@@ -43,10 +43,6 @@
     {
       "name": "component",
       "type": "TAG_TYPE_STRING"
-    },
-    {
-      "name": "dataBinary",
-      "type": "TAG_TYPE_DATA_BINARY"
     }
   ],
   "trace_id_tag_name": "traceId",

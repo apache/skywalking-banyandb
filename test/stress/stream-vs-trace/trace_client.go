@@ -70,7 +70,7 @@ func (c *TraceClient) VerifySchema(ctx context.Context, group, name string) (boo
 	return true, nil
 }
 
-func (c *TraceClient) Write(ctx context.Context, _ *tracev1.WriteRequest) (tracev1.TraceService_WriteClient, error) {
+func (c *TraceClient) Write(ctx context.Context) (tracev1.TraceService_WriteClient, error) {
 	return c.serviceClient.Write(ctx)
 }
 

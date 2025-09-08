@@ -710,14 +710,13 @@ func (s *SpanData) ToTraceWriteRequest() *tracev1.WriteRequest {
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.ServiceID}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.ServiceInstanceID}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.TraceID}}},
-			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: s.StartTime.UnixMilli()}}},
+			{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(s.StartTime)}},
 			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: s.Latency.Milliseconds()}}},
 			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: isError}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.SpanID}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.ParentSpanID}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.OperationName}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s.Component}}},
-			{Value: &modelv1.TagValue_BinaryData{BinaryData: s.DataBinary}},
 		},
 		Span: s.DataBinary, // For trace model, span data goes in the span field
 	}
@@ -755,7 +754,7 @@ func (c *StreamClient) WriteStreamData(ctx context.Context, spans []*SpanData) e
 
 // WriteTraceData writes span data to the trace service.
 func (c *TraceClient) WriteTraceData(ctx context.Context, spans []*SpanData) error {
-	stream, err := c.Write(ctx, nil)
+	stream, err := c.Write(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create trace write client: %w", err)
 	}
