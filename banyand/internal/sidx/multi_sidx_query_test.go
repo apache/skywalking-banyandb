@@ -37,7 +37,7 @@ type mockSIDX struct {
 	delay    bool
 }
 
-func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ uint64) error {
+func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest) error {
 	return nil // Not implemented for tests
 }
 
@@ -60,7 +60,7 @@ func (m *mockSIDX) Flush() error {
 	return nil
 }
 
-func (m *mockSIDX) Merge(_ []uint64, _ uint64, _ <-chan struct{}) error {
+func (m *mockSIDX) Merge(_ <-chan struct{}) error {
 	return nil
 }
 

@@ -188,9 +188,9 @@ func (br *blockReader) nextMetadata() error {
 	for key, tv := range br.block.bm.tagType {
 		tagType[key] = tv
 	}
+	head.tagType = tagType
 	if head.nextBlockMetadata() {
 		heap.Fix(&br.pih, 0)
-		br.pih[0].block.bm.tagType = tagType
 		br.block = &br.pih[0].block
 		return nil
 	}

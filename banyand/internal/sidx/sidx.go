@@ -60,6 +60,7 @@ type sidx struct {
 	totalIntroduceLoopFinished atomic.Int64
 	totalQueries               atomic.Int64
 	totalWrites                atomic.Int64
+	curPartID                  uint64
 	mu                         sync.RWMutex
 }
 
@@ -98,7 +99,7 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 }
 
 // Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) error {
+func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -120,6 +121,9 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) er
 	// Create memory part from elements
 	mp := generateMemPart()
 	mp.mustInitFromElements(es)
+
+	// Generate part ID using atomic increment
+	partID := atomic.AddUint64(&s.curPartID, 1)
 
 	// Create introduction
 	intro := generateIntroduction()
@@ -418,7 +422,7 @@ func (s *sidx) Flush() error {
 		partPath := partPath(s.root, pw.ID())
 		pw.mp.mustFlush(s.fileSystem, partPath)
 		p := mustOpenPart(partPath, s.fileSystem)
-		flushIntro.flushed[p.partMetadata.ID] = p
+		flushIntro.flushed[p.partMetadata.ID] = pw
 	}
 
 	if len(flushIntro.flushed) == 0 {
@@ -826,6 +830,9 @@ func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
 		part.partMetadata.ID = id
 		pw := newPartWrapper(nil, part)
 		snp.addPart(pw)
+		if s.curPartID < id {
+			s.curPartID = id
+		}
 	}
 	s.gc.registerSnapshot(snp)
 	s.gc.clean()
