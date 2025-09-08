@@ -362,7 +362,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs, es.tsTable.curPartID); err != nil {
+					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
 				}

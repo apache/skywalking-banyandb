@@ -37,7 +37,7 @@ import (
 type SIDX interface {
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest, partID uint64) error
+	Write(ctx context.Context, reqs []WriteRequest) error
 
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
@@ -76,7 +76,7 @@ type Merger interface {
 	// and coordinate with the introducer loop for snapshot updates.
 	// This operation is user-controlled and synchronous.
 	// Returns error if merge operation fails.
-	Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error
+	Merge(closeCh <-chan struct{}) error
 }
 
 // Writer handles write path operations for batch processing.
@@ -451,9 +451,6 @@ func (wr WriteRequest) Validate() error {
 	for i, tag := range wr.Tags {
 		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
-		}
-		if len(tag.Value) == 0 {
-			return fmt.Errorf("tag[%d] value cannot be empty", i)
 		}
 	}
 	return nil
