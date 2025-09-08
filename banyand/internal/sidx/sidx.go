@@ -421,8 +421,8 @@ func (s *sidx) Flush() error {
 		}
 		partPath := partPath(s.root, pw.ID())
 		pw.mp.mustFlush(s.fileSystem, partPath)
-		p := mustOpenPart(partPath, s.fileSystem)
-		flushIntro.flushed[p.partMetadata.ID] = pw
+		newPW := newPartWrapper(nil, mustOpenPart(partPath, s.fileSystem))
+		flushIntro.flushed[newPW.ID()] = newPW
 	}
 
 	if len(flushIntro.flushed) == 0 {
