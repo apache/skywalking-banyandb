@@ -342,7 +342,7 @@ func (r *BenchmarkRunner) RunQueryBenchmark(ctx context.Context) error {
 }
 
 // runStreamQueryBenchmark runs stream query benchmarks.
-func (r *BenchmarkRunner) runStreamQueryBenchmark(ctx context.Context) error {
+func (r *BenchmarkRunner) runStreamQueryBenchmark(_ context.Context) error {
 	// TODO: Implement stream query benchmarks
 	// This would include various query patterns like:
 	// - Time range queries
@@ -354,7 +354,7 @@ func (r *BenchmarkRunner) runStreamQueryBenchmark(ctx context.Context) error {
 }
 
 // runTraceQueryBenchmark runs trace query benchmarks.
-func (r *BenchmarkRunner) runTraceQueryBenchmark(ctx context.Context) error {
+func (r *BenchmarkRunner) runTraceQueryBenchmark(_ context.Context) error {
 	// TODO: Implement trace query benchmarks
 	// This would include various query patterns like:
 	// - Trace reconstruction queries

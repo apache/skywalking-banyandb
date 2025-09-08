@@ -77,7 +77,7 @@ func (m *PerformanceMetrics) RecordError() {
 }
 
 // RecordCompression records compression data.
-func (m *PerformanceMetrics) RecordCompression(originalSize, compressedSize int64) {
+func (m *PerformanceMetrics) RecordCompression(_ int64, compressedSize int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
