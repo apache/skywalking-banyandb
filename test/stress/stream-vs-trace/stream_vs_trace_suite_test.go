@@ -53,7 +53,7 @@ var _ = g.Describe("Stream vs Trace Performance", func() {
 	g.It("should setup schemas and run performance comparison", func() {
 		path, deferFn, err := test.NewSpace()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		defer deferFn()
+		g.DeferCleanup(deferFn)
 
 		var ports []int
 		ports, err = test.AllocateFreePorts(4)
