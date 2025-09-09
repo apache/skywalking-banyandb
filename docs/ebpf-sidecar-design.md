@@ -562,19 +562,22 @@ The HTTP API provides REST endpoints for web clients and monitoring systems.
 - Aggregated metrics across all pods
 - Centralized collection point
 
-## 9. Performance Characteristics
+## 9. Performance Considerations
 
 ### 9.1 Overhead Targets
-- CPU Usage: < 1% under normal load
-- Memory: < 50MB resident memory
-- Latency: < 100 microseconds per event
-- Network: Minimal bandwidth for metric export
+We aim for **minimal overhead**, ensuring the sidecar remains lightweight and production-safe:
+- CPU: sub-percent usage under normal load
+- Memory: tens of MB resident footprint
+- Latency: microsecond-level per event
+- Network: negligible metric export cost
+
+(Exact thresholds will be validated during benchmarking; numbers above are indicative, not final.)
 
 ### 9.2 Optimization Strategies
-- Per-CPU data structures to avoid lock contention
-- Early filtering in kernel space
-- Batch processing of events
-- Adaptive collection intervals
+- Use per-CPU data structures to reduce contention
+- Apply early filtering in kernel space
+- Batch process events where possible
+- Support adaptive collection intervals for efficiency
 
 ## 10. Testing Strategy
 
@@ -592,23 +595,11 @@ The HTTP API provides REST endpoints for web clients and monitoring systems.
 ## 11. Future Enhancements
 
 Potential areas for expansion:
-- Network I/O monitoring capabilities
-- CPU scheduling and contention metrics
 - Custom eBPF program loading interface
-- Machine learning-based anomaly detection
 - Integration with distributed tracing systems
-
-## 12. Open Questions for Discussion
-
-1. **Metric Granularity**: Should we track per-file or per-process statistics?
-2. **Collection Interval**: Fixed 10s interval or adaptive based on event rate?
-3. **BanyanDB Schema**: How should eBPF metrics be organized in BanyanDB?
-4. **Resource Limits**: What are acceptable resource consumption thresholds?
-5. **Alert Integration**: Should the sidecar expose alerting conditions?
 
 ---
 
 **Document Version**: 1.0  
 **Status**: Draft for Review  
-**Date**: 2025-01-08  
-**Author**: eBPF Sidecar Team
+**Date**: 2025-09-08
