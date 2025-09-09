@@ -312,6 +312,7 @@
     - [QueryRequest](#banyandb-trace-v1-QueryRequest)
     - [QueryResponse](#banyandb-trace-v1-QueryResponse)
     - [Span](#banyandb-trace-v1-Span)
+    - [Trace](#banyandb-trace-v1-Trace)
   
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
     - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
@@ -4584,7 +4585,7 @@ QueryResponse is the response of a query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is a list of spans that match the query. |
+| traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
 | trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
 
 
@@ -4602,6 +4603,21 @@ Span is a single operation within a trace.
 | ----- | ---- | ----- | ----------- |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
 | span | [bytes](#bytes) |  | span is the raw span data. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Trace"></a>
+
+### Trace
+Trace contains all spans that belong to a single trace ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
 
 
 
