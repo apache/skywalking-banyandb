@@ -15,17 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-spans:
-  - span: trace_005_span_1
-  - span: trace_005_span_2
-  - span: trace_005_span_3
-  - span: trace_005_span_4
-  - span: trace_004_span_1
-  - span: trace_003_span_1
-  - span: trace_003_span_2
-  - span: trace_003_span_3
-  - span: trace_002_span_1
-  - span: trace_002_span_2
-  - span: trace_001_span_1
-  - span: trace_001_span_2
-  - span: trace_001_span_3
+traces:
+  - spans:
+    - span: trace_005_span_1
+    - span: trace_005_span_2
+    - span: trace_005_span_3
+    - span: trace_005_span_4
+  - spans:
+    - span: trace_004_span_1
+  - spans:
+    - span: trace_003_span_1
+    - span: trace_003_span_2
+    - span: trace_003_span_3
+  - spans:
+    - span: trace_002_span_1
+    - span: trace_002_span_2
+  - spans:
+    - span: trace_001_span_1
+    - span: trace_001_span_2
+    - span: trace_001_span_3
