@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -62,7 +63,11 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
-	q, err := query.NewService(ctx, streamSvc, measureSvc, metaSvc, pipeline)
+	traceSvc, err := trace.NewService(metaSvc, pipeline, metricSvc, pm)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate trace service")
+	}
+	q, err := query.NewService(ctx, streamSvc, measureSvc, traceSvc, metaSvc, pipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}

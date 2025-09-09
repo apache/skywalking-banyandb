@@ -317,12 +317,16 @@ type StreamQueryResult interface {
 
 // TraceQueryOptions is the options of a trace query.
 type TraceQueryOptions struct {
-	TimeRange      *timestamp.TimeRange
 	SkippingFilter index.Filter
+	TimeRange      *timestamp.TimeRange
 	Order          *index.OrderBy
 	TagProjection  *TagProjection
 	Name           string
+	Entities       [][]*modelv1.TagValue
+	TraceIDs       []string
 	MaxTraceSize   int
+	MinVal         int64
+	MaxVal         int64
 }
 
 // Reset resets the TraceQueryOptions.
@@ -332,6 +336,8 @@ func (t *TraceQueryOptions) Reset() {
 	t.SkippingFilter = nil
 	t.Order = nil
 	t.TagProjection = nil
+	t.Entities = nil
+	t.TraceIDs = nil
 	t.MaxTraceSize = 0
 }
 
@@ -342,13 +348,20 @@ func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 	t.SkippingFilter = other.SkippingFilter
 	t.Order = other.Order
 	t.TagProjection = other.TagProjection
+	t.Entities = other.Entities
 	t.MaxTraceSize = other.MaxTraceSize
 }
 
 // TraceResult is the result of a query.
 type TraceResult struct {
 	Error error
-	Tags  []Tag
 	Spans [][]byte
-	TIDs  []string
+	TID   string
+	Tags  []Tag
+}
+
+// TraceQueryResult is the result of a trace query.
+type TraceQueryResult interface {
+	Pull() *TraceResult
+	Release()
 }

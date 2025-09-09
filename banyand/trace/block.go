@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"sort"
@@ -40,7 +41,13 @@ type block struct {
 }
 
 func (b *block) reset() {
+	for i := range b.spans {
+		b.spans[i] = nil
+	}
 	b.spans = b.spans[:0]
+	for i := range b.tags {
+		b.tags[i].reset()
+	}
 	b.tags = b.tags[:0]
 	b.minTS = 0
 	b.maxTS = 0
@@ -159,10 +166,12 @@ func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagMetadata: %v", metaReader.Path(), err)
 	}
+	tm.name = name
 	bigValuePool.Release(bb)
 	b.tags[i].name = name
 	if valueType, ok := tagType[name]; ok {
 		b.tags[i].valueType = valueType
+		tm.valueType = valueType
 	} else {
 		b.tags[i].valueType = pbv1.ValueTypeUnknown
 		for j := range b.tags[i].values {
@@ -199,6 +208,8 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 	sort.Strings(keys)
 	b.tags[i].name = keys[i]
 	b.tags[i].valueType = tagType[keys[i]]
+	tm.name = keys[i]
+	tm.valueType = tagType[keys[i]]
 	b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 }
 
@@ -357,6 +368,9 @@ func (bc *blockCursor) reset() {
 	bc.bm.reset()
 	bc.tagProjection = nil
 
+	for i := range bc.spans {
+		bc.spans[i] = nil
+	}
 	bc.spans = bc.spans[:0]
 
 	for i := range bc.tags {
@@ -381,13 +395,9 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 		return
 	}
 
-	requiredCapacity := end - start
-	r.TIDs = append(r.TIDs, make([]string, requiredCapacity)...)
-	for i := range r.TIDs[len(r.TIDs)-requiredCapacity:] {
-		r.TIDs[len(r.TIDs)-requiredCapacity+i] = bc.bm.traceID
-	}
-	r.Spans = append(r.Spans, bc.spans[start:end]...)
+	r.TID = bc.bm.traceID
 
+	r.Spans = append(r.Spans, bc.spans[start:end]...)
 	if desc {
 		slices.Reverse(r.Spans)
 	}
@@ -398,7 +408,6 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 			r.Tags[i] = model.Tag{Name: name}
 		}
 	}
-
 	for i, t := range bc.tags {
 		values := make([]*modelv1.TagValue, end-start)
 		for k := start; k < end; k++ {
@@ -407,9 +416,9 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 			} else {
 				values[k-start] = pbv1.NullTagValue
 			}
-			if desc {
-				slices.Reverse(values)
-			}
+		}
+		if desc {
+			slices.Reverse(values)
 		}
 		r.Tags[i].Values = append(r.Tags[i].Values, values...)
 	}
@@ -417,7 +426,7 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 
 func (bc *blockCursor) copyTo(r *model.TraceResult) {
 	r.Spans = append(r.Spans, bc.spans[bc.idx])
-	r.TIDs = append(r.TIDs, bc.bm.traceID)
+	r.TID = bc.bm.traceID
 	if len(r.Tags) != len(bc.tagProjection.Names) {
 		for _, name := range bc.tagProjection.Names {
 			r.Tags = append(r.Tags, model.Tag{Name: name})
@@ -449,9 +458,6 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			}
 		}
 	}
-	if len(t) == 0 {
-		return false
-	}
 
 	bc.bm.tags = t
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
@@ -459,17 +465,24 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 		return false
 	}
 
-	bc.spans = append(bc.spans, tmpBlock.spans...)
+	for i := range tmpBlock.spans {
+		bc.spans = append(bc.spans, bytes.Clone(tmpBlock.spans[i]))
+	}
 
-	for _, tag := range tmpBlock.tags {
-		if len(tag.values) == 0 {
+	for _, t := range tmpBlock.tags {
+		if len(t.values) == 0 {
 			continue
 		}
-		if len(tag.values) != len(tmpBlock.spans) {
+		if len(t.values) != len(tmpBlock.spans) {
 			logger.Panicf("unexpected number of values for tags %q: got %d; want %d",
-				tag.name, len(tag.values), len(tmpBlock.spans))
+				t.name, len(t.values), len(tmpBlock.spans))
 		}
-		bc.tags = append(bc.tags, tag)
+		tt := tag{
+			name:      t.name,
+			valueType: t.valueType,
+		}
+		tt.values = append(tt.values, t.values...)
+		bc.tags = append(bc.tags, tt)
 	}
 	return len(bc.spans) > 0
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -42,12 +43,13 @@ type queryService struct {
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	tqp         *topNQueryProcessor
+	trqp        *traceQueryProcessor
 	nodeID      string
 	slowQuery   time.Duration
 }
 
 // NewService return a new query service.
-func NewService(_ context.Context, streamService stream.Service, measureService measure.Service,
+func NewService(_ context.Context, streamService stream.Service, measureService measure.Service, traceService trace.Service,
 	metaService metadata.Repo, pipeline queue.Server,
 ) (run.Unit, error) {
 	svc := &queryService{
@@ -69,6 +71,11 @@ func NewService(_ context.Context, streamService stream.Service, measureService 
 		measureService: measureService,
 		queryService:   svc,
 	}
+	// trace query processor
+	svc.trqp = &traceQueryProcessor{
+		traceService: traceService,
+		queryService: svc,
+	}
 	return svc, nil
 }
 
@@ -88,6 +95,7 @@ func (q *queryService) PreRun(ctx context.Context) error {
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
 		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
+		q.pipeline.Subscribe(data.TopicTraceQuery, q.trqp),
 	)
 }
 

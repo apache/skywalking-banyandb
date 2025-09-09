@@ -35,7 +35,6 @@ type tag struct {
 	name      string
 	value     []byte
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 // elements is a collection of elements optimized for batch operations.
@@ -43,10 +42,7 @@ type elements struct {
 	seriesIDs []common.SeriesID // Pooled slice
 	userKeys  []int64           // Pooled slice (replaces timestamps)
 	data      [][]byte          // Pooled slice of slices
-	tags      [][]tag           // Pooled slice of tag slices
-
-	// Pool management
-	pooled bool // Whether from pool
+	tags      [][]*tag          // Pooled slice of tag pointer slices
 }
 
 // reset clears tag for reuse.
@@ -54,7 +50,6 @@ func (t *tag) reset() {
 	t.name = ""
 	t.value = nil
 	t.valueType = pbv1.ValueTypeUnknown
-	t.indexed = false
 }
 
 // reset elements collection for pooling.
@@ -66,15 +61,14 @@ func (e *elements) reset() {
 		e.data[i] = nil
 	}
 	e.data = e.data[:0]
-	// Reset tag slices
+	// Reset tag slices and release tag pointers to pool
 	for i := range e.tags {
 		for j := range e.tags[i] {
-			e.tags[i][j].reset()
+			releaseTag(e.tags[i][j])
 		}
 		e.tags[i] = e.tags[i][:0]
 	}
 	e.tags = e.tags[:0]
-	e.pooled = false
 }
 
 // size returns the size of the tag in bytes.
@@ -125,15 +119,14 @@ var (
 func generateElements() *elements {
 	v := elementsPool.Get()
 	if v == nil {
-		return &elements{pooled: true}
+		return &elements{}
 	}
-	v.pooled = true
 	return v
 }
 
 // releaseElements returns elements to pool after reset.
 func releaseElements(e *elements) {
-	if e == nil || !e.pooled {
+	if e == nil {
 		return
 	}
 	e.reset()
@@ -168,15 +161,14 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 	copy(dataCopy, data)
 	e.data = append(e.data, dataCopy)
 
-	// Convert and copy tags
-	elementTags := make([]tag, len(tags))
-	for i, t := range tags {
-		elementTags[i] = tag{
-			name:      t.name,
-			value:     append([]byte(nil), t.value...),
-			valueType: t.valueType,
-			indexed:   t.indexed,
-		}
+	// Convert and copy tags using generateTag()
+	elementTags := make([]*tag, 0, len(tags))
+	for _, t := range tags {
+		newTag := generateTag()
+		newTag.name = t.Name
+		newTag.value = append([]byte(nil), t.Value...)
+		newTag.valueType = t.ValueType
+		elementTags = append(elementTags, newTag)
 	}
 	e.tags = append(e.tags, elementTags)
 }

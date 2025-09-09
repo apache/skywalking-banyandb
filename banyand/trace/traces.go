@@ -23,8 +23,10 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -157,7 +159,7 @@ func (t *traces) reset() {
 	t.timestamps = t.timestamps[:0]
 	for i := range t.tags {
 		for j := range t.tags[i] {
-			t.tags[i][j].reset()
+			releaseTagValue(t.tags[i][j])
 		}
 	}
 	t.tags = t.tags[:0]
@@ -194,12 +196,19 @@ func releaseTraces(t *traces) {
 
 var tracesPool = pool.Register[*traces]("trace-traces")
 
+type seriesDoc struct {
+	docIDsAdded map[uint64]struct{}
+	docs        index.Documents
+}
+
 type tracesInTable struct {
-	segment   storage.Segment[*tsTable, option]
-	tsTable   *tsTable
-	traces    *traces
-	timeRange timestamp.TimeRange
-	shardID   common.ShardID
+	segment     storage.Segment[*tsTable, option]
+	tsTable     *tsTable
+	traces      *traces
+	sidxReqsMap map[string][]sidx.WriteRequest
+	timeRange   timestamp.TimeRange
+	seriesDocs  seriesDoc
+	shardID     common.ShardID
 }
 
 type tracesInGroup struct {

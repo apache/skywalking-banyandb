@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -43,6 +44,7 @@ const (
 	ValueTypeBinaryData
 	ValueTypeStrArr
 	ValueTypeInt64Arr
+	ValueTypeTimestamp
 )
 
 // MustTagValueToValueType converts modelv1.TagValue to ValueType.
@@ -60,6 +62,8 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 		return ValueTypeStrArr
 	case *modelv1.TagValue_IntArray:
 		return ValueTypeInt64Arr
+	case *modelv1.TagValue_Timestamp:
+		return ValueTypeTimestamp
 	default:
 		panic("unknown tag value type")
 	}
@@ -78,6 +82,8 @@ func MustTagValueSpecToValueType(tag databasev1.TagType) ValueType {
 		return ValueTypeStrArr
 	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
 		return ValueTypeInt64Arr
+	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
+		return ValueTypeTimestamp
 	default:
 		panic("unknown tag value type")
 	}
@@ -92,6 +98,8 @@ func MustTagValueToStr(tag *modelv1.TagValue) string {
 		return strconv.FormatInt(tag.GetInt().Value, 10)
 	case *modelv1.TagValue_BinaryData:
 		return fmt.Sprintf("%x", tag.GetBinaryData())
+	case *modelv1.TagValue_Timestamp:
+		return tag.GetTimestamp().String()
 	default:
 		panic("unknown tag value type")
 	}
@@ -135,6 +143,12 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 		dest = marshalEntityValue(dest, encoding.Int64ToBytes(nil, tv.GetInt().Value))
 	case *modelv1.TagValue_BinaryData:
 		dest = marshalEntityValue(dest, tv.GetBinaryData())
+	case *modelv1.TagValue_Timestamp:
+		// Convert timestamp to 64-bit nanoseconds since epoch for efficient storage
+		ts := tv.GetTimestamp()
+		epochNanos := ts.Seconds*1e9 + int64(ts.Nanos)
+		tsBytes := encoding.Int64ToBytes(nil, epochNanos)
+		dest = marshalEntityValue(dest, tsBytes)
 	default:
 		return nil, errors.New("unsupported tag value type: " + tv.String())
 	}
@@ -196,6 +210,25 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 		return dest, src, &modelv1.TagValue{
 			Value: &modelv1.TagValue_BinaryData{
 				BinaryData: data,
+			},
+		}, nil
+	case ValueTypeTimestamp:
+		if dest, src, err = unmarshalEntityValue(dest, src[1:]); err != nil {
+			return nil, nil, nil, errors.WithMessage(err, "unmarshal timestamp tag value")
+		}
+		// Unmarshal 64-bit epoch nanoseconds and convert back to seconds + nanos
+		if len(dest) < 8 { // Need at least 8 bytes for the 64-bit value
+			return nil, src, nil, errors.New("insufficient bytes for timestamp")
+		}
+		epochNanos := encoding.BytesToInt64(dest)
+		seconds := epochNanos / 1e9
+		nanos := int32(epochNanos % 1e9)
+		return dest, src, &modelv1.TagValue{
+			Value: &modelv1.TagValue_Timestamp{
+				Timestamp: &timestamppb.Timestamp{
+					Seconds: seconds,
+					Nanos:   nanos,
+				},
 			},
 		}, nil
 	default:
@@ -286,6 +319,15 @@ func MustCompareTagValue(tv1, tv2 *modelv1.TagValue) int {
 		return int(tv1.GetInt().Value - tv2.GetInt().Value)
 	case ValueTypeBinaryData:
 		return bytes.Compare(tv1.GetBinaryData(), tv2.GetBinaryData())
+	case ValueTypeTimestamp:
+		ts1 := tv1.GetTimestamp()
+		ts2 := tv2.GetTimestamp()
+		if ts1.Seconds < ts2.Seconds {
+			return -1
+		} else if ts1.Seconds > ts2.Seconds {
+			return 1
+		}
+		return 0
 	default:
 		logger.Panicf("unsupported tag value type: %v", vt1)
 		return 0

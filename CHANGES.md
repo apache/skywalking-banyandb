@@ -33,6 +33,14 @@ Release Notes.
 - Enhance flusher and introducer loops to support merging operations, improving efficiency by eliminating the need for a separate merge loop and optimizing data handling process during flushing and merging
 - Enhance stream synchronization with configurable sync interval - Allows customization of synchronization timing for better performance tuning
 - Refactor flusher and introducer loops to support conditional merging - Optimizes data processing by adding conditional logic to merge operations
+- New storage engine for trace:
+  - Data ingestion and retrieval.
+  - Flush memory data to disk.
+  - Merge memory data and disk data.
+- Enhance access log functionality with sampling option.
+- Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
+- Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
+- Add query access log support for stream, measure, trace, and property services to capture and log all query requests for monitoring and debugging purposes.
 
 ### Bug Fixes
 

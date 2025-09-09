@@ -63,18 +63,23 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata     metadata.Repo
-	evictable    map[string]evictNode
-	log          *logger.Logger
-	registered   map[string]*databasev1.Node
-	active       map[string]*client
-	handlers     map[bus.Topic]schema.EventHandler
-	closer       *run.Closer
-	caCertPath   string
-	prefix       string
-	allowedRoles []databasev1.Role
-	mu           sync.RWMutex
-	tlsEnabled   bool
+	metadata        metadata.Repo
+	handlers        map[bus.Topic]schema.EventHandler
+	log             *logger.Logger
+	registered      map[string]*databasev1.Node
+	active          map[string]*client
+	evictable       map[string]evictNode
+	closer          *run.Closer
+	writableProbe   map[string]map[string]struct{}
+	cbStates        map[string]*circuitState
+	caCertPath      string
+	prefix          string
+	retryPolicy     string
+	allowedRoles    []databasev1.Role
+	mu              sync.RWMutex
+	cbMu            sync.RWMutex
+	writableProbeMu sync.Mutex
+	tlsEnabled      bool
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
@@ -229,6 +234,12 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 			return multierr.Append(err, fmt.Errorf("failed to marshal message[%d]: %w", m.ID(), errSend))
 		}
 		node := m.Node()
+
+		// Check circuit breaker before attempting send
+		if !p.isRequestAllowed(node) {
+			return multierr.Append(err, fmt.Errorf("circuit breaker open for node %s", node))
+		}
+
 		p.mu.RLock()
 		client, ok := p.active[node]
 		p.mu.RUnlock()
@@ -239,12 +250,18 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		f.cancelFn = append(f.cancelFn, cancel)
 		stream, errCreateStream := client.client.Send(ctx)
 		if errCreateStream != nil {
+			// Record failure for circuit breaker (only for transient/internal errors)
+			p.recordFailure(node, errCreateStream)
 			return multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 		}
 		errSend = stream.Send(r)
 		if errSend != nil {
+			// Record failure for circuit breaker (only for transient/internal errors)
+			p.recordFailure(node, errSend)
 			return multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
 		}
+		// Record success for circuit breaker
+		p.recordSuccess(node)
 		f.clients = append(f.clients, stream)
 		f.topics = append(f.topics, topic)
 		f.nodes = append(f.nodes, node)
@@ -279,14 +296,17 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		}
 	}
 	p := &pub{
-		metadata:     metadata,
-		active:       make(map[string]*client),
-		evictable:    make(map[string]evictNode),
-		registered:   make(map[string]*databasev1.Node),
-		handlers:     make(map[bus.Topic]schema.EventHandler),
-		closer:       run.NewCloser(1),
-		allowedRoles: roles,
-		prefix:       strBuilder.String(),
+		metadata:      metadata,
+		active:        make(map[string]*client),
+		evictable:     make(map[string]evictNode),
+		registered:    make(map[string]*databasev1.Node),
+		handlers:      make(map[bus.Topic]schema.EventHandler),
+		closer:        run.NewCloser(1),
+		allowedRoles:  roles,
+		prefix:        strBuilder.String(),
+		writableProbe: make(map[string]map[string]struct{}),
+		cbStates:      make(map[string]*circuitState),
+		retryPolicy:   retryPolicy,
 	}
 	return p
 }

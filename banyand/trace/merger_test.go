@@ -116,29 +116,29 @@ func Test_mergeParts(t *testing.T) {
 		tsList  []*traces
 		want    []blockMetadata
 	}{
-		// {
-		// 	name:    "Test with no trace",
-		// 	tsList:  []*traces{},
-		// 	wantErr: errNoPartToMerge,
-		// },
-		// {
-		// 	name:   "Test with single part",
-		// 	tsList: []*traces{tsTS1},
-		// 	want: []blockMetadata{
-		// 		{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
-		// 		{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-		// 		{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
-		// 	},
-		// },
-		// {
-		// 	name:   "Test with multiple parts",
-		// 	tsList: []*traces{tsTS1, tsTS2, tsTS2},
-		// 	want: []blockMetadata{
-		// 		{traceID: "trace1", count: 3, uncompressedSpanSizeBytes: 15},
-		// 		{traceID: "trace2", count: 3, uncompressedSpanSizeBytes: 15},
-		// 		{traceID: "trace3", count: 3, uncompressedSpanSizeBytes: 15},
-		// 	},
-		// },
+		{
+			name:    "Test with no trace",
+			tsList:  []*traces{},
+			wantErr: errNoPartToMerge,
+		},
+		{
+			name:   "Test with single part",
+			tsList: []*traces{tsTS1},
+			want: []blockMetadata{
+				{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
+				{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
+				{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
+			},
+		},
+		{
+			name:   "Test with multiple parts",
+			tsList: []*traces{tsTS1, tsTS2, tsTS2},
+			want: []blockMetadata{
+				{traceID: "trace1", count: 3, uncompressedSpanSizeBytes: 15},
+				{traceID: "trace2", count: 3, uncompressedSpanSizeBytes: 15},
+				{traceID: "trace3", count: 3, uncompressedSpanSizeBytes: 15},
+			},
+		},
 		{
 			name:   "Test with multiple parts with a large quantity of spans",
 			tsList: []*traces{generateHugeTraces(5000), generateHugeTraces(5000)},

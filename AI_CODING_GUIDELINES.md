@@ -49,6 +49,7 @@ Use these specific aliases for protobuf packages:
 - github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1 → measurev1
 - github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1 → streamv1
 - github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1 → clusterv1
+- github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1 → tracev1
 - github.com/apache/skywalking-banyandb/pkg/pb/v1 → pbv1
 
 ## ERROR HANDLING PATTERNS

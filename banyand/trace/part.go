@@ -23,6 +23,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"sort"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -438,6 +439,8 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 		return
 	}
 
+	sort.Sort(ts)
+
 	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
 	for _, tid := range ts.traceIDs {
@@ -484,6 +487,10 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
+	if mp.traceIDFilter.filter != nil {
+		releaseBloomFilter(mp.traceIDFilter.filter)
+		mp.traceIDFilter.filter = nil
+	}
 
 	fileSystem.SyncPath(path)
 }

@@ -21,11 +21,15 @@ import (
 	"context"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -62,11 +66,6 @@ type standalone struct {
 	maxFileSnapshotNum  int
 }
 
-// StandaloneService returns a new standalone service.
-func StandaloneService(_ context.Context) (Service, error) {
-	return &standalone{}, nil
-}
-
 func (s *standalone) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("trace")
 	fs.StringVar(&s.root, "trace-root-path", "/tmp", "the root path for trace data")
@@ -74,6 +73,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
 	fs.IntVar(&s.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
 	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 2, "the maximum number of file snapshots")
+	s.option.mergePolicy = newDefaultMergePolicy()
+	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
 	// Additional flags can be added here
 	return fs
 }
@@ -93,40 +94,37 @@ func (s *standalone) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
 
-func (s *standalone) PreRun(_ context.Context) error {
-	s.l = logger.GetLogger("trace")
-
-	// Initialize metadata
-	if s.metadata == nil {
-		return errors.New("metadata repo is required")
+func (s *standalone) PreRun(ctx context.Context) error {
+	s.l = logger.GetLogger(s.Name())
+	s.l.Info().Msg("memory protector is initialized in PreRun")
+	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
+	path := path.Join(s.root, s.Name())
+	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	observability.UpdatePath(path)
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return errors.New("node id is empty")
 	}
-
-	// Initialize filesystem
-	if s.lfs == nil {
-		s.lfs = fs.NewLocalFileSystem()
-	}
-
-	// Initialize protector
-	if s.pm == nil {
-		return errors.New("memory protector is required")
-	}
-
-	// Initialize pipeline
-	if s.pipeline == nil {
-		return errors.New("pipeline is required")
-	}
-
-	// Set up data path
+	node := val.(common.Node)
 	if s.dataPath == "" {
-		s.dataPath = path.Join(s.root, "trace-data")
+		s.dataPath = filepath.Join(path, storage.DataDir)
 	}
-
-	// Initialize schema repository
-	var nodeLabels map[string]string
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, nodeLabels)
+	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
+		observability.UpdatePath(s.dataPath)
+	}
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 
 	// Initialize snapshot directory
 	s.snapshotDir = filepath.Join(s.dataPath, "snapshot")
+
+	// Set up write callback handler
+	if s.pipeline != nil {
+		writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+		err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
+		if err != nil {
+			return err
+		}
+	}
 
 	s.l.Info().
 		Str("root", s.root).
@@ -138,12 +136,7 @@ func (s *standalone) PreRun(_ context.Context) error {
 }
 
 func (s *standalone) Serve() run.StopNotify {
-	// As specified in the plan, no pipeline listeners should be implemented
-	s.l.Info().Msg("trace standalone service started")
-
-	// Return a channel that never closes since this service runs indefinitely
-	stopCh := make(chan struct{})
-	return stopCh
+	return s.schemaRepo.StopCh()
 }
 
 func (s *standalone) GracefulStop() {
@@ -167,36 +160,6 @@ func (s *standalone) Trace(metadata *commonv1.Metadata) (Trace, error) {
 
 func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
-}
-
-// SetMetadata sets the metadata repository.
-func (s *standalone) SetMetadata(metadata metadata.Repo) {
-	s.metadata = metadata
-}
-
-// SetObservabilityRegistry sets the observability metrics registry.
-func (s *standalone) SetObservabilityRegistry(omr observability.MetricsRegistry) {
-	s.omr = omr
-}
-
-// SetProtector sets the memory protector.
-func (s *standalone) SetProtector(pm protector.Memory) {
-	s.pm = pm
-}
-
-// SetPipeline sets the pipeline server.
-func (s *standalone) SetPipeline(pipeline queue.Server) {
-	s.pipeline = pipeline
-}
-
-// SetLocalPipeline sets the local pipeline queue.
-func (s *standalone) SetLocalPipeline(localPipeline queue.Queue) {
-	s.localPipeline = localPipeline
-}
-
-// SetFileSystem sets the file system.
-func (s *standalone) SetFileSystem(lfs fs.FileSystem) {
-	s.lfs = lfs
 }
 
 // NewService returns a new service.

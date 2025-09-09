@@ -67,13 +67,14 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, minTimestamp, maxTimestamp int64) ([]*part, int) {
+func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64) ([]*part, int) {
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
+		// TODO: filter parts
 		dst = append(dst, p.p)
 		count++
 	}
