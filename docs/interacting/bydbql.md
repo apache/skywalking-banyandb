@@ -151,7 +151,7 @@ BydbQL for streams is designed for querying and retrieving raw time-series eleme
 ### 4.1. Grammar
 
 ```
-query           ::= SELECT projection [from_stream_clause] [TIME time_condition] [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer]
+query           ::= SELECT projection [from_stream_clause] [TIME time_condition] [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
 from_stream_clause ::= "FROM STREAM" identifier ["IN" "(" group_list ")"]
 projection      ::= "*" | column_list
 column_list     ::= identifier ("," identifier)*
@@ -184,6 +184,7 @@ integer_literal ::= [0-9]+
 *   **`WHERE conditions`**: Maps to `criteria`.
 *   **`ORDER BY field`**: Maps to `order_by`.
 *   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset`.
+*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 4.3. Examples
 
@@ -251,6 +252,13 @@ WHERE status = 'error';
 SELECT trace_id, duration
 FROM STREAM sw
 TIME < '-1d';
+
+-- Query with distributed tracing enabled
+SELECT trace_id, service_id, start_time
+FROM STREAM sw
+TIME BETWEEN '-2h' AND 'now'
+WHERE service_id = 'webapp'
+WITH QUERY_TRACE;
 ```
 
 ## 5. BydbQL for Measures
@@ -260,7 +268,7 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection [from_measure_clause] [TIME time_condition] [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer]
+measure_query     ::= SELECT projection [from_measure_clause] [TIME time_condition] [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
 from_measure_clause ::= "FROM MEASURE" identifier ["IN" "(" group_list ")"]
 projection        ::= "*" | (column_list | agg_function "(" identifier ")" | "TOP" integer projection)
 column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
@@ -302,6 +310,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 *   **`TIME BETWEEN '-1h' AND 'now'`**: Maps to `time_range` from 1 hour ago to current time.
 *   **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
 *   **`SELECT TOP N ...`**: Maps to the `top` message.
+*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 5.4. Examples
 
@@ -400,6 +409,16 @@ FROM MEASURE api_errors
 TIME < '-1d'
 WHERE status_code = '500'
 GROUP BY endpoint;
+
+-- Query with distributed tracing enabled
+SELECT
+    service,
+    AVG(response_time)
+FROM MEASURE http_metrics
+TIME > '-30m'
+WHERE region = 'us-west'
+GROUP BY service
+WITH QUERY_TRACE;
 ```
 
 ## 6. BydbQL for Top-N
@@ -409,7 +428,7 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 ### 6.1. Grammar
 
 ```
-topn_query         ::= SHOW TOP integer from_measure_clause [TIME time_condition] [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]]
+topn_query         ::= SHOW TOP integer from_measure_clause [TIME time_condition] [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
 from_measure_clause ::= "FROM MEASURE" identifier ["IN" "(" group_list ")"]
 topn_criteria      ::= condition (("AND" | "OR") condition)*
 condition          ::= identifier binary_op (value | value_list)
@@ -438,6 +457,7 @@ integer_literal    ::= [0-9]+
 *   **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
 *   **`AGGREGATE BY FUNC`**: Maps to `agg`.
 *   **`ORDER BY value DESC`**: Maps to `field_value_sort`.
+*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 6.3. Examples
 
@@ -495,6 +515,14 @@ SHOW TOP 3
 FROM MEASURE service_response_time
 TIME > '-30m'
 ORDER BY value ASC;
+
+-- Top-N query with distributed tracing enabled
+SHOW TOP 10
+FROM MEASURE service_latency
+TIME > '-1h'
+WHERE http_method = 'GET'
+ORDER BY value DESC
+WITH QUERY_TRACE;
 ```
 
 ## 7. BydbQL for Properties
@@ -504,7 +532,7 @@ BydbQL for properties is designed for simple key-value lookups and metadata filt
 ### 7.1. Grammar
 
 ```
-property_query      ::= SELECT projection [from_property_clause] [WHERE criteria] [LIMIT integer]
+property_query      ::= SELECT projection [from_property_clause] [WHERE criteria] [LIMIT integer] [WITH QUERY_TRACE]
 from_property_clause ::= "FROM PROPERTY" identifier ["IN" "(" group_list ")"]
 projection          ::= "*" | column_list
 column_list         ::= identifier ("," identifier)*
@@ -526,6 +554,7 @@ integer_literal     ::= [0-9]+
 *   **`WHERE ID IN (...)`**: Maps to `ids`.
 *   **`WHERE tag = 'value'`**: Maps to `criteria`.
 *   **`LIMIT n`**: Maps to `limit`.
+*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 7.3. Examples
 
@@ -553,16 +582,205 @@ SELECT ip, owner
 FROM PROPERTY server_metadata IN (datacenter-1, datacenter-2, datacenter-3)
 WHERE in_service = 'true'
 LIMIT 100;
+
+-- Property query with distributed tracing enabled
+SELECT ip, region, owner
+FROM PROPERTY server_metadata
+WHERE datacenter = 'dc-101' AND in_service = 'true'
+LIMIT 50
+WITH QUERY_TRACE;
 ```
 
-## 8. Summary of BydbQL Capabilities
+## 8. BydbQL for Traces
 
-| Feature             | Streams                               | Measures                              | Top-N                               | Properties                          |
-| :------------------ | :------------------------------------ | :------------------------------------ | :---------------------------------- | :---------------------------------- |
-| **Primary Command** | `SELECT ... [FROM STREAM]`            | `SELECT ... [FROM MEASURE]`           | `SHOW TOPN ... FROM MEASURE`        | `SELECT ... [FROM PROPERTY]`        |
-| **Projection**      | Tags by family                        | Tags & Fields                         | Implicit (entity, value)            | Flat list of tags                   |
-| **Aggregation**     | No                                    | Yes (`SUM`, `MEAN`, etc.)             | Yes (optional)                      | No                                  |
-| **Grouping**        | No                                    | Yes (`GROUP BY`)                      | No                                  | No                                  |
-| **Filtering**       | Full `WHERE` clause + `TIME` clause   | Full `WHERE` clause + `TIME` clause   | Simple equality `WHERE` + `TIME` clause | `WHERE` by ID or tags               |
-| **Ordering**        | Yes (`ORDER BY`)                      | Yes (`ORDER BY`)                      | Yes (`ORDER BY value`)              | No                                  |
-| **Pagination**      | Yes (`LIMIT`/`OFFSET`)                | Yes (`LIMIT`/`OFFSET`)                | No                                  | `LIMIT` only                        |
+BydbQL for traces is designed for querying and retrieving trace data with spans. The syntax maps to the `banyandb.trace.v1.QueryRequest` message and is optimized for trace-specific operations.
+
+### 8.1. Grammar
+
+```
+trace_query           ::= SELECT projection [from_trace_clause] [TIME time_condition] [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+from_trace_clause     ::= "FROM TRACE" identifier ["IN" "(" group_list ")"]
+projection            ::= "*" | column_list | "()"
+column_list           ::= identifier ("," identifier)*
+group_list            ::= identifier ("," identifier)*
+criteria              ::= condition (("AND" | "OR") condition)*
+condition             ::= identifier binary_op (value | value_list)
+time_condition        ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
+binary_op             ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "MATCH"
+order_expression      ::= identifier ["ASC" | "DESC"]
+value                 ::= string_literal | integer_literal | "NULL"
+value_list            ::= "(" value ("," value)* ")"
+timestamp             ::= string_literal | integer_literal
+	/* timestamp supports both absolute and relative time formats:
+	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
+	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
+identifier            ::= [a-zA-Z_][a-zA-Z0-9_]*
+string_literal        ::= "'" [^']* "'" | "\"" [^\"]* "\""
+integer_literal       ::= [0-9]+
+```
+
+### 8.2. Trace Model Characteristics
+
+The Trace model in BanyanDB is specifically designed for storing and querying trace data with the following key characteristics:
+
+*   **Trace Resource**: A logical namespace within a group that defines the structure for trace data
+*   **Tags**: Indexed tags that support filtering and querying (defined by `TraceTagSpec`)
+*   **Trace ID Tag**: A specific tag that stores the trace ID for trace correlation
+*   **Timestamp Tag**: A specific tag that stores the timestamp for time-based queries
+*   **Span Data**: Raw span data stored as binary for efficient storage and retrieval
+
+### 8.2.1. Empty Projection Support
+
+BydbQL for traces supports an empty projection syntax `SELECT ()` that allows queries to return only raw span data without any tag information. This is useful for:
+
+*   **Performance Optimization**: When you only need the raw span data and don't want to pay the cost of loading and returning tag values
+*   **Data Processing**: When you plan to process the raw span data externally and don't need the indexed tag values
+*   **Storage Efficiency**: Reducing network transfer and memory usage by excluding tag data
+
+**Syntax**: `SELECT ()` - Returns only raw span data, no tag information
+**Behavior**: The query will still apply filtering and ordering based on the WHERE and ORDER BY clauses, but the result will contain only the binary span data without any tag projections.
+
+### 8.3. Mapping to `trace.v1.QueryRequest`
+
+*   **`FROM TRACE name IN (groups)`**: Maps to the `name` and `groups` fields. If the clause is omitted, these values are taken from the execution context.
+*   **`SELECT tags`**: Maps to `tag_projection`. Requires a trace schema to resolve tags to their specifications.
+*   **`SELECT ()`**: Maps to an empty `tag_projection` array, indicating no tag data should be returned (only raw span data).
+*   **`TIME = '2023-01-01T00:00:00Z'`**: Maps to `time_range` with `begin` and `end` set to the same timestamp.
+*   **`TIME > '2023-01-01T00:00:00Z'`**: Maps to `time_range` with `begin` set to the timestamp.
+*   **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Maps to `time_range` with `begin` and `end` set to the respective timestamps.
+*   **`TIME > '-30m'`**: Maps to `time_range` with `begin` set to 30 minutes ago.
+*   **`TIME BETWEEN '-1h' AND 'now'`**: Maps to `time_range` from 1 hour ago to current time.
+*   **`WHERE conditions`**: Maps to `criteria` for filtering spans based on tag values.
+*   **`ORDER BY field`**: Maps to `order_by` for sorting results.
+*   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset` for pagination.
+*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+
+### 8.3.1. Naming Convention Clarification
+
+To avoid confusion between different uses of the word "trace" in BanyanDB:
+
+*   **Trace Model**: Refers to the data model for storing trace data (spans, tags, etc.) - used in `FROM TRACE` clauses
+*   **Query Tracing**: Refers to distributed tracing of query execution for observability - enabled with `WITH QUERY_TRACE`
+
+The `WITH QUERY_TRACE` clause enables distributed tracing of the query execution itself, which is separate from querying trace data. When enabled, the query response will include execution trace information in the `trace_query_result` field.
+
+### 8.4. Examples
+
+```sql
+-- Simplest query (context must provide the trace name, e.g., 'sw_trace')
+SELECT *;
+
+-- Basic selection with filtering and ordering
+SELECT trace_id, service_id, operation_name
+FROM TRACE sw_trace IN (default, updated)
+WHERE service_id = 'webapp' AND status = 'success'
+ORDER BY start_time DESC
+LIMIT 100;
+
+-- Project all tags from a trace (FROM is explicit)
+SELECT * 
+FROM TRACE sw_trace 
+WHERE status = 'error' 
+LIMIT 10;
+
+-- Query with no tag projection - returns only raw span data
+SELECT ()
+FROM TRACE sw_trace
+WHERE service_id = 'webapp'
+LIMIT 100;
+
+-- Use more complex conditions with IN and OR
+SELECT trace_id, duration, operation_name
+WHERE service_id IN ('webapp', 'api-gateway') OR http.method = 'POST';
+
+-- Query with time range using TIME clause
+SELECT trace_id, service_id, start_time, operation_name
+FROM TRACE sw_trace
+TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
+WHERE service_id = 'webapp'
+ORDER BY start_time DESC;
+
+-- Query data after a specific timestamp
+SELECT *
+FROM TRACE sw_trace
+TIME > '2023-01-01T12:00:00Z'
+WHERE status = 'success'
+LIMIT 100;
+
+-- Query data at an exact timestamp
+SELECT trace_id, duration, operation_name
+FROM TRACE sw_trace
+TIME = '2023-01-01T15:30:00Z';
+
+-- Query with relative time - last 30 minutes
+SELECT *
+FROM TRACE sw_trace
+TIME > '-30m'
+WHERE status = 'error'
+LIMIT 100;
+
+-- Query with relative time range - last 2 hours
+SELECT trace_id, service_id, start_time, operation_name
+FROM TRACE sw_trace
+TIME BETWEEN '-2h' AND 'now'
+WHERE service_id = 'webapp'
+ORDER BY start_time DESC;
+
+-- Query traces by specific trace ID
+SELECT *
+FROM TRACE sw_trace
+WHERE trace_id = '1a2b3c4d5e6f7890';
+
+-- Query traces with specific operation names
+SELECT trace_id, service_id, duration
+FROM TRACE sw_trace
+WHERE operation_name IN ('GET /api/users', 'POST /api/orders')
+ORDER BY duration DESC;
+
+-- Query traces with error status in the last hour
+SELECT trace_id, service_id, error_message
+FROM TRACE sw_trace
+TIME > '-1h'
+WHERE status = 'error'
+ORDER BY start_time DESC
+LIMIT 50;
+
+-- Query traces older than 1 day ago
+SELECT trace_id, duration, operation_name
+FROM TRACE sw_trace
+TIME < '-1d'
+WHERE service_id = 'legacy-service';
+
+-- Query with no projection for raw span data only
+SELECT ()
+FROM TRACE sw_trace
+TIME > '-1h'
+WHERE status = 'error'
+LIMIT 50;
+
+-- Query with distributed tracing enabled for observability
+SELECT trace_id, service_id, operation_name
+FROM TRACE sw_trace
+WHERE service_id = 'webapp'
+WITH QUERY_TRACE;
+
+-- Query with both empty projection and query tracing
+SELECT ()
+FROM TRACE sw_trace
+TIME > '-30m'
+WHERE status = 'error'
+WITH QUERY_TRACE
+LIMIT 100;
+```
+
+## 9. Summary of BydbQL Capabilities
+
+| Feature             | Streams                               | Measures                              | Top-N                               | Properties                          | Traces                              |
+| :------------------ | :------------------------------------ | :------------------------------------ | :---------------------------------- | :---------------------------------- | :---------------------------------- |
+| **Primary Command** | `SELECT ... [FROM STREAM]`            | `SELECT ... [FROM MEASURE]`           | `SHOW TOPN ... FROM MEASURE`        | `SELECT ... [FROM PROPERTY]`        | `SELECT ... [FROM TRACE]`           |
+| **Projection**      | Tags by family                        | Tags & Fields                         | Implicit (entity, value)            | Flat list of tags                   | Tags by specification               |
+| **Aggregation**     | No                                    | Yes (`SUM`, `MEAN`, etc.)             | Yes (optional)                      | No                                  | No                                  |
+| **Grouping**        | No                                    | Yes (`GROUP BY`)                      | No                                  | No                                  | No                                  |
+| **Filtering**       | Full `WHERE` clause + `TIME` clause   | Full `WHERE` clause + `TIME` clause   | Simple equality `WHERE` + `TIME` clause | `WHERE` by ID or tags               | Full `WHERE` clause + `TIME` clause |
+| **Ordering**        | Yes (`ORDER BY`)                      | Yes (`ORDER BY`)                      | Yes (`ORDER BY value`)              | No                                  | Yes (`ORDER BY`)                    |
+| **Pagination**      | Yes (`LIMIT`/`OFFSET`)                | Yes (`LIMIT`/`OFFSET`)                | No                                  | `LIMIT` only                        | Yes (`LIMIT`/`OFFSET`)              |
