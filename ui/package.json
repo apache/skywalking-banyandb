@@ -15,7 +15,7 @@
     "axios": "^1.8.2",
     "codemirror": "^5.65.16",
     "echarts": "^5.5.0",
-    "element-plus": "^2.7.2",
+    "element-plus": "^2.11.0",
     "js-yaml": "^4.1.0",
     "jsonfile": "^6.1.0",
     "mitt": "^3.0.1",
