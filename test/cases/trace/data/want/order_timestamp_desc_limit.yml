@@ -15,10 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-spans:
-  - span: trace_005_span_1
-  - span: trace_005_span_2
-  - span: trace_005_span_3
-  - span: trace_005_span_4
-  - span: trace_004_span_1
+traces:
+  - spans:
+    - span: trace_005_span_1
+    - span: trace_005_span_2
+    - span: trace_005_span_3
+    - span: trace_005_span_4
+  - spans:
+    - span: trace_004_span_1
 

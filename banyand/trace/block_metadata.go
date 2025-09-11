@@ -164,6 +164,9 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 		return nil, fmt.Errorf("cannot unmarshal blockMetadata from less than %d bytes", traceIDLen)
 	}
 	bm.traceID = strings.TrimRight(string(src[:traceIDLen]), "\x00")
+	if len(tagType) == 0 {
+		fmt.Println("tagType is empty")
+	}
 	bm.tagType = tagType
 	src = src[traceIDLen:]
 	src, n := encoding.BytesToVarUint64(src)

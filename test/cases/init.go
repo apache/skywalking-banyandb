@@ -64,4 +64,5 @@ func Initialize(addr string, now time.Time) {
 	// trace
 	interval = 500 * time.Millisecond
 	casestrace.Write(conn, "sw", now, interval)
+	casestrace.Write(conn, "zipkin", now, interval)
 }

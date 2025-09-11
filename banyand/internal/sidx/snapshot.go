@@ -370,22 +370,19 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
-func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
-	result := s.copyAllTo(epoch)
-
-	// Add flushed parts to the snapshot
-	for partID, part := range flushed {
-		// Set the part ID from the map key
-		if part != nil && part.partMetadata != nil {
-			part.partMetadata.ID = partID
+func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *snapshot {
+	var result snapshot
+	result.epoch = nextEpoch
+	result.ref = 1
+	for i := 0; i < len(s.parts); i++ {
+		if n, ok := nextParts[s.parts[i].ID()]; ok {
+			result.parts = append(result.parts, n)
+			continue
 		}
-		// Create part wrapper for the flushed part
-		pw := newPartWrapper(nil, part)
-		result.parts = append(result.parts, pw)
+		s.parts[i].acquire()
+		result.parts = append(result.parts, s.parts[i])
 	}
-
-	result.sortPartsByEpoch()
-	return result
+	return &result
 }
 
 // remove creates a new snapshot by removing specified parts.

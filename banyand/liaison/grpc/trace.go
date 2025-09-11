@@ -311,7 +311,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 	}
 }
 
-var emptyTraceQueryResponse = &tracev1.QueryResponse{Spans: make([]*tracev1.Span, 0)}
+var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
 
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
 	for _, g := range req.Groups {

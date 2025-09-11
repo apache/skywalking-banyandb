@@ -17,27 +17,51 @@
 
 export const Last15Minutes = 900 * 1000;
 
-const LastWeek = 3600 * 1000 * 24 * 7;
+export const Last30Minutes = 1800 * 1000;
 
-const LastMonth = 3600 * 1000 * 24 * 30;
+export const LastHour = 3600 * 1000;
 
-const Last3Months = 3600 * 1000 * 24 * 90;
+export const LastDay = 3600 * 1000 * 24;
+
+export const LastWeek = 3600 * 1000 * 24 * 7;
+
+export const LastMonth = 3600 * 1000 * 24 * 30;
+
+export const Last3Months = 3600 * 1000 * 24 * 90;
 
 export const Shortcuts = [
   {
     text: 'Last 15 minutes',
-    value: [new Date(new Date().getTime() - Last15Minutes), new Date()],
+    value: () => createRange(Last15Minutes),
+  },
+  {
+    text: 'Last 30 minutes',
+    value: () => createRange(Last30Minutes),
+  },
+  {
+    text: 'Last hour',
+    value: () => createRange(LastHour),
+  },
+  {
+    text: 'Last day',
+    value: () => createRange(LastDay),
   },
   {
     text: 'Last week',
-    value: [new Date(new Date().getTime() - LastWeek), new Date()],
+    value: () => createRange(LastWeek),
   },
   {
     text: 'Last month',
-    value: [new Date(new Date().getTime() - LastMonth), new Date()],
+    value: () => createRange(LastMonth),
   },
   {
     text: 'Last 3 months',
-    value: [new Date(new Date().getTime() - Last3Months), new Date()],
+    value: () => createRange(Last3Months),
   },
 ];
+
+function createRange(duration) {
+  const end = new Date();
+  const start = new Date(end.getTime() - duration);
+  return [start, end];
+}

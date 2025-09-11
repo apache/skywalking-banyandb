@@ -34,10 +34,16 @@ message Span {
   bytes span = 2;
 }
 
+// Trace contains all spans that belong to a single trace ID.
+message Trace {
+  // spans is the list of spans that belong to this trace.
+  repeated Span spans = 1;
+}
+
 // QueryResponse is the response of a query.
 message QueryResponse {
-  // spans is a list of spans that match the query.
-  repeated Span spans = 1;
+  // traces is a list of traces that match the query, with spans grouped by trace ID.
+  repeated Trace traces = 1;
   // trace_query_result contains the trace of the query execution if tracing is enabled.
   common.v1.Trace trace_query_result = 2;
 }

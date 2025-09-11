@@ -49,7 +49,7 @@ func releaseIntroduction(i *introduction) {
 }
 
 type flusherIntroduction struct {
-	flushed map[uint64]*part
+	flushed map[uint64]*partWrapper
 	applied chan struct{}
 }
 
@@ -66,7 +66,7 @@ func generateFlusherIntroduction() *flusherIntroduction {
 	v := flusherIntroductionPool.Get()
 	if v == nil {
 		return &flusherIntroduction{
-			flushed: make(map[uint64]*part),
+			flushed: make(map[uint64]*partWrapper),
 		}
 	}
 	fi := v

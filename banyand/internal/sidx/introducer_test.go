@@ -64,7 +64,7 @@ func TestIntroductionPooling(t *testing.T) {
 		var intros []*flusherIntroduction
 		for i := 0; i < 10; i++ {
 			intro := generateFlusherIntroduction()
-			intro.flushed[uint64(i)] = &part{}
+			intro.flushed[uint64(i)] = &partWrapper{}
 			intro.applied = make(chan struct{})
 			intros = append(intros, intro)
 		}
@@ -121,8 +121,8 @@ func TestIntroductionReset(t *testing.T) {
 		intro := generateFlusherIntroduction()
 
 		// Set up flusher introduction with data
-		intro.flushed[1] = &part{}
-		intro.flushed[2] = &part{}
+		intro.flushed[1] = &partWrapper{}
+		intro.flushed[2] = &partWrapper{}
 		intro.applied = make(chan struct{})
 
 		// Reset the flusher introduction
@@ -308,7 +308,7 @@ func TestConcurrentPoolAccess(t *testing.T) {
 				defer wg.Done()
 				for j := 0; j < operationsPerGoroutine; j++ {
 					intro := generateFlusherIntroduction()
-					intro.flushed[uint64(j)] = &part{}
+					intro.flushed[uint64(j)] = &partWrapper{}
 					intro.applied = make(chan struct{})
 					releaseFlusherIntroduction(intro)
 				}
@@ -347,8 +347,8 @@ func TestIntroductionMapOperations(t *testing.T) {
 		intro := generateFlusherIntroduction()
 
 		// Add parts to flushed map
-		part1 := &part{}
-		part2 := &part{}
+		part1 := &partWrapper{}
+		part2 := &partWrapper{}
 		intro.flushed[1] = part1
 		intro.flushed[2] = part2
 

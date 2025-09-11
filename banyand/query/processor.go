@@ -534,7 +534,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	}
 
 	// Convert model.TraceResult iterator to tracev1.QueryResponse format
-	var spans []*tracev1.Span
+	// Each result contains spans from a single trace, so we can directly create traces
+	var traces []*tracev1.Trace
 
 	// Check if trace ID tag should be included based on tag projection
 	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
@@ -543,6 +544,16 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		result, hasNext := resultIterator.Next()
 		if !hasNext {
 			break
+		}
+
+		if result.TID == "" {
+			// Skip spans without trace ID
+			continue
+		}
+
+		// Create a trace for this result
+		trace := &tracev1.Trace{
+			Spans: make([]*tracev1.Span, 0, len(result.Spans)),
 		}
 
 		// Convert each span in the trace result
@@ -577,19 +588,26 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 				})
 			}
 
-			spans = append(spans, &tracev1.Span{
+			span := &tracev1.Span{
 				Tags: traceTags,
 				Span: spanBytes,
-			})
+			}
+			trace.Spans = append(trace.Spans, span)
 		}
+
+		traces = append(traces, trace)
 	}
 
-	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Spans: spans})
+	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Traces: traces})
 
 	if !queryCriteria.Trace && p.slowQuery > 0 {
 		latency := time.Since(n)
 		if latency > p.slowQuery {
-			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(spans)).Msg("trace slow query")
+			spanCount := 0
+			for _, trace := range traces {
+				spanCount += len(trace.Spans)
+			}
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", spanCount).Msg("trace slow query")
 		}
 	}
 	return

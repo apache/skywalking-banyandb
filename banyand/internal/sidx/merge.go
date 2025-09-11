@@ -19,7 +19,7 @@ package sidx
 
 import (
 	"fmt"
-	"slices"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -31,7 +31,7 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error {
+func (s *sidx) Merge(closeCh <-chan struct{}) error {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -44,10 +44,10 @@ func (s *sidx) Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}
 	defer releaseMergerIntroduction(mergeIntro)
 	mergeIntro.applied = make(chan struct{})
 
-	// Select parts to merge
+	// Select parts to merge (all active non-memory parts)
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() && slices.Contains(partIDs, pw.ID()) {
+		if pw.isActive() && !pw.isMemPart() {
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
@@ -60,6 +60,9 @@ func (s *sidx) Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}
 	for _, pw := range partsToMerge {
 		mergeIntro.merged[pw.ID()] = struct{}{}
 	}
+
+	// Generate new part ID using atomic increment
+	newPartID := atomic.AddUint64(&s.curPartID, 1)
 
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
