@@ -122,6 +122,8 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+		s.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSidxPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
 	}
 
 	s.l.Info().

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -62,6 +63,18 @@ func (m *mockSIDX) Flush() error {
 
 func (m *mockSIDX) Merge(_ []uint64, _ uint64, _ <-chan struct{}) error {
 	return nil
+}
+
+func (m *mockSIDX) PartsToSync() []*part {
+	return nil
+}
+
+func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string) ([]queue.StreamingPartData, []func()) {
+	return nil, nil
+}
+
+func (m *mockSIDX) SyncCh() chan<- *SyncIntroduction {
+	return make(chan *SyncIntroduction)
 }
 
 // Helper function to create mock QueryResponse with test data.

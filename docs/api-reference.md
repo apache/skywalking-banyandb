@@ -430,6 +430,9 @@ Information about a part contained within a chunk.
 | blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
 | min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
 | max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
+| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
+| part_type | [string](#string) |  | Part type. |
 
 
 

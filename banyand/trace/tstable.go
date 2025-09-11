@@ -314,6 +314,18 @@ func (tst *tsTable) getAllSidx() []sidx.SIDX {
 	return result
 }
 
+// getAllSidxNames returns all sidx names.
+func (tst *tsTable) getAllSidxNames() []string {
+	tst.RLock()
+	defer tst.RUnlock()
+
+	result := make([]string, 0, len(tst.sidxMap))
+	for sidxName := range tst.sidxMap {
+		result = append(result, sidxName)
+	}
+	return result
+}
+
 func (tst *tsTable) loadSidxMap() {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)

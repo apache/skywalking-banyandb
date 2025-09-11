@@ -256,6 +256,9 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 				BlocksCount:           partInfo.BlocksCount,
 				MinTimestamp:          partInfo.MinTimestamp,
 				MaxTimestamp:          partInfo.MaxTimestamp,
+				MinKey:                partInfo.MinKey,
+				MaxKey:                partInfo.MaxKey,
+				PartType:              partInfo.PartType,
 			}
 		} else if session.partCtx.ID != partInfo.Id {
 			if session.partCtx.Handler != nil {
@@ -271,6 +274,9 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 			session.partCtx.BlocksCount = partInfo.BlocksCount
 			session.partCtx.MinTimestamp = partInfo.MinTimestamp
 			session.partCtx.MaxTimestamp = partInfo.MaxTimestamp
+			session.partCtx.MinKey = partInfo.MinKey
+			session.partCtx.MaxKey = partInfo.MaxKey
+			session.partCtx.PartType = partInfo.PartType
 		}
 
 		if session.partCtx.Handler == nil {

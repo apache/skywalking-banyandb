@@ -51,6 +51,7 @@ type sidx struct {
 	introductions              chan *introduction
 	flushCh                    chan *flusherIntroduction
 	mergeCh                    chan *mergerIntroduction
+	syncCh                     chan *SyncIntroduction
 	loopCloser                 *run.Closer
 	l                          *logger.Logger
 	pm                         protector.Memory
@@ -78,6 +79,7 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 		introductions: make(chan *introduction),
 		flushCh:       make(chan *flusherIntroduction),
 		mergeCh:       make(chan *mergerIntroduction),
+		syncCh:        make(chan *SyncIntroduction),
 		loopCloser:    run.NewCloser(1),
 		l:             logger.GetLogger().Named("sidx"),
 		pm:            opts.Memory,
@@ -92,9 +94,14 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 
 	// Start introducer loop with loaded epoch
 	watcherCh := make(watcher.Channel, 10)
-	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, epoch)
+	go s.introducerLoop(s.flushCh, s.mergeCh, s.syncCh, watcherCh, epoch)
 
 	return s, nil
+}
+
+// SyncCh returns the sync channel for external synchronization.
+func (s *sidx) SyncCh() chan<- *SyncIntroduction {
+	return s.syncCh
 }
 
 // Write implements SIDX interface.
@@ -118,7 +125,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) er
 	}
 
 	// Create memory part from elements
-	mp := generateMemPart()
+	mp := GenerateMemPart()
 	mp.mustInitFromElements(es)
 
 	// Create introduction
@@ -136,7 +143,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, partID uint64) er
 		return nil
 	case <-ctx.Done():
 		releaseIntroduction(intro)
-		releaseMemPart(mp)
+		ReleaseMemPart(mp)
 		return ctx.Err()
 	}
 }

@@ -76,6 +76,7 @@ type NodeRegistries struct {
 	StreamLiaisonNodeRegistry  NodeRegistry
 	MeasureLiaisonNodeRegistry NodeRegistry
 	PropertyNodeRegistry       NodeRegistry
+	TraceLiaisonNodeRegistry   NodeRegistry
 }
 
 type server struct {

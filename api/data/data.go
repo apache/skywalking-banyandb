@@ -24,6 +24,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
@@ -48,6 +49,11 @@ var (
 		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
 		TopicStreamSeriesSync.String():         TopicStreamSeriesSync,
 		TopicStreamElementIndexSync.String():   TopicStreamElementIndexSync,
+		TopicTraceWrite.String():               TopicTraceWrite,
+		TopicTraceQuery.String():               TopicTraceQuery,
+		TopicTracePartSync.String():            TopicTracePartSync,
+		TopicTraceSidxPartSync.String():        TopicTraceSidxPartSync,
+		TopicTraceSidxSeriesWrite.String():     TopicTraceSidxSeriesWrite,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -107,6 +113,21 @@ var (
 		TopicStreamElementIndexSync: func() proto.Message {
 			return nil
 		},
+		TopicTraceWrite: func() proto.Message {
+			return &tracev1.InternalWriteRequest{}
+		},
+		TopicTraceQuery: func() proto.Message {
+			return &tracev1.QueryRequest{}
+		},
+		TopicTracePartSync: func() proto.Message {
+			return nil
+		},
+		TopicTraceSidxPartSync: func() proto.Message {
+			return nil
+		},
+		TopicTraceSidxSeriesWrite: func() proto.Message {
+			return nil
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -132,6 +153,9 @@ var (
 		},
 		TopicPropertyRepair: func() proto.Message {
 			return &propertyv1.InternalRepairResponse{}
+		},
+		TopicTraceQuery: func() proto.Message {
+			return &tracev1.QueryResponse{}
 		},
 	}
 

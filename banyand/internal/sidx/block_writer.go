@@ -69,6 +69,9 @@ func (w *writer) MustClose() {
 // mustCreateTagWriters function type for creating tag file writers.
 type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
 
+// Writers is a type alias for writers.
+type Writers = writers
+
 // writers manages all file writers for a part.
 type writers struct {
 	mustCreateTagWriters mustCreateTagWriters
@@ -103,8 +106,8 @@ func (sw *writers) reset() {
 	}
 }
 
-// mustInitForMemPart initializes writers for memory part.
-func (sw *writers) mustInitForMemPart(mp *memPart) {
+// MustInitForMemPart initializes writers for memory part.
+func (sw *writers) MustInitForMemPart(mp *memPart) {
 	sw.reset()
 	sw.mustCreateTagWriters = mp.mustCreateTagWriters
 	sw.metaWriter.init(&mp.meta)
@@ -148,8 +151,28 @@ func (sw *writers) MustClose() {
 	}
 }
 
-// getWriters returns writers for the specified tag name, creating them if needed.
-func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
+// SidxMetaWriter returns the meta writer.
+func (sw *writers) SidxMetaWriter() *writer {
+	return &sw.metaWriter
+}
+
+// SidxPrimaryWriter returns the primary writer.
+func (sw *writers) SidxPrimaryWriter() *writer {
+	return &sw.primaryWriter
+}
+
+// SidxDataWriter returns the data writer.
+func (sw *writers) SidxDataWriter() *writer {
+	return &sw.dataWriter
+}
+
+// SidxKeysWriter returns the keys writer.
+func (sw *writers) SidxKeysWriter() *writer {
+	return &sw.keysWriter
+}
+
+// GetTagWriters returns writers for the specified tag name, creating them if needed.
+func (sw *writers) GetTagWriters(tagName string) (*writer, *writer, *writer) {
 	tmw, ok := sw.tagMetadataWriters[tagName]
 	tdw := sw.tagDataWriters[tagName]
 	tfw := sw.tagFilterWriters[tagName]
@@ -215,7 +238,7 @@ func (bw *blockWriter) reset() {
 // MustInitForMemPart initializes block writer for memory part.
 func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.reset()
-	bw.writers.mustInitForMemPart(mp)
+	bw.writers.MustInitForMemPart(mp)
 }
 
 // mustInitForFilePart initializes block writer for file part.
@@ -224,18 +247,18 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 
 	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagMetadataExtension)
-		dataPath := filepath.Join(path, name+tagDataExtension)
-		filterPath := filepath.Join(path, name+tagFilterExtension)
+		metaPath := filepath.Join(path, name+TagMetadataExtension)
+		dataPath := filepath.Join(path, name+TagDataExtension)
+		filterPath := filepath.Join(path, name+TagFilterExtension)
 		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
 			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
 			fs.MustCreateFile(fileSystem, filterPath, storage.FilePerm, shouldCache)
 	}
 
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.dataWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, dataFilename), storage.FilePerm, shouldCache))
-	bw.writers.keysWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, keysFilename), storage.FilePerm, shouldCache))
+	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, MetaFilename), storage.FilePerm, shouldCache))
+	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, PrimaryFilename), storage.FilePerm, shouldCache))
+	bw.writers.dataWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, DataFilename), storage.FilePerm, shouldCache))
+	bw.writers.keysWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, KeysFilename), storage.FilePerm, shouldCache))
 }
 
 // MustWriteElements writes elements to the block writer.
@@ -383,11 +406,11 @@ func releaseBlockWriter(bw *blockWriter) {
 	blockWriterPool.Put(bw)
 }
 
-// generateWriters gets writers from pool or creates new.
-func generateWriters() *writers {
+// GenerateWriters gets writers from pool or creates new.
+func GenerateWriters() *Writers {
 	v := writersPool.Get()
 	if v == nil {
-		return &writers{
+		return &Writers{
 			tagMetadataWriters: make(map[string]*writer),
 			tagDataWriters:     make(map[string]*writer),
 			tagFilterWriters:   make(map[string]*writer),
@@ -396,8 +419,8 @@ func generateWriters() *writers {
 	return v
 }
 
-// releaseWriters returns writers to pool after reset.
-func releaseWriters(sw *writers) {
+// ReleaseWriters returns writers to pool after reset.
+func ReleaseWriters(sw *writers) {
 	sw.reset()
 	writersPool.Put(sw)
 }

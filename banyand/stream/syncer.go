@@ -28,6 +28,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+// PartTypeCore is the type of the core part.
+const PartTypeCore = "core"
+
 func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -212,6 +215,7 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 				BlocksCount:           part.partMetadata.BlocksCount,
 				MinTimestamp:          part.partMetadata.MinTimestamp,
 				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
 			})
 		}
 
