@@ -344,7 +344,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			break
 		}
 	}
-	group := groupSchema.Metadata.Group
+	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
 		Location:                       path.Join(s.path, group),
