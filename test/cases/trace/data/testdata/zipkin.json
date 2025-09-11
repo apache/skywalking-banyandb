@@ -1,0 +1,377 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "zipkin_trace_001"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_001"
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": "/api/users"
+                }
+            },
+            {
+                "str": {
+                    "value": "SERVER"
+                }
+            },
+            {
+                "int": {
+                    "value": 1500
+                }
+            },
+            {
+                "str": {
+                    "value": "user-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.10"
+                }
+            },
+            {
+                "int": {
+                    "value": 8080
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            }
+        ],
+        "span": "zipkin_trace_001_span_001"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "zipkin_trace_001"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_002"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_001"
+                }
+            },
+            {
+                "str": {
+                    "value": "/db/query"
+                }
+            },
+            {
+                "str": {
+                    "value": "CLIENT"
+                }
+            },
+            {
+                "int": {
+                    "value": 800
+                }
+            },
+            {
+                "str": {
+                    "value": "user-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.10"
+                }
+            },
+            {
+                "int": {
+                    "value": 8080
+                }
+            },
+            {
+                "str": {
+                    "value": "database-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.20"
+                }
+            },
+            {
+                "int": {
+                    "value": 3306
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            }
+        ],
+        "span": "zipkin_trace_001_span_002"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "zipkin_trace_002"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_003"
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": "/api/orders"
+                }
+            },
+            {
+                "str": {
+                    "value": "SERVER"
+                }
+            },
+            {
+                "int": {
+                    "value": 2200
+                }
+            },
+            {
+                "str": {
+                    "value": "order-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.15"
+                }
+            },
+            {
+                "int": {
+                    "value": 8090
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            }
+        ],
+        "span": "zipkin_trace_002_span_003"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "zipkin_trace_002"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_004"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_003"
+                }
+            },
+            {
+                "str": {
+                    "value": "/cache/get"
+                }
+            },
+            {
+                "str": {
+                    "value": "CLIENT"
+                }
+            },
+            {
+                "int": {
+                    "value": 300
+                }
+            },
+            {
+                "str": {
+                    "value": "order-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.15"
+                }
+            },
+            {
+                "int": {
+                    "value": 8090
+                }
+            },
+            {
+                "str": {
+                    "value": "redis-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.30"
+                }
+            },
+            {
+                "int": {
+                    "value": 6379
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            }
+        ],
+        "span": "zipkin_trace_002_span_004"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "zipkin_trace_003"
+                }
+            },
+            {
+                "str": {
+                    "value": "span_005"
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": "/api/health"
+                }
+            },
+            {
+                "str": {
+                    "value": "SERVER"
+                }
+            },
+            {
+                "int": {
+                    "value": 50
+                }
+            },
+            {
+                "str": {
+                    "value": "health-service"
+                }
+            },
+            {
+                "str": {
+                    "value": "192.168.1.5"
+                }
+            },
+            {
+                "int": {
+                    "value": 8070
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            }
+        ],
+        "span": "zipkin_trace_003_span_005"
+    }
+]

@@ -308,7 +308,7 @@ func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Resourc
 }
 
 func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
-	name := groupSchema.Metadata.Group
+	name := groupSchema.Metadata.Name
 	p := common.Position{
 		Module:   "trace",
 		Database: name,
@@ -413,7 +413,7 @@ func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.R
 }
 
 func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {
-	name := groupSchema.Metadata.Group
+	name := groupSchema.Metadata.Name
 	p := common.Position{
 		Module:   "trace",
 		Database: name,
@@ -423,7 +423,7 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 		return nil, fmt.Errorf("no resource opts in group %s", name)
 	}
 	shardNum := ro.ShardNum
-	group := groupSchema.Metadata.Group
+	group := groupSchema.Metadata.Name
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
