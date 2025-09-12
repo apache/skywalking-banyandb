@@ -36,25 +36,41 @@ import (
 )
 
 const (
-	// Standard file names for sidx parts.
-	primaryFilename  = "primary.bin"
-	dataFilename     = "data.bin"
-	keysFilename     = "keys.bin"
-	metaFilename     = "meta.bin"
-	manifestFilename = "manifest.json"
+	// PrimaryFilename is the filename for primary files.
+	PrimaryFilename = "primary.bin"
+	// DataFilename is the filename for data files.
+	DataFilename = "data.bin"
+	// KeysFilename is the filename for keys files.
+	KeysFilename = "keys.bin"
+	// MetaFilename is the filename for meta files.
+	MetaFilename = "meta.bin"
+	// ManifestFilename is the filename for manifest files.
+	ManifestFilename = "manifest.json"
 
-	// Tag file extensions.
-	tagDataExtension     = ".td" // <name>.td files
-	tagMetadataExtension = ".tm" // <name>.tm files
-	tagFilterExtension   = ".tf" // <name>.tf files
+	// TagDataExtension is the extension for tag data files.
+	TagDataExtension = ".td"
+	// TagMetadataExtension is the extension for tag metadata files.
+	TagMetadataExtension = ".tm"
+	// TagFilterExtension is the extension for tag filter files.
+	TagFilterExtension = ".tf"
+
+	// TagDataPrefix is the prefix for tag data files.
+	TagDataPrefix = "td:"
+	// TagMetadataPrefix is the prefix for tag metadata files.
+	TagMetadataPrefix = "tm:"
+	// TagFilterPrefix is the prefix for tag filter files.
+	TagFilterPrefix = "tf:"
 )
+
+// Part is a type alias for part.
+type Part = part
 
 // part represents a collection of files containing sidx data.
 // Each part contains multiple files organized by type:
 // - primary.bin: Block metadata and structure information
 // - data.bin: User payload data (compressed)
 // - keys.bin: User-provided int64 keys (encoded but not compressed)
-// - meta.bin: Part metadata
+// - meta.bin: part metadata
 // - <name>.td: Tag data files (one per tag)
 // - <name>.tm: Tag metadata files (one per tag)
 // - <name>.tf: Tag filter files (bloom filters, one per tag).
@@ -72,6 +88,10 @@ type part struct {
 	primaryBlockMetadata []primaryBlockMetadata
 }
 
+func (p *part) ID() uint64 {
+	return p.partMetadata.ID
+}
+
 // mustOpenPart opens a part from the specified path using the given file system.
 // It opens all standard files and discovers tag files automatically.
 // Panics if any required file cannot be opened.
@@ -82,10 +102,10 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	}
 
 	// Open standard files.
-	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
-	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
-	p.keys = mustOpenReader(filepath.Join(path, keysFilename), fileSystem)
-	p.meta = mustOpenReader(filepath.Join(path, metaFilename), fileSystem)
+	p.primary = mustOpenReader(filepath.Join(path, PrimaryFilename), fileSystem)
+	p.data = mustOpenReader(filepath.Join(path, DataFilename), fileSystem)
+	p.keys = mustOpenReader(filepath.Join(path, KeysFilename), fileSystem)
+	p.meta = mustOpenReader(filepath.Join(path, MetaFilename), fileSystem)
 
 	// Load part metadata from meta.bin.
 	if err := p.loadPartMetadata(); err != nil {
@@ -105,7 +125,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 // loadPartMetadata reads and parses the part metadata from manifest.json.
 func (p *part) loadPartMetadata() error {
 	// First try to read from manifest.json (new format)
-	manifestPath := filepath.Join(p.path, manifestFilename)
+	manifestPath := filepath.Join(p.path, ManifestFilename)
 	manifestData, err := p.fileSystem.Read(manifestPath)
 	if err == nil {
 		// Parse JSON manifest
@@ -118,7 +138,7 @@ func (p *part) loadPartMetadata() error {
 	}
 
 	// Fallback to meta.bin for backward compatibility
-	metaData, err := p.fileSystem.Read(filepath.Join(p.path, metaFilename))
+	metaData, err := p.fileSystem.Read(filepath.Join(p.path, MetaFilename))
 	if err != nil {
 		return fmt.Errorf("failed to read meta.bin: %w", err)
 	}
@@ -159,9 +179,9 @@ func (p *part) openTagFiles() {
 
 		fileName := entry.Name()
 		// Check if this is a tag file by checking for tag extensions
-		if !strings.HasSuffix(fileName, tagDataExtension) &&
-			!strings.HasSuffix(fileName, tagMetadataExtension) &&
-			!strings.HasSuffix(fileName, tagFilterExtension) {
+		if !strings.HasSuffix(fileName, TagDataExtension) &&
+			!strings.HasSuffix(fileName, TagMetadataExtension) &&
+			!strings.HasSuffix(fileName, TagFilterExtension) {
 			continue
 		}
 
@@ -176,11 +196,11 @@ func (p *part) openTagFiles() {
 		reader := mustOpenReader(filePath, p.fileSystem)
 
 		switch extension {
-		case tagDataExtension:
+		case TagDataExtension:
 			p.tagData[tagName] = reader
-		case tagMetadataExtension:
+		case TagMetadataExtension:
 			p.tagMetadata[tagName] = reader
-		case tagFilterExtension:
+		case TagFilterExtension:
 			p.tagFilters[tagName] = reader
 		default:
 			// Unknown extension, close the reader.
@@ -204,7 +224,7 @@ func extractTagNameAndExtension(fileName string) (tagName, extension string, fou
 
 	// Validate extension.
 	switch extension {
-	case tagDataExtension, tagMetadataExtension, tagFilterExtension:
+	case TagDataExtension, TagMetadataExtension, TagFilterExtension:
 		return tagName, extension, true
 	default:
 		return "", "", false
@@ -499,6 +519,9 @@ func (p *part) Path() string {
 	return p.path
 }
 
+// MemPart is a type alias for memPart.
+type MemPart = memPart
+
 // memPart represents an in-memory part for SIDX with tag-based file design.
 // This structure mirrors the stream module's memPart but uses user keys instead of timestamps.
 type memPart struct {
@@ -510,6 +533,24 @@ type memPart struct {
 	primary      bytes.Buffer
 	data         bytes.Buffer
 	keys         bytes.Buffer
+}
+
+func (mp *memPart) ID() uint64 {
+	return mp.partMetadata.ID
+}
+
+// SetPartMetadata sets the part metadata for the MemPart.
+func (mp *memPart) SetPartMetadata(compressedSizeBytes, uncompressedSizeBytes, totalCount, blocksCount uint64, minKey, maxKey int64, id uint64) {
+	if mp.partMetadata == nil {
+		mp.partMetadata = &partMetadata{}
+	}
+	mp.partMetadata.CompressedSizeBytes = compressedSizeBytes
+	mp.partMetadata.UncompressedSizeBytes = uncompressedSizeBytes
+	mp.partMetadata.TotalCount = totalCount
+	mp.partMetadata.BlocksCount = blocksCount
+	mp.partMetadata.MinKey = minKey
+	mp.partMetadata.MaxKey = maxKey
+	mp.partMetadata.ID = id
 }
 
 // mustCreateTagWriters creates writers for individual tag files.
@@ -630,20 +671,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.MkdirPanicIfExist(partPath, storage.DirPerm)
 
 	// Write core files
-	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, primaryFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, dataFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, keysFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, PrimaryFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, DataFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, KeysFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, MetaFilename), storage.FilePerm)
 
 	// Write individual tag files
 	for tagName, td := range mp.tagData {
-		fs.MustFlush(fileSystem, td.Buf, filepath.Join(partPath, tagName+tagDataExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, td.Buf, filepath.Join(partPath, tagName+TagDataExtension), storage.FilePerm)
 	}
 	for tagName, tm := range mp.tagMetadata {
-		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(partPath, tagName+tagMetadataExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(partPath, tagName+TagMetadataExtension), storage.FilePerm)
 	}
 	for tagName, tf := range mp.tagFilters {
-		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(partPath, tagName+tagFilterExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(partPath, tagName+TagFilterExtension), storage.FilePerm)
 	}
 
 	// Write part metadata manifest
@@ -654,19 +695,24 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.SyncPath(partPath)
 }
 
-// generateMemPart gets memPart from pool or creates new.
-func generateMemPart() *memPart {
+// GenerateMemPart gets memPart from pool or creates new.
+func GenerateMemPart() *MemPart {
 	v := memPartPool.Get()
 	if v == nil {
-		return &memPart{}
+		return &MemPart{}
 	}
 	return v
 }
 
-// releaseMemPart returns memPart to pool after reset.
-func releaseMemPart(mp *memPart) {
+// ReleaseMemPart returns memPart to pool after reset.
+func ReleaseMemPart(mp *memPart) {
 	mp.reset()
 	memPartPool.Put(mp)
+}
+
+// MustFlush flushes the memory part to disk (exported version).
+func (mp *memPart) MustFlush(fileSystem fs.FileSystem, partPath string) {
+	mp.mustFlush(fileSystem, partPath)
 }
 
 var memPartPool = pool.Register[*memPart]("sidx-memPart")
@@ -715,4 +761,48 @@ func partPath(root string, epoch uint64) string {
 // Uses 16-character hex format consistent with stream module.
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// PartContext manages multiple sidx memParts.
+type PartContext struct {
+	memParts map[string]*memPart
+	writers  map[string]*writers
+}
+
+// NewSidxMemParts creates a new sidx part context.
+func NewSidxMemParts() *PartContext {
+	return &PartContext{
+		memParts: make(map[string]*memPart),
+		writers:  make(map[string]*writers),
+	}
+}
+
+// Set sets the memory part and writers.
+func (pc *PartContext) Set(name string, memPart *memPart, writers *writers) {
+	pc.memParts[name] = memPart
+	pc.writers[name] = writers
+}
+
+// GetMemParts gets the memory parts.
+func (pc *PartContext) GetMemParts() map[string]*MemPart {
+	return pc.memParts
+}
+
+// GetWritersByName gets the writers by name.
+func (pc *PartContext) GetWritersByName(name string) (*Writers, bool) {
+	writers, exists := pc.writers[name]
+	return writers, exists
+}
+
+// Close closes the sidx part context.
+func (pc *PartContext) Close() {
+	for _, writers := range pc.writers {
+		writers.MustClose()
+		ReleaseWriters(writers)
+	}
+	for _, memPart := range pc.memParts {
+		ReleaseMemPart(memPart)
+	}
+	pc.memParts = nil
+	pc.writers = nil
 }

@@ -19,30 +19,58 @@ package trace
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type syncPartContext struct {
-	tsTable *tsTable
-	writers *writers
-	memPart *memPart
+	tsTable         *tsTable
+	l               *logger.Logger
+	writers         *writers
+	memPart         *memPart
+	sidxPartContext *sidx.PartContext
 }
 
 func (s *syncPartContext) FinishSync() error {
-	s.tsTable.mustAddMemPart(s.memPart)
+	if s.memPart != nil {
+		s.tsTable.mustAddMemPart(s.memPart)
+	}
+	if s.sidxPartContext != nil {
+		for sidxName, memPart := range s.sidxPartContext.GetMemParts() {
+			partPath := fmt.Sprintf("part-%d", memPart.ID())
+			fullPartPath := filepath.Join(s.tsTable.root, "sidx", sidxName, partPath)
+			memPart.MustFlush(s.tsTable.fileSystem, fullPartPath)
+
+			if s.l != nil {
+				s.l.Debug().
+					Str("sidxName", sidxName).
+					Str("partPath", fullPartPath).
+					Msg("flushed sidx memPart to disk")
+			}
+		}
+	}
 	return s.Close()
 }
 
 func (s *syncPartContext) Close() error {
-	s.writers.MustClose()
-	releaseWriters(s.writers)
-	s.writers = nil
-	s.memPart = nil
+	if s.writers != nil {
+		s.writers.MustClose()
+		releaseWriters(s.writers)
+		s.writers = nil
+	}
+	if s.memPart != nil {
+		s.memPart = nil
+	}
+	if s.sidxPartContext != nil {
+		s.sidxPartContext.Close()
+		s.sidxPartContext = nil
+	}
 	s.tsTable = nil
 	return nil
 }
@@ -84,6 +112,34 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	}
 
 	tsdb.Tick(ctx.MaxTimestamp)
+
+	if ctx.PartType != PartTypeCore {
+		s.l.Debug().
+			Str("group", ctx.Group).
+			Uint32("shardID", ctx.ShardID).
+			Uint64("partID", ctx.ID).
+			Str("partType", ctx.PartType).
+			Msg("creating unified part handler for sidx data")
+		sidxNames := tsTable.getAllSidxNames()
+		sidxMemParts := sidx.NewSidxMemParts()
+		for _, sidxName := range sidxNames {
+			memPart := sidx.GenerateMemPart()
+			memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
+			writers := sidx.GenerateWriters()
+			writers.MustInitForMemPart(memPart)
+			sidxMemParts.Set(sidxName, memPart, writers)
+			s.l.Debug().
+				Str("sidxName", sidxName).
+				Uint64("partID", ctx.ID).
+				Msg("pre-created sidx memPart and writers")
+		}
+		return &syncPartContext{
+			tsTable:         tsTable,
+			l:               s.l,
+			sidxPartContext: sidxMemParts,
+		}, nil
+	}
+
 	memPart := generateMemPart()
 	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
 	memPart.partMetadata.UncompressedSpanSizeBytes = ctx.UncompressedSizeBytes
@@ -91,10 +147,12 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	memPart.partMetadata.BlocksCount = ctx.BlocksCount
 	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
 	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
+	memPart.partMetadata.ID = ctx.ID
 	writers := generateWriters()
 	writers.mustInitForMemPart(memPart)
 	return &syncPartContext{
 		tsTable: tsTable,
+		l:       s.l,
 		writers: writers,
 		memPart: memPart,
 	}, nil
@@ -106,15 +164,51 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		return fmt.Errorf("part handler is nil")
 	}
 	partCtx := ctx.Handler.(*syncPartContext)
-
-	// Select the appropriate writer based on the filename and write the chunk.
 	fileName := ctx.FileName
+	if ctx.PartType != PartTypeCore {
+		return s.handleSidxFileChunk(partCtx, ctx, chunk)
+	}
+	return s.handleTraceFileChunk(partCtx, fileName, chunk)
+}
+
+func (s *syncCallback) handleSidxFileChunk(partCtx *syncPartContext, ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	sidxName := ctx.PartType
+	fileName := ctx.FileName
+	writers, exists := partCtx.sidxPartContext.GetWritersByName(sidxName)
+	if !exists {
+		return fmt.Errorf("sidx memPart not found for sidx name: %s", sidxName)
+	}
 	switch {
-	case fileName == traceMetaName:
+	case fileName == sidx.PrimaryFilename:
+		writers.SidxPrimaryWriter().MustWrite(chunk)
+	case fileName == sidx.DataFilename:
+		writers.SidxDataWriter().MustWrite(chunk)
+	case fileName == sidx.KeysFilename:
+		writers.SidxKeysWriter().MustWrite(chunk)
+	case fileName == sidx.MetaFilename:
+		writers.SidxMetaWriter().MustWrite(chunk)
+	case strings.HasPrefix(fileName, sidx.TagDataExtension):
+		tagName := fileName[len(sidx.TagDataPrefix):]
+		_, tagDataWriter, _ := writers.GetTagWriters(tagName)
+		tagDataWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, sidx.TagMetadataExtension):
+		tagName := fileName[len(sidx.TagMetadataPrefix):]
+		tagMetadataWriter, _, _ := writers.GetTagWriters(tagName)
+		tagMetadataWriter.MustWrite(chunk)
+	default:
+		s.l.Warn().Str("fileName", fileName).Str("sidxName", sidxName).Msg("unknown sidx file type")
+		return fmt.Errorf("unknown sidx file type: %s for sidx: %s", fileName, sidxName)
+	}
+	return nil
+}
+
+func (s *syncCallback) handleTraceFileChunk(partCtx *syncPartContext, fileName string, chunk []byte) error {
+	switch {
+	case fileName == metaFilename:
 		partCtx.writers.metaWriter.MustWrite(chunk)
-	case fileName == tracePrimaryName:
+	case fileName == primaryFilename:
 		partCtx.writers.primaryWriter.MustWrite(chunk)
-	case fileName == traceSpansName:
+	case fileName == spansFilename:
 		partCtx.writers.spanWriter.MustWrite(chunk)
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]
@@ -128,6 +222,5 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
 		return fmt.Errorf("unknown file type: %s", fileName)
 	}
-
 	return nil
 }

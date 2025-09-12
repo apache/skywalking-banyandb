@@ -173,12 +173,12 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				var mpp []*memPart
 				defer func() {
 					for _, mp := range mpp {
-						releaseMemPart(mp)
+						ReleaseMemPart(mp)
 					}
 				}()
 				var pp []*part
 				for _, elems := range tt.elemsList {
-					mp := generateMemPart()
+					mp := GenerateMemPart()
 					mpp = append(mpp, mp)
 					mp.mustInitFromElements(elems)
 					pp = append(pp, openMemPart(mp))
@@ -192,7 +192,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
 				defer func() {
 					for _, mp := range mpp {
-						releaseMemPart(mp)
+						ReleaseMemPart(mp)
 					}
 					for _, pw := range fpp {
 						pw.release()
@@ -202,7 +202,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 				var pp []*part
 				fileSystem := fs.NewLocalFileSystem()
 				for i, elems := range tt.elemsList {
-					mp := generateMemPart()
+					mp := GenerateMemPart()
 					mpp = append(mpp, mp)
 					mp.mustInitFromElements(elems)
 					mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))

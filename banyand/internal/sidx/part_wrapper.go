@@ -146,7 +146,7 @@ func (pw *partWrapper) cleanup() {
 
 	// Release memory part if it exists
 	if pw.mp != nil {
-		releaseMemPart(pw.mp)
+		ReleaseMemPart(pw.mp)
 		pw.mp = nil
 	}
 

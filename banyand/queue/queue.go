@@ -78,6 +78,7 @@ type FileInfo struct {
 type StreamingPartData struct {
 	Group                 string
 	Topic                 string
+	PartType              string
 	Files                 []FileInfo
 	ID                    uint64
 	CompressedSizeBytes   uint64
@@ -86,6 +87,8 @@ type StreamingPartData struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
+	MinKey                int64
+	MaxKey                int64
 	ShardID               uint32
 }
 
@@ -102,6 +105,7 @@ type ChunkedSyncPartContext struct {
 	Handler               PartHandler
 	Group                 string
 	FileName              string
+	PartType              string
 	ID                    uint64
 	CompressedSizeBytes   uint64
 	UncompressedSizeBytes uint64
@@ -109,6 +113,8 @@ type ChunkedSyncPartContext struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
+	MinKey                int64
+	MaxKey                int64
 	ShardID               uint32
 }
 

@@ -126,11 +126,11 @@ func TestPartStringRepresentation(t *testing.T) {
 	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
 
 	testFiles := map[string][]byte{
-		primaryFilename:  []byte("primary"), // placeholder for primary.bin
-		dataFilename:     []byte("data"),
-		keysFilename:     []byte("keys"),
-		metaFilename:     compressedPrimaryData, // meta.bin should contain compressed primary block metadata
-		manifestFilename: metaData,              // manifest.json should contain part metadata
+		PrimaryFilename:  []byte("primary"), // placeholder for primary.bin
+		DataFilename:     []byte("data"),
+		KeysFilename:     []byte("keys"),
+		MetaFilename:     compressedPrimaryData, // meta.bin should contain compressed primary block metadata
+		ManifestFilename: metaData,              // manifest.json should contain part metadata
 	}
 
 	for fileName, content := range testFiles {
@@ -171,8 +171,8 @@ func TestMemPartInitialization(t *testing.T) {
 	defer releaseElements(elems)
 
 	t.Run("memPart initialization", func(t *testing.T) {
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 
 		// Check if memPart is properly initialized from elements
 		mp.mustInitFromElements(elems)
@@ -369,8 +369,8 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Step 1: Create memPart and initialize with elements
-			mp := generateMemPart()
-			defer releaseMemPart(mp)
+			mp := GenerateMemPart()
+			defer ReleaseMemPart(mp)
 
 			// Create a copy of elements for initialization to avoid modifying the original
 			elementsCopy := generateElements()
