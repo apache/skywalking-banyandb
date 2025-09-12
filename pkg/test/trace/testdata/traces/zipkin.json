@@ -1,0 +1,71 @@
+{
+    "metadata": {
+        "name": "zipkin",
+        "group": "zipkinTrace"
+    },
+    "tags": [
+        {
+            "name": "trace_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "span_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "parent_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "operation_name",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "kind",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "timestamp",
+            "type": "TAG_TYPE_TIMESTAMP"
+        },
+        {
+            "name": "duration",
+            "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "local_endpoint_service_name",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "local_endpoint_ipv4",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "local_endpoint_port",
+            "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "remote_endpoint_service_name",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "remote_endpoint_ipv4",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "remote_endpoint_port",
+            "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "shared",
+            "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "debug",
+            "type": "TAG_TYPE_INT"
+        }
+    ],
+    "trace_id_tag_name": "trace_id",
+    "timestamp_tag_name": "timestamp",
+    "updated_at": "2021-04-15T01:30:15.01Z"
+}

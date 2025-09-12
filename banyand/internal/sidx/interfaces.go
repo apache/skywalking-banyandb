@@ -38,7 +38,8 @@ import (
 type SIDX interface {
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest, partID uint64) error
+	Write(ctx context.Context, reqs []WriteRequest) error
+
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.
@@ -50,7 +51,7 @@ type SIDX interface {
 	// Flush flushes the SIDX instance to disk.
 	Flush() error
 	// Merge merges the specified parts into a new part.
-	Merge(partIDs []uint64, newPartID uint64, closeCh <-chan struct{}) error
+	Merge(closeCh <-chan struct{}) error
 	// PartsToSync returns the parts to sync.
 	PartsToSync() []*part
 	// StreamingParts returns the streaming parts.
@@ -411,9 +412,6 @@ func (wr WriteRequest) Validate() error {
 	for i, tag := range wr.Tags {
 		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
-		}
-		if len(tag.Value) == 0 {
-			return fmt.Errorf("tag[%d] value cannot be empty", i)
 		}
 	}
 	return nil

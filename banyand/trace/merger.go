@@ -112,12 +112,8 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	partIDs := make([]uint64, 0, len(parts))
-	for _, pw := range parts {
-		partIDs = append(partIDs, pw.ID())
-	}
 	for sidxName, sidxInstance := range tst.sidxMap {
-		if err := sidxInstance.Merge(partIDs, newPartID, closeCh); err != nil {
+		if err := sidxInstance.Merge(closeCh); err != nil {
 			tst.l.Warn().Err(err).Str("sidx", sidxName).Msg("sidx merge failed")
 			return nil, err
 		}

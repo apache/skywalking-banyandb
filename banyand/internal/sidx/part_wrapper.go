@@ -217,7 +217,7 @@ func (pw *partWrapper) isRemoved() bool {
 // isMemPart returns true if this wrapper contains a memory part.
 func (pw *partWrapper) isMemPart() bool {
 	// A memory part typically has no file system path or is stored in memory
-	return pw.mp != nil || (pw.p != nil && pw.p.path == "")
+	return pw.mp != nil
 }
 
 // String returns a string representation of the partWrapper.
