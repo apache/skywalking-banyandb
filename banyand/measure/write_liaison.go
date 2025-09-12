@@ -108,6 +108,9 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		for j := range g.tables {
 			es := g.tables[j]
 			if es.tsTable != nil && es.dataPoints != nil {
+				for i := range es.dataPoints.timestamps {
+					fmt.Printf("series id: %v timestamp: %v time range: %v\n", es.dataPoints.seriesIDs[i], es.dataPoints.timestamps[i], es.timeRange)
+				}
 				es.tsTable.mustAddDataPoints(es.dataPoints)
 				releaseDataPoints(es.dataPoints)
 			}

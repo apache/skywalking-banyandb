@@ -96,7 +96,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
 		svc.l,
-		newSupplier(path, svc, sr, nodeLabels, nodeID),
+		newSupplier(path, svc, sr, nodeLabels),
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
@@ -392,12 +392,11 @@ type supplier struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
-	nodeID     string
 	path       string
 	option     option
 }
 
-func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string, nodeID string) *supplier {
+func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
 	if svc.pm == nil {
 		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
 	}
@@ -418,7 +417,6 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 		pm:         svc.pm,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
-		nodeID:     nodeID,
 	}
 }
 

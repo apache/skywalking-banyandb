@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -230,7 +231,28 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 			// Create streaming reader for the part.
 			files, release := createPartFileReaders(part)
 			releaseFuncs = append(releaseFuncs, release)
-
+			builder := strings.Builder{}
+			for i := range part.primaryBlockMetadata {
+				offset := part.primaryBlockMetadata[i].offset
+				size := part.primaryBlockMetadata[i].size
+				buf := make([]byte, size)
+				part.primary.Read(int64(offset), buf)
+				uncompressedBuf, err := zstd.Decompress(nil, buf)
+				if err != nil {
+					return fmt.Errorf("cannot decompress block metadata: %w", err)
+				}
+				blockMetadata, err := unmarshalBlockMetadata(nil, uncompressedBuf)
+				if err != nil {
+					return fmt.Errorf("cannot unmarshal block metadata: %w", err)
+				}
+				for _, block := range blockMetadata {
+					builder.WriteString(fmt.Sprintf("%v", block.seriesID))
+					builder.WriteString(",")
+				}
+			}
+			timeStart := time.Unix(0, part.partMetadata.MinTimestamp)
+			timeEnd := time.Unix(0, part.partMetadata.MaxTimestamp)
+			fmt.Printf("snp %v primary block metadata: %v total count: %v time range: %v-%v group: %v shard: %v - %v\n", curSnapshot.epoch, builder.String(), part.partMetadata.TotalCount, timeStart, timeEnd, tst.group, tst.shardID, time.Now().Format(time.StampNano))
 			// Create streaming part sync data.
 			streamingParts = append(streamingParts, queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,

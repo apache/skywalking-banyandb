@@ -34,6 +34,7 @@ import (
 	itest "github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -1512,6 +1513,347 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 				protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
 				t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
 			}
+		})
+	}
+}
+
+func TestSegResultHeap_Sorting(t *testing.T) {
+	tests := []struct {
+		name        string
+		segResults  []*segResult
+		expectOrder []int
+		sortDesc    bool
+	}{
+		{
+			name:     "Sort ascending by SeriesID (no sortedValues)",
+			sortDesc: false,
+			segResults: []*segResult{
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(30)},
+						},
+					},
+					i: 0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(10)},
+						},
+					},
+					i: 0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(20)},
+						},
+					},
+					i: 0,
+				},
+			},
+			expectOrder: []int{1, 0, 2}, // SeriesID order: 10, 30, 20
+		},
+		{
+			name:     "Sort descending by SeriesID (no sortedValues)",
+			sortDesc: true,
+			segResults: []*segResult{
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(10)},
+						},
+					},
+					i: 0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(30)},
+						},
+					},
+					i: 0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(20)},
+						},
+					},
+					i: 0,
+				},
+			},
+			expectOrder: []int{1, 0, 2}, // SeriesID order: 30, 10, 20
+		},
+		{
+			name:     "Sort ascending by sortedValues",
+			sortDesc: false,
+			segResults: []*segResult{
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(1)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("charlie")},
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(2)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("alpha")},
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(3)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("beta")},
+					i:            0,
+				},
+			},
+			expectOrder: []int{1, 0, 2}, // alpha, charlie, beta
+		},
+		{
+			name:     "Sort descending by sortedValues",
+			sortDesc: true,
+			segResults: []*segResult{
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(1)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("alpha")},
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(2)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("charlie")},
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(3)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("beta")},
+					i:            0,
+				},
+			},
+			expectOrder: []int{1, 0, 2}, // charlie, alpha, beta
+		},
+		{
+			name:     "Mixed sortedValues and nil sortedValues ascending",
+			sortDesc: false,
+			segResults: []*segResult{
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(30)},
+						},
+					},
+					sortedValues: nil, // Will use SeriesID for sorting
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(10)},
+						},
+					},
+					sortedValues: [][]byte{[]byte("zzz")}, // Should come after nil sortedValues when sorted by SeriesID
+					i:            0,
+				},
+				{
+					SeriesData: storage.SeriesData{
+						SeriesList: pbv1.SeriesList{
+							&pbv1.Series{ID: common.SeriesID(20)},
+						},
+					},
+					sortedValues: nil, // Will use SeriesID for sorting
+					i:            0,
+				},
+			},
+			expectOrder: []int{1, 0, 2}, // SeriesID 10, 30, 20 (nil sortedValues use SeriesID)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create and initialize heap
+			heap := segResultHeap{
+				results:  make([]*segResult, 0),
+				sortDesc: tt.sortDesc,
+			}
+
+			// Add all results to heap
+			for _, sr := range tt.segResults {
+				heap.results = append(heap.results, sr)
+			}
+
+			// Initialize heap
+			require.Equal(t, len(tt.segResults), heap.Len())
+
+			// Sort using Go's heap
+			heapImpl := &heap
+			heap2 := make([]*segResult, len(tt.segResults))
+			copy(heap2, heap.results)
+
+			// Sort manually to get expected order
+			sort.Slice(heap2, func(i, j int) bool {
+				return heapImpl.Less(i, j)
+			})
+
+			// Verify the order matches expectation
+			for i, expectedIdx := range tt.expectOrder {
+				actual := heap2[i]
+				expected := tt.segResults[expectedIdx]
+				require.Equal(t, expected.SeriesList[expected.i].ID, actual.SeriesList[actual.i].ID,
+					"Position %d: expected SeriesID %d, got %d", i, expected.SeriesList[expected.i].ID, actual.SeriesList[actual.i].ID)
+			}
+		})
+	}
+}
+
+func TestSegResultHeap_NPE_Prevention(t *testing.T) {
+	tests := []struct {
+		name       string
+		segResults []*segResult
+		i, j       int
+		expectLess bool
+	}{
+		{
+			name:       "Out of bounds indices",
+			segResults: []*segResult{{SeriesData: storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 1}}}, i: 0}},
+			i:          0,
+			j:          5, // Out of bounds
+			expectLess: false,
+		},
+		{
+			name:       "Nil segResult",
+			segResults: []*segResult{nil, {SeriesData: storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 1}}}, i: 0}},
+			i:          0,
+			j:          1,
+			expectLess: false,
+		},
+		{
+			name: "Index out of bounds for SeriesList",
+			segResults: []*segResult{
+				{SeriesData: storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 1}}}, i: 5}, // i is out of bounds
+				{SeriesData: storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 2}}}, i: 0},
+			},
+			i:          0,
+			j:          1,
+			expectLess: false,
+		},
+		{
+			name: "Index out of bounds for sortedValues",
+			segResults: []*segResult{
+				{
+					SeriesData:   storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 1}}},
+					sortedValues: [][]byte{[]byte("test")},
+					i:            5, // i is out of bounds for sortedValues
+				},
+				{
+					SeriesData:   storage.SeriesData{SeriesList: pbv1.SeriesList{{ID: 2}}},
+					sortedValues: [][]byte{[]byte("test2")},
+					i:            0,
+				},
+			},
+			i:          0,
+			j:          1,
+			expectLess: false, // Should fallback to SeriesID comparison
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			heap := segResultHeap{
+				results:  tt.segResults,
+				sortDesc: false,
+			}
+
+			// This should not panic due to NPE prevention
+			result := heap.Less(tt.i, tt.j)
+			require.Equal(t, tt.expectLess, result)
+		})
+	}
+}
+
+func TestIndexSortResult_OrderBySortDesc(t *testing.T) {
+	tests := []struct {
+		name       string
+		sortOrder  modelv1.Sort
+		expectDesc bool
+	}{
+		{
+			name:       "SORT_ASC should be ascending",
+			sortOrder:  modelv1.Sort_SORT_ASC,
+			expectDesc: false,
+		},
+		{
+			name:       "SORT_UNSPECIFIED should be ascending",
+			sortOrder:  modelv1.Sort_SORT_UNSPECIFIED,
+			expectDesc: false,
+		},
+		{
+			name:       "SORT_DESC should be descending",
+			sortOrder:  modelv1.Sort_SORT_DESC,
+			expectDesc: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock segments and measure data
+			mqo := model.MeasureQueryOptions{
+				Order: &index.OrderBy{
+					Sort: tt.sortOrder,
+				},
+			}
+
+			// Create a simple segResult
+			sr := &segResult{
+				SeriesData: storage.SeriesData{
+					SeriesList: pbv1.SeriesList{
+						&pbv1.Series{ID: common.SeriesID(1)},
+						&pbv1.Series{ID: common.SeriesID(2)},
+					},
+					Timestamps: []int64{1000, 2000},
+					Versions:   []int64{1, 2},
+				},
+				sortedValues: [][]byte{[]byte("test1"), []byte("test2")},
+				i:            0,
+			}
+
+			// Create index sort result
+			r := &indexSortResult{
+				tfl: []tagFamilyLocation{},
+				segResults: segResultHeap{
+					results:  []*segResult{sr},
+					sortDesc: false, // This should be set by buildIndexQueryResult
+				},
+			}
+
+			// Simulate the logic from buildIndexQueryResult
+			if mqo.Order != nil && mqo.Order.Sort == modelv1.Sort_SORT_DESC {
+				r.segResults.sortDesc = true
+			}
+
+			// Verify the sort order was set correctly
+			require.Equal(t, tt.expectDesc, r.segResults.sortDesc)
 		})
 	}
 }

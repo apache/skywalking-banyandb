@@ -80,6 +80,9 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	if err := series.Marshal(); err != nil {
 		return 0, fmt.Errorf("cannot marshal series: %w", err)
 	}
+	if req.Metadata.Name == "service_cpm_minute" {
+		fmt.Printf("entity values: %v time range: %v series id: %v\n", writeEvent.EntityValues, dpt.timeRange, series.ID)
+	}
 
 	if stm.schema.IndexMode {
 		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators)
