@@ -59,24 +59,25 @@ type Service interface {
 var _ Service = (*standalone)(nil)
 
 type standalone struct {
-	lfs                 fs.FileSystem
-	c                   storage.Cache
-	pipeline            queue.Server
-	localPipeline       queue.Queue
-	metricPipeline      queue.Server
-	omr                 observability.MetricsRegistry
-	metadata            metadata.Repo
-	pm                  protector.Memory
-	cm                  *cacheMetrics
-	l                   *logger.Logger
-	schemaRepo          *schemaRepo
-	root                string
-	snapshotDir         string
-	dataPath            string
-	option              option
-	cc                  storage.CacheConfig
-	maxDiskUsagePercent int
-	maxFileSnapshotNum  int
+	lfs                fs.FileSystem
+	c                  storage.Cache
+	pipeline           queue.Server
+	localPipeline      queue.Queue
+	metricPipeline     queue.Server
+	omr                observability.MetricsRegistry
+	metadata           metadata.Repo
+	pm                 protector.Memory
+	cm                 *cacheMetrics
+	l                  *logger.Logger
+	schemaRepo         *schemaRepo
+	diskMonitor        *storage.DiskMonitor
+	root               string
+	snapshotDir        string
+	dataPath           string
+	option             option
+	retentionConfig    storage.RetentionConfig
+	cc                 storage.CacheConfig
+	maxFileSnapshotNum int
 }
 
 func (s *standalone) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -95,6 +96,40 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
+// RetentionService interface implementation
+
+func (s *standalone) GetDataPath() string {
+	return s.dataPath
+}
+
+func (s *standalone) GetSnapshotDir() string {
+	return s.snapshotDir
+}
+
+func (s *standalone) LoadAllGroups() []resourceSchema.Group {
+	return s.schemaRepo.LoadAllGroups()
+}
+
+func (s *standalone) DeleteOldestSegmentInGroup(group string) (bool, error) {
+	// TODO: Implement actual segment deletion when storage APIs are ready
+	// For now, return false to indicate no deletion performed
+	s.l.Debug().Str("group", group).Msg("DeleteOldestSegmentInGroup not yet implemented")
+	return false, nil
+}
+
+func (s *standalone) CleanupOldSnapshots(maxAge time.Duration) error {
+	if s.snapshotDir == "" {
+		return nil
+	}
+	// DeleteStaleSnapshots doesn't return an error, it just deletes stale snapshots
+	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.lfs)
+	return nil
+}
+
+func (s *standalone) GetServiceName() string {
+	return serviceName
+}
+
 func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
@@ -104,7 +139,13 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")
-	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+
+	// Retention configuration flags
+	flagS.Float64Var(&s.retentionConfig.HighWatermark, "measure-retention-high-watermark", 95.0, "disk usage high watermark percentage that triggers forced retention cleanup")
+	flagS.Float64Var(&s.retentionConfig.LowWatermark, "measure-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
+	flagS.DurationVar(&s.retentionConfig.CheckInterval, "measure-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
+	flagS.DurationVar(&s.retentionConfig.Cooldown, "measure-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")
+
 	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
 	s.cc.MaxCacheSize = run.Bytes(100 * 1024 * 1024)
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
@@ -117,12 +158,24 @@ func (s *standalone) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
-	if s.maxDiskUsagePercent < 0 {
-		return errors.New("measure-max-disk-usage-percent must be greater than or equal to 0")
+
+	// Validate retention configuration
+	if s.retentionConfig.HighWatermark < 0 || s.retentionConfig.HighWatermark > 100 {
+		return errors.New("measure-retention-high-watermark must be between 0 and 100")
 	}
-	if s.maxDiskUsagePercent > 100 {
-		return errors.New("measure-max-disk-usage-percent must be less than or equal to 100")
+	if s.retentionConfig.LowWatermark < 0 || s.retentionConfig.LowWatermark > 100 {
+		return errors.New("measure-retention-low-watermark must be between 0 and 100")
 	}
+	if s.retentionConfig.LowWatermark >= s.retentionConfig.HighWatermark {
+		return errors.New("measure-retention-low-watermark must be less than measure-retention-high-watermark")
+	}
+	if s.retentionConfig.CheckInterval <= 0 {
+		return errors.New("measure-retention-check-interval must be greater than 0")
+	}
+	if s.retentionConfig.Cooldown <= 0 {
+		return errors.New("measure-retention-cooldown must be greater than 0")
+	}
+
 	if s.cc.MaxCacheSize < 0 {
 		return errors.New("service-cache-max-size must be greater than or equal to 0")
 	}
@@ -184,7 +237,12 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	writeListener := setUpWriteCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent)
+	// Initialize disk monitor for forced retention
+	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
+	s.diskMonitor.Start(ctx)
+
+	// For now, keep the original write throttling behavior based on high watermark
+	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
@@ -206,6 +264,11 @@ func (s *standalone) Serve() run.StopNotify {
 }
 
 func (s *standalone) GracefulStop() {
+	// Stop disk monitor
+	if s.diskMonitor != nil {
+		s.diskMonitor.Stop()
+	}
+
 	observability.MetricsCollector.Unregister("measure_cache")
 	s.schemaRepo.Close()
 	s.c.Close()

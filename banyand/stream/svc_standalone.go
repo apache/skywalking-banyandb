@@ -61,20 +61,21 @@ type Service interface {
 var _ Service = (*standalone)(nil)
 
 type standalone struct {
-	pm                    protector.Memory
 	pipeline              queue.Server
 	localPipeline         queue.Queue
 	omr                   observability.MetricsRegistry
 	internalWritePipeline queue.Server
 	lfs                   fs.FileSystem
 	metadata              metadata.Repo
+	pm                    protector.Memory
+	diskMonitor           *storage.DiskMonitor
 	l                     *logger.Logger
 	schemaRepo            schemaRepo
-	snapshotDir           string
 	root                  string
 	dataPath              string
+	snapshotDir           string
 	option                option
-	maxDiskUsagePercent   int
+	retentionConfig       storage.RetentionConfig
 	maxFileSnapshotNum    int
 }
 
@@ -94,6 +95,40 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
+// RetentionService interface implementation
+
+func (s *standalone) GetDataPath() string {
+	return s.dataPath
+}
+
+func (s *standalone) GetSnapshotDir() string {
+	return s.snapshotDir
+}
+
+func (s *standalone) LoadAllGroups() []resourceSchema.Group {
+	return s.schemaRepo.LoadAllGroups()
+}
+
+func (s *standalone) DeleteOldestSegmentInGroup(group string) (bool, error) {
+	// TODO: Implement actual segment deletion when storage APIs are ready
+	// For now, return false to indicate no deletion performed
+	s.l.Debug().Str("group", group).Msg("DeleteOldestSegmentInGroup not yet implemented")
+	return false, nil
+}
+
+func (s *standalone) CleanupOldSnapshots(maxAge time.Duration) error {
+	if s.snapshotDir == "" {
+		return nil
+	}
+	// For stream service, use the existing snapshot cleanup mechanism
+	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.lfs)
+	return nil
+}
+
+func (s *standalone) GetServiceName() string {
+	return s.Name()
+}
+
 func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
@@ -104,7 +139,13 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")
-	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
+
+	// Retention configuration flags
+	flagS.Float64Var(&s.retentionConfig.HighWatermark, "stream-retention-high-watermark", 95.0, "disk usage high watermark percentage that triggers forced retention cleanup")
+	flagS.Float64Var(&s.retentionConfig.LowWatermark, "stream-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
+	flagS.DurationVar(&s.retentionConfig.CheckInterval, "stream-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
+	flagS.DurationVar(&s.retentionConfig.Cooldown, "stream-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")
+
 	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	return flagS
 }
@@ -113,12 +154,24 @@ func (s *standalone) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
-	if s.maxDiskUsagePercent < 0 {
-		return errors.New("stream-max-disk-usage-percent must be greater than or equal to 0")
+
+	// Validate retention configuration
+	if s.retentionConfig.HighWatermark < 0 || s.retentionConfig.HighWatermark > 100 {
+		return errors.New("stream-retention-high-watermark must be between 0 and 100")
 	}
-	if s.maxDiskUsagePercent > 100 {
-		return errors.New("stream-max-disk-usage-percent must be less than or equal to 100")
+	if s.retentionConfig.LowWatermark < 0 || s.retentionConfig.LowWatermark > 100 {
+		return errors.New("stream-retention-low-watermark must be between 0 and 100")
 	}
+	if s.retentionConfig.LowWatermark >= s.retentionConfig.HighWatermark {
+		return errors.New("stream-retention-low-watermark must be less than stream-retention-high-watermark")
+	}
+	if s.retentionConfig.CheckInterval <= 0 {
+		return errors.New("stream-retention-check-interval must be greater than 0")
+	}
+	if s.retentionConfig.Cooldown <= 0 {
+		return errors.New("stream-retention-cooldown must be greater than 0")
+	}
+
 	return nil
 }
 
@@ -160,7 +213,13 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err := s.pipeline.Subscribe(data.TopicDeleteExpiredStreamSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
-	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+
+	// Initialize disk monitor for forced retention
+	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
+	s.diskMonitor.Start(ctx)
+
+	// For now, keep the original write throttling behavior based on high watermark
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	err := s.pipeline.Subscribe(data.TopicStreamWrite, writeListener)
 	if err != nil {
 		return err
@@ -195,6 +254,11 @@ func (s *standalone) Serve() run.StopNotify {
 }
 
 func (s *standalone) GracefulStop() {
+	// Stop disk monitor
+	if s.diskMonitor != nil {
+		s.diskMonitor.Stop()
+	}
+
 	s.schemaRepo.Close()
 	if s.localPipeline != nil {
 		s.localPipeline.GracefulStop()
