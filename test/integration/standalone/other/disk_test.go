@@ -58,7 +58,7 @@ var _ = g.Describe("Disk", func() {
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
 		addr, _, deferFn := setup.Standalone(
-			"--measure-max-disk-usage-percent",
+			"--measure-retention-high-watermark",
 			"0",
 		)
 		defer deferFn()
@@ -104,7 +104,7 @@ var _ = g.Describe("Disk", func() {
 		closeDataNode1 := setup.DataNode(ep)
 		g.By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep,
-			"--measure-max-disk-usage-percent",
+			"--measure-retention-high-watermark",
 			"0")
 		defer func() {
 			closerLiaisonNode()

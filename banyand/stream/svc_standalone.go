@@ -95,7 +95,7 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-// RetentionService interface implementation
+// RetentionService interface implementation.
 
 func (s *standalone) GetDataPath() string {
 	return s.dataPath
@@ -141,7 +141,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")
 
 	// Retention configuration flags
-	flagS.Float64Var(&s.retentionConfig.HighWatermark, "stream-retention-high-watermark", 95.0, "disk usage high watermark percentage that triggers forced retention cleanup")
+	flagS.Float64Var(&s.retentionConfig.HighWatermark, "stream-retention-high-watermark", 95.0, "disk usage high watermark for forced retention cleanup")
 	flagS.Float64Var(&s.retentionConfig.LowWatermark, "stream-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
 	flagS.DurationVar(&s.retentionConfig.CheckInterval, "stream-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
 	flagS.DurationVar(&s.retentionConfig.Cooldown, "stream-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")

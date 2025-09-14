@@ -42,6 +42,10 @@ Release Notes.
 - Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
 - Add query access log support for stream, measure, trace, and property services to capture and log all query requests for monitoring and debugging purposes.
 - Implement comprehensive version compatibility checking for both regular data transmission and chunked sync operations, ensuring proper API version and file format version validation with detailed error reporting and graceful handling of version mismatches.
+- **Breaking Change**: Rename disk usage configuration flags for all services:
+  - `*-max-disk-usage-percent` → `*-retention-high-watermark` (measure, stream, trace, property services)
+  - Add new retention configuration flags: `*-retention-low-watermark`, `*-retention-check-interval`, `*-retention-cooldown`
+  - The high watermark now serves dual purposes: write throttling and forced retention cleanup trigger
 
 ### Bug Fixes
 

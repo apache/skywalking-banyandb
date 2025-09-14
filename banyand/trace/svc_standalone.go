@@ -198,7 +198,7 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-// RetentionService interface implementation
+// RetentionService interface implementation.
 
 func (s *standalone) GetDataPath() string {
 	return s.dataPath
