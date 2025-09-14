@@ -629,6 +629,50 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	}
 }
 
+// peekOldestSegmentEndTime returns the end time of the oldest segment.
+// It returns the zero time and false if no segments exist or all segments have refCount <= 0.
+func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) {
+	sc.RLock()
+	defer sc.RUnlock()
+
+	if len(sc.lst) == 0 {
+		return time.Time{}, false
+	}
+
+	// Segments are sorted by ID (which correlates with start time),
+	// so the first one is the oldest
+	oldest := sc.lst[0]
+
+	// Only return segments that are still active (have references > 0)
+	if atomic.LoadInt32(&oldest.refCount) > 0 {
+		return oldest.End, true
+	}
+
+	return time.Time{}, false
+}
+
+// removeOldest removes exactly one oldest segment if it exists and meets the keep-one rule.
+// Returns true if a segment was deleted, false if no segments to delete or keep-one rule prevents deletion.
+func (sc *segmentController[T, O]) removeOldest() (bool, error) {
+	sc.Lock()
+	defer sc.Unlock()
+
+	if len(sc.lst) <= 1 {
+		// Keep-one rule: never delete the last remaining segment
+		return false, nil
+	}
+
+	// Find the oldest segment (first in sorted list)
+	oldest := sc.lst[0]
+
+	// Delete the segment and remove from list
+	oldest.delete()
+	sc.removeSeg(oldest.id)
+
+	sc.l.Info().Stringer("segment", oldest).Msg("removed oldest segment via forced cleanup")
+	return true, nil
+}
+
 func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()

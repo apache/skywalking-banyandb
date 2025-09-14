@@ -194,7 +194,7 @@ func (dm *DiskMonitor) checkAndCleanup(serviceName string) {
 	}
 }
 
-func (dm *DiskMonitor) runForcedCleanup(serviceName string, currentDiskPercent int) {
+func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 	startTime := time.Now()
 	defer func() {
 		dm.metrics.forcedRetentionLastRunSeconds.Set(time.Since(startTime).Seconds(), serviceName)
@@ -255,7 +255,7 @@ func (dm *DiskMonitor) cleanupSnapshots(serviceName string) error {
 	return err
 }
 
-func (dm *DiskMonitor) deleteOldestSegment(serviceName string) bool {
+func (dm *DiskMonitor) deleteOldestSegment(_ string) bool {
 	groups := dm.service.LoadAllGroups()
 	if len(groups) == 0 {
 		return false
