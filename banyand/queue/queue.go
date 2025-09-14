@@ -116,6 +116,8 @@ type ChunkedSyncPartContext struct {
 	MinKey                int64
 	MaxKey                int64
 	ShardID               uint32
+	TraceIDFilter         any
+	TagType               any
 }
 
 // Close releases resources associated with the context.

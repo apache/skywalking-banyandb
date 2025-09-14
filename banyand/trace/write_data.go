@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -135,6 +136,8 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
 	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
 	memPart.partMetadata.ID = ctx.ID
+	memPart.traceIDFilter = convertPBTraceIDFilter(ctx.TraceIDFilter.(*clusterv1.TraceIDFilter))
+	memPart.tagType = convertPBTagType(ctx.TagType.(*clusterv1.TagType))
 	writers := generateWriters()
 	writers.mustInitForMemPart(memPart)
 	return &syncPartContext{
