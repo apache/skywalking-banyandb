@@ -25,10 +25,74 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
+
+func checkSyncVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.VersionCompatibility, clusterv1.SyncStatus) {
+	if versionInfo == nil {
+		return &clusterv1.VersionCompatibility{
+			Supported:                   true,
+			ServerApiVersion:            apiversion.Version,
+			SupportedApiVersions:        []string{apiversion.Version},
+			ServerFileFormatVersion:     storage.GetCurrentVersion(),
+			SupportedFileFormatVersions: storage.GetCompatibleVersions(),
+			Reason:                      "No version info provided, assuming compatible",
+		}, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+	}
+
+	serverAPIVersion := apiversion.Version
+	serverFileFormatVersion := storage.GetCurrentVersion()
+	compatibleFileFormatVersions := storage.GetCompatibleVersions()
+
+	// Check API version compatibility
+	apiCompatible := versionInfo.ApiVersion == serverAPIVersion
+
+	// Check file format version compatibility
+	fileFormatCompatible := false
+	if versionInfo.FileFormatVersion == serverFileFormatVersion {
+		fileFormatCompatible = true
+	} else {
+		// Check if client's file format version is in our compatible list
+		for _, compatVer := range compatibleFileFormatVersions {
+			if compatVer == versionInfo.FileFormatVersion {
+				fileFormatCompatible = true
+				break
+			}
+		}
+	}
+
+	versionCompatibility := &clusterv1.VersionCompatibility{
+		ServerApiVersion:            serverAPIVersion,
+		SupportedApiVersions:        []string{serverAPIVersion},
+		ServerFileFormatVersion:     serverFileFormatVersion,
+		SupportedFileFormatVersions: compatibleFileFormatVersions,
+	}
+
+	switch {
+	case !apiCompatible && !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.ApiVersion, serverAPIVersion, versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
+	case !apiCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
+	case !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_FORMAT_VERSION_MISMATCH
+	}
+
+	versionCompatibility.Supported = true
+	versionCompatibility.Reason = "Client version compatible with server"
+	return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+}
 
 type chunkBuffer struct {
 	chunks        map[uint32]*clusterv1.SyncPartRequest
@@ -122,6 +186,21 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 }
 
 func (s *server) processChunk(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
+	// Check version compatibility on every chunk
+	if req.VersionInfo != nil {
+		versionCompatibility, status := checkSyncVersionCompatibility(req.VersionInfo)
+		if status != clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED {
+			s.log.Warn().
+				Str("session_id", req.SessionId).
+				Str("client_api_version", req.VersionInfo.ApiVersion).
+				Str("client_file_format_version", req.VersionInfo.FileFormatVersion).
+				Str("reason", versionCompatibility.Reason).
+				Msg("sync version compatibility check failed")
+
+			return s.sendResponse(stream, req, status, versionCompatibility.Reason, versionCompatibility)
+		}
+	}
+
 	if !s.enableChunkReordering {
 		return s.processChunkSequential(stream, session, req)
 	}
@@ -439,14 +518,20 @@ func (s *server) sendResponse(
 	req *clusterv1.SyncPartRequest,
 	status clusterv1.SyncStatus,
 	errorMsg string,
-	syncResult *clusterv1.SyncResult,
+	result interface{},
 ) error {
 	resp := &clusterv1.SyncPartResponse{
 		SessionId:  req.SessionId,
 		ChunkIndex: req.ChunkIndex,
 		Status:     status,
 		Error:      errorMsg,
-		SyncResult: syncResult,
+	}
+
+	switch r := result.(type) {
+	case *clusterv1.SyncResult:
+		resp.SyncResult = r
+	case *clusterv1.VersionCompatibility:
+		resp.VersionCompatibility = r
 	}
 
 	return stream.Send(resp)

@@ -24,11 +24,37 @@ import "banyandb/model/v1/write.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
 
+message VersionInfo {
+  // file_format_version indicates the file format version used
+  string file_format_version = 1;
+  // compatible_file_format_version lists backward compatible versions
+  repeated string compatible_file_format_version = 2;
+  // api_version indicates the API semantic version
+  string api_version = 3;
+}
+
+message VersionCompatibility {
+  // supported indicates whether the client version is supported
+  bool supported = 1;
+  // server_api_version is the API version of the server
+  string server_api_version = 2;
+  // supported_api_versions lists API versions supported by the server
+  repeated string supported_api_versions = 3;
+  // server_file_format_version is the file format version of the server
+  string server_file_format_version = 4;
+  // supported_file_format_versions lists file format versions supported by the server
+  repeated string supported_file_format_versions = 5;
+  // reason provides human-readable explanation of version incompatibility
+  string reason = 6;
+}
+
 message SendRequest {
   string topic = 1;
   uint64 message_id = 2;
   bytes body = 3;
   bool batch_mod = 4;
+  // version_info contains version information
+  VersionInfo version_info = 5;
 }
 
 message SendResponse {
@@ -36,6 +62,8 @@ message SendResponse {
   string error = 2;
   bytes body = 3;
   model.v1.Status status = 4;
+  // version_compatibility contains version compatibility information when status indicates version issues
+  VersionCompatibility version_compatibility = 5;
 }
 
 message HealthCheckRequest {
@@ -60,6 +88,9 @@ message SyncPartRequest {
     SyncMetadata metadata = 7; // Sent with first chunk (chunk_index = 0).
     SyncCompletion completion = 8; // Sent with last chunk to finalize.
   }
+
+  // version_info contains version information
+  VersionInfo version_info = 9;
 }
 
 // Information about a part contained within a chunk.
@@ -125,6 +156,8 @@ message SyncPartResponse {
   SyncStatus status = 3;
   string error = 4;
   SyncResult sync_result = 5; // Final result when sync completes.
+  // version_compatibility contains version compatibility information when status indicates version issues
+  VersionCompatibility version_compatibility = 6;
 }
 
 // SyncResult contains the result of a sync operation.
@@ -152,6 +185,8 @@ enum SyncStatus {
   SYNC_STATUS_CHUNK_OUT_OF_ORDER = 3; // Chunk received out of expected order.
   SYNC_STATUS_SESSION_NOT_FOUND = 4; // Session ID not recognized.
   SYNC_STATUS_SYNC_COMPLETE = 5; // Entire sync operation completed successfully.
+  SYNC_STATUS_VERSION_UNSUPPORTED = 6; // Version not supported for sync operations.
+  SYNC_STATUS_FORMAT_VERSION_MISMATCH = 7; // File format version incompatible.
 }
 
 service Service {

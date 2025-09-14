@@ -3,6 +3,30 @@
 
 ## Table of Contents
 
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
+- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [FileInfo](#banyandb-cluster-v1-FileInfo)
+    - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
+    - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
+    - [PartInfo](#banyandb-cluster-v1-PartInfo)
+    - [PartResult](#banyandb-cluster-v1-PartResult)
+    - [SendRequest](#banyandb-cluster-v1-SendRequest)
+    - [SendResponse](#banyandb-cluster-v1-SendResponse)
+    - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
+    - [SyncMetadata](#banyandb-cluster-v1-SyncMetadata)
+    - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
+    - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
+    - [SyncResult](#banyandb-cluster-v1-SyncResult)
+    - [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility)
+    - [VersionInfo](#banyandb-cluster-v1-VersionInfo)
+  
+    - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
+  
+    - [ChunkedSyncService](#banyandb-cluster-v1-ChunkedSyncService)
+    - [Service](#banyandb-cluster-v1-Service)
+  
 - [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
     - [Group](#banyandb-common-v1-Group)
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
@@ -327,6 +351,357 @@
     - [TraceService](#banyandb-trace-v1-TraceService)
   
 - [Scalar Value Types](#scalar-value-types)
+
+
+
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+| STATUS_DISK_FULL | 6 |  |
+| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
+| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_cluster_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/cluster/v1/rpc.proto
+
+
+
+<a name="banyandb-cluster-v1-FileInfo"></a>
+
+### FileInfo
+Information about an individual file within a part.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
+| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
+| size | [uint32](#uint32) |  | Size of this file in bytes. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-HealthCheckRequest"></a>
+
+### HealthCheckRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-HealthCheckResponse"></a>
+
+### HealthCheckResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartInfo"></a>
+
+### PartInfo
+Information about a part contained within a chunk.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  | Unique identifier for this part. |
+| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
+| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
+| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
+| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
+| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
+| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
+| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartResult"></a>
+
+### PartResult
+PartResult contains the result for individual parts.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether this part was processed successfully. |
+| error | [string](#string) |  | Error message if processing failed. |
+| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SendRequest"></a>
+
+### SendRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| body | [bytes](#bytes) |  |  |
+| batch_mod | [bool](#bool) |  |  |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SendResponse"></a>
+
+### SendResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  |  |
+| error | [string](#string) |  |  |
+| body | [bytes](#bytes) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncCompletion"></a>
+
+### SyncCompletion
+SyncCompletion contains completion information for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
+| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
+| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncMetadata"></a>
+
+### SyncMetadata
+SyncMetadata contains metadata for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | Group name (stream/measure). |
+| shard_id | [uint32](#uint32) |  | Shard identifier. |
+| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
+| timestamp | [int64](#int64) |  | Timestamp when sync started. |
+| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartRequest"></a>
+
+### SyncPartRequest
+Chunked Sync Service Messages.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
+| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
+| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
+| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
+| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
+| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
+| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartResponse"></a>
+
+### SyncPartResponse
+SyncPartResponse contains the response for a sync part request.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  |  |
+| chunk_index | [uint32](#uint32) |  |  |
+| status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
+| error | [string](#string) |  |  |
+| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncResult"></a>
+
+### SyncResult
+SyncResult contains the result of a sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether entire sync was successful. |
+| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
+| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
+| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
+| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
+| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-VersionCompatibility"></a>
+
+### VersionCompatibility
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| supported | [bool](#bool) |  | supported indicates whether the client version is supported |
+| server_api_version | [string](#string) |  | server_api_version is the API version of the server |
+| supported_api_versions | [string](#string) | repeated | supported_api_versions lists API versions supported by the server |
+| server_file_format_version | [string](#string) |  | server_file_format_version is the file format version of the server |
+| supported_file_format_versions | [string](#string) | repeated | supported_file_format_versions lists file format versions supported by the server |
+| reason | [string](#string) |  | reason provides human-readable explanation of version incompatibility |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-VersionInfo"></a>
+
+### VersionInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| file_format_version | [string](#string) |  | file_format_version indicates the file format version used |
+| compatible_file_format_version | [string](#string) | repeated | compatible_file_format_version lists backward compatible versions |
+| api_version | [string](#string) |  | api_version indicates the API semantic version |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-cluster-v1-SyncStatus"></a>
+
+### SyncStatus
+SyncStatus represents the status of a sync operation.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
+| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
+| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
+| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
+| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
+| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
+| SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
+| SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-cluster-v1-ChunkedSyncService"></a>
+
+### ChunkedSyncService
+ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
+
+
+<a name="banyandb-cluster-v1-Service"></a>
+
+### Service
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
+| HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
+
+ 
 
 
 
