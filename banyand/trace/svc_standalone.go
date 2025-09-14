@@ -212,10 +212,42 @@ func (s *standalone) LoadAllGroups() []resourceSchema.Group {
 	return s.schemaRepo.LoadAllGroups()
 }
 
+func (s *standalone) PeekOldestSegmentEndTimeInGroup(group string) (time.Time, bool) {
+	g, ok := s.schemaRepo.LoadGroup(group)
+	if !ok {
+		return time.Time{}, false
+	}
+
+	db := g.SupplyTSDB()
+	if db == nil {
+		return time.Time{}, false
+	}
+
+	// Type assert to the storage interface that has PeekOldestSegmentEndTime
+	if dbWithPeek, ok := db.(interface{ PeekOldestSegmentEndTime() (time.Time, bool) }); ok {
+		return dbWithPeek.PeekOldestSegmentEndTime()
+	}
+
+	return time.Time{}, false
+}
+
 func (s *standalone) DeleteOldestSegmentInGroup(group string) (bool, error) {
-	// TODO: Implement actual segment deletion when storage APIs are ready
-	// For now, return false to indicate no deletion performed
-	s.l.Debug().Str("group", group).Msg("DeleteOldestSegmentInGroup not yet implemented")
+	g, ok := s.schemaRepo.LoadGroup(group)
+	if !ok {
+		return false, nil
+	}
+
+	db := g.SupplyTSDB()
+	if db == nil {
+		return false, nil
+	}
+
+	// Type assert to the storage interface that has DeleteOldestSegment
+	if dbWithDelete, ok := db.(interface{ DeleteOldestSegment() (bool, error) }); ok {
+		return dbWithDelete.DeleteOldestSegment()
+	}
+
+	s.l.Debug().Str("group", group).Msg("database does not support DeleteOldestSegment")
 	return false, nil
 }
 

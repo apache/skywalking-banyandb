@@ -38,6 +38,9 @@ type RetentionService interface {
 	GetSnapshotDir() string
 	// LoadAllGroups returns all groups managed by this service
 	LoadAllGroups() []resourceSchema.Group
+	// PeekOldestSegmentEndTimeInGroup returns the end time of the oldest segment in the specified group
+	// Returns zero time and false if no segments exist or group not found
+	PeekOldestSegmentEndTimeInGroup(group string) (time.Time, bool)
 	// DeleteOldestSegmentInGroup deletes the oldest segment in the specified group
 	// Returns true if a segment was deleted, false if no segments to delete
 	DeleteOldestSegmentInGroup(group string) (bool, error)
@@ -289,21 +292,25 @@ func (dm *DiskMonitor) findGroupWithOldestSegment(groups []resourceSchema.Group)
 
 	var candidates []groupSegmentTime
 
-	// For now, we'll implement a simple round-robin approach across groups
-	// since we don't have the storage API extensions yet to peek segment times
-	// TODO: Replace with actual oldest-segment-finding logic when storage APIs are ready
+	// Query each group's oldest segment end time
 	for _, group := range groups {
-		candidates = append(candidates, groupSegmentTime{
-			groupName: group.GetSchema().Metadata.Name,
-			endTime:   time.Now(), // Placeholder - will be replaced with actual segment time
-		})
+		groupName := group.GetSchema().Metadata.Name
+		endTime, hasSegments := dm.service.PeekOldestSegmentEndTimeInGroup(groupName)
+
+		// Only consider groups that have segments
+		if hasSegments {
+			candidates = append(candidates, groupSegmentTime{
+				groupName: groupName,
+				endTime:   endTime,
+			})
+		}
 	}
 
 	if len(candidates) == 0 {
 		return ""
 	}
 
-	// Sort by end time to find oldest
+	// Sort by end time to find oldest (earliest end time = oldest segment)
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].endTime.Before(candidates[j].endTime)
 	})
