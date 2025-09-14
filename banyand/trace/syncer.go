@@ -36,10 +36,44 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 	defer tst.loopCloser.Done()
 
 	var epoch uint64
+	var lastTriggerTime time.Time
 
 	ew := flusherNotifier.Add(0, tst.loopCloser.CloseNotify())
 	if ew == nil {
 		return
+	}
+
+	syncTimer := time.NewTimer(tst.option.syncInterval)
+	defer syncTimer.Stop()
+
+	trySync := func(triggerTime time.Time) bool {
+		defer syncTimer.Reset(tst.option.syncInterval)
+		curSnapshot := tst.currentSnapshot()
+		if curSnapshot == nil {
+			return false
+		}
+		defer curSnapshot.decRef()
+		if curSnapshot.epoch != epoch {
+			tst.incTotalSyncLoopStarted(1)
+			defer tst.incTotalSyncLoopFinished(1)
+			var err error
+			if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
+				if tst.loopCloser.Closed() {
+					return true
+				}
+				tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
+				tst.incTotalSyncLoopErr(1)
+				time.Sleep(2 * time.Second)
+				return false
+			}
+			epoch = curSnapshot.epoch
+			lastTriggerTime = triggerTime
+			if tst.currentEpoch() != epoch {
+				return false
+			}
+		}
+		ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
+		return ew == nil
 	}
 
 	for {
@@ -47,33 +81,16 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			if func() bool {
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot == nil {
-					return false
-				}
-				defer curSnapshot.decRef()
-				if curSnapshot.epoch != epoch {
-					tst.incTotalSyncLoopStarted(1)
-					defer tst.incTotalSyncLoopFinished(1)
-					var err error
-					if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
-						if tst.loopCloser.Closed() {
-							return true
-						}
-						tst.l.Logger.Warn().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
-						tst.incTotalSyncLoopErr(1)
-						time.Sleep(2 * time.Second)
-						return false
-					}
-					epoch = curSnapshot.epoch
-					if tst.currentEpoch() != epoch {
-						return false
-					}
-				}
-				ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
-				return ew == nil
-			}() {
+			if trySync(time.Now()) {
+				return
+			}
+		case <-syncTimer.C:
+			now := time.Now()
+			if now.Sub(lastTriggerTime) < tst.option.syncInterval {
+				syncTimer.Reset(tst.option.syncInterval - now.Sub(lastTriggerTime))
+				continue
+			}
+			if trySync(now) {
 				return
 			}
 		}
@@ -114,7 +131,6 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 				Reader: reader.SequentialRead(),
 			})
 		}
-
 		for name, reader := range part.tagMetadata {
 			files = append(files, queue.FileInfo{
 				Name:   fmt.Sprintf("%s%s", traceTagMetadataPrefix, name),
@@ -128,34 +144,32 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	}
 }
 
-// syncStreamingPartsToNodes synchronizes streaming parts nodes.
-func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []string, streamingParts []queue.StreamingPartData) error {
-	for _, node := range nodes {
-		// Get chunked sync client for this node
-		chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
-		if err != nil {
-			return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
-		}
-		defer chunkedClient.Close()
-
-		// Sync parts using chunked transfer with streaming
-		result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
-		if err != nil {
-			return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
-		}
-
-		if !result.Success {
-			return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
-		}
-		tst.l.Info().
-			Str("node", node).
-			Str("session", result.SessionID).
-			Uint64("bytes", result.TotalBytes).
-			Int64("duration_ms", result.DurationMs).
-			Uint32("chunks", result.ChunksCount).
-			Uint32("parts", result.PartsCount).
-			Msg("chunked sync completed successfully")
+// syncStreamingPartsToNode synchronizes streaming parts to a node.
+func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
+	// Get chunked sync client for this node
+	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
+	if err != nil {
+		return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
 	}
+	defer chunkedClient.Close()
+
+	// Sync parts using chunked transfer with streaming
+	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+	if err != nil {
+		return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+	}
+	tst.l.Info().
+		Str("node", node).
+		Str("session", result.SessionID).
+		Uint64("bytes", result.TotalBytes).
+		Int64("duration_ms", result.DurationMs).
+		Uint32("chunks", result.ChunksCount).
+		Uint32("parts", result.PartsCount).
+		Msg("chunked sync completed successfully")
 	return nil
 }
 
@@ -171,9 +185,19 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	for name, sidx := range tst.sidxMap {
 		sidxPartsToSync[name] = sidx.PartsToSync()
 	}
-	if len(partsToSync) == 0 && len(sidxPartsToSync) == 0 {
+
+	hasCoreParts := len(partsToSync) > 0
+	hasSidxParts := false
+	for _, parts := range sidxPartsToSync {
+		if len(parts) > 0 {
+			hasSidxParts = true
+			break
+		}
+	}
+	if !hasCoreParts && !hasSidxParts {
 		return nil
 	}
+
 	nodes := tst.getNodes()
 	if len(nodes) == 0 {
 		return fmt.Errorf("no nodes to sync parts")
@@ -196,35 +220,37 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 			release()
 		}
 	}()
-	// Prepare all streaming parts data
-	streamingParts := make([]queue.StreamingPartData, 0)
-	// Create streaming parts from core trace parts
-	for _, part := range partsToSync {
-		files, release := createPartFileReaders(part)
-		releaseFuncs = append(releaseFuncs, release)
-		streamingParts = append(streamingParts, queue.StreamingPartData{
-			ID:                    part.partMetadata.ID,
-			Group:                 tst.group,
-			ShardID:               uint32(tst.shardID),
-			Topic:                 data.TopicStreamPartSync.String(),
-			Files:                 files,
-			CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
-			UncompressedSizeBytes: part.partMetadata.UncompressedSpanSizeBytes,
-			TotalCount:            part.partMetadata.TotalCount,
-			BlocksCount:           part.partMetadata.BlocksCount,
-			MinTimestamp:          part.partMetadata.MinTimestamp,
-			MaxTimestamp:          part.partMetadata.MaxTimestamp,
-			PartType:              PartTypeCore,
-		})
-	}
-	// Add sidx streaming parts
-	for name, sidxParts := range sidxPartsToSync {
-		sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
-		streamingParts = append(streamingParts, sidxStreamingParts...)
-		releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
-	}
-	if err := tst.syncStreamingPartsToNodes(ctx, nodes, streamingParts); err != nil {
-		return err
+	for _, node := range nodes {
+		// Prepare all streaming parts data
+		streamingParts := make([]queue.StreamingPartData, 0)
+		// Create streaming parts from core trace parts
+		for _, part := range partsToSync {
+			files, release := createPartFileReaders(part)
+			releaseFuncs = append(releaseFuncs, release)
+			streamingParts = append(streamingParts, queue.StreamingPartData{
+				ID:                    part.partMetadata.ID,
+				Group:                 tst.group,
+				ShardID:               uint32(tst.shardID),
+				Topic:                 data.TopicTracePartSync.String(),
+				Files:                 files,
+				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+				UncompressedSizeBytes: part.partMetadata.UncompressedSpanSizeBytes,
+				TotalCount:            part.partMetadata.TotalCount,
+				BlocksCount:           part.partMetadata.BlocksCount,
+				MinTimestamp:          part.partMetadata.MinTimestamp,
+				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
+			})
+		}
+		// Add sidx streaming parts
+		for name, sidxParts := range sidxPartsToSync {
+			sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
+			streamingParts = append(streamingParts, sidxStreamingParts...)
+			releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
+		}
+		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
+			return err
+		}
 	}
 
 	// Construct syncIntroduction to remove synced parts from snapshot

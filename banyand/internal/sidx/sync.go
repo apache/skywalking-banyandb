@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 )
 
@@ -63,7 +64,7 @@ func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32,
 			ID:                    part.partMetadata.ID,
 			Group:                 group,
 			ShardID:               shardID,
-			Topic:                 data.TopicStreamPartSync.String(),
+			Topic:                 data.TopicTracePartSync.String(),
 			Files:                 files,
 			CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
 			UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
@@ -81,28 +82,34 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	var files []queue.FileInfo
 
 	buf := bigValuePool.Get()
+	if buf == nil {
+		buf = &bytes.Buffer{}
+	}
 	// Trace metadata
 	for i := range part.primaryBlockMetadata {
 		buf.Buf = part.primaryBlockMetadata[i].marshal(buf.Buf)
 	}
 	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
+	}
 	bb.Buf = zstd.Compress(bb.Buf[:0], buf.Buf, 1)
 	bigValuePool.Put(buf)
 	files = append(files,
 		queue.FileInfo{
-			Name:   MetaFilename,
+			Name:   SidxMetaName,
 			Reader: bb.SequentialRead(),
 		},
 		queue.FileInfo{
-			Name:   PrimaryFilename,
+			Name:   SidxPrimaryName,
 			Reader: part.primary.SequentialRead(),
 		},
 		queue.FileInfo{
-			Name:   DataFilename,
+			Name:   SidxDataName,
 			Reader: part.data.SequentialRead(),
 		},
 		queue.FileInfo{
-			Name:   KeysFilename,
+			Name:   SidxKeysName,
 			Reader: part.keys.SequentialRead(),
 		},
 	)
@@ -124,6 +131,7 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	}
 
 	return files, func() {
+		bb.Buf = bb.Buf[:0]
 		bigValuePool.Put(bb)
 	}
 }

@@ -114,20 +114,22 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 
-	// Initialize snapshot directory
-	s.snapshotDir = filepath.Join(s.dataPath, "snapshot")
-
-	// Set up write callback handler
-	if s.pipeline != nil {
-		writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
-		err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
-		if err != nil {
-			return err
-		}
-		s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
-		s.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSidxPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+	err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
+	if err != nil {
+		return err
+	}
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	err = s.pipeline.Subscribe(data.TopicTraceSidxSeriesWrite, setUpSidxSeriesIndexCallback(s.l, &s.schemaRepo))
+	if err != nil {
+		return err
 	}
 
+	s.localPipeline = queue.Local()
+	err = s.localPipeline.Subscribe(data.TopicTraceWrite, writeListener)
+	if err != nil {
+		return err
+	}
 	s.l.Info().
 		Str("root", s.root).
 		Str("dataPath", s.dataPath).

@@ -126,11 +126,11 @@ func TestPartStringRepresentation(t *testing.T) {
 	compressedPrimaryData := zstd.Compress(nil, primaryData, 1)
 
 	testFiles := map[string][]byte{
-		PrimaryFilename:  []byte("primary"), // placeholder for primary.bin
-		DataFilename:     []byte("data"),
-		KeysFilename:     []byte("keys"),
-		MetaFilename:     compressedPrimaryData, // meta.bin should contain compressed primary block metadata
-		ManifestFilename: metaData,              // manifest.json should contain part metadata
+		primaryFilename:  []byte("primary"), // placeholder for primary.bin
+		dataFilename:     []byte("data"),
+		keysFilename:     []byte("keys"),
+		metaFilename:     compressedPrimaryData, // meta.bin should contain compressed primary block metadata
+		manifestFilename: metaData,              // manifest.json should contain part metadata
 	}
 
 	for fileName, content := range testFiles {

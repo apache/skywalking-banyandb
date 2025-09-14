@@ -19,13 +19,15 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"path"
+	"path/filepath"
 
-	"github.com/pkg/errors"
-
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -85,7 +87,7 @@ func (l *liaison) FlagSet() *run.FlagSet {
 	fs.StringVar(&l.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
 	fs.IntVar(&l.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
-	// Additional liaison-specific flags can be added here
+	fs.DurationVar(&l.option.syncInterval, "trace-sync-interval", defaultSyncInterval, "the periodic sync interval for trace data")
 	return fs
 }
 
@@ -104,55 +106,31 @@ func (l *liaison) Role() databasev1.Role {
 	return databasev1.Role_ROLE_LIAISON
 }
 
-func (l *liaison) PreRun(_ context.Context) error {
-	l.l = logger.GetLogger("trace")
-
-	// Initialize metadata
-	if l.metadata == nil {
-		return errors.New("metadata repo is required")
+func (l *liaison) PreRun(ctx context.Context) error {
+	l.l = logger.GetLogger(l.Name())
+	l.l.Info().Msg("memory protector is initialized in PreRun")
+	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
+	path := path.Join(l.root, l.Name())
+	observability.UpdatePath(path)
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return errors.New("node id is empty")
 	}
-
-	// Initialize filesystem
-	if l.lfs == nil {
-		l.lfs = fs.NewLocalFileSystem()
-	}
-
-	// Initialize protector
-	if l.pm == nil {
-		return errors.New("memory protector is required")
-	}
-
-	// Initialize pipeline
-	if l.pipeline == nil {
-		return errors.New("pipeline is required")
-	}
-
-	// Set up data path
 	if l.dataPath == "" {
-		l.dataPath = path.Join(l.root, "trace-data")
+		l.dataPath = filepath.Join(path, storage.DataDir)
 	}
 
-	// Initialize data node registry
 	traceDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicTracePartSync, l.option.tire2Client, l.dataNodeSelector)
-
-	// Initialize schema repository
 	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry)
-
-	// Initialize write listener
 	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
 
-	// Register chunked sync handler for trace data
+	// Register chunked sync handler for trace and sidx data
 	l.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(l.l, &l.schemaRepo))
-
-	// Register chunked sync handler for sidx data
-	l.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSidxPartSync, setUpChunkedSyncCallback(l.l, &l.schemaRepo))
-
 	l.l.Info().
 		Str("root", l.root).
 		Str("dataPath", l.dataPath).
 		Msg("trace liaison service initialized")
 
-	// Subscribe to trace write events
 	return l.pipeline.Subscribe(data.TopicTraceWrite, l.writeListener)
 }
 

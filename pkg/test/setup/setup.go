@@ -252,6 +252,7 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		"--stream-root-path="+dataDir,
 		"--measure-root-path="+dataDir,
 		"--property-root-path="+dataDir,
+		"--trace-root-path="+dataDir,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
@@ -336,10 +337,13 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 		"--node-host", nodeHost,
 		"--stream-root-path="+path,
 		"--measure-root-path="+path,
+		"--trace-root-path="+path,
 		"--stream-flush-timeout=500ms",
 		"--measure-flush-timeout=500ms",
+		"--trace-flush-timeout=500ms",
 		"--stream-sync-interval=1s",
 		"--measure-sync-interval=1s",
+		"--trace-sync-interval=1s",
 	)
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())

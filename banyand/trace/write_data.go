@@ -43,7 +43,7 @@ func (s *syncPartContext) FinishSync() error {
 	}
 	if s.sidxPartContext != nil {
 		for sidxName, memPart := range s.sidxPartContext.GetMemParts() {
-			partPath := fmt.Sprintf("part-%d", memPart.ID())
+			partPath := fmt.Sprintf("%016x", memPart.ID())
 			fullPartPath := filepath.Join(s.tsTable.root, "sidx", sidxName, partPath)
 			memPart.MustFlush(s.tsTable.fileSystem, fullPartPath)
 
@@ -114,29 +114,16 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	tsdb.Tick(ctx.MaxTimestamp)
 
 	if ctx.PartType != PartTypeCore {
-		s.l.Debug().
-			Str("group", ctx.Group).
-			Uint32("shardID", ctx.ShardID).
-			Uint64("partID", ctx.ID).
-			Str("partType", ctx.PartType).
-			Msg("creating unified part handler for sidx data")
-		sidxNames := tsTable.getAllSidxNames()
-		sidxMemParts := sidx.NewSidxMemParts()
-		for _, sidxName := range sidxNames {
-			memPart := sidx.GenerateMemPart()
-			memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
-			writers := sidx.GenerateWriters()
-			writers.MustInitForMemPart(memPart)
-			sidxMemParts.Set(sidxName, memPart, writers)
-			s.l.Debug().
-				Str("sidxName", sidxName).
-				Uint64("partID", ctx.ID).
-				Msg("pre-created sidx memPart and writers")
-		}
+		sidxPartContext := sidx.NewPartContext()
+		memPart := sidx.GenerateMemPart()
+		memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
+		writers := sidx.GenerateWriters()
+		writers.MustInitForMemPart(memPart)
+		sidxPartContext.Set(ctx.PartType, memPart, writers)
 		return &syncPartContext{
 			tsTable:         tsTable,
 			l:               s.l,
-			sidxPartContext: sidxMemParts,
+			sidxPartContext: sidxPartContext,
 		}, nil
 	}
 
@@ -163,35 +150,34 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 	if ctx.Handler == nil {
 		return fmt.Errorf("part handler is nil")
 	}
-	partCtx := ctx.Handler.(*syncPartContext)
-	fileName := ctx.FileName
 	if ctx.PartType != PartTypeCore {
-		return s.handleSidxFileChunk(partCtx, ctx, chunk)
+		return s.handleSidxFileChunk(ctx, chunk)
 	}
-	return s.handleTraceFileChunk(partCtx, fileName, chunk)
+	return s.handleTraceFileChunk(ctx, chunk)
 }
 
-func (s *syncCallback) handleSidxFileChunk(partCtx *syncPartContext, ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
 	sidxName := ctx.PartType
 	fileName := ctx.FileName
+	partCtx := ctx.Handler.(*syncPartContext)
 	writers, exists := partCtx.sidxPartContext.GetWritersByName(sidxName)
 	if !exists {
 		return fmt.Errorf("sidx memPart not found for sidx name: %s", sidxName)
 	}
 	switch {
-	case fileName == sidx.PrimaryFilename:
+	case fileName == sidx.SidxPrimaryName:
 		writers.SidxPrimaryWriter().MustWrite(chunk)
-	case fileName == sidx.DataFilename:
+	case fileName == sidx.SidxDataName:
 		writers.SidxDataWriter().MustWrite(chunk)
-	case fileName == sidx.KeysFilename:
+	case fileName == sidx.SidxKeysName:
 		writers.SidxKeysWriter().MustWrite(chunk)
-	case fileName == sidx.MetaFilename:
+	case fileName == sidx.SidxMetaName:
 		writers.SidxMetaWriter().MustWrite(chunk)
-	case strings.HasPrefix(fileName, sidx.TagDataExtension):
+	case strings.HasPrefix(fileName, sidx.TagDataPrefix):
 		tagName := fileName[len(sidx.TagDataPrefix):]
 		_, tagDataWriter, _ := writers.GetTagWriters(tagName)
 		tagDataWriter.MustWrite(chunk)
-	case strings.HasPrefix(fileName, sidx.TagMetadataExtension):
+	case strings.HasPrefix(fileName, sidx.TagMetadataPrefix):
 		tagName := fileName[len(sidx.TagMetadataPrefix):]
 		tagMetadataWriter, _, _ := writers.GetTagWriters(tagName)
 		tagMetadataWriter.MustWrite(chunk)
@@ -202,13 +188,15 @@ func (s *syncCallback) handleSidxFileChunk(partCtx *syncPartContext, ctx *queue.
 	return nil
 }
 
-func (s *syncCallback) handleTraceFileChunk(partCtx *syncPartContext, fileName string, chunk []byte) error {
+func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	fileName := ctx.FileName
+	partCtx := ctx.Handler.(*syncPartContext)
 	switch {
-	case fileName == metaFilename:
+	case fileName == traceMetaName:
 		partCtx.writers.metaWriter.MustWrite(chunk)
-	case fileName == primaryFilename:
+	case fileName == tracePrimaryName:
 		partCtx.writers.primaryWriter.MustWrite(chunk)
-	case fileName == spansFilename:
+	case fileName == traceSpansName:
 		partCtx.writers.spanWriter.MustWrite(chunk)
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]

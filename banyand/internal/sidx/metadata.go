@@ -51,7 +51,7 @@ type partMetadata struct {
 }
 
 func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
-	metadataPath := filepath.Join(partPath, ManifestFilename)
+	metadataPath := filepath.Join(partPath, manifestFilename)
 	metadata, err := fileSystem.Read(metadataPath)
 	if err != nil {
 		return errors.WithMessage(err, "cannot read metadata.json")
@@ -444,5 +444,5 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
 	}
-	fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, ManifestFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
 }

@@ -245,47 +245,33 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 	}
 
 	for partIndex, partInfo := range req.PartsInfo {
-		if session.partCtx == nil {
-			session.partCtx = &queue.ChunkedSyncPartContext{
-				ID:                    partInfo.Id,
-				Group:                 session.metadata.Group,
-				ShardID:               session.metadata.ShardId,
-				CompressedSizeBytes:   partInfo.CompressedSizeBytes,
-				UncompressedSizeBytes: partInfo.UncompressedSizeBytes,
-				TotalCount:            partInfo.TotalCount,
-				BlocksCount:           partInfo.BlocksCount,
-				MinTimestamp:          partInfo.MinTimestamp,
-				MaxTimestamp:          partInfo.MaxTimestamp,
-				MinKey:                partInfo.MinKey,
-				MaxKey:                partInfo.MaxKey,
-				PartType:              partInfo.PartType,
-			}
-		} else if session.partCtx.ID != partInfo.Id {
+		if session.partCtx != nil && session.partCtx.ID != partInfo.Id {
 			if session.partCtx.Handler != nil {
 				if err := session.partCtx.Handler.FinishSync(); err != nil {
 					return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
 				}
-				session.partCtx.Handler = nil
 			}
-			session.partCtx.ID = partInfo.Id
-			session.partCtx.CompressedSizeBytes = partInfo.CompressedSizeBytes
-			session.partCtx.UncompressedSizeBytes = partInfo.UncompressedSizeBytes
-			session.partCtx.TotalCount = partInfo.TotalCount
-			session.partCtx.BlocksCount = partInfo.BlocksCount
-			session.partCtx.MinTimestamp = partInfo.MinTimestamp
-			session.partCtx.MaxTimestamp = partInfo.MaxTimestamp
-			session.partCtx.MinKey = partInfo.MinKey
-			session.partCtx.MaxKey = partInfo.MaxKey
-			session.partCtx.PartType = partInfo.PartType
 		}
 
-		if session.partCtx.Handler == nil {
-			partHandler, err := handler.CreatePartHandler(session.partCtx)
-			if err != nil {
-				return fmt.Errorf("failed to create part handler: %w", err)
-			}
-			session.partCtx.Handler = partHandler
+		session.partCtx = &queue.ChunkedSyncPartContext{
+			ID:                    partInfo.Id,
+			Group:                 session.metadata.Group,
+			ShardID:               session.metadata.ShardId,
+			CompressedSizeBytes:   partInfo.CompressedSizeBytes,
+			UncompressedSizeBytes: partInfo.UncompressedSizeBytes,
+			TotalCount:            partInfo.TotalCount,
+			BlocksCount:           partInfo.BlocksCount,
+			MinTimestamp:          partInfo.MinTimestamp,
+			MaxTimestamp:          partInfo.MaxTimestamp,
+			MinKey:                partInfo.MinKey,
+			MaxKey:                partInfo.MaxKey,
+			PartType:              partInfo.PartType,
 		}
+		partHandler, err := handler.CreatePartHandler(session.partCtx)
+		if err != nil {
+			return fmt.Errorf("failed to create part handler: %w", err)
+		}
+		session.partCtx.Handler = partHandler
 
 		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {
 			s.log.Error().Err(err).
@@ -384,6 +370,7 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 		partDataSize += actualFileSize
 
 		session.partCtx.FileName = fileInfo.Name
+		session.partCtx.PartType = partInfo.PartType
 
 		if err := handler.HandleFileChunk(session.partCtx, fileChunk); err != nil {
 			return fmt.Errorf("failed to stream file chunk for %s: %w", fileInfo.Name, err)

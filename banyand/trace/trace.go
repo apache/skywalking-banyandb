@@ -48,6 +48,7 @@ const (
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
 	defaultFlushTimeout = time.Second
+	defaultSyncInterval = 30 * time.Second
 )
 
 var traceScope = observability.RootScope.SubScope("trace")
@@ -58,6 +59,7 @@ type option struct {
 	tire2Client        queue.Client
 	seriesCacheMaxSize run.Bytes
 	flushTimeout       time.Duration
+	syncInterval       time.Duration
 }
 
 // Service allows inspecting the trace data.

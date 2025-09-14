@@ -73,7 +73,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate stream liaison service")
 	}
 
-	traceLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicTracePartSync.String(), metaSvc)
+	traceLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicTraceWrite.String(), metaSvc)
 	traceDataNodeSel := node.NewRoundRobinSelector(data.TopicTracePartSync.String(), metaSvc)
 	traceSVC, err := trace.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, traceDataNodeSel, tire2Client)
 	if err != nil {
@@ -91,7 +91,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
-		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTracePartSync, tire1Client, traceLiaisonNodeSel),
+		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())

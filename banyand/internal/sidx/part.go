@@ -36,23 +36,32 @@ import (
 )
 
 const (
-	// PrimaryFilename is the filename for primary files.
-	PrimaryFilename = "primary.bin"
-	// DataFilename is the filename for data files.
-	DataFilename = "data.bin"
-	// KeysFilename is the filename for keys files.
-	KeysFilename = "keys.bin"
-	// MetaFilename is the filename for meta files.
-	MetaFilename = "meta.bin"
-	// ManifestFilename is the filename for manifest files.
-	ManifestFilename = "manifest.json"
+	// SidxPrimaryName is the name for primary files.
+	SidxPrimaryName = "primary"
+	// SidxDataName is the name for data files.
+	SidxDataName = "data"
+	// SidxKeysName is the name for keys files.
+	SidxKeysName = "keys"
+	// SidxMetaName is the name for meta files.
+	SidxMetaName = "meta"
 
-	// TagDataExtension is the extension for tag data files.
-	TagDataExtension = ".td"
-	// TagMetadataExtension is the extension for tag metadata files.
-	TagMetadataExtension = ".tm"
-	// TagFilterExtension is the extension for tag filter files.
-	TagFilterExtension = ".tf"
+	// primaryFilename is the filename for primary files.
+	primaryFilename = SidxPrimaryName + ".bin"
+	// dataFilename is the filename for data files.
+	dataFilename = SidxDataName + ".bin"
+	// keysFilename is the filename for keys files.
+	keysFilename = SidxKeysName + ".bin"
+	// metaFilename is the filename for meta files.
+	metaFilename = SidxMetaName + ".bin"
+	// manifestFilename is the filename for manifest files.
+	manifestFilename = "manifest.json"
+
+	// tagDataExtension is the extension for tag data files.
+	tagDataExtension = ".td"
+	// tagMetadataExtension is the extension for tag metadata files.
+	tagMetadataExtension = ".tm"
+	// tagFilterExtension is the extension for tag filter files.
+	tagFilterExtension = ".tf"
 
 	// TagDataPrefix is the prefix for tag data files.
 	TagDataPrefix = "td:"
@@ -102,10 +111,10 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	}
 
 	// Open standard files.
-	p.primary = mustOpenReader(filepath.Join(path, PrimaryFilename), fileSystem)
-	p.data = mustOpenReader(filepath.Join(path, DataFilename), fileSystem)
-	p.keys = mustOpenReader(filepath.Join(path, KeysFilename), fileSystem)
-	p.meta = mustOpenReader(filepath.Join(path, MetaFilename), fileSystem)
+	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
+	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
+	p.keys = mustOpenReader(filepath.Join(path, keysFilename), fileSystem)
+	p.meta = mustOpenReader(filepath.Join(path, metaFilename), fileSystem)
 
 	// Load part metadata from meta.bin.
 	if err := p.loadPartMetadata(); err != nil {
@@ -125,7 +134,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 // loadPartMetadata reads and parses the part metadata from manifest.json.
 func (p *part) loadPartMetadata() error {
 	// First try to read from manifest.json (new format)
-	manifestPath := filepath.Join(p.path, ManifestFilename)
+	manifestPath := filepath.Join(p.path, manifestFilename)
 	manifestData, err := p.fileSystem.Read(manifestPath)
 	if err == nil {
 		// Parse JSON manifest
@@ -138,7 +147,7 @@ func (p *part) loadPartMetadata() error {
 	}
 
 	// Fallback to meta.bin for backward compatibility
-	metaData, err := p.fileSystem.Read(filepath.Join(p.path, MetaFilename))
+	metaData, err := p.fileSystem.Read(filepath.Join(p.path, metaFilename))
 	if err != nil {
 		return fmt.Errorf("failed to read meta.bin: %w", err)
 	}
@@ -179,9 +188,9 @@ func (p *part) openTagFiles() {
 
 		fileName := entry.Name()
 		// Check if this is a tag file by checking for tag extensions
-		if !strings.HasSuffix(fileName, TagDataExtension) &&
-			!strings.HasSuffix(fileName, TagMetadataExtension) &&
-			!strings.HasSuffix(fileName, TagFilterExtension) {
+		if !strings.HasSuffix(fileName, tagDataExtension) &&
+			!strings.HasSuffix(fileName, tagMetadataExtension) &&
+			!strings.HasSuffix(fileName, tagFilterExtension) {
 			continue
 		}
 
@@ -196,11 +205,11 @@ func (p *part) openTagFiles() {
 		reader := mustOpenReader(filePath, p.fileSystem)
 
 		switch extension {
-		case TagDataExtension:
+		case tagDataExtension:
 			p.tagData[tagName] = reader
-		case TagMetadataExtension:
+		case tagMetadataExtension:
 			p.tagMetadata[tagName] = reader
-		case TagFilterExtension:
+		case tagFilterExtension:
 			p.tagFilters[tagName] = reader
 		default:
 			// Unknown extension, close the reader.
@@ -224,7 +233,7 @@ func extractTagNameAndExtension(fileName string) (tagName, extension string, fou
 
 	// Validate extension.
 	switch extension {
-	case TagDataExtension, TagMetadataExtension, TagFilterExtension:
+	case tagDataExtension, tagMetadataExtension, tagFilterExtension:
 		return tagName, extension, true
 	default:
 		return "", "", false
@@ -671,20 +680,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.MkdirPanicIfExist(partPath, storage.DirPerm)
 
 	// Write core files
-	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, PrimaryFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, DataFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, KeysFilename), storage.FilePerm)
-	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, MetaFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, primaryFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, dataFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, keysFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
 
 	// Write individual tag files
 	for tagName, td := range mp.tagData {
-		fs.MustFlush(fileSystem, td.Buf, filepath.Join(partPath, tagName+TagDataExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, td.Buf, filepath.Join(partPath, tagName+tagDataExtension), storage.FilePerm)
 	}
 	for tagName, tm := range mp.tagMetadata {
-		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(partPath, tagName+TagMetadataExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(partPath, tagName+tagMetadataExtension), storage.FilePerm)
 	}
 	for tagName, tf := range mp.tagFilters {
-		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(partPath, tagName+TagFilterExtension), storage.FilePerm)
+		fs.MustFlush(fileSystem, tf.Buf, filepath.Join(partPath, tagName+tagFilterExtension), storage.FilePerm)
 	}
 
 	// Write part metadata manifest
@@ -769,8 +778,8 @@ type PartContext struct {
 	writers  map[string]*writers
 }
 
-// NewSidxMemParts creates a new sidx part context.
-func NewSidxMemParts() *PartContext {
+// NewPartContext creates a new sidx part context.
+func NewPartContext() *PartContext {
 	return &PartContext{
 		memParts: make(map[string]*memPart),
 		writers:  make(map[string]*writers),
