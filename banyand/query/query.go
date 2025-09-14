@@ -43,7 +43,7 @@ type queryService struct {
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	nqp         *topNQueryProcessor
-	tqp        *traceQueryProcessor
+	tqp         *traceQueryProcessor
 	nodeID      string
 	slowQuery   time.Duration
 }

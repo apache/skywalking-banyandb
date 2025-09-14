@@ -103,6 +103,8 @@ type ChunkedSyncClient interface {
 // ChunkedSyncPartContext represents the context for a chunked sync operation.
 type ChunkedSyncPartContext struct {
 	Handler               PartHandler
+	TraceIDFilter         *clusterv1.TraceIDFilter
+	TagType               *clusterv1.TagType
 	Group                 string
 	FileName              string
 	PartType              string
@@ -116,8 +118,6 @@ type ChunkedSyncPartContext struct {
 	MinKey                int64
 	MaxKey                int64
 	ShardID               uint32
-	TraceIDFilter         any
-	TagType               any
 }
 
 // Close releases resources associated with the context.

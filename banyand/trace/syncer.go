@@ -144,35 +144,6 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	}
 }
 
-// syncStreamingPartsToNode synchronizes streaming parts to a node.
-func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
-	// Get chunked sync client for this node
-	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
-	if err != nil {
-		return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
-	}
-	defer chunkedClient.Close()
-
-	// Sync parts using chunked transfer with streaming
-	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
-	if err != nil {
-		return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
-	}
-
-	if !result.Success {
-		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
-	}
-	tst.l.Info().
-		Str("node", node).
-		Str("session", result.SessionID).
-		Uint64("bytes", result.TotalBytes).
-		Int64("duration_ms", result.DurationMs).
-		Uint32("chunks", result.ChunksCount).
-		Uint32("parts", result.PartsCount).
-		Msg("chunked sync completed successfully")
-	return nil
-}
-
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
 	// Get all parts from the current snapshot
 	var partsToSync []*part
@@ -220,37 +191,8 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 			release()
 		}
 	}()
-	for _, node := range nodes {
-		// Prepare all streaming parts data
-		streamingParts := make([]queue.StreamingPartData, 0)
-		// Create streaming parts from core trace parts
-		for _, part := range partsToSync {
-			files, release := createPartFileReaders(part)
-			releaseFuncs = append(releaseFuncs, release)
-			streamingParts = append(streamingParts, queue.StreamingPartData{
-				ID:                    part.partMetadata.ID,
-				Group:                 tst.group,
-				ShardID:               uint32(tst.shardID),
-				Topic:                 data.TopicTracePartSync.String(),
-				Files:                 files,
-				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
-				UncompressedSizeBytes: part.partMetadata.UncompressedSpanSizeBytes,
-				TotalCount:            part.partMetadata.TotalCount,
-				BlocksCount:           part.partMetadata.BlocksCount,
-				MinTimestamp:          part.partMetadata.MinTimestamp,
-				MaxTimestamp:          part.partMetadata.MaxTimestamp,
-				PartType:              PartTypeCore,
-			})
-		}
-		// Add sidx streaming parts
-		for name, sidxParts := range sidxPartsToSync {
-			sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
-			streamingParts = append(streamingParts, sidxStreamingParts...)
-			releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
-		}
-		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
-			return err
-		}
+	if err := tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs); err != nil {
+		return err
 	}
 
 	// Construct syncIntroduction to remove synced parts from snapshot
@@ -303,5 +245,73 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		}
 		sidx.ReleaseSyncIntroduction(ssi)
 	}
+	return nil
+}
+
+// syncStreamingPartsToNodes synchronizes streamingparts to multiple nodes.
+func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []string,
+	partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part, releaseFuncs *[]func(),
+) error {
+	for _, node := range nodes {
+		// Prepare all streaming parts data
+		streamingParts := make([]queue.StreamingPartData, 0)
+		// Create streaming parts from core trace parts.
+		for _, part := range partsToSync {
+			files, release := createPartFileReaders(part)
+			*releaseFuncs = append(*releaseFuncs, release)
+			streamingParts = append(streamingParts, queue.StreamingPartData{
+				ID:                    part.partMetadata.ID,
+				Group:                 tst.group,
+				ShardID:               uint32(tst.shardID),
+				Topic:                 data.TopicTracePartSync.String(),
+				Files:                 files,
+				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+				UncompressedSizeBytes: part.partMetadata.UncompressedSpanSizeBytes,
+				TotalCount:            part.partMetadata.TotalCount,
+				BlocksCount:           part.partMetadata.BlocksCount,
+				MinTimestamp:          part.partMetadata.MinTimestamp,
+				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
+			})
+		}
+		// Add sidx streaming parts
+		for name, sidxParts := range sidxPartsToSync {
+			sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
+			streamingParts = append(streamingParts, sidxStreamingParts...)
+			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
+		}
+		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncStreamingPartsToNode synchronizes streaming parts to a node.
+func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
+	// Get chunked sync client for this node
+	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
+	if err != nil {
+		return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
+	}
+	defer chunkedClient.Close()
+
+	// Sync parts using chunked transfer with streaming
+	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+	if err != nil {
+		return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+	}
+	tst.l.Info().
+		Str("node", node).
+		Str("session", result.SessionID).
+		Uint64("bytes", result.TotalBytes).
+		Int64("duration_ms", result.DurationMs).
+		Uint32("chunks", result.ChunksCount).
+		Uint32("parts", result.PartsCount).
+		Msg("chunked sync completed successfully")
 	return nil
 }

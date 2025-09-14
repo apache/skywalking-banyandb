@@ -103,8 +103,6 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 	}
 }
 
-type TagType = tagType
-
 type tagType map[string]pbv1.ValueType
 
 func (tt tagType) reset() {
@@ -201,8 +199,6 @@ func (tt tagType) mustWriteTagType(fileSystem fs.FileSystem, partPath string) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", tagTypePath, n, len(data))
 	}
 }
-
-type TraceIDFilter = traceIDFilter
 
 type traceIDFilter struct {
 	filter *filter.BloomFilter
