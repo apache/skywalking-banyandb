@@ -35,9 +35,11 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -336,6 +338,11 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 		Topic:     topic.String(),
 		MessageId: uint64(m.ID()),
 		BatchMod:  m.BatchModeEnabled(),
+		VersionInfo: &clusterv1.VersionInfo{
+			ApiVersion:                  apiversion.Version,
+			FileFormatVersion:           storage.GetCurrentVersion(),
+			CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
+		},
 	}
 
 	switch data := m.Data().(type) {
