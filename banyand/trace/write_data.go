@@ -18,8 +18,8 @@
 package trace
 
 import (
+	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,18 +42,12 @@ func (s *syncPartContext) FinishSync() error {
 		s.tsTable.mustAddMemPart(s.memPart)
 	}
 	if s.sidxPartContext != nil {
-		for sidxName, memPart := range s.sidxPartContext.GetMemParts() {
-			partPath := fmt.Sprintf("%016x", memPart.ID())
-			fullPartPath := filepath.Join(s.tsTable.root, "sidx", sidxName, partPath)
-			memPart.MustFlush(s.tsTable.fileSystem, fullPartPath)
-
-			if s.l != nil {
-				s.l.Debug().
-					Str("sidxName", sidxName).
-					Str("partPath", fullPartPath).
-					Msg("flushed sidx memPart to disk")
-			}
+		memPart := s.sidxPartContext.GetMemPart()
+		sidxInstance, err := s.tsTable.getOrCreateSidx(s.sidxPartContext.Name())
+		if err != nil {
+			return err
 		}
+		sidxInstance.MustAddMemPart(context.TODO(), memPart)
 	}
 	return s.Close()
 }
@@ -162,10 +156,7 @@ func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, ch
 	sidxName := ctx.PartType
 	fileName := ctx.FileName
 	partCtx := ctx.Handler.(*syncPartContext)
-	writers, exists := partCtx.sidxPartContext.GetWritersByName(sidxName)
-	if !exists {
-		return fmt.Errorf("sidx memPart not found for sidx name: %s", sidxName)
-	}
+	writers := partCtx.sidxPartContext.GetWriters()
 	switch {
 	case fileName == sidx.SidxPrimaryName:
 		writers.SidxPrimaryWriter().MustWrite(chunk)

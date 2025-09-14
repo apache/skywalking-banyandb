@@ -105,6 +105,30 @@ func (s *sidx) SyncCh() chan<- *SyncIntroduction {
 	return s.syncCh
 }
 
+func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart) {
+	// Generate part ID using atomic increment
+	partID := atomic.AddUint64(&s.curPartID, 1)
+
+	// Create introduction
+	intro := generateIntroduction()
+	intro.memPart = mp
+	intro.memPart.partMetadata.ID = partID
+	intro.applied = make(chan struct{})
+
+	// Send to introducer loop
+	select {
+	case s.introductions <- intro:
+		// Wait for introduction to be applied
+		<-intro.applied
+		releaseIntroduction(intro)
+		return
+	case <-ctx.Done():
+		releaseIntroduction(intro)
+		ReleaseMemPart(mp)
+		return
+	}
+}
+
 // Write implements SIDX interface.
 func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	// Validate requests

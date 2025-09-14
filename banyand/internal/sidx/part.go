@@ -774,44 +774,43 @@ func partName(epoch uint64) string {
 
 // PartContext manages multiple sidx memParts.
 type PartContext struct {
-	memParts map[string]*memPart
-	writers  map[string]*writers
+	memPart *memPart
+	writers *writers
+	name    string
 }
 
 // NewPartContext creates a new sidx part context.
 func NewPartContext() *PartContext {
-	return &PartContext{
-		memParts: make(map[string]*memPart),
-		writers:  make(map[string]*writers),
-	}
+	return &PartContext{}
 }
 
 // Set sets the memory part and writers.
 func (pc *PartContext) Set(name string, memPart *memPart, writers *writers) {
-	pc.memParts[name] = memPart
-	pc.writers[name] = writers
+	pc.name = name
+	pc.memPart = memPart
+	pc.writers = writers
 }
 
-// GetMemParts gets the memory parts.
-func (pc *PartContext) GetMemParts() map[string]*MemPart {
-	return pc.memParts
+// Name gets the name.
+func (pc *PartContext) Name() string {
+	return pc.name
 }
 
-// GetWritersByName gets the writers by name.
-func (pc *PartContext) GetWritersByName(name string) (*Writers, bool) {
-	writers, exists := pc.writers[name]
-	return writers, exists
+// GetMemPart gets the memory part.
+func (pc *PartContext) GetMemPart() *MemPart {
+	return pc.memPart
+}
+
+// GetWriters gets the writers.
+func (pc *PartContext) GetWriters() *Writers {
+	return pc.writers
 }
 
 // Close closes the sidx part context.
 func (pc *PartContext) Close() {
-	for _, writers := range pc.writers {
-		writers.MustClose()
-		ReleaseWriters(writers)
-	}
-	for _, memPart := range pc.memParts {
-		ReleaseMemPart(memPart)
-	}
-	pc.memParts = nil
+	pc.writers.MustClose()
+	ReleaseWriters(pc.writers)
+	ReleaseMemPart(pc.memPart)
 	pc.writers = nil
+	pc.memPart = nil
 }

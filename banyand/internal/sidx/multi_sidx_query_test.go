@@ -38,6 +38,8 @@ type mockSIDX struct {
 	delay    bool
 }
 
+func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}
+
 func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest) error {
 	return nil // Not implemented for tests
 }

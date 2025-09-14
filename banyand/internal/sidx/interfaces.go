@@ -36,10 +36,11 @@ import (
 // opaque ordering values by sidx - the system only performs numerical comparisons
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
+	// MustAddMemPart adds a memPart to the SIDX instance.
+	MustAddMemPart(ctx context.Context, mp *memPart)
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
 	Write(ctx context.Context, reqs []WriteRequest) error
-
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.

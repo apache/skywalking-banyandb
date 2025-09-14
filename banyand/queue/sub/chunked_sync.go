@@ -245,7 +245,7 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 	}
 
 	for partIndex, partInfo := range req.PartsInfo {
-		if session.partCtx != nil && session.partCtx.ID != partInfo.Id {
+		if session.partCtx != nil && (session.partCtx.ID != partInfo.Id || session.partCtx.PartType != partInfo.PartType) {
 			if session.partCtx.Handler != nil {
 				if err := session.partCtx.Handler.FinishSync(); err != nil {
 					return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
