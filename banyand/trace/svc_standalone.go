@@ -145,7 +145,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 
 	// Initialize disk monitor for forced retention
 	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
-	s.diskMonitor.Start(ctx)
+	s.diskMonitor.Start()
 
 	// Set up write callback handler
 	if s.pipeline != nil {

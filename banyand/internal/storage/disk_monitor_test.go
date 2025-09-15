@@ -83,7 +83,7 @@ func (m *MockRetentionService) DeleteOldestSegmentInGroup(group string) (bool, e
 	return m.deleteResponse[group], nil
 }
 
-func (m *MockRetentionService) CleanupOldSnapshots(maxAge time.Duration) error {
+func (m *MockRetentionService) CleanupOldSnapshots(_ time.Duration) error {
 	return m.snapshotError
 }
 
@@ -118,7 +118,7 @@ func (m *mockMetricsRegistry) Serve() run.StopNotify        { return nil }
 func (m *mockMetricsRegistry) GracefulStop()                {}
 func (m *mockMetricsRegistry) Name() string                 { return "mock" }
 func (m *mockMetricsRegistry) NativeEnabled() bool          { return false }
-func (m *mockMetricsRegistry) With(scope meter.Scope) *observability.Factory {
+func (m *mockMetricsRegistry) With(_ meter.Scope) *observability.Factory {
 	return &observability.Factory{}
 }
 
@@ -181,8 +181,7 @@ func TestDiskMonitor_StartStop(t *testing.T) {
 
 	dm := NewDiskMonitor(service, config, registry)
 
-	ctx := context.Background()
-	dm.Start(ctx)
+	dm.Start()
 
 	// Give it a moment to start
 	time.Sleep(time.Millisecond * 20)
@@ -207,8 +206,7 @@ func TestDiskMonitor_StartWithZeroInterval(t *testing.T) {
 
 	dm := NewDiskMonitor(service, config, registry)
 
-	ctx := context.Background()
-	dm.Start(ctx)
+	dm.Start()
 
 	// Should not create ticker for zero interval
 	assert.Nil(t, dm.ticker)

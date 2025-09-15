@@ -18,7 +18,6 @@
 package storage
 
 import (
-	"context"
 	"os"
 	"sort"
 	"sync/atomic"
@@ -139,7 +138,7 @@ func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observ
 }
 
 // Start begins monitoring disk usage and starts the forced retention process.
-func (dm *DiskMonitor) Start(ctx context.Context) {
+func (dm *DiskMonitor) Start() {
 	if dm.config.CheckInterval <= 0 {
 		dm.logger.Warn().Msg("disk monitor check interval is 0 or negative, monitor disabled")
 		return

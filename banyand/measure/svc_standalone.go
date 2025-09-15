@@ -271,7 +271,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 
 	// Initialize disk monitor for forced retention
 	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
-	s.diskMonitor.Start(ctx)
+	s.diskMonitor.Start()
 
 	// For now, keep the original write throttling behavior based on high watermark
 	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))

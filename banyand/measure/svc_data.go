@@ -281,7 +281,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 
 	// Initialize disk monitor for forced retention
 	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
-	s.diskMonitor.Start(ctx)
+	s.diskMonitor.Start()
 
 	// For now, keep the original write throttling behavior based on high watermark
 	// TODO: Replace this with a newer write callback that doesn't duplicate disk monitoring
