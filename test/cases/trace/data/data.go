@@ -74,7 +74,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		innerGm.Expect(resp.Spans).To(gm.BeEmpty())
+		innerGm.Expect(resp.Traces).To(gm.BeEmpty())
 		return
 	}
 	if args.Want == "" {
@@ -86,19 +86,36 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	unmarshalYAMLWithSpanEncoding(ww, want)
 
 	if args.DisOrder {
-		slices.SortFunc(want.Spans, func(a, b *tracev1.Span) int {
-			// Sort by first tag value for consistency
-			if len(a.Tags) > 0 && len(b.Tags) > 0 {
-				return strings.Compare(a.Tags[0].Value.GetStr().GetValue(), b.Tags[0].Value.GetStr().GetValue())
+		// Sort traces by first span's tag for consistency
+		slices.SortFunc(want.Traces, func(a, b *tracev1.Trace) int {
+			if len(a.Spans) > 0 && len(b.Spans) > 0 && len(a.Spans[0].Tags) > 0 && len(b.Spans[0].Tags) > 0 {
+				return strings.Compare(a.Spans[0].Tags[0].Value.GetStr().GetValue(), b.Spans[0].Tags[0].Value.GetStr().GetValue())
 			}
 			return 0
 		})
-		slices.SortFunc(resp.Spans, func(a, b *tracev1.Span) int {
-			if len(a.Tags) > 0 && len(b.Tags) > 0 {
-				return strings.Compare(a.Tags[0].Value.GetStr().GetValue(), b.Tags[0].Value.GetStr().GetValue())
+		slices.SortFunc(resp.Traces, func(a, b *tracev1.Trace) int {
+			if len(a.Spans) > 0 && len(b.Spans) > 0 && len(a.Spans[0].Tags) > 0 && len(b.Spans[0].Tags) > 0 {
+				return strings.Compare(a.Spans[0].Tags[0].Value.GetStr().GetValue(), b.Spans[0].Tags[0].Value.GetStr().GetValue())
 			}
 			return 0
 		})
+		// Sort spans within each trace for consistent ordering
+		for _, trace := range want.Traces {
+			slices.SortFunc(trace.Spans, func(a, b *tracev1.Span) int {
+				if len(a.Tags) > 0 && len(b.Tags) > 0 {
+					return strings.Compare(a.Tags[0].Value.GetStr().GetValue(), b.Tags[0].Value.GetStr().GetValue())
+				}
+				return 0
+			})
+		}
+		for _, trace := range resp.Traces {
+			slices.SortFunc(trace.Spans, func(a, b *tracev1.Span) int {
+				if len(a.Tags) > 0 && len(b.Tags) > 0 {
+					return strings.Compare(a.Tags[0].Value.GetStr().GetValue(), b.Tags[0].Value.GetStr().GetValue())
+				}
+				return 0
+			})
+		}
 	}
 	var extra []cmp.Option
 	extra = append(extra, protocmp.IgnoreUnknown(),
@@ -217,13 +234,19 @@ func unmarshalYAMLWithSpanEncoding(yamlData []byte, response *tracev1.QueryRespo
 	err = json.Unmarshal(j, &jsonData)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 
-	// Convert span strings to base64
-	if spans, ok := jsonData["spans"].([]interface{}); ok {
-		for _, spanInterface := range spans {
-			if span, ok := spanInterface.(map[string]interface{}); ok {
-				if spanValue, ok := span["span"].(string); ok {
-					// Encode the plain string as base64
-					span["span"] = base64.StdEncoding.EncodeToString([]byte(spanValue))
+	// Convert span strings to base64 in traces structure
+	if traces, ok := jsonData["traces"].([]interface{}); ok {
+		for _, traceInterface := range traces {
+			if trace, ok := traceInterface.(map[string]interface{}); ok {
+				if spans, ok := trace["spans"].([]interface{}); ok {
+					for _, spanInterface := range spans {
+						if span, ok := spanInterface.(map[string]interface{}); ok {
+							if spanValue, ok := span["span"].(string); ok {
+								// Encode the plain string as base64
+								span["span"] = base64.StdEncoding.EncodeToString([]byte(spanValue))
+							}
+						}
+					}
 				}
 			}
 		}
@@ -252,18 +275,24 @@ func marshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
 		return nil, err
 	}
 
-	// Convert base64 encoded span fields back to strings
-	if spans, ok := jsonData["spans"].([]interface{}); ok {
-		for _, spanInterface := range spans {
-			if span, ok := spanInterface.(map[string]interface{}); ok {
-				if spanB64, ok := span["span"].(string); ok {
-					// Decode base64 back to original string
-					spanBytes, err := base64.StdEncoding.DecodeString(spanB64)
-					if err != nil {
-						// If it's not valid base64, keep the original value
-						continue
+	// Convert base64 encoded span fields back to strings in traces structure
+	if traces, ok := jsonData["traces"].([]interface{}); ok {
+		for _, traceInterface := range traces {
+			if trace, ok := traceInterface.(map[string]interface{}); ok {
+				if spans, ok := trace["spans"].([]interface{}); ok {
+					for _, spanInterface := range spans {
+						if span, ok := spanInterface.(map[string]interface{}); ok {
+							if spanB64, ok := span["span"].(string); ok {
+								// Decode base64 back to original string
+								spanBytes, err := base64.StdEncoding.DecodeString(spanB64)
+								if err != nil {
+									// If it's not valid base64, keep the original value
+									continue
+								}
+								span["span"] = string(spanBytes)
+							}
+						}
 					}
-					span["span"] = string(spanBytes)
 				}
 			}
 		}
@@ -274,7 +303,7 @@ func marshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
 }
 
 // GetSpanDataAsString extracts the span data as a string from a Span.
-// This converts the raw bytes back to the original string value like "span5_trace_data".
+// This converts the raw bytes back to the original string value like "trace_001_span_1".
 func GetSpanDataAsString(span *tracev1.Span) string {
 	if span == nil || len(span.Span) == 0 {
 		return ""

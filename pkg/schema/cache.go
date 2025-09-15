@@ -551,6 +551,9 @@ func (g *group) GetSchema() *commonv1.Group {
 }
 
 func (g *group) SupplyTSDB() io.Closer {
+	if g.db.Load() == nil {
+		return nil
+	}
 	return g.db.Load().(io.Closer)
 }
 

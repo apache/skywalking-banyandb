@@ -49,7 +49,7 @@ func releaseIntroduction(i *introduction) {
 }
 
 type flusherIntroduction struct {
-	flushed map[uint64]*part
+	flushed map[uint64]*partWrapper
 	applied chan struct{}
 }
 
@@ -66,7 +66,7 @@ func generateFlusherIntroduction() *flusherIntroduction {
 	v := flusherIntroductionPool.Get()
 	if v == nil {
 		return &flusherIntroduction{
-			flushed: make(map[uint64]*part),
+			flushed: make(map[uint64]*partWrapper),
 		}
 	}
 	fi := v
@@ -199,8 +199,8 @@ func (s *sidx) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint6
 }
 
 func (s *sidx) replaceSnapshot(next *snapshot) {
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.snapshot != nil {
 		s.snapshot.decRef()
 	}

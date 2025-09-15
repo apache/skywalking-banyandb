@@ -19,6 +19,8 @@
 package accesslog
 
 import (
+	"time"
+
 	"google.golang.org/protobuf/proto"
 )
 
@@ -26,6 +28,8 @@ import (
 type Log interface {
 	// Write writes the access log.
 	Write(req proto.Message) error
+	// WriteQuery writes the query access log with timing information.
+	WriteQuery(service string, startTime time.Time, duration time.Duration, req proto.Message, err error) error
 	// Close closes the access log.
 	Close() error
 }

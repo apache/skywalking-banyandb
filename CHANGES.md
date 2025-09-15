@@ -37,7 +37,11 @@ Release Notes.
   - Data ingestion and retrieval.
   - Flush memory data to disk.
   - Merge memory data and disk data.
-- Enhance access log functionality with sampling option
+- Enhance access log functionality with sampling option.
+- Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
+- Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
+- Add query access log support for stream, measure, trace, and property services to capture and log all query requests for monitoring and debugging purposes.
+- Implement comprehensive version compatibility checking for both regular data transmission and chunked sync operations, ensuring proper API version and file format version validation with detailed error reporting and graceful handling of version mismatches.
 
 ### Bug Fixes
 

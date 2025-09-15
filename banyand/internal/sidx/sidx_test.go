@@ -32,9 +32,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+const partIDForTesting = 1
 
 // Test helper functions.
 
@@ -51,8 +54,9 @@ func createTestOptions(t *testing.T) *Options {
 }
 
 func createTestSIDX(t *testing.T) SIDX {
+	fileSystem := fs.NewLocalFileSystem()
 	opts := createTestOptions(t)
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	require.NoError(t, err)
 	require.NotNil(t, sidx)
 	return sidx
@@ -63,7 +67,6 @@ func createTestTag(name, value string) Tag {
 		Name:      name,
 		Value:     []byte(value),
 		ValueType: pbv1.ValueTypeStr,
-		Indexed:   true,
 	}
 }
 
@@ -1094,13 +1097,13 @@ func TestQueryResult_UniqueDataCaching(t *testing.T) {
 	qr.convertBlockToResponse(block1, 1, result)
 
 	// Verify cache is initialized in QueryResponse
-	assert.NotNil(t, result.uniqueDataMap, "uniqueDataMap should be initialized after first call")
-	assert.Equal(t, 2, result.uniqueDataCount, "uniqueDataCount should be 2 after first call")
-	assert.Equal(t, 2, len(result.uniqueDataMap), "uniqueDataMap should contain 2 elements")
+	assert.NotNil(t, result.uniqueTracker, "uniqueTracker should be initialized after first call")
+	assert.Equal(t, 2, result.UniqueDataCount(), "uniqueDataCount should be 2 after first call")
+	assert.Equal(t, 2, result.uniqueTracker.Count(), "uniqueTracker should contain 2 elements")
 
 	// Verify cache contains expected data
-	_, hasTrace1 := result.uniqueDataMap["trace1"]
-	_, hasTrace2 := result.uniqueDataMap["trace2"]
+	_, hasTrace1 := result.uniqueTracker.dataMap["trace1"]
+	_, hasTrace2 := result.uniqueTracker.dataMap["trace2"]
 	assert.True(t, hasTrace1, "Cache should contain trace1")
 	assert.True(t, hasTrace2, "Cache should contain trace2")
 
@@ -1113,15 +1116,15 @@ func TestQueryResult_UniqueDataCaching(t *testing.T) {
 	qr.convertBlockToResponse(block2, 1, result)
 
 	// Verify cache is updated correctly in QueryResponse
-	assert.Equal(t, 3, result.uniqueDataCount, "uniqueDataCount should be 3 after second call")
-	assert.Equal(t, 3, len(result.uniqueDataMap), "uniqueDataMap should contain 3 elements")
+	assert.Equal(t, 3, result.UniqueDataCount(), "uniqueDataCount should be 3 after second call")
+	assert.Equal(t, 3, result.uniqueTracker.Count(), "uniqueTracker should contain 3 elements")
 
 	// Verify cache contains all expected data
-	_, hasTrace3 := result.uniqueDataMap["trace3"]
+	_, hasTrace3 := result.uniqueTracker.dataMap["trace3"]
 	assert.True(t, hasTrace3, "Cache should contain trace3")
 
 	// trace4 should not be in cache due to limit of 3
-	_, hasTrace4 := result.uniqueDataMap["trace4"]
+	_, hasTrace4 := result.uniqueTracker.dataMap["trace4"]
 	assert.False(t, hasTrace4, "Cache should not contain trace4 due to limit")
 
 	// Verify result has correct total elements: trace1 (2x), trace2 (1x), trace3 (1x)
@@ -1142,22 +1145,24 @@ func TestQueryResponse_Reset_CacheClear(t *testing.T) {
 		Data: [][]byte{[]byte("trace1"), []byte("trace2")},
 		Tags: [][]Tag{{}, {}},
 		SIDs: []common.SeriesID{1, 2},
-		// Manually set cache for testing
-		uniqueDataMap:   map[string]struct{}{"trace1": {}, "trace2": {}},
-		uniqueDataCount: 2,
 	}
 
+	// Manually set cache for testing
+	result.InitUniqueTracker(10)
+	result.uniqueTracker.dataMap = map[string]struct{}{"trace1": {}, "trace2": {}}
+	result.uniqueTracker.count = 2
+
 	// Verify cache is set
-	assert.NotNil(t, result.uniqueDataMap, "Cache should be set before reset")
-	assert.Equal(t, 2, result.uniqueDataCount, "Cache count should be 2 before reset")
+	assert.NotNil(t, result.uniqueTracker, "Cache should be set before reset")
+	assert.Equal(t, 2, result.UniqueDataCount(), "Cache count should be 2 before reset")
 	assert.Equal(t, 2, result.Len(), "Should have 2 elements before reset")
 
 	// Reset the result
 	result.Reset()
 
 	// Verify cache is cleared
-	assert.Nil(t, result.uniqueDataMap, "Cache should be nil after reset")
-	assert.Equal(t, 0, result.uniqueDataCount, "Cache count should be 0 after reset")
+	assert.Nil(t, result.uniqueTracker, "Cache should be nil after reset")
+	assert.Equal(t, 0, result.UniqueDataCount(), "Cache count should be 0 after reset")
 	assert.Equal(t, 0, result.Len(), "Should have 0 elements after reset")
 
 	// Verify other fields are also reset

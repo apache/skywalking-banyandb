@@ -15,10 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-spans:
-  - span: span1_trace_data
-    tags:
-    - key: trace_id
-      value:
-        str:
-          value: "1"
+traces:
+  - spans:
+    - span: trace_001_span_1
+      tags:
+      - key: trace_id
+        value:
+          str:
+            value: "trace_001"
+    - span: trace_001_span_2
+      tags:
+      - key: trace_id
+        value:
+          str:
+            value: "trace_001"
+    - span: trace_001_span_3
+      tags:
+      - key: trace_id
+        value:
+          str:
+            value: "trace_001"

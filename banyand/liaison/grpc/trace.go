@@ -44,6 +44,7 @@ import (
 type traceService struct {
 	tracev1.UnimplementedTraceServiceServer
 	ingestionAccessLog accesslog.Log
+	queryAccessLog     accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
@@ -59,7 +60,15 @@ func (s *traceService) setLogger(log *logger.Logger) {
 
 func (s *traceService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if s.ingestionAccessLog, err = accesslog.
-		NewFileLog(root, "trace-ingest-%s", 10*time.Minute, s.log, sampled); err != nil {
+		NewFileLog(root, "trace-ingest-%s", 10*time.Minute, s.l, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *traceService) activeQueryAccessLog(root string, sampled bool) (err error) {
+	if s.queryAccessLog, err = accesslog.
+		NewFileLog(root, "trace-query-%s", 10*time.Minute, s.l, sampled); err != nil {
 		return err
 	}
 	return nil
@@ -302,7 +311,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 	}
 }
 
-var emptyTraceQueryResponse = &tracev1.QueryResponse{Spans: make([]*tracev1.Span, 0)}
+var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
 
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
 	for _, g := range req.Groups {
@@ -310,12 +319,19 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 	}
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		for _, g := range req.Groups {
 			s.metrics.totalFinished.Inc(1, g, "trace", "query")
 			if err != nil {
 				s.metrics.totalErr.Inc(1, g, "trace", "query")
 			}
-			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "trace", "query")
+			s.metrics.totalLatency.Inc(duration.Seconds(), g, "trace", "query")
+		}
+		// Log query with timing information at the end
+		if s.queryAccessLog != nil {
+			if errAccessLog := s.queryAccessLog.WriteQuery("trace", start, duration, req, err); errAccessLog != nil {
+				s.l.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
 	}()
 	timeRange := req.GetTimeRange()

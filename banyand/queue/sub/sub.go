@@ -28,10 +28,75 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+func checkVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.VersionCompatibility, modelv1.Status) {
+	if versionInfo == nil {
+		return &clusterv1.VersionCompatibility{
+			Supported:                   true,
+			ServerApiVersion:            apiversion.Version,
+			SupportedApiVersions:        []string{apiversion.Version},
+			ServerFileFormatVersion:     storage.GetCurrentVersion(),
+			SupportedFileFormatVersions: storage.GetCompatibleVersions(),
+			Reason:                      "No version info provided, assuming compatible",
+		}, modelv1.Status_STATUS_SUCCEED
+	}
+
+	serverAPIVersion := apiversion.Version
+	serverFileFormatVersion := storage.GetCurrentVersion()
+	compatibleFileFormatVersions := storage.GetCompatibleVersions()
+
+	// Check API version compatibility
+	apiCompatible := versionInfo.ApiVersion == serverAPIVersion
+
+	// Check file format version compatibility
+	fileFormatCompatible := false
+	if versionInfo.FileFormatVersion == serverFileFormatVersion {
+		fileFormatCompatible = true
+	} else {
+		// Check if client's file format version is in our compatible list
+		for _, compatVer := range compatibleFileFormatVersions {
+			if compatVer == versionInfo.FileFormatVersion {
+				fileFormatCompatible = true
+				break
+			}
+		}
+	}
+
+	versionCompatibility := &clusterv1.VersionCompatibility{
+		ServerApiVersion:            serverAPIVersion,
+		SupportedApiVersions:        []string{serverAPIVersion},
+		ServerFileFormatVersion:     serverFileFormatVersion,
+		SupportedFileFormatVersions: compatibleFileFormatVersions,
+	}
+
+	switch {
+	case !apiCompatible && !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.ApiVersion, serverAPIVersion, versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+	case !apiCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
+		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+	case !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+	}
+
+	versionCompatibility.Supported = true
+	versionCompatibility.Reason = "Client version compatible with server"
+	return versionCompatibility, modelv1.Status_STATUS_SUCCEED
+}
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	ctx := stream.Context()
@@ -59,6 +124,29 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		if err != nil {
 			return s.handleRecvError(err)
 		}
+
+		// Check version compatibility on first message received
+		if writeEntity.VersionInfo != nil {
+			versionCompatibility, status := checkVersionCompatibility(writeEntity.VersionInfo)
+			if status != modelv1.Status_STATUS_SUCCEED {
+				s.log.Warn().
+					Str("client_api_version", writeEntity.VersionInfo.ApiVersion).
+					Str("client_file_format_version", writeEntity.VersionInfo.FileFormatVersion).
+					Str("reason", versionCompatibility.Reason).
+					Msg("version compatibility check failed")
+
+				if errSend := stream.Send(&clusterv1.SendResponse{
+					MessageId:            writeEntity.MessageId,
+					Status:               status,
+					Error:                versionCompatibility.Reason,
+					VersionCompatibility: versionCompatibility,
+				}); errSend != nil {
+					s.log.Error().Err(errSend).Msg("failed to send version incompatibility response")
+				}
+				return fmt.Errorf("version incompatibility: %s", versionCompatibility.Reason)
+			}
+		}
+
 		s.metrics.totalMsgReceived.Inc(1, writeEntity.Topic)
 		if writeEntity.Topic != "" && topic == nil {
 			t, ok := data.TopicMap[writeEntity.Topic]

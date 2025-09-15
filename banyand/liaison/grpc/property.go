@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	propertypkg "github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -52,12 +53,45 @@ const defaultQueryTimeout = 10 * time.Second
 type propertyServer struct {
 	propertyv1.UnimplementedPropertyServiceServer
 	*discoveryService
-	schemaRegistry   metadata.Repo
-	pipeline         queue.Client
-	nodeRegistry     NodeRegistry
-	metrics          *metrics
-	repairQueue      *repairQueue
-	repairQueueCount int
+	ingestionAccessLog accesslog.Log
+	queryAccessLog     accesslog.Log
+	schemaRegistry     metadata.Repo
+	pipeline           queue.Client
+	nodeRegistry       NodeRegistry
+	metrics            *metrics
+	repairQueue        *repairQueue
+	repairQueueCount   int
+}
+
+func (ps *propertyServer) activeIngestionAccessLog(root string, sampled bool) (err error) {
+	if ps.ingestionAccessLog, err = accesslog.
+		NewFileLog(root, "property-ingest-%s", 10*time.Minute, ps.log, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ps *propertyServer) activeQueryAccessLog(root string, sampled bool) (err error) {
+	if ps.queryAccessLog, err = accesslog.
+		NewFileLog(root, "property-query-%s", 10*time.Minute, ps.log, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ps *propertyServer) Close() error {
+	var err error
+	if ps.ingestionAccessLog != nil {
+		if closeErr := ps.ingestionAccessLog.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}
+	if ps.queryAccessLog != nil {
+		if closeErr := ps.queryAccessLog.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}
+	return err
 }
 
 func (ps *propertyServer) validatePropertyRequest(property *propertyv1.Property) error {
@@ -163,6 +197,11 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 			ps.metrics.totalErr.Inc(1, g, "property", "apply")
 		}
 	}()
+	if ps.ingestionAccessLog != nil {
+		if errAccessLog := ps.ingestionAccessLog.Write(req); errAccessLog != nil {
+			ps.log.Error().Err(errAccessLog).Msg("ingestion access log error")
+		}
+	}
 	var group *commonv1.Group
 	if group, err = ps.validateGroupForProperty(ctx, g); err != nil {
 		return nil, err
@@ -337,6 +376,11 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 			ps.metrics.totalErr.Inc(1, g, "property", "delete")
 		}
 	}()
+	if ps.ingestionAccessLog != nil {
+		if errAccessLog := ps.ingestionAccessLog.Write(req); errAccessLog != nil {
+			ps.log.Error().Err(errAccessLog).Msg("ingestion access log error")
+		}
+	}
 	qReq := &propertyv1.QueryRequest{
 		Groups: []string{g},
 		Name:   req.Name,
@@ -371,10 +415,17 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	ps.metrics.totalStarted.Inc(1, "", "property", "query")
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		ps.metrics.totalFinished.Inc(1, "", "property", "query")
-		ps.metrics.totalLatency.Inc(time.Since(start).Seconds(), "", "property", "query")
+		ps.metrics.totalLatency.Inc(duration.Seconds(), "", "property", "query")
 		if err != nil {
 			ps.metrics.totalErr.Inc(1, "", "property", "query")
+		}
+		// Log query with timing information at the end
+		if ps.queryAccessLog != nil {
+			if errAccessLog := ps.queryAccessLog.WriteQuery("property", start, duration, req, err); errAccessLog != nil {
+				ps.log.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
 	}()
 	if len(req.Groups) == 0 {

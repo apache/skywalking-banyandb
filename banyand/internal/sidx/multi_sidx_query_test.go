@@ -60,7 +60,7 @@ func (m *mockSIDX) Flush() error {
 	return nil
 }
 
-func (m *mockSIDX) Merge() error {
+func (m *mockSIDX) Merge(_ <-chan struct{}) error {
 	return nil
 }
 

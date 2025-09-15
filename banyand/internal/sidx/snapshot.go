@@ -18,12 +18,20 @@
 package sidx
 
 import (
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"sync/atomic"
 
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+)
+
+const (
+	snapshotSuffix = ".snp"
 )
 
 // snapshot represents an immutable collection of parts at a specific epoch.
@@ -88,6 +96,11 @@ func (s *snapshot) acquire() bool {
 			return true
 		}
 	}
+}
+
+// decRef decrements the snapshot reference count (helper for snapshot interface).
+func (s *snapshot) decRef() {
+	s.release()
 }
 
 // release decrements the snapshot reference count.
@@ -277,6 +290,45 @@ func (s *snapshot) String() string {
 		s.epoch, activeCount, len(s.parts), s.refCount())
 }
 
+func snapshotName(snapshot uint64) string {
+	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
+}
+
+func parseSnapshot(name string) (uint64, error) {
+	if filepath.Ext(name) != snapshotSuffix {
+		return 0, fmt.Errorf("invalid snapshot file ext")
+	}
+	if len(name) < 16 {
+		return 0, fmt.Errorf("invalid snapshot file name")
+	}
+	return parseEpoch(name[:16])
+}
+
+func parseEpoch(epochStr string) (uint64, error) {
+	return strconv.ParseUint(epochStr, 16, 64)
+}
+
+func mustReadSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) []uint64 {
+	snapshotPath := filepath.Join(root, snapshotName(snapshot))
+	data, err := fileSystem.Read(snapshotPath)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot read snapshot")
+	}
+	var partNames []string
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot parse snapshot")
+	}
+	var result []uint64
+	for i := range partNames {
+		e, err := parseEpoch(partNames[i])
+		if err != nil {
+			logger.GetLogger().Panic().Err(err).Str("name", partNames[i]).Msg("cannot parse part name")
+		}
+		result = append(result, e)
+	}
+	return result
+}
+
 // Pool for snapshot reuse.
 var snapshotPool = pool.Register[*snapshot]("sidx-snapshot")
 
@@ -318,22 +370,19 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
-func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
-	result := s.copyAllTo(epoch)
-
-	// Add flushed parts to the snapshot
-	for partID, part := range flushed {
-		// Set the part ID from the map key
-		if part != nil && part.partMetadata != nil {
-			part.partMetadata.ID = partID
+func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *snapshot {
+	var result snapshot
+	result.epoch = nextEpoch
+	result.ref = 1
+	for i := 0; i < len(s.parts); i++ {
+		if n, ok := nextParts[s.parts[i].ID()]; ok {
+			result.parts = append(result.parts, n)
+			continue
 		}
-		// Create part wrapper for the flushed part
-		pw := newPartWrapper(nil, part)
-		result.parts = append(result.parts, pw)
+		s.parts[i].acquire()
+		result.parts = append(result.parts, s.parts[i])
 	}
-
-	result.sortPartsByEpoch()
-	return result
+	return &result
 }
 
 // remove creates a new snapshot by removing specified parts.

@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
 func TestSnapshot_Creation(t *testing.T) {
@@ -410,8 +411,9 @@ func anySubstring(s, substr string) bool {
 
 func TestSnapshotReplacement_Basic(t *testing.T) {
 	// Test that snapshot replacement works correctly with basic operations
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -448,8 +450,9 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 	// Test that concurrent readers see consistent data during snapshot replacements
 	// This verifies that snapshot replacement doesn't cause readers to see inconsistent state
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -572,8 +575,9 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 	// This test should be run with -race flag to detect data races during snapshot replacement
 	// We test through concurrent write and read operations that trigger snapshot replacements
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -636,8 +640,9 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 	// Test to ensure old snapshots are properly cleaned up during replacement operations
 	// This verifies that reference counting prevents memory leaks
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
