@@ -190,9 +190,7 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	}
 	schema := databasev1.NewTraceRegistryServiceClient(conn)
 	resp, err := schema.Get(context.Background(), &databasev1.TraceRegistryServiceGetRequest{Metadata: metadata})
-	if err != nil {
-		return
-	}
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	metadata = resp.GetTrace().GetMetadata()
 
 	c := tracev1.NewTraceServiceClient(conn)

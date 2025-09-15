@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -137,8 +138,31 @@ func newTraceCmd() *cobra.Command {
 		},
 	}
 
-	bindFileFlag(createCmd, updateCmd)
-	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
-	traceCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
+	queryCmd := &cobra.Command{
+		Use:     "query -f [file|dir|-]",
+		Version: version.Build(),
+		Short:   "Query data in a trace",
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					queryReq := new(tracev1.QueryRequest)
+					err := protojson.Unmarshal(request.data, queryReq)
+					if err != nil {
+						return nil, err
+					}
+
+					b, err := protojson.Marshal(queryReq)
+					if err != nil {
+						return nil, err
+					}
+
+					return request.req.SetBody(b).Post(getPath("/api/v1/trace/data"))
+				}, yamlPrinter, enableTLS, insecure, cert)
+		},
+	}
+
+	bindFileFlag(createCmd, updateCmd, queryCmd)
+	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
+	traceCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return traceCmd
 }
