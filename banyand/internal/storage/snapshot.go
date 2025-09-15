@@ -18,8 +18,10 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
@@ -40,5 +42,30 @@ func DeleteStaleSnapshots(root string, maxNum int, lfs fs.FileSystem) {
 	})
 	for i := 0; i < len(snapshots)-maxNum; i++ {
 		lfs.MustRMAll(filepath.Join(root, snapshots[i].Name()))
+	}
+}
+
+// DeleteOldSnapshots deletes snapshots older than the specified maxAge duration.
+// This function is used during forced cleanup to remove old snapshots regardless of count.
+func DeleteOldSnapshots(root string, maxAge time.Duration, lfs fs.FileSystem) {
+	if maxAge <= 0 {
+		return
+	}
+	lfs.MkdirIfNotExist(root, DirPerm)
+	snapshots := lfs.ReadDir(root)
+	if len(snapshots) == 0 {
+		return
+	}
+
+	cutoffTime := time.Now().Add(-maxAge)
+
+	for _, snapshot := range snapshots {
+		snapshotPath := filepath.Join(root, snapshot.Name())
+		// Get file modification time using os.Stat since FileSystem interface doesn't provide Stat
+		if info, err := os.Stat(snapshotPath); err == nil {
+			if info.ModTime().Before(cutoffTime) {
+				lfs.MustRMAll(snapshotPath)
+			}
+		}
 	}
 }

@@ -19,9 +19,12 @@ package storage
 
 import (
 	"context"
+	"os"
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/disk"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -85,13 +88,33 @@ type diskMonitorMetrics struct {
 	snapshotsDeletedTotal          meter.Counter
 }
 
+// getRealTimeDiskUsagePercent calculates real-time disk usage percentage for the given path.
+// This bypasses the cached metrics system to provide immediate, accurate disk usage.
+func getRealTimeDiskUsagePercent(path string) (int, error) {
+	// Check if path exists first
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // Path doesn't exist yet, assume 0% usage
+		}
+		return 0, err
+	}
+
+	// Get disk usage using gopsutil
+	usage, err := disk.Usage(path)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(usage.UsedPercent), nil
+}
+
 // NewDiskMonitor creates a new disk monitor for the given service.
 func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observability.MetricsRegistry) *DiskMonitor {
 	serviceName := service.GetServiceName()
 	logger := logger.GetLogger("disk-monitor").Named(serviceName)
 
-	// Create metrics
-	factory := omr.With(observability.RootScope.SubScope("storage").SubScope("retention"))
+	// Create metrics with service-specific scope to avoid collisions
+	factory := omr.With(observability.RootScope.SubScope("storage").SubScope("retention").SubScope(serviceName))
 	metrics := &diskMonitorMetrics{
 		forcedRetentionActive:          factory.NewGauge("forced_retention_active", "service"),
 		forcedRetentionRunsTotal:       factory.NewCounter("forced_retention_runs_total", "service"),
@@ -168,8 +191,13 @@ func (dm *DiskMonitor) monitorLoop(serviceName string) {
 }
 
 func (dm *DiskMonitor) checkAndCleanup(serviceName string) {
-	// Check disk usage
-	diskPercent := observability.GetPathUsedPercent(dm.service.GetDataPath())
+	// Check disk usage using real-time calculation for responsive forced cleanup
+	diskPercent, err := getRealTimeDiskUsagePercent(dm.service.GetDataPath())
+	if err != nil {
+		dm.logger.Error().Err(err).Msg("failed to get real-time disk usage")
+		// Fall back to cached metrics if real-time calculation fails
+		diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+	}
 	dm.metrics.diskUsagePercent.Set(float64(diskPercent), serviceName)
 
 	dm.logger.Debug().Int("disk_percent", diskPercent).Msg("checking disk usage")
@@ -209,7 +237,11 @@ func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 	}
 
 	// Check if snapshot cleanup was enough
-	diskPercent := observability.GetPathUsedPercent(dm.service.GetDataPath())
+	diskPercent, err := getRealTimeDiskUsagePercent(dm.service.GetDataPath())
+	if err != nil {
+		dm.logger.Error().Err(err).Msg("failed to get real-time disk usage after snapshot cleanup")
+		diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+	}
 	if float64(diskPercent) <= dm.config.LowWatermark {
 		dm.logger.Info().
 			Int("disk_percent", diskPercent).
@@ -227,7 +259,11 @@ func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 		dm.metrics.forcedRetentionSegmentsDeleted.Inc(1, serviceName)
 
 		// Check if we're now below low watermark
-		diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+		diskPercent, err = getRealTimeDiskUsagePercent(dm.service.GetDataPath())
+		if err != nil {
+			dm.logger.Error().Err(err).Msg("failed to get real-time disk usage after segment deletion")
+			diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+		}
 		if float64(diskPercent) <= dm.config.LowWatermark {
 			dm.logger.Info().
 				Int("disk_percent", diskPercent).

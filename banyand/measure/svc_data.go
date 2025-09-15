@@ -149,8 +149,8 @@ func (s *dataSVC) CleanupOldSnapshots(maxAge time.Duration) error {
 	if s.snapshotDir == "" {
 		return nil
 	}
-	// DeleteStaleSnapshots doesn't return an error, it just deletes stale snapshots
-	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.lfs)
+	// Use age-based cleanup during forced retention cleanup
+	storage.DeleteOldSnapshots(s.snapshotDir, maxAge, s.lfs)
 	return nil
 }
 

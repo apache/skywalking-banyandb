@@ -255,8 +255,8 @@ func (s *standalone) CleanupOldSnapshots(maxAge time.Duration) error {
 	if s.snapshotDir == "" {
 		return nil
 	}
-	// For trace service, use the existing snapshot cleanup mechanism
-	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.lfs)
+	// Use age-based cleanup during forced retention cleanup
+	storage.DeleteOldSnapshots(s.snapshotDir, maxAge, s.lfs)
 	return nil
 }
 

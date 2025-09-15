@@ -635,7 +635,7 @@ func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) 
 	sc.RLock()
 	defer sc.RUnlock()
 
-	if len(sc.lst) == 0 {
+	if len(sc.lst) <= 1 {
 		return time.Time{}, false
 	}
 
@@ -669,7 +669,7 @@ func (sc *segmentController[T, O]) removeOldest() (bool, error) {
 	oldest.delete()
 	sc.removeSeg(oldest.id)
 
-	sc.l.Info().Stringer("segment", oldest).Msg("removed oldest segment via forced cleanup")
+	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", fmt.Sprintf("%v", sc.lst)).Msg("removed oldest segment via forced cleanup")
 	return true, nil
 }
 
