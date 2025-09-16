@@ -4,7 +4,7 @@ BanyanDB provides comprehensive disk management capabilities to prevent disk spa
 
 ## Overview
 
-BanyanDB includes a disk monitor that automatically triggers forced retention cleanup when disk usage exceeds configured thresholds. This feature helps prevent disk space exhaustion by automatically removing old data segments and snapshots.
+BanyanDB includes a disk monitor that can automatically trigger forced retention cleanup when disk usage exceeds configured thresholds. This feature helps prevent disk space exhaustion by automatically removing old data segments and snapshots.
 
 ## Configuration
 
@@ -18,6 +18,7 @@ The following flags are used to configure forced retention cleanup for data and 
 - `--measure-retention-low-watermark float`: Disk usage percentage where forced retention cleanup stops (0-100, default: 85.0).
 - `--measure-retention-check-interval duration`: Interval for checking disk usage (default: 5m).
 - `--measure-retention-cooldown duration`: Cooldown period between forced segment deletions (default: 30s).
+- `--measure-retention-force-cleanup-enabled bool`: Enable forced retention cleanup when disk usage exceeds high watermark (default: false).
 
 #### Stream Service
 
@@ -25,6 +26,7 @@ The following flags are used to configure forced retention cleanup for data and 
 - `--stream-retention-low-watermark float`: Disk usage percentage where forced retention cleanup stops (0-100, default: 85.0).
 - `--stream-retention-check-interval duration`: Interval for checking disk usage (default: 5m).
 - `--stream-retention-cooldown duration`: Cooldown period between forced segment deletions (default: 30s).
+- `--stream-retention-force-cleanup-enabled bool`: Enable forced retention cleanup when disk usage exceeds high watermark (default: false).
 
 #### Trace Service
 
@@ -32,6 +34,7 @@ The following flags are used to configure forced retention cleanup for data and 
 - `--trace-retention-low-watermark float`: Disk usage percentage where forced retention cleanup stops (0-100, default: 85.0).
 - `--trace-retention-check-interval duration`: Interval for checking disk usage (default: 5m).
 - `--trace-retention-cooldown duration`: Cooldown period between forced segment deletions (default: 30s).
+- `--trace-retention-force-cleanup-enabled bool`: Enable forced retention cleanup when disk usage exceeds high watermark (default: false).
 
 ### Liaison Servers
 
@@ -51,13 +54,22 @@ Liaison servers use the disk usage flags to manage their write queue and prevent
 
 ## How It Works
 
-### Data & Standalone Servers: Forced Retention Cleanup Process
+### Data & Standalone Servers: Disk Management Process
+
+#### When Force Cleanup is Enabled
 
 1. **Monitoring**: The disk monitor periodically checks disk usage on the service's data path
 2. **Trigger**: When disk usage exceeds the high watermark, forced cleanup begins
 3. **Cleanup**: The system removes old data segments and snapshots in controlled steps
 4. **Cooldown**: A configurable cooldown period prevents thrashing between deletions
 5. **Stop**: Cleanup continues until disk usage falls below the low watermark
+
+#### When Force Cleanup is Disabled (Default)
+
+1. **Monitoring**: The disk monitor periodically checks disk usage for metrics and monitoring only
+2. **No Cleanup**: No automatic segment or snapshot deletion occurs regardless of disk usage
+3. **Write Throttling**: Write operations are throttled/rejected when disk usage exceeds the high watermark
+4. **Manual Management**: Disk space management must be handled manually or through external processes
 
 #### Results When High Watermark is Reached
 
@@ -183,15 +195,29 @@ The disk monitor exposes the following metrics for each service (measure, stream
 
 ### Standalone/Data Server Configuration
 
+#### With Force Cleanup Enabled
 ```sh
 banyand standalone \
   --measure-retention-high-watermark=90.0 \
   --measure-retention-low-watermark=80.0 \
   --measure-retention-check-interval=2m \
+  --measure-retention-force-cleanup-enabled=true \
   --stream-retention-high-watermark=85.0 \
   --stream-retention-low-watermark=75.0 \
+  --stream-retention-force-cleanup-enabled=true \
   --trace-retention-high-watermark=95.0 \
-  --trace-retention-low-watermark=85.0
+  --trace-retention-low-watermark=85.0 \
+  --trace-retention-force-cleanup-enabled=true
+```
+
+#### With Force Cleanup Disabled (Default - Write Throttling Only)
+```sh
+banyand standalone \
+  --measure-retention-high-watermark=90.0 \
+  --stream-retention-high-watermark=85.0 \
+  --trace-retention-high-watermark=95.0
+  # Force cleanup flags omitted = disabled by default
+  # Only write throttling occurs when watermarks are exceeded
 ```
 
 ### Liaison Server Configuration
@@ -213,11 +239,22 @@ banyand data \
 ### Environment Variables
 
 ```sh
-# For standalone/data servers
+# For standalone/data servers with force cleanup enabled
 export BYDB_MEASURE_RETENTION_HIGH_WATERMARK=90.0
 export BYDB_MEASURE_RETENTION_LOW_WATERMARK=80.0
+export BYDB_MEASURE_RETENTION_FORCE_CLEANUP_ENABLED=true
 export BYDB_STREAM_RETENTION_HIGH_WATERMARK=85.0
 export BYDB_STREAM_RETENTION_LOW_WATERMARK=75.0
+export BYDB_STREAM_RETENTION_FORCE_CLEANUP_ENABLED=true
+export BYDB_TRACE_RETENTION_HIGH_WATERMARK=95.0
+export BYDB_TRACE_RETENTION_LOW_WATERMARK=85.0
+export BYDB_TRACE_RETENTION_FORCE_CLEANUP_ENABLED=true
+
+# For standalone/data servers with force cleanup disabled (default)
+export BYDB_MEASURE_RETENTION_HIGH_WATERMARK=90.0
+export BYDB_STREAM_RETENTION_HIGH_WATERMARK=85.0
+export BYDB_TRACE_RETENTION_HIGH_WATERMARK=95.0
+# Force cleanup environment variables omitted = disabled by default
 
 # For liaison servers
 export BYDB_MEASURE_MAX_DISK_USAGE_PERCENT=90

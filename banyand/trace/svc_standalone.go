@@ -79,6 +79,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.Float64Var(&s.retentionConfig.LowWatermark, "trace-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
 	fs.DurationVar(&s.retentionConfig.CheckInterval, "trace-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
 	fs.DurationVar(&s.retentionConfig.Cooldown, "trace-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")
+	fs.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "trace-retention-force-cleanup-enabled", false,
+		"enable forced retention cleanup when disk usage exceeds high watermark")
 
 	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 2, "the maximum number of file snapshots")
 	s.option.mergePolicy = newDefaultMergePolicy()
@@ -102,8 +104,8 @@ func (s *standalone) Validate() error {
 	if s.retentionConfig.LowWatermark > s.retentionConfig.HighWatermark {
 		return errors.New("trace-retention-low-watermark must be less than trace-retention-high-watermark")
 	}
-	if s.retentionConfig.CheckInterval <= 0 {
-		return errors.New("trace-retention-check-interval must be greater than 0")
+	if s.retentionConfig.CheckInterval <= 0 && s.retentionConfig.ForceCleanupEnabled {
+		return errors.New("trace-retention-check-interval must be greater than 0 when force cleanup is enabled")
 	}
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")

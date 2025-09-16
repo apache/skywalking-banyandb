@@ -71,6 +71,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 			"--measure-retention-low-watermark", "10.0", // Stop at 10%
 			"--measure-retention-check-interval", "1s", // Check every second
 			"--measure-retention-cooldown", "500ms", // Short cooldown
+			"--measure-retention-force-cleanup-enabled", "true", // Enable force cleanup
 		)
 		defer deferFn()
 

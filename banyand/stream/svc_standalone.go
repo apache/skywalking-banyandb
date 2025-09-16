@@ -177,6 +177,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.Float64Var(&s.retentionConfig.LowWatermark, "stream-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
 	flagS.DurationVar(&s.retentionConfig.CheckInterval, "stream-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
 	flagS.DurationVar(&s.retentionConfig.Cooldown, "stream-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")
+	flagS.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "stream-retention-force-cleanup-enabled", false,
+		"enable forced retention cleanup when disk usage exceeds high watermark")
 
 	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
 	return flagS
@@ -197,8 +199,8 @@ func (s *standalone) Validate() error {
 	if s.retentionConfig.LowWatermark > s.retentionConfig.HighWatermark {
 		return errors.New("stream-retention-low-watermark must be less than stream-retention-high-watermark")
 	}
-	if s.retentionConfig.CheckInterval <= 0 {
-		return errors.New("stream-retention-check-interval must be greater than 0")
+	if s.retentionConfig.CheckInterval <= 0 && s.retentionConfig.ForceCleanupEnabled {
+		return errors.New("stream-retention-check-interval must be greater than 0 when force cleanup is enabled")
 	}
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("stream-retention-cooldown must be greater than 0")

@@ -150,10 +150,11 @@ func createMockGroup(name string) resourceSchema.Group {
 func TestNewDiskMonitor(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: time.Minute,
-		Cooldown:      time.Second * 5,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Minute,
+		Cooldown:            time.Second * 5,
+		ForceCleanupEnabled: true,
 	}
 	registry := createMockMetricsRegistry()
 
@@ -172,10 +173,11 @@ func TestNewDiskMonitor(t *testing.T) {
 func TestDiskMonitor_StartStop(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: time.Millisecond * 10, // Short interval for testing
-		Cooldown:      time.Millisecond,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Millisecond * 10, // Short interval for testing
+		Cooldown:            time.Millisecond,
+		ForceCleanupEnabled: true,
 	}
 	registry := createMockMetricsRegistry()
 
@@ -197,10 +199,11 @@ func TestDiskMonitor_StartStop(t *testing.T) {
 func TestDiskMonitor_StartWithZeroInterval(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: 0, // Zero interval should disable monitoring
-		Cooldown:      time.Second,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       0, // Zero interval should disable monitoring
+		Cooldown:            time.Second,
+		ForceCleanupEnabled: false, // Test with force cleanup disabled
 	}
 	registry := createMockMetricsRegistry()
 
@@ -217,10 +220,11 @@ func TestDiskMonitor_StartWithZeroInterval(t *testing.T) {
 func TestDiskMonitor_findGroupWithOldestSegment(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: time.Minute,
-		Cooldown:      time.Second,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Minute,
+		Cooldown:            time.Second,
+		ForceCleanupEnabled: true,
 	}
 	registry := createMockMetricsRegistry()
 
@@ -289,10 +293,11 @@ func TestDiskMonitor_findGroupWithOldestSegment(t *testing.T) {
 func TestDiskMonitor_deleteOldestSegment(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: time.Minute,
-		Cooldown:      time.Second,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Minute,
+		Cooldown:            time.Second,
+		ForceCleanupEnabled: true,
 	}
 	registry := createMockMetricsRegistry()
 
@@ -345,10 +350,11 @@ func TestDiskMonitor_deleteOldestSegment(t *testing.T) {
 func TestDiskMonitor_cleanupSnapshots(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{
-		HighWatermark: 80.0,
-		LowWatermark:  60.0,
-		CheckInterval: time.Minute,
-		Cooldown:      time.Second,
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Minute,
+		Cooldown:            time.Second,
+		ForceCleanupEnabled: true,
 	}
 	registry := createMockMetricsRegistry()
 

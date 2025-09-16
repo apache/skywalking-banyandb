@@ -62,6 +62,8 @@ type RetentionConfig struct {
 	CheckInterval time.Duration
 	// Cooldown is the sleep duration between segment deletions
 	Cooldown time.Duration
+	// ForceCleanupEnabled determines whether forced cleanup is enabled
+	ForceCleanupEnabled bool
 }
 
 // DiskMonitor monitors disk usage and orchestrates forced retention cleanup
@@ -152,6 +154,7 @@ func (dm *DiskMonitor) Start() {
 		Float64("low_watermark", dm.config.LowWatermark).
 		Dur("check_interval", dm.config.CheckInterval).
 		Dur("cooldown", dm.config.Cooldown).
+		Bool("force_cleanup_enabled", dm.config.ForceCleanupEnabled).
 		Msg("starting disk monitor")
 
 	go dm.monitorLoop(serviceName)
@@ -199,7 +202,18 @@ func (dm *DiskMonitor) checkAndCleanup(serviceName string) {
 	}
 	dm.metrics.diskUsagePercent.Set(float64(diskPercent), serviceName)
 
-	dm.logger.Debug().Int("disk_percent", diskPercent).Msg("checking disk usage")
+	dm.logger.Debug().Int("disk_percent", diskPercent).Bool("force_cleanup_enabled", dm.config.ForceCleanupEnabled).Msg("checking disk usage")
+
+	// If force cleanup is disabled, only monitor disk usage but don't trigger cleanup
+	if !dm.config.ForceCleanupEnabled {
+		// If cleanup was somehow active (shouldn't happen), deactivate it
+		if dm.isActive.Load() {
+			dm.logger.Info().Msg("force cleanup disabled, stopping any active cleanup")
+			dm.isActive.Store(false)
+			dm.metrics.forcedRetentionActive.Set(0, serviceName)
+		}
+		return
+	}
 
 	// If usage is below high watermark and no cleanup is active, nothing to do
 	if float64(diskPercent) < dm.config.HighWatermark && !dm.isActive.Load() {
