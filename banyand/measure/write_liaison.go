@@ -60,7 +60,7 @@ type writeQueueCallback struct {
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-retention-high-watermark\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
