@@ -73,6 +73,10 @@ var _ = Describe("Registry", func() {
 		client := databasev1.NewStreamRegistryServiceClient(conn)
 		Expect(client).NotTo(BeNil())
 		meta.Name = "sw"
+		Eventually(func() bool {
+			_, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
+			return err == nil
+		}).WithTimeout(testflags.EventuallyTimeout).Should(BeTrue())
 		getResp, err := client.Get(context.TODO(), &databasev1.StreamRegistryServiceGetRequest{Metadata: meta})
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(getResp).NotTo(BeNil())

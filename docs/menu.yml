@@ -109,6 +109,8 @@ catalog:
     catalog:
       - name: "Configure BanyanDB"
         path: "/operation/configuration"
+      - name: "Disk Management"
+        path: "/operation/disk-management"
       - name: "System Configuration"
         path: "/operation/system"
       - name: "Upgrade"
