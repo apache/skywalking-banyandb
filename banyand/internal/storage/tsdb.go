@@ -141,12 +141,13 @@ func (gc *groupCache) put(key EntryKey, value Sizable) {
 
 type database[T TSTable, O any] struct {
 	lock              fs.File
-	logger            *logger.Logger
-	scheduler         *timestamp.Scheduler
+	lfs               fs.FileSystem
 	tsEventCh         chan int64
+	scheduler         *timestamp.Scheduler
 	segmentController *segmentController[T, O]
 	*metrics
-	lfs            fs.FileSystem
+	logger         *logger.Logger
+	retentionGate  chan struct{}
 	p              common.Position
 	location       string
 	latestTickTime atomic.Int64
@@ -209,6 +210,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
 		lfs:              tsdbLfs,
+		retentionGate:    make(chan struct{}, 1),
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
@@ -300,6 +302,46 @@ func (d *database[T, O]) GetExpiredSegmentsTimeRange() *timestamp.TimeRange {
 
 func (d *database[T, O]) DeleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
 	return d.segmentController.deleteExpiredSegments(timeRange)
+}
+
+// PeekOldestSegmentEndTime returns the end time of the oldest segment.
+// It acquires the retention gate to ensure exclusivity with TTL operations.
+// Returns the zero time and false if no segments exist, database is closed,
+// or the retention gate cannot be acquired.
+func (d *database[T, O]) PeekOldestSegmentEndTime() (time.Time, bool) {
+	if d.closed.Load() {
+		return time.Time{}, false
+	}
+
+	// Try to acquire retention gate with non-blocking select
+	select {
+	case d.retentionGate <- struct{}{}:
+		defer func() { <-d.retentionGate }()
+		return d.segmentController.peekOldestSegmentEndTime()
+	default:
+		// Retention gate is busy (TTL is running), return false
+		return time.Time{}, false
+	}
+}
+
+// DeleteOldestSegment deletes exactly one oldest segment if it exists and meets safety rules.
+// It acquires the retention gate to ensure exclusivity with TTL operations.
+// Returns true if a segment was deleted, false if no segments to delete,
+// keep-one rule prevents deletion, database is closed, or retention gate cannot be acquired.
+func (d *database[T, O]) DeleteOldestSegment() (bool, error) {
+	if d.closed.Load() {
+		return false, nil
+	}
+
+	// Try to acquire retention gate with non-blocking select
+	select {
+	case d.retentionGate <- struct{}{}:
+		defer func() { <-d.retentionGate }()
+		return d.segmentController.removeOldest()
+	default:
+		// Retention gate is busy (TTL is running), skip deletion
+		return false, nil
+	}
 }
 
 func (d *database[T, O]) collect() {
