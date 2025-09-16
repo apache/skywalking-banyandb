@@ -2,13 +2,15 @@
 
 ## 1. Executive Summary
 
-The eBPF Sidecar Agent is a kernel-level observability component for Apache SkyWalking BanyanDB that primarily monitors **page cache miss rates** - a critical metric for database performance. High cache miss rates indicate that BanyanDB is frequently reading from disk instead of memory, directly impacting query latency and throughput. By tracking these metrics at the kernel level, we can identify performance bottlenecks and optimize storage patterns.
+The eBPF Sidecar Agent is an **optional** kernel-level observability component for Apache SkyWalking BanyanDB that can be deployed as a sidecar to explore **page cache miss rates** and their impact on database performance. This component serves as a specialized analysis tool to understand how page cache behavior affects BanyanDB query performance. The sidecar is designed to be optionally enabled when starting BanyanDB services, providing operators the choice to include page cache monitoring based on their specific performance analysis needs.
 
 ### Primary Goal
-**Monitor and reduce page cache miss rates in BanyanDB** by providing real-time visibility into:
+**Explore page cache impact on BanyanDB query performance** by providing analytical visibility into:
 - Page cache hit/miss ratios during database operations
 - Correlation between fadvise() hints and actual cache behavior
 - Memory pressure impact on cache eviction rates
+
+The agent periodically analyzes these metrics rather than providing on-demand tooling, helping operators understand performance patterns over time.
 
 ### Key Features
 - **Page cache miss tracking**: Direct monitoring of cache efficiency
@@ -25,11 +27,11 @@ The eBPF Sidecar Agent is a kernel-level observability component for Apache SkyW
 ┌─────────────────────────────────────────────────────────┐
 │                     User Applications                   │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │   BanyanDB   │   │  Prometheus  │   │   Grafana    │ │
-│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘ │
-└─────────┼──────────────────┼──────────────────┼─────────┘
-          │ Native Export    │ Scrape           │ Query
-          ▼                  ▼                  ▼
+│  │   BanyanDB   │   │  Prometheus  │───│   Grafana    │ │
+│  └──────┬───────┘   └──────┬───────┘   └──────────────┘ │
+└─────────┼──────────────────┼─────────────────────────────┘
+          │ Native Export    │ Scrape           Query
+          ▼                  ▼
 ┌─────────────────────────────────────────────────────────┐
 │                  eBPF Sidecar Agent                     │
 │  ┌────────────────────────────────────────────────────┐ │
@@ -545,22 +547,13 @@ The HTTP API provides REST endpoints for web clients and monitoring systems.
 - CAP_SYS_ADMIN for older kernels
 - Privileged container in Kubernetes
 
-### 8.2 Deployment Models
+### 8.2 Deployment Model
 
-**Standalone Deployment:**
-- Single binary deployment
-- Configuration via YAML or environment variables
-- Suitable for VM or bare-metal installations
-
-**Kubernetes Sidecar:**
-- Co-located with BanyanDB pods
-- Shared process namespace for monitoring
-- Resource limits and requests defined
-
-**DaemonSet Deployment:**
-- Node-level monitoring
-- Aggregated metrics across all pods
-- Centralized collection point
+**Sidecar Deployment (Optional)**
+- Optional choice when starting BanyanDB services
+- Co-located with BanyanDB pods with shared process namespace
+- Deployed on-demand for specific performance analysis needs
+- Not a permanent component - enabled only when exploring page cache impact on query performance
 
 ## 9. Performance Considerations
 
