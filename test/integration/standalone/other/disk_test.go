@@ -60,6 +60,8 @@ var _ = g.Describe("Disk", func() {
 		addr, _, deferFn := setup.Standalone(
 			"--measure-retention-high-watermark",
 			"0",
+			"--measure-retention-low-watermark",
+			"0",
 		)
 		defer deferFn()
 		wc, connDeferFn := writeData(addr)
@@ -104,7 +106,7 @@ var _ = g.Describe("Disk", func() {
 		closeDataNode1 := setup.DataNode(ep)
 		g.By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep,
-			"--measure-retention-high-watermark",
+			"--measure-max-disk-usage-percent",
 			"0")
 		defer func() {
 			closerLiaisonNode()

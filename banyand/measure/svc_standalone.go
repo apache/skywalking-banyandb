@@ -198,7 +198,7 @@ func (s *standalone) Validate() error {
 	if s.retentionConfig.LowWatermark < 0 || s.retentionConfig.LowWatermark > 100 {
 		return errors.New("measure-retention-low-watermark must be between 0 and 100")
 	}
-	if s.retentionConfig.LowWatermark >= s.retentionConfig.HighWatermark {
+	if s.retentionConfig.LowWatermark > s.retentionConfig.HighWatermark {
 		return errors.New("measure-retention-low-watermark must be less than measure-retention-high-watermark")
 	}
 	if s.retentionConfig.CheckInterval <= 0 {
