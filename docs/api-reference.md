@@ -19,6 +19,8 @@
     - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
     - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
     - [SyncResult](#banyandb-cluster-v1-SyncResult)
+    - [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility)
+    - [VersionInfo](#banyandb-cluster-v1-VersionInfo)
   
     - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
   
@@ -312,6 +314,7 @@
     - [QueryRequest](#banyandb-trace-v1-QueryRequest)
     - [QueryResponse](#banyandb-trace-v1-QueryResponse)
     - [Span](#banyandb-trace-v1-Span)
+    - [Trace](#banyandb-trace-v1-Trace)
   
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
     - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
@@ -348,6 +351,8 @@ Status is the response status for write
 | STATUS_EXPIRED_SCHEMA | 4 |  |
 | STATUS_INTERNAL_ERROR | 5 |  |
 | STATUS_DISK_FULL | 6 |  |
+| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
+| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
 
 
  
@@ -465,6 +470,7 @@ PartResult contains the result for individual parts.
 | message_id | [uint64](#uint64) |  |  |
 | body | [bytes](#bytes) |  |  |
 | batch_mod | [bool](#bool) |  |  |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
 
 
 
@@ -483,6 +489,7 @@ PartResult contains the result for individual parts.
 | error | [string](#string) |  |  |
 | body | [bytes](#bytes) |  |  |
 | status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
 
 
 
@@ -540,6 +547,7 @@ Chunked Sync Service Messages.
 | parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
 | metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
 | completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
 
 
 
@@ -559,6 +567,7 @@ SyncPartResponse contains the response for a sync part request.
 | status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
 | error | [string](#string) |  |  |
 | sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
 
 
 
@@ -584,6 +593,43 @@ SyncResult contains the result of a sync operation.
 
 
 
+
+<a name="banyandb-cluster-v1-VersionCompatibility"></a>
+
+### VersionCompatibility
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| supported | [bool](#bool) |  | supported indicates whether the client version is supported |
+| server_api_version | [string](#string) |  | server_api_version is the API version of the server |
+| supported_api_versions | [string](#string) | repeated | supported_api_versions lists API versions supported by the server |
+| server_file_format_version | [string](#string) |  | server_file_format_version is the file format version of the server |
+| supported_file_format_versions | [string](#string) | repeated | supported_file_format_versions lists file format versions supported by the server |
+| reason | [string](#string) |  | reason provides human-readable explanation of version incompatibility |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-VersionInfo"></a>
+
+### VersionInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| file_format_version | [string](#string) |  | file_format_version indicates the file format version used |
+| compatible_file_format_version | [string](#string) | repeated | compatible_file_format_version lists backward compatible versions |
+| api_version | [string](#string) |  | api_version indicates the API semantic version |
+
+
+
+
+
  
 
 
@@ -600,6 +646,8 @@ SyncStatus represents the status of a sync operation.
 | SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
 | SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
 | SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
+| SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
+| SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
 
 
  
@@ -4584,7 +4632,7 @@ QueryResponse is the response of a query.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is a list of spans that match the query. |
+| traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
 | trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
 
 
@@ -4602,6 +4650,21 @@ Span is a single operation within a trace.
 | ----- | ---- | ----- | ----------- |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
 | span | [bytes](#bytes) |  | span is the raw span data. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Trace"></a>
+
+### Trace
+Trace contains all spans that belong to a single trace ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
 
 
 

@@ -59,7 +59,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 
 func (w *writeCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-retention-high-watermark\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -362,7 +362,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs, es.tsTable.curPartID); err != nil {
+					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
 				}

@@ -58,7 +58,9 @@ var _ = g.Describe("Disk", func() {
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
 		addr, _, deferFn := setup.Standalone(
-			"--measure-max-disk-usage-percent",
+			"--measure-retention-high-watermark",
+			"0",
+			"--measure-retention-low-watermark",
 			"0",
 		)
 		defer deferFn()

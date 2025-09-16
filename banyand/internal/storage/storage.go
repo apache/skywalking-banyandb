@@ -114,6 +114,12 @@ type TSDB[T TSTable, O any] interface {
 	TakeFileSnapshot(dst string) error
 	GetExpiredSegmentsTimeRange() *timestamp.TimeRange
 	DeleteExpiredSegments(timeRange timestamp.TimeRange) int64
+	// PeekOldestSegmentEndTime returns the end time of the oldest segment.
+	// Returns the zero time and false if no segments exist or retention gate cannot be acquired.
+	PeekOldestSegmentEndTime() (time.Time, bool)
+	// DeleteOldestSegment deletes exactly one oldest segment if it exists and meets safety rules.
+	// Returns true if a segment was deleted, false otherwise.
+	DeleteOldestSegment() (bool, error)
 }
 
 // Segment is a time range of data.

@@ -151,6 +151,16 @@ func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRu
 }
 
 func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
+	// Use the new retention gate for exclusivity with forced cleanup
+	select {
+	case rc.database.retentionGate <- struct{}{}:
+		defer func() { <-rc.database.retentionGate }()
+	default:
+		l.Debug().Msg("retention gate busy, skipping retention run")
+		return true
+	}
+
+	// Original running check for compatibility
 	select {
 	case rc.running <- struct{}{}:
 	default:
