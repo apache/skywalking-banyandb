@@ -307,7 +307,7 @@ func (qr *queryResult) Pull() *model.TraceResult {
 	if len(qr.data) == 1 {
 		r := &model.TraceResult{}
 		bc := qr.data[0]
-		bc.copyAllTo(r, false)
+		bc.copyAllTo(r)
 		qr.data = qr.data[:0]
 		releaseBlockCursor(bc)
 		return r
@@ -365,13 +365,12 @@ func (qr queryResult) Len() int {
 }
 
 func (qr queryResult) Less(i, j int) bool {
-	// If no original sidx order, return natural order (no sorted merge)
-	if len(qr.originalSidxOrder) == 0 {
-		return false
-	}
-
 	traceIDi := qr.data[i].bm.traceID
 	traceIDj := qr.data[j].bm.traceID
+
+	if len(qr.originalSidxOrder) == 0 {
+		return traceIDi < traceIDj
+	}
 
 	orderi, existi := qr.sidxOrderMap[traceIDi]
 	orderj, existj := qr.sidxOrderMap[traceIDj]
@@ -418,13 +417,8 @@ func (qr *queryResult) merge() *model.TraceResult {
 			return result
 		}
 		lastTraceID = topBC.bm.traceID
-
-		topBC.copyTo(result)
-		topBC.idx++
-
-		if topBC.idx >= len(topBC.spans) {
-			heap.Pop(qr)
-		}
+		topBC.copyAllTo(result)
+		heap.Pop(qr)
 	}
 
 	return result
