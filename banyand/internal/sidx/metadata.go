@@ -43,8 +43,8 @@ type partMetadata struct {
 	BlocksCount           uint64 `json:"blocksCount"`
 
 	// Key range
-	MinKey       int64 `json:"minKey"`       // Minimum user key in part
-	MaxKey       int64 `json:"maxKey"`       // Maximum user key in part
+	MinKey int64 `json:"minKey"` // Minimum user key in part
+	MaxKey int64 `json:"maxKey"` // Maximum user key in part
 
 	// Identity
 	ID uint64 `json:"id"` // Unique part identifier

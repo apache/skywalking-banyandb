@@ -30,14 +30,31 @@ import (
 )
 
 type syncPartContext struct {
-	tsTable         *tsTable
-	l               *logger.Logger
-	writers         *writers
-	memPart         *memPart
-	sidxPartContext *sidx.PartContext
+	tsTable             *tsTable
+	l                   *logger.Logger
+	writers             *writers
+	memPart             *memPart
+	sidxPartContext     *sidx.SyncPartContext
+	traceIDFilterBuffer []byte
+	tagTypeBuffer       []byte
 }
 
 func (s *syncPartContext) FinishSync() error {
+	if len(s.traceIDFilterBuffer) > 0 && s.memPart != nil {
+		bf := generateBloomFilter()
+		defer releaseBloomFilter(bf)
+		s.memPart.traceIDFilter.filter = decodeBloomFilter(s.traceIDFilterBuffer, bf)
+	}
+	if len(s.tagTypeBuffer) > 0 && s.memPart != nil {
+		if s.memPart.tagType == nil {
+			s.memPart.tagType = make(tagType)
+		}
+		if err := s.memPart.tagType.unmarshal(s.tagTypeBuffer); err != nil {
+			s.l.Error().Err(err).Msg("failed to unmarshal tag type data")
+			return err
+		}
+	}
+
 	if s.memPart != nil {
 		s.tsTable.mustAddMemPart(s.memPart)
 	}
@@ -108,7 +125,7 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	tsdb.Tick(ctx.MaxTimestamp)
 
 	if ctx.PartType != PartTypeCore {
-		sidxPartContext := sidx.NewPartContext()
+		sidxPartContext := sidx.NewSyncPartContext()
 		memPart := sidx.GenerateMemPart()
 		memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
 		writers := sidx.GenerateWriters()
@@ -191,6 +208,18 @@ func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, c
 		partCtx.writers.primaryWriter.MustWrite(chunk)
 	case fileName == traceSpansName:
 		partCtx.writers.spanWriter.MustWrite(chunk)
+	case fileName == traceIDFilterFilename:
+		if partCtx.memPart != nil {
+			if err := s.handleTraceIDFilterChunk(partCtx, chunk); err != nil {
+				return fmt.Errorf("failed to handle traceID filter chunk: %w", err)
+			}
+		}
+	case fileName == tagTypeFilename:
+		if partCtx.memPart != nil {
+			if err := s.handleTagTypeChunk(partCtx, chunk); err != nil {
+				return fmt.Errorf("failed to handle tag type chunk: %w", err)
+			}
+		}
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]
 		_, tagWriter := partCtx.writers.getWriters(tagName)
@@ -203,5 +232,15 @@ func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, c
 		s.l.Warn().Str("fileName", fileName).Msg("unknown file type in chunked sync")
 		return fmt.Errorf("unknown file type: %s", fileName)
 	}
+	return nil
+}
+
+func (s *syncCallback) handleTraceIDFilterChunk(partCtx *syncPartContext, chunk []byte) error {
+	partCtx.traceIDFilterBuffer = append(partCtx.traceIDFilterBuffer, chunk...)
+	return nil
+}
+
+func (s *syncCallback) handleTagTypeChunk(partCtx *syncPartContext, chunk []byte) error {
+	partCtx.tagTypeBuffer = append(partCtx.tagTypeBuffer, chunk...)
 	return nil
 }

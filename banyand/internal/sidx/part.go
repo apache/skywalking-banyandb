@@ -772,44 +772,44 @@ func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
 }
 
-// PartContext manages multiple sidx memParts.
-type PartContext struct {
+// SyncPartContext manages multiple sidx memParts.
+type SyncPartContext struct {
 	memPart *memPart
 	writers *writers
 	name    string
 }
 
-// NewPartContext creates a new sidx part context.
-func NewPartContext() *PartContext {
-	return &PartContext{}
+// NewSyncPartContext creates a new sidx part context.
+func NewSyncPartContext() *SyncPartContext {
+	return &SyncPartContext{}
 }
 
 // Set sets the memory part and writers.
-func (pc *PartContext) Set(name string, memPart *memPart, writers *writers) {
-	pc.name = name
-	pc.memPart = memPart
-	pc.writers = writers
+func (spc *SyncPartContext) Set(name string, memPart *memPart, writers *writers) {
+	spc.name = name
+	spc.memPart = memPart
+	spc.writers = writers
 }
 
 // Name gets the name.
-func (pc *PartContext) Name() string {
-	return pc.name
+func (spc *SyncPartContext) Name() string {
+	return spc.name
 }
 
 // GetMemPart gets the memory part.
-func (pc *PartContext) GetMemPart() *MemPart {
-	return pc.memPart
+func (spc *SyncPartContext) GetMemPart() *MemPart {
+	return spc.memPart
 }
 
 // GetWriters gets the writers.
-func (pc *PartContext) GetWriters() *Writers {
-	return pc.writers
+func (spc *SyncPartContext) GetWriters() *Writers {
+	return spc.writers
 }
 
 // Close closes the sidx part context.
-func (pc *PartContext) Close() {
-	pc.writers.MustClose()
-	ReleaseWriters(pc.writers)
-	pc.writers = nil
-	pc.memPart = nil
+func (spc *SyncPartContext) Close() {
+	spc.writers.MustClose()
+	ReleaseWriters(spc.writers)
+	spc.writers = nil
+	spc.memPart = nil
 }

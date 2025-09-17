@@ -20,6 +20,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -135,6 +136,32 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 			files = append(files, queue.FileInfo{
 				Name:   fmt.Sprintf("%s%s", traceTagMetadataPrefix, name),
 				Reader: reader.SequentialRead(),
+			})
+		}
+	}
+
+	// TraceID filter data
+	if part.fileSystem != nil {
+		traceIDFilterPath := filepath.Join(part.path, traceIDFilterFilename)
+		if filterData, err := part.fileSystem.Read(traceIDFilterPath); err == nil && len(filterData) > 0 {
+			filterBuf := bigValuePool.Generate()
+			filterBuf.Buf = append(filterBuf.Buf[:0], filterData...)
+			files = append(files, queue.FileInfo{
+				Name:   traceIDFilterFilename,
+				Reader: filterBuf.SequentialRead(),
+			})
+		}
+	}
+
+	// Tag type data
+	if part.fileSystem != nil {
+		tagTypePath := filepath.Join(part.path, tagTypeFilename)
+		if tagTypeData, err := part.fileSystem.Read(tagTypePath); err == nil && len(tagTypeData) > 0 {
+			tagTypeBuf := bigValuePool.Generate()
+			tagTypeBuf.Buf = append(tagTypeBuf.Buf[:0], tagTypeData...)
+			files = append(files, queue.FileInfo{
+				Name:   tagTypeFilename,
+				Reader: tagTypeBuf.SequentialRead(),
 			})
 		}
 	}
