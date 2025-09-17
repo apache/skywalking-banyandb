@@ -324,33 +324,37 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 	}
 
 	for partIndex, partInfo := range req.PartsInfo {
-		if session.partCtx != nil && (session.partCtx.ID != partInfo.Id || session.partCtx.PartType != partInfo.PartType) {
-			if session.partCtx.Handler != nil {
-				if err := session.partCtx.Handler.FinishSync(); err != nil {
-					return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
-				}
+		createNewContext := session.partCtx == nil ||
+			session.partCtx.ID != partInfo.Id ||
+			session.partCtx.PartType != partInfo.PartType
+
+		if createNewContext && session.partCtx != nil && session.partCtx.Handler != nil {
+			if err := session.partCtx.Handler.FinishSync(); err != nil {
+				return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
 			}
 		}
 
-		session.partCtx = &queue.ChunkedSyncPartContext{
-			ID:                    partInfo.Id,
-			Group:                 session.metadata.Group,
-			ShardID:               session.metadata.ShardId,
-			CompressedSizeBytes:   partInfo.CompressedSizeBytes,
-			UncompressedSizeBytes: partInfo.UncompressedSizeBytes,
-			TotalCount:            partInfo.TotalCount,
-			BlocksCount:           partInfo.BlocksCount,
-			MinTimestamp:          partInfo.MinTimestamp,
-			MaxTimestamp:          partInfo.MaxTimestamp,
-			MinKey:                partInfo.MinKey,
-			MaxKey:                partInfo.MaxKey,
-			PartType:              partInfo.PartType,
+		if createNewContext {
+			session.partCtx = &queue.ChunkedSyncPartContext{
+				ID:                    partInfo.Id,
+				Group:                 session.metadata.Group,
+				ShardID:               session.metadata.ShardId,
+				CompressedSizeBytes:   partInfo.CompressedSizeBytes,
+				UncompressedSizeBytes: partInfo.UncompressedSizeBytes,
+				TotalCount:            partInfo.TotalCount,
+				BlocksCount:           partInfo.BlocksCount,
+				MinTimestamp:          partInfo.MinTimestamp,
+				MaxTimestamp:          partInfo.MaxTimestamp,
+				MinKey:                partInfo.MinKey,
+				MaxKey:                partInfo.MaxKey,
+				PartType:              partInfo.PartType,
+			}
+			partHandler, err := handler.CreatePartHandler(session.partCtx)
+			if err != nil {
+				return fmt.Errorf("failed to create part handler: %w", err)
+			}
+			session.partCtx.Handler = partHandler
 		}
-		partHandler, err := handler.CreatePartHandler(session.partCtx)
-		if err != nil {
-			return fmt.Errorf("failed to create part handler: %w", err)
-		}
-		session.partCtx.Handler = partHandler
 
 		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {
 			s.log.Error().Err(err).
