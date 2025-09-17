@@ -593,6 +593,6 @@ Potential areas for expansion:
 
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 1.1  
 **Status**: Draft for Review  
-**Date**: 2025-09-08
+**Date**: 2025-09-17
