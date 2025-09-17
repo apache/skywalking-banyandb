@@ -51,14 +51,13 @@ func (s *sidx) PartsToSync() []*part {
 }
 
 // StreamingParts returns the streaming parts.
-func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func()) {
+func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32, name string, minTimestamps []int64) ([]queue.StreamingPartData, []func()) {
 	var streamingParts []queue.StreamingPartData
 	var releaseFuncs []func()
-	for _, part := range partsToSync {
+	for i, part := range partsToSync {
 		// Create streaming reader for the part
 		files, release := createPartFileReaders(part)
 		releaseFuncs = append(releaseFuncs, release)
-
 		// Create streaming part sync data
 		streamingParts = append(streamingParts, queue.StreamingPartData{
 			ID:                    part.partMetadata.ID,
@@ -70,8 +69,9 @@ func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32,
 			UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
 			TotalCount:            part.partMetadata.TotalCount,
 			BlocksCount:           part.partMetadata.BlocksCount,
-			MinTimestamp:          part.partMetadata.MinKey,
-			MaxTimestamp:          part.partMetadata.MaxKey,
+			MinTimestamp:          minTimestamps[i],
+			MinKey:                part.partMetadata.MinKey,
+			MaxKey:                part.partMetadata.MaxKey,
 			PartType:              name,
 		})
 	}

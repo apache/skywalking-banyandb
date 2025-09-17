@@ -810,7 +810,6 @@ func (pc *PartContext) GetWriters() *Writers {
 func (pc *PartContext) Close() {
 	pc.writers.MustClose()
 	ReleaseWriters(pc.writers)
-	ReleaseMemPart(pc.memPart)
 	pc.writers = nil
 	pc.memPart = nil
 }

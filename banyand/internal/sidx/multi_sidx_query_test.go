@@ -71,7 +71,7 @@ func (m *mockSIDX) PartsToSync() []*part {
 	return nil
 }
 
-func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string) ([]queue.StreamingPartData, []func()) {
+func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string, _ []int64) ([]queue.StreamingPartData, []func()) {
 	return nil, nil
 }
 

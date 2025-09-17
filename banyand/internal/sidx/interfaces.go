@@ -56,7 +56,7 @@ type SIDX interface {
 	// PartsToSync returns the parts to sync.
 	PartsToSync() []*part
 	// StreamingParts returns the streaming parts.
-	StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
+	StreamingParts(partsToSync []*part, group string, shardID uint32, name string, minTimestamps []int64) ([]queue.StreamingPartData, []func())
 	// SyncCh returns the sync channel for external synchronization.
 	SyncCh() chan<- *SyncIntroduction
 }
