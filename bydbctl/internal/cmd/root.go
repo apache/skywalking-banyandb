@@ -80,7 +80,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("password", command.PersistentFlags().Lookup("password"))
 
 	command.AddCommand(newGroupCmd(), newUseCmd(), newStreamCmd(), newMeasureCmd(), newTopnCmd(),
-		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd())
+		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd(), newBydbQLCmd())
 }
 
 func init() {
