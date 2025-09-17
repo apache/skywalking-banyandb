@@ -94,7 +94,7 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := entityDict[cond.Name]; ok {
+		if _, ok := entityDict[cond.Name]; ok && !hasGlobalIndex {
 			return DummyFilter, nil
 		}
 		if cond.Name == globalTagName {
