@@ -37,7 +37,7 @@ var (
 	}
 )
 
-var _ = g.FDescribeTable("Scanning Traces", func(args helpers.Args) {
+var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
