@@ -19,7 +19,6 @@ syntax = "proto3";
 
 package banyandb.cluster.v1;
 
-import "banyandb/database/v1/schema.proto";
 import "banyandb/model/v1/write.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
@@ -105,9 +104,7 @@ message PartInfo {
   int64 max_timestamp = 8; // Maximum timestamp from partMetadata.
   int64 min_key = 9; // Minimum user-provided key for sidx.
   int64 max_key = 10; // Maximum user-provided key for sidx.
-  TraceIDFilter trace_id_filter = 11; // TraceID filter for trace parts.
-  TagType tag_type = 12; // TagType for trace parts.
-  string part_type = 13; // Part type.
+  string part_type = 11; // Part type.
 }
 
 // Information about an individual file within a part.
@@ -115,22 +112,6 @@ message FileInfo {
   string name = 1; // File identifier (e.g., "primary", "timestamps", "tagFamilies:seriesId").
   uint32 offset = 2; // Byte offset within the part where this file starts.
   uint32 size = 3; // Size of this file in bytes.
-}
-
-// TraceIDFilter is a filter for trace IDs.
-message TraceIDFilter {
-  BloomFilter filter = 1;
-}
-
-// BloomFilter is a Bloom filter.
-message BloomFilter {
-  repeated uint64 bits = 1;
-  int64 n = 2;
-}
-
-// TagType is a map of tag names to value types.
-message TagType {
-  map<string, database.v1.TagType> tags = 1;
 }
 
 // SyncMetadata contains metadata for the sync operation.

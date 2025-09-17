@@ -344,8 +344,6 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 			MaxTimestamp:          partInfo.MaxTimestamp,
 			MinKey:                partInfo.MinKey,
 			MaxKey:                partInfo.MaxKey,
-			TraceIDFilter:         partInfo.TraceIdFilter,
-			TagType:               partInfo.TagType,
 			PartType:              partInfo.PartType,
 		}
 		partHandler, err := handler.CreatePartHandler(session.partCtx)

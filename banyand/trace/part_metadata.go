@@ -24,7 +24,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -248,27 +247,4 @@ func (tf *traceIDFilter) mustWriteTraceIDFilter(fileSystem fs.FileSystem, partPa
 	if n != len(data) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", traceIDFilterPath, n, len(data))
 	}
-}
-
-func convertPBTraceIDFilter(pbFilter *clusterv1.TraceIDFilter) traceIDFilter {
-	if pbFilter == nil || pbFilter.Filter == nil {
-		return traceIDFilter{filter: nil}
-	}
-
-	bloomFilter := filter.NewBloomFilter(int(pbFilter.Filter.N))
-	bloomFilter.SetBits(pbFilter.Filter.Bits)
-	bloomFilter.SetN(int(pbFilter.Filter.N))
-	return traceIDFilter{filter: bloomFilter}
-}
-
-func convertPBTagType(pbTagType *clusterv1.TagType) tagType {
-	if pbTagType == nil || pbTagType.Tags == nil {
-		return make(tagType)
-	}
-
-	result := make(tagType, len(pbTagType.Tags))
-	for tagName, dbTagType := range pbTagType.Tags {
-		result[tagName] = pbv1.MustTagValueSpecToValueType(dbTagType)
-	}
-	return result
 }

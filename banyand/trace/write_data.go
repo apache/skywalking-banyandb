@@ -146,8 +146,6 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
 	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
 	memPart.partMetadata.ID = ctx.ID
-	memPart.traceIDFilter = convertPBTraceIDFilter(ctx.TraceIDFilter)
-	memPart.tagType = convertPBTagType(ctx.TagType)
 	writers := generateWriters()
 	writers.mustInitForMemPart(memPart)
 	return &syncPartContext{

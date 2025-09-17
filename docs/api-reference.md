@@ -37,6 +37,25 @@
     - [Catalog](#banyandb-common-v1-Catalog)
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
+- [banyandb/common/v1/rpc.proto](#banyandb_common_v1_rpc-proto)
+    - [APIVersion](#banyandb-common-v1-APIVersion)
+    - [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest)
+    - [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse)
+  
+    - [Service](#banyandb-common-v1-Service)
+  
+- [banyandb/common/v1/trace.proto](#banyandb_common_v1_trace-proto)
+    - [Span](#banyandb-common-v1-Span)
+    - [Tag](#banyandb-common-v1-Tag)
+    - [Trace](#banyandb-common-v1-Trace)
+  
+- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
+    - [Node](#banyandb-database-v1-Node)
+    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
+    - [Shard](#banyandb-database-v1-Shard)
+  
+    - [Role](#banyandb-database-v1-Role)
+  
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
     - [Float](#banyandb-model-v1-Float)
@@ -87,51 +106,6 @@
     - [FieldType](#banyandb-database-v1-FieldType)
     - [IndexRule.Type](#banyandb-database-v1-IndexRule-Type)
     - [TagType](#banyandb-database-v1-TagType)
-  
-- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
-    - [Status](#banyandb-model-v1-Status)
-  
-- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
-    - [BloomFilter](#banyandb-cluster-v1-BloomFilter)
-    - [FileInfo](#banyandb-cluster-v1-FileInfo)
-    - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
-    - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
-    - [PartInfo](#banyandb-cluster-v1-PartInfo)
-    - [PartResult](#banyandb-cluster-v1-PartResult)
-    - [SendRequest](#banyandb-cluster-v1-SendRequest)
-    - [SendResponse](#banyandb-cluster-v1-SendResponse)
-    - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
-    - [SyncMetadata](#banyandb-cluster-v1-SyncMetadata)
-    - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
-    - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
-    - [SyncResult](#banyandb-cluster-v1-SyncResult)
-    - [TagType](#banyandb-cluster-v1-TagType)
-    - [TagType.TagsEntry](#banyandb-cluster-v1-TagType-TagsEntry)
-    - [TraceIDFilter](#banyandb-cluster-v1-TraceIDFilter)
-  
-    - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
-  
-    - [ChunkedSyncService](#banyandb-cluster-v1-ChunkedSyncService)
-    - [Service](#banyandb-cluster-v1-Service)
-  
-- [banyandb/common/v1/rpc.proto](#banyandb_common_v1_rpc-proto)
-    - [APIVersion](#banyandb-common-v1-APIVersion)
-    - [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest)
-    - [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse)
-  
-    - [Service](#banyandb-common-v1-Service)
-  
-- [banyandb/common/v1/trace.proto](#banyandb_common_v1_trace-proto)
-    - [Span](#banyandb-common-v1-Span)
-    - [Tag](#banyandb-common-v1-Tag)
-    - [Trace](#banyandb-common-v1-Trace)
-  
-- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
-    - [Node](#banyandb-database-v1-Node)
-    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
-    - [Shard](#banyandb-database-v1-Shard)
-  
-    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
@@ -461,6 +435,9 @@ Information about a part contained within a chunk.
 | blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
 | min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
 | max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
+| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
+| part_type | [string](#string) |  | Part type. |
 
 
 
@@ -833,6 +810,233 @@ Metadata is for multi-tenant, multi-model use
 | UNIT_UNSPECIFIED | 0 |  |
 | UNIT_HOUR | 1 |  |
 | UNIT_DAY | 2 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_common_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/rpc.proto
+
+
+
+<a name="banyandb-common-v1-APIVersion"></a>
+
+### APIVersion
+APIVersion is the version of the API
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [string](#string) |  | version is the version of the API |
+| revision | [string](#string) |  | revision is the commit hash of the API |
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionRequest"></a>
+
+### GetAPIVersionRequest
+GetAPIVersionRequest is the request for GetAPIVersion
+
+empty
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionResponse"></a>
+
+### GetAPIVersionResponse
+GetAPIVersionResponse is the response for GetAPIVersion
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [APIVersion](#banyandb-common-v1-APIVersion) |  | version is the version of the API |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-common-v1-Service"></a>
+
+### Service
+Service is the service for the API
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetAPIVersion | [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest) | [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse) | GetAPIVersion returns the version of the API |
+
+ 
+
+
+
+<a name="banyandb_common_v1_trace-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/trace.proto
+
+
+
+<a name="banyandb-common-v1-Span"></a>
+
+### Span
+Span is the basic unit of a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| start_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | start_time is the start time of the span. |
+| end_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | end_time is the end time of the span. |
+| error | [bool](#bool) |  | error indicates whether the span is an error span. |
+| tags | [Tag](#banyandb-common-v1-Tag) | repeated | tags is a list of tags of the span. |
+| message | [string](#string) |  | message is the message generated by the span. |
+| children | [Span](#banyandb-common-v1-Span) | repeated | children is a list of child spans of the span. |
+| duration | [int64](#int64) |  | duration is the duration of the span. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-Tag"></a>
+
+### Tag
+Tag is the key-value pair of a span.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  | key is the key of the tag. |
+| value | [string](#string) |  | value is the value of the tag. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-Trace"></a>
+
+### Trace
+Trace is the top level message of a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
+| spans | [Span](#banyandb-common-v1-Span) | repeated | spans is a list of spans in the trace. |
+| error | [bool](#bool) |  | error indicates whether the trace is an error trace. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_database_v1_database-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/database/v1/database.proto
+
+
+
+<a name="banyandb-database-v1-Node"></a>
+
+### Node
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+| property_repair_gossip_grpc_address | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Node-LabelsEntry"></a>
+
+### Node.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Shard"></a>
+
+### Shard
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| node | [string](#string) |  |  |
+| total | [uint32](#uint32) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-database-v1-Role"></a>
+
+### Role
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_LIAISON | 3 |  |
 
 
  
@@ -1590,606 +1794,6 @@ Type determine the index structure under the hood
 | TAG_TYPE_INT_ARRAY | 4 |  |
 | TAG_TYPE_DATA_BINARY | 5 |  |
 | TAG_TYPE_TIMESTAMP | 6 |  |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_model_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/model/v1/write.proto
-
-
- 
-
-
-<a name="banyandb-model-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_INVALID_TIMESTAMP | 2 |  |
-| STATUS_NOT_FOUND | 3 |  |
-| STATUS_EXPIRED_SCHEMA | 4 |  |
-| STATUS_INTERNAL_ERROR | 5 |  |
-| STATUS_DISK_FULL | 6 |  |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_cluster_v1_rpc-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/cluster/v1/rpc.proto
-
-
-
-<a name="banyandb-cluster-v1-BloomFilter"></a>
-
-### BloomFilter
-BloomFilter is a Bloom filter.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| bits | [uint64](#uint64) | repeated |  |
-| n | [int64](#int64) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-FileInfo"></a>
-
-### FileInfo
-Information about an individual file within a part.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
-| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
-| size | [uint32](#uint32) |  | Size of this file in bytes. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-HealthCheckRequest"></a>
-
-### HealthCheckRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| service_name | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-HealthCheckResponse"></a>
-
-### HealthCheckResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| service_name | [string](#string) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
-| error | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-PartInfo"></a>
-
-### PartInfo
-Information about a part contained within a chunk.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  | Unique identifier for this part. |
-| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
-| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
-| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
-| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
-| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
-| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
-| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
-| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
-| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
-| trace_id_filter | [TraceIDFilter](#banyandb-cluster-v1-TraceIDFilter) |  | TraceID filter for trace parts. |
-| tag_type | [TagType](#banyandb-cluster-v1-TagType) |  | TagType for trace parts. |
-| part_type | [string](#string) |  | Part type. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-PartResult"></a>
-
-### PartResult
-PartResult contains the result for individual parts.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether this part was processed successfully. |
-| error | [string](#string) |  | Error message if processing failed. |
-| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SendRequest"></a>
-
-### SendRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| topic | [string](#string) |  |  |
-| message_id | [uint64](#uint64) |  |  |
-| body | [bytes](#bytes) |  |  |
-| batch_mod | [bool](#bool) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SendResponse"></a>
-
-### SendResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| message_id | [uint64](#uint64) |  |  |
-| error | [string](#string) |  |  |
-| body | [bytes](#bytes) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncCompletion"></a>
-
-### SyncCompletion
-SyncCompletion contains completion information for the sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
-| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
-| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncMetadata"></a>
-
-### SyncMetadata
-SyncMetadata contains metadata for the sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | Group name (stream/measure). |
-| shard_id | [uint32](#uint32) |  | Shard identifier. |
-| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
-| timestamp | [int64](#int64) |  | Timestamp when sync started. |
-| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncPartRequest"></a>
-
-### SyncPartRequest
-Chunked Sync Service Messages.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
-| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
-| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
-| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
-| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
-| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
-| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncPartResponse"></a>
-
-### SyncPartResponse
-SyncPartResponse contains the response for a sync part request.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  |  |
-| chunk_index | [uint32](#uint32) |  |  |
-| status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
-| error | [string](#string) |  |  |
-| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncResult"></a>
-
-### SyncResult
-SyncResult contains the result of a sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether entire sync was successful. |
-| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
-| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
-| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
-| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
-| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-TagType"></a>
-
-### TagType
-TagType is a map of tag names to value types.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tags | [TagType.TagsEntry](#banyandb-cluster-v1-TagType-TagsEntry) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-TagType-TagsEntry"></a>
-
-### TagType.TagsEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [banyandb.database.v1.TagType](#banyandb-database-v1-TagType) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-TraceIDFilter"></a>
-
-### TraceIDFilter
-TraceIDFilter is a filter for trace IDs.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| filter | [BloomFilter](#banyandb-cluster-v1-BloomFilter) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-cluster-v1-SyncStatus"></a>
-
-### SyncStatus
-SyncStatus represents the status of a sync operation.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
-| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
-| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
-| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
-| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
-| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
-
-
- 
-
- 
-
-
-<a name="banyandb-cluster-v1-ChunkedSyncService"></a>
-
-### ChunkedSyncService
-ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
-
-
-<a name="banyandb-cluster-v1-Service"></a>
-
-### Service
-
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
-| HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
-
- 
-
-
-
-<a name="banyandb_common_v1_rpc-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/common/v1/rpc.proto
-
-
-
-<a name="banyandb-common-v1-APIVersion"></a>
-
-### APIVersion
-APIVersion is the version of the API
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| version | [string](#string) |  | version is the version of the API |
-| revision | [string](#string) |  | revision is the commit hash of the API |
-
-
-
-
-
-
-<a name="banyandb-common-v1-GetAPIVersionRequest"></a>
-
-### GetAPIVersionRequest
-GetAPIVersionRequest is the request for GetAPIVersion
-
-empty
-
-
-
-
-
-
-<a name="banyandb-common-v1-GetAPIVersionResponse"></a>
-
-### GetAPIVersionResponse
-GetAPIVersionResponse is the response for GetAPIVersion
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| version | [APIVersion](#banyandb-common-v1-APIVersion) |  | version is the version of the API |
-
-
-
-
-
- 
-
- 
-
- 
-
-
-<a name="banyandb-common-v1-Service"></a>
-
-### Service
-Service is the service for the API
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| GetAPIVersion | [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest) | [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse) | GetAPIVersion returns the version of the API |
-
- 
-
-
-
-<a name="banyandb_common_v1_trace-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/common/v1/trace.proto
-
-
-
-<a name="banyandb-common-v1-Span"></a>
-
-### Span
-Span is the basic unit of a trace.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| start_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | start_time is the start time of the span. |
-| end_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | end_time is the end time of the span. |
-| error | [bool](#bool) |  | error indicates whether the span is an error span. |
-| tags | [Tag](#banyandb-common-v1-Tag) | repeated | tags is a list of tags of the span. |
-| message | [string](#string) |  | message is the message generated by the span. |
-| children | [Span](#banyandb-common-v1-Span) | repeated | children is a list of child spans of the span. |
-| duration | [int64](#int64) |  | duration is the duration of the span. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-Tag"></a>
-
-### Tag
-Tag is the key-value pair of a span.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  | key is the key of the tag. |
-| value | [string](#string) |  | value is the value of the tag. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-Trace"></a>
-
-### Trace
-Trace is the top level message of a trace.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
-| spans | [Span](#banyandb-common-v1-Span) | repeated | spans is a list of spans in the trace. |
-| error | [bool](#bool) |  | error indicates whether the trace is an error trace. |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_database_v1_database-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/database.proto
-
-
-
-<a name="banyandb-database-v1-Node"></a>
-
-### Node
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
-| grpc_address | [string](#string) |  |  |
-| http_address | [string](#string) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
-| property_repair_gossip_grpc_address | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Node-LabelsEntry"></a>
-
-### Node.LabelsEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Shard"></a>
-
-### Shard
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  |  |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [string](#string) |  |  |
-| total | [uint32](#uint32) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Role"></a>
-
-### Role
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ROLE_UNSPECIFIED | 0 |  |
-| ROLE_META | 1 |  |
-| ROLE_DATA | 2 |  |
-| ROLE_LIAISON | 3 |  |
 
 
  

@@ -103,8 +103,6 @@ type ChunkedSyncClient interface {
 // ChunkedSyncPartContext represents the context for a chunked sync operation.
 type ChunkedSyncPartContext struct {
 	Handler               PartHandler
-	TraceIDFilter         *clusterv1.TraceIDFilter
-	TagType               *clusterv1.TagType
 	Group                 string
 	FileName              string
 	PartType              string
