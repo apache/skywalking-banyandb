@@ -19,6 +19,7 @@
 package data
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/base64"
@@ -84,6 +85,16 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &tracev1.QueryResponse{}
 	unmarshalYAMLWithSpanEncoding(ww, want)
+	for i := range want.Traces {
+		slices.SortFunc(want.Traces[i].Spans, func(a, b *tracev1.Span) int {
+			return bytes.Compare(a.Span, b.Span)
+		})
+	}
+	for i := range resp.Traces {
+		slices.SortFunc(resp.Traces[i].Spans, func(a, b *tracev1.Span) int {
+			return bytes.Compare(a.Span, b.Span)
+		})
+	}
 
 	if args.DisOrder {
 		// Sort traces by first span's tag for consistency

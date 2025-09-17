@@ -25,3 +25,5 @@ traces:
     - span: trace_001_span_1
     - span: trace_001_span_2
     - span: trace_001_span_3
+    - span: trace_001_span_4
+    - span: trace_001_span_5

@@ -17,6 +17,28 @@
 
 traces:
   - spans:
+    - span: trace_008_span_1
+    - span: trace_008_span_2
+    - span: trace_008_span_3
+  - spans:
+    - span: trace_007_span_1
+    - span: trace_007_span_2
+  - spans:
+    - span: trace_006_span_1
+    - span: trace_006_span_2
+    - span: trace_006_span_3
+  - spans:
+    - span: trace_002_span_1
+    - span: trace_002_span_2
+    - span: trace_002_span_3
+    - span: trace_002_span_4
+  - spans:
+    - span: trace_001_span_4
+    - span: trace_001_span_5
+    - span: trace_001_span_1
+    - span: trace_001_span_2
+    - span: trace_001_span_3
+  - spans:
     - span: trace_005_span_1
     - span: trace_005_span_2
     - span: trace_005_span_3
@@ -27,10 +49,3 @@ traces:
     - span: trace_003_span_1
     - span: trace_003_span_2
     - span: trace_003_span_3
-  - spans:
-    - span: trace_002_span_1
-    - span: trace_002_span_2
-  - spans:
-    - span: trace_001_span_1
-    - span: trace_001_span_2
-    - span: trace_001_span_3
