@@ -20,7 +20,6 @@ package trace
 import (
 	"bytes"
 	"fmt"
-	"slices"
 	"sort"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -359,11 +358,9 @@ type blockCursor struct {
 	tagValuesDecoder encoding.BytesBlockDecoder
 	tagProjection    *model.TagProjection
 	bm               blockMetadata
-	idx              int
 }
 
 func (bc *blockCursor) reset() {
-	bc.idx = 0
 	bc.p = nil
 	bc.bm.reset()
 	bc.tagProjection = nil
@@ -386,21 +383,10 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.tagProjection = opts.TagProjection
 }
 
-func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
-	start, end := 0, bc.idx+1
-	if !desc {
-		start, end = bc.idx, len(bc.spans)
-	}
-	if end <= start {
-		return
-	}
-
+func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 	r.TID = bc.bm.traceID
 
-	r.Spans = append(r.Spans, bc.spans[start:end]...)
-	if desc {
-		slices.Reverse(r.Spans)
-	}
+	r.Spans = append(r.Spans, bc.spans...)
 
 	if len(r.Tags) != len(bc.tagProjection.Names) {
 		r.Tags = make([]model.Tag, len(bc.tagProjection.Names))
@@ -409,38 +395,15 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult, desc bool) {
 		}
 	}
 	for i, t := range bc.tags {
-		values := make([]*modelv1.TagValue, end-start)
-		for k := start; k < end; k++ {
+		values := make([]*modelv1.TagValue, len(bc.spans))
+		for k := range bc.spans {
 			if len(t.values) > k {
-				values[k-start] = mustDecodeTagValue(t.valueType, t.values[k])
+				values[k] = mustDecodeTagValue(t.valueType, t.values[k])
 			} else {
-				values[k-start] = pbv1.NullTagValue
+				values[k] = pbv1.NullTagValue
 			}
 		}
-		if desc {
-			slices.Reverse(values)
-		}
 		r.Tags[i].Values = append(r.Tags[i].Values, values...)
-	}
-}
-
-func (bc *blockCursor) copyTo(r *model.TraceResult) {
-	r.Spans = append(r.Spans, bc.spans[bc.idx])
-	r.TID = bc.bm.traceID
-	if len(r.Tags) != len(bc.tagProjection.Names) {
-		for _, name := range bc.tagProjection.Names {
-			r.Tags = append(r.Tags, model.Tag{Name: name})
-		}
-	}
-	if len(bc.tags) != len(r.Tags) {
-		logger.Panicf("unexpected number of tags: got %d; want %d", len(bc.tags), len(r.Tags))
-	}
-	for i, t := range bc.tags {
-		if len(t.values) > bc.idx {
-			r.Tags[i].Values = append(r.Tags[i].Values, mustDecodeTagValue(t.valueType, t.values[bc.idx]))
-		} else {
-			r.Tags[i].Values = append(r.Tags[i].Values, pbv1.NullTagValue)
-		}
 	}
 }
 
