@@ -41,7 +41,7 @@ build-server:
 
 .PHONY: dev-up
 dev-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env.dev up --build
+	$(cli_env) docker compose $(CLI_ARGS) --profile ebpf --env-file ./env.dev up --build
 
 .PHONY: up
 up: clean

@@ -207,13 +207,15 @@ If you see permission errors:
    ```bash
    docker inspect classic-banyandb-1 | grep -A 20 CapAdd
    ```
-   Should include: SYS_ADMIN, SYS_RESOURCE, NET_ADMIN, PERFMON, BPF
+   Should include: SYS_ADMIN, SYS_RESOURCE, PERFMON, BPF
 
-2. **Verify privileged mode:**
+2. **Verify security options:**
    ```bash
-   docker inspect classic-banyandb-1 | grep Privileged
+   docker inspect classic-banyandb-1 | grep -A 5 SecurityOpt
    ```
-   Should show: `"Privileged": true`
+   Should show: `"apparmor:unconfined"`
+
+Note: We don't use `privileged: true` to avoid conflicts with non-root user mode.
 
 ## Advanced Configuration
 
