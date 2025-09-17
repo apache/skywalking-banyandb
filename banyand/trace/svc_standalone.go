@@ -22,6 +22,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -50,20 +51,21 @@ var (
 var _ Service = (*standalone)(nil)
 
 type standalone struct {
-	pm                  protector.Memory
-	pipeline            queue.Server
-	localPipeline       queue.Queue
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	metadata            metadata.Repo
-	l                   *logger.Logger
-	schemaRepo          schemaRepo
-	snapshotDir         string
-	root                string
-	dataPath            string
-	option              option
-	maxDiskUsagePercent int
-	maxFileSnapshotNum  int
+	pm                 protector.Memory
+	pipeline           queue.Server
+	localPipeline      queue.Queue
+	omr                observability.MetricsRegistry
+	lfs                fs.FileSystem
+	metadata           metadata.Repo
+	l                  *logger.Logger
+	diskMonitor        *storage.DiskMonitor
+	schemaRepo         schemaRepo
+	snapshotDir        string
+	root               string
+	dataPath           string
+	option             option
+	retentionConfig    storage.RetentionConfig
+	maxFileSnapshotNum int
 }
 
 func (s *standalone) FlagSet() *run.FlagSet {
@@ -71,7 +73,15 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&s.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
-	fs.IntVar(&s.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
+
+	// Retention configuration flags
+	fs.Float64Var(&s.retentionConfig.HighWatermark, "trace-retention-high-watermark", 95.0, "disk usage high watermark percentage that triggers forced retention cleanup")
+	fs.Float64Var(&s.retentionConfig.LowWatermark, "trace-retention-low-watermark", 85.0, "disk usage low watermark percentage where forced retention cleanup stops")
+	fs.DurationVar(&s.retentionConfig.CheckInterval, "trace-retention-check-interval", 5*time.Minute, "interval for checking disk usage")
+	fs.DurationVar(&s.retentionConfig.Cooldown, "trace-retention-cooldown", 30*time.Second, "cooldown period between forced segment deletions")
+	fs.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "trace-retention-force-cleanup-enabled", false,
+		"enable forced retention cleanup when disk usage exceeds high watermark")
+
 	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 2, "the maximum number of file snapshots")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
@@ -83,6 +93,24 @@ func (s *standalone) Validate() error {
 	if s.root == "" {
 		return errEmptyRootPath
 	}
+
+	// Validate retention configuration
+	if s.retentionConfig.HighWatermark < 0 || s.retentionConfig.HighWatermark > 100 {
+		return errors.New("trace-retention-high-watermark must be between 0 and 100")
+	}
+	if s.retentionConfig.LowWatermark < 0 || s.retentionConfig.LowWatermark > 100 {
+		return errors.New("trace-retention-low-watermark must be between 0 and 100")
+	}
+	if s.retentionConfig.LowWatermark > s.retentionConfig.HighWatermark {
+		return errors.New("trace-retention-low-watermark must be less than trace-retention-high-watermark")
+	}
+	if s.retentionConfig.CheckInterval <= 0 && s.retentionConfig.ForceCleanupEnabled {
+		return errors.New("trace-retention-check-interval must be greater than 0 when force cleanup is enabled")
+	}
+	if s.retentionConfig.Cooldown <= 0 {
+		return errors.New("trace-retention-cooldown must be greater than 0")
+	}
+
 	return nil
 }
 
@@ -114,7 +142,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 
-	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent)
+	// Initialize snapshot directory
+	s.snapshotDir = filepath.Join(s.dataPath, "snapshot")
+
+	// Initialize disk monitor for forced retention
+	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
+	s.diskMonitor.Start()
+
+	// Set up write callback handler. For now, keep the original write throttling behavior based on high watermark
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
 	if err != nil {
 		return err
@@ -144,6 +180,11 @@ func (s *standalone) Serve() run.StopNotify {
 }
 
 func (s *standalone) GracefulStop() {
+	// Stop disk monitor
+	if s.diskMonitor != nil {
+		s.diskMonitor.Stop()
+	}
+
 	if s.schemaRepo.Repository != nil {
 		s.schemaRepo.Repository.Close()
 	}
@@ -164,6 +205,72 @@ func (s *standalone) Trace(metadata *commonv1.Metadata) (Trace, error) {
 
 func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
+}
+
+// RetentionService interface implementation.
+
+func (s *standalone) GetDataPath() string {
+	return s.dataPath
+}
+
+func (s *standalone) GetSnapshotDir() string {
+	return s.snapshotDir
+}
+
+func (s *standalone) LoadAllGroups() []resourceSchema.Group {
+	return s.schemaRepo.LoadAllGroups()
+}
+
+func (s *standalone) PeekOldestSegmentEndTimeInGroup(group string) (time.Time, bool) {
+	g, ok := s.schemaRepo.LoadGroup(group)
+	if !ok {
+		return time.Time{}, false
+	}
+
+	db := g.SupplyTSDB()
+	if db == nil {
+		return time.Time{}, false
+	}
+
+	// Type assert to the storage interface that has PeekOldestSegmentEndTime
+	if dbWithPeek, ok := db.(interface{ PeekOldestSegmentEndTime() (time.Time, bool) }); ok {
+		return dbWithPeek.PeekOldestSegmentEndTime()
+	}
+
+	return time.Time{}, false
+}
+
+func (s *standalone) DeleteOldestSegmentInGroup(group string) (bool, error) {
+	g, ok := s.schemaRepo.LoadGroup(group)
+	if !ok {
+		return false, nil
+	}
+
+	db := g.SupplyTSDB()
+	if db == nil {
+		return false, nil
+	}
+
+	// Type assert to the storage interface that has DeleteOldestSegment
+	if dbWithDelete, ok := db.(interface{ DeleteOldestSegment() (bool, error) }); ok {
+		return dbWithDelete.DeleteOldestSegment()
+	}
+
+	s.l.Debug().Str("group", group).Msg("database does not support DeleteOldestSegment")
+	return false, nil
+}
+
+func (s *standalone) CleanupOldSnapshots(maxAge time.Duration) error {
+	if s.snapshotDir == "" {
+		return nil
+	}
+	// Use age-based cleanup during forced retention cleanup
+	storage.DeleteOldSnapshots(s.snapshotDir, maxAge, s.lfs)
+	return nil
+}
+
+func (s *standalone) GetServiceName() string {
+	return s.Name()
 }
 
 // NewService returns a new service.

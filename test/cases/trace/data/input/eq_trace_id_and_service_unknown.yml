@@ -15,12 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-traces:
-  - spans:
-    - span: trace_008_span_1
-    - span: trace_008_span_2
-    - span: trace_008_span_3
-  - spans:
-    - span: trace_007_span_1
-    - span: trace_007_span_2
-
+name: "sw"
+groups: ["test-trace-group"]
+tag_projection: ["trace_id"]
+criteria:
+  le:
+    op: "LOGICAL_OP_AND"
+    left:
+      condition:
+        name: "trace_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "trace_001"
+    right:
+      condition:
+        name: "service_id"
+        op: "BINARY_OP_EQ"
+        value:
+          str:
+            value: "unknown"

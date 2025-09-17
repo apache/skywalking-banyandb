@@ -1,0 +1,422 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_001"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "api_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/api/v1/users"
+                }
+            },
+            {
+                "int": {
+                    "value": 750
+                }
+            }
+        ],
+        "span": "trace_001_span_4"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_001"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "api_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/api/v1/profile"
+                }
+            },
+            {
+                "int": {
+                    "value": 320
+                }
+            }
+        ],
+        "span": "trace_001_span_5"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_002"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "auth_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "auth_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/auth/login"
+                }
+            },
+            {
+                "int": {
+                    "value": 450
+                }
+            }
+        ],
+        "span": "trace_002_span_3"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_002"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "auth_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "auth_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/auth/validate"
+                }
+            },
+            {
+                "int": {
+                    "value": 180
+                }
+            }
+        ],
+        "span": "trace_002_span_4"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_006"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/payment/process"
+                }
+            },
+            {
+                "int": {
+                    "value": 1190
+                }
+            }
+        ],
+        "span": "trace_006_span_1"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_006"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/payment/verify"
+                }
+            },
+            {
+                "int": {
+                    "value": 280
+                }
+            }
+        ],
+        "span": "trace_006_span_2"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_006"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "payment_instance_3"
+                }
+            },
+            {
+                "str": {
+                    "value": "/payment/refund"
+                }
+            },
+            {
+                "int": {
+                    "value": 150
+                }
+            }
+        ],
+        "span": "trace_006_span_3"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_007"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "notification_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "notification_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/notification/send"
+                }
+            },
+            {
+                "int": {
+                    "value": 650
+                }
+            }
+        ],
+        "span": "trace_007_span_1"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_007"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "notification_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "notification_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/notification/email"
+                }
+            },
+            {
+                "int": {
+                    "value": 420
+                }
+            }
+        ],
+        "span": "trace_007_span_2"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_008"
+                }
+            },
+            {
+                "int": {
+                    "value": 1
+                }
+            },
+            {
+                "str": {
+                    "value": "database_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "database_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/db/query"
+                }
+            },
+            {
+                "int": {
+                    "value": 890
+                }
+            }
+        ],
+        "span": "trace_008_span_1"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_008"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "database_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "database_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/db/transaction"
+                }
+            },
+            {
+                "int": {
+                    "value": 340
+                }
+            }
+        ],
+        "span": "trace_008_span_2"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_008"
+                }
+            },
+            {
+                "int": {
+                    "value": 0
+                }
+            },
+            {
+                "str": {
+                    "value": "database_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "database_instance_3"
+                }
+            },
+            {
+                "str": {
+                    "value": "/db/backup"
+                }
+            },
+            {
+                "int": {
+                    "value": 2100
+                }
+            }
+        ],
+        "span": "trace_008_span_3"
+    }
+]
