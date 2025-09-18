@@ -67,7 +67,7 @@ The Trace model uses a flat tag structure optimized for trace operations:
     {"name": "serviceId", "type": "TAG_TYPE_STRING"},
     {"name": "serviceInstanceId", "type": "TAG_TYPE_STRING"},
     {"name": "traceId", "type": "TAG_TYPE_STRING"},
-    {"name": "startTime", "type": "TAG_TYPE_INT"},
+    {"name": "startTime", "type": "TAG_TYPE_TIMESTAMP"},
     {"name": "latency", "type": "TAG_TYPE_INT"},
     {"name": "isError", "type": "TAG_TYPE_INT"},
     {"name": "spanId", "type": "TAG_TYPE_STRING"},
