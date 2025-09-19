@@ -237,6 +237,7 @@ projection:
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
 			out := issue()
+			GinkgoWriter.Println(out)
 			resp := new(streamv1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)

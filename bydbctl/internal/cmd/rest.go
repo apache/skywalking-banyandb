@@ -203,8 +203,8 @@ func parseTimeRangeFromFlagAndYAML(reader io.Reader) (requests []reqBody, err er
 		}
 		startTS = endTS.Add(-timeRange)
 	}
-	s := startTS.Format(time.RFC3339)
-	e := endTS.Format(time.RFC3339)
+	s := startTS.Format("2006-01-02T15:04:05-07:00")
+	e := endTS.Format("2006-01-02T15:04:05-07:00")
 	var rawRequests []reqBody
 	if rawRequests, err = parseNameAndGroupFromYAML(reader); err != nil {
 		return nil, err

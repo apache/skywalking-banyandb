@@ -202,31 +202,31 @@ var _ = Describe("Translator", func() {
 		Entry("simple stream query",
 			"SELECT * FROM STREAM sw",
 			func(data map[string]any) bool {
-				return data["Name"] == "sw"
+				return data["name"] == "sw"
 			}),
 		Entry("measure query with aggregation",
 			"SELECT region, SUM(latency) FROM MEASURE metrics GROUP BY region",
 			func(data map[string]any) bool {
-				agg, ok := data["Agg"].(map[string]any)
-				return ok && agg["Function"] == "SUM" && agg["FieldName"] == "latency"
+				agg, ok := data["agg"].(map[string]any)
+				return ok && agg["function"] == "SUM" && agg["field_name"] == "latency"
 			}),
 		Entry("time range query",
 			"SELECT * FROM STREAM sw TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'",
 			func(data map[string]any) bool {
-				timeRange, ok := data["TimeRange"].(map[string]any)
-				return ok && timeRange["Begin"] == "2023-01-01T00:00:00Z" &&
-					timeRange["End"] == "2023-01-02T00:00:00Z"
+				timeRange, ok := data["timeRange"].(map[string]any)
+				return ok && timeRange["begin"] == "2023-01-01T00:00:00Z" &&
+					timeRange["end"] == "2023-01-02T00:00:00Z"
 			}),
 		Entry("relative time query",
 			"SELECT * FROM STREAM sw TIME > '-30m'",
 			func(data map[string]any) bool {
-				timeRange, ok := data["TimeRange"].(map[string]any)
-				return ok && timeRange["Begin"] != nil && timeRange["End"] != nil
+				timeRange, ok := data["timeRange"].(map[string]any)
+				return ok && timeRange["begin"] != nil && timeRange["end"] != nil
 			}),
 		Entry("WHERE clause with criteria",
 			"SELECT * FROM STREAM sw WHERE service_id = 'webapp'",
 			func(data map[string]any) bool {
-				criteria, ok := data["Criteria"].([]any)
+				criteria, ok := data["criteria"].([]any)
 				if !ok || len(criteria) == 0 {
 					return false
 				}
@@ -236,20 +236,49 @@ var _ = Describe("Translator", func() {
 		Entry("TOP N query",
 			"SHOW TOP 10 FROM MEASURE service_latency ORDER BY value DESC",
 			func(data map[string]any) bool {
-				topN := data["TopN"]
-				fieldValueSort := data["FieldValueSort"]
-				return topN == float64(10) && fieldValueSort == "DESC"
+				topN := data["top_n"]
+				fieldValueSort := data["field_value_sort"]
+				return topN == 10 && fieldValueSort == "DESC"
 			}),
 		Entry("property query with IDs",
 			"SELECT * FROM PROPERTY metadata WHERE ID = 'id1' OR ID = 'id2'",
 			func(data map[string]any) bool {
-				criteria, ok := data["Criteria"].([]any)
+				criteria, ok := data["criteria"].([]any)
 				return ok && len(criteria) == 2
 			}),
 		Entry("query trace enabled",
 			"SELECT * FROM STREAM sw WITH QUERY_TRACE",
 			func(data map[string]any) bool {
-				return data["Trace"] == true
+				return data["trace"] == true
+			}),
+		Entry("stream query with projection tagFamilies format",
+			"SELECT trace_id FROM STREAM sw",
+			func(data map[string]any) bool {
+				// Verify that projection is translated to tagFamilies format with snake_case
+				projection, ok := data["projection"].(map[string]any)
+				if !ok {
+					return false
+				}
+				tagFamiliesRaw := projection["tagFamilies"]
+				tagFamilies, ok := tagFamiliesRaw.([]interface{})
+				if !ok || len(tagFamilies) == 0 {
+					return false
+				}
+				tagFamily, ok := tagFamilies[0].(map[string]interface{})
+				if !ok {
+					return false
+				}
+				name, ok := tagFamily["name"].(string)
+				if !ok || name != "searchable" {
+					return false
+				}
+				tagsRaw := tagFamily["tags"]
+				tags, ok := tagsRaw.([]interface{})
+				if !ok || len(tags) == 0 {
+					return false
+				}
+				tag, ok := tags[0].(string)
+				return ok && tag == "trace_id"
 			}),
 	)
 })
@@ -370,15 +399,15 @@ var _ = Describe("Time Format Parsing", func() {
 		Entry("absolute time range",
 			"BETWEEN '2023-01-01T10:00:00Z' AND '2023-01-01T11:00:00Z'",
 			func(data map[string]any) bool {
-				timeRange, ok := data["TimeRange"].(map[string]any)
-				return ok && timeRange["Begin"] == "2023-01-01T10:00:00Z" &&
-					timeRange["End"] == "2023-01-01T11:00:00Z"
+				timeRange, ok := data["timeRange"].(map[string]any)
+				return ok && timeRange["begin"] == "2023-01-01T10:00:00Z" &&
+					timeRange["end"] == "2023-01-01T11:00:00Z"
 			}),
 		Entry("relative time condition",
 			"> '-30m'",
 			func(data map[string]any) bool {
-				timeRange, ok := data["TimeRange"].(map[string]any)
-				return ok && timeRange["Begin"] != nil && timeRange["End"] != nil
+				timeRange, ok := data["timeRange"].(map[string]any)
+				return ok && timeRange["begin"] != nil && timeRange["end"] != nil
 			}),
 	)
 })

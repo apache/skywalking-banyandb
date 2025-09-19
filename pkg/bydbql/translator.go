@@ -24,38 +24,38 @@ import (
 	"time"
 
 	str2duration "github.com/xhit/go-str2duration/v2"
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
 )
 
 // QueryYAML represents the YAML structure for BanyanDB queries
 type QueryYAML struct {
 	// Common fields
-	Name       string                 `yaml:"name,omitempty"`
-	Groups     []string               `yaml:"groups,omitempty"`
-	TimeRange  *TimeRangeYAML         `yaml:"timeRange,omitempty"`
-	Criteria   []map[string]interface{} `yaml:"criteria,omitempty"`
-	Limit      *int                   `yaml:"limit,omitempty"`
-	Offset     *int                   `yaml:"offset,omitempty"`
-	Trace      bool                   `yaml:"trace,omitempty"`
+	Name      string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Groups    []string                 `yaml:"groups,omitempty" json:"groups,omitempty"`
+	TimeRange *TimeRangeYAML           `yaml:"timeRange,omitempty" json:"timeRange,omitempty"`
+	Criteria  []map[string]interface{} `yaml:"criteria,omitempty" json:"criteria,omitempty"`
+	Limit     *int                     `yaml:"limit,omitempty" json:"limit,omitempty"`
+	Offset    *int                     `yaml:"offset,omitempty" json:"offset,omitempty"`
+	Trace     bool                     `yaml:"trace,omitempty" json:"trace,omitempty"`
 
 	// Stream/Trace specific
-	Projection []string               `yaml:"projection,omitempty"`
-	OrderBy    *OrderByYAML           `yaml:"orderBy,omitempty"`
+	Projection interface{}  `yaml:"projection,omitempty" json:"projection,omitempty"`
+	OrderBy    *OrderByYAML `yaml:"order_by,omitempty" json:"order_by,omitempty"`
 
 	// Measure specific
-	TagProjection   []string              `yaml:"tagProjection,omitempty"`
-	FieldProjection []string              `yaml:"fieldProjection,omitempty"`
-	GroupBy         *GroupByYAML          `yaml:"groupBy,omitempty"`
-	Agg             *AggregationYAML      `yaml:"agg,omitempty"`
-	Top             *TopYAML              `yaml:"top,omitempty"`
+	TagProjection   []string         `yaml:"tag_projection,omitempty" json:"tag_projection,omitempty"`
+	FieldProjection []string         `yaml:"field_projection,omitempty" json:"field_projection,omitempty"`
+	GroupBy         *GroupByYAML     `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	Agg             *AggregationYAML `yaml:"agg,omitempty" json:"agg,omitempty"`
+	Top             *TopYAML         `yaml:"top,omitempty" json:"top,omitempty"`
 
 	// Property specific
-	IDs []string `yaml:"ids,omitempty"`
+	IDs []string `yaml:"ids,omitempty" json:"ids,omitempty"`
 
 	// Top-N specific (for separate endpoint)
-	TopN              int                `yaml:"topN,omitempty"`
-	FieldValueSort    string             `yaml:"fieldValueSort,omitempty"`
-	Conditions        []map[string]interface{} `yaml:"conditions,omitempty"`
+	TopN           int                      `yaml:"top_n,omitempty" json:"top_n,omitempty"`
+	FieldValueSort string                   `yaml:"field_value_sort,omitempty" json:"field_value_sort,omitempty"`
+	Conditions     []map[string]interface{} `yaml:"conditions,omitempty" json:"conditions,omitempty"`
 }
 
 // TimeRangeYAML represents time range in YAML
@@ -66,26 +66,37 @@ type TimeRangeYAML struct {
 
 // OrderByYAML represents ORDER BY clause in YAML
 type OrderByYAML struct {
-	IndexRuleName string `yaml:"indexRuleName"`
+	IndexRuleName string `yaml:"index_rule_name"`
 	Sort          string `yaml:"sort"` // ASC or DESC
 }
 
 // GroupByYAML represents GROUP BY clause in YAML
 type GroupByYAML struct {
-	TagProjection []string `yaml:"tagProjection"`
+	TagProjection []string `yaml:"tag_projection"`
+}
+
+// TagFamilyYAML represents a tag family in projection
+type TagFamilyYAML struct {
+	Name string   `yaml:"name"`
+	Tags []string `yaml:"tags"`
+}
+
+// ProjectionYAML represents the projection structure for stream/trace queries
+type ProjectionYAML struct {
+	TagFamilies []TagFamilyYAML `yaml:"tagFamilies"`
 }
 
 // AggregationYAML represents aggregation function in YAML
 type AggregationYAML struct {
-	Function   string `yaml:"function"`
-	FieldName  string `yaml:"fieldName"`
+	Function  string `yaml:"function"`
+	FieldName string `yaml:"field_name"`
 }
 
 // TopYAML represents TOP N clause in YAML
 type TopYAML struct {
-	Number        int      `yaml:"number"`
-	FieldName     string   `yaml:"fieldName"`
-	FieldValueSort string  `yaml:"fieldValueSort"`
+	Number         int    `yaml:"number"`
+	FieldName      string `yaml:"field_name"`
+	FieldValueSort string `yaml:"field_value_sort"`
 }
 
 // Translator converts parsed BydbQL to YAML format
@@ -209,10 +220,20 @@ func (t *Translator) translateStreamOrTraceQuery(stmt *SelectStatement, yamlQuer
 			// SELECT * - no specific projection needed
 		} else if stmt.Projection.Empty {
 			// SELECT () - empty projection for traces
-			yamlQuery.Projection = []string{}
+			yamlQuery.Projection = &ProjectionYAML{
+				TagFamilies: []TagFamilyYAML{},
+			}
 		} else if len(stmt.Projection.Columns) > 0 {
+			// Group columns by tag family (default to "searchable" for now)
+			tagFamily := TagFamilyYAML{
+				Name: "searchable",
+				Tags: make([]string, 0, len(stmt.Projection.Columns)),
+			}
 			for _, col := range stmt.Projection.Columns {
-				yamlQuery.Projection = append(yamlQuery.Projection, col.Name)
+				tagFamily.Tags = append(tagFamily.Tags, col.Name)
+			}
+			yamlQuery.Projection = &ProjectionYAML{
+				TagFamilies: []TagFamilyYAML{tagFamily},
 			}
 		}
 	}
@@ -301,9 +322,11 @@ func (t *Translator) translateMeasureQuery(stmt *SelectStatement, yamlQuery *Que
 func (t *Translator) translatePropertyQuery(stmt *SelectStatement, yamlQuery *QueryYAML) (*QueryYAML, error) {
 	// Translate projection
 	if stmt.Projection != nil && !stmt.Projection.All && len(stmt.Projection.Columns) > 0 {
+		projection := make([]string, 0, len(stmt.Projection.Columns))
 		for _, col := range stmt.Projection.Columns {
-			yamlQuery.Projection = append(yamlQuery.Projection, col.Name)
+			projection = append(projection, col.Name)
 		}
+		yamlQuery.Projection = projection
 	}
 
 	// Extract IDs from WHERE clause if present

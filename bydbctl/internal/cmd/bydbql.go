@@ -28,6 +28,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
 	"sigs.k8s.io/yaml"
 
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
@@ -36,10 +37,10 @@ import (
 
 // BydbQL endpoint paths
 const (
-	streamQueryPath   = "/api/v1/stream/query"
-	measureQueryPath  = "/api/v1/measure/query"
-	traceQueryPath    = "/api/v1/trace/query"
-	propertyQueryPath = "/api/v1/property/query"
+	streamQueryPath   = "/api/v1/stream/data"
+	measureQueryPath  = "/api/v1/measure/data"
+	traceQueryPath    = "/api/v1/trace/data"
+	propertyQueryPath = "/api/v1/property/data/query"
 	topnQueryPath     = "/api/v1/measure/topn"
 )
 
@@ -228,22 +229,21 @@ func executeBydbQLQuery(query string) error {
 	if err != nil {
 		return fmt.Errorf("translation error: %w", err)
 	}
-	fmt.Printf("Translated YAML:\n%s\n", yamlData)
 
 	// Convert to JSON for REST API
-	jsonData, err := json.Marshal(yamlData)
-	if err != nil {
-		return fmt.Errorf("JSON conversion error: %w", err)
-	}
-
-	// Determine endpoint based on query type
+	// jsonData, err := json.Marshal(yamlData)
+	// if err != nil {
+	// 	return fmt.Errorf("JSON conversion error: %w", err)
+	// }
+	//
+	// // Determine endpoint based on query type
 	endpoint, err := determineEndpoint(parsed)
 	if err != nil {
 		return err
 	}
 
 	// Execute the query via REST API
-	return executeRESTQuery(endpoint, jsonData)
+	return executeRESTQuery(endpoint, yamlData)
 }
 
 // determineEndpoint determines the REST endpoint based on query type
@@ -279,18 +279,21 @@ func determineEndpoint(parsed *bydbql.ParsedQuery) (string, error) {
 }
 
 // executeRESTQuery executes the query via REST API
-func executeRESTQuery(endpoint string, jsonData []byte) error {
-	// Create REST request using existing infrastructure
-	reqBodyData := reqBody{
-		data: jsonData,
-	}
-
+func executeRESTQuery(endpoint string, jsonData map[string]any) error {
 	// Use existing rest function with appropriate parameters
 	return rest(
 		func() ([]reqBody, error) {
+			data, err := json.Marshal(jsonData)
+			if err != nil {
+				return nil, fmt.Errorf("JSON conversion error: %w", err)
+			}
+
+			reqBodyData := reqBody{data: data}
+
 			return []reqBody{reqBodyData}, nil
 		},
 		func(req request) (*resty.Response, error) {
+			fmt.Printf("Executing query at endpoint %s\n", string(req.data))
 			url := viper.GetString("addr") + endpoint
 			resp, err := req.req.
 				SetHeader("Content-Type", "application/json").
@@ -375,4 +378,3 @@ func printQueryResult(data []byte) error {
 	fmt.Print(string(yamlData))
 	return nil
 }
-
