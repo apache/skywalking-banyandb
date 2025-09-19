@@ -25,10 +25,6 @@
             "type": "TAG_TYPE_STRING"
         },
         {
-            "name": "timestamp",
-            "type": "TAG_TYPE_TIMESTAMP"
-        },
-        {
             "name": "duration",
             "type": "TAG_TYPE_INT"
         },
@@ -63,6 +59,14 @@
         {
             "name": "debug",
             "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "query",
+            "type": "TAG_TYPE_STRING_ARRAY"
+        },
+        {
+            "name": "timestamp",
+            "type": "TAG_TYPE_TIMESTAMP"
         }
     ],
     "trace_id_tag_name": "trace_id",

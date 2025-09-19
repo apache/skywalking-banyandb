@@ -147,7 +147,7 @@ func (s *sidx) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
 	if cur != nil {
 		defer cur.decRef()
 	} else {
-		cur = generateSnapshot()
+		cur = &snapshot{}
 	}
 
 	next := nextIntroduction.memPart
