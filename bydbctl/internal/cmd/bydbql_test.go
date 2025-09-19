@@ -104,7 +104,7 @@ SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s'`, nowStr,
 		rootCmd.SetArgs([]string{"bydbql", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
-SELECT trace_id FROM STREAM sw in (default) WHERE trace_id = 'trace-1' TIME BETWEEN '%s' AND '%s' LIMIT 10`, nowStr, endStr)))
+SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s' WHERE trace_id = 'trace-1' LIMIT 10`, nowStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {

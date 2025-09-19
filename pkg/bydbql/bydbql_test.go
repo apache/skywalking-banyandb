@@ -133,6 +133,29 @@ var _ = Describe("Parser", func() {
 			Expect(stmt.GroupBy.Columns[0]).To(Equal("region"))
 		})
 
+		It("parses SELECT with both TIME BETWEEN and WHERE clause", func() {
+			parsed, errors := ParseQuery("SELECT * FROM STREAM sw TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z' WHERE service_id = 'webapp' AND status = 200")
+			Expect(errors).To(BeEmpty())
+			Expect(parsed).NotTo(BeNil())
+
+			stmt, ok := parsed.Statement.(*SelectStatement)
+			Expect(ok).To(BeTrue())
+
+			// Verify TIME BETWEEN is parsed
+			Expect(stmt.Time).NotTo(BeNil())
+			Expect(stmt.Time.Operator).To(Equal(TimeOpBetween))
+			Expect(stmt.Time.Begin).To(Equal("2023-01-01T00:00:00Z"))
+			Expect(stmt.Time.End).To(Equal("2023-01-02T00:00:00Z"))
+
+			// Verify WHERE clause is parsed
+			Expect(stmt.Where).NotTo(BeNil())
+			Expect(stmt.Where.Conditions).To(HaveLen(2))
+			Expect(stmt.Where.Conditions[0].Left).To(Equal("service_id"))
+			Expect(stmt.Where.Conditions[0].Right.StringVal).To(Equal("webapp"))
+			Expect(stmt.Where.Conditions[1].Left).To(Equal("status"))
+			Expect(stmt.Where.Conditions[1].Right.Integer).To(Equal(int64(200)))
+		})
+
 		It("parses TOP N statement", func() {
 			parsed, errors := ParseQuery("SHOW TOP 10 FROM MEASURE service_latency ORDER BY value DESC")
 			Expect(errors).To(BeEmpty())
