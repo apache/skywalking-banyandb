@@ -27,7 +27,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
@@ -46,19 +45,15 @@ type snapshot struct {
 
 	// ref is the atomic reference counter for safe concurrent access
 	ref int32
-
-	// released tracks if this snapshot has been released
-	released atomic.Bool
 }
 
 // newSnapshot creates a new snapshot with the given parts and epoch.
 // The snapshot starts with a reference count of 1.
 func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
-	s := generateSnapshot()
+	s := &snapshot{}
 	s.parts = append(s.parts[:0], parts...)
 	s.epoch = epoch
 	s.ref = 1
-	s.released.Store(false)
 
 	// Acquire references to all parts to ensure they remain valid
 	for _, pw := range s.parts {
@@ -77,25 +72,7 @@ func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
 // acquire increments the snapshot reference count.
 // Returns true if successful, false if snapshot has been released.
 func (s *snapshot) acquire() bool {
-	if s.released.Load() {
-		return false
-	}
-
-	for {
-		oldRef := atomic.LoadInt32(&s.ref)
-		if oldRef <= 0 {
-			return false
-		}
-
-		if atomic.CompareAndSwapInt32(&s.ref, oldRef, oldRef+1) {
-			// Double-check that snapshot wasn't released during acquire
-			if s.released.Load() {
-				s.release()
-				return false
-			}
-			return true
-		}
-	}
+	return atomic.AddInt32(&s.ref, 1) > 0
 }
 
 // decRef decrements the snapshot reference count (helper for snapshot interface).
@@ -118,11 +95,6 @@ func (s *snapshot) release() {
 			Msg("snapshot reference count went negative")
 		return
 	}
-
-	// Mark as released first
-	s.released.Store(true)
-	// Return to pool
-	releaseSnapshot(s)
 }
 
 // getParts returns parts that potentially contain data within the specified key range.
@@ -190,17 +162,8 @@ func (s *snapshot) refCount() int32 {
 	return atomic.LoadInt32(&s.ref)
 }
 
-// isReleased returns true if the snapshot has been released.
-func (s *snapshot) isReleased() bool {
-	return s.released.Load()
-}
-
 // validate checks snapshot consistency and part availability.
 func (s *snapshot) validate() error {
-	if s.released.Load() {
-		return fmt.Errorf("snapshot has been released")
-	}
-
 	if atomic.LoadInt32(&s.ref) <= 0 {
 		return fmt.Errorf("snapshot has zero or negative reference count")
 	}
@@ -280,7 +243,6 @@ func (s *snapshot) reset() {
 	s.parts = s.parts[:0]
 	s.epoch = 0
 	s.ref = 0
-	s.released.Store(false)
 }
 
 // String returns a string representation of the snapshot.
@@ -329,34 +291,12 @@ func mustReadSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) []
 	return result
 }
 
-// Pool for snapshot reuse.
-var snapshotPool = pool.Register[*snapshot]("sidx-snapshot")
-
-// generateSnapshot gets a snapshot from the pool or creates a new one.
-func generateSnapshot() *snapshot {
-	v := snapshotPool.Get()
-	if v == nil {
-		return &snapshot{}
-	}
-	return v
-}
-
-// releaseSnapshot returns a snapshot to the pool after reset.
-func releaseSnapshot(s *snapshot) {
-	if s == nil {
-		return
-	}
-	s.reset()
-	snapshotPool.Put(s)
-}
-
 // copyAllTo creates a new snapshot with all parts from current snapshot.
 func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 	var result snapshot
 	result.parts = make([]*partWrapper, len(s.parts))
 	result.epoch = epoch
 	result.ref = 1
-	result.released.Store(false)
 
 	// Copy all parts and acquire references
 	copy(result.parts, s.parts)
@@ -379,8 +319,9 @@ func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *s
 			result.parts = append(result.parts, n)
 			continue
 		}
-		s.parts[i].acquire()
-		result.parts = append(result.parts, s.parts[i])
+		if s.parts[i].acquire() {
+			result.parts = append(result.parts, s.parts[i])
+		}
 	}
 	return &result
 }
@@ -390,7 +331,6 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 	var result snapshot
 	result.epoch = epoch
 	result.ref = 1
-	result.released.Store(false)
 
 	// Copy parts except those being removed
 	for _, pw := range s.parts {
@@ -399,6 +339,7 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 				result.parts = append(result.parts, pw)
 			}
 		}
+		pw.markForRemoval()
 	}
 
 	return &result

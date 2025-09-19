@@ -83,7 +83,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	ctx.projectionTags = projTags
 	plan := uis.selectIndexScanner(ctx, uis.ec)
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, false, "")
+		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, s, false, "")
 		if errFilter != nil {
 			return nil, errFilter
 		}
