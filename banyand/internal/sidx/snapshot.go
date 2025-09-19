@@ -95,6 +95,7 @@ func (s *snapshot) release() {
 			Msg("snapshot reference count went negative")
 		return
 	}
+	s.reset()
 }
 
 // getParts returns parts that potentially contain data within the specified key range.
