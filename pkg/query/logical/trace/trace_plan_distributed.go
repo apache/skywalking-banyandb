@@ -358,7 +358,6 @@ func (tri *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
 
 	result := model.TraceResult{
 		TID:         trace.TraceId,
-		TraceIDName: trace.TraceIdName,
 	}
 
 	// Extract tags and spans from all spans in this trace

@@ -4631,8 +4631,6 @@ InternalTrace is the trace that is used for internal use.
 | ----- | ---- | ----- | ----------- |
 | spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
 | trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
-| trace_id_name | [string](#string) |  | trace_id_name is the name of the trace ID tag. |
-| sorted_tag | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) |  | sorted_tag is the tag that is used for sorting. |
 | key | [int64](#int64) |  | key is used for sorting. |
 
 

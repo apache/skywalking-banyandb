@@ -493,20 +493,6 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		timestampTagName = ec.GetSchema().GetTimestampTagName()
 	}
 
-	var sortingTagName string
-	var sortOrder modelv1.Sort
-	if queryCriteria.OrderBy != nil && queryCriteria.OrderBy.IndexRuleName != "" && len(schemas) > 0 {
-		indexRuleName := queryCriteria.OrderBy.IndexRuleName
-		ok, indexRule := schemas[0].IndexRuleDefined(indexRuleName)
-		if ok && len(indexRule.Tags) > 0 {
-			sortingTagName = indexRule.Tags[len(indexRule.Tags)-1]
-			sortOrder = queryCriteria.OrderBy.Sort
-			if !slices.Contains(queryCriteria.TagProjection, sortingTagName) {
-				queryCriteria.TagProjection = append(queryCriteria.TagProjection, sortingTagName)
-			}
-		}
-	}
-
 	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName, timestampTagName)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
@@ -548,8 +534,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	}
 
 	// Convert model.TraceResult iterator to tracev1.QueryResponse format
-	// Each result contains spans from a single trace, so we can directly create traces
-	var traces []*tracev1.InternalTrace
+	// Each result contains spans from a single trace, so we can directly create internalTraces
+	var internalTraces []*tracev1.InternalTrace
 
 	// Check if trace ID tag should be included based on tag projection
 	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
@@ -565,8 +551,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 			continue
 		}
 
-		// Create a trace for this result
-		trace := &tracev1.InternalTrace{
+		// Create a internalTrace for this result
+		internalTrace := &tracev1.InternalTrace{
 			Spans: make([]*tracev1.Span, 0, len(result.Spans)),
 		}
 
@@ -606,127 +592,25 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 				Tags: traceTags,
 				Span: spanBytes,
 			}
-			trace.Spans = append(trace.Spans, span)
-			trace.TraceId = result.TID
-			trace.Key = result.Key
+			internalTrace.Spans = append(internalTrace.Spans, span)
+			internalTrace.TraceId = result.TID
+			internalTrace.Key = result.Key
 		}
 
-		traces = append(traces, trace)
-	}
-
-	internalTraces := make([]*tracev1.InternalTrace, 0, len(traces))
-	for _, trace := range traces {
-		internalTrace := &tracev1.InternalTrace{
-			Spans:   trace.Spans,
-			TraceId: trace.TraceId,
-			Key:     trace.Key,
-		}
-		if len(trace.Spans) > 0 {
-			for _, tag := range trace.Spans[0].Tags {
-				if tag.Key == traceIDTagName {
-					if strVal := tag.Value.GetStr(); strVal != nil {
-						internalTrace.TraceIdName = tag.Key
-					}
-					break
-				}
-			}
-		}
-		if len(trace.Spans) > 0 && sortingTagName != "" {
-			var selectedTag *modelv1.Tag
-			for _, span := range trace.Spans {
-				for _, tag := range span.Tags {
-					if tag.Key == sortingTagName {
-						if selectedTag == nil {
-							selectedTag = tag
-						} else {
-							shouldReplace := false
-							if sortOrder == modelv1.Sort_SORT_DESC {
-								shouldReplace = compareTagValues(tag.Value, selectedTag.Value) > 0
-							} else {
-								shouldReplace = compareTagValues(tag.Value, selectedTag.Value) < 0
-							}
-							if shouldReplace {
-								selectedTag = tag
-							}
-						}
-						break
-					}
-				}
-			}
-			if selectedTag != nil {
-				internalTrace.SortedTag = selectedTag
-			}
-		}
 		internalTraces = append(internalTraces, internalTrace)
 	}
+
 	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: internalTraces})
 
 	if !queryCriteria.Trace && p.slowQuery > 0 {
 		latency := time.Since(n)
 		if latency > p.slowQuery {
 			spanCount := 0
-			for _, trace := range traces {
+			for _, trace := range internalTraces {
 				spanCount += len(trace.Spans)
 			}
 			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", spanCount).Msg("trace slow query")
 		}
 	}
 	return
-}
-
-func compareTagValues(a, b *modelv1.TagValue) int {
-	if a == nil && b == nil {
-		return 0
-	}
-	if a == nil {
-		return -1
-	}
-	if b == nil {
-		return 1
-	}
-
-	switch aVal := a.Value.(type) {
-	case *modelv1.TagValue_Str:
-		if bVal, ok := b.Value.(*modelv1.TagValue_Str); ok {
-			aStr := aVal.Str.GetValue()
-			bStr := bVal.Str.GetValue()
-			if aStr < bStr {
-				return -1
-			} else if aStr > bStr {
-				return 1
-			}
-			return 0
-		}
-	case *modelv1.TagValue_Int:
-		if bVal, ok := b.Value.(*modelv1.TagValue_Int); ok {
-			aInt := aVal.Int.GetValue()
-			bInt := bVal.Int.GetValue()
-			if aInt < bInt {
-				return -1
-			} else if aInt > bInt {
-				return 1
-			}
-			return 0
-		}
-	case *modelv1.TagValue_Timestamp:
-		if bVal, ok := b.Value.(*modelv1.TagValue_Timestamp); ok {
-			aTime := aVal.Timestamp.AsTime()
-			bTime := bVal.Timestamp.AsTime()
-			if aTime.Before(bTime) {
-				return -1
-			} else if aTime.After(bTime) {
-				return 1
-			}
-			return 0
-		}
-	}
-
-	aStr := a.String()
-	bStr := b.String()
-	if aStr < bStr {
-		return -1
-	} else if aStr > bStr {
-		return 1
-	}
-	return 0
 }

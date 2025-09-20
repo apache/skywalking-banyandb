@@ -40,12 +40,8 @@ message InternalTrace {
   repeated Span spans = 1;
   // trace_id is the unique identifier of the trace.
   string trace_id = 2;
-  // trace_id_name is the name of the trace ID tag.
-  string trace_id_name = 3;
-  // sorted_tag is the tag that is used for sorting.
-  model.v1.Tag  sorted_tag = 4;
   // key is used for sorting.
-  int64 key = 5;
+  int64 key = 3;
 }
 
 // Trace contains all spans that belong to a single trace ID.

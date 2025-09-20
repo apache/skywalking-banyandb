@@ -197,7 +197,6 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 			}
 			trace.Spans = append(trace.Spans, span)
 			trace.TraceId = result.TID
-			trace.TraceIdName = result.TraceIDName
 		}
 	}
 	return traces
