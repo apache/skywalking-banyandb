@@ -115,7 +115,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	}
 	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal)
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(traceIDs) > 0, uis.traceIDTagName)
+		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, s, len(traceIDs) > 0, uis.traceIDTagName)
 		if errFilter != nil {
 			return nil, errFilter
 		}
@@ -189,7 +189,7 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err := buildFilter(criteria, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err := buildFilter(criteria, s, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
 }
 

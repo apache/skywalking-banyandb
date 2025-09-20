@@ -56,6 +56,8 @@ Release Notes.
 - Fix the crash when collecting the metrics from a closed segment.
 - Fix topN parsing panic when the criteria is set.
 - Remove the indexed_only field in TagSpec.
+- Fix returning empty result when using IN operatior on the array type tags.
+- Fix etcd prefix matching any key that starts with this prefix.
 
 ### Document
 

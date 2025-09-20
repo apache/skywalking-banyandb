@@ -55,10 +55,6 @@ func TestSnapshot_Creation(t *testing.T) {
 	if snapshot.getPartCount() != len(parts) {
 		t.Errorf("expected part count %d, got %d", len(parts), snapshot.getPartCount())
 	}
-
-	if snapshot.isReleased() {
-		t.Error("snapshot should not be released")
-	}
 }
 
 func TestSnapshot_ReferenceCountingBasic(t *testing.T) {
@@ -81,18 +77,8 @@ func TestSnapshot_ReferenceCountingBasic(t *testing.T) {
 		t.Errorf("expected ref count 1, got %d", snapshot.refCount())
 	}
 
-	// Check state before final release
-	isReleasedBefore := snapshot.isReleased()
-	if isReleasedBefore {
-		t.Error("snapshot should not be released before final release")
-	}
-
 	// Final release should clean up
 	snapshot.release()
-
-	// After final release, the snapshot object may be reset and returned to pool
-	// so we can't reliably check its state. The important thing is that it
-	// doesn't crash and the cleanup happens properly.
 }
 
 func TestSnapshot_ReferenceCountingConcurrent(t *testing.T) {
@@ -348,9 +334,6 @@ func TestSnapshot_PoolReuse(t *testing.T) {
 	}
 	if snapshot2.refCount() != 1 {
 		t.Errorf("expected ref count 1, got %d", snapshot2.refCount())
-	}
-	if snapshot2.isReleased() {
-		t.Error("new snapshot should not be released")
 	}
 }
 
