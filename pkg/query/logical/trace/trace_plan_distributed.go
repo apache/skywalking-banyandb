@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -223,21 +222,7 @@ func newComparableElement(e *tracev1.InternalTrace, sortByTime bool, sortTagSpec
 		// For traces, we use trace ID as sort field when sorting by time
 		sortField = []byte(e.TraceId)
 	} else {
-		// For tag-based sorting, find the tag in the first span
-		if len(e.Spans) > 0 {
-			tag := e.SortedTag
-			if tag.Key == sortTagSpec.Spec.GetName() {
-				var err error
-				sortField, err = pbv1.MarshalTagValue(tag.Value)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		// Fallback to trace ID if tag not found
-		if len(sortField) == 0 {
-			sortField = []byte(e.TraceId)
-		}
+		sortField = convert.Int64ToBytes(e.Key)
 	}
 
 	return &comparableElement{

@@ -353,13 +353,13 @@ func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 }
 
 // TraceResult is the result of a query.
-// TODO: add key for sorting
 // TODO: remove TraceIDName
 type TraceResult struct {
 	Error       error
 	Spans       [][]byte
 	TID         string
 	TraceIDName string
+	Key         int64
 	Tags        []Tag
 }
 

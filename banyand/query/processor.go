@@ -608,6 +608,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 			}
 			trace.Spans = append(trace.Spans, span)
 			trace.TraceId = result.TID
+			trace.Key = result.Key
 		}
 
 		traces = append(traces, trace)
@@ -616,8 +617,9 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	internalTraces := make([]*tracev1.InternalTrace, 0, len(traces))
 	for _, trace := range traces {
 		internalTrace := &tracev1.InternalTrace{
-			Spans: trace.Spans,
+			Spans:   trace.Spans,
 			TraceId: trace.TraceId,
+			Key:     trace.Key,
 		}
 		if len(trace.Spans) > 0 {
 			for _, tag := range trace.Spans[0].Tags {

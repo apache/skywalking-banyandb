@@ -44,6 +44,8 @@ message InternalTrace {
   string trace_id_name = 3;
   // sorted_tag is the tag that is used for sorting.
   model.v1.Tag  sorted_tag = 4;
+  // key is used for sorting.
+  int64 key = 5;
 }
 
 // Trace contains all spans that belong to a single trace ID.

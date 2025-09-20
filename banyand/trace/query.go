@@ -147,8 +147,8 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 			for seriesID := range qo.seriesToEntity {
 				seriesIDs = append(seriesIDs, seriesID)
 			}
-			// TODO: return keys for sorting, map[traceID] -> key
-			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
+			traceIDs, keys, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
+			result.keys = keys
 			if sidxErr != nil {
 				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
 			} else if len(traceIDs) > 0 {
@@ -233,6 +233,7 @@ type queryResult struct {
 	ctx               context.Context
 	tagProjection     *model.TagProjection
 	sidxOrderMap      map[string]int
+	keys              map[string]int64
 	data              []*blockCursor
 	snapshots         []*snapshot
 	segments          []storage.Segment[*tsTable, option]
@@ -309,6 +310,7 @@ func (qr *queryResult) Pull() *model.TraceResult {
 		r := &model.TraceResult{}
 		bc := qr.data[0]
 		bc.copyAllTo(r)
+		r.Key = qr.keys[bc.bm.traceID]
 		qr.data = qr.data[:0]
 		releaseBlockCursor(bc)
 		return r
@@ -419,6 +421,7 @@ func (qr *queryResult) merge() *model.TraceResult {
 		}
 		lastTraceID = topBC.bm.traceID
 		topBC.copyAllTo(result)
+		result.Key = qr.keys[topBC.bm.traceID]
 		heap.Pop(qr)
 	}
 

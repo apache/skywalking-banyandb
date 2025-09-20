@@ -139,7 +139,7 @@ func (t *trace) parseSpec() {
 }
 
 // querySidxForTraceIDs queries sidx instances to get ordered trace IDs.
-func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions, seriesIDs []common.SeriesID) ([]string, error) {
+func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions, seriesIDs []common.SeriesID) ([]string, map[string]int64, error) {
 	// Convert TraceQueryOptions to sidx.QueryRequest
 	req := sidx.QueryRequest{
 		Filter:         tqo.SkippingFilter,
@@ -164,11 +164,11 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 	// Query multiple sidx instances
 	response, err := sidx.QueryMultipleSIDX(ctx, sidxInstances, req)
 	if err != nil {
-		return nil, fmt.Errorf("sidx query failed: %w", err)
+		return nil, nil, fmt.Errorf("sidx query failed: %w", err)
 	}
 
 	if response == nil || len(response.Data) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Extract trace IDs from response data and deduplicate them while preserving order
@@ -176,18 +176,20 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 	// We need to keep only the first occurrence of each trace ID to preserve ordering
 	seenTraceIDs := make(map[string]bool)
 	var traceIDs []string
+	keys := make(map[string]int64)
 
-	for _, data := range response.Data {
+	for i, data := range response.Data {
 		if len(data) > 0 {
 			traceID := string(data)
 			if !seenTraceIDs[traceID] {
 				seenTraceIDs[traceID] = true
 				traceIDs = append(traceIDs, traceID)
+				keys[traceID] = response.Keys[i]
 			}
 		}
 	}
 
-	return traceIDs, nil
+	return traceIDs, keys, nil
 }
 
 func openTrace(schema *databasev1.Trace, l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo) *trace {
