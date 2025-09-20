@@ -147,6 +147,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 			for seriesID := range qo.seriesToEntity {
 				seriesIDs = append(seriesIDs, seriesID)
 			}
+			// TODO: return keys for sorting, map[traceID] -> key
 			traceIDs, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
 			if sidxErr != nil {
 				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")

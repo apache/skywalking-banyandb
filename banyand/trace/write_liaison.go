@@ -120,15 +120,15 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueu
 
 func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
 	var et *tracesInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eq.tables {
-		if eq.tables[i].timeRange.Contains(ts) {
+		if eq.tables[i].timeRange.Contains(ts) && eq.tables[i].shardID == shardID {
 			et = eq.tables[i]
 			break
 		}
 	}
 
 	if et == nil {
-		shardID := common.ShardID(writeEvent.ShardId)
 		shard, err := eq.queue.GetOrCreateShard(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create shard: %w", err)

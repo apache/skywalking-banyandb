@@ -151,7 +151,7 @@ var (
 			return &propertyv1.InternalRepairResponse{}
 		},
 		TopicTraceQuery: func() proto.Message {
-			return &tracev1.QueryResponse{}
+			return &tracev1.InternalQueryResponse{}
 		},
 	}
 

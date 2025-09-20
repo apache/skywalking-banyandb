@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -100,6 +101,7 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 
 func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	var files []queue.FileInfo
+	var buffersToRelease []*bytes.Buffer
 
 	buf := bigValuePool.Generate()
 	// Trace metadata
@@ -109,6 +111,7 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	bb := bigValuePool.Generate()
 	bb.Buf = zstd.Compress(bb.Buf[:0], buf.Buf, 1)
 	bigValuePool.Release(buf)
+	buffersToRelease = append(buffersToRelease, bb)
 	files = append(files,
 		queue.FileInfo{
 			Name:   traceMetaName,
@@ -146,6 +149,7 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		if filterData, err := part.fileSystem.Read(traceIDFilterPath); err == nil && len(filterData) > 0 {
 			filterBuf := bigValuePool.Generate()
 			filterBuf.Buf = append(filterBuf.Buf[:0], filterData...)
+			buffersToRelease = append(buffersToRelease, filterBuf)
 			files = append(files, queue.FileInfo{
 				Name:   traceIDFilterFilename,
 				Reader: filterBuf.SequentialRead(),
@@ -159,6 +163,7 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		if tagTypeData, err := part.fileSystem.Read(tagTypePath); err == nil && len(tagTypeData) > 0 {
 			tagTypeBuf := bigValuePool.Generate()
 			tagTypeBuf.Buf = append(tagTypeBuf.Buf[:0], tagTypeData...)
+			buffersToRelease = append(buffersToRelease, tagTypeBuf)
 			files = append(files, queue.FileInfo{
 				Name:   tagTypeFilename,
 				Reader: tagTypeBuf.SequentialRead(),
@@ -167,7 +172,9 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	}
 
 	return files, func() {
-		bigValuePool.Release(bb)
+		for _, buffer := range buffersToRelease {
+			bigValuePool.Release(buffer)
+		}
 	}
 }
 

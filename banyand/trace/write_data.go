@@ -189,6 +189,10 @@ func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, ch
 		tagName := fileName[len(sidx.TagMetadataPrefix):]
 		tagMetadataWriter, _, _ := writers.GetTagWriters(tagName)
 		tagMetadataWriter.MustWrite(chunk)
+	case strings.HasPrefix(fileName, sidx.TagFilterPrefix):
+		tagName := fileName[len(sidx.TagFilterPrefix):]
+		_, _, tagFilterWriter := writers.GetTagWriters(tagName)
+		tagFilterWriter.MustWrite(chunk)
 	default:
 		s.l.Warn().Str("fileName", fileName).Str("sidxName", sidxName).Msg("unknown sidx file type")
 		return fmt.Errorf("unknown sidx file type: %s for sidx: %s", fileName, sidxName)

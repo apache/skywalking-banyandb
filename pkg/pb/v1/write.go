@@ -148,6 +148,8 @@ func ParseTagValue(tagValue *modelv1.TagValue) (TagValue, error) {
 		return *fv, nil
 	case *modelv1.TagValue_BinaryData:
 		return newValue(bytes.Clone(x.BinaryData)), nil
+	case *modelv1.TagValue_Timestamp:
+		return newValue(convert.Int64ToBytes(x.Timestamp.Seconds*1e9 + int64(x.Timestamp.Nanos))), nil
 	}
 	return TagValue{}, errUnsupportedTagForIndexField
 }

@@ -116,7 +116,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
-			case *tracev1.QueryResponse:
+			case *tracev1.InternalQueryResponse:
 				d.TraceQueryResult = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
@@ -141,7 +141,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	}
 
 	traces := BuildTracesFromResult(resultIterator, queryCriteria)
-	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Traces: traces})
+	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: traces})
 	if !queryCriteria.Trace && p.slowQuery > 0 {
 		latency := time.Since(n)
 		if latency > p.slowQuery {
@@ -156,20 +156,25 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 }
 
 // BuildTracesFromResult builds traces from the result iterator.
-func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) []*tracev1.Trace {
-	traceMap := make(map[string]*tracev1.Trace)
+func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) []*tracev1.InternalTrace {
+	traceIndex := make(map[string]int)
+	traces := make([]*tracev1.InternalTrace, 0)
 	for {
 		result, hasNext := resultIterator.Next()
 		if !hasNext {
 			break
 		}
 		traceID := result.TID
-		trace, exists := traceMap[traceID]
+		_, exists := traceIndex[traceID]
+		var trace *tracev1.InternalTrace
 		if !exists {
-			trace = &tracev1.Trace{
+			trace = &tracev1.InternalTrace{
 				Spans: make([]*tracev1.Span, 0),
 			}
-			traceMap[traceID] = trace
+			traceIndex[traceID] = len(traces)
+			traces = append(traces, trace)
+		} else {
+			trace = traces[traceIndex[traceID]]
 		}
 		for i, spanBytes := range result.Spans {
 			var traceTags []*modelv1.Tag
@@ -191,11 +196,9 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 				Span: spanBytes,
 			}
 			trace.Spans = append(trace.Spans, span)
+			trace.TraceId = result.TID
+			trace.TraceIdName = result.TraceIDName
 		}
-	}
-	var traces []*tracev1.Trace
-	for _, trace := range traceMap {
-		traces = append(traces, trace)
 	}
 	return traces
 }

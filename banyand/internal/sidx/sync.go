@@ -80,6 +80,7 @@ func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32,
 
 func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	var files []queue.FileInfo
+	var buffersToRelease []*bytes.Buffer
 
 	buf := bigValuePool.Get()
 	if buf == nil {
@@ -94,7 +95,9 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		bb = &bytes.Buffer{}
 	}
 	bb.Buf = zstd.Compress(bb.Buf[:0], buf.Buf, 1)
+	buf.Buf = buf.Buf[:0]
 	bigValuePool.Put(buf)
+	buffersToRelease = append(buffersToRelease, bb)
 	files = append(files,
 		queue.FileInfo{
 			Name:   SidxMetaName,
@@ -128,10 +131,18 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 				Reader: reader.SequentialRead(),
 			})
 		}
+		for name, reader := range part.tagFilters {
+			files = append(files, queue.FileInfo{
+				Name:   fmt.Sprintf("%s%s", TagFilterPrefix, name),
+				Reader: reader.SequentialRead(),
+			})
+		}
 	}
 
 	return files, func() {
-		bb.Buf = bb.Buf[:0]
-		bigValuePool.Put(bb)
+		for _, buffer := range buffersToRelease {
+			buffer.Buf = buffer.Buf[:0]
+			bigValuePool.Put(buffer)
+		}
 	}
 }
