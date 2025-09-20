@@ -64,7 +64,7 @@ func Initialize(addr string, now time.Time) {
 	// trace
 	interval = 500 * time.Millisecond
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now, interval)
-	casestrace.Write(conn, "zipkin", now, interval)
+	casestrace.WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", now, interval)
 	time.Sleep(5 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
 }

@@ -70,6 +70,15 @@
                 "int": {
                     "value": 0
                 }
+            },
+            {
+                "str_array": {
+                    "value": [
+                        "user_id=123",
+                        "limit=10",
+                        "offset=0"
+                    ]
+                }
             }
         ],
         "span": "zipkin_trace_001_span_001"
@@ -144,6 +153,14 @@
             {
                 "int": {
                     "value": 0
+                }
+            },
+            {
+                "str_array": {
+                    "value": [
+                        "SELECT * FROM users",
+                        "WHERE id=123"
+                    ]
                 }
             }
         ],
@@ -220,6 +237,15 @@
                 "int": {
                     "value": 0
                 }
+            },
+            {
+                "str_array": {
+                    "value": [
+                        "order_id=456",
+                        "status=pending",
+                        "customer_id=789"
+                    ]
+                }
             }
         ],
         "span": "zipkin_trace_002_span_003"
@@ -295,6 +321,14 @@
                 "int": {
                     "value": 0
                 }
+            },
+            {
+                "str_array": {
+                    "value": [
+                        "GET order:456",
+                        "ttl=3600"
+                    ]
+                }
             }
         ],
         "span": "zipkin_trace_002_span_004"
@@ -369,6 +403,13 @@
             {
                 "int": {
                     "value": 1
+                }
+            },
+            {
+                "str_array": {
+                    "value": [
+                        "health_check=true"
+                    ]
                 }
             }
         ],
