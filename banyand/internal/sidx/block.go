@@ -248,7 +248,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 
 // mustWriteTag writes a single tag's data to its tag files.
 func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww *writers) {
-	tmw, tdw, tfw := ww.getWriters(tagName)
+	tmw, tdw, tfw := ww.GetTagWriters(tagName)
 
 	// Create tag metadata
 	tm := generateTagMetadata()

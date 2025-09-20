@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/banyand/queue/sub"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -60,25 +61,37 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := observability.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
 	pm := protector.NewMemory(metricSvc)
 	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
+	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)
+	if err != nil {
+		l.Fatal().Err(err).Msg("failed to initiate measure liaison service")
+	}
+
+	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
 	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamPartSync.String(), metaSvc)
 	streamSVC, err := stream.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, streamDataNodeSel, tire2Client)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream liaison service")
 	}
-	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)
+
+	traceLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicTraceWrite.String(), metaSvc)
+	traceDataNodeSel := node.NewRoundRobinSelector(data.TopicTracePartSync.String(), metaSvc)
+	traceSVC, err := trace.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, traceDataNodeSel, tire2Client)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to initiate measure liaison service")
+		l.Fatal().Err(err).Msg("failed to initiate trace liaison service")
 	}
-	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
-	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC)
+
+	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC, traceSVC)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
+
 	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
+		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
@@ -95,9 +108,12 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		measureDataNodeSel,
 		streamLiaisonNodeSel,
 		streamDataNodeSel,
+		traceLiaisonNodeSel,
+		traceDataNodeSel,
 		propertyNodeSel,
 		streamSVC,
 		measureSVC,
+		traceSVC,
 		dQuery,
 		grpcServer,
 		httpServer,

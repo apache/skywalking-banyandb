@@ -79,7 +79,7 @@ func releaseFlusherIntroduction(i *flusherIntroduction) {
 }
 
 type mergerIntroduction struct {
-	merged  map[uint64]struct{}
+	merged  map[partHandle]struct{}
 	newPart *partWrapper
 	applied chan struct{}
 	creator snapshotCreator
@@ -87,7 +87,7 @@ type mergerIntroduction struct {
 
 func (i *mergerIntroduction) reset() {
 	for k := range i.merged {
-		delete(i.merged, k)
+		delete(i.merged, partHandle{partID: k.partID, partType: PartTypeCore})
 	}
 	i.newPart = nil
 	i.applied = nil
@@ -110,8 +110,13 @@ func releaseMergerIntroduction(i *mergerIntroduction) {
 	mergerIntroductionPool.Put(i)
 }
 
+type partHandle struct {
+	partType string
+	partID   uint64
+}
+
 type syncIntroduction struct {
-	synced  map[uint64]struct{}
+	synced  map[partHandle]struct{}
 	applied chan struct{}
 }
 
@@ -128,7 +133,7 @@ func generateSyncIntroduction() *syncIntroduction {
 	v := syncIntroductionPool.Get()
 	if v == nil {
 		return &syncIntroduction{
-			synced: make(map[uint64]struct{}),
+			synced: make(map[partHandle]struct{}),
 		}
 	}
 	si := v

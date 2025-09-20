@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -165,7 +166,7 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 	}
 	bm.traceID = strings.TrimRight(string(src[:traceIDLen]), "\x00")
 	if len(tagType) == 0 {
-		fmt.Println("tagType is empty")
+		logger.GetLogger().Error().Msg("tagType is empty")
 	}
 	bm.tagType = tagType
 	src = src[traceIDLen:]

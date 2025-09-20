@@ -122,12 +122,12 @@ func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) sn
 	return result
 }
 
-func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot {
+func (s *snapshot) remove(nextEpoch uint64, merged map[partHandle]struct{}) snapshot {
 	var result snapshot
 	result.epoch = nextEpoch
 	result.ref = 1
 	for i := 0; i < len(s.parts); i++ {
-		if _, ok := merged[s.parts[i].ID()]; !ok {
+		if _, ok := merged[partHandle{partID: s.parts[i].ID(), partType: PartTypeCore}]; !ok {
 			s.parts[i].incRef()
 			result.parts = append(result.parts, s.parts[i])
 			continue

@@ -29,6 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+// PartTypeCore is the type of the core part.
+const PartTypeCore = "core"
+
 type syncIntroduction struct {
 	synced  map[uint64]struct{}
 	applied chan struct{}
@@ -241,6 +244,7 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 				BlocksCount:           part.partMetadata.BlocksCount,
 				MinTimestamp:          part.partMetadata.MinTimestamp,
 				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
 			})
 		}
 

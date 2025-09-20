@@ -76,6 +76,7 @@ type NodeRegistries struct {
 	StreamLiaisonNodeRegistry  NodeRegistry
 	MeasureLiaisonNodeRegistry NodeRegistry
 	PropertyNodeRegistry       NodeRegistry
+	TraceLiaisonNodeRegistry   NodeRegistry
 }
 
 type server struct {
@@ -135,7 +136,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		broadcaster:      broadcaster,
 	}
 	traceSVC := &traceService{
-		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
+		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
@@ -285,9 +286,12 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
 	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
 	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
+	fs.DurationVar(&s.traceSVC.writeTimeout, "trace-write-timeout", 15*time.Second, "timeout for writing trace among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
+	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
 	return fs

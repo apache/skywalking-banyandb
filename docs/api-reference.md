@@ -311,6 +311,8 @@
     - [StreamService](#banyandb-stream-v1-StreamService)
   
 - [banyandb/trace/v1/query.proto](#banyandb_trace_v1_query-proto)
+    - [InternalQueryResponse](#banyandb-trace-v1-InternalQueryResponse)
+    - [InternalTrace](#banyandb-trace-v1-InternalTrace)
     - [QueryRequest](#banyandb-trace-v1-QueryRequest)
     - [QueryResponse](#banyandb-trace-v1-QueryResponse)
     - [Span](#banyandb-trace-v1-Span)
@@ -435,6 +437,9 @@ Information about a part contained within a chunk.
 | blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
 | min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
 | max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
+| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
+| part_type | [string](#string) |  | Part type. |
 
 
 
@@ -4597,6 +4602,39 @@ QueryResponse is the response for a query to the Query module.
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/trace/v1/query.proto
+
+
+
+<a name="banyandb-trace-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+InternalQueryResponse is the response of an internal query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| internal_traces | [InternalTrace](#banyandb-trace-v1-InternalTrace) | repeated | internal_traces is a list of internal traces that match the query. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-InternalTrace"></a>
+
+### InternalTrace
+InternalTrace is the trace that is used for internal use.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
+| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
+| key | [int64](#int64) |  | key is used for sorting. |
+
+
+
 
 
 

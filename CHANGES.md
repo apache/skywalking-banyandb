@@ -47,7 +47,7 @@ Release Notes.
   - Add new retention configuration flags: `*-retention-low-watermark`, `*-retention-check-interval`, `*-retention-cooldown`
   - Implement disk monitor with forced retention cleanup for data/standalone servers
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
-
+- Implement cluster mode for trace.
 
 ### Bug Fixes
 

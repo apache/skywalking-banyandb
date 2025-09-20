@@ -302,7 +302,7 @@ func TestSnapshotMerge(t *testing.T) {
 func TestSnapshotRemove(t *testing.T) {
 	tests := []struct {
 		snapshot    *snapshot
-		mergedParts map[uint64]struct{}
+		mergedParts map[partHandle]struct{}
 		name        string
 		expected    snapshot
 		nextEpoch   uint64
@@ -314,7 +314,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[uint64]struct{}{},
+			mergedParts: map[partHandle]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -330,7 +330,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[uint64]struct{}{},
+			mergedParts: map[partHandle]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -349,8 +349,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[uint64]struct{}{
-				1: {},
+			mergedParts: map[partHandle]struct{}{
+				{partID: 1, partType: PartTypeCore}: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -366,7 +366,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[uint64]struct{}{},
+			mergedParts: map[partHandle]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -383,7 +383,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[uint64]struct{}{},
+			mergedParts: map[partHandle]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -407,8 +407,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[uint64]struct{}{
-				1: {},
+			mergedParts: map[partHandle]struct{}{
+				{partID: 1, partType: PartTypeCore}: {},
 			},
 			expected: snapshot{
 				epoch: 1,

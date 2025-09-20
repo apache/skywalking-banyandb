@@ -280,7 +280,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if s.internalWritePipeline != nil {
 		return s.internalWritePipeline.Subscribe(data.TopicStreamWrite, writeListener)
 	}
-	return err
+	return nil
 }
 
 func (s *standalone) Serve() run.StopNotify {

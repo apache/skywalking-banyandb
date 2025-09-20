@@ -355,9 +355,10 @@ func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 // TraceResult is the result of a query.
 type TraceResult struct {
 	Error error
-	Spans [][]byte
 	TID   string
+	Spans [][]byte
 	Tags  []Tag
+	Key   int64
 }
 
 // TraceQueryResult is the result of a trace query.

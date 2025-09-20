@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -36,6 +37,8 @@ type mockSIDX struct {
 	name     string
 	delay    bool
 }
+
+func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}
 
 func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest) error {
 	return nil // Not implemented for tests
@@ -62,6 +65,18 @@ func (m *mockSIDX) Flush() error {
 
 func (m *mockSIDX) Merge(_ <-chan struct{}) error {
 	return nil
+}
+
+func (m *mockSIDX) PartsToSync() []*part {
+	return nil
+}
+
+func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string, _ []int64) ([]queue.StreamingPartData, []func()) {
+	return nil, nil
+}
+
+func (m *mockSIDX) SyncCh() chan<- *SyncIntroduction {
+	return make(chan *SyncIntroduction)
 }
 
 // Helper function to create mock QueryResponse with test data.

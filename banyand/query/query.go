@@ -42,8 +42,8 @@ type queryService struct {
 	log         *logger.Logger
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
-	tqp         *topNQueryProcessor
-	trqp        *traceQueryProcessor
+	nqp         *topNQueryProcessor
+	tqp         *traceQueryProcessor
 	nodeID      string
 	slowQuery   time.Duration
 }
@@ -67,12 +67,12 @@ func NewService(_ context.Context, streamService stream.Service, measureService 
 		queryService:  svc,
 	}
 	// topN query processor
-	svc.tqp = &topNQueryProcessor{
+	svc.nqp = &topNQueryProcessor{
 		measureService: measureService,
 		queryService:   svc,
 	}
 	// trace query processor
-	svc.trqp = &traceQueryProcessor{
+	svc.tqp = &traceQueryProcessor{
 		traceService: traceService,
 		queryService: svc,
 	}
@@ -94,8 +94,8 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
-		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
-		q.pipeline.Subscribe(data.TopicTraceQuery, q.trqp),
+		q.pipeline.Subscribe(data.TopicTopNQuery, q.nqp),
+		q.pipeline.Subscribe(data.TopicTraceQuery, q.tqp),
 	)
 }
 

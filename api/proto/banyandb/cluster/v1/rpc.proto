@@ -102,6 +102,9 @@ message PartInfo {
   uint64 blocks_count = 6; // Blocks count from partMetadata.
   int64 min_timestamp = 7; // Minimum timestamp from partMetadata.
   int64 max_timestamp = 8; // Maximum timestamp from partMetadata.
+  int64 min_key = 9; // Minimum user-provided key for sidx.
+  int64 max_key = 10; // Maximum user-provided key for sidx.
+  string part_type = 11; // Part type.
 }
 
 // Information about an individual file within a part.
