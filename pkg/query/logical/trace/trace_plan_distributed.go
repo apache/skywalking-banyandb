@@ -53,11 +53,11 @@ func newUnresolvedTraceDistributed(query *tracev1.QueryRequest) logical.Unresolv
 	}
 }
 
-func (utd *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
-	if utd.originalQuery.TagProjection == nil {
-		utd.originalQuery.TagProjection = []string{}
+func (t *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
+	if t.originalQuery.TagProjection == nil {
+		t.originalQuery.TagProjection = []string{}
 	}
-	tagProjections := convertStringProjectionToTags(utd.originalQuery.GetTagProjection())
+	tagProjections := convertStringProjectionToTags(t.originalQuery.GetTagProjection())
 	if len(tagProjections) > 0 {
 		var err error
 		projTagsRefs, err := s.CreateTagRef(tagProjections...)
@@ -66,43 +66,43 @@ func (utd *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, 
 		}
 		s = s.ProjTags(projTagsRefs...)
 	}
-	limit := utd.originalQuery.GetLimit()
+	limit := t.originalQuery.GetLimit()
 	if limit == 0 {
 		limit = defaultLimit
 	}
 	temp := &tracev1.QueryRequest{
-		TagProjection: utd.originalQuery.TagProjection,
-		Name:          utd.originalQuery.Name,
-		Groups:        utd.originalQuery.Groups,
-		Criteria:      utd.originalQuery.Criteria,
-		Limit:         limit + utd.originalQuery.Offset,
-		OrderBy:       utd.originalQuery.OrderBy,
+		TagProjection: t.originalQuery.TagProjection,
+		Name:          t.originalQuery.Name,
+		Groups:        t.originalQuery.Groups,
+		Criteria:      t.originalQuery.Criteria,
+		Limit:         limit + t.originalQuery.Offset,
+		OrderBy:       t.originalQuery.OrderBy,
 	}
-	if utd.originalQuery.OrderBy == nil {
+	if t.originalQuery.OrderBy == nil {
 		return &distributedPlan{
 			queryTemplate: temp,
 			s:             s,
-			sortByTime:    true,
+			sortByTraceID: true,
 		}, nil
 	}
-	if utd.originalQuery.OrderBy.IndexRuleName == "" {
+	if t.originalQuery.OrderBy.IndexRuleName == "" {
 		result := &distributedPlan{
 			queryTemplate: temp,
 			s:             s,
-			sortByTime:    true,
+			sortByTraceID: true,
 		}
-		if utd.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
+		if t.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
 		}
 		return result, nil
 	}
-	ok, indexRule := s.IndexRuleDefined(utd.originalQuery.OrderBy.IndexRuleName)
+	ok, indexRule := s.IndexRuleDefined(t.originalQuery.OrderBy.IndexRuleName)
 	if !ok {
-		return nil, fmt.Errorf("index rule %s not found", utd.originalQuery.OrderBy.IndexRuleName)
+		return nil, fmt.Errorf("index rule %s not found", t.originalQuery.OrderBy.IndexRuleName)
 	}
 	tags := indexRule.GetTags()
 	if len(tags) == 0 {
-		return nil, fmt.Errorf("index rule %s has no tags", utd.originalQuery.OrderBy.IndexRuleName)
+		return nil, fmt.Errorf("index rule %s has no tags", t.originalQuery.OrderBy.IndexRuleName)
 	}
 	sortTagName := tags[len(tags)-1]
 	sortTagSpec := s.FindTagSpecByName(sortTagName)
@@ -112,10 +112,10 @@ func (utd *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, 
 	result := &distributedPlan{
 		queryTemplate: temp,
 		s:             s,
-		sortByTime:    false,
+		sortByTraceID: false,
 		sortTagSpec:   *sortTagSpec,
 	}
-	if utd.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
+	if t.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
 	}
 	return result, nil
@@ -124,22 +124,22 @@ func (utd *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, 
 var _ executor.TraceExecutable = (*distributedPlan)(nil)
 
 type distributedPlan struct {
-	s              logical.Schema
-	queryTemplate  *tracev1.QueryRequest
-	sortTagSpec    logical.TagSpec
-	sortByTime     bool
-	desc           bool
-	maxElementSize uint32
+	s             logical.Schema
+	queryTemplate *tracev1.QueryRequest
+	sortTagSpec   logical.TagSpec
+	sortByTraceID bool
+	desc          bool
+	maxTraceSize  uint32
 }
 
-func (t *distributedPlan) Close() {}
+func (p *distributedPlan) Close() {}
 
-func (t *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.TraceResult], error) {
+func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.TraceResult], error) {
 	dctx := executor.FromDistributedExecutionContext(ctx)
-	queryRequest := proto.Clone(t.queryTemplate).(*tracev1.QueryRequest)
+	queryRequest := proto.Clone(p.queryTemplate).(*tracev1.QueryRequest)
 	queryRequest.TimeRange = dctx.TimeRange()
-	if t.maxElementSize > 0 {
-		queryRequest.Limit = t.maxElementSize
+	if p.maxTraceSize > 0 {
+		queryRequest.Limit = p.maxTraceSize
 	}
 	tracer := query.GetTracer(ctx)
 	var span *query.Span
@@ -158,7 +158,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 		return iter.Empty[model.TraceResult](), err
 	}
 	var allErr error
-	var see []sort.Iterator[*comparableElement]
+	var ct []sort.Iterator[*comparableTrace]
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
@@ -171,18 +171,18 @@ func (t *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 			if span != nil {
 				span.AddSubTrace(resp.TraceQueryResult)
 			}
-			see = append(see,
-				newSortableElements(resp.InternalTraces, t.sortByTime))
+			ct = append(ct,
+				newSortableTraces(resp.InternalTraces, p.sortByTraceID))
 		}
 	}
-	sortIter := sort.NewItemIter(see, t.desc)
+	sortIter := sort.NewItemIter(ct, p.desc)
 	var result []*tracev1.InternalTrace
 	seen := make(map[string]bool)
 	for sortIter.Next() {
-		element := sortIter.Val().InternalTrace
-		if !seen[element.TraceId] {
-			seen[element.TraceId] = true
-			result = append(result, element)
+		trace := sortIter.Val().InternalTrace
+		if !seen[trace.TraceId] {
+			seen[trace.TraceId] = true
+			result = append(result, trace)
 		}
 	}
 
@@ -193,88 +193,88 @@ func (t *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 	}, nil
 }
 
-func (t *distributedPlan) String() string {
-	return fmt.Sprintf("distributed:%s", t.queryTemplate.String())
+func (p *distributedPlan) String() string {
+	return fmt.Sprintf("distributed:%s", p.queryTemplate.String())
 }
 
-func (t *distributedPlan) Children() []logical.Plan {
+func (p *distributedPlan) Children() []logical.Plan {
 	return []logical.Plan{}
 }
 
-func (t *distributedPlan) Schema() logical.Schema {
-	return t.s
+func (p *distributedPlan) Schema() logical.Schema {
+	return p.s
 }
 
-func (t *distributedPlan) Limit(maxVal int) {
-	t.maxElementSize = uint32(maxVal)
+func (p *distributedPlan) Limit(maxVal int) {
+	p.maxTraceSize = uint32(maxVal)
 }
 
-var _ sort.Comparable = (*comparableElement)(nil)
+var _ sort.Comparable = (*comparableTrace)(nil)
 
-type comparableElement struct {
+type comparableTrace struct {
 	*tracev1.InternalTrace
 	sortField []byte
 }
 
-func newComparableElement(e *tracev1.InternalTrace, sortByTime bool) (*comparableElement, error) {
+func newComparableTrace(t *tracev1.InternalTrace, sortByTraceID bool) (*comparableTrace, error) {
 	var sortField []byte
-	if sortByTime {
+	if sortByTraceID {
 		// For traces, we use trace ID as sort field when sorting by time
-		sortField = []byte(e.TraceId)
+		sortField = []byte(t.TraceId)
 	} else {
-		sortField = convert.Int64ToBytes(e.Key)
+		sortField = convert.Int64ToBytes(t.Key)
 	}
 
-	return &comparableElement{
-		InternalTrace: e,
+	return &comparableTrace{
+		InternalTrace: t,
 		sortField:     sortField,
 	}, nil
 }
 
-func (e *comparableElement) SortedField() []byte {
-	return e.sortField
+func (t *comparableTrace) SortedField() []byte {
+	return t.sortField
 }
 
-var _ sort.Iterator[*comparableElement] = (*sortableElements)(nil)
+var _ sort.Iterator[*comparableTrace] = (*sortableTraces)(nil)
 
-type sortableElements struct {
-	cur          *comparableElement
-	elements     []*tracev1.InternalTrace
-	index        int
-	isSortByTime bool
+type sortableTraces struct {
+	cur             *comparableTrace
+	traces          []*tracev1.InternalTrace
+	index           int
+	isSortByTraceID bool
 }
 
-func newSortableElements(elements []*tracev1.InternalTrace, isSortByTime bool) *sortableElements {
-	return &sortableElements{
-		elements:     elements,
-		isSortByTime: isSortByTime,
+func newSortableTraces(traces []*tracev1.InternalTrace, isSortByTraceID bool) *sortableTraces {
+	return &sortableTraces{
+		traces:          traces,
+		isSortByTraceID: isSortByTraceID,
 	}
 }
 
-func (*sortableElements) Close() error {
+func (*sortableTraces) Close() error {
 	return nil
 }
 
-func (s *sortableElements) Next() bool {
-	return s.iter(func(e *tracev1.InternalTrace) (*comparableElement, error) {
-		return newComparableElement(e, s.isSortByTime)
+func (t *sortableTraces) Next() bool {
+	return t.iter(func(it *tracev1.InternalTrace) (*comparableTrace, error) {
+		return newComparableTrace(it, t.isSortByTraceID)
 	})
 }
 
-func (s *sortableElements) Val() *comparableElement {
-	return s.cur
+func (t *sortableTraces) Val() *comparableTrace {
+	return t.cur
 }
 
-func (s *sortableElements) iter(fn func(*tracev1.InternalTrace) (*comparableElement, error)) bool {
-	if s.index >= len(s.elements) {
+func (t *sortableTraces) iter(fn func(*tracev1.InternalTrace) (*comparableTrace, error)) bool {
+	if t.index >= len(t.traces) {
 		return false
 	}
-	cur, err := fn(s.elements[s.index])
-	s.index++
+	cur, err := fn(t.traces[t.index])
+	t.index++
 	if err != nil {
-		return s.iter(fn)
+		return t.iter(fn)
 	}
-	s.cur = cur
+	t.cur = cur
 	return true
 }
 
@@ -343,16 +343,16 @@ type distributedTraceResultIterator struct {
 	index  int
 }
 
-func (tri *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
-	if tri.index >= len(tri.traces) {
-		if tri.err != nil {
-			return model.TraceResult{Error: tri.err}, false
+func (t *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
+	if t.index >= len(t.traces) {
+		if t.err != nil {
+			return model.TraceResult{Error: t.err}, false
 		}
 		return model.TraceResult{}, false
 	}
 
-	trace := tri.traces[tri.index]
-	tri.index++
+	trace := t.traces[t.index]
+	t.index++
 
 	result := model.TraceResult{
 		TID: trace.TraceId,
