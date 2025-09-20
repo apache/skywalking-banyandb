@@ -599,7 +599,7 @@ func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, 
 }
 
 func listPrefixesForEntity(group, entityPrefix string) string {
-	return path.Join(entityPrefix, group)
+	return path.Join(entityPrefix, group) + "/"
 }
 
 func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
