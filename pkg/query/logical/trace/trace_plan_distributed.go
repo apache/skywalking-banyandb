@@ -172,7 +172,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 				span.AddSubTrace(resp.TraceQueryResult)
 			}
 			see = append(see,
-				newSortableElements(resp.InternalTraces, t.sortByTime, t.sortTagSpec))
+				newSortableElements(resp.InternalTraces, t.sortByTime))
 		}
 	}
 	sortIter := sort.NewItemIter(see, t.desc)
@@ -216,7 +216,7 @@ type comparableElement struct {
 	sortField []byte
 }
 
-func newComparableElement(e *tracev1.InternalTrace, sortByTime bool, sortTagSpec logical.TagSpec) (*comparableElement, error) {
+func newComparableElement(e *tracev1.InternalTrace, sortByTime bool) (*comparableElement, error) {
 	var sortField []byte
 	if sortByTime {
 		// For traces, we use trace ID as sort field when sorting by time
@@ -240,16 +240,14 @@ var _ sort.Iterator[*comparableElement] = (*sortableElements)(nil)
 type sortableElements struct {
 	cur          *comparableElement
 	elements     []*tracev1.InternalTrace
-	sortTagSpec  logical.TagSpec
 	index        int
 	isSortByTime bool
 }
 
-func newSortableElements(elements []*tracev1.InternalTrace, isSortByTime bool, sortTagSpec logical.TagSpec) *sortableElements {
+func newSortableElements(elements []*tracev1.InternalTrace, isSortByTime bool) *sortableElements {
 	return &sortableElements{
 		elements:     elements,
 		isSortByTime: isSortByTime,
-		sortTagSpec:  sortTagSpec,
 	}
 }
 
@@ -259,7 +257,7 @@ func (*sortableElements) Close() error {
 
 func (s *sortableElements) Next() bool {
 	return s.iter(func(e *tracev1.InternalTrace) (*comparableElement, error) {
-		return newComparableElement(e, s.isSortByTime, s.sortTagSpec)
+		return newComparableElement(e, s.isSortByTime)
 	})
 }
 
@@ -340,9 +338,9 @@ func newDistributedTraceLimit(input logical.UnresolvedPlan, offset, limit uint32
 }
 
 type distributedTraceResultIterator struct {
+	err    error
 	traces []*tracev1.InternalTrace
 	index  int
-	err    error
 }
 
 func (tri *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
@@ -357,7 +355,7 @@ func (tri *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
 	tri.index++
 
 	result := model.TraceResult{
-		TID:         trace.TraceId,
+		TID: trace.TraceId,
 	}
 
 	// Extract tags and spans from all spans in this trace

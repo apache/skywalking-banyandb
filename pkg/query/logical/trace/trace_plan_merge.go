@@ -36,6 +36,6 @@ type unresolvedTraceMerger struct {
 }
 
 // Analyze implements logical.UnresolvedPlan.
-func (u *unresolvedTraceMerger) Analyze(s logical.Schema) (logical.Plan, error) {
+func (u *unresolvedTraceMerger) Analyze(_ logical.Schema) (logical.Plan, error) {
 	return nil, fmt.Errorf("trace merger not implemented yet")
 }

@@ -139,7 +139,9 @@ func (t *trace) parseSpec() {
 }
 
 // querySidxForTraceIDs queries sidx instances to get ordered trace IDs.
-func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX, tqo model.TraceQueryOptions, seriesIDs []common.SeriesID) ([]string, map[string]int64, error) {
+func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX,
+	tqo model.TraceQueryOptions, seriesIDs []common.SeriesID,
+) ([]string, map[string]int64, error) {
 	// Convert TraceQueryOptions to sidx.QueryRequest
 	req := sidx.QueryRequest{
 		Filter:         tqo.SkippingFilter,
