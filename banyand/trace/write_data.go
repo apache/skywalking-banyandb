@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -41,7 +42,7 @@ type syncPartContext struct {
 
 func (s *syncPartContext) FinishSync() error {
 	if len(s.traceIDFilterBuffer) > 0 && s.memPart != nil {
-		bf := generateBloomFilter()
+		bf := filter.NewBloomFilter(0)
 		s.memPart.traceIDFilter.filter = decodeBloomFilter(s.traceIDFilterBuffer, bf)
 	}
 	if len(s.tagTypeBuffer) > 0 && s.memPart != nil {

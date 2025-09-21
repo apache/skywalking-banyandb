@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -274,7 +275,7 @@ func (mp *memPart) Unmarshal(data []byte) error {
 		}
 		filterBytes := tail[:filterLen]
 		tail = tail[filterLen:]
-		bf := generateBloomFilter()
+		bf := filter.NewBloomFilter(0)
 		mp.traceIDFilter.filter = decodeBloomFilter(filterBytes, bf)
 	} else {
 		mp.traceIDFilter.filter = nil
