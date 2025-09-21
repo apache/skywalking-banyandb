@@ -142,7 +142,7 @@ func (s *tumblingTimeWindows) flushDueWindows() {
 	defer s.timerMu.Unlock()
 	for {
 		if lookAhead, ok := s.timerHeap.Peek().(*internalTimer); ok {
-			if lookAhead.triggerTimeMillis <= s.currentWatermark {
+			if lookAhead.w.MaxTimestamp() <= s.currentWatermark {
 				oldestTimer := heap.Pop(s.timerHeap).(*internalTimer)
 				s.flushWindow(oldestTimer.w)
 				continue
@@ -162,37 +162,32 @@ func (s *tumblingTimeWindows) receive() {
 	defer s.Done()
 
 	for elem := range s.in {
-		assignedWindows, err := s.AssignWindows(elem.TimestampMillis())
+		assignedWindow, err := s.AssignWindows(elem.TimestampMillis())
 		if err != nil {
 			s.errorHandler(err)
 			continue
 		}
-		ctx := triggerContext{
-			delegation: s,
+		// drop if the window is late
+		if s.isWindowLate(assignedWindow) {
+			continue
 		}
-		for _, w := range assignedWindows {
-			// drop if the window is late
-			if s.isWindowLate(w) {
-				continue
+		tw := assignedWindow.(timeWindow)
+		// add elem to the bucket
+		if oldAggr, ok := s.snapshots.Get(tw); ok {
+			oldAggr.(flow.AggregationOp).Add([]flow.StreamRecord{elem})
+		} else {
+			newAggr := s.aggregationFactory()
+			newAggr.Add([]flow.StreamRecord{elem})
+			s.snapshots.Add(tw, newAggr)
+			if e := s.l.Debug(); e.Enabled() {
+				e.Stringer("window", tw).Msg("create new window")
 			}
-			tw := w.(timeWindow)
-			ctx.window = tw
-			// add elem to the bucket
-			if oldAggr, ok := s.snapshots.Get(tw); ok {
-				oldAggr.(flow.AggregationOp).Add([]flow.StreamRecord{elem})
-			} else {
-				newAggr := s.aggregationFactory()
-				newAggr.Add([]flow.StreamRecord{elem})
-				s.snapshots.Add(tw, newAggr)
-				if e := s.l.Debug(); e.Enabled() {
-					e.Stringer("window", tw).Msg("create new window")
-				}
-			}
+		}
 
-			result := ctx.OnElement(elem)
-			if result == fire {
-				s.flushWindow(tw)
-			}
+		result := s.eventTimeTriggerOnElement(tw)
+
+		if result == fire {
+			s.flushWindow(tw)
 		}
 
 		// even if the incoming elements do not follow strict order,
@@ -260,7 +255,7 @@ func NewTumblingTimeWindows(size time.Duration, maxFlushInterval time.Duration) 
 	return &tumblingTimeWindows{
 		windowSize: ws,
 		timerHeap: flow.NewPriorityQueue(func(a, b interface{}) int {
-			return int(a.(*internalTimer).triggerTimeMillis - b.(*internalTimer).triggerTimeMillis)
+			return int(a.(*internalTimer).w.MaxTimestamp() - b.(*internalTimer).w.MaxTimestamp())
 		}, false),
 		in:               make(chan flow.StreamRecord),
 		out:              make(chan flow.StreamRecord),
@@ -285,14 +280,12 @@ func (t timeWindow) String() string {
 }
 
 // AssignWindows assigns windows according to the given timestamp.
-func (s *tumblingTimeWindows) AssignWindows(timestamp int64) ([]flow.Window, error) {
+func (s *tumblingTimeWindows) AssignWindows(timestamp int64) (flow.Window, error) {
 	if timestamp > math.MinInt64 {
 		start := getWindowStart(timestamp, s.windowSize)
-		return []flow.Window{
-			timeWindow{
-				start: start,
-				end:   start + s.windowSize,
-			},
+		return timeWindow{
+			start: start,
+			end:   start + s.windowSize,
 		}, nil
 	}
 	return nil, errors.New("invalid timestamp from the element")
@@ -305,43 +298,27 @@ func getWindowStart(timestamp, windowSize int64) int64 {
 }
 
 // eventTimeTriggerOnElement processes element(s) with EventTimeTrigger.
-func eventTimeTriggerOnElement(window timeWindow, ctx *triggerContext) triggerResult {
-	if window.MaxTimestamp() <= ctx.GetCurrentWatermark() {
+func (s *tumblingTimeWindows) eventTimeTriggerOnElement(window timeWindow) triggerResult {
+	if window.MaxTimestamp() <= s.currentWatermark {
 		// if watermark is already past the window fire immediately
 		return fire
 	}
-	ctx.RegisterEventTimeTimer(window.MaxTimestamp())
+	s.timerMu.Lock()
+	defer s.timerMu.Unlock()
+	heap.Push(s.timerHeap, &internalTimer{
+		w: window,
+	})
 	return cont
 }
 
-type triggerContext struct {
-	delegation *tumblingTimeWindows
-	window     timeWindow
-}
-
-func (ctx *triggerContext) GetCurrentWatermark() int64 {
-	return ctx.delegation.currentWatermark
-}
-
-func (ctx *triggerContext) RegisterEventTimeTimer(triggerTime int64) {
-	ctx.delegation.timerMu.Lock()
-	defer ctx.delegation.timerMu.Unlock()
-	heap.Push(ctx.delegation.timerHeap, &internalTimer{
-		triggerTimeMillis: triggerTime,
-		w:                 ctx.window,
-	})
-}
-
-func (ctx *triggerContext) OnElement(_ flow.StreamRecord) triggerResult {
-	return eventTimeTriggerOnElement(ctx.window, ctx)
-}
-
-var _ flow.Element = (*internalTimer)(nil)
+var (
+	_ flow.Element         = (*internalTimer)(nil)
+	_ flow.HashableElement = (*internalTimer)(nil)
+)
 
 type internalTimer struct {
-	w                 timeWindow
-	triggerTimeMillis int64
-	index             int
+	w     timeWindow
+	index int
 }
 
 func (t *internalTimer) GetIndex() int {
@@ -350,4 +327,15 @@ func (t *internalTimer) GetIndex() int {
 
 func (t *internalTimer) SetIndex(idx int) {
 	t.index = idx
+}
+
+func (t *internalTimer) Equal(other flow.HashableElement) bool {
+	if otherTimer, ok := other.(*internalTimer); ok {
+		return t.w.start == otherTimer.w.start && t.w.end == otherTimer.w.end
+	}
+	return false
+}
+
+func (t *internalTimer) Hash() uint64 {
+	return uint64(t.w.start)<<32 | uint64(t.w.end)
 }
