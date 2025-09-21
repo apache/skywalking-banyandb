@@ -19,6 +19,7 @@ package sidx
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -34,18 +35,28 @@ func NewPartsToSync() map[string][]*Part {
 
 // PartsToSync returns the parts to sync.
 func (s *sidx) PartsToSync() []*part {
-	var partsToSync []*part
-	for _, pw := range s.snapshot.parts {
+	if s.loopCloser != nil && s.loopCloser.Closed() {
+		return nil
+	}
+
+	s.mu.RLock()
+	snapshot := s.snapshot
+	if snapshot == nil {
+		s.mu.RUnlock()
+		return nil
+	}
+	partsToSync := make([]*part, 0, len(snapshot.parts))
+	for _, pw := range snapshot.parts {
 		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
 			partsToSync = append(partsToSync, pw.p)
 		}
 	}
-	for i := 0; i < len(partsToSync); i++ {
-		for j := i + 1; j < len(partsToSync); j++ {
-			if partsToSync[i].partMetadata.ID > partsToSync[j].partMetadata.ID {
-				partsToSync[i], partsToSync[j] = partsToSync[j], partsToSync[i]
-			}
-		}
+	s.mu.RUnlock()
+
+	if len(partsToSync) > 1 {
+		sort.Slice(partsToSync, func(i, j int) bool {
+			return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
+		})
 	}
 	return partsToSync
 }

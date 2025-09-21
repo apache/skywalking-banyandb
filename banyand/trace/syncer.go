@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -179,6 +180,9 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 }
 
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
+	if tst.loopCloser != nil && tst.loopCloser.Closed() {
+		return errClosed
+	}
 	// Get all parts from the current snapshot
 	var partsToSync []*part
 	for _, pw := range curSnapshot.parts {
@@ -188,6 +192,9 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	}
 	sidxPartsToSync := sidx.NewPartsToSync()
 	for name, sidx := range tst.sidxMap {
+		if tst.loopCloser != nil && tst.loopCloser.Closed() {
+			return errClosed
+		}
 		sidxPartsToSync[name] = sidx.PartsToSync()
 	}
 
@@ -207,15 +214,9 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if len(nodes) == 0 {
 		return fmt.Errorf("no nodes to sync parts")
 	}
-	// Sort parts from old to new (by part ID)
-	// Parts with lower IDs are older
-	for i := 0; i < len(partsToSync); i++ {
-		for j := i + 1; j < len(partsToSync); j++ {
-			if partsToSync[i].partMetadata.ID > partsToSync[j].partMetadata.ID {
-				partsToSync[i], partsToSync[j] = partsToSync[j], partsToSync[i]
-			}
-		}
-	}
+	sort.Slice(partsToSync, func(i, j int) bool {
+		return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
+	})
 
 	// Use chunked sync with streaming for better memory efficiency
 	ctx := context.Background()
@@ -286,7 +287,13 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []string,
 	partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part, releaseFuncs *[]func(),
 ) error {
+	if tst.loopCloser != nil && tst.loopCloser.Closed() {
+		return errClosed
+	}
 	for _, node := range nodes {
+		if tst.loopCloser != nil && tst.loopCloser.Closed() {
+			return errClosed
+		}
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
 		snapshot := tst.currentSnapshot()
