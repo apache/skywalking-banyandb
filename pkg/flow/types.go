@@ -73,7 +73,7 @@ type Window interface {
 type WindowAssigner interface {
 	// AssignWindows assigns a slice of Window according to the given timestamp, e.g. eventTime.
 	// The unit of the timestamp here is MilliSecond.
-	AssignWindows(timestamp int64) ([]Window, error)
+	AssignWindows(timestamp int64) (Window, error)
 }
 
 // AggregationOp defines the stateful operation for aggregation.
