@@ -42,7 +42,6 @@ type syncPartContext struct {
 func (s *syncPartContext) FinishSync() error {
 	if len(s.traceIDFilterBuffer) > 0 && s.memPart != nil {
 		bf := generateBloomFilter()
-		defer releaseBloomFilter(bf)
 		s.memPart.traceIDFilter.filter = decodeBloomFilter(s.traceIDFilterBuffer, bf)
 	}
 	if len(s.tagTypeBuffer) > 0 && s.memPart != nil {

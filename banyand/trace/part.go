@@ -74,6 +74,7 @@ func (p *part) close() {
 	for _, tm := range p.tagMetadata {
 		fs.MustClose(tm)
 	}
+	p.traceIDFilter.reset()
 }
 
 func (p *part) String() string {
@@ -274,7 +275,6 @@ func (mp *memPart) Unmarshal(data []byte) error {
 		filterBytes := tail[:filterLen]
 		tail = tail[filterLen:]
 		bf := generateBloomFilter()
-		defer releaseBloomFilter(bf)
 		mp.traceIDFilter.filter = decodeBloomFilter(filterBytes, bf)
 	} else {
 		mp.traceIDFilter.filter = nil
@@ -489,7 +489,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
 	if mp.traceIDFilter.filter != nil {
 		releaseBloomFilter(mp.traceIDFilter.filter)
-		mp.traceIDFilter.filter = nil
+		mp.traceIDFilter.reset()
 	}
 
 	fileSystem.SyncPath(path)
