@@ -81,7 +81,7 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 		flushCh:       make(chan *flusherIntroduction),
 		mergeCh:       make(chan *mergerIntroduction),
 		syncCh:        make(chan *SyncIntroduction),
-		loopCloser:    run.NewCloser(1),
+		loopCloser:    run.NewCloser(1 + 1),
 		l:             logger.GetLogger().Named("sidx"),
 		pm:            opts.Memory,
 		root:          opts.Path,
@@ -471,7 +471,10 @@ func (s *sidx) Flush() error {
 
 // Close implements SIDX interface.
 func (s *sidx) Close() error {
-	s.loopCloser.CloseThenWait()
+	if s.loopCloser != nil {
+		s.loopCloser.Done()
+		s.loopCloser.CloseThenWait()
+	}
 
 	// Close current snapshot
 	s.mu.Lock()
