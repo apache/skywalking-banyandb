@@ -33,7 +33,7 @@ type QueryYAML struct {
 	Name      string                   `yaml:"name,omitempty" json:"name,omitempty"`
 	Groups    []string                 `yaml:"groups,omitempty" json:"groups,omitempty"`
 	TimeRange *TimeRangeYAML           `yaml:"timeRange,omitempty" json:"timeRange,omitempty"`
-	Criteria  []map[string]interface{} `yaml:"criteria,omitempty" json:"criteria,omitempty"`
+	Criteria  map[string]interface{}   `yaml:"criteria,omitempty" json:"criteria,omitempty"`
 	Limit     *int                     `yaml:"limit,omitempty" json:"limit,omitempty"`
 	Offset    *int                     `yaml:"offset,omitempty" json:"offset,omitempty"`
 	Trace     bool                     `yaml:"trace,omitempty" json:"trace,omitempty"`
@@ -55,7 +55,7 @@ type QueryYAML struct {
 	// Top-N specific (for separate endpoint)
 	TopN           int                      `yaml:"top_n,omitempty" json:"top_n,omitempty"`
 	FieldValueSort string                   `yaml:"field_value_sort,omitempty" json:"field_value_sort,omitempty"`
-	Conditions     []map[string]interface{} `yaml:"conditions,omitempty" json:"conditions,omitempty"`
+	Conditions     map[string]interface{}   `yaml:"conditions,omitempty" json:"conditions,omitempty"`
 }
 
 // TimeRangeYAML represents time range in YAML
@@ -471,102 +471,161 @@ func (t *Translator) parseTimestamp(timestamp string) (string, error) {
 }
 
 // translateWhereClause translates WHERE conditions to criteria format
-func (t *Translator) translateWhereClause(where *WhereClause) ([]map[string]interface{}, error) {
-	var criteria []map[string]interface{}
+func (t *Translator) translateWhereClause(where *WhereClause) (map[string]interface{}, error) {
+	if len(where.Conditions) == 0 {
+		return nil, nil
+	}
 
-	for _, condition := range where.Conditions {
-		criterion := make(map[string]interface{})
+	if len(where.Conditions) == 1 {
+		// Single condition - wrap in Criteria with condition field
+		condition, err := t.translateCondition(where.Conditions[0])
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"condition": condition,
+		}, nil
+	}
 
-		// Set tag name
-		criterion["tagName"] = condition.Left
+	// Multiple conditions - create LogicalExpression with AND operator
+	var criteria map[string]interface{}
+	leftCondition, err := t.translateCondition(where.Conditions[0])
+	if err != nil {
+		return nil, err
+	}
 
-		// Set operator and values
-		switch condition.Operator {
-		case OpEqual:
-			criterion["op"] = "BINARY_OP_EQ"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpNotEqual:
-			criterion["op"] = "BINARY_OP_NE"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpGreater:
-			criterion["op"] = "BINARY_OP_GT"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpLess:
-			criterion["op"] = "BINARY_OP_LT"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpGreaterEqual:
-			criterion["op"] = "BINARY_OP_GE"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpLessEqual:
-			criterion["op"] = "BINARY_OP_LE"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
-			}
-		case OpIn:
-			criterion["op"] = "BINARY_OP_IN"
-			var values []interface{}
-			for _, val := range condition.Values {
-				values = append(values, t.translateValue(val))
-			}
-			criterion["value"] = map[string]interface{}{
-				"strArray": map[string]interface{}{
-					"value": values,
+	if len(where.Conditions) == 2 {
+		rightCondition, err := t.translateCondition(where.Conditions[1])
+		if err != nil {
+			return nil, err
+		}
+		criteria = map[string]interface{}{
+			"le": map[string]interface{}{
+				"op": "LOGICAL_OP_AND",
+				"left": map[string]interface{}{
+					"condition": leftCondition,
 				},
-			}
-		case OpNotIn:
-			criterion["op"] = "BINARY_OP_NOT_IN"
-			var values []interface{}
-			for _, val := range condition.Values {
-				values = append(values, t.translateValue(val))
-			}
-			criterion["value"] = map[string]interface{}{
-				"strArray": map[string]interface{}{
-					"value": values,
+				"right": map[string]interface{}{
+					"condition": rightCondition,
 				},
+			},
+		}
+	} else {
+		// More than 2 conditions - chain them with AND operators
+		criteria = map[string]interface{}{
+			"condition": leftCondition,
+		}
+		for i := 1; i < len(where.Conditions); i++ {
+			condition, err := t.translateCondition(where.Conditions[i])
+			if err != nil {
+				return nil, err
 			}
-		case OpHaving:
-			criterion["op"] = "BINARY_OP_HAVING"
-			var values []interface{}
-			for _, val := range condition.Values {
-				values = append(values, t.translateValue(val))
-			}
-			criterion["value"] = map[string]interface{}{
-				"strArray": map[string]interface{}{
-					"value": values,
+			criteria = map[string]interface{}{
+				"le": map[string]interface{}{
+					"op": "LOGICAL_OP_AND",
+					"left": criteria,
+					"right": map[string]interface{}{
+						"condition": condition,
+					},
 				},
-			}
-		case OpNotHaving:
-			criterion["op"] = "BINARY_OP_NOT_HAVING"
-			var values []interface{}
-			for _, val := range condition.Values {
-				values = append(values, t.translateValue(val))
-			}
-			criterion["value"] = map[string]interface{}{
-				"strArray": map[string]interface{}{
-					"value": values,
-				},
-			}
-		case OpMatch:
-			criterion["op"] = "BINARY_OP_MATCH"
-			if condition.Right != nil {
-				criterion["value"] = t.translateValue(condition.Right)
 			}
 		}
-
-		criteria = append(criteria, criterion)
 	}
 
 	return criteria, nil
+}
+
+// translateCondition translates a single condition to the proper format
+func (t *Translator) translateCondition(condition *Condition) (map[string]interface{}, error) {
+	criterion := make(map[string]interface{})
+
+	// Set field name
+	criterion["name"] = condition.Left
+
+	// Set operator and values
+	switch condition.Operator {
+	case OpEqual:
+		criterion["op"] = "BINARY_OP_EQ"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpNotEqual:
+		criterion["op"] = "BINARY_OP_NE"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpGreater:
+		criterion["op"] = "BINARY_OP_GT"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpLess:
+		criterion["op"] = "BINARY_OP_LT"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpGreaterEqual:
+		criterion["op"] = "BINARY_OP_GE"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpLessEqual:
+		criterion["op"] = "BINARY_OP_LE"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	case OpIn:
+		criterion["op"] = "BINARY_OP_IN"
+		var values []interface{}
+		for _, val := range condition.Values {
+			values = append(values, t.translateValue(val))
+		}
+		criterion["value"] = map[string]interface{}{
+			"strArray": map[string]interface{}{
+				"value": values,
+			},
+		}
+	case OpNotIn:
+		criterion["op"] = "BINARY_OP_NOT_IN"
+		var values []interface{}
+		for _, val := range condition.Values {
+			values = append(values, t.translateValue(val))
+		}
+		criterion["value"] = map[string]interface{}{
+			"strArray": map[string]interface{}{
+				"value": values,
+			},
+		}
+	case OpHaving:
+		criterion["op"] = "BINARY_OP_HAVING"
+		var values []interface{}
+		for _, val := range condition.Values {
+			values = append(values, t.translateValue(val))
+		}
+		criterion["value"] = map[string]interface{}{
+			"strArray": map[string]interface{}{
+				"value": values,
+			},
+		}
+	case OpNotHaving:
+		criterion["op"] = "BINARY_OP_NOT_HAVING"
+		var values []interface{}
+		for _, val := range condition.Values {
+			values = append(values, t.translateValue(val))
+		}
+		criterion["value"] = map[string]interface{}{
+			"strArray": map[string]interface{}{
+				"value": values,
+			},
+		}
+	case OpMatch:
+		criterion["op"] = "BINARY_OP_MATCH"
+		if condition.Right != nil {
+			criterion["value"] = t.translateValue(condition.Right)
+		}
+	}
+
+	return criterion, nil
 }
 
 // translateValue translates a value to the appropriate YAML format

@@ -90,7 +90,7 @@ SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s'`, nowStr,
 		}, flags.EventuallyTimeout).Should(Equal(5))
 	})
 
-	It("executes stream query with WHERE condition", func() {
+	It("executes stream query with WHERE condition and limit", func() {
 		conn, err := grpclib.NewClient(
 			grpcAddr,
 			grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -104,7 +104,7 @@ SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s'`, nowStr,
 		rootCmd.SetArgs([]string{"bydbql", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
-SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s' WHERE trace_id = 'trace-1' LIMIT 10`, nowStr, endStr)))
+			SELECT trace_id, webapp_service FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s' WHERE service_id = 'webapp_id' LIMIT 3`, nowStr, endStr)))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {
@@ -119,7 +119,7 @@ SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s' WHERE tra
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
 			return len(resp.Elements)
-		}, time.Microsecond).Should(Equal(1))
+		}, flags.EventuallyTimeout).Should(Equal(3)) // We have > 3 elements match the condition, but limit 3
 	})
 
 	It("executes stream query with relative time range", func() {
@@ -136,7 +136,7 @@ SELECT trace_id FROM STREAM sw in (default) TIME BETWEEN '%s' AND '%s' WHERE tra
 		rootCmd.SetArgs([]string{"bydbql", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(`
-SELECT trace_id FROM STREAM sw TIME > '-30m' LIMIT 10`))
+SELECT trace_id FROM STREAM sw in (default) TIME > '-30m' LIMIT 10`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				if err != nil {

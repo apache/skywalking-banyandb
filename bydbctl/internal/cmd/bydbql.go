@@ -293,7 +293,7 @@ func executeRESTQuery(endpoint string, jsonData map[string]any) error {
 			return []reqBody{reqBodyData}, nil
 		},
 		func(req request) (*resty.Response, error) {
-			fmt.Printf("Executing query at endpoint %s\n", string(req.data))
+			// fmt.Printf("Executing query at endpoint %s\n", string(req.data))
 			url := viper.GetString("addr") + endpoint
 			resp, err := req.req.
 				SetHeader("Content-Type", "application/json").

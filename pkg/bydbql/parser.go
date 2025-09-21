@@ -665,7 +665,7 @@ func (p *Parser) parseCondition() *Condition {
 	p.nextToken()
 
 	// Parse right side
-	if condition.Operator == OpIn || condition.Operator == OpNotIn {
+	if condition.Operator == OpIn || condition.Operator == OpNotIn || condition.Operator == OpHaving || condition.Operator == OpNotHaving {
 		// Parse value list
 		if !p.expectToken(TokenLeftParen) {
 			return nil

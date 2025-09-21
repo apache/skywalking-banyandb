@@ -249,12 +249,12 @@ var _ = Describe("Translator", func() {
 		Entry("WHERE clause with criteria",
 			"SELECT * FROM STREAM sw WHERE service_id = 'webapp'",
 			func(data map[string]any) bool {
-				criteria, ok := data["criteria"].([]any)
-				if !ok || len(criteria) == 0 {
+				criteria, ok := data["criteria"].(map[string]any)
+				if !ok {
 					return false
 				}
-				first, ok := criteria[0].(map[string]any)
-				return ok && first["tagName"] == "service_id" && first["op"] == "BINARY_OP_EQ"
+				condition, ok := criteria["condition"].(map[string]any)
+				return ok && condition["name"] == "service_id" && condition["op"] == "BINARY_OP_EQ"
 			}),
 		Entry("TOP N query",
 			"SHOW TOP 10 FROM MEASURE service_latency ORDER BY value DESC",
@@ -266,8 +266,8 @@ var _ = Describe("Translator", func() {
 		Entry("property query with IDs",
 			"SELECT * FROM PROPERTY metadata WHERE ID = 'id1' OR ID = 'id2'",
 			func(data map[string]any) bool {
-				criteria, ok := data["criteria"].([]any)
-				return ok && len(criteria) == 2
+				criteria, ok := data["criteria"].(map[string]any)
+				return ok && criteria != nil
 			}),
 		Entry("query trace enabled",
 			"SELECT * FROM STREAM sw WITH QUERY_TRACE",
@@ -515,3 +515,401 @@ func BenchmarkEndToEnd(b *testing.B) {
 		_, _, _ = TranslateQuery(query, context)
 	}
 }
+
+var _ = Describe("Criteria BinaryOp Tests", func() {
+	var context *QueryContext
+
+	BeforeEach(func() {
+		context = &QueryContext{
+			DefaultGroup:        "default",
+			DefaultResourceName: "test_resource",
+			DefaultResourceType: ResourceTypeStream,
+			CurrentTime:         time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
+		}
+	})
+
+	DescribeTable("translates all BinaryOp operators correctly",
+		func(whereClause string, expectedOp string, validateValue func(map[string]any) bool) {
+			query := fmt.Sprintf("SELECT * FROM STREAM sw WHERE %s", whereClause)
+			parsed, errors := ParseQuery(query)
+			Expect(errors).To(BeEmpty())
+			Expect(parsed).NotTo(BeNil())
+
+			translator := NewTranslator(context)
+			data, err := translator.TranslateToMap(parsed)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Extract condition from criteria
+			criteria, ok := data["criteria"].(map[string]any)
+			Expect(ok).To(BeTrue(), "criteria should be an object")
+			Expect(criteria).NotTo(BeEmpty())
+
+			condition, ok := criteria["condition"].(map[string]any)
+			Expect(ok).To(BeTrue(), "should have condition field")
+
+			Expect(condition["op"]).To(Equal(expectedOp))
+			if validateValue != nil {
+				Expect(validateValue(condition)).To(BeTrue(), "value validation failed for condition: %+v", condition)
+			}
+		},
+		// BINARY_OP_EQ
+		Entry("BINARY_OP_EQ with string",
+			"service_id = 'mysql'",
+			"BINARY_OP_EQ",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				str, ok := value["str"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return str["value"] == "mysql" && condition["name"] == "service_id"
+			}),
+		Entry("BINARY_OP_EQ with integer",
+			"status = 200",
+			"BINARY_OP_EQ",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				intVal, ok := value["int"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return intVal["value"] == "200" && condition["name"] == "status"
+			}),
+		// BINARY_OP_NE
+		Entry("BINARY_OP_NE with string",
+			"service_name != 'test-service'",
+			"BINARY_OP_NE",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				str, ok := value["str"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return str["value"] == "test-service" && condition["name"] == "service_name"
+			}),
+		// BINARY_OP_GT
+		Entry("BINARY_OP_GT with integer",
+			"latency > 1000",
+			"BINARY_OP_GT",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				intVal, ok := value["int"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return intVal["value"] == "1000" && condition["name"] == "latency"
+			}),
+		// BINARY_OP_LT
+		Entry("BINARY_OP_LT with integer",
+			"response_time < 500",
+			"BINARY_OP_LT",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				intVal, ok := value["int"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return intVal["value"] == "500" && condition["name"] == "response_time"
+			}),
+		// BINARY_OP_GE
+		Entry("BINARY_OP_GE with integer",
+			"status >= 10",
+			"BINARY_OP_GE",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				intVal, ok := value["int"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return intVal["value"] == "10" && condition["name"] == "status"
+			}),
+		// BINARY_OP_LE
+		Entry("BINARY_OP_LE with integer",
+			"duration <= 3000",
+			"BINARY_OP_LE",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				intVal, ok := value["int"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return intVal["value"] == "3000" && condition["name"] == "duration"
+			}),
+		// BINARY_OP_MATCH
+		Entry("BINARY_OP_MATCH with string",
+			"service_id MATCH 'mysql'",
+			"BINARY_OP_MATCH",
+			func(condition map[string]any) bool {
+				value, ok := condition["value"].(map[string]any)
+				if !ok {
+					return false
+				}
+				str, ok := value["str"].(map[string]any)
+				if !ok {
+					return false
+				}
+				return str["value"] == "mysql" && condition["name"] == "service_id"
+			}),
+	)
+})
+
+var _ = Describe("Criteria LogicalExpression Tests", func() {
+	var context *QueryContext
+
+	BeforeEach(func() {
+		context = &QueryContext{
+			DefaultGroup:        "default",
+			DefaultResourceName: "test_resource",
+			DefaultResourceType: ResourceTypeStream,
+			CurrentTime:         time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
+		}
+	})
+
+	It("translates AND logical expression correctly", func() {
+		query := "SELECT * FROM STREAM sw WHERE service_id = 'webapp' AND status = 200"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Extract criteria
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		// Should have a logical expression
+		le, ok := criteria["le"].(map[string]any)
+		Expect(ok).To(BeTrue(), "should have logical expression")
+		Expect(le["op"]).To(Equal("LOGICAL_OP_AND"))
+
+		// Check left condition
+		left, ok := le["left"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		leftCond, ok := left["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(leftCond["name"]).To(Equal("service_id"))
+		Expect(leftCond["op"]).To(Equal("BINARY_OP_EQ"))
+
+		// Check right condition
+		right, ok := le["right"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		rightCond, ok := right["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(rightCond["name"]).To(Equal("status"))
+		Expect(rightCond["op"]).To(Equal("BINARY_OP_EQ"))
+	})
+
+	It("translates multiple AND conditions correctly", func() {
+		query := "SELECT * FROM STREAM sw WHERE service_id = 'webapp' AND status = 200 AND region = 'us-west'"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Extract criteria
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		// Should have nested logical expressions
+		le, ok := criteria["le"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(le["op"]).To(Equal("LOGICAL_OP_AND"))
+
+		// The structure should be: ((service_id = 'webapp' AND status = 200) AND region = 'us-west')
+		// Check that left is another logical expression
+		left, ok := le["left"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		innerLe, ok := left["le"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(innerLe["op"]).To(Equal("LOGICAL_OP_AND"))
+
+		// Check the rightmost condition
+		right, ok := le["right"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		rightCond, ok := right["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(rightCond["name"]).To(Equal("region"))
+		Expect(rightCond["op"]).To(Equal("BINARY_OP_EQ"))
+	})
+
+	It("translates complex nested criteria with different operators", func() {
+		query := "SELECT * FROM STREAM sw WHERE service_id = 'webapp' AND latency > 1000 AND status != 500"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Verify structure exists
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		// Verify it has nested logical expressions
+		_, hasLe := criteria["le"]
+		Expect(hasLe).To(BeTrue())
+	})
+
+	It("translates MATCH operator correctly", func() {
+		query := "SELECT * FROM STREAM sw WHERE description MATCH 'error occurred'"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		condition, ok := criteria["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(condition["name"]).To(Equal("description"))
+		Expect(condition["op"]).To(Equal("BINARY_OP_MATCH"))
+
+		value, ok := condition["value"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		str, ok := value["str"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(str["value"]).To(Equal("error occurred"))
+	})
+
+	It("translates mixed string and integer conditions", func() {
+		query := "SELECT * FROM STREAM sw WHERE service_id = 'webapp' AND status >= 400 AND latency < 5000"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		yamlData, err := translator.TranslateToYAML(parsed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(yamlData).NotTo(BeEmpty())
+
+		// Verify YAML structure by unmarshaling
+		var result map[string]any
+		err = yaml.Unmarshal(yamlData, &result)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result["criteria"]).NotTo(BeNil())
+	})
+})
+
+var _ = Describe("Criteria Proto Format Verification", func() {
+	var context *QueryContext
+
+	BeforeEach(func() {
+		context = &QueryContext{
+			DefaultGroup:        "default",
+			DefaultResourceName: "test_resource",
+			DefaultResourceType: ResourceTypeStream,
+			CurrentTime:         time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
+		}
+	})
+
+	It("generates criteria in correct proto format for MATCH operator", func() {
+		query := "SELECT * FROM STREAM sw WHERE database_instance MATCH 'mysql'"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		yamlData, err := translator.TranslateToYAML(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Print the YAML output to verify the format
+		fmt.Printf("YAML Output for MATCH query:\n%s\n", string(yamlData))
+
+		// Verify the structure matches the expected proto format
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		condition, ok := criteria["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(condition["name"]).To(Equal("database_instance"))
+		Expect(condition["op"]).To(Equal("BINARY_OP_MATCH"))
+
+		// Verify value structure
+		value, ok := condition["value"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		str, ok := value["str"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(str["value"]).To(Equal("mysql"))
+	})
+
+	It("generates criteria with LogicalExpression for AND conditions", func() {
+		query := "SELECT * FROM STREAM sw WHERE service_id = 'webapp' AND status = 200"
+		parsed, errors := ParseQuery(query)
+		Expect(errors).To(BeEmpty())
+		Expect(parsed).NotTo(BeNil())
+
+		translator := NewTranslator(context)
+		yamlData, err := translator.TranslateToYAML(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Print the YAML output to verify the format
+		fmt.Printf("YAML Output for AND conditions:\n%s\n", string(yamlData))
+
+		// Verify the structure has proper LogicalExpression
+		data, err := translator.TranslateToMap(parsed)
+		Expect(err).NotTo(HaveOccurred())
+
+		criteria, ok := data["criteria"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(criteria).NotTo(BeEmpty())
+
+		// Should have a logical expression
+		le, ok := criteria["le"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(le["op"]).To(Equal("LOGICAL_OP_AND"))
+
+		// Verify left and right conditions
+		left, ok := le["left"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		leftCond, ok := left["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(leftCond["name"]).To(Equal("service_id"))
+		Expect(leftCond["op"]).To(Equal("BINARY_OP_EQ"))
+
+		right, ok := le["right"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		rightCond, ok := right["condition"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(rightCond["name"]).To(Equal("status"))
+		Expect(rightCond["op"]).To(Equal("BINARY_OP_EQ"))
+	})
+})
