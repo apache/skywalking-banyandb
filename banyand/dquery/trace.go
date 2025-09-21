@@ -140,7 +140,12 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 		return
 	}
 
-	traces := BuildTracesFromResult(resultIterator, queryCriteria)
+	traces, err := BuildTracesFromResult(resultIterator, queryCriteria)
+	if err != nil {
+		p.log.Error().Err(err).Msg("fail to build traces from result")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build traces from result: %v", err))
+		return
+	}
 	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: traces})
 	if !queryCriteria.Trace && p.slowQuery > 0 {
 		latency := time.Since(n)
@@ -156,11 +161,14 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 }
 
 // BuildTracesFromResult builds traces from the result iterator.
-func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) []*tracev1.InternalTrace {
+func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) ([]*tracev1.InternalTrace, error) {
 	traceIndex := make(map[string]int)
 	traces := make([]*tracev1.InternalTrace, 0)
 	for {
 		result, hasNext := resultIterator.Next()
+		if result.Error != nil {
+			return nil, result.Error
+		}
 		if !hasNext {
 			break
 		}
@@ -199,5 +207,5 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 			trace.TraceId = result.TID
 		}
 	}
-	return traces
+	return traces, nil
 }

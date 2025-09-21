@@ -104,16 +104,10 @@ func (t *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, er
 	if len(tags) == 0 {
 		return nil, fmt.Errorf("index rule %s has no tags", t.originalQuery.OrderBy.IndexRuleName)
 	}
-	sortTagName := tags[len(tags)-1]
-	sortTagSpec := s.FindTagSpecByName(sortTagName)
-	if sortTagSpec == nil {
-		return nil, fmt.Errorf("tag %s not found", sortTagName)
-	}
 	result := &distributedPlan{
 		queryTemplate: temp,
 		s:             s,
 		sortByTraceID: false,
-		sortTagSpec:   *sortTagSpec,
 	}
 	if t.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -126,7 +120,6 @@ var _ executor.TraceExecutable = (*distributedPlan)(nil)
 type distributedPlan struct {
 	s             logical.Schema
 	queryTemplate *tracev1.QueryRequest
-	sortTagSpec   logical.TagSpec
 	sortByTraceID bool
 	desc          bool
 	maxTraceSize  uint32

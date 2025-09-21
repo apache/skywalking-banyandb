@@ -171,6 +171,9 @@ func (tli *traceLimitIterator) Next() (model.TraceResult, bool) {
 
 	for {
 		result, hasNext := tli.sourceIterator.Next()
+		if result.Error != nil {
+			return model.TraceResult{Error: result.Error}, false
+		}
 		if !hasNext {
 			return model.TraceResult{}, false
 		}
