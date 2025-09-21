@@ -1,0 +1,112 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.bydbql.v1;
+
+import "banyandb/bydbql/v1/query.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1";
+option java_package = "org.apache.skywalking.banyandb.bydbql.v1";
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
+
+// BydbQLService provides query interface for BanyanDB Query Language (BydbQL)
+service BydbQLService {
+  // Query executes a generic BydbQL query with explicit FROM clause
+  // This endpoint requires the query to specify the resource type and name
+  // in the FROM clause (e.g., "FROM STREAM sw", "FROM MEASURE metrics")
+  rpc Query(QueryRequest) returns (QueryResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/query"
+      body: "*"
+    };
+  }
+
+  // QueryStream executes a BydbQL query against a specific stream resource
+  // The stream name is provided in the URL path, eliminating the need
+  // for a FROM clause in the query string
+  rpc QueryStream(QueryStreamRequest) returns (QueryStreamResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/stream/{group}/{name}/query"
+      body: "*"
+      additional_bindings: {
+        post: "/v1/bydbql/stream/{name}/query"
+        body: "*"
+      }
+    };
+  }
+
+  // QueryMeasure executes a BydbQL query against a specific measure resource
+  // The measure name is provided in the URL path, eliminating the need
+  // for a FROM clause in the query string
+  rpc QueryMeasure(QueryMeasureRequest) returns (QueryMeasureResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/measure/{group}/{name}/query"
+      body: "*"
+      additional_bindings: {
+        post: "/v1/bydbql/measure/{name}/query"
+        body: "*"
+      }
+    };
+  }
+
+  // QueryProperty executes a BydbQL query against a specific property resource
+  // The property name is provided in the URL path, eliminating the need
+  // for a FROM clause in the query string
+  rpc QueryProperty(QueryPropertyRequest) returns (QueryPropertyResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/property/{group}/{name}/query"
+      body: "*"
+      additional_bindings: {
+        post: "/v1/bydbql/property/{name}/query"
+        body: "*"
+      }
+    };
+  }
+
+  // QueryTrace executes a BydbQL query against a specific trace resource
+  // The trace name is provided in the URL path, eliminating the need
+  // for a FROM clause in the query string
+  rpc QueryTrace(QueryTraceRequest) returns (QueryTraceResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/trace/{group}/{name}/query"
+      body: "*"
+      additional_bindings: {
+        post: "/v1/bydbql/trace/{name}/query"
+        body: "*"
+      }
+    };
+  }
+
+  // TopN executes a BydbQL Top-N query against a specific measure resource
+  // The measure name is provided in the URL path, eliminating the need
+  // for a FROM clause in the query string
+  // This endpoint is specifically for "SHOW TOP N" queries
+  rpc TopN(TopNRequest) returns (TopNResponse) {
+    option (google.api.http) = {
+      post: "/v1/bydbql/measure/{group}/{name}/topn"
+      body: "*"
+      additional_bindings: {
+        post: "/v1/bydbql/measure/{name}/topn"
+        body: "*"
+      }
+    };
+  }
+}

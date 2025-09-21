@@ -194,7 +194,7 @@ SELECT *;
 
 -- Basic selection with filtering and ordering
 SELECT trace_id, service_id
-FROM STREAM sw IN (default, updated)
+FROM STREAM sw IN (group1, group2)
 WHERE service_id = 'webapp' AND state = 1
 ORDER BY start_time DESC
 LIMIT 100;
@@ -672,7 +672,7 @@ SELECT *;
 
 -- Basic selection with filtering and ordering
 SELECT trace_id, service_id, operation_name
-FROM TRACE sw_trace IN (default, updated)
+FROM TRACE sw_trace IN (group1, group2)
 WHERE service_id = 'webapp' AND status = 'success'
 ORDER BY start_time DESC
 LIMIT 100;
