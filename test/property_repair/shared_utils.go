@@ -21,6 +21,7 @@ package propertyrepair
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -405,24 +406,125 @@ func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
 // ExecuteComposeCommand executes a docker-compose command, supporting both v1 and v2.
 func ExecuteComposeCommand(args ...string) error {
 	// v2
+	var executed bool
 	if _, err := exec.LookPath("docker"); err == nil {
 		check := exec.Command("docker", "compose", "version")
 		if out, err := check.CombinedOutput(); err == nil && strings.Contains(string(out), "Docker Compose") {
 			composeArgs := append([]string{"compose"}, args...)
+			composeArgs = append(composeArgs, "--wait")
 			cmd := exec.Command("docker", composeArgs...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
-			return cmd.Run()
+			if dockerErr := cmd.Run(); dockerErr != nil {
+				return dockerErr
+			}
+			executed = true
 		}
 	}
 
 	// v1
-	if _, err := exec.LookPath("docker-compose"); err == nil {
+	if _, err := exec.LookPath("docker-compose"); err == nil && !executed {
 		cmd := exec.Command("docker-compose", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		if dockerErr := cmd.Run(); dockerErr != nil {
+			return dockerErr
+		}
+	}
+
+	// wait all the container ready
+	interval := time.Second * 3
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for compose containers ready timeout")
+		default:
+		}
+		ids, err := listComposeContainerIDs()
+		if err != nil {
+			return fmt.Errorf("listing compose containers: %v", err)
+		}
+		if len(ids) == 0 {
+			time.Sleep(interval)
+			continue
+		}
+
+		allOK := true
+		var details []string
+
+		for _, id := range ids {
+			name, health, state, err := inspectHealth(id)
+			if err != nil {
+				allOK = false
+				details = append(details, fmt.Sprintf("%s: inspect error: %v", id, err))
+				continue
+			}
+
+			ok := false
+			switch {
+			case health != "":
+				ok = health == "healthy"
+			default:
+				ok = state == "running"
+			}
+
+			if !ok {
+				allOK = false
+			}
+			if health == "" {
+				details = append(details, fmt.Sprintf("%s (state=%s, no healthcheck)", name, state))
+			} else {
+				details = append(details, fmt.Sprintf("%s (health=%s, state=%s)", name, health, state))
+			}
+		}
+
+		fmt.Println("Compose containers status:")
+		for _, d := range details {
+			fmt.Println("   -", d)
+		}
+
+		if allOK {
+			return nil
+		}
+
+		time.Sleep(interval)
 	}
 
 	return nil
+}
+
+func listComposeContainerIDs() ([]string, error) {
+	out, err := exec.Command("docker", "ps", "-q").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps -q: %w (%s)", err, string(out))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var ids []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			ids = append(ids, l)
+		}
+	}
+	return ids, nil
+}
+
+func inspectHealth(containerID string) (name, health, state string, err error) {
+	tpl := "{{.Name}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}{{end}}|{{.State.Status}}"
+	cmd := exec.Command("docker", "inspect", "-f", tpl, containerID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", "", fmt.Errorf("docker inspect %s: %w (%s)", containerID, err, string(out))
+	}
+	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) != 3 {
+		return "", "", "", errors.New("unexpected inspect output: " + string(out))
+	}
+	name = strings.TrimPrefix(parts[0], "/")
+	health = parts[1]
+	state = parts[2]
+	return
 }
