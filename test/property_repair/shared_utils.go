@@ -445,7 +445,7 @@ func ExecuteComposeCommand(args ...string) error {
 		}
 		ids, err := listComposeContainerIDs()
 		if err != nil {
-			return fmt.Errorf("listing compose containers: %v", err)
+			return fmt.Errorf("listing compose containers: %w", err)
 		}
 		if len(ids) == 0 {
 			time.Sleep(interval)
@@ -492,8 +492,6 @@ func ExecuteComposeCommand(args ...string) error {
 
 		time.Sleep(interval)
 	}
-
-	return nil
 }
 
 func listComposeContainerIDs() ([]string, error) {
