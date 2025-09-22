@@ -156,11 +156,11 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 
 func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (bool, error) {
 	var memParts []*partWrapper
-	mergedIDs := make(map[uint64]struct{})
+	mergedIDs := make(map[partHandle]struct{})
 	for i := range snp.parts {
 		if snp.parts[i].mp != nil {
 			memParts = append(memParts, snp.parts[i])
-			mergedIDs[snp.parts[i].ID()] = struct{}{}
+			mergedIDs[partHandle{partID: snp.parts[i].ID(), partType: PartTypeCore}] = struct{}{}
 			continue
 		}
 	}

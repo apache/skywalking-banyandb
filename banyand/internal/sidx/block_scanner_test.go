@@ -161,8 +161,8 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 				defer releaseElements(elements)
 
 				// Create memPart and initialize with elements
-				mp := generateMemPart()
-				defer releaseMemPart(mp)
+				mp := GenerateMemPart()
+				defer ReleaseMemPart(mp)
 				mp.mustInitFromElements(elements)
 
 				// Create part from memPart (in-memory approach - faster for tests)

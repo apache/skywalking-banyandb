@@ -51,6 +51,7 @@ type sidx struct {
 	introductions              chan *introduction
 	flushCh                    chan *flusherIntroduction
 	mergeCh                    chan *mergerIntroduction
+	syncCh                     chan *SyncIntroduction
 	loopCloser                 *run.Closer
 	l                          *logger.Logger
 	pm                         protector.Memory
@@ -79,7 +80,8 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 		introductions: make(chan *introduction),
 		flushCh:       make(chan *flusherIntroduction),
 		mergeCh:       make(chan *mergerIntroduction),
-		loopCloser:    run.NewCloser(1),
+		syncCh:        make(chan *SyncIntroduction),
+		loopCloser:    run.NewCloser(1 + 1),
 		l:             logger.GetLogger().Named("sidx"),
 		pm:            opts.Memory,
 		root:          opts.Path,
@@ -93,9 +95,38 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 
 	// Start introducer loop with loaded epoch
 	watcherCh := make(watcher.Channel, 10)
-	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, epoch)
+	go s.introducerLoop(s.flushCh, s.mergeCh, s.syncCh, watcherCh, epoch)
 
 	return s, nil
+}
+
+// SyncCh returns the sync channel for external synchronization.
+func (s *sidx) SyncCh() chan<- *SyncIntroduction {
+	return s.syncCh
+}
+
+func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart) {
+	// Generate part ID using atomic increment
+	partID := atomic.AddUint64(&s.curPartID, 1)
+
+	// Create introduction
+	intro := generateIntroduction()
+	intro.memPart = mp
+	intro.memPart.partMetadata.ID = partID
+	intro.applied = make(chan struct{})
+
+	// Send to introducer loop
+	select {
+	case s.introductions <- intro:
+		// Wait for introduction to be applied
+		<-intro.applied
+		releaseIntroduction(intro)
+		return
+	case <-ctx.Done():
+		releaseIntroduction(intro)
+		ReleaseMemPart(mp)
+		return
+	}
 }
 
 // Write implements SIDX interface.
@@ -119,7 +150,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	}
 
 	// Create memory part from elements
-	mp := generateMemPart()
+	mp := GenerateMemPart()
 	mp.mustInitFromElements(es)
 
 	// Generate part ID using atomic increment
@@ -140,7 +171,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 		return nil
 	case <-ctx.Done():
 		releaseIntroduction(intro)
-		releaseMemPart(mp)
+		ReleaseMemPart(mp)
 		return ctx.Err()
 	}
 }
@@ -440,7 +471,10 @@ func (s *sidx) Flush() error {
 
 // Close implements SIDX interface.
 func (s *sidx) Close() error {
-	s.loopCloser.CloseThenWait()
+	if s.loopCloser != nil {
+		s.loopCloser.Done()
+		s.loopCloser.CloseThenWait()
+	}
 
 	// Close current snapshot
 	s.mu.Lock()

@@ -305,8 +305,8 @@ func TestPartIterVerification(t *testing.T) {
 				elements := createTestElements(tt.elements)
 				defer releaseElements(elements)
 
-				mp := generateMemPart()
-				defer releaseMemPart(mp)
+				mp := GenerateMemPart()
+				defer ReleaseMemPart(mp)
 
 				mp.mustInitFromElements(elements)
 
@@ -331,8 +331,8 @@ func TestPartIterVerification(t *testing.T) {
 				elements := createTestElements(tt.elements)
 				defer releaseElements(elements)
 
-				mp := generateMemPart()
-				defer releaseMemPart(mp)
+				mp := GenerateMemPart()
+				defer ReleaseMemPart(mp)
 
 				mp.mustInitFromElements(elements)
 
@@ -369,8 +369,8 @@ func TestPartIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "empty_series_test")
@@ -410,8 +410,8 @@ func TestPartIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "no_match_key_range")
@@ -451,8 +451,8 @@ func TestPartIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "no_match_series")
@@ -497,8 +497,8 @@ func TestPartIterBlockFilter(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "nil_filter")
@@ -539,8 +539,8 @@ func TestPartIterBlockFilter(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "allow_all_filter")
@@ -584,8 +584,8 @@ func TestPartIterBlockFilter(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "skip_all_filter")
@@ -629,8 +629,8 @@ func TestPartIterBlockFilter(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "error_filter")

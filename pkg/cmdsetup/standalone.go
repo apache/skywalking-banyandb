@@ -79,6 +79,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		MeasureLiaisonNodeRegistry: nr,
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
+		TraceLiaisonNodeRegistry:   nr,
 	}, metricSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())

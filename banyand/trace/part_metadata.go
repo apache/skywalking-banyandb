@@ -225,8 +225,7 @@ func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPat
 		return
 	}
 
-	bf := generateBloomFilter()
-	defer releaseBloomFilter(bf)
+	bf := filter.NewBloomFilter(0)
 	tf.filter = decodeBloomFilter(data, bf)
 }
 

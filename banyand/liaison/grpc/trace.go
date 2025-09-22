@@ -370,8 +370,18 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 	}
 	data := msg.Data()
 	switch d := data.(type) {
-	case *tracev1.QueryResponse:
-		return d, nil
+	case *tracev1.InternalQueryResponse:
+		traces := make([]*tracev1.Trace, 0, len(d.InternalTraces))
+		for _, internalTrace := range d.InternalTraces {
+			trace := &tracev1.Trace{
+				Spans: internalTrace.Spans,
+			}
+			traces = append(traces, trace)
+		}
+		return &tracev1.QueryResponse{
+			Traces:           traces,
+			TraceQueryResult: d.TraceQueryResult,
+		}, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}
