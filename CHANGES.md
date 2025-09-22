@@ -47,7 +47,7 @@ Release Notes.
   - Add new retention configuration flags: `*-retention-low-watermark`, `*-retention-check-interval`, `*-retention-cooldown`
   - Implement disk monitor with forced retention cleanup for data/standalone servers
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
-
+- Implement cluster mode for trace.
 
 ### Bug Fixes
 
@@ -56,6 +56,9 @@ Release Notes.
 - Fix the crash when collecting the metrics from a closed segment.
 - Fix topN parsing panic when the criteria is set.
 - Remove the indexed_only field in TagSpec.
+- Fix returning empty result when using IN operatior on the array type tags.
+- Fix memory leaks and OOM issues in streaming processing by implementing deduplication logic in priority queues and improving sliding window memory management.
+- Fix etcd prefix matching any key that starts with this prefix.
 
 ### Document
 

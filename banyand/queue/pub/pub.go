@@ -229,7 +229,9 @@ type publishResult struct {
 
 func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	var err error
-	f := &future{}
+	f := &future{
+		log: p.log,
+	}
 	handleMessage := func(m bus.Message, err error) error {
 		r, errSend := messageToRequest(topic, m)
 		if errSend != nil {
@@ -362,6 +364,7 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 }
 
 type future struct {
+	log      *logger.Logger
 	clients  []clusterv1.Service_SendClient
 	cancelFn []func()
 	topics   []bus.Topic
@@ -372,10 +375,16 @@ func (l *future) Get() (bus.Message, error) {
 	if len(l.clients) < 1 {
 		return bus.Message{}, io.EOF
 	}
+
 	c := l.clients[0]
 	t := l.topics[0]
 	n := l.nodes[0]
+
 	defer func() {
+		if err := c.CloseSend(); err != nil {
+			l.log.Error().Err(err).Msg("failed to close send stream")
+		}
+
 		l.clients = l.clients[1:]
 		l.topics = l.topics[1:]
 		l.cancelFn[0]()

@@ -83,7 +83,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	ctx.projectionTags = projTags
 	plan := uis.selectIndexScanner(ctx, uis.ec)
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1, "")
+		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, s, false, "")
 		if errFilter != nil {
 			return nil, errFilter
 		}
@@ -124,19 +124,17 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 }
 
 type analyzeContext struct {
-	s                logical.Schema
-	invertedFilter   index.Filter
-	skippingFilter   index.Filter
-	entities         [][]*modelv1.TagValue
-	projectionTags   []model.TagProjection
-	globalConditions []interface{}
-	projTagsRefs     [][]*logical.TagRef
+	s              logical.Schema
+	invertedFilter index.Filter
+	skippingFilter index.Filter
+	entities       [][]*modelv1.TagValue
+	projectionTags []model.TagProjection
+	projTagsRefs   [][]*logical.TagRef
 }
 
 func newAnalyzerContext(s logical.Schema) *analyzeContext {
 	return &analyzeContext{
-		globalConditions: make([]interface{}, 0),
-		s:                s,
+		s: s,
 	}
 }
 

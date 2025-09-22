@@ -677,7 +677,9 @@ func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()
 	for _, s := range sc.lst {
-		s.DecRef()
+		for atomic.LoadInt32(&s.refCount) > 0 {
+			s.DecRef()
+		}
 	}
 	sc.lst = sc.lst[:0]
 	if sc.metrics != nil {

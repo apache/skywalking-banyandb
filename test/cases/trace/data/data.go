@@ -75,7 +75,19 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred(), query.String())
 	if args.WantEmpty {
-		innerGm.Expect(resp.Traces).To(gm.BeEmpty())
+		innerGm.Expect(resp.Traces).To(gm.BeEmpty(), func() string {
+			var j []byte
+			j, err = marshalToJSONWithStringBytes(resp)
+			if err != nil {
+				return err.Error()
+			}
+			var y []byte
+			y, err = yaml.JSONToYAML(j)
+			if err != nil {
+				return err.Error()
+			}
+			return string(y)
+		})
 		return
 	}
 	if args.Want == "" {
@@ -140,7 +152,6 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 				return err.Error()
 			}
 			var y []byte
-			// TODO: it lose tag values.
 			y, err = yaml.JSONToYAML(j)
 			if err != nil {
 				return err.Error()

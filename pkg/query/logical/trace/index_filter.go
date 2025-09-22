@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -34,7 +35,7 @@ import (
 // Trace conditions are either entity or skipping index.
 // Trace creates explicit index rules for skipping index on all tags that don't belong to entity.
 // Returns min/max int64 values for the orderByTag if provided, otherwise returns math.MaxInt64, math.MinInt64.
-func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
+func buildFilter(criteria *modelv1.Criteria, schema logical.Schema, tagNames map[string]bool,
 	entityDict map[string]int, entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
@@ -43,15 +44,17 @@ func buildFilter(criteria *modelv1.Criteria, tagNames map[string]bool,
 
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
-		return buildFilterFromCondition(criteria.GetCondition(), tagNames, entityDict, entity, traceIDTagName, orderByTag)
+		return buildFilterFromCondition(criteria.GetCondition(), schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	case *modelv1.Criteria_Le:
-		return buildFilterFromLogicalExpression(criteria.GetLe(), tagNames, entityDict, entity, traceIDTagName, orderByTag)
+		return buildFilterFromLogicalExpression(criteria.GetLe(), schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	}
 
 	return nil, nil, nil, nil, math.MinInt64, math.MaxInt64, logical.ErrInvalidCriteriaType
 }
 
-func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue, expr logical.LiteralExpr) (index.Filter, [][]*modelv1.TagValue, error) {
+func parseConditionToFilter(cond *modelv1.Condition, schema logical.Schema,
+	entity []*modelv1.TagValue, expr logical.LiteralExpr,
+) (index.Filter, [][]*modelv1.TagValue, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
 		return &traceRangeFilter{op: "gt", tagName: cond.Name, cond: cond, expr: expr}, [][]*modelv1.TagValue{entity}, nil
@@ -72,8 +75,20 @@ func parseConditionToFilter(cond *modelv1.Condition, entity []*modelv1.TagValue,
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		return &traceFilter{op: "not_having", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
+		if schema != nil {
+			tagSpec := schema.FindTagSpecByName(cond.Name)
+			if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+				return nil, nil, errors.Errorf("in condition is not supported for array type")
+			}
+		}
 		return &traceFilter{op: "in", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
+		if schema != nil {
+			tagSpec := schema.FindTagSpecByName(cond.Name)
+			if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+				return nil, nil, errors.Errorf("not in condition is not supported for array type")
+			}
+		}
 		return &traceFilter{op: "not_in", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
 	}
 	return nil, nil, errors.Errorf("unsupported condition operation: %v", cond.Op)
@@ -276,7 +291,7 @@ func extractTraceIDsFromCondition(cond *modelv1.Condition) []string {
 }
 
 // buildFilterFromCondition handles single condition filtering and min/max extraction.
-func buildFilterFromCondition(cond *modelv1.Condition, tagNames map[string]bool, entityDict map[string]int,
+func buildFilterFromCondition(cond *modelv1.Condition, schema logical.Schema, tagNames map[string]bool, entityDict map[string]int,
 	entity []*modelv1.TagValue, traceIDTagName, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	var collectedTagNames []string
@@ -317,12 +332,12 @@ func buildFilterFromCondition(cond *modelv1.Condition, tagNames map[string]bool,
 	if err != nil {
 		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, err
 	}
-	filter, entities, err := parseConditionToFilter(cond, entity, expr)
+	filter, entities, err := parseConditionToFilter(cond, schema, entity, expr)
 	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
 }
 
 // buildFilterFromLogicalExpression handles logical expression (AND/OR) filtering and min/max extraction.
-func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, tagNames map[string]bool, entityDict map[string]int,
+func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, schema logical.Schema, tagNames map[string]bool, entityDict map[string]int,
 	entity []*modelv1.TagValue, traceIDTagName, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	var collectedTagNames []string
@@ -334,17 +349,17 @@ func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, tagNames ma
 		return nil, nil, nil, traceIDs, minVal, maxVal, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", le)
 	}
 	if le.GetLeft() == nil {
-		return buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+		return buildFilter(le.Right, schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	}
 	if le.GetRight() == nil {
-		return buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+		return buildFilter(le.Left, schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	}
 
-	left, leftEntities, leftTagNames, leftTraceIDs, leftMin, leftMax, err := buildFilter(le.Left, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	left, leftEntities, leftTagNames, leftTraceIDs, leftMin, leftMax, err := buildFilter(le.Left, schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	if err != nil {
 		return nil, nil, leftTagNames, leftTraceIDs, minVal, maxVal, err
 	}
-	right, rightEntities, rightTagNames, rightTraceIDs, rightMin, rightMax, err := buildFilter(le.Right, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	right, rightEntities, rightTagNames, rightTraceIDs, rightMin, rightMax, err := buildFilter(le.Right, schema, tagNames, entityDict, entity, traceIDTagName, orderByTag)
 	if err != nil {
 		return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), minVal, maxVal, err
 	}

@@ -316,6 +316,8 @@ func (m *MockChunkedSyncHandler) CreatePartHandler(ctx *queue.ChunkedSyncPartCon
 		BlocksCount:           ctx.BlocksCount,
 		MinTimestamp:          ctx.MinTimestamp,
 		MaxTimestamp:          ctx.MaxTimestamp,
+		MinKey:                ctx.MinKey,
+		MaxKey:                ctx.MaxKey,
 	}
 	m.receivedContexts = append(m.receivedContexts, contextCopy)
 	m.mu.Unlock()
@@ -380,6 +382,8 @@ func (m *MockChunkedSyncHandler) GetReceivedContexts() []*queue.ChunkedSyncPartC
 			BlocksCount:           ctx.BlocksCount,
 			MinTimestamp:          ctx.MinTimestamp,
 			MaxTimestamp:          ctx.MaxTimestamp,
+			MinKey:                ctx.MinKey,
+			MaxKey:                ctx.MaxKey,
 		}
 		result[i] = contextCopy
 	}

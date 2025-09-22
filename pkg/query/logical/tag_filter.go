@@ -25,6 +25,7 @@ import (
 	"github.com/blugelabs/bluge/analysis"
 	"github.com/pkg/errors"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
@@ -76,11 +77,13 @@ type TagFilter interface {
 
 // BuildSimpleTagFilter returns a TagFilter without any local-index, global index, sharding key support.
 func BuildSimpleTagFilter(criteria *modelv1.Criteria) (TagFilter, error) {
-	return BuildTagFilter(criteria, nil, emptyIndexChecker{}, false, "")
+	return BuildTagFilter(criteria, nil, nil, emptyIndexChecker{}, false, "")
 }
 
 // BuildTagFilter returns a TagFilter.
-func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, indexChecker IndexChecker, hasGlobalIndex bool, globalTagName string) (TagFilter, error) {
+func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schema Schema,
+	indexChecker IndexChecker, hasGlobalIndex bool, globalTagName string,
+) (TagFilter, error) {
 	if criteria == nil {
 		return DummyFilter, nil
 	}
@@ -94,20 +97,20 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := entityDict[cond.Name]; ok {
+		if _, ok := entityDict[cond.Name]; ok && !hasGlobalIndex {
 			return DummyFilter, nil
 		}
 		if cond.Name == globalTagName {
 			return DummyFilter, nil
 		}
-		return parseFilter(cond, expr, indexChecker)
+		return parseFilter(cond, expr, schema, indexChecker)
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
-		left, err := BuildTagFilter(le.Left, entityDict, indexChecker, hasGlobalIndex, globalTagName)
+		left, err := BuildTagFilter(le.Left, entityDict, schema, indexChecker, hasGlobalIndex, globalTagName)
 		if err != nil {
 			return nil, err
 		}
-		right, err := BuildTagFilter(le.Right, entityDict, indexChecker, hasGlobalIndex, globalTagName)
+		right, err := BuildTagFilter(le.Right, entityDict, schema, indexChecker, hasGlobalIndex, globalTagName)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +134,7 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, index
 	return nil, ErrInvalidCriteriaType
 }
 
-func parseFilter(cond *modelv1.Condition, expr ComparableExpr, indexChecker IndexChecker) (TagFilter, error) {
+func parseFilter(cond *modelv1.Condition, expr ComparableExpr, schema Schema, indexChecker IndexChecker) (TagFilter, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
 		return newRangeTag(cond.Name, rangeOpts{
@@ -162,8 +165,20 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr, indexChecker Inde
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		return newNotTag(newHavingTag(cond.Name, expr)), nil
 	case modelv1.Condition_BINARY_OP_IN:
+		if schema != nil {
+			tagSpec := schema.FindTagSpecByName(cond.Name)
+			if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+				return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "in condition is not supported for array type")
+			}
+		}
 		return newInTag(cond.Name, expr), nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
+		if schema != nil {
+			tagSpec := schema.FindTagSpecByName(cond.Name)
+			if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+				return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "not in condition is not supported for array type")
+			}
+		}
 		return newNotTag(newInTag(cond.Name, expr)), nil
 	default:
 		return nil, errors.WithMessagef(ErrUnsupportedConditionOp, "tag filter parses %v", cond)

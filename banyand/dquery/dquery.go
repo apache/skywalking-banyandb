@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -62,7 +63,8 @@ type queryService struct {
 	log                  *logger.Logger
 	sqp                  *streamQueryProcessor
 	mqp                  *measureQueryProcessor
-	tqp                  *topNQueryProcessor
+	nqp                  *topNQueryProcessor
+	tqp                  *traceQueryProcessor
 	closer               *run.Closer
 	nodeID               string
 	hotStageNodeSelector string
@@ -71,7 +73,7 @@ type queryService struct {
 
 // NewService return a new query service.
 func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, omr observability.MetricsRegistry,
-	streamSchemaSVC stream.Service, measureSchemaSVC measure.Service,
+	streamSchemaSVC stream.Service, measureSchemaSVC measure.Service, traceSchemaSVC trace.Service,
 ) (Service, error) {
 	svc := &queryService{
 		metaService: metaService,
@@ -89,8 +91,13 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bu
 		measureService: measureSchemaSVC,
 		broadcaster:    broadcaster,
 	}
-	svc.tqp = &topNQueryProcessor{
+	svc.nqp = &topNQueryProcessor{
 		queryService: svc,
+		broadcaster:  broadcaster,
+	}
+	svc.tqp = &traceQueryProcessor{
+		queryService: svc,
+		traceService: traceSchemaSVC,
 		broadcaster:  broadcaster,
 	}
 	return svc, nil
@@ -123,11 +130,12 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	}
 
 	q.log = logger.GetLogger(moduleName)
-	q.tqp.measureService = q.mqp.measureService
+	q.nqp.measureService = q.mqp.measureService
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
-		q.pipeline.Subscribe(data.TopicTopNQuery, q.tqp),
+		q.pipeline.Subscribe(data.TopicTopNQuery, q.nqp),
+		q.pipeline.Subscribe(data.TopicTraceQuery, q.tqp),
 	)
 }
 

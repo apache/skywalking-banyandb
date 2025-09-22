@@ -225,8 +225,8 @@ func TestIterComprehensive(t *testing.T) {
 						elements := createTestElements(partElements)
 						defer releaseElements(elements)
 
-						mp := generateMemPart()
-						defer releaseMemPart(mp)
+						mp := GenerateMemPart()
+						defer ReleaseMemPart(mp)
 						mp.mustInitFromElements(elements)
 
 						var testPart *part
@@ -272,8 +272,8 @@ func TestIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "empty_series")
@@ -304,12 +304,12 @@ func TestIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements2)
 
-		mp1 := generateMemPart()
-		defer releaseMemPart(mp1)
+		mp1 := GenerateMemPart()
+		defer ReleaseMemPart(mp1)
 		mp1.mustInitFromElements(elements1)
 
-		mp2 := generateMemPart()
-		defer releaseMemPart(mp2)
+		mp2 := GenerateMemPart()
+		defer ReleaseMemPart(mp2)
 		mp2.mustInitFromElements(elements2)
 
 		partDir1 := filepath.Join(tempDir, "no_match_part1")
@@ -340,8 +340,8 @@ func TestIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		partDir := filepath.Join(tempDir, "single_part")
@@ -368,8 +368,8 @@ func TestIterEdgeCases(t *testing.T) {
 		})
 		defer releaseElements(elements)
 
-		mp := generateMemPart()
-		defer releaseMemPart(mp)
+		mp := GenerateMemPart()
+		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
 		testPart := openMemPart(mp)
@@ -414,12 +414,12 @@ func TestIterOrdering(t *testing.T) {
 		})
 		defer releaseElements(elements2)
 
-		mp1 := generateMemPart()
-		defer releaseMemPart(mp1)
+		mp1 := GenerateMemPart()
+		defer ReleaseMemPart(mp1)
 		mp1.mustInitFromElements(elements1)
 
-		mp2 := generateMemPart()
-		defer releaseMemPart(mp2)
+		mp2 := GenerateMemPart()
+		defer ReleaseMemPart(mp2)
 		mp2.mustInitFromElements(elements2)
 
 		partDir1 := filepath.Join(tempDir, "ordering_part1")

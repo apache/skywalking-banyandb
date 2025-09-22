@@ -512,7 +512,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
-			case *tracev1.QueryResponse:
+			case *tracev1.InternalQueryResponse:
 				d.TraceQueryResult = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
@@ -535,7 +535,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 
 	// Convert model.TraceResult iterator to tracev1.QueryResponse format
 	// Each result contains spans from a single trace, so we can directly create traces
-	var traces []*tracev1.Trace
+	var traces []*tracev1.InternalTrace
 
 	// Check if trace ID tag should be included based on tag projection
 	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
@@ -552,7 +552,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		}
 
 		// Create a trace for this result
-		trace := &tracev1.Trace{
+		trace := &tracev1.InternalTrace{
 			Spans: make([]*tracev1.Span, 0, len(result.Spans)),
 		}
 
@@ -593,12 +593,14 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 				Span: spanBytes,
 			}
 			trace.Spans = append(trace.Spans, span)
+			trace.TraceId = result.TID
+			trace.Key = result.Key
 		}
 
 		traces = append(traces, trace)
 	}
 
-	resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{Traces: traces})
+	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: traces})
 
 	if !queryCriteria.Trace && p.slowQuery > 0 {
 		latency := time.Since(n)

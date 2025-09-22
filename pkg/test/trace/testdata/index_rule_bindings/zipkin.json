@@ -4,9 +4,7 @@
         "group": "zipkinTrace"
     },
     "rules": [
-        "zipkin-duration",
-        "zipkin-timestamp",
-        "zipkin-service"
+        "zipkin-timestamp"
     ],
     "subject": {
         "catalog": "CATALOG_TRACE",

@@ -396,7 +396,7 @@ func Test_mergeParts(t *testing.T) {
 					defFn()
 				}()
 				for _, es := range tt.esList {
-					mp := generateMemPart()
+					mp := GenerateMemPart()
 					mp.mustInitFromElements(es)
 					pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
 				}
@@ -414,7 +414,7 @@ func Test_mergeParts(t *testing.T) {
 				}()
 				fileSystem := fs.NewLocalFileSystem()
 				for i, es := range tt.esList {
-					mp := generateMemPart()
+					mp := GenerateMemPart()
 					mp.mustInitFromElements(es)
 					partPath := filepath.Join(tmpPath, "part_"+string(rune('0'+i)))
 					mp.mustFlush(fileSystem, partPath)
@@ -422,7 +422,7 @@ func Test_mergeParts(t *testing.T) {
 					filePW := newPartWrapper(nil, filePart)
 					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
-					releaseMemPart(mp)
+					ReleaseMemPart(mp)
 				}
 				verify(t, fpp, fileSystem, tmpPath, uint64(len(tt.esList)))
 			})
