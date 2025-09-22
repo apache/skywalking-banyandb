@@ -47,4 +47,4 @@ verify:
     interval: 10s
   cases:
   - includes:
-    - ../storage/expected/storage-cases.yaml
+    - ../storage/storage-cases.yaml
