@@ -48,7 +48,6 @@ import (
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
-	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
 )
 
 func TestDistributedMultiSegments(t *testing.T) {
@@ -134,10 +133,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   baseTime,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		BaseTime:   baseTime,
-	}
-	casestrace.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   baseTime,
 	}

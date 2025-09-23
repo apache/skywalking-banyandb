@@ -306,25 +306,13 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 }
 
 // getAllSidx returns all sidx instances for potential multi-sidx queries.
-func (tst *tsTable) getAllSidx() []sidx.SIDX {
+func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	tst.RLock()
 	defer tst.RUnlock()
 
-	result := make([]sidx.SIDX, 0, len(tst.sidxMap))
-	for _, sidxInstance := range tst.sidxMap {
-		result = append(result, sidxInstance)
-	}
-	return result
-}
-
-// getAllSidxNames returns all sidx names.
-func (tst *tsTable) getAllSidxNames() []string {
-	tst.RLock()
-	defer tst.RUnlock()
-
-	result := make([]string, 0, len(tst.sidxMap))
-	for sidxName := range tst.sidxMap {
-		result = append(result, sidxName)
+	result := make(map[string]sidx.SIDX, len(tst.sidxMap))
+	for name, sidxInstance := range tst.sidxMap {
+		result[name] = sidxInstance
 	}
 	return result
 }

@@ -297,7 +297,6 @@ func (p *part) readAll() ([]*elements, error) {
 	result := make([]*elements, 0, len(p.primaryBlockMetadata))
 	compressedPrimaryBuf := make([]byte, 0, 1024)
 	primaryBuf := make([]byte, 0, 1024)
-	compressedDataBuf := make([]byte, 0, 1024)
 	dataBuf := make([]byte, 0, 1024)
 	compressedKeysBuf := make([]byte, 0, 1024)
 
@@ -348,17 +347,8 @@ func (p *part) readAll() ([]*elements, error) {
 			}
 
 			// Read data payloads
-			compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
-			fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
-
-			dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
-			if err != nil {
-				releaseElements(elems)
-				for _, e := range result {
-					releaseElements(e)
-				}
-				return nil, fmt.Errorf("cannot decompress data block: %w", err)
-			}
+			dataBuf = bytes.ResizeOver(dataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), dataBuf)
 
 			// Decode data payloads - create a new decoder for each block to avoid state corruption
 			blockBytesDecoder := &encoding.BytesBlockDecoder{}
