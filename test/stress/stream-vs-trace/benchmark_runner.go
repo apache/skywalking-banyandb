@@ -83,13 +83,13 @@ func (r *BenchmarkRunner) RunWriteBenchmark(ctx context.Context) error {
 	errChan := make(chan error, 2)
 
 	// Stream write benchmark
-	// wg.Add(1)
-	// go func() {
-	// 	defer wg.Done()
-	// 	if err := r.runStreamWriteBenchmark(benchCtx); err != nil {
-	// 		errChan <- fmt.Errorf("stream write benchmark failed: %w", err)
-	// 	}
-	// }()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := r.runStreamWriteBenchmark(benchCtx); err != nil {
+			errChan <- fmt.Errorf("stream write benchmark failed: %w", err)
+		}
+	}()
 
 	// Trace write benchmark
 	wg.Add(1)
@@ -112,9 +112,9 @@ func (r *BenchmarkRunner) RunWriteBenchmark(ctx context.Context) error {
 	}
 
 	// Generate reports
-	// fmt.Println("\n=== Stream Model Write Performance ===")
-	// streamReport := r.streamMetrics.GenerateReport("Stream Write", r.config.Scale)
-	// streamReport.PrintReport()
+	fmt.Println("\n=== Stream Model Write Performance ===")
+	streamReport := r.streamMetrics.GenerateReport("Stream Write", r.config.Scale)
+	streamReport.PrintReport()
 
 	fmt.Println("\n=== Trace Model Write Performance ===")
 	traceReport := r.traceMetrics.GenerateReport("Trace Write", r.config.Scale)

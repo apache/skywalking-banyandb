@@ -51,9 +51,9 @@ var _ = g.Describe("Stream vs Trace Performance", func() {
 	})
 
 	g.It("should setup schemas and run performance comparison", func() {
-		path, deferFn, err := test.NewSpace()
+		path, _, err := test.NewSpace()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		g.DeferCleanup(deferFn)
+		// g.DeferCleanup(deferFn)
 
 		var ports []int
 		ports, err = test.AllocateFreePorts(4)
@@ -79,29 +79,11 @@ var _ = g.Describe("Stream vs Trace Performance", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer conn.Close()
 
-		// Run performance tests
-		g.By("Running Stream vs Trace performance comparison")
-
 		// Create clients
 		streamClient := NewStreamClient(conn)
 		traceClient := NewTraceClient(conn)
-
 		// Create context for operations
 		ctx := context.Background()
-
-		// Create benchmark runner with small scale for testing
-		config := DefaultBenchmarkConfig(SmallScale)
-		config.TestDuration = 2 * time.Minute // Shorter duration for testing
-		config.Concurrency = 5                // Lower concurrency for testing
-
-		benchmarkRunner := NewBenchmarkRunner(config, streamClient, traceClient)
-
-		// Run write benchmark
-		err = benchmarkRunner.RunWriteBenchmark(ctx)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		// Compare results
-		benchmarkRunner.CompareResults()
 
 		// Verify schemas are created
 		// Test basic connectivity
@@ -165,5 +147,22 @@ var _ = g.Describe("Stream vs Trace Performance", func() {
 		gomega.Expect(traceExists).To(gomega.BeTrue())
 
 		fmt.Println("All schemas, groups, index rules, and index rule bindings verified successfully!")
+
+		// Run performance tests
+		g.By("Running Stream vs Trace performance comparison")
+
+		// Create benchmark runner with small scale for testing
+		config := DefaultBenchmarkConfig(SmallScale)
+		config.TestDuration = 2 * time.Minute // Shorter duration for testing
+		config.Concurrency = 5                // Lower concurrency for testing
+
+		benchmarkRunner := NewBenchmarkRunner(config, streamClient, traceClient)
+
+		// Run write benchmark
+		err = benchmarkRunner.RunWriteBenchmark(ctx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Compare results
+		benchmarkRunner.CompareResults()
 	})
 })
