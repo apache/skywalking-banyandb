@@ -1699,9 +1699,7 @@ func TestSegResultHeap_Sorting(t *testing.T) {
 			}
 
 			// Add all results to heap
-			for _, sr := range tt.segResults {
-				heap.results = append(heap.results, sr)
-			}
+			heap.results = append(heap.results, tt.segResults...)
 
 			// Initialize heap
 			require.Equal(t, len(tt.segResults), heap.Len())

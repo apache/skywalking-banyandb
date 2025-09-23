@@ -42,11 +42,13 @@ import (
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
+	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
 )
 
 func TestDistributedMultiSegments(t *testing.T) {
@@ -95,6 +97,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ctx := context.Background()
 	test_stream.PreloadSchema(ctx, schemaRegistry)
 	test_measure.PreloadSchema(ctx, schemaRegistry)
+	test_trace.PreloadSchema(ctx, schemaRegistry)
 
 	By("Starting data node 0")
 	closeDataNode0 := setup.DataNode(ep)
@@ -106,7 +109,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
-	baseTime = time.Date(now.Year(), now.Month(), now.Day(), 00, 02, 0, 0, now.Location())
+	baseTime = time.Date(now.Year(), now.Month(), now.Day(), 0o0, 0o2, 0, 0, now.Location())
 	test_cases.Initialize(liaisonAddr, baseTime)
 
 	deferFunc = func() {
@@ -131,6 +134,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   baseTime,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   baseTime,
+	}
+	casestrace.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   baseTime,
 	}

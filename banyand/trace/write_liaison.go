@@ -191,7 +191,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
+			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano())
 			releaseTraces(es.traces)
 
 			for sidxName, sidxReqs := range es.sidxReqsMap {

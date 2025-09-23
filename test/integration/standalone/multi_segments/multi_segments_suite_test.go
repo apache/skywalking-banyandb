@@ -66,7 +66,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	addr, _, deferFunc = setup.Standalone()
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
-	baseTime = time.Date(now.Year(), now.Month(), now.Day(), 00, 02, 0, 0, now.Location())
+	baseTime = time.Date(now.Year(), now.Month(), now.Day(), 0o0, 0o2, 0, 0, now.Location())
 	test_cases.Initialize(addr, baseTime)
 	return []byte(addr)
 }, func(address []byte) {

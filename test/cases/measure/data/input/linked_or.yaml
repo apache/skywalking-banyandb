@@ -16,7 +16,6 @@
 # under the License.
 
 name: "service_cpm_minute"
-trace: true
 groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
