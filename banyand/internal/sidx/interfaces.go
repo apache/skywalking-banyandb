@@ -40,7 +40,7 @@ type SIDX interface {
 	MustAddMemPart(ctx context.Context, mp *memPart)
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest) error
+	Write(ctx context.Context, reqs []WriteRequest, segmentID int64) error
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.
@@ -56,7 +56,7 @@ type SIDX interface {
 	// PartsToSync returns the parts to sync.
 	PartsToSync() []*part
 	// StreamingParts returns the streaming parts.
-	StreamingParts(partsToSync []*part, group string, shardID uint32, name string, minTimestamps []int64) ([]queue.StreamingPartData, []func())
+	StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// SyncCh returns the sync channel for external synchronization.
 	SyncCh() chan<- *SyncIntroduction
 }
