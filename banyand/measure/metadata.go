@@ -372,8 +372,9 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 			manager := v.(*topNProcessorManager)
 			if err := manager.Close(); err != nil {
 				sr.l.Error().Err(err).Str("key", key).Msg("failed to close topN processor manager")
+			} else {
+				sr.topNProcessorMap.Delete(key)
 			}
-			sr.topNProcessorMap.Delete(key)
 		}
 	}
 
