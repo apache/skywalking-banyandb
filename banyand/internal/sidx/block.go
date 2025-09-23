@@ -528,14 +528,7 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 }
 
 func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
-	bb := bigValuePool.Get()
-	if bb == nil {
-		bb = &bytes.Buffer{}
-	}
-	defer func() {
-		bb.Buf = bb.Buf[:0]
-		bigValuePool.Put(bb)
-	}()
+	bb := &bytes.Buffer{}
 	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.dataBlock.size))
 	sr.data.mustReadFull(bb.Buf)
 	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb.Buf)
