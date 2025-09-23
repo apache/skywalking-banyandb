@@ -87,7 +87,7 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Simple wait for services to be ready
-			time.Sleep(10 * time.Second)
+			time.Sleep(20 * time.Second)
 		})
 
 		ginkgo.It("Should connect to liaison and setup clients", func() {
