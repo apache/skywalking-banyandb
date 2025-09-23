@@ -31,6 +31,7 @@ message WriteRequest {
   repeated model.v1.TagValue tags = 2 [(validate.rules).repeated.min_items = 1];
   bytes span = 3;
   uint64 version = 4 [(validate.rules).uint64.gt = 0];
+  string span_id = 5;
 }
 
 message WriteResponse {

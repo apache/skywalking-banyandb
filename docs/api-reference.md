@@ -4688,6 +4688,7 @@ Span is a single operation within a trace.
 | ----- | ---- | ----- | ----------- |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
 | span | [bytes](#bytes) |  | span is the raw span data. |
+| span_id | [string](#string) |  | span_id is the unique identifier of a span in the trace. |
 
 
 
@@ -4753,6 +4754,7 @@ Trace contains all spans that belong to a single trace ID.
 | tags | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | span | [bytes](#bytes) |  |  |
 | version | [uint64](#uint64) |  |  |
+| span_id | [string](#string) |  |  |
 
 
 

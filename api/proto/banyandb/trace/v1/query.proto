@@ -32,6 +32,8 @@ message Span {
   repeated model.v1.Tag tags = 1;
   // span is the raw span data.
   bytes span = 2;
+  // span_id is the unique identifier of a span in the trace.
+  string span_id = 3;
 }
 
 // InternalTrace is the trace that is used for internal use.
