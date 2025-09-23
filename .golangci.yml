@@ -133,7 +133,7 @@ linters-settings:
     - 'cobra\.Command$'
 
 run:
-  go: "1.24"
+  go: "1.25"
 issues:
   exclude-rules:
   - path: ".*\\.pb\\.go"
