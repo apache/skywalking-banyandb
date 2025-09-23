@@ -296,21 +296,9 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 		}
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
-		snapshot := tst.currentSnapshot()
 		// Add sidx streaming parts
 		for name, sidxParts := range sidxPartsToSync {
-			// TODO: minTimestmaps should be read only once
-			minTimestamps := make([]int64, 0)
-			for _, part := range sidxParts {
-				partID := part.ID()
-				for _, pw := range snapshot.parts {
-					if pw.p.partMetadata.ID == partID {
-						minTimestamps = append(minTimestamps, pw.p.partMetadata.MinTimestamp)
-						break
-					}
-				}
-			}
-			sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name, minTimestamps)
+			sidxStreamingParts, sidxReleaseFuncs := tst.sidxMap[name].StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
 			streamingParts = append(streamingParts, sidxStreamingParts...)
 			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
 		}

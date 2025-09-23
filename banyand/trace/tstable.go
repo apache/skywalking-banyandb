@@ -248,6 +248,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		for _, id := range loadedSnapshots {
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
 		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -412,12 +415,17 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 }
 
 func (tst *tsTable) mustAddTraces(ts *traces) {
+	tst.mustAddTracesWithSegmentID(ts, 0)
+}
+
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
+	mp.segmentID = segmentID
 	tst.mustAddMemPart(mp)
 }
 

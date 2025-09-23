@@ -191,7 +191,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
+			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano())
 			releaseTraces(es.traces)
 
 			for sidxName, sidxReqs := range es.sidxReqsMap {
@@ -201,7 +201,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
+					if err := sidxInstance.Write(ctx, sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
 				}

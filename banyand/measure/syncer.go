@@ -230,7 +230,6 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 			// Create streaming reader for the part.
 			files, release := createPartFileReaders(part)
 			releaseFuncs = append(releaseFuncs, release)
-
 			// Create streaming part sync data.
 			streamingParts = append(streamingParts, queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,

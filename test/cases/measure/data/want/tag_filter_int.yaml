@@ -22,7 +22,7 @@ dataPoints:
           - key: name
             value:
               str:
-                value: service_name_1
+                value: service_name_3
           - key: layer
             value:
               int:
@@ -33,7 +33,7 @@ dataPoints:
           - key: name
             value:
               str:
-                value: service_name_3
+                value: service_name_1
           - key: layer
             value:
               int:

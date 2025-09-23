@@ -47,7 +47,8 @@ type partMetadata struct {
 	MaxKey int64 `json:"maxKey"` // Maximum user key in part
 
 	// Identity
-	ID uint64 `json:"id"` // Unique part identifier
+	ID        uint64 `json:"id"`        // Unique part identifier
+	SegmentID int64  `json:"segmentID"` // Segment identifier
 }
 
 func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {

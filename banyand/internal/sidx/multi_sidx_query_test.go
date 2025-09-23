@@ -40,7 +40,7 @@ type mockSIDX struct {
 
 func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}
 
-func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest) error {
+func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ int64) error {
 	return nil // Not implemented for tests
 }
 
@@ -71,7 +71,7 @@ func (m *mockSIDX) PartsToSync() []*part {
 	return nil
 }
 
-func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string, _ []int64) ([]queue.StreamingPartData, []func()) {
+func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string) ([]queue.StreamingPartData, []func()) {
 	return nil, nil
 }
 

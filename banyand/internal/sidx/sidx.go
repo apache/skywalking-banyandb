@@ -130,7 +130,7 @@ func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart) {
 }
 
 // Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
+func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, segmentID int64) error {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -160,6 +160,7 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	intro := generateIntroduction()
 	intro.memPart = mp
 	intro.memPart.partMetadata.ID = partID
+	intro.memPart.partMetadata.SegmentID = segmentID
 	intro.applied = make(chan struct{})
 
 	// Send to introducer loop

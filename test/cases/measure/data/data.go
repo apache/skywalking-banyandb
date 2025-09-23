@@ -23,6 +23,7 @@ import (
 	"embed"
 	"encoding/json"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -75,6 +76,26 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.QueryResponse{}
 	helpers.UnmarshalYAML(ww, want)
+	if args.DisOrder {
+		slices.SortFunc(want.DataPoints, func(a, b *measurev1.DataPoint) int {
+			if a.Sid != b.Sid {
+				if a.Sid < b.Sid {
+					return -1
+				}
+				return 1
+			}
+			return a.Timestamp.AsTime().Compare(b.Timestamp.AsTime())
+		})
+		slices.SortFunc(resp.DataPoints, func(a, b *measurev1.DataPoint) int {
+			if a.Sid != b.Sid {
+				if a.Sid < b.Sid {
+					return -1
+				}
+				return 1
+			}
+			return a.Timestamp.AsTime().Compare(b.Timestamp.AsTime())
+		})
+	}
 	for i := range resp.DataPoints {
 		if resp.DataPoints[i].Timestamp != nil {
 			innerGm.Expect(resp.DataPoints[i].Version).Should(gm.BeNumerically(">", 0))
