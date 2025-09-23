@@ -112,9 +112,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	for sidxName, sidxInstance := range tst.sidxMap {
+	for _, sidxInstance := range tst.getAllSidx() {
 		if err := sidxInstance.Merge(closeCh); err != nil {
-			tst.l.Warn().Err(err).Str("sidx", sidxName).Msg("sidx merge failed")
+			tst.l.Warn().Err(err).Msg("sidx merge failed")
 			return nil, err
 		}
 	}

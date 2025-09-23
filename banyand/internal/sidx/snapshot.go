@@ -338,6 +338,7 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 		if _, shouldRemove := toRemove[pw.ID()]; !shouldRemove {
 			if pw.acquire() {
 				result.parts = append(result.parts, pw)
+				continue
 			}
 		}
 		pw.markForRemoval()
