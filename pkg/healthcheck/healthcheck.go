@@ -54,6 +54,8 @@ func NewClient(ctx context.Context, l *logger.Logger, addr string, opts []grpc.D
 	return &Client{conn: conn}, nil
 }
 
+var _ grpc_health_v1.HealthClient = (*Client)(nil)
+
 // Client is a health check client.
 type Client struct {
 	conn *grpc.ClientConn
@@ -79,7 +81,7 @@ func (g *Client) Watch(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, 
 	return nil, status.Error(codes.Unimplemented, "unimplemented")
 }
 
-// List lists the services. Not implemented currently.
-func (g *Client) List(_ context.Context, _ *grpc_health_v1.HealthCheckRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthCheckResponse, error) {
+// List implements grpc_health_v1.HealthClient.
+func (g *Client) List(_ context.Context, _ *grpc_health_v1.HealthListRequest, _ ...grpc.CallOption) (*grpc_health_v1.HealthListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "unimplemented")
 }

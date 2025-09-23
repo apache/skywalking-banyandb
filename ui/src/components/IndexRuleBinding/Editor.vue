@@ -85,7 +85,7 @@
       data.name = route.params.name;
       data.type = route.params.type;
       data.operator = route.params.operator;
-      (data.schema = route.params.schema), initData();
+      ((data.schema = route.params.schema), initData());
     },
     {
       immediate: true,
