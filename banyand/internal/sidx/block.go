@@ -25,7 +25,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -341,11 +340,9 @@ func mustWriteDataTo(db *dataBlock, data [][]byte, dataWriter *writer) {
 	// Encode all data payloads as a block
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], data)
 
-	// Compress and write
-	compressedData := zstd.Compress(nil, bb.Buf, 1)
 	db.offset = dataWriter.bytesWritten
-	db.size = uint64(len(compressedData))
-	dataWriter.MustWrite(compressedData)
+	db.size = uint64(len(bb.Buf))
+	dataWriter.MustWrite(bb.Buf)
 }
 
 type blockPointer struct {
@@ -528,14 +525,19 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 }
 
 func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
-	bb := &bytes.Buffer{}
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.dataBlock.size))
-	sr.data.mustReadFull(bb.Buf)
-	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb.Buf)
-	if err != nil {
-		return fmt.Errorf("cannot decompress data: %w", err)
+	bb := bigValuePool.Get()
+	if bb == nil {
+		bb = &bytes.Buffer{}
 	}
-	b.data, err = decoder.Decode(b.data[:0], dataBuf, bm.count)
+	defer func() {
+		bb.Buf = bb.Buf[:0]
+		bigValuePool.Put(bb)
+	}()
+	bb.Buf = bytes.ResizeOver(bb.Buf, int(bm.dataBlock.size))
+	sr.data.mustReadFull(bb.Buf)
+
+	var err error
+	b.data, err = decoder.Decode(b.data[:0], bb.Buf, bm.count)
 	if err != nil {
 		return fmt.Errorf("cannot decode data payloads: %w", err)
 	}

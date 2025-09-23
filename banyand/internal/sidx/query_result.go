@@ -24,7 +24,6 @@ import (
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -87,14 +86,9 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(bm.dataBlock.size))
 	fs.MustReadData(p.data, int64(bm.dataBlock.offset), bb2.Buf)
 
-	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb2.Buf)
-	if err != nil {
-		return false
-	}
-
 	// Decode data payloads
 	decoder := &encoding.BytesBlockDecoder{}
-	tmpBlock.data, err = decoder.Decode(tmpBlock.data[:0], dataBuf, bm.count)
+	tmpBlock.data, err = decoder.Decode(tmpBlock.data[:0], bb2.Buf, bm.count)
 	if err != nil {
 		return false
 	}
