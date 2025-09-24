@@ -103,7 +103,8 @@ func (tff *tagFamilyFilter) reset() {
 
 func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader) {
 	bb := bigValuePool.Generate()
-	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	defer bigValuePool.Release(bb)
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -111,12 +112,11 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
-	bigValuePool.Release(bb)
 	for _, tm := range tfm.tagMetadata {
 		if tm.filterBlock.size == 0 {
 			continue
 		}
-		bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
+		bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
 		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
 		bf := generateBloomFilter()
 		bf = decodeBloomFilter(bb.Buf, bf)
