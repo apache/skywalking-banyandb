@@ -203,6 +203,28 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 	return true, nil
 }
 
+// Having checks if any of the provided tag values might exist in the bloom filter.
+// It returns true if at least one value might be contained in any tag family filter.
+func (tfs *tagFamilyFilters) Having(tagName string, tagValues []string) bool {
+	for _, tff := range tfs.tagFamilyFilters {
+		if tf, ok := (*tff)[tagName]; ok {
+			if tf.filter != nil {
+				for _, tagValue := range tagValues {
+					if tf.filter.MightContain([]byte(tagValue)) {
+						return true // Return true as soon as we find a potential match
+					}
+				}
+				// None of the values might exist in this tag family filter
+				return false
+			}
+			// If no bloom filter, conservatively return true
+			return true
+		}
+	}
+	// If tag is not found in any tag family filter, return true (conservative)
+	return true
+}
+
 func generateTagFamilyFilters() *tagFamilyFilters {
 	v := tagFamilyFiltersPool.Get()
 	if v == nil {
