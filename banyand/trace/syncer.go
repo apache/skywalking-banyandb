@@ -189,24 +189,16 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
-	if len(partsToSync) == 0 && len(sidxPartsToSync) == 0 {
-		return nil
-	}
-	hasSidxParts := false
-	for _, sidxParts := range sidxPartsToSync {
-		if len(sidxParts) == 0 {
-			continue
-		}
-		hasSidxParts = true
-		break
-	}
-	if len(partsToSync) == 0 && !hasSidxParts {
-		return nil
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Debug().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in syncSnapshot")
 	}
 
 	// Validate sync preconditions
-	if err := tst.validateSyncPreconditions(partsToSync, sidxPartsToSync); err != nil {
-		return err
+	if !tst.needToSync(partsToSync, sidxPartsToSync) {
+		return nil
 	}
 
 	// Execute sync operation
@@ -234,13 +226,44 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 			return nil, nil, errClosed
 		}
 		sidxPartsToSync[name] = sidx.PartsToSync()
+		tst.l.Debug().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxPartsToSync[name])).
+			Msg("get sidx parts to sync")
+	}
+
+	tst.l.Debug().
+		Int("core_parts_count", len(partsToSync)).
+		Uint64("snapshot_epoch", curSnapshot.epoch).
+		Msg("collected core parts for sync")
+
+	if len(partsToSync) > 0 {
+		var corePartIDs []uint64
+		for _, part := range partsToSync {
+			corePartIDs = append(corePartIDs, part.partMetadata.ID)
+		}
+		tst.l.Debug().
+			Interface("core_part_ids", corePartIDs).
+			Msg("core parts to sync details")
+	}
+
+	for sidxName, sidxParts := range sidxPartsToSync {
+		var sidxPartIDs []uint64
+		for _, part := range sidxParts {
+			sidxPartIDs = append(sidxPartIDs, part.ID())
+		}
+		tst.l.Debug().
+			Str("sidx_name", sidxName).
+			Int("sidx_parts_count", len(sidxParts)).
+			Interface("sidx_part_ids", sidxPartIDs).
+			Msg("collected sidx parts for sync")
 	}
 
 	return partsToSync, sidxPartsToSync, nil
 }
 
-// validateSyncPreconditions validates that there are parts to sync and nodes available.
-func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) error {
+// needToSync validates that there are parts to sync and nodes available.
+func (tst *tsTable) needToSync(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) bool {
 	hasCoreParts := len(partsToSync) > 0
 	hasSidxParts := false
 	for _, parts := range sidxPartsToSync {
@@ -250,15 +273,11 @@ func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSy
 		}
 	}
 	if !hasCoreParts && !hasSidxParts {
-		return nil
+		return false
 	}
 
 	nodes := tst.getNodes()
-	if len(nodes) == 0 {
-		return fmt.Errorf("no nodes to sync parts")
-	}
-
-	return nil
+	return len(nodes) > 0
 }
 
 // executeSyncOperation performs the actual synchronization of parts to nodes.
@@ -276,6 +295,13 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync ma
 	}()
 
 	nodes := tst.getNodes()
+
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Debug().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in executeSyncOperation")
+	}
 	return tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs)
 }
 
@@ -387,6 +413,9 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 		streamingParts := make([]queue.StreamingPartData, 0)
 		// Add sidx streaming parts
 		for name, sidxParts := range sidxPartsToSync {
+			if len(sidxParts) == 0 {
+				continue
+			}
 			sidx, ok := tst.getSidx(name)
 			if !ok {
 				return fmt.Errorf("sidx %s not found", name)
@@ -439,6 +468,7 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 	if !result.Success {
 		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
 	}
+
 	tst.l.Info().
 		Str("node", node).
 		Str("session", result.SessionID).
@@ -447,5 +477,6 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 		Uint32("chunks", result.ChunksCount).
 		Uint32("parts", result.PartsCount).
 		Msg("chunked sync completed successfully")
+
 	return nil
 }

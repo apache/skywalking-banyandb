@@ -453,6 +453,10 @@ func (s *sidx) Flush() error {
 		}
 		partPath := partPath(s.root, pw.ID())
 		pw.mp.mustFlush(s.fileSystem, partPath)
+		s.l.Debug().
+			Uint64("part_id", pw.ID()).
+			Str("part_path", partPath).
+			Msg("flushing sidx part")
 		newPW := newPartWrapper(nil, mustOpenPart(partPath, s.fileSystem))
 		flushIntro.flushed[newPW.ID()] = newPW
 	}
