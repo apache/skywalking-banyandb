@@ -123,8 +123,6 @@ func generateMetaAndFilter(tagCount int, itemsPerTag int) ([]byte, []byte) {
 }
 
 func TestTagFamilyFiltersHaving(t *testing.T) {
-	assert := assert.New(t)
-
 	// Create a tag family filter with test data
 	bf := filter.NewBloomFilter(100)
 	bf.Add([]byte("service-1"))
