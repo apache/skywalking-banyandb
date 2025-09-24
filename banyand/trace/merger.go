@@ -112,12 +112,12 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	for _, sidxInstance := range tst.getAllSidx() {
-		if err := sidxInstance.Merge(closeCh); err != nil {
-			tst.l.Warn().Err(err).Msg("sidx merge failed")
-			return nil, err
-		}
-	}
+	// for _, sidxInstance := range tst.getAllSidx() {
+	// 	if err := sidxInstance.Merge(closeCh); err != nil {
+	// 		tst.l.Warn().Err(err).Msg("sidx merge failed")
+	// 		return nil, err
+	// 	}
+	// }
 	elapsed := time.Since(start)
 	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
 	tst.incTotalMerged(1, typ)
