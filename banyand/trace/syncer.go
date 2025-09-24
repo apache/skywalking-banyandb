@@ -189,24 +189,10 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
-	if len(partsToSync) == 0 && len(sidxPartsToSync) == 0 {
-		return nil
-	}
-	hasSidxParts := false
-	for _, sidxParts := range sidxPartsToSync {
-		if len(sidxParts) == 0 {
-			continue
-		}
-		hasSidxParts = true
-		break
-	}
-	if len(partsToSync) == 0 && !hasSidxParts {
-		return nil
-	}
 
 	// Validate sync preconditions
-	if err := tst.validateSyncPreconditions(partsToSync, sidxPartsToSync); err != nil {
-		return err
+	if !tst.needToSync(partsToSync, sidxPartsToSync) {
+		return nil
 	}
 
 	// Execute sync operation
@@ -239,8 +225,8 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 	return partsToSync, sidxPartsToSync, nil
 }
 
-// validateSyncPreconditions validates that there are parts to sync and nodes available.
-func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) error {
+// needToSync validates that there are parts to sync and nodes available.
+func (tst *tsTable) needToSync(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) bool {
 	hasCoreParts := len(partsToSync) > 0
 	hasSidxParts := false
 	for _, parts := range sidxPartsToSync {
@@ -250,15 +236,11 @@ func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSy
 		}
 	}
 	if !hasCoreParts && !hasSidxParts {
-		return nil
+		return false
 	}
 
 	nodes := tst.getNodes()
-	if len(nodes) == 0 {
-		return fmt.Errorf("no nodes to sync parts")
-	}
-
-	return nil
+	return len(nodes) > 0
 }
 
 // executeSyncOperation performs the actual synchronization of parts to nodes.
