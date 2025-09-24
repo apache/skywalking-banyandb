@@ -189,6 +189,20 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
+	if len(partsToSync) == 0 && len(sidxPartsToSync) == 0 {
+		return nil
+	}
+	hasSidxParts := false
+	for _, sidxParts := range sidxPartsToSync {
+		if len(sidxParts) == 0 {
+			continue
+		}
+		hasSidxParts = true
+		break
+	}
+	if len(partsToSync) == 0 && !hasSidxParts {
+		return nil
+	}
 
 	// Validate sync preconditions
 	if err := tst.validateSyncPreconditions(partsToSync, sidxPartsToSync); err != nil {

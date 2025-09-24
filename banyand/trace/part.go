@@ -446,11 +446,6 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 
 	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
-	for _, tid := range ts.traceIDs {
-		if len(tid) > int(bsw.traceIDLen) {
-			bsw.traceIDLen = uint32(len(tid))
-		}
-	}
 
 	var tidPrev string
 	uncompressedSpansSizeBytes := uint64(0)
