@@ -18,14 +18,11 @@
 package trace
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -136,12 +133,8 @@ func (bm *blockMetadata) reset() {
 	}
 }
 
-func (bm *blockMetadata) marshal(dst []byte, traceIDLen uint32) []byte {
-	dst = append(dst, bm.traceID...)
-	paddingLen := traceIDLen - uint32(len(bm.traceID))
-	if paddingLen > 0 {
-		dst = append(dst, bytes.Repeat([]byte{0}, int(paddingLen))...)
-	}
+func (bm *blockMetadata) marshal(dst []byte) []byte {
+	dst = encoding.EncodeBytes(dst, convert.StringToBytes(bm.traceID))
 	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSpanSizeBytes)
 	dst = encoding.VarUint64ToBytes(dst, bm.count)
 	dst = bm.spans.marshal(dst)
@@ -160,16 +153,13 @@ func (bm *blockMetadata) marshal(dst []byte, traceIDLen uint32) []byte {
 	return dst
 }
 
-func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType, traceIDLen int) ([]byte, error) {
-	if len(src) < traceIDLen {
-		return nil, fmt.Errorf("cannot unmarshal blockMetadata from less than %d bytes", traceIDLen)
+func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType) ([]byte, error) {
+	src, traceIDBytes, err := encoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal traceID: %w", err)
 	}
-	bm.traceID = strings.TrimRight(string(src[:traceIDLen]), "\x00")
-	if len(tagType) == 0 {
-		logger.GetLogger().Error().Msg("tagType is empty")
-	}
+	bm.traceID = string(traceIDBytes)
 	bm.tagType = tagType
-	src = src[traceIDLen:]
 	src, n := encoding.BytesToVarUint64(src)
 	bm.uncompressedSpanSizeBytes = n
 	src, n = encoding.BytesToVarUint64(src)
@@ -259,7 +249,7 @@ func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.max = src.max
 }
 
-func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType, traceIDLen int) ([]blockMetadata, error) {
+func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType) ([]blockMetadata, error) {
 	dstOrig := dst
 	var pre *blockMetadata
 	for len(src) > 0 {
@@ -269,7 +259,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
-		tail, err := bm.unmarshal(src, tagType, traceIDLen)
+		tail, err := bm.unmarshal(src, tagType)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
 		}

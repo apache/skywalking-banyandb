@@ -112,12 +112,12 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	// for _, sidxInstance := range tst.getAllSidx() {
-	// 	if err := sidxInstance.Merge(closeCh); err != nil {
-	// 		tst.l.Warn().Err(err).Msg("sidx merge failed")
-	// 		return nil, err
-	// 	}
-	// }
+	for _, sidxInstance := range tst.getAllSidx() {
+		if err := sidxInstance.Merge(closeCh); err != nil {
+			tst.l.Warn().Err(err).Msg("sidx merge failed")
+			return nil, err
+		}
+	}
 	elapsed := time.Since(start)
 	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
 	tst.incTotalMerged(1, typ)
@@ -259,13 +259,6 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br.init(pii)
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
-	for _, pw := range parts {
-		for _, pbm := range pw.p.primaryBlockMetadata {
-			if len(pbm.traceID) > int(bw.traceIDLen) {
-				bw.traceIDLen = uint32(len(pbm.traceID))
-			}
-		}
-	}
 
 	var minTimestamp, maxTimestamp int64
 	for i, pw := range parts {
@@ -284,16 +277,16 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 
 	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
-	if err != nil {
-		return nil, err
-	}
-	pm.MinTimestamp = minTimestamp
-	pm.MaxTimestamp = maxTimestamp
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
 		releasePartMergeIter(pii[i])
 	}
+	if err != nil {
+		return nil, err
+	}
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
 	tt.mustWriteTagType(fileSystem, dstPath)
