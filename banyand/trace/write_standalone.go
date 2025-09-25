@@ -291,8 +291,13 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			}
 		}
 
+		// Add control bit at the first position for backward compatibility
+		data := make([]byte, len(traceID)+1)
+		data[0] = byte(idFormatV1) // Control bit indicating new format
+		copy(data[1:], traceID)
+
 		writeReq := sidx.WriteRequest{
-			Data:     []byte(traceID),
+			Data:     data,
 			Tags:     filteredSidxTags,
 			SeriesID: series.ID,
 			Key:      key,
