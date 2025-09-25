@@ -189,6 +189,12 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in syncSnapshot")
+	}
 
 	// Validate sync preconditions
 	if !tst.needToSync(partsToSync, sidxPartsToSync) {
@@ -288,6 +294,13 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync ma
 	}()
 
 	nodes := tst.getNodes()
+
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in executeSyncOperation")
+	}
 	return tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs)
 }
 
@@ -443,6 +456,12 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
 
+		for name, sidxParts := range sidxPartsToSync {
+			tst.l.Info().
+				Str("sidx_name", name).
+				Int("sidx_parts_count", len(sidxParts)).
+				Msg("sidxPartsToSync in syncStreamingPartsToNodes")
+		}
 		// Add sidx streaming parts
 		for name, sidxParts := range sidxPartsToSync {
 			if len(sidxParts) == 0 {
@@ -462,7 +481,7 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 			streamingParts = append(streamingParts, sidxStreamingParts...)
 			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
 
-			tst.l.Debug().
+			tst.l.Info().
 				Str("sidx_name", name).
 				Str("node", node).
 				Int("sidx_parts_prepared", len(sidxStreamingParts)).
@@ -489,7 +508,7 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 			}
 			streamingParts = append(streamingParts, streamingPart)
 
-			tst.l.Debug().
+			tst.l.Info().
 				Uint64("part_id", part.partMetadata.ID).
 				Str("node", node).
 				Uint64("total_count", part.partMetadata.TotalCount).

@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // NewPartsToSync creates a new map of parts to sync.
@@ -63,12 +64,39 @@ func (s *sidx) PartsToSync() []*part {
 
 // StreamingParts returns the streaming parts.
 func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func()) {
+	l := logger.GetLogger().Named("sidx").Named("StreamingParts")
+
+	// Debug log for method entry
+	l.Info().
+		Int("partsToSyncCount", len(partsToSync)).
+		Str("group", group).
+		Uint32("shardID", shardID).
+		Str("name", name).
+		Msg("StreamingParts method called")
+
 	var streamingParts []queue.StreamingPartData
 	var releaseFuncs []func()
-	for _, part := range partsToSync {
+	for i, part := range partsToSync {
+		// Debug log for each part processing
+		l.Info().
+			Int("partIndex", i).
+			Uint64("partID", part.partMetadata.ID).
+			Uint64("totalCount", part.partMetadata.TotalCount).
+			Uint64("compressedSize", part.partMetadata.CompressedSizeBytes).
+			Uint64("uncompressedSize", part.partMetadata.UncompressedSizeBytes).
+			Uint64("blocksCount", part.partMetadata.BlocksCount).
+			Msg("Processing part for streaming")
+
 		// Create streaming reader for the part
 		files, release := createPartFileReaders(part)
 		releaseFuncs = append(releaseFuncs, release)
+
+		// Debug log for files created
+		l.Debug().
+			Uint64("partID", part.partMetadata.ID).
+			Int("filesCount", len(files)).
+			Msg("Created file readers for part")
+
 		// Create streaming part sync data
 		streamingParts = append(streamingParts, queue.StreamingPartData{
 			ID:                    part.partMetadata.ID,
@@ -86,6 +114,13 @@ func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32,
 			PartType:              name,
 		})
 	}
+
+	// Debug log for method exit
+	l.Debug().
+		Int("streamingPartsCount", len(streamingParts)).
+		Int("releaseFuncsCount", len(releaseFuncs)).
+		Msg("StreamingParts method completed")
+
 	return streamingParts, releaseFuncs
 }
 
