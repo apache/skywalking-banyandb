@@ -19,6 +19,7 @@ package trace
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -159,7 +160,12 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 		return nil, fmt.Errorf("cannot unmarshal traceID: %w", err)
 	}
 	bm.traceID = string(traceIDBytes)
-	bm.tagType = tagType
+	if bm.tagType == nil {
+		bm.tagType = make(map[string]pbv1.ValueType)
+	} else {
+		clear(bm.tagType)
+	}
+	maps.Copy(bm.tagType, tagType)
 	src, n := encoding.BytesToVarUint64(src)
 	bm.uncompressedSpanSizeBytes = n
 	src, n = encoding.BytesToVarUint64(src)
