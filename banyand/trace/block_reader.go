@@ -26,7 +26,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -184,11 +183,6 @@ func (br *blockReader) nextBlockMetadata() bool {
 
 func (br *blockReader) nextMetadata() error {
 	head := br.pih[0]
-	tagType := make(map[string]pbv1.ValueType)
-	for key, tv := range br.block.bm.tagType {
-		tagType[key] = tv
-	}
-	head.tagType = tagType
 	if head.nextBlockMetadata() {
 		heap.Fix(&br.pih, 0)
 		br.block = &br.pih[0].block
@@ -207,7 +201,6 @@ func (br *blockReader) nextMetadata() error {
 		return io.EOF
 	}
 
-	br.pih[0].block.bm.tagType = tagType
 	br.block = &br.pih[0].block
 	return nil
 }
