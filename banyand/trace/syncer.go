@@ -328,7 +328,7 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, sidxPartsToSync
 		Msg("created all sync introductions")
 
 	// Send sync introductions
-	if err := tst.sendSyncIntroductions(si, sidxSyncIntroductions, syncCh); err != nil {
+	if err = tst.sendSyncIntroductions(si, sidxSyncIntroductions, syncCh); err != nil {
 		tst.l.Error().
 			Err(err).
 			Msg("failed to send sync introductions")
