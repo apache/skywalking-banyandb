@@ -26,7 +26,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -152,4 +154,84 @@ func Test_blockReader_nextBlock(t *testing.T) {
 			})
 		})
 	}
+}
+
+func Test_blockReader_TagTypePerPart(t *testing.T) {
+	// Build two file parts for the same traceID but with disjoint tag sets and types.
+	// The reader should use each part's own tagType when reading its blocks, so the
+	// decoded tag names must match the keys present in bm.tags for that block.
+
+	// Helper to build traces with a single span and one tag.
+	buildTraces := func(traceID string, ts int64, tagName string, vt pbv1.ValueType, val []byte) *traces {
+		tv := &tagValue{tag: tagName, valueType: vt, value: val}
+		tr := &traces{
+			traceIDs:   []string{traceID},
+			timestamps: []int64{ts},
+			tags:       [][]*tagValue{{tv}},
+			spans:      [][]byte{[]byte("span")},
+		}
+		return tr
+	}
+
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Part 1: tagA as string
+	mp1 := generateMemPart()
+	defer releaseMemPart(mp1)
+	ts1 := buildTraces("trace-1", 1, "tagA", pbv1.ValueTypeStr, []byte("v1"))
+	mp1.mustInitFromTraces(ts1)
+	mp1.mustFlush(fileSystem, partPath(tmpPath, 1))
+	pw1 := newPartWrapper(nil, mustOpenFilePart(1, tmpPath, fileSystem))
+	defer pw1.decRef()
+
+	// Part 2: tagB as int64
+	mp2 := generateMemPart()
+	defer releaseMemPart(mp2)
+	ts2 := buildTraces("trace-1", 2, "tagB", pbv1.ValueTypeInt64, convert.Int64ToBytes(123))
+	mp2.mustInitFromTraces(ts2)
+	mp2.mustFlush(fileSystem, partPath(tmpPath, 2))
+	pw2 := newPartWrapper(nil, mustOpenFilePart(2, tmpPath, fileSystem))
+	defer pw2.decRef()
+
+	// Initialize block reader over both parts
+	pmi1 := &partMergeIter{}
+	pmi1.mustInitFromPart(pw1.p)
+	pmi2 := &partMergeIter{}
+	pmi2.mustInitFromPart(pw2.p)
+
+	br := generateBlockReader()
+	defer releaseBlockReader(br)
+	br.init([]*partMergeIter{pmi1, pmi2})
+
+	dec := generateColumnValuesDecoder()
+	defer releaseColumnValuesDecoder(dec)
+
+	var seen int
+	for br.nextBlockMetadata() {
+		// Load block data for current metadata
+		br.loadBlockData(dec)
+
+		// Collect expected tag names from bm.tags keys (sorted for stability)
+		var expected []string
+		for name := range br.block.bm.tags {
+			expected = append(expected, name)
+		}
+		sort.Strings(expected)
+
+		// Collect actual decoded tag names from block
+		var actual []string
+		for _, t := range br.block.block.tags {
+			actual = append(actual, t.name)
+		}
+		sort.Strings(actual)
+
+		require.Equal(t, expected, actual, "decoded tag names must match bm.tags keys for each block")
+		seen++
+	}
+
+	// We should have seen two blocks (one from each part)
+	require.Equal(t, 2, seen)
 }

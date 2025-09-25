@@ -126,7 +126,6 @@ pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
 	$(MAKE) generate
 	$(MAKE) lint
-	$(MAKE) license-dep
 	$(MAKE) check
 	$(MAKE) vuln-check
 

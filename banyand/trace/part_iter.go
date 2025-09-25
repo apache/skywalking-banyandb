@@ -267,7 +267,7 @@ type partMergeIter struct {
 func (pmi *partMergeIter) reset() {
 	pmi.err = nil
 	pmi.seqReaders.reset()
-	clear(pmi.tagType)
+	pmi.tagType = nil
 	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
