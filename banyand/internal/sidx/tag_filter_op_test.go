@@ -19,6 +19,7 @@ package sidx
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -489,6 +490,331 @@ func BenchmarkDecodeBloomFilterFromBytes(b *testing.B) {
 		decodedBF := filter.NewBloomFilter(0)
 		decodeBloomFilterFromBytes(testData, decodedBF)
 	}
+}
+
+func BenchmarkTagFilterOpHaving(b *testing.B) {
+	// Setup bloom filter with test data
+	bf := filter.NewBloomFilter(1000)
+	for i := 0; i < 500; i++ {
+		bf.Add([]byte(fmt.Sprintf("service-%d", i)))
+	}
+
+	cache := &tagFilterCache{
+		bloomFilter: bf,
+		valueType:   pbv1.ValueTypeStr,
+	}
+
+	tfo := &tagFilterOp{
+		blockMetadata: &blockMetadata{
+			tagsBlocks: map[string]dataBlock{
+				"service": {offset: 0, size: 100},
+			},
+		},
+		part: &part{},
+		tagCache: map[string]*tagFilterCache{
+			"service": cache,
+		},
+	}
+
+	// Test different sizes of input lists
+	b.Run("small list (5 items)", func(b *testing.B) {
+		testValues := []string{"service-1", "service-2", "service-3", "unknown-1", "unknown-2"}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tfo.Having("service", testValues)
+		}
+	})
+
+	b.Run("medium list (50 items)", func(b *testing.B) {
+		testValues := make([]string, 50)
+		for i := 0; i < 50; i++ {
+			if i < 25 {
+				testValues[i] = fmt.Sprintf("service-%d", i)
+			} else {
+				testValues[i] = fmt.Sprintf("unknown-%d", i)
+			}
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tfo.Having("service", testValues)
+		}
+	})
+
+	b.Run("large list (500 items)", func(b *testing.B) {
+		testValues := make([]string, 500)
+		for i := 0; i < 500; i++ {
+			if i < 250 {
+				testValues[i] = fmt.Sprintf("service-%d", i)
+			} else {
+				testValues[i] = fmt.Sprintf("unknown-%d", i)
+			}
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tfo.Having("service", testValues)
+		}
+	})
+
+	b.Run("early exit (match first)", func(b *testing.B) {
+		testValues := make([]string, 100)
+		testValues[0] = "service-1" // This will match
+		for i := 1; i < 100; i++ {
+			testValues[i] = fmt.Sprintf("unknown-%d", i)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tfo.Having("service", testValues)
+		}
+	})
+
+	b.Run("no matches", func(b *testing.B) {
+		testValues := make([]string, 100)
+		for i := 0; i < 100; i++ {
+			testValues[i] = fmt.Sprintf("definitely-not-there-%d", i)
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			tfo.Having("service", testValues)
+		}
+	})
+}
+
+func TestTagFilterOpHaving(t *testing.T) {
+	tests := []struct {
+		blockMetadata  *blockMetadata
+		part           *part
+		name           string
+		tagName        string
+		description    string
+		tagValues      []string
+		expectedResult bool
+	}{
+		{
+			name:           "nil block metadata",
+			blockMetadata:  nil,
+			part:           &part{},
+			tagName:        "service",
+			tagValues:      []string{"order-service", "user-service"},
+			expectedResult: false,
+			description:    "should return false when blockMetadata is nil",
+		},
+		{
+			name:           "nil part",
+			blockMetadata:  &blockMetadata{tagsBlocks: make(map[string]dataBlock)},
+			part:           nil,
+			tagName:        "service",
+			tagValues:      []string{"order-service", "user-service"},
+			expectedResult: false,
+			description:    "should return false when part is nil",
+		},
+		{
+			name: "tag not in block",
+			blockMetadata: &blockMetadata{
+				tagsBlocks: map[string]dataBlock{
+					"other_tag": {offset: 0, size: 100},
+				},
+			},
+			part:           &part{},
+			tagName:        "service",
+			tagValues:      []string{"order-service", "user-service"},
+			expectedResult: false,
+			description:    "should return false when tag doesn't exist in block",
+		},
+		{
+			name: "tag exists but no cache data",
+			blockMetadata: &blockMetadata{
+				tagsBlocks: map[string]dataBlock{
+					"service": {offset: 0, size: 100},
+				},
+			},
+			part:           &part{},
+			tagName:        "service",
+			tagValues:      []string{"order-service", "user-service"},
+			expectedResult: true,
+			description:    "should return true (conservative) when tag exists but cache fails",
+		},
+		{
+			name:           "empty tag values list",
+			blockMetadata:  &blockMetadata{tagsBlocks: make(map[string]dataBlock)},
+			part:           &part{},
+			tagName:        "service",
+			tagValues:      []string{},
+			expectedResult: false,
+			description:    "should return false when no tag values provided",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tfo := &tagFilterOp{
+				blockMetadata: tt.blockMetadata,
+				part:          tt.part,
+				tagCache:      make(map[string]*tagFilterCache),
+			}
+
+			result := tfo.Having(tt.tagName, tt.tagValues)
+			assert.Equal(t, tt.expectedResult, result, tt.description)
+		})
+	}
+}
+
+func TestTagFilterOpHavingWithBloomFilter(t *testing.T) {
+	// Create a bloom filter and add some test values
+	bf := filter.NewBloomFilter(100)
+	bf.Add([]byte("order-service"))
+	bf.Add([]byte("payment-service"))
+	bf.Add([]byte("inventory-service"))
+
+	// Create cache with bloom filter
+	cache := &tagFilterCache{
+		bloomFilter: bf,
+		valueType:   pbv1.ValueTypeStr,
+	}
+
+	tfo := &tagFilterOp{
+		blockMetadata: &blockMetadata{
+			tagsBlocks: map[string]dataBlock{
+				"service": {offset: 0, size: 100},
+			},
+		},
+		part: &part{},
+		tagCache: map[string]*tagFilterCache{
+			"service": cache,
+		},
+	}
+
+	tests := []struct {
+		name           string
+		description    string
+		tagValues      []string
+		expectedResult bool
+	}{
+		{
+			name:           "all values might exist",
+			tagValues:      []string{"order-service", "payment-service"},
+			expectedResult: true,
+			description:    "should return true when all values might exist in bloom filter",
+		},
+		{
+			name:           "some values might exist",
+			tagValues:      []string{"order-service", "non-existent-service"},
+			expectedResult: true,
+			description:    "should return true when at least one value might exist in bloom filter",
+		},
+		{
+			name:           "no values might exist",
+			tagValues:      []string{"non-existent-service-1", "non-existent-service-2"},
+			expectedResult: false,
+			description:    "should return false when no values might exist in bloom filter",
+		},
+		{
+			name:           "single value exists",
+			tagValues:      []string{"inventory-service"},
+			expectedResult: true,
+			description:    "should return true when single value might exist in bloom filter",
+		},
+		{
+			name:           "single value does not exist",
+			tagValues:      []string{"definitely-not-there"},
+			expectedResult: false,
+			description:    "should return false when single value doesn't exist in bloom filter",
+		},
+		{
+			name:           "empty values list",
+			tagValues:      []string{},
+			expectedResult: false,
+			description:    "should return false when no values provided",
+		},
+		{
+			name:           "mixed case with first match",
+			tagValues:      []string{"order-service", "unknown-1", "unknown-2"},
+			expectedResult: true,
+			description:    "should return true immediately when first value matches",
+		},
+		{
+			name:           "mixed case with last match",
+			tagValues:      []string{"unknown-1", "unknown-2", "payment-service"},
+			expectedResult: true,
+			description:    "should return true when last value matches",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tfo.Having("service", tt.tagValues)
+			assert.Equal(t, tt.expectedResult, result, tt.description)
+		})
+	}
+}
+
+func TestTagFilterOpHavingWithoutBloomFilter(t *testing.T) {
+	// Create cache without bloom filter
+	cache := &tagFilterCache{
+		bloomFilter: nil,
+		valueType:   pbv1.ValueTypeStr,
+	}
+
+	tfo := &tagFilterOp{
+		blockMetadata: &blockMetadata{
+			tagsBlocks: map[string]dataBlock{
+				"service": {offset: 0, size: 100},
+			},
+		},
+		part: &part{},
+		tagCache: map[string]*tagFilterCache{
+			"service": cache,
+		},
+	}
+
+	// When no bloom filter is available, should always return true (conservative)
+	result := tfo.Having("service", []string{"any-service", "another-service"})
+	assert.True(t, result, "should return true when no bloom filter is available (conservative approach)")
+
+	// Test with empty list too
+	result = tfo.Having("service", []string{})
+	assert.True(t, result, "should return true even with empty list when no bloom filter (conservative approach)")
+}
+
+func TestTagFilterOpHavingLargeList(t *testing.T) {
+	// Create a bloom filter with some values
+	bf := filter.NewBloomFilter(1000)
+	bf.Add([]byte("target-service"))
+
+	cache := &tagFilterCache{
+		bloomFilter: bf,
+		valueType:   pbv1.ValueTypeStr,
+	}
+
+	tfo := &tagFilterOp{
+		blockMetadata: &blockMetadata{
+			tagsBlocks: map[string]dataBlock{
+				"service": {offset: 0, size: 100},
+			},
+		},
+		part: &part{},
+		tagCache: map[string]*tagFilterCache{
+			"service": cache,
+		},
+	}
+
+	// Create a large list with the target at the end
+	largeList := make([]string, 1000)
+	for i := 0; i < 999; i++ {
+		largeList[i] = fmt.Sprintf("non-existent-service-%d", i)
+	}
+	largeList[999] = "target-service"
+
+	result := tfo.Having("service", largeList)
+	assert.True(t, result, "should handle large lists and find target value")
+
+	// Test with large list that has no matches
+	noMatchList := make([]string, 1000)
+	for i := 0; i < 1000; i++ {
+		noMatchList[i] = fmt.Sprintf("definitely-not-there-%d", i)
+	}
+
+	result = tfo.Having("service", noMatchList)
+	assert.False(t, result, "should return false for large list with no matches")
 }
 
 func TestTagFilterOpErrorHandling(t *testing.T) {

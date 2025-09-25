@@ -304,11 +304,12 @@ func (s *standalone) GracefulStop() {
 	}
 
 	observability.MetricsCollector.Unregister("measure_cache")
-	s.schemaRepo.Close()
-	s.c.Close()
+	// Stop local pipeline first to prevent new metadata/write events creating processors during shutdown
 	if s.localPipeline != nil {
 		s.localPipeline.GracefulStop()
 	}
+	s.schemaRepo.Close()
+	s.c.Close()
 }
 
 func (s *standalone) collectCacheMetrics() {
