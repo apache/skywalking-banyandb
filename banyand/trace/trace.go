@@ -183,7 +183,7 @@ func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.S
 	for i, data := range response.Data {
 		if len(data) > 0 {
 			var traceID string
-			if len(data) > 0 && idFormat(data[0]) == idFormatV1 {
+			if idFormat(data[0]) == idFormatV1 {
 				traceID = string(data[1:])
 			} else {
 				logger.Panicf("invalid trace ID format: %x", data)
