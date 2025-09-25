@@ -266,10 +266,34 @@ func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint
 		return
 	}
 	defer cur.decRef()
+
+	// Log sync introduction details for trace
+	var syncedPartIDs []uint64
+	var syncedPartTypes []string
+	for partHandle := range nextIntroduction.synced {
+		syncedPartIDs = append(syncedPartIDs, partHandle.partID)
+		syncedPartTypes = append(syncedPartTypes, partHandle.partType)
+	}
+
+	tst.l.Info().
+		Interface("synced_part_ids", syncedPartIDs).
+		Interface("synced_part_types", syncedPartTypes).
+		Int("synced_parts_count", len(syncedPartIDs)).
+		Uint64("current_epoch", cur.epoch).
+		Uint64("next_epoch", epoch).
+		Msg("introducing synced parts to trace table")
+
 	nextSnp := cur.remove(epoch, nextIntroduction.synced)
 	nextSnp.creator = snapshotCreatorSyncer
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
+
+	tst.l.Info().
+		Interface("synced_part_ids", syncedPartIDs).
+		Uint64("new_epoch", nextSnp.epoch).
+		Int("remaining_parts", len(nextSnp.parts)).
+		Msg("successfully introduced synced parts and updated trace snapshot")
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

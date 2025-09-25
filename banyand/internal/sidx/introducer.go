@@ -246,9 +246,30 @@ func (s *sidx) introduceSync(nextIntroduction *SyncIntroduction, epoch uint64) {
 		return
 	}
 	defer cur.decRef()
+
+	// Log sync introduction details
+	var syncedPartIDs []uint64
+	for partID := range nextIntroduction.Synced {
+		syncedPartIDs = append(syncedPartIDs, partID)
+	}
+
+	s.l.Info().
+		Interface("synced_part_ids", syncedPartIDs).
+		Int("synced_parts_count", len(syncedPartIDs)).
+		Uint64("current_epoch", cur.epoch).
+		Uint64("next_epoch", epoch).
+		Msg("introducing synced parts to sidx")
+
 	nextSnp := cur.remove(epoch, nextIntroduction.Synced)
 	s.replaceSnapshot(nextSnp)
 	s.persistSnapshot(nextSnp)
+
+	s.l.Info().
+		Interface("synced_part_ids", syncedPartIDs).
+		Uint64("new_epoch", nextSnp.epoch).
+		Int("remaining_parts", nextSnp.getPartCount()).
+		Msg("successfully introduced synced parts and updated snapshot")
+
 	if nextIntroduction.Applied != nil {
 		close(nextIntroduction.Applied)
 	}
