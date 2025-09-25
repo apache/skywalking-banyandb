@@ -73,6 +73,41 @@ func (tfo *tagFilterOp) Eq(tagName string, tagValue string) bool {
 	return true
 }
 
+// Having checks if any of the provided tag values might exist in the bloom filter.
+// It returns true if at least one value might be contained in the bloom filter.
+func (tfo *tagFilterOp) Having(tagName string, tagValues []string) bool {
+	if tfo.blockMetadata == nil || tfo.part == nil {
+		return false
+	}
+
+	// Check if the tag exists in the block
+	tagBlock, exists := tfo.blockMetadata.tagsBlocks[tagName]
+	if !exists {
+		return false
+	}
+
+	// Get or create cached tag filter data
+	cache, err := tfo.getTagFilterCache(tagName, tagBlock)
+	if err != nil {
+		logger.Errorf("failed to get tag filter cache for %s: %v", tagName, err)
+		return true // Conservative approach - don't filter out
+	}
+
+	// Use bloom filter to check if any value might exist
+	if cache.bloomFilter != nil {
+		for _, tagValue := range tagValues {
+			if cache.bloomFilter.MightContain([]byte(tagValue)) {
+				return true // Return true as soon as we find a potential match
+			}
+		}
+		// None of the values might exist in the bloom filter
+		return false
+	}
+
+	// If no bloom filter, conservatively return true
+	return true
+}
+
 // Range checks if a tag is within a specific range using min/max metadata.
 func (tfo *tagFilterOp) Range(tagName string, rangeOpts index.RangeOpts) (bool, error) {
 	if tfo.blockMetadata == nil || tfo.part == nil {

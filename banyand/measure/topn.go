@@ -81,6 +81,10 @@ func (sr *schemaRepo) inFlow(stm *databasev1.Measure, seriesID uint64, shardID u
 
 func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
 	key := getKey(source)
+	// avoid creating a new manager if the source group is closing
+	if sr.isGroupClosing(source.GetGroup()) {
+		return nil
+	}
 	sourceMeasure, ok := sr.loadMeasure(source)
 	if !ok {
 		m, _ := sr.topNProcessorMap.LoadOrStore(key, &topNProcessorManager{

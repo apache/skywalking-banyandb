@@ -71,7 +71,7 @@ func parseConditionToFilter(cond *modelv1.Condition, schema logical.Schema,
 	case modelv1.Condition_BINARY_OP_MATCH:
 		return &traceMatchFilter{op: "match", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
-		return &traceFilter{op: "having", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
+		return &traceHavingFilter{op: "having", tagName: cond.Name, expr: expr}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
 		return &traceFilter{op: "not_having", tagName: cond.Name}, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
@@ -248,6 +248,34 @@ func (tmf *traceMatchFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
 
 func (tmf *traceMatchFilter) String() string {
 	return tmf.op + ":" + tmf.tagName
+}
+
+// traceHavingFilter implements index.Filter for HAVING operations in trace queries.
+type traceHavingFilter struct {
+	expr    logical.LiteralExpr
+	op      string
+	tagName string
+}
+
+func (thf *traceHavingFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	panic("traceHavingFilter.Execute should not be invoked")
+}
+
+func (thf *traceHavingFilter) ShouldSkip(tagFilters index.FilterOp) (bool, error) {
+	// Use the parsed expression to get the tag values and invoke tagFilters.Having
+	if thf.expr != nil {
+		subExprs := thf.expr.SubExprs()
+		tagValues := make([]string, len(subExprs))
+		for i, subExpr := range subExprs {
+			tagValues[i] = subExpr.String()
+		}
+		return !tagFilters.Having(thf.tagName, tagValues), nil
+	}
+	return false, nil
+}
+
+func (thf *traceHavingFilter) String() string {
+	return thf.op + ":" + thf.tagName
 }
 
 // extractTraceIDsFromCondition extracts trace IDs from equal and in conditions.
