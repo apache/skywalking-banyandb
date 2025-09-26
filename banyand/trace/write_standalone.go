@@ -225,11 +225,19 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 
 	sidxTags := make([]sidx.Tag, 0, len(tags))
 	for _, tag := range tags {
-		sidxTags = append(sidxTags, sidx.Tag{
-			Name:      tag.tag,
-			Value:     tag.value,
-			ValueType: tag.valueType,
-		})
+		if tag.valueArr != nil {
+			sidxTags = append(sidxTags, sidx.Tag{
+				Name:      tag.tag,
+				ValueArr:  tag.valueArr,
+				ValueType: tag.valueType,
+			})
+		} else {
+			sidxTags = append(sidxTags, sidx.Tag{
+				Name:      tag.tag,
+				Value:     tag.value,
+				ValueType: tag.valueType,
+			})
+		}
 	}
 
 	indexRules := stm.GetIndexRules()

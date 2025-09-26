@@ -342,28 +342,29 @@ func (rm *ResponseMetadata) Validate() error {
 type Tag struct {
 	Name      string
 	Value     []byte
+	ValueArr  [][]byte
 	ValueType pbv1.ValueType
-}
-
-// NewTag creates a new Tag instance with the given values.
-func NewTag(name string, value []byte, valueType pbv1.ValueType) Tag {
-	return Tag{
-		Name:      name,
-		Value:     value,
-		ValueType: valueType,
-	}
 }
 
 // Reset resets the Tag to its zero state for reuse.
 func (t *Tag) Reset() {
 	t.Name = ""
 	t.Value = nil
+	t.ValueArr = nil
 	t.ValueType = pbv1.ValueTypeUnknown
 }
 
 // Size returns the size of the tag in bytes.
 func (t *Tag) Size() int {
-	return len(t.Name) + len(t.Value) + 1 // +1 for valueType
+	size := len(t.Name) + 1 // +1 for valueType
+	if t.ValueArr != nil {
+		for _, v := range t.ValueArr {
+			size += len(v)
+		}
+	} else {
+		size += len(t.Value)
+	}
+	return size
 }
 
 // Copy creates a deep copy of the Tag.
@@ -373,28 +374,19 @@ func (t *Tag) Copy() Tag {
 		valueCopy = make([]byte, len(t.Value))
 		copy(valueCopy, t.Value)
 	}
+	var valueArrCopy [][]byte
+	if t.ValueArr != nil {
+		valueArrCopy = make([][]byte, len(t.ValueArr))
+		for i, v := range t.ValueArr {
+			valueArrCopy[i] = make([]byte, len(v))
+			copy(valueArrCopy[i], v)
+		}
+	}
 	return Tag{
 		Name:      t.Name,
 		Value:     valueCopy,
+		ValueArr:  valueArrCopy,
 		ValueType: t.ValueType,
-	}
-}
-
-// toInternalTag converts the exported Tag to an internal tag for use with the pooling system.
-func (t *Tag) toInternalTag() *tag {
-	return &tag{
-		name:      t.Name,
-		value:     t.Value,
-		valueType: t.ValueType,
-	}
-}
-
-// fromInternalTag creates a Tag from an internal tag.
-func fromInternalTag(t *tag) Tag {
-	return Tag{
-		Name:      t.name,
-		Value:     t.value,
-		ValueType: t.valueType,
 	}
 }
 
