@@ -226,6 +226,10 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 			return nil, nil, errClosed
 		}
 		sidxPartsToSync[name] = sidx.PartsToSync()
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxPartsToSync[name])).
+			Msg("get sidx parts to sync")
 	}
 
 	// Log collected parts to sync
@@ -245,17 +249,15 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 	}
 
 	for sidxName, sidxParts := range sidxPartsToSync {
-		if len(sidxParts) > 0 {
-			var sidxPartIDs []uint64
-			for _, part := range sidxParts {
-				sidxPartIDs = append(sidxPartIDs, part.ID())
-			}
-			tst.l.Info().
-				Str("sidx_name", sidxName).
-				Int("sidx_parts_count", len(sidxParts)).
-				Interface("sidx_part_ids", sidxPartIDs).
-				Msg("collected sidx parts for sync")
+		var sidxPartIDs []uint64
+		for _, part := range sidxParts {
+			sidxPartIDs = append(sidxPartIDs, part.ID())
 		}
+		tst.l.Info().
+			Str("sidx_name", sidxName).
+			Int("sidx_parts_count", len(sidxParts)).
+			Interface("sidx_part_ids", sidxPartIDs).
+			Msg("collected sidx parts for sync")
 	}
 
 	return partsToSync, sidxPartsToSync, nil
