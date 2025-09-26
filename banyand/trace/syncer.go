@@ -189,24 +189,16 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
-	if len(partsToSync) == 0 && len(sidxPartsToSync) == 0 {
-		return nil
-	}
-	hasSidxParts := false
-	for _, sidxParts := range sidxPartsToSync {
-		if len(sidxParts) == 0 {
-			continue
-		}
-		hasSidxParts = true
-		break
-	}
-	if len(partsToSync) == 0 && !hasSidxParts {
-		return nil
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in syncSnapshot")
 	}
 
 	// Validate sync preconditions
-	if err := tst.validateSyncPreconditions(partsToSync, sidxPartsToSync); err != nil {
-		return err
+	if !tst.needToSync(partsToSync, sidxPartsToSync) {
+		return nil
 	}
 
 	// Execute sync operation
@@ -234,13 +226,45 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 			return nil, nil, errClosed
 		}
 		sidxPartsToSync[name] = sidx.PartsToSync()
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxPartsToSync[name])).
+			Msg("get sidx parts to sync")
+	}
+
+	// Log collected parts to sync
+	tst.l.Info().
+		Int("core_parts_count", len(partsToSync)).
+		Uint64("snapshot_epoch", curSnapshot.epoch).
+		Msg("collected core parts for sync")
+
+	if len(partsToSync) > 0 {
+		var corePartIDs []uint64
+		for _, part := range partsToSync {
+			corePartIDs = append(corePartIDs, part.partMetadata.ID)
+		}
+		tst.l.Debug().
+			Interface("core_part_ids", corePartIDs).
+			Msg("core parts to sync details")
+	}
+
+	for sidxName, sidxParts := range sidxPartsToSync {
+		var sidxPartIDs []uint64
+		for _, part := range sidxParts {
+			sidxPartIDs = append(sidxPartIDs, part.ID())
+		}
+		tst.l.Info().
+			Str("sidx_name", sidxName).
+			Int("sidx_parts_count", len(sidxParts)).
+			Interface("sidx_part_ids", sidxPartIDs).
+			Msg("collected sidx parts for sync")
 	}
 
 	return partsToSync, sidxPartsToSync, nil
 }
 
-// validateSyncPreconditions validates that there are parts to sync and nodes available.
-func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) error {
+// needToSync validates that there are parts to sync and nodes available.
+func (tst *tsTable) needToSync(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) bool {
 	hasCoreParts := len(partsToSync) > 0
 	hasSidxParts := false
 	for _, parts := range sidxPartsToSync {
@@ -250,15 +274,11 @@ func (tst *tsTable) validateSyncPreconditions(partsToSync []*part, sidxPartsToSy
 		}
 	}
 	if !hasCoreParts && !hasSidxParts {
-		return nil
+		return false
 	}
 
 	nodes := tst.getNodes()
-	if len(nodes) == 0 {
-		return fmt.Errorf("no nodes to sync parts")
-	}
-
-	return nil
+	return len(nodes) > 0
 }
 
 // executeSyncOperation performs the actual synchronization of parts to nodes.
@@ -276,6 +296,13 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync ma
 	}()
 
 	nodes := tst.getNodes()
+
+	for name, sidxParts := range sidxPartsToSync {
+		tst.l.Info().
+			Str("sidx_name", name).
+			Int("sidx_parts_count", len(sidxParts)).
+			Msg("sidxPartsToSync in executeSyncOperation")
+	}
 	return tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs)
 }
 
@@ -285,28 +312,62 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, sidxPartsToSync
 	si := generateSyncIntroduction()
 	defer releaseSyncIntroduction(si)
 	si.applied = make(chan struct{})
+
+	var corePartIDs []uint64
 	for _, part := range partsToSync {
 		ph := partHandle{
 			partID:   part.partMetadata.ID,
 			partType: PartTypeCore,
 		}
 		si.synced[ph] = struct{}{}
+		corePartIDs = append(corePartIDs, part.partMetadata.ID)
 	}
+
+	tst.l.Info().
+		Interface("core_part_ids", corePartIDs).
+		Int("core_parts_count", len(corePartIDs)).
+		Msg("created core sync introduction")
 
 	// Create sidx sync introductions
 	sidxSyncIntroductions, err := tst.createSidxSyncIntroductions(sidxPartsToSync)
 	if err != nil {
+		tst.l.Error().
+			Err(err).
+			Msg("failed to create sidx sync introductions")
 		return err
 	}
 	defer tst.releaseSidxSyncIntroductions(sidxSyncIntroductions)
 
+	tst.l.Info().
+		Int("sidx_introductions_count", len(sidxSyncIntroductions)).
+		Msg("created all sync introductions")
+
 	// Send sync introductions
-	if err := tst.sendSyncIntroductions(si, sidxSyncIntroductions, syncCh); err != nil {
+	if err = tst.sendSyncIntroductions(si, sidxSyncIntroductions, syncCh); err != nil {
+		tst.l.Error().
+			Err(err).
+			Msg("failed to send sync introductions")
 		return err
 	}
 
+	tst.l.Info().
+		Msg("sent all sync introductions, waiting for completion")
+
 	// Wait for sync introductions to be applied
-	return tst.waitForSyncIntroductions(si, sidxSyncIntroductions)
+	err = tst.waitForSyncIntroductions(si, sidxSyncIntroductions)
+	if err != nil {
+		tst.l.Error().
+			Err(err).
+			Msg("failed while waiting for sync introductions to be applied")
+		return err
+	}
+
+	tst.l.Info().
+		Interface("core_part_ids", corePartIDs).
+		Int("sidx_introductions_count", len(sidxSyncIntroductions)).
+		Msg("all sync introductions applied successfully")
+
+	return nil
 }
 
 // createSidxSyncIntroductions creates sync introductions for sidx parts.
@@ -379,27 +440,61 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 	if tst.loopCloser != nil && tst.loopCloser.Closed() {
 		return errClosed
 	}
+
+	tst.l.Info().
+		Str("nodes", fmt.Sprintf("%v", nodes)).
+		Int("nodes_count", len(nodes)).
+		Msg("starting sync to multiple nodes")
+
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
 			return errClosed
 		}
+
+		tst.l.Info().
+			Str("node", node).
+			Msg("preparing parts for sync to node")
+
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
+
+		for name, sidxParts := range sidxPartsToSync {
+			tst.l.Info().
+				Str("sidx_name", name).
+				Int("sidx_parts_count", len(sidxParts)).
+				Msg("sidxPartsToSync in syncStreamingPartsToNodes")
+		}
 		// Add sidx streaming parts
 		for name, sidxParts := range sidxPartsToSync {
+			if len(sidxParts) == 0 {
+				continue
+			}
+
 			sidx, ok := tst.getSidx(name)
 			if !ok {
+				tst.l.Error().
+					Str("sidx_name", name).
+					Str("node", node).
+					Msg("sidx not found during sync preparation")
 				return fmt.Errorf("sidx %s not found", name)
 			}
+
 			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
 			streamingParts = append(streamingParts, sidxStreamingParts...)
 			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
+
+			tst.l.Info().
+				Str("sidx_name", name).
+				Str("node", node).
+				Int("sidx_parts_prepared", len(sidxStreamingParts)).
+				Msg("prepared sidx streaming parts for node")
 		}
+
 		// Create streaming parts from core trace parts.
 		for _, part := range partsToSync {
 			files, release := createPartFileReaders(part)
 			*releaseFuncs = append(*releaseFuncs, release)
-			streamingParts = append(streamingParts, queue.StreamingPartData{
+			streamingPart := queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,
 				Group:                 tst.group,
 				ShardID:               uint32(tst.shardID),
@@ -412,20 +507,70 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 				MinTimestamp:          part.partMetadata.MinTimestamp,
 				MaxTimestamp:          part.partMetadata.MaxTimestamp,
 				PartType:              PartTypeCore,
-			})
+			}
+			streamingParts = append(streamingParts, streamingPart)
+
+			tst.l.Info().
+				Uint64("part_id", part.partMetadata.ID).
+				Str("node", node).
+				Uint64("total_count", part.partMetadata.TotalCount).
+				Uint64("compressed_size", part.partMetadata.CompressedSizeBytes).
+				Int64("min_timestamp", part.partMetadata.MinTimestamp).
+				Int64("max_timestamp", part.partMetadata.MaxTimestamp).
+				Msg("prepared core part for sync to node")
 		}
+
+		tst.l.Info().
+			Str("node", node).
+			Int("total_parts", len(streamingParts)).
+			Msg("syncing all parts to node")
+
 		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
+			tst.l.Error().
+				Str("node", node).
+				Int("failed_parts_count", len(streamingParts)).
+				Err(err).
+				Msg("failed to sync parts to node")
 			return err
 		}
+
+		tst.l.Info().
+			Str("node", node).
+			Int("synced_parts_count", len(streamingParts)).
+			Msg("successfully synced all parts to node")
 	}
 	return nil
 }
 
 // syncStreamingPartsToNode synchronizes streaming parts to a node.
 func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
+	// Log details about parts being synced
+	var partIDs []uint64
+	var totalBytes uint64
+	partTypeGroups := make(map[string]int)
+
+	for _, part := range streamingParts {
+		partIDs = append(partIDs, part.ID)
+		totalBytes += part.CompressedSizeBytes
+		partTypeGroups[part.PartType]++
+	}
+
+	tst.l.Info().
+		Str("node", node).
+		Interface("part_ids", partIDs).
+		Interface("part_type_counts", partTypeGroups).
+		Uint64("total_compressed_bytes", totalBytes).
+		Int("parts_count", len(streamingParts)).
+		Msg("starting chunked sync to node")
+
 	// Get chunked sync client for this node
 	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
 	if err != nil {
+		tst.l.Error().
+			Str("node", node).
+			Interface("part_ids", partIDs).
+			Err(err).
+			Msg("failed to create chunked sync client")
 		return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
 	}
 	defer chunkedClient.Close()
@@ -433,19 +578,46 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 	// Sync parts using chunked transfer with streaming
 	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
 	if err != nil {
+		tst.l.Error().
+			Str("node", node).
+			Interface("part_ids", partIDs).
+			Err(err).
+			Msg("failed to sync streaming parts to node")
 		return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
 	}
 
 	if !result.Success {
+		tst.l.Error().
+			Str("node", node).
+			Interface("part_ids", partIDs).
+			Str("error_message", result.ErrorMessage).
+			Msg("chunked sync partially failed")
 		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
 	}
+
+	// Enhanced success logging with detailed part information
 	tst.l.Info().
 		Str("node", node).
 		Str("session", result.SessionID).
+		Interface("synced_part_ids", partIDs).
+		Interface("part_type_counts", partTypeGroups).
 		Uint64("bytes", result.TotalBytes).
 		Int64("duration_ms", result.DurationMs).
 		Uint32("chunks", result.ChunksCount).
 		Uint32("parts", result.PartsCount).
-		Msg("chunked sync completed successfully")
+		Float64("throughput_mbps", float64(result.TotalBytes)/float64(result.DurationMs)*1000/1024/1024).
+		Msg("chunked sync completed successfully with all parts")
+
+	// Log individual part sync status for debugging
+	for _, part := range streamingParts {
+		tst.l.Debug().
+			Str("node", node).
+			Uint64("part_id", part.ID).
+			Str("part_type", part.PartType).
+			Uint64("compressed_size", part.CompressedSizeBytes).
+			Uint64("total_count", part.TotalCount).
+			Msg("part synced successfully")
+	}
+
 	return nil
 }
