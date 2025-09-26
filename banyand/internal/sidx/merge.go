@@ -119,7 +119,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
-	var tmpBlock, tmpBlock2 *blockPointer
+	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
@@ -172,7 +172,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()
