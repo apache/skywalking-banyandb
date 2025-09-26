@@ -580,10 +580,6 @@ func assertIdxAndOffset(name string, length int, idx int, offset int) {
 	}
 }
 
-func (bi *blockPointer) isFull() bool {
-	return bi.bm.uncompressedSpanSizeBytes >= maxUncompressedSpanSize
-}
-
 func (bi *blockPointer) reset() {
 	bi.idx = 0
 	bi.block.reset()

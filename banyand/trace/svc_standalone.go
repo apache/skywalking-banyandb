@@ -160,6 +160,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err = s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+		return err
+	}
 
 	s.localPipeline = queue.Local()
 	err = s.localPipeline.Subscribe(data.TopicTraceWrite, writeListener)
