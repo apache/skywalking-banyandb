@@ -458,11 +458,6 @@ func (p *part) String() string {
 	return fmt.Sprintf("sidx part at %s", p.path)
 }
 
-// getPartMetadata returns the part metadata.
-func (p *part) getPartMetadata() *partMetadata {
-	return p.partMetadata
-}
-
 // getTagDataReader returns the tag data reader for the specified tag name.
 func (p *part) getTagDataReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagData[tagName]
@@ -479,38 +474,6 @@ func (p *part) getTagMetadataReader(tagName string) (fs.Reader, bool) {
 func (p *part) getTagFilterReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagFilters[tagName]
 	return reader, exists
-}
-
-// getAvailableTagNames returns a slice of all available tag names in this part.
-func (p *part) getAvailableTagNames() []string {
-	tagNames := make(map[string]struct{})
-
-	// Collect tag names from all tag file types.
-	for tagName := range p.tagData {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagMetadata {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagFilters {
-		tagNames[tagName] = struct{}{}
-	}
-
-	// Convert to slice.
-	result := make([]string, 0, len(tagNames))
-	for tagName := range tagNames {
-		result = append(result, tagName)
-	}
-
-	return result
-}
-
-// hasTagFiles returns true if the part has any tag files for the specified tag name.
-func (p *part) hasTagFiles(tagName string) bool {
-	_, hasData := p.tagData[tagName]
-	_, hasMeta := p.tagMetadata[tagName]
-	_, hasFilter := p.tagFilters[tagName]
-	return hasData || hasMeta || hasFilter
 }
 
 // Path returns the part's directory path.

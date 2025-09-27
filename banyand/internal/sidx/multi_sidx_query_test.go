@@ -35,7 +35,6 @@ type mockSIDX struct {
 	err      error
 	response *QueryResponse
 	name     string
-	delay    bool
 }
 
 func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}

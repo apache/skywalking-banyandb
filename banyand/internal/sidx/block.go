@@ -112,13 +112,12 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	td.values = make([][]byte, len(b.userKeys))
 
 	var valueType pbv1.ValueType
-
 	// Collect values for this tag across all elements
 	for i, tags := range elementTags {
 		found := false
 		for _, tag := range tags {
 			if tag.name == tagName {
-				td.values[i] = tag.value
+				td.values[i] = tag.marshal()
 				valueType = tag.valueType
 				found = true
 				break
@@ -133,9 +132,20 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 
 	// Create bloom filter for indexed tags
 	td.filter = generateBloomFilter(len(b.userKeys))
-	for _, value := range td.values {
-		if value != nil {
-			td.filter.Add(value)
+	for _, tags := range elementTags {
+		for _, tag := range tags {
+			if tag.name == tagName {
+				if tag.valueArr != nil {
+					for _, v := range tag.valueArr {
+						if v != nil {
+							td.filter.Add(v)
+						}
+					}
+				} else if tag.value != nil {
+					td.filter.Add(tag.value)
+				}
+				break
+			}
 		}
 	}
 

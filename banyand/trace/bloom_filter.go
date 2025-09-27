@@ -21,7 +21,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 func encodeBloomFilter(dst []byte, bf *filter.BloomFilter) []byte {
@@ -44,18 +43,3 @@ func decodeBloomFilter(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
 
 	return bf
 }
-
-func generateBloomFilter() *filter.BloomFilter {
-	v := bloomFilterPool.Get()
-	if v == nil {
-		return filter.NewBloomFilter(0)
-	}
-	return v
-}
-
-func releaseBloomFilter(bf *filter.BloomFilter) {
-	bf.Reset()
-	bloomFilterPool.Put(bf)
-}
-
-var bloomFilterPool = pool.Register[*filter.BloomFilter]("trace-bloomFilter")
