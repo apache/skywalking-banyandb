@@ -118,6 +118,7 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[partHandle]struct{}) snap
 	var result snapshot
 	result.epoch = nextEpoch
 	result.ref = 1
+	var removedCount int
 	for i := 0; i < len(s.parts); i++ {
 		if _, ok := merged[partHandle{partID: s.parts[i].ID(), partType: PartTypeCore}]; !ok {
 			s.parts[i].incRef()
@@ -125,7 +126,9 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[partHandle]struct{}) snap
 			continue
 		}
 		s.parts[i].removable.Store(true)
+		removedCount++
 	}
+	logger.Infof("removed %d parts, merged %d parts", removedCount, len(merged))
 	return result
 }
 
