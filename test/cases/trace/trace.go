@@ -53,4 +53,5 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	g.Entry("filter by trace id and service unknown", helpers.Args{Input: "eq_trace_id_and_service_unknown", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("filter by query", helpers.Args{Input: "having_query_tag", Duration: 1 * time.Hour}),
 	g.Entry("err in arr", helpers.Args{Input: "err_in_arr", Duration: 1 * time.Hour, WantErr: true}),
+	g.Entry("filter by query with having condition", helpers.Args{Input: "having_query_tag_cond", Want: "having_query_tag", Duration: 1 * time.Hour}),
 )

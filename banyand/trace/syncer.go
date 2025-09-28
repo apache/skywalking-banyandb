@@ -320,10 +320,7 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, sidxPartsToSync
 	}
 
 	// Create sidx sync introductions
-	sidxSyncIntroductions, err := tst.createSidxSyncIntroductions(sidxPartsToSync)
-	if err != nil {
-		return err
-	}
+	sidxSyncIntroductions := tst.createSidxSyncIntroductions(sidxPartsToSync)
 	defer tst.releaseSidxSyncIntroductions(sidxSyncIntroductions)
 
 	// Send sync introductions
@@ -336,7 +333,7 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, sidxPartsToSync
 }
 
 // createSidxSyncIntroductions creates sync introductions for sidx parts.
-func (tst *tsTable) createSidxSyncIntroductions(sidxPartsToSync map[string][]*sidx.Part) (map[string]*sidx.SyncIntroduction, error) {
+func (tst *tsTable) createSidxSyncIntroductions(sidxPartsToSync map[string][]*sidx.Part) map[string]*sidx.SyncIntroduction {
 	sidxSyncIntroductions := make(map[string]*sidx.SyncIntroduction)
 	for name, sidxParts := range sidxPartsToSync {
 		if len(sidxParts) > 0 {
@@ -348,7 +345,7 @@ func (tst *tsTable) createSidxSyncIntroductions(sidxPartsToSync map[string][]*si
 			sidxSyncIntroductions[name] = ssi
 		}
 	}
-	return sidxSyncIntroductions, nil
+	return sidxSyncIntroductions
 }
 
 // releaseSidxSyncIntroductions releases sidx sync introductions.

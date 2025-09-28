@@ -35,9 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
-
-const partIDForTesting = 1
 
 // Test helper functions.
 
@@ -400,6 +399,55 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 					map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
 			}
 		})
+	}
+}
+
+func TestSIDX_Query_WithArrValues(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	// Write test data with different keys
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "data100", Tag{
+			Name: "arr_tag",
+			ValueArr: [][]byte{
+				[]byte("a"),
+				[]byte("b"),
+			},
+			ValueType: pbv1.ValueTypeStrArr,
+		}),
+		createTestWriteRequest(1, 150, "data150"),
+		createTestWriteRequest(1, 200, "data200"),
+	}
+	err := sidx.Write(ctx, reqs, 1)
+	require.NoError(t, err)
+
+	// Wait for introducer loop to process
+	waitForIntroducerLoop()
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagProjection: []model.TagProjection{
+			{
+				Names: []string{"arr_tag"},
+			},
+		},
+	}
+
+	response, err := sidx.Query(ctx, queryReq)
+	require.NoError(t, err)
+	require.NotNil(t, response)
+
+	assert.Equal(t, 3, response.Len())
+	for i := 0; i < response.Len(); i++ {
+		if response.Keys[i] == 100 {
+			assert.Equal(t, "arr_tag", response.Tags[i][0].Name)
+			assert.Equal(t, "a|b|", string(response.Tags[i][0].Value))
+		}
 	}
 }
 

@@ -214,15 +214,11 @@ func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, c
 		partCtx.writers.spanWriter.MustWrite(chunk)
 	case fileName == traceIDFilterFilename:
 		if partCtx.memPart != nil {
-			if err := s.handleTraceIDFilterChunk(partCtx, chunk); err != nil {
-				return fmt.Errorf("failed to handle traceID filter chunk: %w", err)
-			}
+			s.handleTraceIDFilterChunk(partCtx, chunk)
 		}
 	case fileName == tagTypeFilename:
 		if partCtx.memPart != nil {
-			if err := s.handleTagTypeChunk(partCtx, chunk); err != nil {
-				return fmt.Errorf("failed to handle tag type chunk: %w", err)
-			}
+			s.handleTagTypeChunk(partCtx, chunk)
 		}
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]
@@ -239,12 +235,10 @@ func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, c
 	return nil
 }
 
-func (s *syncCallback) handleTraceIDFilterChunk(partCtx *syncPartContext, chunk []byte) error {
+func (s *syncCallback) handleTraceIDFilterChunk(partCtx *syncPartContext, chunk []byte) {
 	partCtx.traceIDFilterBuffer = append(partCtx.traceIDFilterBuffer, chunk...)
-	return nil
 }
 
-func (s *syncCallback) handleTagTypeChunk(partCtx *syncPartContext, chunk []byte) error {
+func (s *syncCallback) handleTagTypeChunk(partCtx *syncPartContext, chunk []byte) {
 	partCtx.tagTypeBuffer = append(partCtx.tagTypeBuffer, chunk...)
-	return nil
 }
