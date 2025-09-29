@@ -20,6 +20,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.uber.org/multierr"
@@ -136,13 +137,17 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 	}
 	tracer := query.GetTracer(ctx)
 	var span *query.Span
+	var err error
 	if tracer != nil {
 		span, _ = tracer.StartSpan(ctx, "distributed-client")
 		queryRequest.Trace = true
 		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
 		defer func() {
-			// TODO: handle error
-			span.Stop()
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.Stop()
+			}
 		}()
 	}
 	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicTraceQuery,
@@ -170,12 +175,19 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 	}
 	sortIter := sort.NewItemIter(ct, p.desc)
 	var result []*tracev1.InternalTrace
-	seen := make(map[string]bool)
+	seen := make(map[string]*tracev1.InternalTrace)
 	for sortIter.Next() {
 		trace := sortIter.Val().InternalTrace
-		if !seen[trace.TraceId] {
-			seen[trace.TraceId] = true
+		if _, ok := seen[trace.TraceId]; !ok {
+			seen[trace.TraceId] = trace
 			result = append(result, trace)
+		} else {
+			for _, spanId := range trace.SpanIds {
+				if !slices.Contains(seen[trace.TraceId].SpanIds, spanId) {
+					seen[trace.TraceId].SpanIds = append(seen[trace.TraceId].SpanIds, spanId)
+					seen[trace.TraceId].Spans = append(seen[trace.TraceId].Spans, trace.Spans...)
+				}
+			}
 		}
 	}
 
@@ -212,7 +224,6 @@ type comparableTrace struct {
 func newComparableTrace(t *tracev1.InternalTrace, sortByTraceID bool) (*comparableTrace, error) {
 	var sortField []byte
 	if sortByTraceID {
-		// For traces, we use trace ID as sort field when sorting by time
 		sortField = []byte(t.TraceId)
 	} else {
 		sortField = convert.Int64ToBytes(t.Key)

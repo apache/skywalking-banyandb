@@ -33,7 +33,7 @@ const defaultLimit uint32 = 20
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
-	ecc []executor.TraceExecutionContext, traceIDTagName, timestampTagName string,
+	ecc []executor.TraceExecutionContext, traceIDTagName, spanIDTagName, timestampTagName string,
 ) (logical.Plan, error) {
 	// parse fields
 	if len(metadata) != len(ss) {
@@ -55,7 +55,7 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 	var s logical.Schema
 	tagProjection := convertStringProjectionToTags(criteria.GetTagProjection())
 	if len(metadata) == 1 {
-		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagName, orderByTag)
+		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagName, spanIDTagName, orderByTag)
 		s = ss[0]
 	} else {
 		var err error
@@ -223,7 +223,7 @@ func newTraceLimit(input logical.UnresolvedPlan, offset, num uint32) logical.Unr
 }
 
 func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
-	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, orderByTag string,
+	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, spanIDTagName, orderByTag string,
 ) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return &unresolvedTraceTagFilter{
@@ -234,6 +234,7 @@ func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
 		projectionTags: tagProjection,
 		ec:             ec,
 		traceIDTagName: traceIDTagName,
+		spanIDTagName:  spanIDTagName,
 		orderByTag:     orderByTag,
 	}
 }

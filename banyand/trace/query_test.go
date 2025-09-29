@@ -63,7 +63,8 @@ func TestQueryResult(t *testing.T) {
 					{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1")}},
 					{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10)}},
 				},
-				Spans: [][]byte{[]byte("span1")},
+				Spans:   [][]byte{[]byte("span1")},
+				SpanIDs: []string{"span1"},
 			}},
 		},
 		{
@@ -80,7 +81,8 @@ func TestQueryResult(t *testing.T) {
 					{Name: "strTag", Values: []*modelv1.TagValue{strTagValue("value1"), strTagValue("value4")}},
 					{Name: "intTag", Values: []*modelv1.TagValue{int64TagValue(10), int64TagValue(40)}},
 				},
-				Spans: [][]byte{[]byte("span1"), []byte("span4")},
+				Spans:   [][]byte{[]byte("span1"), []byte("span4")},
+				SpanIDs: []string{"span1", "span4"},
 			}},
 		},
 	}

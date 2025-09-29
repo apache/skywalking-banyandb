@@ -183,6 +183,12 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	}
 	traceID := req.Tags[idx].GetStr().GetValue()
 	tracesInTable.traces.traceIDs = append(tracesInTable.traces.traceIDs, traceID)
+	idx, err = getTagIndex(stm, stm.schema.SpanIdTagName)
+	if err != nil {
+		return err
+	}
+	spanID := req.Tags[idx].GetStr().GetValue()
+	tracesInTable.traces.spanIDs = append(tracesInTable.traces.spanIDs, spanID)
 	tracesInTable.traces.spans = append(tracesInTable.traces.spans, req.Span)
 
 	tLen := len(req.GetTags())
@@ -204,7 +210,7 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	tagSpecs := stm.GetSchema().GetTags()
 	for i := range tagSpecs {
 		tagSpec := tagSpecs[i]
-		if tagSpec.Name == stm.schema.TraceIdTagName {
+		if tagSpec.Name == stm.schema.TraceIdTagName || tagSpec.Name == stm.schema.SpanIdTagName {
 			continue
 		}
 		if tagSpec.Name == stm.schema.TimestampTagName {

@@ -84,7 +84,8 @@ func toTagProjection(b block) []string {
 }
 
 var conventionalBlockWithTS = block{
-	spans: [][]byte{[]byte("span1"), []byte("span2")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2")},
+	spanIDs: []string{"span1", "span2"},
 	tags: []tag{
 		{
 			name: "binaryTag", valueType: pbv1.ValueTypeBinaryData,
@@ -116,7 +117,8 @@ var conventionalBlockWithTS = block{
 }
 
 var conventionalBlock = block{
-	spans: [][]byte{[]byte("span1"), []byte("span2")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2")},
+	spanIDs: []string{"span1", "span2"},
 	tags: []tag{
 		{
 			name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
@@ -149,6 +151,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 	type args struct {
 		timestamps []int64
 		spans      [][]byte
+		spanIDs    []string
 		tags       [][]*tagValue
 	}
 	tests := []struct {
@@ -161,6 +164,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				spans:      [][]byte{[]byte("span1"), []byte("span2")},
+				spanIDs:    []string{"span1", "span2"},
 				tags: [][]*tagValue{
 					{
 						{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
@@ -186,7 +190,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromTrace(tt.args.spans, tt.args.tags, tt.args.timestamps)
+			b.mustInitFromTrace(tt.args.spans, tt.args.tags, tt.args.timestamps, tt.args.spanIDs)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromTrace() = %+v, want %+v", *b, tt.want)
 			}
@@ -237,8 +241,8 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteSpansTo(sm, tt.spans, w)
-			spans := mustReadSpansFrom(nil, sm, len(tt.spans), b)
+			mustWriteSpansTo(sm, tt.spans, nil, w)
+			spans, _ := mustReadSpansFrom(nil, nil, sm, len(tt.spans), b)
 			if !reflect.DeepEqual(spans, tt.spans) {
 				t.Errorf("mustReadSpansFrom() spans = %v, want %v", spans, tt.spans)
 			}
