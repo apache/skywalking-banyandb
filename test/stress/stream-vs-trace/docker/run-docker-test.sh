@@ -51,6 +51,7 @@ show_usage() {
     echo "  logs      Show container logs"
     echo "  ps        Show container status"
     echo "  stats     Show container resource usage"
+    echo "  summary   Show performance summary from last test"
     echo "  all       Run complete test (build, up, test, down)"
     echo "  help      Show this help message"
     echo ""
@@ -96,21 +97,42 @@ do_test() {
     # Set environment variable to enable Docker test
     export DOCKER_TEST=true
     
-    # Run the test from the docker directory to ensure relative paths work
+    # Start container stats collection
+    echo -e "${GREEN}Starting container performance monitoring...${NC}"
     cd "$SCRIPT_DIR"
+    ./collect-stats.sh start
+    
+    # Run the test from the docker directory to ensure relative paths work
     go test -v -timeout 30m ./... -run TestStreamVsTraceDocker
+    
+    # Stop stats collection and generate summary
+    echo -e "${GREEN}Stopping performance monitoring...${NC}"
+    ./collect-stats.sh stop
+    ./collect-stats.sh summary
     
     echo -e "${GREEN}Test completed successfully!${NC}"
     
-    # Optional: Show container resource usage
-    echo -e "\n${YELLOW}Container Resource Usage:${NC}"
+    # Show final container resource usage
+    echo -e "\n${YELLOW}Final Container Resource Usage:${NC}"
     docker stats --no-stream banyandb-stream banyandb-trace
+    
+    # Display performance summary
+    if [ -f "performance-summary.txt" ]; then
+        echo -e "\n${GREEN}Performance Summary:${NC}"
+        cat performance-summary.txt
+    fi
 }
 
 # Function to stop containers
 do_down() {
     echo -e "${YELLOW}Stopping containers...${NC}"
     cd "$SCRIPT_DIR"
+    
+    # Stop stats collection if running
+    if [ -f "collect-stats.sh" ]; then
+        ./collect-stats.sh stop 2>/dev/null || true
+    fi
+    
     docker compose down
     echo -e "${GREEN}Containers stopped.${NC}"
 }
@@ -119,6 +141,15 @@ do_down() {
 do_clean() {
     echo -e "${YELLOW}Cleaning up everything...${NC}"
     cd "$SCRIPT_DIR"
+    
+    # Stop stats collection and cleanup
+    if [ -f "collect-stats.sh" ]; then
+        ./collect-stats.sh cleanup 2>/dev/null || true
+    fi
+    
+    # Remove stats files
+    rm -f container-stats.json performance-summary.txt stats_pid
+    
     docker compose down -v
     docker compose rm -f
     echo -e "${GREEN}Cleanup complete.${NC}"
@@ -139,6 +170,17 @@ do_ps() {
 # Function to show container stats
 do_stats() {
     docker stats --no-stream banyandb-stream banyandb-trace
+}
+
+# Function to show performance summary
+do_summary() {
+    cd "$SCRIPT_DIR"
+    if [ -f "performance-summary.txt" ]; then
+        echo -e "${GREEN}Performance Summary from Last Test:${NC}"
+        cat performance-summary.txt
+    else
+        echo -e "${YELLOW}No performance summary found. Run a test first.${NC}"
+    fi
 }
 
 # Function to run all steps
@@ -205,6 +247,9 @@ case $COMMAND in
         ;;
     stats)
         do_stats
+        ;;
+    summary)
+        do_summary
         ;;
     all)
         do_all

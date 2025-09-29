@@ -12,3 +12,8 @@ coverage.html
 
 # Binary files
 *.test
+
+# Stats files
+container-stats.json
+performance-summary.txt
+stats_pid

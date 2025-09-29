@@ -35,27 +35,27 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// SchemaClient handles schema operations via gRPC
+// SchemaClient handles schema operations via gRPC.
 type SchemaClient struct {
-	groupClient       databasev1.GroupRegistryServiceClient
-	streamClient      databasev1.StreamRegistryServiceClient
-	traceClient       databasev1.TraceRegistryServiceClient
-	indexRuleClient   databasev1.IndexRuleRegistryServiceClient
+	groupClient        databasev1.GroupRegistryServiceClient
+	streamClient       databasev1.StreamRegistryServiceClient
+	traceClient        databasev1.TraceRegistryServiceClient
+	indexRuleClient    databasev1.IndexRuleRegistryServiceClient
 	indexBindingClient databasev1.IndexRuleBindingRegistryServiceClient
 }
 
-// NewSchemaClient creates a new schema client
+// NewSchemaClient creates a new schema client.
 func NewSchemaClient(conn *grpc.ClientConn) *SchemaClient {
 	return &SchemaClient{
-		groupClient:       databasev1.NewGroupRegistryServiceClient(conn),
-		streamClient:      databasev1.NewStreamRegistryServiceClient(conn),
-		traceClient:       databasev1.NewTraceRegistryServiceClient(conn),
-		indexRuleClient:   databasev1.NewIndexRuleRegistryServiceClient(conn),
+		groupClient:        databasev1.NewGroupRegistryServiceClient(conn),
+		streamClient:       databasev1.NewStreamRegistryServiceClient(conn),
+		traceClient:        databasev1.NewTraceRegistryServiceClient(conn),
+		indexRuleClient:    databasev1.NewIndexRuleRegistryServiceClient(conn),
 		indexBindingClient: databasev1.NewIndexRuleBindingRegistryServiceClient(conn),
 	}
 }
 
-// LoadStreamSchemas loads all stream-related schemas
+// LoadStreamSchemas loads all stream-related schemas.
 func (s *SchemaClient) LoadStreamSchemas(ctx context.Context) error {
 	// Load stream group
 	if err := s.loadStreamGroup(ctx); err != nil {
@@ -80,7 +80,7 @@ func (s *SchemaClient) LoadStreamSchemas(ctx context.Context) error {
 	return nil
 }
 
-// LoadTraceSchemas loads all trace-related schemas
+// LoadTraceSchemas loads all trace-related schemas.
 func (s *SchemaClient) LoadTraceSchemas(ctx context.Context) error {
 	// Load trace group
 	if err := s.loadTraceGroup(ctx); err != nil {

@@ -19,33 +19,33 @@ package docker
 
 import (
 	"google.golang.org/grpc"
-	
+
 	streamvstrace "github.com/apache/skywalking-banyandb/test/stress/stream-vs-trace"
 )
 
-// DockerStreamClient wraps StreamClient with connection exposed
-type DockerStreamClient struct {
+// StreamClient wraps StreamClient with connection exposed.
+type StreamClient struct {
 	*streamvstrace.StreamClient
 	conn *grpc.ClientConn
 }
 
-// NewDockerStreamClient creates a new DockerStreamClient instance
-func NewDockerStreamClient(conn *grpc.ClientConn) *DockerStreamClient {
-	return &DockerStreamClient{
+// NewStreamClient creates a new DockerStreamClient instance.
+func NewStreamClient(conn *grpc.ClientConn) *StreamClient {
+	return &StreamClient{
 		StreamClient: streamvstrace.NewStreamClient(conn),
 		conn:         conn,
 	}
 }
 
-// DockerTraceClient wraps TraceClient with connection exposed
-type DockerTraceClient struct {
+// TraceClient wraps TraceClient with connection exposed.
+type TraceClient struct {
 	*streamvstrace.TraceClient
 	conn *grpc.ClientConn
 }
 
-// NewDockerTraceClient creates a new DockerTraceClient instance
-func NewDockerTraceClient(conn *grpc.ClientConn) *DockerTraceClient {
-	return &DockerTraceClient{
+// NewTraceClient creates a new DockerTraceClient instance.
+func NewTraceClient(conn *grpc.ClientConn) *TraceClient {
+	return &TraceClient{
 		TraceClient: streamvstrace.NewTraceClient(conn),
 		conn:        conn,
 	}

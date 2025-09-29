@@ -113,7 +113,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		return nil, err
 	}
 	for _, sidxInstance := range tst.getAllSidx() {
-		if err := sidxInstance.Merge(closeCh); err != nil {
+		if err := sidxInstance.MergeMemParts(closeCh); err != nil {
 			tst.l.Warn().Err(err).Msg("sidx merge failed")
 			return nil, err
 		}

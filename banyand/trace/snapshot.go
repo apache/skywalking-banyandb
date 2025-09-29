@@ -128,7 +128,6 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[partHandle]struct{}) snap
 		s.parts[i].removable.Store(true)
 		removedCount++
 	}
-	logger.Infof("removed %d parts, merged %d parts", removedCount, len(merged))
 	return result
 }
 

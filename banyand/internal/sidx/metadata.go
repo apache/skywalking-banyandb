@@ -402,18 +402,6 @@ func (bm *blockMetadata) TagsBlocks() map[string]dataBlock {
 	return bm.tagsBlocks
 }
 
-// setSeriesID sets the seriesID of the block.
-func (bm *blockMetadata) setSeriesID(seriesID common.SeriesID) {
-	bm.seriesID = seriesID
-}
-
-// setKeyRange sets the key range of the block.
-func (bm *blockMetadata) setKeyRange(minKey, maxKey int64) {
-	bm.minKey = minKey
-	bm.maxKey = maxKey
-}
-
-// setDataBlock sets the data block reference.
 func (bm *blockMetadata) setDataBlock(offset, size uint64) {
 	bm.dataBlock = dataBlock{offset: offset, size: size}
 }

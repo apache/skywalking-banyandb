@@ -20,7 +20,9 @@ package streamvstrace
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"strings"
@@ -744,11 +746,15 @@ func (c *StreamClient) WriteStreamData(ctx context.Context, spans []*SpanData) e
 	}
 
 	// Wait for final response
-	_, err = stream.Recv()
-	if err != nil && err.Error() != "EOF" {
-		return fmt.Errorf("failed to receive final response: %w", err)
+	for i := 0; i < len(spans); i++ {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to receive final response: %w", err)
+		}
 	}
-
 	return nil
 }
 
@@ -774,9 +780,14 @@ func (c *TraceClient) WriteTraceData(ctx context.Context, spans []*SpanData) err
 	}
 
 	// Wait for final response
-	_, err = stream.Recv()
-	if err != nil && err.Error() != "EOF" {
-		return fmt.Errorf("failed to receive final response: %w", err)
+	for i := 0; i < len(spans); i++ {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to receive final response: %w", err)
+		}
 	}
 
 	return nil

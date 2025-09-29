@@ -277,6 +277,7 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 	for _, pw := range result.parts {
 		if pw != nil {
 			pw.acquire()
+			pw.snapshot = append(pw.snapshot, epoch)
 		}
 	}
 
@@ -291,10 +292,12 @@ func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *s
 	for i := 0; i < len(s.parts); i++ {
 		if n, ok := nextParts[s.parts[i].ID()]; ok {
 			result.parts = append(result.parts, n)
+			n.snapshot = append(n.snapshot, nextEpoch)
 			continue
 		}
 		if s.parts[i].acquire() {
 			result.parts = append(result.parts, s.parts[i])
+			s.parts[i].snapshot = append(s.parts[i].snapshot, nextEpoch)
 		}
 	}
 	return &result

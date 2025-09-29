@@ -21,7 +21,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -38,9 +37,6 @@ import (
 )
 
 func TestStreamVsTraceDocker(t *testing.T) {
-	if os.Getenv("DOCKER_TEST") != "true" {
-		t.Skip("Skipping Docker test. Set DOCKER_TEST=true to run.")
-	}
 	gomega.RegisterFailHandler(g.Fail)
 	g.RunSpecs(t, "Stream vs Trace Performance Docker Suite", g.Label("docker", "performance", "slow"))
 }
@@ -55,8 +51,8 @@ var _ = g.Describe("Stream vs Trace Performance Docker", func() {
 
 	g.It("should run performance comparison using Docker containers", func() {
 		// Define connection addresses for the two containers
-		streamAddr := "localhost:17912"  // Stream container gRPC port
-		traceAddr := "localhost:27912"   // Trace container gRPC port
+		streamAddr := "localhost:17912" // Stream container gRPC port
+		traceAddr := "localhost:27912"  // Trace container gRPC port
 
 		// Wait for both containers to be ready
 		g.By("Waiting for Stream container to be ready")
@@ -77,8 +73,8 @@ var _ = g.Describe("Stream vs Trace Performance Docker", func() {
 		defer traceConn.Close()
 
 		// Create Docker clients with exposed connections
-		streamClient := NewDockerStreamClient(streamConn)
-		traceClient := NewDockerTraceClient(traceConn)
+		streamClient := NewStreamClient(streamConn)
+		traceClient := NewTraceClient(traceConn)
 
 		// Create context for operations
 		ctx := context.Background()
@@ -128,8 +124,7 @@ var _ = g.Describe("Stream vs Trace Performance Docker", func() {
 	})
 })
 
-// loadSchemasToContainer loads the required schemas into both containers
-func loadSchemasToContainer(ctx context.Context, streamClient *DockerStreamClient, traceClient *DockerTraceClient) error {
+func loadSchemasToContainer(ctx context.Context, streamClient *StreamClient, traceClient *TraceClient) error {
 	// Create schema clients for both connections
 	streamSchemaClient := NewSchemaClient(streamClient.conn)
 	traceSchemaClient := NewSchemaClient(traceClient.conn)

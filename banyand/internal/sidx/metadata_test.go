@@ -587,10 +587,11 @@ func TestBlockMetadata_SetterMethods(t *testing.T) {
 	defer releaseBlockMetadata(bm)
 
 	// Test setter methods
-	bm.setSeriesID(common.SeriesID(456))
+	bm.seriesID = common.SeriesID(456)
 	assert.Equal(t, common.SeriesID(456), bm.seriesID)
 
-	bm.setKeyRange(20, 200)
+	bm.minKey = 20
+	bm.maxKey = 200
 	assert.Equal(t, int64(20), bm.minKey)
 	assert.Equal(t, int64(200), bm.maxKey)
 
