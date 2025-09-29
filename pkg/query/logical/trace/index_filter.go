@@ -383,11 +383,13 @@ func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, schema logi
 		return buildFilter(le.Left, schema, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)
 	}
 
-	left, leftEntities, leftTagNames, leftTraceIDs, leftMin, leftMax, err := buildFilter(le.Left, schema, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)
+	left, leftEntities, leftTagNames, leftTraceIDs, leftMin, leftMax, err := buildFilter(le.Left, schema, tagNames, entityDict, entity,
+		traceIDTagName, spanIDTagName, orderByTag)
 	if err != nil {
 		return nil, nil, leftTagNames, leftTraceIDs, minVal, maxVal, err
 	}
-	right, rightEntities, rightTagNames, rightTraceIDs, rightMin, rightMax, err := buildFilter(le.Right, schema, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)
+	right, rightEntities, rightTagNames, rightTraceIDs, rightMin, rightMax, err := buildFilter(le.Right, schema, tagNames, entityDict, entity,
+		traceIDTagName, spanIDTagName, orderByTag)
 	if err != nil {
 		return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), minVal, maxVal, err
 	}

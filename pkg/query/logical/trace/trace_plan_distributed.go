@@ -182,9 +182,9 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 			seen[trace.TraceId] = trace
 			result = append(result, trace)
 		} else {
-			for _, spanId := range trace.SpanIds {
-				if !slices.Contains(seen[trace.TraceId].SpanIds, spanId) {
-					seen[trace.TraceId].SpanIds = append(seen[trace.TraceId].SpanIds, spanId)
+			for _, spanID := range trace.SpanIds {
+				if !slices.Contains(seen[trace.TraceId].SpanIds, spanID) {
+					seen[trace.TraceId].SpanIds = append(seen[trace.TraceId].SpanIds, spanID)
 					seen[trace.TraceId].Spans = append(seen[trace.TraceId].Spans, trace.Spans...)
 				}
 			}
