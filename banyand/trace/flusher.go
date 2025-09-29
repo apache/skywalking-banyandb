@@ -269,9 +269,11 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	}
 	allSidx := tst.getAllSidx()
 	for name, sidxInstance := range allSidx {
-		tst.l.Debug().
-			Str("sidx_name", name).
-			Msg("flushing sidx")
+		if l := tst.l.Debug(); l.Enabled() {
+			tst.l.Debug().
+				Str("sidx_name", name).
+				Msg("flushing sidx")
+		}
 		if err := sidxInstance.Flush(); err != nil {
 			tst.l.Warn().Err(err).Str("sidx", name).Msg("sidx flush failed")
 			return

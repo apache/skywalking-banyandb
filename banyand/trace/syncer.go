@@ -189,11 +189,13 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	if err != nil {
 		return err
 	}
-	for name, sidxParts := range sidxPartsToSync {
-		tst.l.Debug().
-			Str("sidx_name", name).
-			Int("sidx_parts_count", len(sidxParts)).
-			Msg("sidxPartsToSync in syncSnapshot")
+	if l := tst.l.Debug(); l.Enabled() {
+		for name, sidxParts := range sidxPartsToSync {
+			tst.l.Debug().
+				Str("sidx_name", name).
+				Int("sidx_parts_count", len(sidxParts)).
+				Msg("sidxPartsToSync in syncSnapshot")
+		}
 	}
 
 	// Validate sync preconditions
@@ -226,37 +228,39 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[stri
 			return nil, nil, errClosed
 		}
 		sidxPartsToSync[name] = sidx.PartsToSync()
-		tst.l.Debug().
-			Str("sidx_name", name).
-			Int("sidx_parts_count", len(sidxPartsToSync[name])).
-			Msg("get sidx parts to sync")
+		if l := tst.l.Debug(); l.Enabled() {
+			tst.l.Debug().
+				Str("sidx_name", name).
+				Int("sidx_parts_count", len(sidxPartsToSync[name])).
+				Msg("get sidx parts to sync")
+		}
 	}
 
-	tst.l.Debug().
-		Int("core_parts_count", len(partsToSync)).
-		Uint64("snapshot_epoch", curSnapshot.epoch).
-		Msg("collected core parts for sync")
-
-	if len(partsToSync) > 0 {
-		var corePartIDs []uint64
-		for _, part := range partsToSync {
-			corePartIDs = append(corePartIDs, part.partMetadata.ID)
-		}
+	if l := tst.l.Debug(); l.Enabled() {
 		tst.l.Debug().
-			Interface("core_part_ids", corePartIDs).
-			Msg("core parts to sync details")
-	}
-
-	for sidxName, sidxParts := range sidxPartsToSync {
-		var sidxPartIDs []uint64
-		for _, part := range sidxParts {
-			sidxPartIDs = append(sidxPartIDs, part.ID())
+			Int("core_parts_count", len(partsToSync)).
+			Uint64("snapshot_epoch", curSnapshot.epoch).
+			Msg("collected core parts for sync")
+		if len(partsToSync) > 0 {
+			var corePartIDs []uint64
+			for _, part := range partsToSync {
+				corePartIDs = append(corePartIDs, part.partMetadata.ID)
+			}
+			tst.l.Debug().
+				Interface("core_part_ids", corePartIDs).
+				Msg("core parts to sync details")
 		}
-		tst.l.Debug().
-			Str("sidx_name", sidxName).
-			Int("sidx_parts_count", len(sidxParts)).
-			Interface("sidx_part_ids", sidxPartIDs).
-			Msg("collected sidx parts for sync")
+		for sidxName, sidxParts := range sidxPartsToSync {
+			var sidxPartIDs []uint64
+			for _, part := range sidxParts {
+				sidxPartIDs = append(sidxPartIDs, part.ID())
+			}
+			tst.l.Debug().
+				Str("sidx_name", sidxName).
+				Int("sidx_parts_count", len(sidxParts)).
+				Interface("sidx_part_ids", sidxPartIDs).
+				Msg("collected sidx parts for sync")
+		}
 	}
 
 	return partsToSync, sidxPartsToSync, nil
@@ -295,13 +299,6 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync ma
 	}()
 
 	nodes := tst.getNodes()
-
-	for name, sidxParts := range sidxPartsToSync {
-		tst.l.Debug().
-			Str("sidx_name", name).
-			Int("sidx_parts_count", len(sidxParts)).
-			Msg("sidxPartsToSync in executeSyncOperation")
-	}
 	return tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs)
 }
 
@@ -465,7 +462,6 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 	if !result.Success {
 		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
 	}
-
 	tst.l.Info().
 		Str("node", node).
 		Str("session", result.SessionID).
@@ -474,6 +470,5 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 		Uint32("chunks", result.ChunksCount).
 		Uint32("parts", result.PartsCount).
 		Msg("chunked sync completed successfully")
-
 	return nil
 }
