@@ -83,6 +83,8 @@ func (s *syncPartContext) Close() error {
 		s.sidxPartContext = nil
 	}
 	s.tsTable = nil
+	s.traceIDFilterBuffer = nil
+	s.tagTypeBuffer = nil
 	return nil
 }
 

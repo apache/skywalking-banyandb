@@ -256,6 +256,8 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
+		"--logging-modules", "trace,sidx",
+		"--logging-levels", "debug,debug",
 	)
 
 	closeFn := CMD(flags...)
@@ -344,6 +346,8 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 		"--stream-sync-interval=1s",
 		"--measure-sync-interval=1s",
 		"--trace-sync-interval=1s",
+		"--logging-modules", "trace,sidx",
+		"--logging-levels", "debug,debug",
 	)
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
