@@ -56,7 +56,6 @@ func (s partWrapperState) String() string {
 type partWrapper struct {
 	p         *part
 	mp        *memPart
-	snapshot  []uint64
 	ref       int32
 	state     int32
 	removable atomic.Bool
