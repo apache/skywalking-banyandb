@@ -20,7 +20,6 @@ package cmd_test
 import (
 	"fmt"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -39,11 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	cases_trace_data "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
-
-func TestStable(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Stable Suite", Label("integration", "slow"))
-}
 
 var _ = Describe("Trace Schema Operation", func() {
 	var addr string
