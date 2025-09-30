@@ -137,8 +137,22 @@ func newTraceCmd() *cobra.Command {
 		},
 	}
 
-	bindFileFlag(createCmd, updateCmd)
-	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
-	traceCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd)
+	queryCmd := &cobra.Command{
+		Use:     "query [-s start_time] [-e end_time] -f [file|dir|-]",
+		Version: version.Build(),
+		Short:   "Query data in a trace",
+		Long:    timeRangeUsage,
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
+				func(request request) (*resty.Response, error) {
+					return request.req.SetBody(request.data).Post(getPath("/api/v1/trace/data"))
+				}, yamlPrinter, enableTLS, insecure, cert)
+		},
+	}
+
+	bindFileFlag(createCmd, updateCmd, queryCmd)
+	bindTimeRangeFlag(queryCmd)
+	bindTLSRelatedFlag(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
+	traceCmd.AddCommand(getCmd, createCmd, deleteCmd, updateCmd, listCmd, queryCmd)
 	return traceCmd
 }
