@@ -114,6 +114,42 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 	return dst, nil
 }
 
+// DecodeWithTail decodes a block of strings from src and returns the remaining tail.
+func (bbd *BytesBlockDecoder) DecodeWithTail(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, []byte, error) {
+	u64List := GenerateUint64List(0)
+	defer ReleaseUint64List(u64List)
+
+	var tail []byte
+	var err error
+	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
+	if err != nil {
+		return dst, nil, fmt.Errorf("cannot decode string lengths: %w", err)
+	}
+	aLens := u64List.L
+	src = tail
+
+	dataLen := len(bbd.data)
+	bbd.data, tail, err = decompressBlock(bbd.data, src)
+	if err != nil {
+		return dst, tail, fmt.Errorf("cannot decode bytes block with strings: %w", err)
+	}
+
+	data := bbd.data[dataLen:]
+	for _, sLen := range aLens {
+		if uint64(len(data)) < sLen {
+			return dst, tail, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
+		}
+		if sLen == 0 {
+			dst = append(dst, nil)
+			continue
+		}
+		dst = append(dst, data[:sLen])
+		data = data[sLen:]
+	}
+
+	return dst, tail, nil
+}
+
 // EncodeUint64Block encodes a block of uint64 values into dst.
 func EncodeUint64Block(dst []byte, a []uint64) []byte {
 	bb := bbPool.Generate()

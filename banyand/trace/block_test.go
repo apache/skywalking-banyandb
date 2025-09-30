@@ -222,11 +222,13 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 	tests := []struct {
 		name      string
 		spans     [][]byte
+		spanIDs   []string
 		wantPanic bool
 	}{
 		{
-			name:  "Test mustWriteAndReadSpans",
-			spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+			name:    "Test mustWriteAndReadSpans",
+			spans:   [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+			spanIDs: []string{"id1", "id2", "id3"},
 		},
 	}
 	decoder := &encoding.BytesBlockDecoder{}
@@ -242,10 +244,13 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteSpansTo(sm, tt.spans, w)
-			spans := mustReadSpansFrom(decoder, nil, sm, len(tt.spans), b)
+			mustWriteSpansTo(sm, tt.spans, tt.spanIDs, w)
+			spans, spanIDs := mustReadSpansFrom(decoder, nil, nil, sm, len(tt.spans), b)
 			if !reflect.DeepEqual(spans, tt.spans) {
 				t.Errorf("mustReadSpansFrom() spans = %v, want %v", spans, tt.spans)
+			}
+			if !reflect.DeepEqual(spanIDs, tt.spanIDs) {
+				t.Errorf("mustReadSpansFrom() spanIDs = %v, want %v", spanIDs, tt.spanIDs)
 			}
 		})
 	}

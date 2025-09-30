@@ -231,7 +231,7 @@ func (b *block) spanSize() uint64 {
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
-	b.spans = mustReadSpansFrom(decoder, b.spans, bm.spans, int(bm.count), p.spans)
+	b.spans, b.spanIDs = mustReadSpansFrom(decoder, b.spans, b.spanIDs, bm.spans, int(bm.count), p.spans)
 
 	b.resizeTags(len(bm.tagProjection.Names))
 	for i, name := range bm.tagProjection.Names {
@@ -252,7 +252,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
 
-	b.spans = mustSeqReadSpansFrom(decoder, b.spans, bm.spans, int(bm.count), &seqReaders.spans)
+	b.spans, b.spanIDs = mustSeqReadSpansFrom(decoder, b.spans, b.spanIDs, bm.spans, int(bm.count), &seqReaders.spans)
 
 	b.resizeTags(len(bm.tags))
 	keys := make([]string, 0, len(bm.tags))
@@ -283,26 +283,47 @@ func mustWriteSpansTo(sm *dataBlock, spans [][]byte, spanIDs []string, spanWrite
 	defer bigValuePool.Release(bb)
 
 	sm.offset = spanWriter.bytesWritten
+	spanIDBytes := generateSpanIDBytes(len(spanIDs))
+	defer releaseSpanIDBytes(spanIDBytes)
+	for i, id := range spanIDs {
+		(*spanIDBytes)[i] = []byte(id)
+	}
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, *spanIDBytes)
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, spans)
 	sm.size = uint64(len(bb.Buf))
 
 	spanWriter.MustWrite(bb.Buf)
 }
 
-func mustReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, sm *dataBlock, count int, reader fs.Reader) [][]byte {
+func mustReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, spanIDs []string, sm *dataBlock, count int, reader fs.Reader) ([][]byte, []string) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(sm.size))
 	fs.MustReadData(reader, int64(sm.offset), bb.Buf)
+
+	spanIDBytes := generateSpanIDBytes(count)
+	defer releaseSpanIDBytes(spanIDBytes)
+	var err error
+	var tail []byte
+	*spanIDBytes, tail, err = decoder.DecodeWithTail((*spanIDBytes)[:0], bb.Buf, uint64(count))
+	if err != nil {
+		logger.Panicf("cannot decode spanIDs: %v", err)
+	}
+	spanIDs = resizeSpanIDs(spanIDs, count)
+	for i, idBytes := range *spanIDBytes {
+		spanIDs[i] = string(idBytes)
+	}
+
 	spans = resizeSpans(spans, count)
-	spans, err := decoder.Decode(spans[:0], bb.Buf, uint64(count))
+	spans, err = decoder.Decode(spans[:0], tail, uint64(count))
 	if err != nil {
 		logger.Panicf("cannot decode spans: %v", err)
 	}
+
 	return spans, spanIDs
 }
 
-func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, sm *dataBlock, count int, reader *seqReader) [][]byte {
+func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, spanIDs []string, sm *dataBlock, count int, reader *seqReader) ([][]byte, []string) {
 	if sm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", sm.offset, reader.bytesRead)
 	}
@@ -310,10 +331,25 @@ func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, s
 	defer bigValuePool.Release(bb)
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(sm.size))
 	reader.mustReadFull(bb.Buf)
-	spans, err := decoder.Decode(spans[:0], bb.Buf, uint64(count))
+
+	spanIDBytes := generateSpanIDBytes(count)
+	defer releaseSpanIDBytes(spanIDBytes)
+	var err error
+	var tail []byte
+	*spanIDBytes, tail, err = decoder.DecodeWithTail((*spanIDBytes)[:0], bb.Buf, uint64(count))
+	if err != nil {
+		logger.Panicf("cannot decode spanIDs: %v", err)
+	}
+	spanIDs = resizeSpanIDs(spanIDs, count)
+	for i, bytes := range *spanIDBytes {
+		spanIDs[i] = string(bytes)
+	}
+
+	spans, err = decoder.Decode(spans[:0], tail, uint64(count))
 	if err != nil {
 		logger.Panicf("cannot decode spans: %v", err)
 	}
+
 	return spans, spanIDs
 }
 
@@ -334,6 +370,33 @@ func resizeSpanIDs(spanIDs []string, spanIDsLen int) []string {
 	spanIDs = spanIDs[:spanIDsLen]
 	return spanIDs
 }
+
+func generateSpanIDBytes(length int) *[][]byte {
+	v := spanIDBytesPool.Get()
+	if v == nil {
+		s := make([][]byte, length)
+		return &s
+	}
+	*v = (*v)[:0]
+	if n := length - cap(*v); n > 0 {
+		*v = append((*v)[:cap(*v)], make([][]byte, n)...)
+	}
+	*v = (*v)[:length]
+	return v
+}
+
+func releaseSpanIDBytes(s *[][]byte) {
+	if s == nil {
+		return
+	}
+	for i := range *s {
+		(*s)[i] = nil
+	}
+	*s = (*s)[:0]
+	spanIDBytesPool.Put(s)
+}
+
+var spanIDBytesPool = pool.Register[*[][]byte]("trace-spanIDBytes")
 
 func generateBlock() *block {
 	v := blockPool.Get()
@@ -605,27 +668,3 @@ func releaseBlockPointer(bi *blockPointer) {
 }
 
 var blockPointerPool = pool.Register[*blockPointer]("trace-blockPointer")
-
-func decodeSpanAndSpanID(src []byte) ([]byte, string, []byte) {
-	if len(src) == 0 {
-		return nil, "", nil
-	}
-
-	var spanIDLen uint64
-	remaining, spanIDLen := encoding.BytesToVarUint64(src)
-	if uint64(len(remaining)) < spanIDLen {
-		logger.Panicf("insufficient data for span_id: need %d bytes, have %d", spanIDLen, len(remaining))
-	}
-	spanID := string(remaining[:spanIDLen])
-	remaining = remaining[spanIDLen:]
-
-	var spanLen uint64
-	remaining, spanLen = encoding.BytesToVarUint64(remaining)
-	if uint64(len(remaining)) < spanLen {
-		logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(remaining))
-	}
-	span := make([]byte, spanLen)
-	copy(span, remaining[:spanLen])
-
-	return span, spanID, remaining[spanLen:]
-}
