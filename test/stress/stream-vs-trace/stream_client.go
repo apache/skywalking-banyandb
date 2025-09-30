@@ -70,7 +70,7 @@ func (c *StreamClient) VerifySchema(ctx context.Context, group, name string) (bo
 	return true, nil
 }
 
-func (c *StreamClient) Write(ctx context.Context, _ *streamv1.WriteRequest) (streamv1.StreamService_WriteClient, error) {
+func (c *StreamClient) Write(ctx context.Context) (streamv1.StreamService_WriteClient, error) {
 	return c.serviceClient.Write(ctx)
 }
 
