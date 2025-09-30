@@ -460,6 +460,7 @@ func (s *sidx) Flush() error {
 				Msg("flushing sidx part")
 		}
 		newPW := newPartWrapper(nil, mustOpenPart(partPath, s.fileSystem))
+		newPW.p.partMetadata.ID = pw.ID()
 		flushIntro.flushed[newPW.ID()] = newPW
 	}
 

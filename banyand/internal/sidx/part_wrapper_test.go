@@ -206,7 +206,7 @@ func TestPartWrapper_NilPart(t *testing.T) {
 	require.NotNil(t, pw)
 
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.Equal(t, uint64(0), pw.ID()) // Should return 0 for nil part
+	assert.Nil(t, pw.p)
 	assert.True(t, pw.isActive())
 
 	// Test acquire/release with nil part

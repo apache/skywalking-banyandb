@@ -1,0 +1,18 @@
+[
+  {
+    "metadata": {
+      "name": "segment_trace_binding",
+      "group": "trace_performance_test"
+    },
+    "rules": [
+      "time_based_index",
+      "latency_based_index"
+    ],
+    "subject": {
+      "name": "segment_trace",
+      "catalog": "CATALOG_TRACE"
+    },
+    "begin_at": "2024-01-01T00:00:00Z",
+    "expire_at": "2030-01-01T00:00:00Z"
+  }
+]
