@@ -69,7 +69,55 @@ func (s *sidx) Merge(closeCh <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	mergeIntro.newPart = newPart.p
+	mergeIntro.newPart = newPart
+
+	// Send to introducer loop
+	s.mergeCh <- mergeIntro
+
+	// Wait for merge to complete
+	<-mergeIntro.applied
+
+	return nil
+}
+
+func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
+	snap := s.currentSnapshot()
+	if snap == nil {
+		return nil
+	}
+	defer snap.decRef()
+
+	// Create merge introduction
+	mergeIntro := generateMergerIntroduction()
+	defer releaseMergerIntroduction(mergeIntro)
+	mergeIntro.applied = make(chan struct{})
+
+	// Select parts to merge (all active non-memory parts)
+	var partsToMerge []*partWrapper
+	for _, pw := range snap.parts {
+		if pw.isActive() && pw.isMemPart() {
+			partsToMerge = append(partsToMerge, pw)
+		}
+	}
+
+	if len(partsToMerge) < 2 {
+		return nil
+	}
+
+	// Mark parts for merging
+	for _, pw := range partsToMerge {
+		mergeIntro.merged[pw.ID()] = struct{}{}
+	}
+
+	// Generate new part ID using atomic increment
+	newPartID := atomic.AddUint64(&s.curPartID, 1)
+
+	// Create new merged part
+	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
+	if err != nil {
+		return err
+	}
+	mergeIntro.newPart = newPart
 
 	// Send to introducer loop
 	s.mergeCh <- mergeIntro
@@ -119,7 +167,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
-	var tmpBlock, tmpBlock2 *blockPointer
+	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
@@ -172,7 +220,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()

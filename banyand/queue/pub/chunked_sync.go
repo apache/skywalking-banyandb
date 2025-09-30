@@ -255,6 +255,9 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 						BlocksCount:           originalPart.BlocksCount,
 						MinTimestamp:          originalPart.MinTimestamp,
 						MaxTimestamp:          originalPart.MaxTimestamp,
+						MinKey:                originalPart.MinKey,
+						MaxKey:                originalPart.MaxKey,
+						PartType:              originalPart.PartType,
 					}
 					currentPartIdx = filePartIdx
 				}

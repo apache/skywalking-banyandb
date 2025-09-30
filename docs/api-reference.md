@@ -334,6 +334,7 @@
   
     - [StreamService](#banyandb-stream-v1-StreamService)
   
+
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
     - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-trace-v1-WriteRequest)
@@ -435,12 +436,17 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
-| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
-| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
-| stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
-| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
-| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+| id | [uint64](#uint64) |  | Unique identifier for this part. |
+| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
+| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
+| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
+| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
+| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
+| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
+| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
+| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
+| part_type | [string](#string) |  | Part type. |
 
 
 
@@ -4966,6 +4972,128 @@ WriteResponse is the response contract for write
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-stream-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse) |  |
 
  
+
+
+
+
+<a name="banyandb_trace_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/trace/v1/query.proto
+
+
+
+<a name="banyandb-trace-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+InternalQueryResponse is the response of an internal query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| internal_traces | [InternalTrace](#banyandb-trace-v1-InternalTrace) | repeated | internal_traces is a list of internal traces that match the query. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-InternalTrace"></a>
+
+### InternalTrace
+InternalTrace is the trace that is used for internal use.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
+| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
+| key | [int64](#int64) |  | key is used for sorting. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicates the physical data location. |
+| name | [string](#string) |  | name is the identity of a trace. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of trace, it represents the range of the `startTime` for spans/segments, it is always recommended to specify time range for performance reason |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of spans being returned |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only tags in the type of Integer are supported |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is the filter criteria. |
+| tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response of a query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Span"></a>
+
+### Span
+Span is a single operation within a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
+| span | [bytes](#bytes) |  | span is the raw span data. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Trace"></a>
+
+### Trace
+Trace contains all spans that belong to a single trace ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
 
 
 

@@ -112,6 +112,7 @@ type memPart struct {
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
 	partMetadata      partMetadata
+	segmentID         int64
 }
 
 func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Writer, fs.Writer) {
@@ -140,6 +141,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
+	mp.segmentID = 0
 	if mp.tagFamilies != nil {
 		for k, tf := range mp.tagFamilies {
 			tf.Reset()

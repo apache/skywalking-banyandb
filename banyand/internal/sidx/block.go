@@ -25,7 +25,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -113,13 +112,12 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	td.values = make([][]byte, len(b.userKeys))
 
 	var valueType pbv1.ValueType
-
 	// Collect values for this tag across all elements
 	for i, tags := range elementTags {
 		found := false
 		for _, tag := range tags {
 			if tag.name == tagName {
-				td.values[i] = tag.value
+				td.values[i] = tag.marshal()
 				valueType = tag.valueType
 				found = true
 				break
@@ -134,9 +132,20 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 
 	// Create bloom filter for indexed tags
 	td.filter = generateBloomFilter(len(b.userKeys))
-	for _, value := range td.values {
-		if value != nil {
-			td.filter.Add(value)
+	for _, tags := range elementTags {
+		for _, tag := range tags {
+			if tag.name == tagName {
+				if tag.valueArr != nil {
+					for _, v := range tag.valueArr {
+						if v != nil {
+							td.filter.Add(v)
+						}
+					}
+				} else if tag.value != nil {
+					td.filter.Add(tag.value)
+				}
+				break
+			}
 		}
 	}
 
@@ -236,6 +245,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 
 	// Write user keys to keys.bin and capture encoding information
 	bm.keysEncodeType, bm.minKey = mustWriteKeysTo(&bm.keysBlock, b.userKeys, &ww.keysWriter)
+	bm.maxKey = b.userKeys[len(b.userKeys)-1]
 
 	// Write data payloads to data.bin
 	mustWriteDataTo(&bm.dataBlock, b.data, &ww.dataWriter)
@@ -248,7 +258,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 
 // mustWriteTag writes a single tag's data to its tag files.
 func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww *writers) {
-	tmw, tdw, tfw := ww.getWriters(tagName)
+	tmw, tdw, tfw := ww.GetTagWriters(tagName)
 
 	// Create tag metadata
 	tm := generateTagMetadata()
@@ -341,11 +351,9 @@ func mustWriteDataTo(db *dataBlock, data [][]byte, dataWriter *writer) {
 	// Encode all data payloads as a block
 	bb.Buf = encoding.EncodeBytesBlock(bb.Buf[:0], data)
 
-	// Compress and write
-	compressedData := zstd.Compress(nil, bb.Buf, 1)
 	db.offset = dataWriter.bytesWritten
-	db.size = uint64(len(compressedData))
-	dataWriter.MustWrite(compressedData)
+	db.size = uint64(len(bb.Buf))
+	dataWriter.MustWrite(bb.Buf)
 }
 
 type blockPointer struct {
@@ -509,6 +517,9 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqRead
 }
 
 func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
+	if bm.keysBlock.offset != sr.keys.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", bm.keysBlock.offset, sr.keys.bytesRead)
+	}
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -517,7 +528,7 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 		bb.Buf = bb.Buf[:0]
 		bigValuePool.Put(bb)
 	}()
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.keysBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(bm.keysBlock.size))
 	sr.keys.mustReadFull(bb.Buf)
 	var err error
 	b.userKeys, err = encoding.BytesToInt64List(b.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
@@ -528,6 +539,9 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 }
 
 func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
+	if bm.dataBlock.offset != sr.data.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", bm.dataBlock.offset, sr.data.bytesRead)
+	}
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -536,13 +550,11 @@ func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm
 		bb.Buf = bb.Buf[:0]
 		bigValuePool.Put(bb)
 	}()
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.dataBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(bm.dataBlock.size))
 	sr.data.mustReadFull(bb.Buf)
-	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb.Buf)
-	if err != nil {
-		return fmt.Errorf("cannot decompress data: %w", err)
-	}
-	b.data, err = decoder.Decode(b.data[:0], dataBuf, bm.count)
+
+	var err error
+	b.data, err = decoder.Decode(b.data[:0], bb.Buf, bm.count)
 	if err != nil {
 		return fmt.Errorf("cannot decode data payloads: %w", err)
 	}
@@ -562,6 +574,9 @@ func (b *block) readTagData(decoder *encoding.BytesBlockDecoder, sr *seqReaders,
 }
 
 func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReaders, tagName string, tagBlock *dataBlock, count int) error {
+	if tagBlock.offset != sr.tagMetadata[tagName].bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", tagBlock.offset, sr.tagMetadata[tagName].bytesRead)
+	}
 	tmReader, tmExists := sr.tagMetadata[tagName]
 	if !tmExists {
 		return fmt.Errorf("tag metadata reader not found for tag %s", tagName)
@@ -580,7 +595,7 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 		bigValuePool.Put(bb)
 	}()
 
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tagBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(tagBlock.size))
 	tmReader.mustReadFull(bb.Buf)
 	tm, err := unmarshalTagMetadata(bb.Buf)
 	if err != nil {
@@ -588,7 +603,7 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 	}
 	defer releaseTagMetadata(tm)
 
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tm.dataBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(tm.dataBlock.size))
 	tdReader.mustReadFull(bb.Buf)
 	td := generateTagData()
 	td.name = tagName

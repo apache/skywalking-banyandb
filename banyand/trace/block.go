@@ -223,7 +223,7 @@ func (b *block) spanSize() uint64 {
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
 
-	b.spans = mustReadSpansFrom(b.spans, bm.spans, int(bm.count), p.spans)
+	b.spans = mustReadSpansFrom(decoder, b.spans, bm.spans, int(bm.count), p.spans)
 
 	b.resizeTags(len(bm.tagProjection.Names))
 	for i, name := range bm.tagProjection.Names {
@@ -244,7 +244,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
 
-	b.spans = mustSeqReadSpansFrom(b.spans, bm.spans, int(bm.count), &seqReaders.spans)
+	b.spans = mustSeqReadSpansFrom(decoder, b.spans, bm.spans, int(bm.count), &seqReaders.spans)
 
 	b.resizeTags(len(bm.tags))
 	keys := make([]string, 0, len(bm.tags))
@@ -275,36 +275,26 @@ func mustWriteSpansTo(sm *dataBlock, spans [][]byte, spanWriter *writer) {
 	defer bigValuePool.Release(bb)
 
 	sm.offset = spanWriter.bytesWritten
-	for _, span := range spans {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(span)))
-		bb.Buf = append(bb.Buf, span...)
-	}
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, spans)
 	sm.size = uint64(len(bb.Buf))
 
 	spanWriter.MustWrite(bb.Buf)
 }
 
-func mustReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader fs.Reader) [][]byte {
+func mustReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, sm *dataBlock, count int, reader fs.Reader) [][]byte {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(sm.size))
 	fs.MustReadData(reader, int64(sm.offset), bb.Buf)
-
-	src := bb.Buf
 	spans = resizeSpans(spans, count)
-	var spanLen uint64
-	for i := 0; i < count; i++ {
-		src, spanLen = encoding.BytesToVarUint64(src)
-		if uint64(len(src)) < spanLen {
-			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
-		}
-		spans[i] = append(spans[i], src[:spanLen]...)
-		src = src[spanLen:]
+	spans, err := decoder.Decode(spans[:0], bb.Buf, uint64(count))
+	if err != nil {
+		logger.Panicf("cannot decode spans: %v", err)
 	}
 	return spans
 }
 
-func mustSeqReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader *seqReader) [][]byte {
+func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, sm *dataBlock, count int, reader *seqReader) [][]byte {
 	if sm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", sm.offset, reader.bytesRead)
 	}
@@ -312,17 +302,9 @@ func mustSeqReadSpansFrom(spans [][]byte, sm *dataBlock, count int, reader *seqR
 	defer bigValuePool.Release(bb)
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(sm.size))
 	reader.mustReadFull(bb.Buf)
-
-	src := bb.Buf
-	spans = resizeSpans(spans, count)
-	var spanLen uint64
-	for i := 0; i < count; i++ {
-		src, spanLen = encoding.BytesToVarUint64(src)
-		if uint64(len(src)) < spanLen {
-			logger.Panicf("insufficient data for span: need %d bytes, have %d", spanLen, len(src))
-		}
-		spans[i] = append(spans[i], src[:spanLen]...)
-		src = src[spanLen:]
+	spans, err := decoder.Decode(spans[:0], bb.Buf, uint64(count))
+	if err != nil {
+		logger.Panicf("cannot decode spans: %v", err)
 	}
 	return spans
 }
@@ -578,10 +560,6 @@ func assertIdxAndOffset(name string, length int, idx int, offset int) {
 	if offset > length {
 		logger.Panicf("%q offset %d must be less than or equal to length %d", name, offset, length)
 	}
-}
-
-func (bi *blockPointer) isFull() bool {
-	return bi.bm.uncompressedSpanSizeBytes >= maxUncompressedSpanSize
 }
 
 func (bi *blockPointer) reset() {

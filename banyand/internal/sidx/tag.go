@@ -18,7 +18,6 @@
 package sidx
 
 import (
-	"bytes"
 	"fmt"
 
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -215,31 +214,6 @@ func (td *tagData) updateMinMax() {
 		td.min = pkgencoding.Int64ToBytes(nil, minVal)
 		td.max = pkgencoding.Int64ToBytes(nil, maxVal)
 	}
-}
-
-// addValue adds a value to the tag data.
-func (td *tagData) addValue(value []byte) {
-	td.values = append(td.values, value)
-
-	// Update filter for indexed tags
-	if td.filter != nil {
-		td.filter.Add(value)
-	}
-}
-
-// hasValue checks if a value exists in the tag using the bloom filter.
-func (td *tagData) hasValue(value []byte) bool {
-	if td.filter == nil {
-		// For non-indexed tags, do linear search
-		for _, v := range td.values {
-			if bytes.Equal(v, value) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return td.filter.MightContain(value)
 }
 
 // marshal serializes tag metadata to bytes using encoding package.

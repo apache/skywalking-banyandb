@@ -413,7 +413,7 @@ func TestSnapshotReplacement_Basic(t *testing.T) {
 			Tags:     []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
 		}
 
-		if err := sidx.Write(ctx, []WriteRequest{req}); err != nil {
+		if err := sidx.Write(ctx, []WriteRequest{req}, 1); err != nil {
 			t.Errorf("write %d failed: %v", i, err)
 		}
 
@@ -504,7 +504,7 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 			},
 		}
 
-		if err := sidx.Write(ctx, reqs); err != nil {
+		if err := sidx.Write(ctx, reqs, 1); err != nil {
 			t.Errorf("write %d failed: %v", i, err)
 		}
 
@@ -593,7 +593,7 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 							},
 						},
 					}
-					sidx.Write(ctx, reqs)
+					sidx.Write(ctx, reqs, 1)
 				case 1:
 					// Stats operation - accesses current snapshot
 					sidx.Stats(ctx)
@@ -653,7 +653,7 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 				},
 			}
 
-			if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
+			if writeErr := sidx.Write(ctx, reqs, 1); writeErr != nil {
 				t.Errorf("batch %d write %d failed: %v", i, j, writeErr)
 			}
 		}
@@ -714,7 +714,7 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 					},
 				}
 
-				if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
+				if writeErr := sidx.Write(ctx, reqs, 1); writeErr != nil {
 					t.Errorf("concurrent writer %d write %d failed: %v", writerID, j, writeErr)
 				}
 

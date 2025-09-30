@@ -214,7 +214,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType, int(mr.traceIDLen))
+	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
@@ -267,7 +267,7 @@ type partMergeIter struct {
 func (pmi *partMergeIter) reset() {
 	pmi.err = nil
 	pmi.seqReaders.reset()
-	clear(pmi.tagType)
+	pmi.tagType = nil
 	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
@@ -326,8 +326,7 @@ func (pmi *partMergeIter) loadPrimaryBuf() error {
 func (pmi *partMergeIter) loadBlockMetadata() error {
 	pmi.block.reset()
 	var err error
-	traceIDLen := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1].traceIDLen
-	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, pmi.tagType, int(traceIDLen))
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, pmi.tagType)
 	if err != nil {
 		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)

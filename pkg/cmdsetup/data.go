@@ -85,6 +85,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		propertySvc,
 		measureSvc,
 		streamSvc,
+		traceSvc,
 		q,
 		profSvc,
 	)

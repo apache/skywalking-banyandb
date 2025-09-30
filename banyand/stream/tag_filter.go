@@ -103,7 +103,8 @@ func (tff *tagFamilyFilter) reset() {
 
 func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader) {
 	bb := bigValuePool.Generate()
-	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	defer bigValuePool.Release(bb)
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -111,12 +112,11 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
-	bigValuePool.Release(bb)
 	for _, tm := range tfm.tagMetadata {
 		if tm.filterBlock.size == 0 {
 			continue
 		}
-		bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
+		bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
 		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
 		bf := generateBloomFilter()
 		bf = decodeBloomFilter(bb.Buf, bf)
@@ -201,6 +201,28 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 		}
 	}
 	return true, nil
+}
+
+// Having checks if any of the provided tag values might exist in the bloom filter.
+// It returns true if at least one value might be contained in any tag family filter.
+func (tfs *tagFamilyFilters) Having(tagName string, tagValues []string) bool {
+	for _, tff := range tfs.tagFamilyFilters {
+		if tf, ok := (*tff)[tagName]; ok {
+			if tf.filter != nil {
+				for _, tagValue := range tagValues {
+					if tf.filter.MightContain([]byte(tagValue)) {
+						return true // Return true as soon as we find a potential match
+					}
+				}
+				// None of the values might exist in this tag family filter
+				return false
+			}
+			// If no bloom filter, conservatively return true
+			return true
+		}
+	}
+	// If tag is not found in any tag family filter, return true (conservative)
+	return true
 }
 
 func generateTagFamilyFilters() *tagFamilyFilters {

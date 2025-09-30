@@ -25,11 +25,16 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -115,15 +120,15 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueu
 
 func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
 	var et *tracesInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eq.tables {
-		if eq.tables[i].timeRange.Contains(ts) {
+		if eq.tables[i].timeRange.Contains(ts) && eq.tables[i].shardID == shardID {
 			et = eq.tables[i]
 			break
 		}
 	}
 
 	if et == nil {
-		shardID := common.ShardID(writeEvent.ShardId)
 		shard, err := eq.queue.GetOrCreateShard(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create shard: %w", err)
@@ -133,10 +138,15 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEven
 		timeRange := eq.queue.GetTimeRange(time.Unix(0, ts))
 
 		et = &tracesInTable{
-			shardID:   shardID,
-			timeRange: timeRange,
-			tsTable:   tstb,
-			traces:    generateTraces(),
+			shardID:     shardID,
+			timeRange:   timeRange,
+			tsTable:     tstb,
+			traces:      generateTraces(),
+			sidxReqsMap: make(map[string][]sidx.WriteRequest),
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.traces.reset()
 		eq.tables = append(eq.tables, et)
@@ -144,7 +154,7 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEven
 	return et, nil
 }
 
-func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -181,8 +191,50 @@ func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp b
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
+			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano())
 			releaseTraces(es.traces)
+
+			for sidxName, sidxReqs := range es.sidxReqsMap {
+				if len(sidxReqs) > 0 {
+					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					if err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						continue
+					}
+					if err := sidxInstance.Write(ctx, sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+					}
+				}
+			}
+
+			nodes := g.queue.GetNodes(es.shardID)
+			if len(nodes) == 0 {
+				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
+				continue
+			}
+
+			// Handle series index writing
+			if len(es.seriesDocs.docs) > 0 {
+				seriesDocData, marshalErr := es.seriesDocs.docs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
+				} else {
+					// Encode group name, start timestamp from timeRange, and prepend to docData
+					combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
+					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
+					combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
+					combinedData = append(combinedData, seriesDocData...)
+
+					// Send to all nodes for this shard
+					for _, node := range nodes {
+						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
+						_, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
+						if publishErr != nil {
+							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						}
+					}
+				}
+			}
 		}
 	}
 	return

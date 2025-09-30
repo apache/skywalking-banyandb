@@ -133,7 +133,7 @@ linters-settings:
     - 'cobra\.Command$'
 
 run:
-  go: "1.24"
+  go: "1.25"
 issues:
   exclude-rules:
   - path: ".*\\.pb\\.go"
@@ -152,13 +152,4 @@ issues:
   - linters:
     - staticcheck
     text: "SA1019: package github.com/golang/protobuf"
-  # TODO: remove this after the trace is done
-  - path: "^trace/"
-    linters:
-    - unused
-    - unparam
-  # TODO: remove this after the sidx is done
-  - path: "internal/sidx/"
-    linters:
-    - unused
   max-same-issues: 0

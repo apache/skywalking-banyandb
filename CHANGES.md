@@ -47,7 +47,7 @@ Release Notes.
   - Add new retention configuration flags: `*-retention-low-watermark`, `*-retention-check-interval`, `*-retention-cooldown`
   - Implement disk monitor with forced retention cleanup for data/standalone servers
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
-
+- Implement cluster mode for trace.
 
 ### Bug Fixes
 
@@ -59,6 +59,7 @@ Release Notes.
 - Fix returning empty result when using IN operatior on the array type tags.
 - Fix memory leaks and OOM issues in streaming processing by implementing deduplication logic in priority queues and improving sliding window memory management.
 - Fix etcd prefix matching any key that starts with this prefix.
+- Fix the sorting timestamps issue of the measure model when there are more than one segment.
 
 ### Document
 

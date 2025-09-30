@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -74,6 +75,7 @@ func (p *part) close() {
 	for _, tm := range p.tagMetadata {
 		fs.MustClose(tm)
 	}
+	p.traceIDFilter.reset()
 }
 
 func (p *part) String() string {
@@ -111,6 +113,7 @@ type memPart struct {
 	meta          bytes.Buffer
 	primary       bytes.Buffer
 	partMetadata  partMetadata
+	segmentID     int64
 }
 
 func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer) {
@@ -141,6 +144,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.spans.Reset()
+	mp.segmentID = 0
 	if mp.tags != nil {
 		for k, t := range mp.tags {
 			t.Reset()
@@ -273,8 +277,7 @@ func (mp *memPart) Unmarshal(data []byte) error {
 		}
 		filterBytes := tail[:filterLen]
 		tail = tail[filterLen:]
-		bf := generateBloomFilter()
-		defer releaseBloomFilter(bf)
+		bf := filter.NewBloomFilter(0)
 		mp.traceIDFilter.filter = decodeBloomFilter(filterBytes, bf)
 	} else {
 		mp.traceIDFilter.filter = nil
@@ -443,11 +446,6 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 
 	bsw := generateBlockWriter()
 	bsw.MustInitForMemPart(mp)
-	for _, tid := range ts.traceIDs {
-		if len(tid) > int(bsw.traceIDLen) {
-			bsw.traceIDLen = uint32(len(tid))
-		}
-	}
 
 	var tidPrev string
 	uncompressedSpansSizeBytes := uint64(0)
@@ -487,10 +485,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
-	if mp.traceIDFilter.filter != nil {
-		releaseBloomFilter(mp.traceIDFilter.filter)
-		mp.traceIDFilter.filter = nil
-	}
+	mp.traceIDFilter.reset()
 
 	fileSystem.SyncPath(path)
 }

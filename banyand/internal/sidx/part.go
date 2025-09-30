@@ -36,25 +36,50 @@ import (
 )
 
 const (
-	// Standard file names for sidx parts.
-	primaryFilename  = "primary.bin"
-	dataFilename     = "data.bin"
-	keysFilename     = "keys.bin"
-	metaFilename     = "meta.bin"
+	// SidxPrimaryName is the name for primary files.
+	SidxPrimaryName = "primary"
+	// SidxDataName is the name for data files.
+	SidxDataName = "data"
+	// SidxKeysName is the name for keys files.
+	SidxKeysName = "keys"
+	// SidxMetaName is the name for meta files.
+	SidxMetaName = "meta"
+
+	// primaryFilename is the filename for primary files.
+	primaryFilename = SidxPrimaryName + ".bin"
+	// dataFilename is the filename for data files.
+	dataFilename = SidxDataName + ".bin"
+	// keysFilename is the filename for keys files.
+	keysFilename = SidxKeysName + ".bin"
+	// metaFilename is the filename for meta files.
+	metaFilename = SidxMetaName + ".bin"
+	// manifestFilename is the filename for manifest files.
 	manifestFilename = "manifest.json"
 
-	// Tag file extensions.
-	tagDataExtension     = ".td" // <name>.td files
-	tagMetadataExtension = ".tm" // <name>.tm files
-	tagFilterExtension   = ".tf" // <name>.tf files
+	// tagDataExtension is the extension for tag data files.
+	tagDataExtension = ".td"
+	// tagMetadataExtension is the extension for tag metadata files.
+	tagMetadataExtension = ".tm"
+	// tagFilterExtension is the extension for tag filter files.
+	tagFilterExtension = ".tf"
+
+	// TagDataPrefix is the prefix for tag data files.
+	TagDataPrefix = "td:"
+	// TagMetadataPrefix is the prefix for tag metadata files.
+	TagMetadataPrefix = "tm:"
+	// TagFilterPrefix is the prefix for tag filter files.
+	TagFilterPrefix = "tf:"
 )
+
+// Part is a type alias for part.
+type Part = part
 
 // part represents a collection of files containing sidx data.
 // Each part contains multiple files organized by type:
 // - primary.bin: Block metadata and structure information
 // - data.bin: User payload data (compressed)
 // - keys.bin: User-provided int64 keys (encoded but not compressed)
-// - meta.bin: Part metadata
+// - meta.bin: part metadata
 // - <name>.td: Tag data files (one per tag)
 // - <name>.tm: Tag metadata files (one per tag)
 // - <name>.tf: Tag filter files (bloom filters, one per tag).
@@ -70,6 +95,10 @@ type part struct {
 	partMetadata         *partMetadata
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
+}
+
+func (p *part) ID() uint64 {
+	return p.partMetadata.ID
 }
 
 // mustOpenPart opens a part from the specified path using the given file system.
@@ -268,7 +297,6 @@ func (p *part) readAll() ([]*elements, error) {
 	result := make([]*elements, 0, len(p.primaryBlockMetadata))
 	compressedPrimaryBuf := make([]byte, 0, 1024)
 	primaryBuf := make([]byte, 0, 1024)
-	compressedDataBuf := make([]byte, 0, 1024)
 	dataBuf := make([]byte, 0, 1024)
 	compressedKeysBuf := make([]byte, 0, 1024)
 
@@ -319,17 +347,8 @@ func (p *part) readAll() ([]*elements, error) {
 			}
 
 			// Read data payloads
-			compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
-			fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
-
-			dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
-			if err != nil {
-				releaseElements(elems)
-				for _, e := range result {
-					releaseElements(e)
-				}
-				return nil, fmt.Errorf("cannot decompress data block: %w", err)
-			}
+			dataBuf = bytes.ResizeOver(dataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), dataBuf)
 
 			// Decode data payloads - create a new decoder for each block to avoid state corruption
 			blockBytesDecoder := &encoding.BytesBlockDecoder{}
@@ -439,11 +458,6 @@ func (p *part) String() string {
 	return fmt.Sprintf("sidx part at %s", p.path)
 }
 
-// getPartMetadata returns the part metadata.
-func (p *part) getPartMetadata() *partMetadata {
-	return p.partMetadata
-}
-
 // getTagDataReader returns the tag data reader for the specified tag name.
 func (p *part) getTagDataReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagData[tagName]
@@ -462,42 +476,13 @@ func (p *part) getTagFilterReader(tagName string) (fs.Reader, bool) {
 	return reader, exists
 }
 
-// getAvailableTagNames returns a slice of all available tag names in this part.
-func (p *part) getAvailableTagNames() []string {
-	tagNames := make(map[string]struct{})
-
-	// Collect tag names from all tag file types.
-	for tagName := range p.tagData {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagMetadata {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagFilters {
-		tagNames[tagName] = struct{}{}
-	}
-
-	// Convert to slice.
-	result := make([]string, 0, len(tagNames))
-	for tagName := range tagNames {
-		result = append(result, tagName)
-	}
-
-	return result
-}
-
-// hasTagFiles returns true if the part has any tag files for the specified tag name.
-func (p *part) hasTagFiles(tagName string) bool {
-	_, hasData := p.tagData[tagName]
-	_, hasMeta := p.tagMetadata[tagName]
-	_, hasFilter := p.tagFilters[tagName]
-	return hasData || hasMeta || hasFilter
-}
-
 // Path returns the part's directory path.
 func (p *part) Path() string {
 	return p.path
 }
+
+// MemPart is a type alias for memPart.
+type MemPart = memPart
 
 // memPart represents an in-memory part for SIDX with tag-based file design.
 // This structure mirrors the stream module's memPart but uses user keys instead of timestamps.
@@ -510,6 +495,24 @@ type memPart struct {
 	primary      bytes.Buffer
 	data         bytes.Buffer
 	keys         bytes.Buffer
+}
+
+func (mp *memPart) ID() uint64 {
+	return mp.partMetadata.ID
+}
+
+// SetPartMetadata sets the part metadata for the MemPart.
+func (mp *memPart) SetPartMetadata(compressedSizeBytes, uncompressedSizeBytes, totalCount, blocksCount uint64, minKey, maxKey int64, id uint64) {
+	if mp.partMetadata == nil {
+		mp.partMetadata = &partMetadata{}
+	}
+	mp.partMetadata.CompressedSizeBytes = compressedSizeBytes
+	mp.partMetadata.UncompressedSizeBytes = uncompressedSizeBytes
+	mp.partMetadata.TotalCount = totalCount
+	mp.partMetadata.BlocksCount = blocksCount
+	mp.partMetadata.MinKey = minKey
+	mp.partMetadata.MaxKey = maxKey
+	mp.partMetadata.ID = id
 }
 
 // mustCreateTagWriters creates writers for individual tag files.
@@ -654,19 +657,24 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.SyncPath(partPath)
 }
 
-// generateMemPart gets memPart from pool or creates new.
-func generateMemPart() *memPart {
+// GenerateMemPart gets memPart from pool or creates new.
+func GenerateMemPart() *MemPart {
 	v := memPartPool.Get()
 	if v == nil {
-		return &memPart{}
+		return &MemPart{}
 	}
 	return v
 }
 
-// releaseMemPart returns memPart to pool after reset.
-func releaseMemPart(mp *memPart) {
+// ReleaseMemPart returns memPart to pool after reset.
+func ReleaseMemPart(mp *memPart) {
 	mp.reset()
 	memPartPool.Put(mp)
+}
+
+// MustFlush flushes the memory part to disk (exported version).
+func (mp *memPart) MustFlush(fileSystem fs.FileSystem, partPath string) {
+	mp.mustFlush(fileSystem, partPath)
 }
 
 var memPartPool = pool.Register[*memPart]("sidx-memPart")
@@ -715,4 +723,46 @@ func partPath(root string, epoch uint64) string {
 // Uses 16-character hex format consistent with stream module.
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// SyncPartContext manages multiple sidx memParts.
+type SyncPartContext struct {
+	memPart *memPart
+	writers *writers
+	name    string
+}
+
+// NewSyncPartContext creates a new sidx part context.
+func NewSyncPartContext() *SyncPartContext {
+	return &SyncPartContext{}
+}
+
+// Set sets the memory part and writers.
+func (spc *SyncPartContext) Set(name string, memPart *memPart, writers *writers) {
+	spc.name = name
+	spc.memPart = memPart
+	spc.writers = writers
+}
+
+// Name gets the name.
+func (spc *SyncPartContext) Name() string {
+	return spc.name
+}
+
+// GetMemPart gets the memory part.
+func (spc *SyncPartContext) GetMemPart() *MemPart {
+	return spc.memPart
+}
+
+// GetWriters gets the writers.
+func (spc *SyncPartContext) GetWriters() *Writers {
+	return spc.writers
+}
+
+// Close closes the sidx part context.
+func (spc *SyncPartContext) Close() {
+	spc.writers.MustClose()
+	ReleaseWriters(spc.writers)
+	spc.writers = nil
+	spc.memPart = nil
 }

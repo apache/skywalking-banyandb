@@ -89,7 +89,7 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 
 func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
 	freeDiskSize := tst.freeDiskSpace(tst.root)
-	var toBeMerged map[uint64]struct{}
+	var toBeMerged map[partHandle]struct{}
 	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
 	if len(dst) < 2 {
 		return nil, nil
@@ -101,7 +101,7 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 	return dst, nil
 }
 
-func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
+func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[partHandle]struct{}, merges chan *mergerIntroduction,
 	closeCh <-chan struct{}, typ string,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
@@ -112,9 +112,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	if err != nil {
 		return nil, err
 	}
-	for sidxName, sidxInstance := range tst.sidxMap {
-		if err := sidxInstance.Merge(closeCh); err != nil {
-			tst.l.Warn().Err(err).Str("sidx", sidxName).Msg("sidx merge failed")
+	for _, sidxInstance := range tst.getAllSidx() {
+		if err := sidxInstance.MergeMemParts(closeCh); err != nil {
+			tst.l.Warn().Err(err).Msg("sidx merge failed")
 			return nil, err
 		}
 	}
@@ -206,7 +206,7 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[partHandle]struct{}) {
 	var parts []*partWrapper
 
 	for _, pw := range snapshot.parts {
@@ -221,9 +221,9 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 		return nil, nil
 	}
 
-	toBeMerged := make(map[uint64]struct{})
+	toBeMerged := make(map[partHandle]struct{})
 	for _, pw := range dst {
-		toBeMerged[pw.ID()] = struct{}{}
+		toBeMerged[partHandle{partID: pw.ID(), partType: PartTypeCore}] = struct{}{}
 	}
 	return dst, toBeMerged
 }
@@ -259,13 +259,6 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br.init(pii)
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
-	for _, pw := range parts {
-		for _, pbm := range pw.p.primaryBlockMetadata {
-			if len(pbm.traceID) > int(bw.traceIDLen) {
-				bw.traceIDLen = uint32(len(pbm.traceID))
-			}
-		}
-	}
 
 	var minTimestamp, maxTimestamp int64
 	for i, pw := range parts {
@@ -284,22 +277,23 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 
 	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
-	if err != nil {
-		return nil, err
-	}
-	pm.MinTimestamp = minTimestamp
-	pm.MaxTimestamp = maxTimestamp
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
 		releasePartMergeIter(pii[i])
 	}
+	if err != nil {
+		return nil, err
+	}
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
 	tt.mustWriteTagType(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
 
+	tf.reset()
 	return newPartWrapper(nil, p), nil
 }
 

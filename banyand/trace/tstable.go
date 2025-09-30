@@ -248,6 +248,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		for _, id := range loadedSnapshots {
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
 		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -303,13 +306,13 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 }
 
 // getAllSidx returns all sidx instances for potential multi-sidx queries.
-func (tst *tsTable) getAllSidx() []sidx.SIDX {
+func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	tst.RLock()
 	defer tst.RUnlock()
 
-	result := make([]sidx.SIDX, 0, len(tst.sidxMap))
-	for _, sidxInstance := range tst.sidxMap {
-		result = append(result, sidxInstance)
+	result := make(map[string]sidx.SIDX, len(tst.sidxMap))
+	for name, sidxInstance := range tst.sidxMap {
+		result[name] = sidxInstance
 	}
 	return result
 }
@@ -400,12 +403,17 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 }
 
 func (tst *tsTable) mustAddTraces(ts *traces) {
+	tst.mustAddTracesWithSegmentID(ts, 0)
+}
+
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
+	mp.segmentID = segmentID
 	tst.mustAddMemPart(mp)
 }
 

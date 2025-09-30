@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"sync/atomic"
 
@@ -186,32 +185,6 @@ func (s *snapshot) validate() error {
 	return nil
 }
 
-// sortPartsByEpoch sorts parts by their epoch (ID), oldest first.
-// This ensures consistent iteration order during queries.
-func (s *snapshot) sortPartsByEpoch() {
-	sort.Slice(s.parts, func(i, j int) bool {
-		partI := s.parts[i].p
-		partJ := s.parts[j].p
-
-		if partI == nil || partI.partMetadata == nil {
-			return false
-		}
-		if partJ == nil || partJ.partMetadata == nil {
-			return true
-		}
-
-		return partI.partMetadata.ID < partJ.partMetadata.ID
-	})
-}
-
-// copyParts creates a copy of the parts slice for safe iteration.
-// The caller should acquire references to parts they intend to use.
-func (s *snapshot) copyParts() []*partWrapper {
-	result := make([]*partWrapper, len(s.parts))
-	copy(result, s.parts)
-	return result
-}
-
 // addPart adds a new part to the snapshot during construction.
 // This should only be called before the snapshot is made available to other goroutines.
 // After construction, snapshots should be treated as immutable.
@@ -338,7 +311,9 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 		if _, shouldRemove := toRemove[pw.ID()]; !shouldRemove {
 			if pw.acquire() {
 				result.parts = append(result.parts, pw)
+				continue
 			}
+			continue
 		}
 		pw.markForRemoval()
 	}

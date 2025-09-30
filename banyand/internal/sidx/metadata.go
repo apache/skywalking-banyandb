@@ -42,12 +42,13 @@ type partMetadata struct {
 	TotalCount            uint64 `json:"totalCount"`
 	BlocksCount           uint64 `json:"blocksCount"`
 
-	// Key range (replaces timestamp range from stream module)
+	// Key range
 	MinKey int64 `json:"minKey"` // Minimum user key in part
 	MaxKey int64 `json:"maxKey"` // Maximum user key in part
 
 	// Identity
-	ID uint64 `json:"id"` // Unique part identifier
+	ID        uint64 `json:"id"`        // Unique part identifier
+	SegmentID int64  `json:"segmentID"` // Segment identifier
 }
 
 func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
@@ -401,18 +402,6 @@ func (bm *blockMetadata) TagsBlocks() map[string]dataBlock {
 	return bm.tagsBlocks
 }
 
-// setSeriesID sets the seriesID of the block.
-func (bm *blockMetadata) setSeriesID(seriesID common.SeriesID) {
-	bm.seriesID = seriesID
-}
-
-// setKeyRange sets the key range of the block.
-func (bm *blockMetadata) setKeyRange(minKey, maxKey int64) {
-	bm.minKey = minKey
-	bm.maxKey = maxKey
-}
-
-// setDataBlock sets the data block reference.
 func (bm *blockMetadata) setDataBlock(offset, size uint64) {
 	bm.dataBlock = dataBlock{offset: offset, size: size}
 }

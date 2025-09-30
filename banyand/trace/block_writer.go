@@ -148,12 +148,10 @@ type blockWriter struct {
 	totalMinTimestamp              int64
 	totalMaxTimestamp              int64
 	minTimestampLast               int64
-	traceIDLen                     uint32
 }
 
 func (bw *blockWriter) reset() {
 	bw.writers.reset()
-	bw.traceIDLen = 0
 	bw.traceIDs = bw.traceIDs[:0]
 	if bw.tagType == nil {
 		bw.tagType = make(tagType)
@@ -249,7 +247,7 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	bw.totalCount += bm.count
 	bw.totalBlocksCount++
 
-	bw.primaryBlockData = bm.marshal(bw.primaryBlockData, bw.traceIDLen)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
 	releaseBlockMetadata(bm)
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
@@ -259,7 +257,7 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDLen, bw.traceIDs[0], &bw.writers)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDs[0], &bw.writers)
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.minTimestamp = 0
@@ -284,7 +282,7 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 
 	if len(bw.traceIDs) > 0 {
 		if tf.filter == nil {
-			tf.filter = generateBloomFilter()
+			tf.filter = filter.NewBloomFilter(0)
 		}
 		tf.filter.SetN(len(bw.traceIDs))
 		tf.filter.ResizeBits((len(bw.traceIDs)*filter.B + 63) / 64)

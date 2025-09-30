@@ -168,13 +168,13 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			marshaled := tc.original.marshal(nil, 6)
+			marshaled := tc.original.marshal(nil)
 
 			unmarshaled := blockMetadata{
 				tags: make(map[string]*dataBlock),
 			}
 
-			_, err := unmarshaled.unmarshal(marshaled, nil, 6)
+			_, err := unmarshaled.unmarshal(marshaled, nil)
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.original.traceID, unmarshaled.traceID)
@@ -242,11 +242,11 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 
 		var marshaled []byte
 		for _, bm := range original {
-			marshaled = bm.marshal(marshaled, 6)
+			marshaled = bm.marshal(marshaled)
 		}
 
 		tagType := make(map[string]pbv1.ValueType)
-		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled, tagType, 6)
+		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled, tagType)
 		require.NoError(t, err)
 		require.Equal(t, wanted, unmarshaled)
 	})
@@ -277,11 +277,11 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 
 		var marshaled []byte
 		for _, bm := range original {
-			marshaled = bm.marshal(marshaled, 6)
+			marshaled = bm.marshal(marshaled)
 		}
 
 		tagType := make(map[string]pbv1.ValueType)
-		_, err := unmarshalBlockMetadata(nil, marshaled, tagType, 6)
+		_, err := unmarshalBlockMetadata(nil, marshaled, tagType)
 		require.Error(t, err)
 	})
 }

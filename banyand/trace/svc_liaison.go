@@ -19,17 +19,21 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"path"
+	"path/filepath"
 
-	"github.com/pkg/errors"
-
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
@@ -44,6 +48,7 @@ type liaison struct {
 	pipeline            queue.Server
 	omr                 observability.MetricsRegistry
 	lfs                 fs.FileSystem
+	writeListener       bus.MessageListener
 	dataNodeSelector    node.Selector
 	l                   *logger.Logger
 	schemaRepo          schemaRepo
@@ -55,7 +60,23 @@ type liaison struct {
 
 var _ Service = (*liaison)(nil)
 
-// LiaisonService returns a new liaison service.
+// NewLiaison creates a new trace liaison service with the given dependencies.
+func NewLiaison(metadata metadata.Repo, pipeline queue.Server, omr observability.MetricsRegistry, pm protector.Memory,
+	dataNodeSelector node.Selector, tire2Client queue.Client,
+) (Service, error) {
+	return &liaison{
+		metadata:         metadata,
+		pipeline:         pipeline,
+		omr:              omr,
+		pm:               pm,
+		dataNodeSelector: dataNodeSelector,
+		option: option{
+			tire2Client: tire2Client,
+		},
+	}, nil
+}
+
+// LiaisonService returns a new liaison service (deprecated - use NewLiaison).
 func LiaisonService(_ context.Context) (Service, error) {
 	return &liaison{}, nil
 }
@@ -66,7 +87,7 @@ func (l *liaison) FlagSet() *run.FlagSet {
 	fs.StringVar(&l.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
 	fs.IntVar(&l.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
-	// Additional liaison-specific flags can be added here
+	fs.DurationVar(&l.option.syncInterval, "trace-sync-interval", defaultSyncInterval, "the periodic sync interval for trace data")
 	return fs
 }
 
@@ -85,55 +106,36 @@ func (l *liaison) Role() databasev1.Role {
 	return databasev1.Role_ROLE_LIAISON
 }
 
-func (l *liaison) PreRun(_ context.Context) error {
-	l.l = logger.GetLogger("trace")
-
-	// Initialize metadata
-	if l.metadata == nil {
-		return errors.New("metadata repo is required")
+func (l *liaison) PreRun(ctx context.Context) error {
+	l.l = logger.GetLogger(l.Name())
+	l.l.Info().Msg("memory protector is initialized in PreRun")
+	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
+	path := path.Join(l.root, l.Name())
+	observability.UpdatePath(path)
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return errors.New("node id is empty")
 	}
-
-	// Initialize filesystem
-	if l.lfs == nil {
-		l.lfs = fs.NewLocalFileSystem()
-	}
-
-	// Initialize protector
-	if l.pm == nil {
-		return errors.New("memory protector is required")
-	}
-
-	// Initialize pipeline
-	if l.pipeline == nil {
-		return errors.New("pipeline is required")
-	}
-
-	// Set up data path
 	if l.dataPath == "" {
-		l.dataPath = path.Join(l.root, "trace-data")
+		l.dataPath = filepath.Join(path, storage.DataDir)
 	}
 
-	// Initialize data node registry - this would be provided by the system
-	var traceDataNodeRegistry grpc.NodeRegistry
-
-	// Initialize schema repository
+	traceDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicTracePartSync, l.option.tire2Client, l.dataNodeSelector)
 	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry)
+	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
 
+	// Register chunked sync handler for trace and sidx data
+	l.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(l.l, &l.schemaRepo))
 	l.l.Info().
 		Str("root", l.root).
 		Str("dataPath", l.dataPath).
 		Msg("trace liaison service initialized")
 
-	return nil
+	return l.pipeline.Subscribe(data.TopicTraceWrite, l.writeListener)
 }
 
 func (l *liaison) Serve() run.StopNotify {
-	// As specified in the plan, no pipeline listeners should be implemented
-	l.l.Info().Msg("trace liaison service started")
-
-	// Return a channel that never closes since this service runs indefinitely
-	stopCh := make(chan struct{})
-	return stopCh
+	return l.schemaRepo.StopCh()
 }
 
 func (l *liaison) GracefulStop() {

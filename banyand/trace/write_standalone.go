@@ -225,11 +225,19 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 
 	sidxTags := make([]sidx.Tag, 0, len(tags))
 	for _, tag := range tags {
-		sidxTags = append(sidxTags, sidx.Tag{
-			Name:      tag.tag,
-			Value:     tag.value,
-			ValueType: tag.valueType,
-		})
+		if tag.valueArr != nil {
+			sidxTags = append(sidxTags, sidx.Tag{
+				Name:      tag.tag,
+				ValueArr:  tag.valueArr,
+				ValueType: tag.valueType,
+			})
+		} else {
+			sidxTags = append(sidxTags, sidx.Tag{
+				Name:      tag.tag,
+				Value:     tag.value,
+				ValueType: tag.valueType,
+			})
+		}
 	}
 
 	indexRules := stm.GetIndexRules()
@@ -291,8 +299,13 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			}
 		}
 
+		// Add control bit at the first position for backward compatibility
+		data := make([]byte, len(traceID)+1)
+		data[0] = byte(idFormatV1) // Control bit indicating new format
+		copy(data[1:], traceID)
+
 		writeReq := sidx.WriteRequest{
-			Data:     []byte(traceID),
+			Data:     data,
 			Tags:     filteredSidxTags,
 			SeriesID: series.ID,
 			Key:      key,
@@ -362,7 +375,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs); err != nil {
+					if err := sidxInstance.Write(ctx, sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 					}
 				}

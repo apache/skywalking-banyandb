@@ -21,12 +21,21 @@
 package encoding
 
 import (
+	stdbytes "bytes"
+
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+)
+
+const (
+	// EntityDelimiter is the delimiter for entities in a variable-length array.
+	EntityDelimiter = '|'
+	// Escape is the escape character for entities in a variable-length array.
+	Escape = '\\'
 )
 
 var (
@@ -84,6 +93,24 @@ func generateDictionary() *encoding.Dictionary {
 func releaseDictionary(d *encoding.Dictionary) {
 	d.Reset()
 	dictionaryPool.Put(d)
+}
+
+// MarshalVarArray marshals a byte slice into a variable-length array format.
+// It escapes delimiter and escape characters within the source slice.
+func MarshalVarArray(dest, src []byte) []byte {
+	if stdbytes.IndexByte(src, EntityDelimiter) < 0 && stdbytes.IndexByte(src, Escape) < 0 {
+		dest = append(dest, src...)
+		dest = append(dest, EntityDelimiter)
+		return dest
+	}
+	for _, b := range src {
+		if b == EntityDelimiter || b == Escape {
+			dest = append(dest, Escape)
+		}
+		dest = append(dest, b)
+	}
+	dest = append(dest, EntityDelimiter)
+	return dest
 }
 
 // EncodeTagValues encodes tag values based on the value type with optimal compression.

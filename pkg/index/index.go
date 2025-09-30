@@ -941,4 +941,5 @@ type Filter interface {
 type FilterOp interface {
 	Eq(tagName string, tagValue string) bool
 	Range(tagName string, rangeOpts RangeOpts) (bool, error)
+	Having(tagName string, tagValues []string) bool
 }

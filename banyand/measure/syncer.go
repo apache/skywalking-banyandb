@@ -29,6 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
+// PartTypeCore is the type of the core part.
+const PartTypeCore = "core"
+
 type syncIntroduction struct {
 	synced  map[uint64]struct{}
 	applied chan struct{}
@@ -227,7 +230,6 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 			// Create streaming reader for the part.
 			files, release := createPartFileReaders(part)
 			releaseFuncs = append(releaseFuncs, release)
-
 			// Create streaming part sync data.
 			streamingParts = append(streamingParts, queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,
@@ -241,6 +243,7 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 				BlocksCount:           part.partMetadata.BlocksCount,
 				MinTimestamp:          part.partMetadata.MinTimestamp,
 				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
 			})
 		}
 

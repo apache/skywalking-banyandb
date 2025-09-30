@@ -108,7 +108,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		for j := range g.tables {
 			es := g.tables[j]
 			if es.tsTable != nil && es.dataPoints != nil {
-				es.tsTable.mustAddDataPoints(es.dataPoints)
+				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano())
 				releaseDataPoints(es.dataPoints)
 			}
 			nodes := g.queue.GetNodes(es.shardID)

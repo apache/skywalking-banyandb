@@ -41,7 +41,11 @@ func TestTagExportedFields(t *testing.T) {
 
 func TestNewTag(t *testing.T) {
 	// Test the NewTag constructor function
-	tag := NewTag("service", []byte("order-service"), pbv1.ValueTypeStr)
+	tag := Tag{
+		Name:      "service",
+		Value:     []byte("order-service"),
+		ValueType: pbv1.ValueTypeStr,
+	}
 
 	assert.Equal(t, "service", tag.Name)
 	assert.Equal(t, []byte("order-service"), tag.Value)

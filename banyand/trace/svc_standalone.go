@@ -149,16 +149,23 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
 	s.diskMonitor.Start()
 
-	// Set up write callback handler
-	if s.pipeline != nil {
-		// For now, keep the original write throttling behavior based on high watermark
-		writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
-		err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
-		if err != nil {
-			return err
-		}
+	// Set up write callback handler. For now, keep the original write throttling behavior based on high watermark
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
+	err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
+	if err != nil {
+		return err
+	}
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	err = s.pipeline.Subscribe(data.TopicTraceSidxSeriesWrite, setUpSidxSeriesIndexCallback(s.l, &s.schemaRepo))
+	if err != nil {
+		return err
 	}
 
+	s.localPipeline = queue.Local()
+	err = s.localPipeline.Subscribe(data.TopicTraceWrite, writeListener)
+	if err != nil {
+		return err
+	}
 	s.l.Info().
 		Str("root", s.root).
 		Str("dataPath", s.dataPath).

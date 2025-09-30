@@ -24,6 +24,13 @@ x-data-base: &data_base
   depends_on:
     etcd:
       condition: service_healthy
+    liaison:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "nc", "-z", "localhost", "17913"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
   cpus: 2
   mem_limit: 4g
   command: &base_data_cmd |
@@ -56,6 +63,11 @@ services:
     cpus: 2
     mem_limit: 3g
     container_name: liaison
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "17913"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
     ports:
       - "17912:17912"
       - "17913:17913"

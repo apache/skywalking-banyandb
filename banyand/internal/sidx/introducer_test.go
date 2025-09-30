@@ -88,7 +88,7 @@ func TestIntroductionPooling(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			intro := generateMergerIntroduction()
 			intro.merged[uint64(i)] = struct{}{}
-			intro.newPart = &part{}
+			intro.newPart = &partWrapper{}
 			intro.applied = make(chan struct{})
 			intros = append(intros, intro)
 		}
@@ -141,7 +141,7 @@ func TestIntroductionReset(t *testing.T) {
 		// Set up merger introduction with data
 		intro.merged[1] = struct{}{}
 		intro.merged[2] = struct{}{}
-		intro.newPart = &part{}
+		intro.newPart = &partWrapper{}
 		intro.applied = make(chan struct{})
 
 		// Reset the merger introduction
@@ -331,7 +331,7 @@ func TestConcurrentPoolAccess(t *testing.T) {
 				for j := 0; j < operationsPerGoroutine; j++ {
 					intro := generateMergerIntroduction()
 					intro.merged[uint64(j)] = struct{}{}
-					intro.newPart = &part{}
+					intro.newPart = &partWrapper{}
 					intro.applied = make(chan struct{})
 					releaseMergerIntroduction(intro)
 				}

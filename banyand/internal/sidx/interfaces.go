@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -35,68 +36,31 @@ import (
 // opaque ordering values by sidx - the system only performs numerical comparisons
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
+	// MustAddMemPart adds a memPart to the SIDX instance.
+	MustAddMemPart(ctx context.Context, mp *memPart)
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest) error
-
+	Write(ctx context.Context, reqs []WriteRequest, segmentID int64) error
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.
 	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
-
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
-
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
 	Close() error
-
-	// User-triggered operations for manual control
-	Flusher
-	Merger
-}
-
-// Flusher provides user-triggered persistence operations.
-// Users control when memory parts are flushed to disk for durability.
-// This interface abstracts flush functionality to enable testing and modularity.
-type Flusher interface {
-	// Flush triggers persistence of memory parts to disk.
-	// The implementation should select appropriate memory parts, persist them to disk files,
-	// and coordinate with the introducer loop for snapshot updates.
-	// This operation is user-controlled and synchronous.
-	// Returns error if flush operation fails.
+	// Flush flushes the SIDX instance to disk.
 	Flush() error
-}
-
-// Merger provides user-triggered compaction operations.
-// Users control when parts are merged to optimize storage and query performance.
-// This interface abstracts merge functionality to enable testing and modularity.
-type Merger interface {
-	// Merge triggers compaction of parts to optimize storage.
-	// The implementation should select appropriate parts for merging, combine them while maintaining key order,
-	// and coordinate with the introducer loop for snapshot updates.
-	// This operation is user-controlled and synchronous.
-	// Returns error if merge operation fails.
+	// Merge merges the specified parts into a new part.
 	Merge(closeCh <-chan struct{}) error
-}
-
-// Writer handles write path operations for batch processing.
-// This interface abstracts the write functionality to enable testing and modularity.
-type Writer interface {
-	// Write performs batch write operations on multiple elements.
-	// All elements in the batch should be pre-sorted by seriesID then userKey for optimal performance.
-	// The implementation should handle element accumulation, validation, and coordination with memory parts.
-	// Returns error if any element in the batch fails validation or if write operation fails.
-	Write(ctx context.Context, reqs []WriteRequest) error
-}
-
-// Querier handles query path operations with filtering and range selection.
-// This interface abstracts the query functionality to enable testing and modularity.
-type Querier interface {
-	// Query executes a query with specified parameters including key ranges and tag filters.
-	// The implementation should handle snapshot access, part filtering, block scanning, and result assembly.
-	// Returns a QueryResponse directly with all results loaded.
-	// Both setup/validation errors and execution errors are returned via the error return value.
-	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
+	// MergeMemPart merges the mem parts into a new part.
+	MergeMemParts(closeCh <-chan struct{}) error
+	// PartsToSync returns the parts to sync.
+	PartsToSync() []*part
+	// StreamingParts returns the streaming parts.
+	StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
+	// SyncCh returns the sync channel for external synchronization.
+	SyncCh() chan<- *SyncIntroduction
 }
 
 // WriteRequest contains data for a single write operation within a batch.
@@ -380,28 +344,29 @@ func (rm *ResponseMetadata) Validate() error {
 type Tag struct {
 	Name      string
 	Value     []byte
+	ValueArr  [][]byte
 	ValueType pbv1.ValueType
-}
-
-// NewTag creates a new Tag instance with the given values.
-func NewTag(name string, value []byte, valueType pbv1.ValueType) Tag {
-	return Tag{
-		Name:      name,
-		Value:     value,
-		ValueType: valueType,
-	}
 }
 
 // Reset resets the Tag to its zero state for reuse.
 func (t *Tag) Reset() {
 	t.Name = ""
 	t.Value = nil
+	t.ValueArr = nil
 	t.ValueType = pbv1.ValueTypeUnknown
 }
 
 // Size returns the size of the tag in bytes.
 func (t *Tag) Size() int {
-	return len(t.Name) + len(t.Value) + 1 // +1 for valueType
+	size := len(t.Name) + 1 // +1 for valueType
+	if t.ValueArr != nil {
+		for _, v := range t.ValueArr {
+			size += len(v)
+		}
+	} else {
+		size += len(t.Value)
+	}
+	return size
 }
 
 // Copy creates a deep copy of the Tag.
@@ -411,28 +376,19 @@ func (t *Tag) Copy() Tag {
 		valueCopy = make([]byte, len(t.Value))
 		copy(valueCopy, t.Value)
 	}
+	var valueArrCopy [][]byte
+	if t.ValueArr != nil {
+		valueArrCopy = make([][]byte, len(t.ValueArr))
+		for i, v := range t.ValueArr {
+			valueArrCopy[i] = make([]byte, len(v))
+			copy(valueArrCopy[i], v)
+		}
+	}
 	return Tag{
 		Name:      t.Name,
 		Value:     valueCopy,
+		ValueArr:  valueArrCopy,
 		ValueType: t.ValueType,
-	}
-}
-
-// toInternalTag converts the exported Tag to an internal tag for use with the pooling system.
-func (t *Tag) toInternalTag() *tag {
-	return &tag{
-		name:      t.Name,
-		value:     t.Value,
-		valueType: t.ValueType,
-	}
-}
-
-// fromInternalTag creates a Tag from an internal tag.
-func fromInternalTag(t *tag) Tag {
-	return Tag{
-		Name:      t.name,
-		Value:     t.value,
-		ValueType: t.valueType,
 	}
 }
 
