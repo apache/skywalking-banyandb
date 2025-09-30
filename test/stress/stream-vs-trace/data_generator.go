@@ -726,7 +726,7 @@ func (s *SpanData) ToTraceWriteRequest() *tracev1.WriteRequest {
 
 // WriteStreamData writes span data to the stream service.
 func (c *StreamClient) WriteStreamData(ctx context.Context, spans []*SpanData) error {
-	stream, err := c.Write(ctx, nil)
+	stream, err := c.Write(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create stream write client: %w", err)
 	}
