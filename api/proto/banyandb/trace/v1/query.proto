@@ -42,6 +42,8 @@ message InternalTrace {
   string trace_id = 2;
   // key is used for sorting.
   int64 key = 3;
+  // span_ids are the ids of the spans that belong to the trace.
+  repeated string span_ids = 4;
 }
 
 // Trace contains all spans that belong to a single trace ID.
