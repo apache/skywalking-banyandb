@@ -46,10 +46,6 @@ service BydbQLService {
     option (google.api.http) = {
       post: "/v1/bydbql/stream/{group}/{name}/query"
       body: "*"
-      additional_bindings: {
-        post: "/v1/bydbql/stream/{name}/query"
-        body: "*"
-      }
     };
   }
 
@@ -60,10 +56,6 @@ service BydbQLService {
     option (google.api.http) = {
       post: "/v1/bydbql/measure/{group}/{name}/query"
       body: "*"
-      additional_bindings: {
-        post: "/v1/bydbql/measure/{name}/query"
-        body: "*"
-      }
     };
   }
 
@@ -74,10 +66,6 @@ service BydbQLService {
     option (google.api.http) = {
       post: "/v1/bydbql/property/{group}/{name}/query"
       body: "*"
-      additional_bindings: {
-        post: "/v1/bydbql/property/{name}/query"
-        body: "*"
-      }
     };
   }
 
@@ -88,10 +76,6 @@ service BydbQLService {
     option (google.api.http) = {
       post: "/v1/bydbql/trace/{group}/{name}/query"
       body: "*"
-      additional_bindings: {
-        post: "/v1/bydbql/trace/{name}/query"
-        body: "*"
-      }
     };
   }
 
@@ -103,10 +87,6 @@ service BydbQLService {
     option (google.api.http) = {
       post: "/v1/bydbql/measure/{group}/{name}/topn"
       body: "*"
-      additional_bindings: {
-        post: "/v1/bydbql/measure/{name}/topn"
-        body: "*"
-      }
     };
   }
 }
