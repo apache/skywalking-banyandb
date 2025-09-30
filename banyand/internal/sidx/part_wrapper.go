@@ -54,22 +54,10 @@ func (s partWrapperState) String() string {
 // It enables safe concurrent access to parts while managing their lifecycle.
 // When the reference count reaches zero, the underlying part is cleaned up.
 type partWrapper struct {
-	// p is the underlying part. It can be nil for memory parts.
-	p *part
-
-	// mp is the memory part. It can be nil for file-based parts.
-	mp *memPart
-
-	// ref is the atomic reference counter.
-	// It starts at 1 when the wrapper is created.
-	ref int32
-
-	// state tracks the lifecycle state of the part.
-	// State transitions: active -> removing -> removed
-	state int32
-
-	// removable indicates if the part should be removed from disk when dereferenced.
-	// This is typically true for parts that have been merged or are no longer needed.
+	p         *part
+	mp        *memPart
+	ref       int32
+	state     int32
 	removable atomic.Bool
 }
 

@@ -229,6 +229,7 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 			spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
 		},
 	}
+	decoder := &encoding.BytesBlockDecoder{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -241,8 +242,8 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteSpansTo(sm, tt.spans, nil, w)
-			spans, _ := mustReadSpansFrom(nil, nil, sm, len(tt.spans), b)
+			mustWriteSpansTo(sm, tt.spans, w)
+			spans := mustReadSpansFrom(decoder, nil, sm, len(tt.spans), b)
 			if !reflect.DeepEqual(spans, tt.spans) {
 				t.Errorf("mustReadSpansFrom() spans = %v, want %v", spans, tt.spans)
 			}

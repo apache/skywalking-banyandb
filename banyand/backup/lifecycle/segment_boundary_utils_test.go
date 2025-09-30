@@ -29,8 +29,8 @@ import (
 func TestCalculateTargetSegments(t *testing.T) {
 	//nolint:govet // fieldalignment: test struct optimization not critical
 	tests := []struct {
-		expected       []time.Time
 		name           string
+		expected       []time.Time
 		targetInterval storage.IntervalRule
 		partMinTS      int64
 		partMaxTS      int64

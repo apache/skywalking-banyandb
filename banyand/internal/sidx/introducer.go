@@ -80,7 +80,7 @@ func releaseFlusherIntroduction(i *flusherIntroduction) {
 
 type mergerIntroduction struct {
 	merged  map[uint64]struct{}
-	newPart *part
+	newPart *partWrapper
 	applied chan struct{}
 }
 
@@ -229,8 +229,7 @@ func (s *sidx) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint6
 	nextSnp := cur.remove(epoch, nextIntroduction.merged)
 
 	// Wrap the new part
-	pw := newPartWrapper(nil, nextIntroduction.newPart)
-	nextSnp.parts = append(nextSnp.parts, pw)
+	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 
 	s.replaceSnapshot(nextSnp)
 	s.persistSnapshot(nextSnp)

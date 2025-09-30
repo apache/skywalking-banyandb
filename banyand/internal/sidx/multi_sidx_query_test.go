@@ -66,6 +66,10 @@ func (m *mockSIDX) Merge(_ <-chan struct{}) error {
 	return nil
 }
 
+func (m *mockSIDX) MergeMemParts(_ <-chan struct{}) error {
+	return nil
+}
+
 func (m *mockSIDX) PartsToSync() []*part {
 	return nil
 }

@@ -245,6 +245,7 @@ func (b *block) mustWriteTo(sid common.SeriesID, bm *blockMetadata, ww *writers)
 
 	// Write user keys to keys.bin and capture encoding information
 	bm.keysEncodeType, bm.minKey = mustWriteKeysTo(&bm.keysBlock, b.userKeys, &ww.keysWriter)
+	bm.maxKey = b.userKeys[len(b.userKeys)-1]
 
 	// Write data payloads to data.bin
 	mustWriteDataTo(&bm.dataBlock, b.data, &ww.dataWriter)
@@ -516,6 +517,9 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqRead
 }
 
 func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
+	if bm.keysBlock.offset != sr.keys.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", bm.keysBlock.offset, sr.keys.bytesRead)
+	}
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -524,7 +528,7 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 		bb.Buf = bb.Buf[:0]
 		bigValuePool.Put(bb)
 	}()
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(bm.keysBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(bm.keysBlock.size))
 	sr.keys.mustReadFull(bb.Buf)
 	var err error
 	b.userKeys, err = encoding.BytesToInt64List(b.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
@@ -535,6 +539,9 @@ func (b *block) readUserKeys(sr *seqReaders, bm *blockMetadata) error {
 }
 
 func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
+	if bm.dataBlock.offset != sr.data.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", bm.dataBlock.offset, sr.data.bytesRead)
+	}
 	bb := bigValuePool.Get()
 	if bb == nil {
 		bb = &bytes.Buffer{}
@@ -543,7 +550,7 @@ func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm
 		bb.Buf = bb.Buf[:0]
 		bigValuePool.Put(bb)
 	}()
-	bb.Buf = bytes.ResizeOver(bb.Buf, int(bm.dataBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf, int(bm.dataBlock.size))
 	sr.data.mustReadFull(bb.Buf)
 
 	var err error
@@ -567,6 +574,9 @@ func (b *block) readTagData(decoder *encoding.BytesBlockDecoder, sr *seqReaders,
 }
 
 func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReaders, tagName string, tagBlock *dataBlock, count int) error {
+	if tagBlock.offset != sr.tagMetadata[tagName].bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", tagBlock.offset, sr.tagMetadata[tagName].bytesRead)
+	}
 	tmReader, tmExists := sr.tagMetadata[tagName]
 	if !tmExists {
 		return fmt.Errorf("tag metadata reader not found for tag %s", tagName)
@@ -585,7 +595,7 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 		bigValuePool.Put(bb)
 	}()
 
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tagBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(tagBlock.size))
 	tmReader.mustReadFull(bb.Buf)
 	tm, err := unmarshalTagMetadata(bb.Buf)
 	if err != nil {
@@ -593,7 +603,7 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 	}
 	defer releaseTagMetadata(tm)
 
-	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(tm.dataBlock.size))
+	bb.Buf = bytes.ResizeExact(bb.Buf[:0], int(tm.dataBlock.size))
 	tdReader.mustReadFull(bb.Buf)
 	td := generateTagData()
 	td.name = tagName

@@ -313,6 +313,7 @@ func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot 
 				result.parts = append(result.parts, pw)
 				continue
 			}
+			continue
 		}
 		pw.markForRemoval()
 	}

@@ -70,6 +70,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	var err error
 	tmpBlock.userKeys, err = encoding.BytesToInt64List(tmpBlock.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
 	if err != nil {
+		logger.Panicf("cannot decode user keys: %v", err)
 		return false
 	}
 
@@ -90,6 +91,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	decoder := &encoding.BytesBlockDecoder{}
 	tmpBlock.data, err = decoder.Decode(tmpBlock.data[:0], bb2.Buf, bm.count)
 	if err != nil {
+		logger.Panicf("cannot decode data payloads: %v", err)
 		return false
 	}
 
@@ -156,6 +158,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	tm, err := unmarshalTagMetadata(bb.Buf)
 	if err != nil {
+		logger.Panicf("cannot unmarshal tag metadata: %v", err)
 		return false
 	}
 	defer releaseTagMetadata(tm)
@@ -178,6 +181,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 	// Decode tag values directly (no compression)
 	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb2, tm.valueType, count)
 	if err != nil {
+		logger.Panicf("cannot decode tag values: %v", err)
 		return false
 	}
 
