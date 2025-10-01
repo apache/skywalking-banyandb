@@ -33,6 +33,11 @@ import (
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
+var (
+	mergeTypeMem  = "mem"
+	mergeTypeFile = "file"
+)
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
@@ -95,7 +100,7 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 		return nil, nil
 	}
 	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify(), "file"); err != nil {
+		toBeMerged, merges, tst.loopCloser.CloseNotify(), mergeTypeFile); err != nil {
 		return dst, err
 	}
 	return dst, nil
@@ -111,12 +116,6 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root)
 	if err != nil {
 		return nil, err
-	}
-	for _, sidxInstance := range tst.getAllSidx() {
-		if err := sidxInstance.MergeMemParts(closeCh); err != nil {
-			tst.l.Warn().Err(err).Msg("sidx merge failed")
-			return nil, err
-		}
 	}
 	elapsed := time.Since(start)
 	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
@@ -155,6 +154,31 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Str("maxSize", humanize.IBytes(maxSize)).
 				Dur("elapsedMS", elapsed).
 				Msg("background merger merges unbalanced parts")
+		}
+	}
+	for sidxName, sidxInstance := range tst.getAllSidx() {
+		start = time.Now()
+		var mergedPartsCount uint64
+		var err error
+		if typ == mergeTypeMem {
+			mergedPartsCount, err = sidxInstance.MergeMemParts(closeCh)
+			if err != nil {
+				tst.l.Warn().Err(err).Msg("sidx merge mem parts failed")
+				return nil, err
+			}
+		} else {
+			mergedPartsCount, err = sidxInstance.Merge(closeCh)
+			if err != nil {
+				tst.l.Warn().Err(err).Msg("sidx merge file parts failed")
+				return nil, err
+			}
+		}
+		elapsed = time.Since(start)
+		tst.incTotalMergeLatency(elapsed.Seconds(), fmt.Sprintf("%s_%s", typ, sidxName))
+		tst.incTotalMerged(1, fmt.Sprintf("%s_%s", typ, sidxName))
+		tst.incTotalMergedParts(int(mergedPartsCount), fmt.Sprintf("%s_%s", typ, sidxName))
+		if elapsed > 30*time.Second {
+			tst.l.Warn().Uint64("mergedPartsCount", mergedPartsCount).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
 		}
 	}
 

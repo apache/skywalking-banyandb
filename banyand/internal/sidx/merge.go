@@ -31,11 +31,11 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(closeCh <-chan struct{}) error {
+func (s *sidx) Merge(closeCh <-chan struct{}) (uint64, error) {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return nil
+		return 0, nil
 	}
 	defer snap.decRef()
 
@@ -53,7 +53,7 @@ func (s *sidx) Merge(closeCh <-chan struct{}) error {
 	}
 
 	if len(partsToMerge) < 2 {
-		return nil
+		return 0, nil
 	}
 
 	// Mark parts for merging
@@ -67,7 +67,7 @@ func (s *sidx) Merge(closeCh <-chan struct{}) error {
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	mergeIntro.newPart = newPart
 
@@ -77,13 +77,13 @@ func (s *sidx) Merge(closeCh <-chan struct{}) error {
 	// Wait for merge to complete
 	<-mergeIntro.applied
 
-	return nil
+	return uint64(len(partsToMerge)), nil
 }
 
-func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
+func (s *sidx) MergeMemParts(closeCh <-chan struct{}) (uint64, error) {
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return nil
+		return 0, nil
 	}
 	defer snap.decRef()
 
@@ -92,7 +92,7 @@ func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
 	defer releaseMergerIntroduction(mergeIntro)
 	mergeIntro.applied = make(chan struct{})
 
-	// Select parts to merge (all active non-memory parts)
+	// Select parts to merge (all active memory parts)
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
 		if pw.isActive() && pw.isMemPart() {
@@ -101,7 +101,7 @@ func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
 	}
 
 	if len(partsToMerge) < 2 {
-		return nil
+		return 0, nil
 	}
 
 	// Mark parts for merging
@@ -115,7 +115,7 @@ func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	mergeIntro.newPart = newPart
 
@@ -125,7 +125,7 @@ func (s *sidx) MergeMemParts(closeCh <-chan struct{}) error {
 	// Wait for merge to complete
 	<-mergeIntro.applied
 
-	return nil
+	return uint64(len(partsToMerge)), nil
 }
 
 func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
@@ -158,7 +158,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
-	p := mustOpenPart(dstPath, fileSystem)
+	p := mustOpenPart(partID, dstPath, fileSystem)
 
 	return newPartWrapper(nil, p), nil
 }
