@@ -62,12 +62,12 @@ func (m *mockSIDX) Flush() error {
 	return nil
 }
 
-func (m *mockSIDX) Merge(_ <-chan struct{}) error {
-	return nil
+func (m *mockSIDX) Merge(_ <-chan struct{}) (uint64, error) {
+	return 0, nil
 }
 
-func (m *mockSIDX) MergeMemParts(_ <-chan struct{}) error {
-	return nil
+func (m *mockSIDX) MergeMemParts(_ <-chan struct{}) (uint64, error) {
+	return 0, nil
 }
 
 func (m *mockSIDX) PartsToSync() []*part {
