@@ -868,7 +868,6 @@ func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
 		}
 		partPath := partPath(s.root, id)
 		part := mustOpenPart(id, partPath, s.fileSystem)
-		part.partMetadata.ID = id
 		pw := newPartWrapper(nil, part)
 		snp.addPart(pw)
 		if s.curPartID < id {
