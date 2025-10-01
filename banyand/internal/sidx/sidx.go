@@ -459,8 +459,7 @@ func (s *sidx) Flush() error {
 				Str("part_path", partPath).
 				Msg("flushing sidx part")
 		}
-		newPW := newPartWrapper(nil, mustOpenPart(partPath, s.fileSystem))
-		newPW.p.partMetadata.ID = pw.ID()
+		newPW := newPartWrapper(nil, mustOpenPart(pw.ID(), partPath, s.fileSystem))
 		flushIntro.flushed[newPW.ID()] = newPW
 	}
 
@@ -868,7 +867,7 @@ func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
 			continue
 		}
 		partPath := partPath(s.root, id)
-		part := mustOpenPart(partPath, s.fileSystem)
+		part := mustOpenPart(id, partPath, s.fileSystem)
 		part.partMetadata.ID = id
 		pw := newPartWrapper(nil, part)
 		snp.addPart(pw)

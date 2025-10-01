@@ -104,7 +104,7 @@ func (p *part) ID() uint64 {
 // mustOpenPart opens a part from the specified path using the given file system.
 // It opens all standard files and discovers tag files automatically.
 // Panics if any required file cannot be opened.
-func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
+func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 	p := &part{
 		path:       path,
 		fileSystem: fileSystem,
@@ -121,6 +121,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 		p.close()
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load part metadata")
 	}
+	p.partMetadata.ID = partID
 
 	// Load primary block metadata from primary.bin.
 	p.loadPrimaryBlockMetadata()
