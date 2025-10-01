@@ -28,7 +28,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const traceSchemaPath = "/api/v1/trace/schema"
+const (
+	traceSchemaPath = "/api/v1/trace/schema"
+	traceQueryPath  = "/api/v1/trace/data"
+	traceListPath   = "/api/v1/trace/schema/lists/{group}"
+)
 
 var traceSchemaPathWithParams = traceSchemaPath + pathTemp
 
@@ -132,7 +136,7 @@ func newTraceCmd() *cobra.Command {
 		Short:   "List traces",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/trace/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath(traceListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
@@ -145,7 +149,7 @@ func newTraceCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/trace/data"))
+					return request.req.SetBody(request.data).Post(getPath(traceQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
