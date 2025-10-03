@@ -84,7 +84,8 @@ func toTagProjection(b block) []string {
 }
 
 var conventionalBlockWithTS = block{
-	spans: [][]byte{[]byte("span1"), []byte("span2")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2")},
+	spanIDs: []string{"span1", "span2"},
 	tags: []tag{
 		{
 			name: "binaryTag", valueType: pbv1.ValueTypeBinaryData,
@@ -116,7 +117,8 @@ var conventionalBlockWithTS = block{
 }
 
 var conventionalBlock = block{
-	spans: [][]byte{[]byte("span1"), []byte("span2")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2")},
+	spanIDs: []string{"span1", "span2"},
 	tags: []tag{
 		{
 			name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
@@ -149,6 +151,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 	type args struct {
 		timestamps []int64
 		spans      [][]byte
+		spanIDs    []string
 		tags       [][]*tagValue
 	}
 	tests := []struct {
@@ -161,6 +164,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 			args: args{
 				timestamps: []int64{1, 2},
 				spans:      [][]byte{[]byte("span1"), []byte("span2")},
+				spanIDs:    []string{"span1", "span2"},
 				tags: [][]*tagValue{
 					{
 						{tag: "binaryTag", valueType: pbv1.ValueTypeBinaryData, value: longText, valueArr: nil},
@@ -186,7 +190,7 @@ func Test_block_mustInitFromTrace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &block{}
-			b.mustInitFromTrace(tt.args.spans, tt.args.tags, tt.args.timestamps)
+			b.mustInitFromTrace(tt.args.spans, tt.args.tags, tt.args.timestamps, tt.args.spanIDs)
 			if !reflect.DeepEqual(*b, tt.want) {
 				t.Errorf("block.mustInitFromTrace() = %+v, want %+v", *b, tt.want)
 			}
@@ -218,11 +222,13 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 	tests := []struct {
 		name      string
 		spans     [][]byte
+		spanIDs   []string
 		wantPanic bool
 	}{
 		{
-			name:  "Test mustWriteAndReadSpans",
-			spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+			name:    "Test mustWriteAndReadSpans",
+			spans:   [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+			spanIDs: []string{"id1", "id2", "id3"},
 		},
 	}
 	decoder := &encoding.BytesBlockDecoder{}
@@ -238,10 +244,13 @@ func Test_mustWriteAndReadSpans(t *testing.T) {
 			b := &bytes.Buffer{}
 			w := new(writer)
 			w.init(b)
-			mustWriteSpansTo(sm, tt.spans, w)
-			spans := mustReadSpansFrom(decoder, nil, sm, len(tt.spans), b)
+			mustWriteSpansTo(sm, tt.spans, tt.spanIDs, w)
+			spans, spanIDs := mustReadSpansFrom(decoder, nil, nil, sm, len(tt.spans), b)
 			if !reflect.DeepEqual(spans, tt.spans) {
 				t.Errorf("mustReadSpansFrom() spans = %v, want %v", spans, tt.spans)
+			}
+			if !reflect.DeepEqual(spanIDs, tt.spanIDs) {
+				t.Errorf("mustReadSpansFrom() spanIDs = %v, want %v", spanIDs, tt.spanIDs)
 			}
 		})
 	}

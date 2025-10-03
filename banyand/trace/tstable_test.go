@@ -50,6 +50,7 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 					timestamps: []int64{},
 					tags:       [][]*tagValue{},
 					spans:      [][]byte{},
+					spanIDs:    []string{},
 				},
 			},
 			want: 0,
@@ -66,7 +67,8 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 							{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 						},
 					},
-					spans: [][]byte{[]byte("span1")},
+					spans:   [][]byte{[]byte("span1")},
+					spanIDs: []string{"span1"},
 				},
 			},
 			want: 1,
@@ -241,7 +243,8 @@ var tsTS1 = &traces{
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 		},
 	},
-	spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+	spanIDs: []string{"span1", "span2", "span3"},
 }
 
 var tsTS2 = &traces{
@@ -264,7 +267,8 @@ var tsTS2 = &traces{
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(60), valueArr: nil},
 		},
 	},
-	spans: [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
+	spans:   [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
+	spanIDs: []string{"span4", "span5", "span6"},
 }
 
 func generateHugeTraces(num int) *traces {
@@ -273,6 +277,7 @@ func generateHugeTraces(num int) *traces {
 		timestamps: []int64{},
 		tags:       [][]*tagValue{},
 		spans:      [][]byte{},
+		spanIDs:    []string{},
 	}
 	for i := 1; i <= num; i++ {
 		traces.traceIDs = append(traces.traceIDs, "trace1")
@@ -285,6 +290,7 @@ func generateHugeTraces(num int) *traces {
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 		})
 		traces.spans = append(traces.spans, []byte("span1"))
+		traces.spanIDs = append(traces.spanIDs, "span1")
 	}
 	traces.traceIDs = append(traces.traceIDs, []string{"trace2", "trace3"}...)
 	traces.timestamps = append(traces.timestamps, []int64{int64(num + 1), int64(num + 2)}...)
@@ -296,5 +302,6 @@ func generateHugeTraces(num int) *traces {
 		{}, // empty tags
 	}...)
 	traces.spans = append(traces.spans, [][]byte{[]byte("span2"), []byte("span3")}...)
+	traces.spanIDs = append(traces.spanIDs, []string{"span2", "span3"}...)
 	return traces
 }

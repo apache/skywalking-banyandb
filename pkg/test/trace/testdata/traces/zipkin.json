@@ -70,6 +70,7 @@
         }
     ],
     "trace_id_tag_name": "trace_id",
+    "span_id_tag_name": "span_id",
     "timestamp_tag_name": "timestamp",
     "updated_at": "2021-04-15T01:30:15.01Z"
 }

@@ -243,4 +243,6 @@ message Trace {
   string timestamp_tag_name = 4 [(validate.rules).string.min_len = 1];
   // updated_at indicates when the trace resource is updated.
   google.protobuf.Timestamp updated_at = 5;
+  // span_id_tag_name is the name of the tag that stores the span ID.
+  string span_id_tag_name = 6 [(validate.rules).string.min_len = 1];
 }

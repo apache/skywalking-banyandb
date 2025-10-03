@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -43,6 +44,7 @@ import (
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 const (
@@ -451,6 +453,223 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	return
 }
 
+type traceExecutionPlan struct {
+	traceIDTagName    string
+	timestampTagName  string
+	spanIDTagName     string
+	metadata          []*commonv1.Metadata
+	schemas           []logical.Schema
+	executionContexts []trace.Trace
+}
+
+func (p *traceQueryProcessor) setupTraceExecutionPlan(queryCriteria *tracev1.QueryRequest) (*traceExecutionPlan, *common.Error) {
+	plan := &traceExecutionPlan{
+		metadata:          make([]*commonv1.Metadata, 0, len(queryCriteria.Groups)),
+		schemas:           make([]logical.Schema, 0, len(queryCriteria.Groups)),
+		executionContexts: make([]trace.Trace, 0, len(queryCriteria.Groups)),
+	}
+
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.traceService.Trace(meta)
+		if err != nil {
+			return nil, common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err)
+		}
+
+		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			return nil, common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err)
+		}
+
+		// Validate tag name consistency
+		if errMsg := p.validateTagNames(plan, ec, meta); errMsg != nil {
+			return nil, errMsg
+		}
+
+		plan.executionContexts = append(plan.executionContexts, ec)
+		plan.schemas = append(plan.schemas, s)
+		plan.metadata = append(plan.metadata, meta)
+		plan.traceIDTagName = ec.GetSchema().GetTraceIdTagName()
+		plan.timestampTagName = ec.GetSchema().GetTimestampTagName()
+		plan.spanIDTagName = ec.GetSchema().GetSpanIdTagName()
+	}
+
+	return plan, nil
+}
+
+func (p *traceQueryProcessor) validateTagNames(plan *traceExecutionPlan, ec trace.Trace, meta *commonv1.Metadata) *common.Error {
+	if plan.traceIDTagName != "" && plan.traceIDTagName != ec.GetSchema().GetTraceIdTagName() {
+		return common.NewError("trace id tag name mismatch for trace %s: %s != %s",
+			meta.GetName(), plan.traceIDTagName, ec.GetSchema().GetTraceIdTagName())
+	}
+	if plan.timestampTagName != "" && plan.timestampTagName != ec.GetSchema().GetTimestampTagName() {
+		return common.NewError("timestamp tag name mismatch for trace %s: %s != %s",
+			meta.GetName(), plan.timestampTagName, ec.GetSchema().GetTimestampTagName())
+	}
+	if plan.spanIDTagName != "" && plan.spanIDTagName != ec.GetSchema().GetSpanIdTagName() {
+		return common.NewError("span id tag name mismatch for trace %s: %s != %s",
+			meta.GetName(), plan.spanIDTagName, ec.GetSchema().GetSpanIdTagName())
+	}
+	return nil
+}
+
+type traceMonitor struct {
+	tracer *query.Tracer
+	span   *query.Span
+}
+
+func (p *traceQueryProcessor) setupTraceMonitor(ctx context.Context, queryCriteria *tracev1.QueryRequest,
+	plan logical.Plan, startTime time.Time,
+) (context.Context, *traceMonitor) {
+	if !queryCriteria.Trace {
+		return ctx, nil
+	}
+
+	tracer, newCtx := query.NewTracer(ctx, startTime.Format(time.RFC3339Nano))
+	span, newCtx := tracer.StartSpan(newCtx, "data-%s", p.queryService.nodeID)
+	span.Tag("plan", plan.String())
+
+	return newCtx, &traceMonitor{
+		tracer: tracer,
+		span:   span,
+	}
+}
+
+func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
+	if tm == nil {
+		return
+	}
+
+	data := resp.Data()
+	switch d := data.(type) {
+	case *tracev1.InternalQueryResponse:
+		d.TraceQueryResult = tm.tracer.ToProto()
+	case *common.Error:
+		tm.span.Error(errors.New(d.Error()))
+		*resp = bus.NewMessage(bus.MessageID(messageID), &tracev1.QueryResponse{TraceQueryResult: tm.tracer.ToProto()})
+	default:
+		panic("unexpected data type")
+	}
+	tm.span.Stop()
+}
+
+func (p *traceQueryProcessor) processTraceResults(resultIterator iter.Iterator[model.TraceResult],
+	queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
+) ([]*tracev1.InternalTrace, error) {
+	var traces []*tracev1.InternalTrace
+
+	// Check if trace ID tag should be included based on tag projection
+	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, execPlan.traceIDTagName)
+	// Check if span ID tag should be included based on tag projection
+	shouldIncludeSpanID := slices.Contains(queryCriteria.TagProjection, execPlan.spanIDTagName)
+
+	for {
+		result, hasNext := resultIterator.Next()
+		if !hasNext {
+			break
+		}
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.TID == "" {
+			// Skip spans without trace ID
+			continue
+		}
+
+		// Create a trace for this result
+		trace := &tracev1.InternalTrace{
+			TraceId: result.TID,
+			Key:     result.Key,
+			Spans:   make([]*tracev1.Span, 0, len(result.Spans)),
+			SpanIds: result.SpanIDs,
+		}
+		// Convert each span in the trace result
+		for i, spanBytes := range result.Spans {
+			traceTags := p.buildTraceTags(&result, queryCriteria, execPlan, i, shouldIncludeTraceID, shouldIncludeSpanID)
+
+			span := &tracev1.Span{
+				Tags: traceTags,
+				Span: spanBytes,
+			}
+			trace.Spans = append(trace.Spans, span)
+		}
+		traces = append(traces, trace)
+	}
+
+	return traces, nil
+}
+
+func (p *traceQueryProcessor) buildTraceTags(result *model.TraceResult, queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
+	spanIndex int, shouldIncludeTraceID, shouldIncludeSpanID bool,
+) []*modelv1.Tag {
+	var traceTags []*modelv1.Tag
+
+	// Create trace tags from the result
+	if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
+		for _, tag := range result.Tags {
+			if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+				continue
+			}
+			if spanIndex < len(tag.Values) {
+				traceTags = append(traceTags, &modelv1.Tag{
+					Key:   tag.Name,
+					Value: tag.Values[spanIndex],
+				})
+			}
+		}
+	}
+
+	// Add trace ID tag to each span if it should be included
+	if shouldIncludeTraceID && result.TID != "" {
+		traceTags = append(traceTags, &modelv1.Tag{
+			Key: execPlan.traceIDTagName,
+			Value: &modelv1.TagValue{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: result.TID,
+					},
+				},
+			},
+		})
+	}
+
+	// Add span ID tag to each span if it should be included
+	if shouldIncludeSpanID && spanIndex < len(result.SpanIDs) {
+		traceTags = append(traceTags, &modelv1.Tag{
+			Key: execPlan.spanIDTagName,
+			Value: &modelv1.TagValue{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: result.SpanIDs[spanIndex],
+					},
+				},
+			},
+		})
+	}
+
+	return traceTags
+}
+
+func (p *traceQueryProcessor) logSlowQuery(queryCriteria *tracev1.QueryRequest, traces []*tracev1.InternalTrace, startTime time.Time) {
+	if queryCriteria.Trace || p.slowQuery <= 0 {
+		return
+	}
+
+	latency := time.Since(startTime)
+	if latency <= p.slowQuery {
+		return
+	}
+
+	spanCount := 0
+	for _, trace := range traces {
+		spanCount += len(trace.Spans)
+	}
+	p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", spanCount).Msg("trace slow query")
+}
+
 func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *tracev1.QueryRequest) (resp bus.Message) {
 	n := time.Now()
 	now := n.UnixNano()
@@ -461,39 +680,20 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		}
 	}()
 
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.TraceExecutionContext
-	var traceIDTagName string
-	var timestampTagName string
-	for i := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
-		}
-		ec, err := p.traceService.Trace(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err))
-			return
-		}
-		ecc = append(ecc, ec)
-		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err))
-			return
-		}
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
-		if traceIDTagName != "" && traceIDTagName != ec.GetSchema().GetTraceIdTagName() {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("trace id tag name mismatch for trace %s: %s != %s",
-				meta.GetName(), traceIDTagName, ec.GetSchema().GetTraceIdTagName()))
-			return
-		}
-		traceIDTagName = ec.GetSchema().GetTraceIdTagName()
-		timestampTagName = ec.GetSchema().GetTimestampTagName()
+	execPlan, setupErr := p.setupTraceExecutionPlan(queryCriteria)
+	if setupErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), setupErr)
+		return
 	}
 
-	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName, timestampTagName)
+	// Convert Trace to TraceExecutionContext for logical_trace.Analyze
+	traceExecContexts := make([]executor.TraceExecutionContext, len(execPlan.executionContexts))
+	for i, t := range execPlan.executionContexts {
+		traceExecContexts[i] = t
+	}
+
+	plan, err := logical_trace.Analyze(queryCriteria, execPlan.metadata, execPlan.schemas, traceExecContexts,
+		execPlan.traceIDTagName, execPlan.spanIDTagName, execPlan.timestampTagName)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return
@@ -503,25 +703,9 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		p.log.Debug().Str("plan", plan.String()).Msg("trace query plan")
 	}
 
-	var tracer *query.Tracer
-	var span *query.Span
-	if queryCriteria.Trace {
-		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
-		defer func() {
-			data := resp.Data()
-			switch d := data.(type) {
-			case *tracev1.InternalQueryResponse:
-				d.TraceQueryResult = tracer.ToProto()
-			case *common.Error:
-				span.Error(errors.New(d.Error()))
-				resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{TraceQueryResult: tracer.ToProto()})
-			default:
-				panic("unexpected data type")
-			}
-			span.Stop()
-		}()
+	ctx, traceMonitor := p.setupTraceMonitor(ctx, queryCriteria, plan, n)
+	if traceMonitor != nil {
+		defer traceMonitor.finishTrace(&resp, now)
 	}
 
 	te := plan.(executor.TraceExecutable)
@@ -533,84 +717,15 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		return
 	}
 
-	// Convert model.TraceResult iterator to tracev1.QueryResponse format
-	// Each result contains spans from a single trace, so we can directly create traces
-	var traces []*tracev1.InternalTrace
-
-	// Check if trace ID tag should be included based on tag projection
-	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
-
-	for {
-		result, hasNext := resultIterator.Next()
-		if !hasNext {
-			break
-		}
-
-		if result.TID == "" {
-			// Skip spans without trace ID
-			continue
-		}
-
-		// Create a trace for this result
-		trace := &tracev1.InternalTrace{
-			Spans: make([]*tracev1.Span, 0, len(result.Spans)),
-		}
-
-		// Convert each span in the trace result
-		for i, spanBytes := range result.Spans {
-			// Create trace tags from the result
-			var traceTags []*modelv1.Tag
-			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
-				for _, tag := range result.Tags {
-					if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
-						continue
-					}
-					if i < len(tag.Values) {
-						traceTags = append(traceTags, &modelv1.Tag{
-							Key:   tag.Name,
-							Value: tag.Values[i],
-						})
-					}
-				}
-			}
-
-			// Add trace ID tag to each span if it should be included
-			if shouldIncludeTraceID && result.TID != "" {
-				traceTags = append(traceTags, &modelv1.Tag{
-					Key: traceIDTagName,
-					Value: &modelv1.TagValue{
-						Value: &modelv1.TagValue_Str{
-							Str: &modelv1.Str{
-								Value: result.TID,
-							},
-						},
-					},
-				})
-			}
-
-			span := &tracev1.Span{
-				Tags: traceTags,
-				Span: spanBytes,
-			}
-			trace.Spans = append(trace.Spans, span)
-			trace.TraceId = result.TID
-			trace.Key = result.Key
-		}
-
-		traces = append(traces, trace)
+	traces, err := p.processTraceResults(resultIterator, queryCriteria, execPlan)
+	if err != nil {
+		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to process trace results for %s: %v", queryCriteria.GetName(), err))
+		return
 	}
 
 	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: traces})
 
-	if !queryCriteria.Trace && p.slowQuery > 0 {
-		latency := time.Since(n)
-		if latency > p.slowQuery {
-			spanCount := 0
-			for _, trace := range traces {
-				spanCount += len(trace.Spans)
-			}
-			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", spanCount).Msg("trace slow query")
-		}
-	}
+	p.logSlowQuery(queryCriteria, traces, n)
 	return
 }

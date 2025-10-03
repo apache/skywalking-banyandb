@@ -457,14 +457,14 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 		}
 
 		if uncompressedSpansSizeBytes >= maxUncompressedSpanSize || tid != tidPrev {
-			bsw.MustWriteTrace(tidPrev, ts.spans[indexPrev:i], ts.tags[indexPrev:i], ts.timestamps[indexPrev:i])
+			bsw.MustWriteTrace(tidPrev, ts.spans[indexPrev:i], ts.tags[indexPrev:i], ts.timestamps[indexPrev:i], ts.spanIDs[indexPrev:i])
 			tidPrev = tid
 			indexPrev = i
 			uncompressedSpansSizeBytes = 0
 		}
 		uncompressedSpansSizeBytes += uint64(len(ts.spans[i]))
 	}
-	bsw.MustWriteTrace(tidPrev, ts.spans[indexPrev:], ts.tags[indexPrev:], ts.timestamps[indexPrev:])
+	bsw.MustWriteTrace(tidPrev, ts.spans[indexPrev:], ts.tags[indexPrev:], ts.timestamps[indexPrev:], ts.spanIDs[indexPrev:])
 	bsw.Flush(&mp.partMetadata, &mp.traceIDFilter, &mp.tagType)
 	releaseBlockWriter(bsw)
 }

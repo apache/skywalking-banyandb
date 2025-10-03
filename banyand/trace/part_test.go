@@ -43,6 +43,7 @@ func TestMustInitFromTraces(t *testing.T) {
 				timestamps: []int64{},
 				tags:       [][]*tagValue{},
 				spans:      [][]byte{},
+				spanIDs:    []string{},
 			},
 			want: partMetadata{},
 		},
@@ -57,7 +58,8 @@ func TestMustInitFromTraces(t *testing.T) {
 						{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 					},
 				},
-				spans: [][]byte{[]byte("span1")},
+				spans:   [][]byte{[]byte("span1")},
+				spanIDs: []string{"span1"},
 			},
 			want: partMetadata{
 				BlocksCount:  1,
@@ -156,6 +158,7 @@ var ts = &traces{
 		[]byte("span5"),
 		[]byte("span6"),
 	},
+	spanIDs: []string{"span1", "span2", "span3", "span4", "span5", "span6"},
 }
 
 func TestMustInitFromPart(t *testing.T) {
@@ -238,6 +241,7 @@ func Test_memPart_Marshal_Unmarshal(t *testing.T) {
 			[]byte("span2"),
 			[]byte("span3"),
 		},
+		spanIDs: []string{"span1", "span2", "span3"},
 	}
 
 	mp.mustInitFromTraces(tsData)

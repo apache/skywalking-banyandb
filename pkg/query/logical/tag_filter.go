@@ -82,7 +82,7 @@ func BuildSimpleTagFilter(criteria *modelv1.Criteria) (TagFilter, error) {
 
 // BuildTagFilter returns a TagFilter.
 func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schema Schema,
-	indexChecker IndexChecker, hasGlobalIndex bool, globalTagName string,
+	indexChecker IndexChecker, hasGlobalIndex bool, skippedTagNames ...string,
 ) (TagFilter, error) {
 	if criteria == nil {
 		return DummyFilter, nil
@@ -100,17 +100,19 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 		if _, ok := entityDict[cond.Name]; ok && !hasGlobalIndex {
 			return DummyFilter, nil
 		}
-		if cond.Name == globalTagName {
-			return DummyFilter, nil
+		for _, skippedTagName := range skippedTagNames {
+			if cond.Name == skippedTagName {
+				return DummyFilter, nil
+			}
 		}
 		return parseFilter(cond, expr, schema, indexChecker)
 	case *modelv1.Criteria_Le:
 		le := criteria.GetLe()
-		left, err := BuildTagFilter(le.Left, entityDict, schema, indexChecker, hasGlobalIndex, globalTagName)
+		left, err := BuildTagFilter(le.Left, entityDict, schema, indexChecker, hasGlobalIndex, skippedTagNames...)
 		if err != nil {
 			return nil, err
 		}
-		right, err := BuildTagFilter(le.Right, entityDict, schema, indexChecker, hasGlobalIndex, globalTagName)
+		right, err := BuildTagFilter(le.Right, entityDict, schema, indexChecker, hasGlobalIndex, skippedTagNames...)
 		if err != nil {
 			return nil, err
 		}

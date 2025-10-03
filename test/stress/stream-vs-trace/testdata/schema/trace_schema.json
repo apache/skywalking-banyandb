@@ -46,5 +46,6 @@
     }
   ],
   "trace_id_tag_name": "traceId",
+  "span_id_tag_name": "spanId",
   "timestamp_tag_name": "startTime"
 }
