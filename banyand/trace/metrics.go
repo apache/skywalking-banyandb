@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	streamScope = observability.RootScope.SubScope("stream")
+	streamScope = observability.RootScope.SubScope("trace")
 	tbScope     = streamScope.SubScope("tst")
 )
 

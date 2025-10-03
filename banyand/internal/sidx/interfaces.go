@@ -37,10 +37,10 @@ import (
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
 	// MustAddMemPart adds a memPart to the SIDX instance.
-	MustAddMemPart(ctx context.Context, mp *memPart)
+	MustAddMemPart(ctx context.Context, mp *memPart, partID uint64)
 	// Write performs batch write operations. All writes must be submitted as batches.
 	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest, segmentID int64) error
+	Write(ctx context.Context, reqs []WriteRequest, segmentID int64, partID uint64) error
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.
@@ -52,9 +52,7 @@ type SIDX interface {
 	// Flush flushes the SIDX instance to disk.
 	Flush() error
 	// Merge merges the specified parts into a new part.
-	Merge(closeCh <-chan struct{}) (uint64, error)
-	// MergeMemPart merges the mem parts into a new part.
-	MergeMemParts(closeCh <-chan struct{}) (uint64, error)
+	Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (uint64, error)
 	// PartsToSync returns the parts to sync.
 	PartsToSync() []*part
 	// StreamingParts returns the streaming parts.

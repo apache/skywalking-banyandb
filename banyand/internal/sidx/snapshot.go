@@ -104,10 +104,6 @@ func (s *snapshot) getParts(minKey, maxKey int64) []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if !pw.isActive() {
-			continue
-		}
-
 		part := pw.p
 		if part == nil || part.partMetadata == nil {
 			continue
@@ -133,7 +129,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if pw.isActive() {
+		if !pw.removable.Load() {
 			result = append(result, pw)
 		}
 	}
@@ -143,13 +139,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 
 // getPartCount returns the number of parts in the snapshot.
 func (s *snapshot) getPartCount() int {
-	count := 0
-	for _, pw := range s.parts {
-		if pw.isActive() {
-			count++
-		}
-	}
-	return count
+	return len(s.getPartsAll())
 }
 
 // getEpoch returns the snapshot's epoch.

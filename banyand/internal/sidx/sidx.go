@@ -61,7 +61,6 @@ type sidx struct {
 	totalIntroduceLoopFinished atomic.Int64
 	totalQueries               atomic.Int64
 	totalWrites                atomic.Int64
-	curPartID                  uint64
 	mu                         sync.RWMutex
 }
 
@@ -105,10 +104,7 @@ func (s *sidx) SyncCh() chan<- *SyncIntroduction {
 	return s.syncCh
 }
 
-func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart) {
-	// Generate part ID using atomic increment
-	partID := atomic.AddUint64(&s.curPartID, 1)
-
+func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart, partID uint64) {
 	// Create introduction
 	intro := generateIntroduction()
 	intro.memPart = mp
@@ -130,7 +126,7 @@ func (s *sidx) MustAddMemPart(ctx context.Context, mp *memPart) {
 }
 
 // Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, segmentID int64) error {
+func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, segmentID int64, partID uint64) error {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -152,9 +148,6 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest, segmentID int64) 
 	// Create memory part from elements
 	mp := GenerateMemPart()
 	mp.mustInitFromElements(es)
-
-	// Generate part ID using atomic increment
-	partID := atomic.AddUint64(&s.curPartID, 1)
 
 	// Create introduction
 	intro := generateIntroduction()
@@ -288,7 +281,7 @@ func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
 	var selectedParts []*part
 
 	for _, pw := range snap.parts {
-		if pw.isActive() && pw.overlapsKeyRange(minKey, maxKey) {
+		if pw.overlapsKeyRange(minKey, maxKey) {
 			selectedParts = append(selectedParts, pw.p)
 		}
 	}
@@ -448,7 +441,7 @@ func (s *sidx) Flush() error {
 
 	// Select memory parts to flush
 	for _, pw := range snap.parts {
-		if !pw.isMemPart() || !pw.isActive() {
+		if !pw.isMemPart() {
 			continue
 		}
 		partPath := partPath(s.root, pw.ID())
@@ -870,9 +863,6 @@ func (s *sidx) loadSnapshot(epoch uint64, loadedParts []uint64) {
 		part := mustOpenPart(id, partPath, s.fileSystem)
 		pw := newPartWrapper(nil, part)
 		snp.addPart(pw)
-		if s.curPartID < id {
-			s.curPartID = id
-		}
 	}
 	s.gc.registerSnapshot(snp)
 	s.gc.clean()

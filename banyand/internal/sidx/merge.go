@@ -19,10 +19,10 @@ package sidx
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
@@ -31,7 +31,7 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(closeCh <-chan struct{}) (uint64, error) {
+func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (uint64, error) {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -39,84 +39,37 @@ func (s *sidx) Merge(closeCh <-chan struct{}) (uint64, error) {
 	}
 	defer snap.decRef()
 
-	// Create merge introduction
-	mergeIntro := generateMergerIntroduction()
-	defer releaseMergerIntroduction(mergeIntro)
-	mergeIntro.applied = make(chan struct{})
-
 	// Select parts to merge (all active non-memory parts)
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() {
+		if _, ok := partIDtoMerge[pw.ID()]; ok {
+			if pw.isMemPart() {
+				logger.Panicf("mem part %d is not flushed", pw.ID())
+			}
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
 
 	if len(partsToMerge) < 2 {
-		return 0, nil
+		logger.Panicf("not enough parts to merge: %d", len(partsToMerge))
 	}
-
-	// Mark parts for merging
-	for _, pw := range partsToMerge {
-		mergeIntro.merged[pw.ID()] = struct{}{}
-	}
-
-	// Generate new part ID using atomic increment
-	newPartID := atomic.AddUint64(&s.curPartID, 1)
 
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
 	if err != nil {
 		return 0, err
 	}
-	mergeIntro.newPart = newPart
-
-	// Send to introducer loop
-	s.mergeCh <- mergeIntro
-
-	// Wait for merge to complete
-	<-mergeIntro.applied
-
-	return uint64(len(partsToMerge)), nil
-}
-
-func (s *sidx) MergeMemParts(closeCh <-chan struct{}) (uint64, error) {
-	snap := s.currentSnapshot()
-	if snap == nil {
-		return 0, nil
-	}
-	defer snap.decRef()
 
 	// Create merge introduction
 	mergeIntro := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mergeIntro)
 	mergeIntro.applied = make(chan struct{})
 
-	// Select parts to merge (all active memory parts)
-	var partsToMerge []*partWrapper
-	for _, pw := range snap.parts {
-		if pw.isActive() && pw.isMemPart() {
-			partsToMerge = append(partsToMerge, pw)
-		}
-	}
-
-	if len(partsToMerge) < 2 {
-		return 0, nil
-	}
-
 	// Mark parts for merging
 	for _, pw := range partsToMerge {
 		mergeIntro.merged[pw.ID()] = struct{}{}
 	}
 
-	// Generate new part ID using atomic increment
-	newPartID := atomic.AddUint64(&s.curPartID, 1)
-
-	// Create new merged part
-	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
-	if err != nil {
-		return 0, err
-	}
 	mergeIntro.newPart = newPart
 
 	// Send to introducer loop

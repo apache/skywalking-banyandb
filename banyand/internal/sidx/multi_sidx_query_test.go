@@ -37,9 +37,9 @@ type mockSIDX struct {
 	name     string
 }
 
-func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}
+func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart, _ uint64) {}
 
-func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ int64) error {
+func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ int64, _ uint64) error {
 	return nil // Not implemented for tests
 }
 
@@ -62,11 +62,7 @@ func (m *mockSIDX) Flush() error {
 	return nil
 }
 
-func (m *mockSIDX) Merge(_ <-chan struct{}) (uint64, error) {
-	return 0, nil
-}
-
-func (m *mockSIDX) MergeMemParts(_ <-chan struct{}) (uint64, error) {
+func (m *mockSIDX) Merge(_ <-chan struct{}, _ map[uint64]struct{}, _ uint64) (uint64, error) {
 	return 0, nil
 }
 

@@ -99,7 +99,7 @@ func TestSIDX_Write_SingleRequest(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1", createTestTag("tag1", "value1")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	assert.NoError(t, err)
 
 	// Verify stats
@@ -123,7 +123,7 @@ func TestSIDX_Write_BatchRequest(t *testing.T) {
 		createTestWriteRequest(2, 200, "data3", createTestTag("tag2", "value3")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	assert.NoError(t, err)
 
 	// Verify stats
@@ -169,7 +169,7 @@ func TestSIDX_Write_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := sidx.Write(ctx, []WriteRequest{tt.req}, 1)
+			err := sidx.Write(ctx, []WriteRequest{tt.req}, 1, 1)
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -198,7 +198,7 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 		createTestWriteRequest(1, 100, "trace-data", tags...),
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	assert.NoError(t, err)
 }
 
@@ -217,7 +217,7 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1"),
 		createTestWriteRequest(1, 101, "data2"),
 	}
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -267,7 +267,7 @@ func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
 		createTestWriteRequest(1, 150, "data150"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -321,7 +321,7 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 		createTestWriteRequest(3, 75, "series3-data75"),
 		createTestWriteRequest(3, 175, "series3-data175"),
 	}
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -423,7 +423,7 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 		createTestWriteRequest(1, 150, "data150"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Wait for introducer loop to process
@@ -527,7 +527,7 @@ func TestSIDX_WriteQueryIntegration(t *testing.T) {
 		createTestWriteRequest(2, 180, "series2-data2", createTestTag("env", "dev")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Test 1: Query single series
@@ -588,7 +588,7 @@ func TestSIDX_DataConsistency(t *testing.T) {
 		reqs = append(reqs, createTestWriteRequest(1, key, data))
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Query back and verify data integrity
@@ -635,7 +635,7 @@ func TestSIDX_LargeDataset(t *testing.T) {
 		))
 	}
 
-	err := sidx.Write(ctx, reqs, 1)
+	err := sidx.Write(ctx, reqs, 1, 1)
 	require.NoError(t, err)
 
 	// Query back and verify we can handle large result sets
@@ -682,7 +682,7 @@ func TestSIDX_ConcurrentWrites(t *testing.T) {
 				reqs = append(reqs, createTestWriteRequest(seriesID, key, data))
 			}
 
-			if err := sidx.Write(ctx, reqs, 1); err != nil {
+			if err := sidx.Write(ctx, reqs, 1, 1); err != nil {
 				errors <- err
 			}
 		}(g)
@@ -714,7 +714,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 	initialReqs := []WriteRequest{
 		createTestWriteRequest(1, 100, "initial-data"),
 	}
-	err := sidx.Write(ctx, initialReqs, 1)
+	err := sidx.Write(ctx, initialReqs, 1, 1)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -756,7 +756,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 					int64(writeCount),
 					fmt.Sprintf("writer-%d-data-%d", writerID, writeCount),
 				)
-				sidx.Write(ctx, []WriteRequest{req}, 1) // Ignore errors during concurrent stress
+				sidx.Write(ctx, []WriteRequest{req}, 1, 1) // Ignore errors during concurrent stress
 				writeCount++
 			}
 		}(i)
