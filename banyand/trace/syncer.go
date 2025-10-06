@@ -240,10 +240,6 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 		return errClosed
 	}
 	sidxMap := tst.getAllSidx()
-	if len(sidxMap) == 0 {
-		logger.Panicf("sidx map is empty")
-		return nil
-	}
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
 			return errClosed
@@ -283,6 +279,12 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 				PartType:              PartTypeCore,
 			})
 		}
+		sort.Slice(streamingParts, func(i, j int) bool {
+			if streamingParts[i].ID == streamingParts[j].ID {
+				return streamingParts[i].PartType < streamingParts[j].PartType
+			}
+			return streamingParts[i].ID < streamingParts[j].ID
+		})
 		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
 			return err
 		}
