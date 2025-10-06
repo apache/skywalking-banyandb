@@ -35,23 +35,17 @@ func NewPartsToSync() map[string][]*Part {
 
 // PartsToSync returns the parts to sync.
 func (s *sidx) PartsToSync() []*part {
-	if s.loopCloser != nil && s.loopCloser.Closed() {
-		return nil
-	}
-
-	s.mu.RLock()
-	snapshot := s.snapshot
+	snapshot := s.currentSnapshot()
 	if snapshot == nil {
-		s.mu.RUnlock()
 		return nil
 	}
+	defer snapshot.decRef()
 	partsToSync := make([]*part, 0, len(snapshot.parts))
 	for _, pw := range snapshot.parts {
 		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
 			partsToSync = append(partsToSync, pw.p)
 		}
 	}
-	s.mu.RUnlock()
 
 	if len(partsToSync) > 1 {
 		sort.Slice(partsToSync, func(i, j int) bool {
@@ -62,28 +56,42 @@ func (s *sidx) PartsToSync() []*part {
 }
 
 // StreamingParts returns the streaming parts.
-func (s *sidx) StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func()) {
+func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func()) {
+	snapshot := s.currentSnapshot()
+	if snapshot == nil {
+		return nil, nil
+	}
+	defer snapshot.decRef()
 	var streamingParts []queue.StreamingPartData
 	var releaseFuncs []func()
-	for _, part := range partsToSync {
-		// Create streaming reader for the part
-		files, release := createPartFileReaders(part)
-		releaseFuncs = append(releaseFuncs, release)
-		// Create streaming part sync data
-		streamingParts = append(streamingParts, queue.StreamingPartData{
-			ID:                    part.partMetadata.ID,
-			Group:                 group,
-			ShardID:               shardID,
-			Topic:                 data.TopicTracePartSync.String(),
-			Files:                 files,
-			CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
-			UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
-			TotalCount:            part.partMetadata.TotalCount,
-			BlocksCount:           part.partMetadata.BlocksCount,
-			MinTimestamp:          part.partMetadata.SegmentID,
-			MinKey:                part.partMetadata.MinKey,
-			MaxKey:                part.partMetadata.MaxKey,
-			PartType:              name,
+	for _, pw := range snapshot.parts {
+		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
+			if _, ok := partIDsToSync[pw.p.partMetadata.ID]; ok {
+				part := pw.p
+				files, release := createPartFileReaders(part)
+				releaseFuncs = append(releaseFuncs, release)
+				streamingParts = append(streamingParts, queue.StreamingPartData{
+					ID:                    part.partMetadata.ID,
+					Group:                 group,
+					ShardID:               shardID,
+					Topic:                 data.TopicTracePartSync.String(),
+					Files:                 files,
+					CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+					UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
+					TotalCount:            part.partMetadata.TotalCount,
+					BlocksCount:           part.partMetadata.BlocksCount,
+					MinTimestamp:          part.partMetadata.SegmentID,
+					MinKey:                part.partMetadata.MinKey,
+					MaxKey:                part.partMetadata.MaxKey,
+					PartType:              name,
+				})
+			}
+		}
+	}
+
+	if len(streamingParts) > 1 {
+		sort.Slice(streamingParts, func(i, j int) bool {
+			return streamingParts[i].ID < streamingParts[j].ID
 		})
 	}
 	return streamingParts, releaseFuncs

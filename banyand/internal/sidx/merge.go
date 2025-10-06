@@ -31,11 +31,11 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (uint64, error) {
+func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error) {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return 0, nil
+		return nil, nil
 	}
 	defer snap.decRef()
 
@@ -43,27 +43,22 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
 		if _, ok := partIDtoMerge[pw.ID()]; ok {
-			if pw.isMemPart() {
-				logger.Panicf("mem part %d is not flushed", pw.ID())
-			}
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
 
-	if len(partsToMerge) < 2 {
+	if len(partsToMerge) != len(partIDtoMerge) {
 		logger.Panicf("not enough parts to merge: %d", len(partsToMerge))
 	}
 
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	// Create merge introduction
 	mergeIntro := generateMergerIntroduction()
-	defer releaseMergerIntroduction(mergeIntro)
-	mergeIntro.applied = make(chan struct{})
 
 	// Mark parts for merging
 	for _, pw := range partsToMerge {
@@ -71,14 +66,7 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 	}
 
 	mergeIntro.newPart = newPart
-
-	// Send to introducer loop
-	s.mergeCh <- mergeIntro
-
-	// Wait for merge to complete
-	<-mergeIntro.applied
-
-	return uint64(len(partsToMerge)), nil
+	return mergeIntro, nil
 }
 
 func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {

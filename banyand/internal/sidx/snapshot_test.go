@@ -29,6 +29,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
+// writeTestData is a helper function for writing test data using the new pattern.
+func writeTestDataToSIDX(t *testing.T, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
+	// Convert write requests to MemPart
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	if err != nil {
+		t.Errorf("ConvertToMemPart failed: %v", err)
+		return
+	}
+
+	// Introduce the MemPart to SIDX
+	sidx.IntroduceMemPart(partID, memPart)
+}
+
 func TestSnapshot_Creation(t *testing.T) {
 	// Create test parts with different key ranges
 	parts := createTestParts(t, []keyRange{
@@ -39,14 +52,10 @@ func TestSnapshot_Creation(t *testing.T) {
 	defer cleanupTestParts(parts)
 
 	// Create snapshot
-	epoch := uint64(1001)
-	snapshot := newSnapshot(parts, epoch)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	// Verify snapshot properties
-	if snapshot.getEpoch() != epoch {
-		t.Errorf("expected epoch %d, got %d", epoch, snapshot.getEpoch())
-	}
 
 	if snapshot.refCount() != 1 {
 		t.Errorf("expected ref count 1, got %d", snapshot.refCount())
@@ -61,7 +70,7 @@ func TestSnapshot_ReferenceCountingBasic(t *testing.T) {
 	parts := createTestParts(t, []keyRange{{minKey: 100, maxKey: 199, id: 1}})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 
 	// Test acquire
 	if !snapshot.acquire() {
@@ -85,7 +94,7 @@ func TestSnapshot_ReferenceCountingConcurrent(t *testing.T) {
 	parts := createTestParts(t, []keyRange{{minKey: 100, maxKey: 199, id: 1}})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	// Simulate concurrent access
@@ -134,7 +143,7 @@ func TestSnapshot_GetPartsByKeyRange(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	tests := []struct {
@@ -214,7 +223,7 @@ func TestSnapshot_GetPartsAll(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	allParts := snapshot.getPartsAll()
@@ -245,7 +254,7 @@ func TestSnapshot_Validation(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 
 	// Valid snapshot should pass validation
 	if err := snapshot.validate(); err != nil {
@@ -266,7 +275,7 @@ func TestSnapshot_String(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	str := snapshot.String()
@@ -274,10 +283,7 @@ func TestSnapshot_String(t *testing.T) {
 		t.Error("String() should return non-empty string")
 	}
 
-	// String should contain epoch and part count
-	if !contains(str, "epoch=1001") {
-		t.Error("String() should contain epoch")
-	}
+	// String should contain part count
 	if !contains(str, "parts=2") {
 		t.Error("String() should contain part count")
 	}
@@ -291,7 +297,7 @@ func TestSnapshot_PartManagement(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	initialCount := snapshot.getPartCount()
@@ -321,17 +327,14 @@ func TestSnapshot_PoolReuse(t *testing.T) {
 	defer cleanupTestParts(parts)
 
 	// Create and release a snapshot
-	snapshot1 := newSnapshot(parts, 1001)
+	snapshot1 := newSnapshot(parts)
 	snapshot1.release()
 
 	// Create another snapshot - should potentially reuse the same object
-	snapshot2 := newSnapshot(parts, 1002)
+	snapshot2 := newSnapshot(parts)
 	defer snapshot2.release()
 
 	// Should be clean state
-	if snapshot2.getEpoch() != 1002 {
-		t.Errorf("expected epoch 1002, got %d", snapshot2.getEpoch())
-	}
 	if snapshot2.refCount() != 1 {
 		t.Errorf("expected ref count 1, got %d", snapshot2.refCount())
 	}
@@ -413,9 +416,7 @@ func TestSnapshotReplacement_Basic(t *testing.T) {
 			Tags:     []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
 		}
 
-		if err := sidx.Write(ctx, []WriteRequest{req}, 1, 1); err != nil {
-			t.Errorf("write %d failed: %v", i, err)
-		}
+		writeTestDataToSIDX(t, sidx, []WriteRequest{req}, int64(i+1), uint64(i+1))
 
 		// Verify system remains consistent after each write
 		stats, err := sidx.Stats(ctx)
@@ -504,9 +505,7 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 			},
 		}
 
-		if err := sidx.Write(ctx, reqs, 1, 1); err != nil {
-			t.Errorf("write %d failed: %v", i, err)
-		}
+		writeTestDataToSIDX(t, sidx, reqs, int64(i+1), uint64(i+1))
 
 		time.Sleep(10 * time.Millisecond) // Space out writes
 	}
@@ -584,7 +583,7 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 					// Write operation - triggers memory part introduction (snapshot replacement)
 					reqs := []WriteRequest{
 						{
-							SeriesID: common.SeriesID(id*1000 + j),
+							SeriesID: common.SeriesID(id*1000 + j + 1), // Ensure non-zero SeriesID
 							Key:      int64(id*1000 + j),
 							Data:     []byte(fmt.Sprintf("race-test-%d-%d", id, j)),
 							Tags: []Tag{
@@ -593,7 +592,7 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 							},
 						},
 					}
-					sidx.Write(ctx, reqs, 1, 1)
+					writeTestDataToSIDX(t, sidx, reqs, int64(id+1), uint64(j+1))
 				case 1:
 					// Stats operation - accesses current snapshot
 					sidx.Stats(ctx)
@@ -653,9 +652,7 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 				},
 			}
 
-			if writeErr := sidx.Write(ctx, reqs, 1, 1); writeErr != nil {
-				t.Errorf("batch %d write %d failed: %v", i, j, writeErr)
-			}
+			writeTestDataToSIDX(t, sidx, reqs, int64(i+1), uint64(j+1))
 		}
 
 		// Verify the system state remains consistent
@@ -714,9 +711,7 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 					},
 				}
 
-				if writeErr := sidx.Write(ctx, reqs, 1, 1); writeErr != nil {
-					t.Errorf("concurrent writer %d write %d failed: %v", writerID, j, writeErr)
-				}
+				writeTestDataToSIDX(t, sidx, reqs, int64(writerID+1), uint64(j+1))
 
 				time.Sleep(3 * time.Millisecond)
 			}

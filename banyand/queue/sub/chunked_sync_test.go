@@ -203,6 +203,10 @@ func (m *MockChunkedSyncHandler) HandleFileChunk(_ *queue.ChunkedSyncPartContext
 // MockChunkedSyncPartHandler implements queue.PartHandler for testing.
 type MockChunkedSyncPartHandler struct{}
 
+func (m *MockChunkedSyncPartHandler) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	return nil
+}
+
 func (m *MockChunkedSyncPartHandler) FinishSync() error {
 	return nil
 }
@@ -567,4 +571,214 @@ func TestChunkedSyncOutOfOrderBasic(t *testing.T) {
 		assert.Contains(t, resp.Error, "expected 1")
 		assert.Contains(t, resp.Error, "got 2")
 	})
+}
+
+func TestChunkedSyncNewPartTypeBehavior(t *testing.T) {
+	// Initialize logger for tests
+	err := logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: "info",
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                    string
+		firstPartType           string
+		secondPartType          string
+		description             string
+		firstPartID             uint64
+		secondPartID            uint64
+		expectNewPartTypeCalled bool
+	}{
+		{
+			name:                    "same_id_different_parttype",
+			firstPartID:             123,
+			firstPartType:           "primary",
+			secondPartID:            123,         // Same ID
+			secondPartType:          "secondary", // Different PartType
+			expectNewPartTypeCalled: true,
+			description:             "NewPartType should be called when ID is same but PartType changes",
+		},
+		{
+			name:                    "same_id_same_parttype",
+			firstPartID:             456,
+			firstPartType:           "primary",
+			secondPartID:            456,       // Same ID
+			secondPartType:          "primary", // Same PartType
+			expectNewPartTypeCalled: false,
+			description:             "NewPartType should NOT be called when both ID and PartType are same",
+		},
+		{
+			name:                    "different_id_same_parttype",
+			firstPartID:             789,
+			firstPartType:           "primary",
+			secondPartID:            790,       // Different ID
+			secondPartType:          "primary", // Same PartType
+			expectNewPartTypeCalled: false,
+			description:             "NewPartType should NOT be called when ID changes (CreatePartHandler is called instead)",
+		},
+		{
+			name:                    "different_id_different_parttype",
+			firstPartID:             111,
+			firstPartType:           "primary",
+			secondPartID:            222,         // Different ID
+			secondPartType:          "secondary", // Different PartType
+			expectNewPartTypeCalled: false,
+			description:             "NewPartType should NOT be called when ID changes (CreatePartHandler is called instead)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create server
+			s := &server{
+				log:                   logger.GetLogger("test-server-" + tt.name),
+				chunkedSyncHandlers:   make(map[bus.Topic]queue.ChunkedSyncHandler),
+				enableChunkReordering: false,
+			}
+
+			// Create mock handler that tracks NewPartType calls
+			mockHandler := &MockChunkedSyncHandlerWithTracking{}
+			s.chunkedSyncHandlers[data.TopicStreamPartSync] = mockHandler
+
+			// Create mock stream
+			mockStream := &MockSyncPartStream{}
+
+			// Create a session
+			session := &syncSession{
+				sessionID:      "test-session-" + tt.name,
+				startTime:      time.Now(),
+				chunksReceived: 0,
+				partsProgress:  make(map[int]*partProgress),
+				metadata: &clusterv1.SyncMetadata{
+					Group:   "test-group",
+					ShardId: 1,
+					Topic:   data.TopicStreamPartSync.String(),
+				},
+			}
+
+			// Send first chunk
+			req1 := &clusterv1.SyncPartRequest{
+				SessionId:     "test-session-" + tt.name,
+				ChunkIndex:    0,
+				ChunkData:     []byte("first-chunk-data"),
+				ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("first-chunk-data"))),
+				PartsInfo: []*clusterv1.PartInfo{
+					{
+						Id:                    tt.firstPartID,
+						PartType:              tt.firstPartType,
+						CompressedSizeBytes:   100,
+						UncompressedSizeBytes: 200,
+						TotalCount:            10,
+						BlocksCount:           5,
+						MinTimestamp:          time.Now().UnixMilli(),
+						MaxTimestamp:          time.Now().UnixMilli(),
+						Files: []*clusterv1.FileInfo{
+							{
+								Name:   "test-file.dat",
+								Offset: 0,
+								Size:   17,
+							},
+						},
+					},
+				},
+			}
+
+			err := s.processChunk(mockStream, session, req1)
+			require.NoError(t, err, "First chunk should be processed successfully")
+
+			// Reset the NewPartType call tracking
+			mockHandler.resetNewPartTypeCalls()
+
+			// Send second chunk
+			req2 := &clusterv1.SyncPartRequest{
+				SessionId:     "test-session-" + tt.name,
+				ChunkIndex:    1,
+				ChunkData:     []byte("second-chunk-data"),
+				ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("second-chunk-data"))),
+				PartsInfo: []*clusterv1.PartInfo{
+					{
+						Id:                    tt.secondPartID,
+						PartType:              tt.secondPartType,
+						CompressedSizeBytes:   150,
+						UncompressedSizeBytes: 250,
+						TotalCount:            15,
+						BlocksCount:           7,
+						MinTimestamp:          time.Now().UnixMilli(),
+						MaxTimestamp:          time.Now().UnixMilli(),
+						Files: []*clusterv1.FileInfo{
+							{
+								Name:   "test-file.dat",
+								Offset: 0,
+								Size:   18,
+							},
+						},
+					},
+				},
+			}
+
+			err = s.processChunk(mockStream, session, req2)
+			require.NoError(t, err, "Second chunk should be processed successfully")
+
+			// Verify NewPartType call behavior
+			if tt.expectNewPartTypeCalled {
+				assert.True(t, mockHandler.newPartTypeCalled, "NewPartType should have been called: %s", tt.description)
+				assert.Len(t, mockHandler.newPartTypeContexts, 1, "NewPartType should have been called exactly once")
+				if len(mockHandler.newPartTypeContexts) > 0 {
+					ctx := mockHandler.newPartTypeContexts[0]
+					assert.Equal(t, tt.secondPartID, ctx.ID, "NewPartType should be called with correct part ID")
+					assert.Equal(t, tt.secondPartType, ctx.PartType, "NewPartType should be called with correct part type")
+				}
+			} else {
+				assert.False(t, mockHandler.newPartTypeCalled, "NewPartType should NOT have been called: %s", tt.description)
+				assert.Len(t, mockHandler.newPartTypeContexts, 0, "NewPartType should not have been called")
+			}
+
+			// Verify that both chunks were processed successfully
+			assert.Len(t, mockStream.sentResponses, 2, "Should have received responses for both chunks")
+			for i, resp := range mockStream.sentResponses {
+				assert.Equal(t, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED, resp.Status,
+					"Chunk %d should be received successfully", i)
+				assert.Empty(t, resp.Error, "Chunk %d should not have errors", i)
+			}
+		})
+	}
+}
+
+// MockChunkedSyncHandlerWithTracking implements queue.ChunkedSyncHandler with tracking capabilities.
+type MockChunkedSyncHandlerWithTracking struct {
+	newPartTypeContexts []*queue.ChunkedSyncPartContext
+	newPartTypeCalled   bool
+}
+
+func (m *MockChunkedSyncHandlerWithTracking) CreatePartHandler(_ *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	return &MockChunkedSyncPartHandlerWithTracking{parent: m}, nil
+}
+
+func (m *MockChunkedSyncHandlerWithTracking) HandleFileChunk(_ *queue.ChunkedSyncPartContext, _ []byte) error {
+	return nil
+}
+
+func (m *MockChunkedSyncHandlerWithTracking) resetNewPartTypeCalls() {
+	m.newPartTypeCalled = false
+	m.newPartTypeContexts = nil
+}
+
+// MockChunkedSyncPartHandlerWithTracking implements queue.PartHandler with tracking capabilities.
+type MockChunkedSyncPartHandlerWithTracking struct {
+	parent *MockChunkedSyncHandlerWithTracking
+}
+
+func (m *MockChunkedSyncPartHandlerWithTracking) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	m.parent.newPartTypeCalled = true
+	m.parent.newPartTypeContexts = append(m.parent.newPartTypeContexts, ctx)
+	return nil
+}
+
+func (m *MockChunkedSyncPartHandlerWithTracking) FinishSync() error {
+	return nil
+}
+
+func (m *MockChunkedSyncPartHandlerWithTracking) Close() error {
+	return nil
 }

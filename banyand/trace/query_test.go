@@ -150,7 +150,7 @@ func TestQueryResult(t *testing.T) {
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 				for _, traces := range tt.tracesList {
-					tst.mustAddTraces(traces)
+					tst.mustAddTraces(traces, nil)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tst)
@@ -165,7 +165,7 @@ func TestQueryResult(t *testing.T) {
 					logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
 				require.NoError(t, err)
 				for _, traces := range tt.tracesList {
-					tst.mustAddTraces(traces)
+					tst.mustAddTraces(traces, nil)
 					time.Sleep(100 * time.Millisecond)
 				}
 				// wait until the introducer is done

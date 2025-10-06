@@ -276,6 +276,22 @@ func (tst *tsTable) getSidx(name string) (sidx.SIDX, bool) {
 	return sidxInstance, ok
 }
 
+func (tst *tsTable) mustGetSidx(name string) sidx.SIDX {
+	sidxInstance, ok := tst.getSidx(name)
+	if !ok {
+		tst.l.Panic().Str("name", name).Msg("sidx not found")
+	}
+	return sidxInstance
+}
+
+func (tst *tsTable) mustGetOrCreateSidx(name string) sidx.SIDX {
+	sidxInstance, err := tst.getOrCreateSidx(name)
+	if err != nil {
+		tst.l.Panic().Str("name", name).Msg("cannot get or create sidx")
+	}
+	return sidxInstance
+}
+
 func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if sidxInstance, ok := tst.getSidx(name); ok {
 		return sidxInstance, nil
@@ -378,7 +394,7 @@ func (tst *tsTable) Close() error {
 	return tst.closeSidxMap()
 }
 
-func (tst *tsTable) mustAddMemPart(mp *memPart) {
+func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
@@ -386,6 +402,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	ind.sidxReqsMap = sidxReqsMap
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
 	select {
@@ -402,11 +419,11 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
-func (tst *tsTable) mustAddTraces(ts *traces) {
-	tst.mustAddTracesWithSegmentID(ts, 0)
+func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
+	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
 }
 
-func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
@@ -414,7 +431,8 @@ func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
 	mp.segmentID = segmentID
-	tst.mustAddMemPart(mp)
+
+	tst.mustAddMemPart(mp, sidxReqsMap)
 }
 
 type tstIter struct {

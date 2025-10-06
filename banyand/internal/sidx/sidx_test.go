@@ -61,6 +61,16 @@ func createTestSIDX(t *testing.T) SIDX {
 	return sidx
 }
 
+func writeTestData(t *testing.T, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
+	// Convert write requests to MemPart
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	require.NoError(t, err)
+	require.NotNil(t, memPart)
+
+	// Introduce the MemPart to SIDX
+	sidx.IntroduceMemPart(partID, memPart)
+}
+
 func createTestTag(name, value string) Tag {
 	return Tag{
 		Name:      name,
@@ -99,8 +109,7 @@ func TestSIDX_Write_SingleRequest(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1", createTestTag("tag1", "value1")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	assert.NoError(t, err)
+	writeTestData(t, sidx, reqs, 1, 1) // Test with segmentID=1, partID=1
 
 	// Verify stats
 	stats, err := sidx.Stats(ctx)
@@ -123,8 +132,7 @@ func TestSIDX_Write_BatchRequest(t *testing.T) {
 		createTestWriteRequest(2, 200, "data3", createTestTag("tag2", "value3")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	assert.NoError(t, err)
+	writeTestData(t, sidx, reqs, 2, 2) // Test with segmentID=2, partID=2
 
 	// Verify stats
 	stats, err := sidx.Stats(ctx)
@@ -137,8 +145,6 @@ func TestSIDX_Write_Validation(t *testing.T) {
 	defer func() {
 		assert.NoError(t, sidx.Close())
 	}()
-
-	ctx := context.Background()
 
 	tests := []struct {
 		name      string
@@ -169,7 +175,7 @@ func TestSIDX_Write_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := sidx.Write(ctx, []WriteRequest{tt.req}, 1, 1)
+			_, err := sidx.ConvertToMemPart([]WriteRequest{tt.req}, 12) // Test with segmentID=12
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -185,8 +191,6 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 		assert.NoError(t, sidx.Close())
 	}()
 
-	ctx := context.Background()
-
 	// Write with multiple tags
 	tags := []Tag{
 		createTestTag("service", "user-service"),
@@ -198,8 +202,7 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 		createTestWriteRequest(1, 100, "trace-data", tags...),
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	assert.NoError(t, err)
+	writeTestData(t, sidx, reqs, 3, 3) // Test with segmentID=3, partID=3
 }
 
 // Query Operation Tests.
@@ -217,8 +220,7 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 		createTestWriteRequest(1, 100, "data1"),
 		createTestWriteRequest(1, 101, "data2"),
 	}
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 4, 4) // Test with segmentID=4, partID=4
 
 	// Wait for introducer loop to process
 	waitForIntroducerLoop()
@@ -267,8 +269,7 @@ func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
 		createTestWriteRequest(1, 150, "data150"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 5, 5) // Test with segmentID=5, partID=5
 
 	// Wait for introducer loop to process
 	waitForIntroducerLoop()
@@ -321,8 +322,7 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 		createTestWriteRequest(3, 75, "series3-data75"),
 		createTestWriteRequest(3, 175, "series3-data175"),
 	}
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 6, 6) // Test with segmentID=6, partID=6
 
 	// Wait for introducer loop to process
 	waitForIntroducerLoop()
@@ -423,8 +423,7 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 		createTestWriteRequest(1, 150, "data150"),
 		createTestWriteRequest(1, 200, "data200"),
 	}
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 7, 7) // Test with segmentID=7, partID=7
 
 	// Wait for introducer loop to process
 	waitForIntroducerLoop()
@@ -527,8 +526,7 @@ func TestSIDX_WriteQueryIntegration(t *testing.T) {
 		createTestWriteRequest(2, 180, "series2-data2", createTestTag("env", "dev")),
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 8, 8) // Test with segmentID=8, partID=8
 
 	// Test 1: Query single series
 	queryReq := createTestQueryRequest(1)
@@ -588,8 +586,7 @@ func TestSIDX_DataConsistency(t *testing.T) {
 		reqs = append(reqs, createTestWriteRequest(1, key, data))
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 9, 9) // Test with segmentID=9, partID=9
 
 	// Query back and verify data integrity
 	queryReq := createTestQueryRequest(1)
@@ -635,8 +632,7 @@ func TestSIDX_LargeDataset(t *testing.T) {
 		))
 	}
 
-	err := sidx.Write(ctx, reqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, reqs, 10, 10) // Test with segmentID=10, partID=10
 
 	// Query back and verify we can handle large result sets
 	queryReq := QueryRequest{
@@ -682,9 +678,13 @@ func TestSIDX_ConcurrentWrites(t *testing.T) {
 				reqs = append(reqs, createTestWriteRequest(seriesID, key, data))
 			}
 
-			if err := sidx.Write(ctx, reqs, 1, 1); err != nil {
+			// Convert to MemPart and introduce
+			memPart, err := sidx.ConvertToMemPart(reqs, int64(goroutineID+12)) // Test with varied segmentID
+			if err != nil {
 				errors <- err
+				return
 			}
+			sidx.IntroduceMemPart(uint64(goroutineID+12), memPart) // Test with varied partID
 		}(g)
 	}
 
@@ -714,8 +714,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 	initialReqs := []WriteRequest{
 		createTestWriteRequest(1, 100, "initial-data"),
 	}
-	err := sidx.Write(ctx, initialReqs, 1, 1)
-	require.NoError(t, err)
+	writeTestData(t, sidx, initialReqs, 11, 11) // Test with segmentID=11, partID=11
 
 	var wg sync.WaitGroup
 	numReaders := 5
@@ -756,7 +755,10 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 					int64(writeCount),
 					fmt.Sprintf("writer-%d-data-%d", writerID, writeCount),
 				)
-				sidx.Write(ctx, []WriteRequest{req}, 1, 1) // Ignore errors during concurrent stress
+				// Convert to MemPart and introduce (ignore errors during concurrent stress)
+				if memPart, err := sidx.ConvertToMemPart([]WriteRequest{req}, int64(writerID+13)); err == nil { // Test with varied segmentID
+					sidx.IntroduceMemPart(uint64(writerID+13), memPart) // Test with varied partID
+				}
 				writeCount++
 			}
 		}(i)

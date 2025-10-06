@@ -92,7 +92,7 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 			go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 			defer tst.Close()
 			for _, ts := range tt.tsList {
-				tst.mustAddTraces(ts)
+				tst.mustAddTraces(ts, nil)
 				time.Sleep(100 * time.Millisecond)
 			}
 			s := tst.currentSnapshot()
@@ -208,7 +208,7 @@ func Test_tstIter(t *testing.T) {
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 				for _, ts := range tt.tsList {
-					tst.mustAddTraces(ts)
+					tst.mustAddTraces(ts, nil)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tt, tst)

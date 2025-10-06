@@ -37,6 +37,11 @@ type Options struct {
 	// This includes part directories, metadata files, and temporary files.
 	// MANDATORY: Must be provided, non-empty, and an absolute path.
 	Path string
+
+	// AvaiablePartIDs is the list of available part IDs.
+	// It is used to load the snapshot and validate the part IDs.
+	// MANDATORY: Must be provided and cannot be nil.
+	AvaiablePartIDs []uint64
 }
 
 // MergePolicy defines the strategy for merging parts in SIDX.

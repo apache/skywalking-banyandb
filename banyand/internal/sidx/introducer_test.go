@@ -18,39 +18,13 @@
 package sidx
 
 import (
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIntroductionPooling(t *testing.T) {
-	t.Run("introduction pooling reduces allocations", func(t *testing.T) {
-		// Test that the pool works by verifying reuse
-		intro1 := generateIntroduction()
-		releaseIntroduction(intro1)
-
-		intro2 := generateIntroduction()
-		// With pooling, we might get the same instance back
-		require.NotNil(t, intro2, "pool should provide introduction instance")
-		releaseIntroduction(intro2)
-
-		// Test multiple allocations work correctly
-		var intros []*introduction
-		for i := 0; i < 10; i++ {
-			intro := generateIntroduction()
-			intro.memPart = &memPart{}
-			intro.applied = make(chan struct{})
-			intros = append(intros, intro)
-		}
-
-		for _, intro := range intros {
-			releaseIntroduction(intro)
-		}
-	})
-
 	t.Run("flusher introduction pooling reduces allocations", func(t *testing.T) {
 		intro1 := generateFlusherIntroduction()
 		releaseFlusherIntroduction(intro1)
@@ -61,11 +35,10 @@ func TestIntroductionPooling(t *testing.T) {
 		releaseFlusherIntroduction(intro2)
 
 		// Test multiple allocations
-		var intros []*flusherIntroduction
+		var intros []*FlusherIntroduction
 		for i := 0; i < 10; i++ {
 			intro := generateFlusherIntroduction()
 			intro.flushed[uint64(i)] = &partWrapper{}
-			intro.applied = make(chan struct{})
 			intros = append(intros, intro)
 		}
 
@@ -84,12 +57,11 @@ func TestIntroductionPooling(t *testing.T) {
 		releaseMergerIntroduction(intro2)
 
 		// Test multiple allocations
-		var intros []*mergerIntroduction
+		var intros []*MergerIntroduction
 		for i := 0; i < 10; i++ {
 			intro := generateMergerIntroduction()
 			intro.merged[uint64(i)] = struct{}{}
 			intro.newPart = &partWrapper{}
-			intro.applied = make(chan struct{})
 			intros = append(intros, intro)
 		}
 
@@ -100,37 +72,18 @@ func TestIntroductionPooling(t *testing.T) {
 }
 
 func TestIntroductionReset(t *testing.T) {
-	t.Run("introduction reset for reuse", func(t *testing.T) {
-		intro := generateIntroduction()
-
-		// Set up introduction with data
-		intro.memPart = &memPart{}
-		intro.applied = make(chan struct{})
-
-		// Reset the introduction
-		intro.reset()
-
-		// Verify all fields are cleared
-		assert.Nil(t, intro.memPart, "memPart should be nil")
-		assert.Nil(t, intro.applied, "applied channel should be nil")
-
-		releaseIntroduction(intro)
-	})
-
 	t.Run("flusher introduction reset for reuse", func(t *testing.T) {
 		intro := generateFlusherIntroduction()
 
 		// Set up flusher introduction with data
 		intro.flushed[1] = &partWrapper{}
 		intro.flushed[2] = &partWrapper{}
-		intro.applied = make(chan struct{})
 
 		// Reset the flusher introduction
 		intro.reset()
 
 		// Verify all fields are cleared
 		assert.Len(t, intro.flushed, 0, "flushed map should be empty")
-		assert.Nil(t, intro.applied, "applied channel should be nil")
 
 		releaseFlusherIntroduction(intro)
 	})
@@ -142,7 +95,6 @@ func TestIntroductionReset(t *testing.T) {
 		intro.merged[1] = struct{}{}
 		intro.merged[2] = struct{}{}
 		intro.newPart = &partWrapper{}
-		intro.applied = make(chan struct{})
 
 		// Reset the merger introduction
 		intro.reset()
@@ -150,195 +102,8 @@ func TestIntroductionReset(t *testing.T) {
 		// Verify all fields are cleared
 		assert.Len(t, intro.merged, 0, "merged map should be empty")
 		assert.Nil(t, intro.newPart, "newPart should be nil")
-		assert.Nil(t, intro.applied, "applied channel should be nil")
 
 		releaseMergerIntroduction(intro)
-	})
-}
-
-func TestChannelSynchronization(t *testing.T) {
-	t.Run("applied notifications work reliably", func(t *testing.T) {
-		intro := generateIntroduction()
-		intro.applied = make(chan struct{})
-
-		// Start a goroutine that waits for the notification
-		done := make(chan bool)
-		go func() {
-			select {
-			case <-intro.applied:
-				done <- true
-			case <-time.After(100 * time.Millisecond):
-				done <- false
-			}
-		}()
-
-		// Close the applied channel to simulate completion
-		close(intro.applied)
-
-		// Check that the notification was received
-		result := <-done
-		assert.True(t, result, "applied notification should be received")
-
-		releaseIntroduction(intro)
-	})
-
-	t.Run("multiple waiters on applied channel", func(t *testing.T) {
-		intro := generateFlusherIntroduction()
-		intro.applied = make(chan struct{})
-
-		const numWaiters = 5
-		var wg sync.WaitGroup
-		results := make(chan bool, numWaiters)
-
-		// Start multiple waiters
-		for i := 0; i < numWaiters; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				select {
-				case <-intro.applied:
-					results <- true
-				case <-time.After(100 * time.Millisecond):
-					results <- false
-				}
-			}()
-		}
-
-		// Close the applied channel
-		close(intro.applied)
-		wg.Wait()
-		close(results)
-
-		// All waiters should receive the notification
-		successCount := 0
-		for result := range results {
-			if result {
-				successCount++
-			}
-		}
-		assert.Equal(t, numWaiters, successCount, "all waiters should receive notification")
-
-		releaseFlusherIntroduction(intro)
-	})
-
-	t.Run("channel synchronization correctness", func(t *testing.T) {
-		intro := generateMergerIntroduction()
-		intro.applied = make(chan struct{})
-
-		// Test that reading from a closed channel doesn't block
-		close(intro.applied)
-
-		// Multiple reads should work
-		for i := 0; i < 3; i++ {
-			select {
-			case <-intro.applied:
-				// Should not block
-			default:
-				t.Errorf("reading from closed channel should not block")
-			}
-		}
-
-		releaseMergerIntroduction(intro)
-	})
-}
-
-func TestIntroductionGeneration(t *testing.T) {
-	t.Run("introduction generation creates valid instances", func(t *testing.T) {
-		intro := generateIntroduction()
-		require.NotNil(t, intro, "generated introduction should not be nil")
-		assert.Nil(t, intro.memPart, "initial memPart should be nil")
-		assert.Nil(t, intro.applied, "initial applied channel should be nil")
-		releaseIntroduction(intro)
-	})
-
-	t.Run("flusher introduction generation creates valid instances", func(t *testing.T) {
-		intro := generateFlusherIntroduction()
-		require.NotNil(t, intro, "generated flusher introduction should not be nil")
-		require.NotNil(t, intro.flushed, "flushed map should be initialized")
-		assert.Len(t, intro.flushed, 0, "flushed map should be empty")
-		assert.Nil(t, intro.applied, "initial applied channel should be nil")
-		releaseFlusherIntroduction(intro)
-	})
-
-	t.Run("merger introduction generation creates valid instances", func(t *testing.T) {
-		intro := generateMergerIntroduction()
-		require.NotNil(t, intro, "generated merger introduction should not be nil")
-		require.NotNil(t, intro.merged, "merged map should be initialized")
-		assert.Len(t, intro.merged, 0, "merged map should be empty")
-		assert.Nil(t, intro.newPart, "initial newPart should be nil")
-		assert.Nil(t, intro.applied, "initial applied channel should be nil")
-		releaseMergerIntroduction(intro)
-	})
-}
-
-func TestConcurrentPoolAccess(t *testing.T) {
-	t.Run("concurrent pool access is safe", func(_ *testing.T) {
-		const numGoroutines = 10
-		const operationsPerGoroutine = 100
-
-		var wg sync.WaitGroup
-
-		// Test concurrent access to introduction pool
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
-					intro := generateIntroduction()
-					intro.memPart = &memPart{}
-					intro.applied = make(chan struct{})
-					releaseIntroduction(intro)
-				}
-			}()
-		}
-
-		wg.Wait()
-		// Test should complete without data races
-	})
-
-	t.Run("concurrent flusher introduction pool access", func(_ *testing.T) {
-		const numGoroutines = 10
-		const operationsPerGoroutine = 100
-
-		var wg sync.WaitGroup
-
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
-					intro := generateFlusherIntroduction()
-					intro.flushed[uint64(j)] = &partWrapper{}
-					intro.applied = make(chan struct{})
-					releaseFlusherIntroduction(intro)
-				}
-			}()
-		}
-
-		wg.Wait()
-	})
-
-	t.Run("concurrent merger introduction pool access", func(_ *testing.T) {
-		const numGoroutines = 10
-		const operationsPerGoroutine = 100
-
-		var wg sync.WaitGroup
-
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
-					intro := generateMergerIntroduction()
-					intro.merged[uint64(j)] = struct{}{}
-					intro.newPart = &partWrapper{}
-					intro.applied = make(chan struct{})
-					releaseMergerIntroduction(intro)
-				}
-			}()
-		}
-
-		wg.Wait()
 	})
 }
 
@@ -393,11 +158,6 @@ func TestIntroductionMapOperations(t *testing.T) {
 }
 
 func TestNilSafetyForIntroductions(t *testing.T) {
-	t.Run("release nil introduction", func(_ *testing.T) {
-		// Should not panic
-		releaseIntroduction(nil)
-	})
-
 	t.Run("release nil flusher introduction", func(_ *testing.T) {
 		// Should not panic
 		releaseFlusherIntroduction(nil)

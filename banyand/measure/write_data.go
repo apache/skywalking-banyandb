@@ -37,6 +37,11 @@ type syncPartContext struct {
 	memPart *memPart
 }
 
+func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for measure")
+	return nil
+}
+
 func (s *syncPartContext) FinishSync() error {
 	s.tsTable.mustAddMemPart(s.memPart)
 	return s.Close()
@@ -179,6 +184,11 @@ type syncSeriesContext struct {
 	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
 	l        *logger.Logger
 	fileName string
+}
+
+func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for measure")
+	return nil
 }
 
 func (s *syncSeriesContext) FinishSync() error {

@@ -36,11 +36,14 @@ import (
 // opaque ordering values by sidx - the system only performs numerical comparisons
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
-	// MustAddMemPart adds a memPart to the SIDX instance.
-	MustAddMemPart(ctx context.Context, mp *memPart, partID uint64)
-	// Write performs batch write operations. All writes must be submitted as batches.
-	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest, segmentID int64, partID uint64) error
+	// IntroduceMemPart introduces a memPart to the SIDX instance.
+	IntroduceMemPart(partID uint64, mp *MemPart)
+	// IntroduceFlushed introduces a flushed map to the SIDX instance.
+	IntroduceFlushed(nextIntroduction *FlusherIntroduction)
+	// IntroduceMerged introduces a merged map and a new part to the SIDX instance.
+	IntroduceMerged(nextIntroduction *MergerIntroduction)
+	// ConvertToMemPart converts a write request to a memPart.
+	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
 	// Query executes a query with key range and tag filtering.
 	// Returns a QueryResponse directly with all results loaded.
 	// Both setup/validation errors and execution errors are returned via the error return value.
@@ -50,15 +53,13 @@ type SIDX interface {
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
 	Close() error
 	// Flush flushes the SIDX instance to disk.
-	Flush() error
+	Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
 	// Merge merges the specified parts into a new part.
-	Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (uint64, error)
-	// PartsToSync returns the parts to sync.
-	PartsToSync() []*part
+	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error)
 	// StreamingParts returns the streaming parts.
-	StreamingParts(partsToSync []*part, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
-	// SyncCh returns the sync channel for external synchronization.
-	SyncCh() chan<- *SyncIntroduction
+	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
+	// IntroduceSynced introduces a synced map to the SIDX instance.
+	IntroduceSynced(partIDsToSync map[uint64]struct{})
 }
 
 // WriteRequest contains data for a single write operation within a batch.
