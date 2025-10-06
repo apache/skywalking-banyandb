@@ -240,6 +240,10 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 		return errClosed
 	}
 	sidxMap := tst.getAllSidx()
+	if len(sidxMap) == 0 {
+		logger.Panicf("sidx map is empty")
+		return nil
+	}
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
 			return errClosed

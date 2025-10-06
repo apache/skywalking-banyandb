@@ -89,6 +89,11 @@ func (s *syncPartContext) FinishSync() error {
 		for _, sidxPartContext := range s.sidxPartContexts {
 			sidxPartContexts[sidxPartContext.Name()] = sidxPartContext.GetMemPart()
 		}
+		// TODO: remove this after sidx part is supported
+		if len(sidxPartContexts) == 0 {
+			logger.Panicf("sidx part contexts is empty")
+			return nil
+		}
 		s.tsTable.mustAddMemPart(s.memPart, sidxPartContexts)
 	}
 	return s.Close()
