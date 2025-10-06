@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -238,6 +239,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 	if tst.loopCloser != nil && tst.loopCloser.Closed() {
 		return errClosed
 	}
+	sidxMap := tst.getAllSidx()
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
 			return errClosed
@@ -245,10 +247,18 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
 		// Add sidx streaming parts
-		for name, sidx := range tst.getAllSidx() {
+		for name, sidx := range sidxMap {
 			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(partIDsToSync, tst.group, uint32(tst.shardID), name)
+			if len(sidxStreamingParts) != len(partIDsToSync) {
+				logger.Panicf("sidx streaming parts count mismatch: %d != %d", len(sidxStreamingParts), len(partIDsToSync))
+				return nil
+			}
 			streamingParts = append(streamingParts, sidxStreamingParts...)
 			releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
+		}
+		if len(streamingParts) != len(partIDsToSync)*len(sidxMap) {
+			logger.Panicf("streaming parts count mismatch: %d != %d", len(streamingParts), len(partIDsToSync)*len(sidxMap))
+			return nil
 		}
 		// Create streaming parts from core trace parts.
 		for _, part := range partsToSync {

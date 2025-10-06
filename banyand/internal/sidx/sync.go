@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // NewPartsToSync creates a new map of parts to sync.
@@ -65,27 +66,29 @@ func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, s
 	var streamingParts []queue.StreamingPartData
 	var releaseFuncs []func()
 	for _, pw := range snapshot.parts {
-		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
-			if _, ok := partIDsToSync[pw.p.partMetadata.ID]; ok {
-				part := pw.p
-				files, release := createPartFileReaders(part)
-				releaseFuncs = append(releaseFuncs, release)
-				streamingParts = append(streamingParts, queue.StreamingPartData{
-					ID:                    part.partMetadata.ID,
-					Group:                 group,
-					ShardID:               shardID,
-					Topic:                 data.TopicTracePartSync.String(),
-					Files:                 files,
-					CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
-					UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
-					TotalCount:            part.partMetadata.TotalCount,
-					BlocksCount:           part.partMetadata.BlocksCount,
-					MinTimestamp:          part.partMetadata.SegmentID,
-					MinKey:                part.partMetadata.MinKey,
-					MaxKey:                part.partMetadata.MaxKey,
-					PartType:              name,
-				})
+		if _, ok := partIDsToSync[pw.p.partMetadata.ID]; ok {
+			if pw.mp != nil {
+				logger.Panicf("sidx streaming parts: %s, part %d should not a mem part", name, pw.p.partMetadata.ID)
+				return nil, nil
 			}
+			part := pw.p
+			files, release := createPartFileReaders(part)
+			releaseFuncs = append(releaseFuncs, release)
+			streamingParts = append(streamingParts, queue.StreamingPartData{
+				ID:                    part.partMetadata.ID,
+				Group:                 group,
+				ShardID:               shardID,
+				Topic:                 data.TopicTracePartSync.String(),
+				Files:                 files,
+				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+				UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
+				TotalCount:            part.partMetadata.TotalCount,
+				BlocksCount:           part.partMetadata.BlocksCount,
+				MinTimestamp:          part.partMetadata.SegmentID,
+				MinKey:                part.partMetadata.MinKey,
+				MaxKey:                part.partMetadata.MaxKey,
+				PartType:              name,
+			})
 		}
 	}
 
