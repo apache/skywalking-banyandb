@@ -120,30 +120,30 @@ func (s *sidx) IntroduceFlushed(nextIntroduction *FlusherIntroduction) {
 	s.replaceSnapshot(nextSnp)
 }
 
-func (s *sidx) IntroduceMerged(nextIntroduction *MergerIntroduction) {
+func (s *sidx) IntroduceMerged(nextIntroduction *MergerIntroduction) func() {
 	cur := s.currentSnapshot()
 	if cur == nil {
 		s.l.Panic().Msg("current snapshot is nil")
-		return
+		return nil
 	}
-	defer cur.decRef()
 	nextSnp := cur.remove(nextIntroduction.merged)
 
 	// Wrap the new part
 	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
 
 	s.replaceSnapshot(nextSnp)
+	return cur.decRef
 }
 
-func (s *sidx) IntroduceSynced(partIDsToSync map[uint64]struct{}) {
+func (s *sidx) IntroduceSynced(partIDsToSync map[uint64]struct{}) func() {
 	cur := s.currentSnapshot()
 	if cur == nil {
 		s.l.Panic().Msg("current snapshot is nil")
-		return
+		return nil
 	}
-	defer cur.decRef()
 	nextSnp := cur.remove(partIDsToSync)
 	s.replaceSnapshot(nextSnp)
+	return cur.decRef
 }
 
 func (s *sidx) replaceSnapshot(next *snapshot) {

@@ -55,12 +55,14 @@ func (m *mockSIDX) IntroduceFlushed(_ *FlusherIntroduction) {
 	// Not implemented for tests
 }
 
-func (m *mockSIDX) IntroduceMerged(_ *MergerIntroduction) {
+func (m *mockSIDX) IntroduceMerged(_ *MergerIntroduction) func() {
 	// Not implemented for tests
+	return nil
 }
 
-func (m *mockSIDX) IntroduceSynced(_ map[uint64]struct{}) {
+func (m *mockSIDX) IntroduceSynced(_ map[uint64]struct{}) func() {
 	// Not implemented for tests
+	return nil
 }
 
 func (m *mockSIDX) Query(_ context.Context, _ QueryRequest) (*QueryResponse, error) {

@@ -255,7 +255,10 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 
 func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint64) {
 	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
-		tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
+		deferFuncs := tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
+		if deferFuncs != nil {
+			defer deferFuncs()
+		}
 	}
 	cur := tst.currentSnapshot()
 	if cur == nil {
@@ -274,13 +277,21 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 }
 
 func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint64) {
+	synced := nextIntroduction.synced
+	allSidx := tst.getAllSidx()
+	for _, sidx := range allSidx {
+		deferFuncs := sidx.IntroduceSynced(synced)
+		if deferFuncs != nil {
+			defer deferFuncs()
+		}
+	}
 	cur := tst.currentSnapshot()
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")
 		return
 	}
 	defer cur.decRef()
-	nextSnp := cur.remove(epoch, nextIntroduction.synced)
+	nextSnp := cur.remove(epoch, synced)
 	nextSnp.creator = snapshotCreatorSyncer
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)

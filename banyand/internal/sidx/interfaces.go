@@ -41,7 +41,7 @@ type SIDX interface {
 	// IntroduceFlushed introduces a flushed map to the SIDX instance.
 	IntroduceFlushed(nextIntroduction *FlusherIntroduction)
 	// IntroduceMerged introduces a merged map and a new part to the SIDX instance.
-	IntroduceMerged(nextIntroduction *MergerIntroduction)
+	IntroduceMerged(nextIntroduction *MergerIntroduction) func()
 	// ConvertToMemPart converts a write request to a memPart.
 	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
 	// Query executes a query with key range and tag filtering.
@@ -59,7 +59,7 @@ type SIDX interface {
 	// StreamingParts returns the streaming parts.
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// IntroduceSynced introduces a synced map to the SIDX instance.
-	IntroduceSynced(partIDsToSync map[uint64]struct{})
+	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
 }
 
 // WriteRequest contains data for a single write operation within a batch.

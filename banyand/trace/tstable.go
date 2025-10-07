@@ -106,6 +106,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	}
 	snp.incRef()
 	tst.snapshot = &snp
+	tst.loadSidxMap(parts)
 	if needToPersist {
 		tst.persistSnapshot(&snp)
 	}
@@ -203,7 +204,6 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
-	tst.loadSidxMap()
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -316,6 +316,9 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
 	}
+	if tst.sidxMap == nil {
+		tst.sidxMap = make(map[string]sidx.SIDX)
+	}
 
 	tst.sidxMap[name] = newSidx
 	return newSidx, nil
@@ -333,7 +336,7 @@ func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	return result
 }
 
-func (tst *tsTable) loadSidxMap() {
+func (tst *tsTable) loadSidxMap(avaiablePartIDs []uint64) {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)
 	if _, err := os.Stat(sidxRootPath); os.IsNotExist(err) {
@@ -357,6 +360,7 @@ func (tst *tsTable) loadSidxMap() {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx options, skipping")
 			continue
 		}
+		sidxOpts.AvaiablePartIDs = avaiablePartIDs
 		newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 		if err != nil {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx instance, skipping")
