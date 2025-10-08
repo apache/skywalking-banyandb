@@ -418,9 +418,8 @@ func Test_mergeParts(t *testing.T) {
 					mp.mustInitFromElements(es)
 					partPath := filepath.Join(tmpPath, "part_"+string(rune('0'+i)))
 					mp.mustFlush(fileSystem, partPath)
-					filePart := mustOpenPart(partPath, fileSystem)
+					filePart := mustOpenPart(uint64(i), partPath, fileSystem)
 					filePW := newPartWrapper(nil, filePart)
-					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
 					ReleaseMemPart(mp)
 				}

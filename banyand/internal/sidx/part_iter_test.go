@@ -314,7 +314,7 @@ func TestPartIterVerification(t *testing.T) {
 				partDir := filepath.Join(tempDir, fmt.Sprintf("part_%s", tt.name))
 				mp.mustFlush(testFS, partDir)
 
-				part := mustOpenPart(partDir, testFS)
+				part := mustOpenPart(1, partDir, testFS)
 				defer part.close()
 
 				// Run the test case
@@ -376,7 +376,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "empty_series_test")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with empty series list
@@ -417,7 +417,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "no_match_key_range")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with non-overlapping key range
@@ -458,7 +458,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "no_match_series")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with different series ID
@@ -504,7 +504,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "nil_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with nil blockFilter
@@ -546,7 +546,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "allow_all_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that allows all blocks
@@ -591,7 +591,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "skip_all_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that skips all blocks
@@ -636,7 +636,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "error_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that returns an error

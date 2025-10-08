@@ -56,7 +56,6 @@ func (s partWrapperState) String() string {
 type partWrapper struct {
 	p         *part
 	mp        *memPart
-	snapshot  []uint64
 	ref       int32
 	state     int32
 	removable atomic.Bool
@@ -169,11 +168,7 @@ func (pw *partWrapper) markForRemoval() {
 }
 
 // ID returns the unique identifier of the part.
-// Returns 0 if the part is nil.
 func (pw *partWrapper) ID() uint64 {
-	if pw.p == nil || pw.p.partMetadata == nil {
-		return 0
-	}
 	return pw.p.partMetadata.ID
 }
 
@@ -219,12 +214,32 @@ func (pw *partWrapper) String() string {
 	}
 
 	if pw.mp != nil {
+		var id uint64
+		if pw.mp.partMetadata != nil {
+			id = pw.mp.partMetadata.ID
+		}
 		return fmt.Sprintf("partWrapper{id=%d, state=%s, ref=%d, memPart=true}",
-			pw.ID(), state, refCount)
+			id, state, refCount)
+	}
+
+	if pw.p == nil {
+		return fmt.Sprintf("partWrapper{id=nil, state=%s, ref=%d, part=nil}", state, refCount)
+	}
+
+	// Handle case where p.partMetadata might be nil after cleanup
+	var id uint64
+	var path string
+	if pw.p.partMetadata != nil {
+		id = pw.p.partMetadata.ID
+	}
+	if pw.p.path != "" {
+		path = pw.p.path
+	} else {
+		path = "unknown"
 	}
 
 	return fmt.Sprintf("partWrapper{id=%d, state=%s, ref=%d, path=%s}",
-		pw.ID(), state, refCount, pw.p.path)
+		id, state, refCount, path)
 }
 
 // overlapsKeyRange checks if the part overlaps with the given key range.

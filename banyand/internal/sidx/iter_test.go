@@ -233,7 +233,7 @@ func TestIterComprehensive(t *testing.T) {
 						if partType == "file_based" {
 							partDir := filepath.Join(tempDir, fmt.Sprintf("%s_%s_part%d", partType, tc.name, i))
 							mp.mustFlush(testFS, partDir)
-							testPart = mustOpenPart(partDir, testFS)
+							testPart = mustOpenPart(uint64(i), partDir, testFS)
 						} else {
 							testPart = openMemPart(mp)
 						}
@@ -278,7 +278,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 		partDir := filepath.Join(tempDir, "empty_series")
 		mp.mustFlush(testFS, partDir)
-		testPart := mustOpenPart(partDir, testFS)
+		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
 		bma := generateBlockMetadataArray()
@@ -317,9 +317,9 @@ func TestIterEdgeCases(t *testing.T) {
 		mp1.mustFlush(testFS, partDir1)
 		mp2.mustFlush(testFS, partDir2)
 
-		testPart1 := mustOpenPart(partDir1, testFS)
+		testPart1 := mustOpenPart(1, partDir1, testFS)
 		defer testPart1.close()
-		testPart2 := mustOpenPart(partDir2, testFS)
+		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
 		bma := generateBlockMetadataArray()
@@ -346,7 +346,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 		partDir := filepath.Join(tempDir, "single_part")
 		mp.mustFlush(testFS, partDir)
-		testPart := mustOpenPart(partDir, testFS)
+		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
 		bma := generateBlockMetadataArray()
@@ -427,9 +427,9 @@ func TestIterOrdering(t *testing.T) {
 		mp1.mustFlush(testFS, partDir1)
 		mp2.mustFlush(testFS, partDir2)
 
-		testPart1 := mustOpenPart(partDir1, testFS)
+		testPart1 := mustOpenPart(1, partDir1, testFS)
 		defer testPart1.close()
-		testPart2 := mustOpenPart(partDir2, testFS)
+		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
 		bma := generateBlockMetadataArray()

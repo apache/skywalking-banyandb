@@ -229,7 +229,19 @@ func TestPartWrapper_MultipleReleases(t *testing.T) {
 
 	pw := newPartWrapper(nil, p)
 
-	// Release once (should reach 0)
+	// Test multiple releases before cleanup
+	pw.acquire() // ref count = 2
+	pw.acquire() // ref count = 3
+
+	pw.release() // ref count = 2
+	assert.Equal(t, int32(2), pw.refCount())
+	assert.True(t, pw.isActive())
+
+	pw.release() // ref count = 1
+	assert.Equal(t, int32(1), pw.refCount())
+	assert.True(t, pw.isActive())
+
+	// Final release should trigger cleanup and set ref to 0
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
 	assert.True(t, pw.isRemoved())

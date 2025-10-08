@@ -52,9 +52,9 @@ type SIDX interface {
 	// Flush flushes the SIDX instance to disk.
 	Flush() error
 	// Merge merges the specified parts into a new part.
-	Merge(closeCh <-chan struct{}) error
+	Merge(closeCh <-chan struct{}) (uint64, error)
 	// MergeMemPart merges the mem parts into a new part.
-	MergeMemParts(closeCh <-chan struct{}) error
+	MergeMemParts(closeCh <-chan struct{}) (uint64, error)
 	// PartsToSync returns the parts to sync.
 	PartsToSync() []*part
 	// StreamingParts returns the streaming parts.
