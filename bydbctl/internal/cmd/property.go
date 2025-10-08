@@ -32,6 +32,7 @@ import (
 const (
 	propertySchemaPath = "/api/v1/property/schema"
 	propertyDataPath   = "/api/v1/property/data/{group}/{name}/{id}"
+	propertyQueryPath  = "/api/v1/property/data/query"
 )
 
 var propertySchemaPathWithParams = propertySchemaPath + pathTemp
@@ -209,7 +210,7 @@ func newPropertyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return simpleParseFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/property/data/query"))
+					return request.req.SetBody(request.data).Post(getPath(propertyQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
