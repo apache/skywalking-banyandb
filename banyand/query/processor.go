@@ -464,8 +464,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	var metadata []*commonv1.Metadata
 	var schemas []logical.Schema
 	var ecc []executor.TraceExecutionContext
-	var traceIDTagName string
-	var timestampTagName string
+	var traceIDTagNames []string
 	for i := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
 			Name:  queryCriteria.Name,
@@ -484,16 +483,10 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		}
 		schemas = append(schemas, s)
 		metadata = append(metadata, meta)
-		if traceIDTagName != "" && traceIDTagName != ec.GetSchema().GetTraceIdTagName() {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("trace id tag name mismatch for trace %s: %s != %s",
-				meta.GetName(), traceIDTagName, ec.GetSchema().GetTraceIdTagName()))
-			return
-		}
-		traceIDTagName = ec.GetSchema().GetTraceIdTagName()
-		timestampTagName = ec.GetSchema().GetTimestampTagName()
+		traceIDTagNames = append(traceIDTagNames, ec.GetSchema().GetTraceIdTagName())
 	}
 
-	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagName, timestampTagName)
+	plan, err := logical_trace.Analyze(queryCriteria, metadata, schemas, ecc, traceIDTagNames)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return
@@ -533,12 +526,16 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		return
 	}
 
-	// Convert model.TraceResult iterator to tracev1.QueryResponse format
-	// Each result contains spans from a single trace, so we can directly create traces
 	var traces []*tracev1.InternalTrace
 
-	// Check if trace ID tag should be included based on tag projection
-	shouldIncludeTraceID := slices.Contains(queryCriteria.TagProjection, traceIDTagName)
+	traceIDTagNameMap := make(map[int]string)
+	traceIDInclusionMap := make(map[int]bool)
+	for i, tagName := range traceIDTagNames {
+		traceIDTagNameMap[i] = tagName
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			traceIDInclusionMap[i] = true
+		}
+	}
 
 	for {
 		result, hasNext := resultIterator.Next()
@@ -575,9 +572,10 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 			}
 
 			// Add trace ID tag to each span if it should be included
-			if shouldIncludeTraceID && result.TID != "" {
+			// Use the group index to select the correct traceIDTagName
+			if traceIDInclusionMap[result.GroupIndex] && result.TID != "" {
 				traceTags = append(traceTags, &modelv1.Tag{
-					Key: traceIDTagName,
+					Key: traceIDTagNameMap[result.GroupIndex],
 					Value: &modelv1.TagValue{
 						Value: &modelv1.TagValue_Str{
 							Str: &modelv1.Str{
