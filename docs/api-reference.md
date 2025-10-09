@@ -3,16 +3,6 @@
 
 ## Table of Contents
 
-- [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
-    - [Group](#banyandb-common-v1-Group)
-    - [IntervalRule](#banyandb-common-v1-IntervalRule)
-    - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
-    - [Metadata](#banyandb-common-v1-Metadata)
-    - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
-  
-    - [Catalog](#banyandb-common-v1-Catalog)
-    - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
-  
 - [banyandb/common/v1/trace.proto](#banyandb_common_v1_trace-proto)
     - [Span](#banyandb-common-v1-Span)
     - [Tag](#banyandb-common-v1-Tag)
@@ -62,6 +52,16 @@
     - [TopNList.Item](#banyandb-measure-v1-TopNList-Item)
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
     - [TopNResponse](#banyandb-measure-v1-TopNResponse)
+  
+- [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
+    - [Group](#banyandb-common-v1-Group)
+    - [IntervalRule](#banyandb-common-v1-IntervalRule)
+    - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
+    - [Metadata](#banyandb-common-v1-Metadata)
+    - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
+  
+    - [Catalog](#banyandb-common-v1-Catalog)
+    - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
@@ -334,144 +334,6 @@
     - [TraceService](#banyandb-trace-v1-TraceService)
   
 - [Scalar Value Types](#scalar-value-types)
-
-
-
-<a name="banyandb_common_v1_common-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/common/v1/common.proto
-
-
-
-<a name="banyandb-common-v1-Group"></a>
-
-### Group
-Group is an internal object for Group management
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [Metadata](#banyandb-common-v1-Metadata) |  | metadata define the group&#39;s identity |
-| catalog | [Catalog](#banyandb-common-v1-Catalog) |  | catalog denotes which type of data the group contains |
-| resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
-
-
-
-
-
-
-<a name="banyandb-common-v1-IntervalRule"></a>
-
-### IntervalRule
-IntervalRule is a structured duration
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| unit | [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit) |  | unit can only be UNIT_HOUR or UNIT_DAY |
-| num | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-common-v1-LifecycleStage"></a>
-
-### LifecycleStage
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | The stage name (e.g., &#34;warm&#34;, &#34;cold&#34;). This should be a non-empty string. |
-| shard_num | [uint32](#uint32) |  | Number of shards allocated for this stage. Must be greater than zero. |
-| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Defines the interval for data segmentation in this stage. This is a required field and uses the IntervalRule structure. |
-| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Specifies the time-to-live for data in this stage before moving to the next. This is also a required field using the IntervalRule structure. |
-| node_selector | [string](#string) |  | Node selector specifying target nodes for this stage. Optional; if provided, it must be a non-empty string. |
-| close | [bool](#bool) |  | Indicates whether segments that are no longer live should be closed. |
-| replicas | [uint32](#uint32) |  | replicas is the number of replicas for this stage. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-Metadata"></a>
-
-### Metadata
-Metadata is for multi-tenant, multi-model use
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | group contains a set of options, like retention policy, max |
-| name | [string](#string) |  | name of the entity |
-| id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
-| create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
-| mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-ResourceOpts"></a>
-
-### ResourceOpts
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
-| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
-| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
-| stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
-| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
-| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
-
-
-
-
-
- 
-
-
-<a name="banyandb-common-v1-Catalog"></a>
-
-### Catalog
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| CATALOG_UNSPECIFIED | 0 |  |
-| CATALOG_STREAM | 1 |  |
-| CATALOG_MEASURE | 2 |  |
-| CATALOG_PROPERTY | 3 |  |
-| CATALOG_TRACE | 4 |  |
-
-
-
-<a name="banyandb-common-v1-IntervalRule-Unit"></a>
-
-### IntervalRule.Unit
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| UNIT_UNSPECIFIED | 0 |  |
-| UNIT_HOUR | 1 |  |
-| UNIT_DAY | 2 |  |
-
-
- 
-
- 
-
- 
 
 
 
@@ -1197,6 +1059,144 @@ TopNResponse is the response for a query to the Query module.
 
 
  
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_common_v1_common-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/common.proto
+
+
+
+<a name="banyandb-common-v1-Group"></a>
+
+### Group
+Group is an internal object for Group management
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [Metadata](#banyandb-common-v1-Metadata) |  | metadata define the group&#39;s identity |
+| catalog | [Catalog](#banyandb-common-v1-Catalog) |  | catalog denotes which type of data the group contains |
+| resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
+
+
+
+
+
+
+<a name="banyandb-common-v1-IntervalRule"></a>
+
+### IntervalRule
+IntervalRule is a structured duration
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| unit | [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit) |  | unit can only be UNIT_HOUR or UNIT_DAY |
+| num | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-common-v1-LifecycleStage"></a>
+
+### LifecycleStage
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The stage name (e.g., &#34;warm&#34;, &#34;cold&#34;). This should be a non-empty string. |
+| shard_num | [uint32](#uint32) |  | Number of shards allocated for this stage. Must be greater than zero. |
+| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Defines the interval for data segmentation in this stage. This is a required field and uses the IntervalRule structure. |
+| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Specifies the time-to-live for data in this stage before moving to the next. This is also a required field using the IntervalRule structure. |
+| node_selector | [string](#string) |  | Node selector specifying target nodes for this stage. Optional; if provided, it must be a non-empty string. |
+| close | [bool](#bool) |  | Indicates whether segments that are no longer live should be closed. |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas for this stage. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-Metadata"></a>
+
+### Metadata
+Metadata is for multi-tenant, multi-model use
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | group contains a set of options, like retention policy, max |
+| name | [string](#string) |  | name of the entity |
+| id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
+| create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
+| mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-ResourceOpts"></a>
+
+### ResourceOpts
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
+| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
+| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
+| stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
+| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-common-v1-Catalog"></a>
+
+### Catalog
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CATALOG_UNSPECIFIED | 0 |  |
+| CATALOG_STREAM | 1 |  |
+| CATALOG_MEASURE | 2 |  |
+| CATALOG_PROPERTY | 3 |  |
+| CATALOG_TRACE | 4 |  |
+
+
+
+<a name="banyandb-common-v1-IntervalRule-Unit"></a>
+
+### IntervalRule.Unit
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UNIT_UNSPECIFIED | 0 |  |
+| UNIT_HOUR | 1 |  |
+| UNIT_DAY | 2 |  |
+
 
  
 
