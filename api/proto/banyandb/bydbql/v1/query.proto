@@ -48,6 +48,8 @@ message QueryRequest {
   // execution_context provides resource context when FROM clause is omitted
   // This field is optional when the FROM clause is present in the query
   QueryExecutionContext execution_context = 2;
+  // trace is used to enable trace for the query
+  bool trace = 3;
 }
 
 // QueryResponse contains the result of a BydbQL query
@@ -78,6 +80,8 @@ message QueryStreamRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
+  // trace is used to enable trace for the query
+  bool trace = 4;
 }
 
 // QueryStreamResponse is the response for stream-specific queries
@@ -97,6 +101,8 @@ message QueryMeasureRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
+  // trace is used to enable trace for the query
+  bool trace = 4;
 }
 
 // QueryMeasureResponse is the response for measure-specific queries
@@ -116,6 +122,8 @@ message QueryPropertyRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
+  // trace is used to enable trace for the query
+  bool trace = 4;
 }
 
 // QueryPropertyResponse is the response for property-specific queries
@@ -135,6 +143,8 @@ message QueryTraceRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
+  // trace is used to enable trace for the query
+  bool trace = 4;
 }
 
 // QueryTraceResponse is the response for trace-specific queries
@@ -154,6 +164,8 @@ message TopNRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
+  // trace is used to enable trace for the query
+  bool trace = 4;
 }
 
 // TopNResponse is the response for TopN-specific queries
