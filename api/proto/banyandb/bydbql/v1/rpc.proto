@@ -47,7 +47,7 @@ service BydbQLService {
   // QueryStream executes a BydbQL query against a specific stream resource
   // The stream name is provided in the URL path, eliminating the need
   // for a FROM clause in the query string
-  rpc QueryStream(QueryStreamRequest) returns (.stream.v1.QueryResponse) {
+  rpc QueryStream(QueryStreamRequest) returns (stream.v1.QueryResponse) {
     option (google.api.http) = {
       post: "/v1/bydbql/stream/{group}/{name}/query"
       body: "*"
