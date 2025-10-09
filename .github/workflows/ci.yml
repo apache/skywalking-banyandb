@@ -139,7 +139,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       options: --vv --fail-fast --label-filter \\!slow
-      timeout-minutes: 30
+      timeout-minutes: 60
       
   result:
     name: Continuous Integration

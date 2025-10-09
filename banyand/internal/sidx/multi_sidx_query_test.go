@@ -37,12 +37,6 @@ type mockSIDX struct {
 	name     string
 }
 
-func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart, _ uint64) {}
-
-func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ int64, _ uint64) error {
-	return nil // Not implemented for tests
-}
-
 func (m *mockSIDX) ConvertToMemPart(_ []WriteRequest, _ int64) (*MemPart, error) {
 	return nil, nil // Not implemented for tests
 }
