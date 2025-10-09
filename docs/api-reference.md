@@ -3,58 +3,10 @@
 
 ## Table of Contents
 
-- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
-    - [Status](#banyandb-model-v1-Status)
-  
-- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
-    - [FileInfo](#banyandb-cluster-v1-FileInfo)
-    - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
-    - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
-    - [PartInfo](#banyandb-cluster-v1-PartInfo)
-    - [PartResult](#banyandb-cluster-v1-PartResult)
-    - [SendRequest](#banyandb-cluster-v1-SendRequest)
-    - [SendResponse](#banyandb-cluster-v1-SendResponse)
-    - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
-    - [SyncMetadata](#banyandb-cluster-v1-SyncMetadata)
-    - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
-    - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
-    - [SyncResult](#banyandb-cluster-v1-SyncResult)
-    - [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility)
-    - [VersionInfo](#banyandb-cluster-v1-VersionInfo)
-  
-    - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
-  
-    - [ChunkedSyncService](#banyandb-cluster-v1-ChunkedSyncService)
-    - [Service](#banyandb-cluster-v1-Service)
-  
-- [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
-    - [Group](#banyandb-common-v1-Group)
-    - [IntervalRule](#banyandb-common-v1-IntervalRule)
-    - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
-    - [Metadata](#banyandb-common-v1-Metadata)
-    - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
-  
-    - [Catalog](#banyandb-common-v1-Catalog)
-    - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
-  
-- [banyandb/common/v1/rpc.proto](#banyandb_common_v1_rpc-proto)
-    - [APIVersion](#banyandb-common-v1-APIVersion)
-    - [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest)
-    - [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse)
-  
-    - [Service](#banyandb-common-v1-Service)
-  
 - [banyandb/common/v1/trace.proto](#banyandb_common_v1_trace-proto)
     - [Span](#banyandb-common-v1-Span)
     - [Tag](#banyandb-common-v1-Tag)
     - [Trace](#banyandb-common-v1-Trace)
-  
-- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
-    - [Node](#banyandb-database-v1-Node)
-    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
-    - [Shard](#banyandb-database-v1-Shard)
-  
-    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/model/v1/common.proto](#banyandb_model_v1_common-proto)
     - [FieldValue](#banyandb-model-v1-FieldValue)
@@ -84,6 +36,110 @@
     - [Condition.MatchOption.Operator](#banyandb-model-v1-Condition-MatchOption-Operator)
     - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
+  
+- [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
+    - [DataPoint](#banyandb-measure-v1-DataPoint)
+    - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
+    - [QueryRequest](#banyandb-measure-v1-QueryRequest)
+    - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
+    - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
+    - [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy)
+    - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
+    - [QueryResponse](#banyandb-measure-v1-QueryResponse)
+  
+- [banyandb/measure/v1/topn.proto](#banyandb_measure_v1_topn-proto)
+    - [TopNList](#banyandb-measure-v1-TopNList)
+    - [TopNList.Item](#banyandb-measure-v1-TopNList-Item)
+    - [TopNRequest](#banyandb-measure-v1-TopNRequest)
+    - [TopNResponse](#banyandb-measure-v1-TopNResponse)
+  
+- [banyandb/common/v1/common.proto](#banyandb_common_v1_common-proto)
+    - [Group](#banyandb-common-v1-Group)
+    - [IntervalRule](#banyandb-common-v1-IntervalRule)
+    - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
+    - [Metadata](#banyandb-common-v1-Metadata)
+    - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
+  
+    - [Catalog](#banyandb-common-v1-Catalog)
+    - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
+  
+- [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
+    - [Property](#banyandb-property-v1-Property)
+  
+- [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
+    - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
+    - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
+    - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
+    - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
+    - [InternalDeleteRequest](#banyandb-property-v1-InternalDeleteRequest)
+    - [InternalQueryResponse](#banyandb-property-v1-InternalQueryResponse)
+    - [InternalRepairRequest](#banyandb-property-v1-InternalRepairRequest)
+    - [InternalRepairResponse](#banyandb-property-v1-InternalRepairResponse)
+    - [InternalUpdateRequest](#banyandb-property-v1-InternalUpdateRequest)
+    - [QueryRequest](#banyandb-property-v1-QueryRequest)
+    - [QueryResponse](#banyandb-property-v1-QueryResponse)
+  
+    - [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy)
+  
+    - [PropertyService](#banyandb-property-v1-PropertyService)
+  
+- [banyandb/stream/v1/query.proto](#banyandb_stream_v1_query-proto)
+    - [Element](#banyandb-stream-v1-Element)
+    - [QueryRequest](#banyandb-stream-v1-QueryRequest)
+    - [QueryResponse](#banyandb-stream-v1-QueryResponse)
+  
+- [banyandb/trace/v1/query.proto](#banyandb_trace_v1_query-proto)
+    - [InternalQueryResponse](#banyandb-trace-v1-InternalQueryResponse)
+    - [InternalTrace](#banyandb-trace-v1-InternalTrace)
+    - [QueryRequest](#banyandb-trace-v1-QueryRequest)
+    - [QueryResponse](#banyandb-trace-v1-QueryResponse)
+    - [Span](#banyandb-trace-v1-Span)
+    - [Trace](#banyandb-trace-v1-Trace)
+  
+- [banyandb/bydbql/v1/query.proto](#banyandb_bydbql_v1_query-proto)
+    - [QueryRequest](#banyandb-bydbql-v1-QueryRequest)
+    - [QueryResponse](#banyandb-bydbql-v1-QueryResponse)
+  
+- [banyandb/bydbql/v1/rpc.proto](#banyandb_bydbql_v1_rpc-proto)
+    - [BydbQLService](#banyandb-bydbql-v1-BydbQLService)
+  
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
+- [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
+    - [FileInfo](#banyandb-cluster-v1-FileInfo)
+    - [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest)
+    - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
+    - [PartInfo](#banyandb-cluster-v1-PartInfo)
+    - [PartResult](#banyandb-cluster-v1-PartResult)
+    - [SendRequest](#banyandb-cluster-v1-SendRequest)
+    - [SendResponse](#banyandb-cluster-v1-SendResponse)
+    - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
+    - [SyncMetadata](#banyandb-cluster-v1-SyncMetadata)
+    - [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest)
+    - [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse)
+    - [SyncResult](#banyandb-cluster-v1-SyncResult)
+    - [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility)
+    - [VersionInfo](#banyandb-cluster-v1-VersionInfo)
+  
+    - [SyncStatus](#banyandb-cluster-v1-SyncStatus)
+  
+    - [ChunkedSyncService](#banyandb-cluster-v1-ChunkedSyncService)
+    - [Service](#banyandb-cluster-v1-Service)
+  
+- [banyandb/common/v1/rpc.proto](#banyandb_common_v1_rpc-proto)
+    - [APIVersion](#banyandb-common-v1-APIVersion)
+    - [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest)
+    - [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse)
+  
+    - [Service](#banyandb-common-v1-Service)
+  
+- [banyandb/database/v1/database.proto](#banyandb_database_v1_database-proto)
+    - [Node](#banyandb-database-v1-Node)
+    - [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry)
+    - [Shard](#banyandb-database-v1-Shard)
+  
+    - [Role](#banyandb-database-v1-Role)
   
 - [banyandb/database/v1/schema.proto](#banyandb_database_v1_schema-proto)
     - [Entity](#banyandb-database-v1-Entity)
@@ -219,22 +275,6 @@
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
-- [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
-    - [DataPoint](#banyandb-measure-v1-DataPoint)
-    - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
-    - [QueryRequest](#banyandb-measure-v1-QueryRequest)
-    - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
-    - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
-    - [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy)
-    - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
-    - [QueryResponse](#banyandb-measure-v1-QueryResponse)
-  
-- [banyandb/measure/v1/topn.proto](#banyandb_measure_v1_topn-proto)
-    - [TopNList](#banyandb-measure-v1-TopNList)
-    - [TopNList.Item](#banyandb-measure-v1-TopNList-Item)
-    - [TopNRequest](#banyandb-measure-v1-TopNRequest)
-    - [TopNResponse](#banyandb-measure-v1-TopNResponse)
-  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
@@ -255,9 +295,6 @@
   
     - [GossipService](#banyandb-property-v1-GossipService)
   
-- [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
-    - [Property](#banyandb-property-v1-Property)
-  
 - [banyandb/property/v1/repair.proto](#banyandb_property_v1_repair-proto)
     - [DifferTreeSummary](#banyandb-property-v1-DifferTreeSummary)
     - [PropertyMissing](#banyandb-property-v1-PropertyMissing)
@@ -276,28 +313,6 @@
   
     - [RepairService](#banyandb-property-v1-RepairService)
   
-- [banyandb/property/v1/rpc.proto](#banyandb_property_v1_rpc-proto)
-    - [ApplyRequest](#banyandb-property-v1-ApplyRequest)
-    - [ApplyResponse](#banyandb-property-v1-ApplyResponse)
-    - [DeleteRequest](#banyandb-property-v1-DeleteRequest)
-    - [DeleteResponse](#banyandb-property-v1-DeleteResponse)
-    - [InternalDeleteRequest](#banyandb-property-v1-InternalDeleteRequest)
-    - [InternalQueryResponse](#banyandb-property-v1-InternalQueryResponse)
-    - [InternalRepairRequest](#banyandb-property-v1-InternalRepairRequest)
-    - [InternalRepairResponse](#banyandb-property-v1-InternalRepairResponse)
-    - [InternalUpdateRequest](#banyandb-property-v1-InternalUpdateRequest)
-    - [QueryRequest](#banyandb-property-v1-QueryRequest)
-    - [QueryResponse](#banyandb-property-v1-QueryResponse)
-  
-    - [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy)
-  
-    - [PropertyService](#banyandb-property-v1-PropertyService)
-  
-- [banyandb/stream/v1/query.proto](#banyandb_stream_v1_query-proto)
-    - [Element](#banyandb-stream-v1-Element)
-    - [QueryRequest](#banyandb-stream-v1-QueryRequest)
-    - [QueryResponse](#banyandb-stream-v1-QueryResponse)
-  
 - [banyandb/stream/v1/write.proto](#banyandb_stream_v1_write-proto)
     - [ElementValue](#banyandb-stream-v1-ElementValue)
     - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
@@ -310,14 +325,6 @@
   
     - [StreamService](#banyandb-stream-v1-StreamService)
   
-- [banyandb/trace/v1/query.proto](#banyandb_trace_v1_query-proto)
-    - [InternalQueryResponse](#banyandb-trace-v1-InternalQueryResponse)
-    - [InternalTrace](#banyandb-trace-v1-InternalTrace)
-    - [QueryRequest](#banyandb-trace-v1-QueryRequest)
-    - [QueryResponse](#banyandb-trace-v1-QueryResponse)
-    - [Span](#banyandb-trace-v1-Span)
-    - [Trace](#banyandb-trace-v1-Trace)
-  
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
     - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
     - [WriteRequest](#banyandb-trace-v1-WriteRequest)
@@ -327,567 +334,6 @@
     - [TraceService](#banyandb-trace-v1-TraceService)
   
 - [Scalar Value Types](#scalar-value-types)
-
-
-
-<a name="banyandb_model_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/model/v1/write.proto
-
-
- 
-
-
-<a name="banyandb-model-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_INVALID_TIMESTAMP | 2 |  |
-| STATUS_NOT_FOUND | 3 |  |
-| STATUS_EXPIRED_SCHEMA | 4 |  |
-| STATUS_INTERNAL_ERROR | 5 |  |
-| STATUS_DISK_FULL | 6 |  |
-| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
-| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_cluster_v1_rpc-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/cluster/v1/rpc.proto
-
-
-
-<a name="banyandb-cluster-v1-FileInfo"></a>
-
-### FileInfo
-Information about an individual file within a part.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
-| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
-| size | [uint32](#uint32) |  | Size of this file in bytes. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-HealthCheckRequest"></a>
-
-### HealthCheckRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| service_name | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-HealthCheckResponse"></a>
-
-### HealthCheckResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| service_name | [string](#string) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
-| error | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-PartInfo"></a>
-
-### PartInfo
-Information about a part contained within a chunk.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  | Unique identifier for this part. |
-| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
-| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
-| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
-| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
-| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
-| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
-| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
-| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
-| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
-| part_type | [string](#string) |  | Part type. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-PartResult"></a>
-
-### PartResult
-PartResult contains the result for individual parts.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether this part was processed successfully. |
-| error | [string](#string) |  | Error message if processing failed. |
-| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SendRequest"></a>
-
-### SendRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| topic | [string](#string) |  |  |
-| message_id | [uint64](#uint64) |  |  |
-| body | [bytes](#bytes) |  |  |
-| batch_mod | [bool](#bool) |  |  |
-| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SendResponse"></a>
-
-### SendResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| message_id | [uint64](#uint64) |  |  |
-| error | [string](#string) |  |  |
-| body | [bytes](#bytes) |  |  |
-| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
-| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncCompletion"></a>
-
-### SyncCompletion
-SyncCompletion contains completion information for the sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
-| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
-| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncMetadata"></a>
-
-### SyncMetadata
-SyncMetadata contains metadata for the sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | Group name (stream/measure). |
-| shard_id | [uint32](#uint32) |  | Shard identifier. |
-| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
-| timestamp | [int64](#int64) |  | Timestamp when sync started. |
-| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncPartRequest"></a>
-
-### SyncPartRequest
-Chunked Sync Service Messages.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
-| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
-| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
-| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
-| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
-| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
-| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
-| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncPartResponse"></a>
-
-### SyncPartResponse
-SyncPartResponse contains the response for a sync part request.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  |  |
-| chunk_index | [uint32](#uint32) |  |  |
-| status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
-| error | [string](#string) |  |  |
-| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
-| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-SyncResult"></a>
-
-### SyncResult
-SyncResult contains the result of a sync operation.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  | Whether entire sync was successful. |
-| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
-| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
-| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
-| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
-| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-VersionCompatibility"></a>
-
-### VersionCompatibility
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| supported | [bool](#bool) |  | supported indicates whether the client version is supported |
-| server_api_version | [string](#string) |  | server_api_version is the API version of the server |
-| supported_api_versions | [string](#string) | repeated | supported_api_versions lists API versions supported by the server |
-| server_file_format_version | [string](#string) |  | server_file_format_version is the file format version of the server |
-| supported_file_format_versions | [string](#string) | repeated | supported_file_format_versions lists file format versions supported by the server |
-| reason | [string](#string) |  | reason provides human-readable explanation of version incompatibility |
-
-
-
-
-
-
-<a name="banyandb-cluster-v1-VersionInfo"></a>
-
-### VersionInfo
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| file_format_version | [string](#string) |  | file_format_version indicates the file format version used |
-| compatible_file_format_version | [string](#string) | repeated | compatible_file_format_version lists backward compatible versions |
-| api_version | [string](#string) |  | api_version indicates the API semantic version |
-
-
-
-
-
- 
-
-
-<a name="banyandb-cluster-v1-SyncStatus"></a>
-
-### SyncStatus
-SyncStatus represents the status of a sync operation.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
-| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
-| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
-| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
-| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
-| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
-| SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
-| SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
-
-
- 
-
- 
-
-
-<a name="banyandb-cluster-v1-ChunkedSyncService"></a>
-
-### ChunkedSyncService
-ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
-
-
-<a name="banyandb-cluster-v1-Service"></a>
-
-### Service
-
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
-| HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
-
- 
-
-
-
-<a name="banyandb_common_v1_common-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/common/v1/common.proto
-
-
-
-<a name="banyandb-common-v1-Group"></a>
-
-### Group
-Group is an internal object for Group management
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [Metadata](#banyandb-common-v1-Metadata) |  | metadata define the group&#39;s identity |
-| catalog | [Catalog](#banyandb-common-v1-Catalog) |  | catalog denotes which type of data the group contains |
-| resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
-
-
-
-
-
-
-<a name="banyandb-common-v1-IntervalRule"></a>
-
-### IntervalRule
-IntervalRule is a structured duration
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| unit | [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit) |  | unit can only be UNIT_HOUR or UNIT_DAY |
-| num | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-common-v1-LifecycleStage"></a>
-
-### LifecycleStage
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | The stage name (e.g., &#34;warm&#34;, &#34;cold&#34;). This should be a non-empty string. |
-| shard_num | [uint32](#uint32) |  | Number of shards allocated for this stage. Must be greater than zero. |
-| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Defines the interval for data segmentation in this stage. This is a required field and uses the IntervalRule structure. |
-| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Specifies the time-to-live for data in this stage before moving to the next. This is also a required field using the IntervalRule structure. |
-| node_selector | [string](#string) |  | Node selector specifying target nodes for this stage. Optional; if provided, it must be a non-empty string. |
-| close | [bool](#bool) |  | Indicates whether segments that are no longer live should be closed. |
-| replicas | [uint32](#uint32) |  | replicas is the number of replicas for this stage. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-Metadata"></a>
-
-### Metadata
-Metadata is for multi-tenant, multi-model use
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | group contains a set of options, like retention policy, max |
-| name | [string](#string) |  | name of the entity |
-| id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
-| create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
-| mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
-
-
-
-
-
-
-<a name="banyandb-common-v1-ResourceOpts"></a>
-
-### ResourceOpts
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
-| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
-| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
-| stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
-| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
-| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
-
-
-
-
-
- 
-
-
-<a name="banyandb-common-v1-Catalog"></a>
-
-### Catalog
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| CATALOG_UNSPECIFIED | 0 |  |
-| CATALOG_STREAM | 1 |  |
-| CATALOG_MEASURE | 2 |  |
-| CATALOG_PROPERTY | 3 |  |
-| CATALOG_TRACE | 4 |  |
-
-
-
-<a name="banyandb-common-v1-IntervalRule-Unit"></a>
-
-### IntervalRule.Unit
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| UNIT_UNSPECIFIED | 0 |  |
-| UNIT_HOUR | 1 |  |
-| UNIT_DAY | 2 |  |
-
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_common_v1_rpc-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/common/v1/rpc.proto
-
-
-
-<a name="banyandb-common-v1-APIVersion"></a>
-
-### APIVersion
-APIVersion is the version of the API
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| version | [string](#string) |  | version is the version of the API |
-| revision | [string](#string) |  | revision is the commit hash of the API |
-
-
-
-
-
-
-<a name="banyandb-common-v1-GetAPIVersionRequest"></a>
-
-### GetAPIVersionRequest
-GetAPIVersionRequest is the request for GetAPIVersion
-
-empty
-
-
-
-
-
-
-<a name="banyandb-common-v1-GetAPIVersionResponse"></a>
-
-### GetAPIVersionResponse
-GetAPIVersionResponse is the response for GetAPIVersion
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| version | [APIVersion](#banyandb-common-v1-APIVersion) |  | version is the version of the API |
-
-
-
-
-
- 
-
- 
-
- 
-
-
-<a name="banyandb-common-v1-Service"></a>
-
-### Service
-Service is the service for the API
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| GetAPIVersion | [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest) | [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse) | GetAPIVersion returns the version of the API |
-
- 
 
 
 
@@ -952,94 +398,6 @@ Trace is the top level message of a trace.
 
 
  
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_database_v1_database-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/database/v1/database.proto
-
-
-
-<a name="banyandb-database-v1-Node"></a>
-
-### Node
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
-| grpc_address | [string](#string) |  |  |
-| http_address | [string](#string) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
-| property_repair_gossip_grpc_address | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Node-LabelsEntry"></a>
-
-### Node.LabelsEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-Shard"></a>
-
-### Shard
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [uint64](#uint64) |  |  |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
-| node | [string](#string) |  |  |
-| total | [uint32](#uint32) |  |  |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-
-
-
-
-
- 
-
-
-<a name="banyandb-database-v1-Role"></a>
-
-### Role
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ROLE_UNSPECIFIED | 0 |  |
-| ROLE_META | 1 |  |
-| ROLE_DATA | 2 |  |
-| ROLE_LIAISON | 3 |  |
-
 
  
 
@@ -1453,6 +811,1426 @@ Each item in a string array is seen as a token instead of a query expression.
 | SORT_UNSPECIFIED | 0 |  |
 | SORT_DESC | 1 |  |
 | SORT_ASC | 2 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_measure_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/measure/v1/query.proto
+
+
+
+<a name="banyandb-measure-v1-DataPoint"></a>
+
+### DataPoint
+DataPoint is stored in Measures
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
+| tag_families | [banyandb.model.v1.TagFamily](#banyandb-model-v1-TagFamily) | repeated | tag_families contains tags selected in the projection |
+| fields | [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field) | repeated | fields contains fields selected in the projection |
+| sid | [uint64](#uint64) |  | sid is the series id of the data point |
+| version | [int64](#int64) |  | version is the version of the data point in a series sid, timestamp and version are used to identify a data point |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-DataPoint-Field"></a>
+
+### DataPoint.Field
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is the identity of a measure. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
+| tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
+| field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
+| group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
+| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
+| top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specified, top sorts the dataset based on order_by&#39;s output |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is specified, offset processes the dataset based on top&#39;s output |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
+| rewrite_agg_top_n_result | [bool](#bool) |  | rewriteAggTopNResult will rewrite agg result to raw data |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-Aggregation"></a>
+
+### QueryRequest.Aggregation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  |  |
+| field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-FieldProjection"></a>
+
+### QueryRequest.FieldProjection
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| names | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-GroupBy"></a>
+
+### QueryRequest.GroupBy
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection must be a subset of the tag_projection of QueryRequest |
+| field_name | [string](#string) |  | field_name must be one of fields indicated by field_projection |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-Top"></a>
+
+### QueryRequest.Top
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| number | [int32](#int32) |  | number set the how many items should be returned |
+| field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
+| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields ASC: bottomN DESC: topN UNSPECIFIED: topN |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response for a query to the Query module.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_points | [DataPoint](#banyandb-measure-v1-DataPoint) | repeated | data_points are the actual data returned |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_measure_v1_topn-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/measure/v1/topn.proto
+
+
+
+<a name="banyandb-measure-v1-TopNList"></a>
+
+### TopNList
+TopNList contains a series of topN items
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
+| items | [TopNList.Item](#banyandb-measure-v1-TopNList-Item) | repeated | items contains top-n items in a list |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-TopNList-Item"></a>
+
+### TopNList.Item
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated |  |
+| value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-TopNRequest"></a>
+
+### TopNRequest
+TopNRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is the identity of a measure. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
+| top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
+| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range |
+| conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
+| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-TopNResponse"></a>
+
+### TopNResponse
+TopNResponse is the response for a query to the Query module.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lists | [TopNList](#banyandb-measure-v1-TopNList) | repeated | lists contain a series topN lists ranked by timestamp if agg_func in query request is specified, lists&#39; size should be one. |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_common_v1_common-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/common.proto
+
+
+
+<a name="banyandb-common-v1-Group"></a>
+
+### Group
+Group is an internal object for Group management
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [Metadata](#banyandb-common-v1-Metadata) |  | metadata define the group&#39;s identity |
+| catalog | [Catalog](#banyandb-common-v1-Catalog) |  | catalog denotes which type of data the group contains |
+| resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
+
+
+
+
+
+
+<a name="banyandb-common-v1-IntervalRule"></a>
+
+### IntervalRule
+IntervalRule is a structured duration
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| unit | [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit) |  | unit can only be UNIT_HOUR or UNIT_DAY |
+| num | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-common-v1-LifecycleStage"></a>
+
+### LifecycleStage
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The stage name (e.g., &#34;warm&#34;, &#34;cold&#34;). This should be a non-empty string. |
+| shard_num | [uint32](#uint32) |  | Number of shards allocated for this stage. Must be greater than zero. |
+| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Defines the interval for data segmentation in this stage. This is a required field and uses the IntervalRule structure. |
+| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | Specifies the time-to-live for data in this stage before moving to the next. This is also a required field using the IntervalRule structure. |
+| node_selector | [string](#string) |  | Node selector specifying target nodes for this stage. Optional; if provided, it must be a non-empty string. |
+| close | [bool](#bool) |  | Indicates whether segments that are no longer live should be closed. |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas for this stage. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-Metadata"></a>
+
+### Metadata
+Metadata is for multi-tenant, multi-model use
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | group contains a set of options, like retention policy, max |
+| name | [string](#string) |  | name of the entity |
+| id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
+| create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
+| mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-ResourceOpts"></a>
+
+### ResourceOpts
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_num | [uint32](#uint32) |  | shard_num is the number of shards |
+| segment_interval | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | segment_interval indicates the length of a segment |
+| ttl | [IntervalRule](#banyandb-common-v1-IntervalRule) |  | ttl indicates time to live, how long the data will be cached |
+| stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
+| default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
+| replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-common-v1-Catalog"></a>
+
+### Catalog
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CATALOG_UNSPECIFIED | 0 |  |
+| CATALOG_STREAM | 1 |  |
+| CATALOG_MEASURE | 2 |  |
+| CATALOG_PROPERTY | 3 |  |
+| CATALOG_TRACE | 4 |  |
+
+
+
+<a name="banyandb-common-v1-IntervalRule-Unit"></a>
+
+### IntervalRule.Unit
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UNIT_UNSPECIFIED | 0 |  |
+| UNIT_HOUR | 1 |  |
+| UNIT_DAY | 2 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_property_v1_property-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/property.proto
+
+
+
+<a name="banyandb-property-v1-Property"></a>
+
+### Property
+Property stores the user defined data
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
+| id | [string](#string) |  | id is the identity of a property |
+| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_property_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/property/v1/rpc.proto
+
+
+
+<a name="banyandb-property-v1-ApplyRequest"></a>
+
+### ApplyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| strategy | [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy) |  | strategy indicates how to update a property. It defaults to STRATEGY_MERGE |
+
+
+
+
+
+
+<a name="banyandb-property-v1-ApplyResponse"></a>
+
+### ApplyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
+| tags_num | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-DeleteRequest"></a>
+
+### DeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is the identity of a property. |
+| id | [string](#string) |  | id is the identity of item in the property. |
+
+
+
+
+
+
+<a name="banyandb-property-v1-DeleteResponse"></a>
+
+### DeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalDeleteRequest"></a>
+
+### InternalDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ids | [bytes](#bytes) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| sources | [bytes](#bytes) | repeated |  |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  |  |
+| deletes | [int64](#int64) | repeated | deletes indicates the property is deleted timestamps, it&#39;s mapping to the sources in the same order if the value is 0, it means the property is not deleted |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalRepairRequest"></a>
+
+### InternalRepairRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint64](#uint64) |  |  |
+| id | [bytes](#bytes) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalRepairResponse"></a>
+
+### InternalRepairResponse
+
+
+
+
+
+
+
+<a name="banyandb-property-v1-InternalUpdateRequest"></a>
+
+### InternalUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [bytes](#bytes) |  |  |
+| shard_id | [uint64](#uint64) |  |  |
+| property | [Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-property-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
+| name | [string](#string) |  | name is created when it receives the first property |
+| ids | [string](#string) | repeated | ids is the identities of properties |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is used to filter properties based on tags |
+| tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
+| limit | [uint32](#uint32) |  |  |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+
+
+
+
+
+
+<a name="banyandb-property-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response for a query to the Query module.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| properties | [Property](#banyandb-property-v1-Property) | repeated | properties are the actual data returned |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-property-v1-ApplyRequest-Strategy"></a>
+
+### ApplyRequest.Strategy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STRATEGY_UNSPECIFIED | 0 |  |
+| STRATEGY_MERGE | 1 |  |
+| STRATEGY_REPLACE | 2 |  |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-property-v1-PropertyService"></a>
+
+### PropertyService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Apply | [ApplyRequest](#banyandb-property-v1-ApplyRequest) | [ApplyResponse](#banyandb-property-v1-ApplyResponse) | Apply creates a property if it&#39;s absent, or update a existed one based on a strategy. |
+| Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
+| Query | [QueryRequest](#banyandb-property-v1-QueryRequest) | [QueryResponse](#banyandb-property-v1-QueryResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_stream_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/stream/v1/query.proto
+
+
+
+<a name="banyandb-stream-v1-Element"></a>
+
+### Element
+Element represents
+(stream context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
+(Log context) a log
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| element_id | [string](#string) |  | element_id could be span_id of a Span or segment_id of a Segment in the context of stream |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp represents a millisecond 1) either the start time of a Span/Segment, 2) or the timestamp of a log |
+| tag_families | [banyandb.model.v1.TagFamily](#banyandb-model-v1-TagFamily) | repeated | fields contains all indexed Field. Some typical names, - stream_id - duration - service_name - service_instance_id - end_time_milliseconds |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicate where the elements are stored. |
+| name | [string](#string) |  | name is the identity of a stream. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of stream, it represents the range of the `startTime` for spans/segments, while in the context of Log, it means the range of the timestamp(s) for logs. it is always recommended to specify time range for performance reason |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
+| projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response for a query to the Query module.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| elements | [Element](#banyandb-stream-v1-Element) | repeated | elements are the actual data returned |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_trace_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/trace/v1/query.proto
+
+
+
+<a name="banyandb-trace-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+InternalQueryResponse is the response of an internal query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| internal_traces | [InternalTrace](#banyandb-trace-v1-InternalTrace) | repeated | internal_traces is a list of internal traces that match the query. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-InternalTrace"></a>
+
+### InternalTrace
+InternalTrace is the trace that is used for internal use.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
+| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
+| key | [int64](#int64) |  | key is used for sorting. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the request contract for query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [string](#string) | repeated | groups indicates the physical data location. |
+| name | [string](#string) |  | name is the identity of a trace. |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of trace, it represents the range of the `startTime` for spans/segments, it is always recommended to specify time range for performance reason |
+| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
+| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of spans being returned |
+| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only tags in the type of Integer are supported |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is the filter criteria. |
+| tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
+| trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse is the response of a query.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
+| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Span"></a>
+
+### Span
+Span is a single operation within a trace.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
+| span | [bytes](#bytes) |  | span is the raw span data. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-Trace"></a>
+
+### Trace
+Trace contains all spans that belong to a single trace ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_bydbql_v1_query-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/bydbql/v1/query.proto
+
+
+
+<a name="banyandb-bydbql-v1-QueryRequest"></a>
+
+### QueryRequest
+QueryRequest is the main request message for BydbQL queries
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [string](#string) |  | query is the BydbQL query string |
+
+
+
+
+
+
+<a name="banyandb-bydbql-v1-QueryResponse"></a>
+
+### QueryResponse
+QueryResponse contains the result of a BydbQL query
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stream_result | [banyandb.stream.v1.QueryResponse](#banyandb-stream-v1-QueryResponse) |  | stream_result is returned for stream queries |
+| measure_result | [banyandb.measure.v1.QueryResponse](#banyandb-measure-v1-QueryResponse) |  | measure_result is returned for measure queries |
+| property_result | [banyandb.property.v1.QueryResponse](#banyandb-property-v1-QueryResponse) |  | property_result is returned for property queries |
+| trace_result | [banyandb.trace.v1.QueryResponse](#banyandb-trace-v1-QueryResponse) |  | trace_result is returned for trace queries |
+| topn_result | [banyandb.measure.v1.TopNResponse](#banyandb-measure-v1-TopNResponse) |  | topn_result is returned for TopN queries |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_bydbql_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/bydbql/v1/rpc.proto
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-bydbql-v1-BydbQLService"></a>
+
+### BydbQLService
+BydbQLService provides query interface for BanyanDB Query Language (BydbQL)
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Query | [QueryRequest](#banyandb-bydbql-v1-QueryRequest) | [QueryResponse](#banyandb-bydbql-v1-QueryResponse) | Query executes a generic BydbQL query with explicit FROM clause This endpoint requires the query to specify the resource type and name in the FROM clause (e.g., &#34;FROM STREAM sw&#34;, &#34;FROM MEASURE metrics&#34;) |
+
+ 
+
+
+
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+| STATUS_DISK_FULL | 6 |  |
+| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
+| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="banyandb_cluster_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/cluster/v1/rpc.proto
+
+
+
+<a name="banyandb-cluster-v1-FileInfo"></a>
+
+### FileInfo
+Information about an individual file within a part.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
+| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
+| size | [uint32](#uint32) |  | Size of this file in bytes. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-HealthCheckRequest"></a>
+
+### HealthCheckRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-HealthCheckResponse"></a>
+
+### HealthCheckResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| service_name | [string](#string) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| error | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartInfo"></a>
+
+### PartInfo
+Information about a part contained within a chunk.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  | Unique identifier for this part. |
+| files | [FileInfo](#banyandb-cluster-v1-FileInfo) | repeated | Information about individual files within this part. |
+| compressed_size_bytes | [uint64](#uint64) |  | Compressed size in bytes from partMetadata. |
+| uncompressed_size_bytes | [uint64](#uint64) |  | Uncompressed size in bytes from partMetadata. |
+| total_count | [uint64](#uint64) |  | Total count from partMetadata. |
+| blocks_count | [uint64](#uint64) |  | Blocks count from partMetadata. |
+| min_timestamp | [int64](#int64) |  | Minimum timestamp from partMetadata. |
+| max_timestamp | [int64](#int64) |  | Maximum timestamp from partMetadata. |
+| min_key | [int64](#int64) |  | Minimum user-provided key for sidx. |
+| max_key | [int64](#int64) |  | Maximum user-provided key for sidx. |
+| part_type | [string](#string) |  | Part type. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-PartResult"></a>
+
+### PartResult
+PartResult contains the result for individual parts.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether this part was processed successfully. |
+| error | [string](#string) |  | Error message if processing failed. |
+| bytes_processed | [uint32](#uint32) |  | Number of bytes processed for this part. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SendRequest"></a>
+
+### SendRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| body | [bytes](#bytes) |  |  |
+| batch_mod | [bool](#bool) |  |  |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SendResponse"></a>
+
+### SendResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  |  |
+| error | [string](#string) |  |  |
+| body | [bytes](#bytes) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncCompletion"></a>
+
+### SyncCompletion
+SyncCompletion contains completion information for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_bytes_sent | [uint64](#uint64) |  | Total bytes sent for validation. |
+| total_parts_sent | [uint32](#uint32) |  | Total number of parts sent. |
+| total_chunks | [uint32](#uint32) |  | Total number of chunks in this sync. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncMetadata"></a>
+
+### SyncMetadata
+SyncMetadata contains metadata for the sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | Group name (stream/measure). |
+| shard_id | [uint32](#uint32) |  | Shard identifier. |
+| topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
+| timestamp | [int64](#int64) |  | Timestamp when sync started. |
+| total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartRequest"></a>
+
+### SyncPartRequest
+Chunked Sync Service Messages.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  | Unique session identifier for this sync operation. |
+| chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
+| chunk_data | [bytes](#bytes) |  | Actual chunk data. |
+| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
+| parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
+| metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
+| completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncPartResponse"></a>
+
+### SyncPartResponse
+SyncPartResponse contains the response for a sync part request.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  |  |
+| chunk_index | [uint32](#uint32) |  |  |
+| status | [SyncStatus](#banyandb-cluster-v1-SyncStatus) |  |  |
+| error | [string](#string) |  |  |
+| sync_result | [SyncResult](#banyandb-cluster-v1-SyncResult) |  | Final result when sync completes. |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  | version_compatibility contains version compatibility information when status indicates version issues |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-SyncResult"></a>
+
+### SyncResult
+SyncResult contains the result of a sync operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  | Whether entire sync was successful. |
+| total_bytes_received | [uint64](#uint64) |  | Total bytes received. |
+| duration_ms | [int64](#int64) |  | Time taken for sync in milliseconds. |
+| chunks_received | [uint32](#uint32) |  | Number of chunks successfully received. |
+| parts_received | [uint32](#uint32) |  | Number of parts successfully received. |
+| parts_results | [PartResult](#banyandb-cluster-v1-PartResult) | repeated | Results for each part. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-VersionCompatibility"></a>
+
+### VersionCompatibility
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| supported | [bool](#bool) |  | supported indicates whether the client version is supported |
+| server_api_version | [string](#string) |  | server_api_version is the API version of the server |
+| supported_api_versions | [string](#string) | repeated | supported_api_versions lists API versions supported by the server |
+| server_file_format_version | [string](#string) |  | server_file_format_version is the file format version of the server |
+| supported_file_format_versions | [string](#string) | repeated | supported_file_format_versions lists file format versions supported by the server |
+| reason | [string](#string) |  | reason provides human-readable explanation of version incompatibility |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-VersionInfo"></a>
+
+### VersionInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| file_format_version | [string](#string) |  | file_format_version indicates the file format version used |
+| compatible_file_format_version | [string](#string) | repeated | compatible_file_format_version lists backward compatible versions |
+| api_version | [string](#string) |  | api_version indicates the API semantic version |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-cluster-v1-SyncStatus"></a>
+
+### SyncStatus
+SyncStatus represents the status of a sync operation.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SYNC_STATUS_UNSPECIFIED | 0 | Unspecified status. |
+| SYNC_STATUS_CHUNK_RECEIVED | 1 | Chunk received and validated successfully. |
+| SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH | 2 | Chunk checksum validation failed. |
+| SYNC_STATUS_CHUNK_OUT_OF_ORDER | 3 | Chunk received out of expected order. |
+| SYNC_STATUS_SESSION_NOT_FOUND | 4 | Session ID not recognized. |
+| SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
+| SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
+| SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-cluster-v1-ChunkedSyncService"></a>
+
+### ChunkedSyncService
+ChunkedSyncService provides streaming sync capabilities for chunked data transfer.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| SyncPart | [SyncPartRequest](#banyandb-cluster-v1-SyncPartRequest) stream | [SyncPartResponse](#banyandb-cluster-v1-SyncPartResponse) stream | SyncPart synchronizes part data using chunked transfer. |
+
+
+<a name="banyandb-cluster-v1-Service"></a>
+
+### Service
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
+| HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_common_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/common/v1/rpc.proto
+
+
+
+<a name="banyandb-common-v1-APIVersion"></a>
+
+### APIVersion
+APIVersion is the version of the API
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [string](#string) |  | version is the version of the API |
+| revision | [string](#string) |  | revision is the commit hash of the API |
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionRequest"></a>
+
+### GetAPIVersionRequest
+GetAPIVersionRequest is the request for GetAPIVersion
+
+empty
+
+
+
+
+
+
+<a name="banyandb-common-v1-GetAPIVersionResponse"></a>
+
+### GetAPIVersionResponse
+GetAPIVersionResponse is the response for GetAPIVersion
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [APIVersion](#banyandb-common-v1-APIVersion) |  | version is the version of the API |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-common-v1-Service"></a>
+
+### Service
+Service is the service for the API
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetAPIVersion | [GetAPIVersionRequest](#banyandb-common-v1-GetAPIVersionRequest) | [GetAPIVersionResponse](#banyandb-common-v1-GetAPIVersionResponse) | GetAPIVersion returns the version of the API |
+
+ 
+
+
+
+<a name="banyandb_database_v1_database-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/database/v1/database.proto
+
+
+
+<a name="banyandb-database-v1-Node"></a>
+
+### Node
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| roles | [Role](#banyandb-database-v1-Role) | repeated |  |
+| grpc_address | [string](#string) |  |  |
+| http_address | [string](#string) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
+| property_repair_gossip_grpc_address | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Node-LabelsEntry"></a>
+
+### Node.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-Shard"></a>
+
+### Shard
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  |  |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| node | [string](#string) |  |  |
+| total | [uint32](#uint32) |  |  |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-database-v1-Role"></a>
+
+### Role
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROLE_UNSPECIFIED | 0 |  |
+| ROLE_META | 1 |  |
+| ROLE_DATA | 2 |  |
+| ROLE_LIAISON | 3 |  |
 
 
  
@@ -3417,253 +4195,6 @@ Type determine the index structure under the hood
 
 
 
-<a name="banyandb_measure_v1_query-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/measure/v1/query.proto
-
-
-
-<a name="banyandb-measure-v1-DataPoint"></a>
-
-### DataPoint
-DataPoint is stored in Measures
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
-| tag_families | [banyandb.model.v1.TagFamily](#banyandb-model-v1-TagFamily) | repeated | tag_families contains tags selected in the projection |
-| fields | [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field) | repeated | fields contains fields selected in the projection |
-| sid | [uint64](#uint64) |  | sid is the series id of the data point |
-| version | [int64](#int64) |  | version is the version of the data point in a series sid, timestamp and version are used to identify a data point |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-DataPoint-Field"></a>
-
-### DataPoint.Field
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryRequest"></a>
-
-### QueryRequest
-QueryRequest is the request contract for query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
-| name | [string](#string) |  | name is the identity of a measure. |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
-| tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
-| field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
-| group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
-| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
-| top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specified, top sorts the dataset based on order_by&#39;s output |
-| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is specified, offset processes the dataset based on top&#39;s output |
-| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
-| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
-| trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
-| rewrite_agg_top_n_result | [bool](#bool) |  | rewriteAggTopNResult will rewrite agg result to raw data |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryRequest-Aggregation"></a>
-
-### QueryRequest.Aggregation
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  |  |
-| field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryRequest-FieldProjection"></a>
-
-### QueryRequest.FieldProjection
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| names | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryRequest-GroupBy"></a>
-
-### QueryRequest.GroupBy
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection must be a subset of the tag_projection of QueryRequest |
-| field_name | [string](#string) |  | field_name must be one of fields indicated by field_projection |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryRequest-Top"></a>
-
-### QueryRequest.Top
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| number | [int32](#int32) |  | number set the how many items should be returned |
-| field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
-| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields ASC: bottomN DESC: topN UNSPECIFIED: topN |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-QueryResponse"></a>
-
-### QueryResponse
-QueryResponse is the response for a query to the Query module.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| data_points | [DataPoint](#banyandb-measure-v1-DataPoint) | repeated | data_points are the actual data returned |
-| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
-<a name="banyandb_measure_v1_topn-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/measure/v1/topn.proto
-
-
-
-<a name="banyandb-measure-v1-TopNList"></a>
-
-### TopNList
-TopNList contains a series of topN items
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
-| items | [TopNList.Item](#banyandb-measure-v1-TopNList-Item) | repeated | items contains top-n items in a list |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-TopNList-Item"></a>
-
-### TopNList.Item
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated |  |
-| value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-TopNRequest"></a>
-
-### TopNRequest
-TopNRequest is the request contract for query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
-| name | [string](#string) |  | name is the identity of a measure. |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. |
-| top_n | [int32](#int32) |  | top_n set the how many items should be returned in each list. |
-| agg | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  | agg aggregates lists grouped by field names in the time_range |
-| conditions | [banyandb.model.v1.Condition](#banyandb-model-v1-Condition) | repeated | criteria select counters. Only equals are acceptable. |
-| field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
-| trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
-
-
-
-
-
-
-<a name="banyandb-measure-v1-TopNResponse"></a>
-
-### TopNResponse
-TopNResponse is the response for a query to the Query module.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| lists | [TopNList](#banyandb-measure-v1-TopNList) | repeated | lists contain a series topN lists ranked by timestamp if agg_func in query request is specified, lists&#39; size should be one. |
-| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_measure_v1_write-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -3892,40 +4423,6 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Propagation | [PropagationRequest](#banyandb-property-v1-PropagationRequest) | [PropagationResponse](#banyandb-property-v1-PropagationResponse) | Propagation is used to propagate messages across nodes in the cluster. |
-
- 
-
-
-
-<a name="banyandb_property_v1_property-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/property/v1/property.proto
-
-
-
-<a name="banyandb-property-v1-Property"></a>
-
-### Property
-Property stores the user defined data
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
-| id | [string](#string) |  | id is the identity of a property |
-| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
-| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
-
-
-
-
-
- 
-
- 
-
- 
 
  
 
@@ -4161,300 +4658,6 @@ Property stores the user defined data
 
 
 
-<a name="banyandb_property_v1_rpc-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/property/v1/rpc.proto
-
-
-
-<a name="banyandb-property-v1-ApplyRequest"></a>
-
-### ApplyRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-| strategy | [ApplyRequest.Strategy](#banyandb-property-v1-ApplyRequest-Strategy) |  | strategy indicates how to update a property. It defaults to STRATEGY_MERGE |
-
-
-
-
-
-
-<a name="banyandb-property-v1-ApplyResponse"></a>
-
-### ApplyResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| created | [bool](#bool) |  | created indicates whether the property existed. True: the property is absent. False: the property existed. |
-| tags_num | [uint32](#uint32) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-DeleteRequest"></a>
-
-### DeleteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | groups indicate where the data points are stored. |
-| name | [string](#string) |  | name is the identity of a property. |
-| id | [string](#string) |  | id is the identity of item in the property. |
-
-
-
-
-
-
-<a name="banyandb-property-v1-DeleteResponse"></a>
-
-### DeleteResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| deleted | [bool](#bool) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalDeleteRequest"></a>
-
-### InternalDeleteRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| ids | [bytes](#bytes) | repeated |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalQueryResponse"></a>
-
-### InternalQueryResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| sources | [bytes](#bytes) | repeated |  |
-| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  |  |
-| deletes | [int64](#int64) | repeated | deletes indicates the property is deleted timestamps, it&#39;s mapping to the sources in the same order if the value is 0, it means the property is not deleted |
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalRepairRequest"></a>
-
-### InternalRepairRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| shard_id | [uint64](#uint64) |  |  |
-| id | [bytes](#bytes) |  |  |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-| delete_time | [int64](#int64) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalRepairResponse"></a>
-
-### InternalRepairResponse
-
-
-
-
-
-
-
-<a name="banyandb-property-v1-InternalUpdateRequest"></a>
-
-### InternalUpdateRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [bytes](#bytes) |  |  |
-| shard_id | [uint64](#uint64) |  |  |
-| property | [Property](#banyandb-property-v1-Property) |  |  |
-
-
-
-
-
-
-<a name="banyandb-property-v1-QueryRequest"></a>
-
-### QueryRequest
-QueryRequest is the request contract for query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicate where the data points are stored. |
-| name | [string](#string) |  | name is created when it receives the first property |
-| ids | [string](#string) | repeated | ids is the identities of properties |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is used to filter properties based on tags |
-| tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
-| limit | [uint32](#uint32) |  |  |
-| trace | [bool](#bool) |  | trace is used to enable trace for the query |
-
-
-
-
-
-
-<a name="banyandb-property-v1-QueryResponse"></a>
-
-### QueryResponse
-QueryResponse is the response for a query to the Query module.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| properties | [Property](#banyandb-property-v1-Property) | repeated | properties are the actual data returned |
-| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
-
-
-
-
-
- 
-
-
-<a name="banyandb-property-v1-ApplyRequest-Strategy"></a>
-
-### ApplyRequest.Strategy
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STRATEGY_UNSPECIFIED | 0 |  |
-| STRATEGY_MERGE | 1 |  |
-| STRATEGY_REPLACE | 2 |  |
-
-
- 
-
- 
-
-
-<a name="banyandb-property-v1-PropertyService"></a>
-
-### PropertyService
-
-
-| Method Name | Request Type | Response Type | Description |
-| ----------- | ------------ | ------------- | ------------|
-| Apply | [ApplyRequest](#banyandb-property-v1-ApplyRequest) | [ApplyResponse](#banyandb-property-v1-ApplyResponse) | Apply creates a property if it&#39;s absent, or update a existed one based on a strategy. |
-| Delete | [DeleteRequest](#banyandb-property-v1-DeleteRequest) | [DeleteResponse](#banyandb-property-v1-DeleteResponse) |  |
-| Query | [QueryRequest](#banyandb-property-v1-QueryRequest) | [QueryResponse](#banyandb-property-v1-QueryResponse) |  |
-
- 
-
-
-
-<a name="banyandb_stream_v1_query-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/stream/v1/query.proto
-
-
-
-<a name="banyandb-stream-v1-Element"></a>
-
-### Element
-Element represents
-(stream context) a Span defined in Google Dapper paper or equivalently a Segment in Skywalking.
-(Log context) a log
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| element_id | [string](#string) |  | element_id could be span_id of a Span or segment_id of a Segment in the context of stream |
-| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp represents a millisecond 1) either the start time of a Span/Segment, 2) or the timestamp of a log |
-| tag_families | [banyandb.model.v1.TagFamily](#banyandb-model-v1-TagFamily) | repeated | fields contains all indexed Field. Some typical names, - stream_id - duration - service_name - service_instance_id - end_time_milliseconds |
-
-
-
-
-
-
-<a name="banyandb-stream-v1-QueryRequest"></a>
-
-### QueryRequest
-QueryRequest is the request contract for query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicate where the elements are stored. |
-| name | [string](#string) |  | name is the identity of a stream. |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of stream, it represents the range of the `startTime` for spans/segments, while in the context of Log, it means the range of the timestamp(s) for logs. it is always recommended to specify time range for performance reason |
-| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
-| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned |
-| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a field. So far, only fields in the type of Integer are supported |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | tag_families are indexed. |
-| projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
-| trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
-
-
-
-
-
-
-<a name="banyandb-stream-v1-QueryResponse"></a>
-
-### QueryResponse
-QueryResponse is the response for a query to the Query module.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| elements | [Element](#banyandb-stream-v1-Element) | repeated | elements are the actual data returned |
-| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="banyandb_stream_v1_write-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -4593,126 +4796,6 @@ QueryResponse is the response for a query to the Query module.
 | Query | [QueryRequest](#banyandb-stream-v1-QueryRequest) | [QueryResponse](#banyandb-stream-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-stream-v1-WriteRequest) stream | [WriteResponse](#banyandb-stream-v1-WriteResponse) stream |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-stream-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-stream-v1-DeleteExpiredSegmentsResponse) |  |
-
- 
-
-
-
-<a name="banyandb_trace_v1_query-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/trace/v1/query.proto
-
-
-
-<a name="banyandb-trace-v1-InternalQueryResponse"></a>
-
-### InternalQueryResponse
-InternalQueryResponse is the response of an internal query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| internal_traces | [InternalTrace](#banyandb-trace-v1-InternalTrace) | repeated | internal_traces is a list of internal traces that match the query. |
-| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
-
-
-
-
-
-
-<a name="banyandb-trace-v1-InternalTrace"></a>
-
-### InternalTrace
-InternalTrace is the trace that is used for internal use.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
-| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
-| key | [int64](#int64) |  | key is used for sorting. |
-
-
-
-
-
-
-<a name="banyandb-trace-v1-QueryRequest"></a>
-
-### QueryRequest
-QueryRequest is the request contract for query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| groups | [string](#string) | repeated | groups indicates the physical data location. |
-| name | [string](#string) |  | name is the identity of a trace. |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | time_range is a range query with begin/end time of entities in the timeunit of milliseconds. In the context of trace, it represents the range of the `startTime` for spans/segments, it is always recommended to specify time range for performance reason |
-| offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit |
-| limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of spans being returned |
-| order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. So far, only tags in the type of Integer are supported |
-| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  | criteria is the filter criteria. |
-| tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
-| trace | [bool](#bool) |  | trace is used to enable trace for the query |
-| stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
-
-
-
-
-
-
-<a name="banyandb-trace-v1-QueryResponse"></a>
-
-### QueryResponse
-QueryResponse is the response of a query.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
-| trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
-
-
-
-
-
-
-<a name="banyandb-trace-v1-Span"></a>
-
-### Span
-Span is a single operation within a trace.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
-| span | [bytes](#bytes) |  | span is the raw span data. |
-
-
-
-
-
-
-<a name="banyandb-trace-v1-Trace"></a>
-
-### Trace
-Trace contains all spans that belong to a single trace ID.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
-
-
-
-
-
- 
-
- 
-
- 
 
  
 

@@ -14,6 +14,7 @@ BydbQL supports querying across BanyanDB's primary data models:
 *   **Streams**: For raw, time-series elements like logs and traces.
 *   **Measures**: For aggregated numerical time-series data (metrics).
 *   **Properties**: For metadata and key-value information.
+*   **Traces**: For distributed tracing data with spans.
 
 It also provides a specialized syntax for optimized **Top-N** queries against measures.
 
@@ -33,12 +34,11 @@ BydbQL Query String
 Abstract Syntax Tree (AST)
         ↓
    Transformer
-        ↓
-  Protobuf Request
 ```
+
 *   **Lexer**: Breaks the query string into a sequence of tokens.
 *   **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
-*   **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Request` message.
+*   **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Stream/Measure/Property/Traces/TopN Request` message.
 
 ### 2.2. Distinguishing Query Types
 
@@ -53,11 +53,7 @@ Specialized queries, like Top-N, use a distinct top-level command and typically 
 
 ### 2.3. Optional `FROM` Clause
 
-In BydbQL, the `FROM` clause is **optional** for `SELECT` queries. When it is omitted, the target resource (the specific stream, measure, or property) **must** be supplied by the execution context.
-
-The simplest possible BydbQL query is `SELECT *`. When executed within the context of a stream named `sw`, this is equivalent to `SELECT * FROM STREAM sw`.
-
-When the `FROM` clause is present, it overrides any context provided by the environment. This is useful for clients that connect to a generic query endpoint and need to specify the target resource directly within the query text.
+In BydbQL, the `FROM` clause is **required** for `SELECT` queries.
 
 ### 2.4. Case Sensitivity
 
@@ -189,12 +185,9 @@ integer_literal ::= [0-9]+
 ### 4.3. Examples
 
 ```sql
--- Simplest query (context must provide the stream name, e.g., 'sw')
-SELECT *;
-
 -- Basic selection with filtering and ordering
 SELECT trace_id, service_id
-FROM STREAM sw IN (default, updated)
+FROM STREAM sw IN (group1, group2)
 WHERE service_id = 'webapp' AND state = 1
 ORDER BY start_time DESC
 LIMIT 100;
@@ -207,6 +200,7 @@ LIMIT 10;
 
 -- Use more complex conditions with IN and OR
 SELECT trace_id, duration
+FROM STREAM sw
 WHERE service_id IN ('webapp', 'api-gateway') OR http.method = 'POST';
 
 -- Query with time range using TIME clause
@@ -315,13 +309,11 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 ### 5.4. Examples
 
 ```sql
--- Simplest query (context must provide measure name)
-SELECT *;
-
 -- Select a specific tag and a specific field
 SELECT
     instance,
     latency
+FROM MEASURE service_cpm
 WHERE region = 'us-west-1'
 LIMIT 10;
 
@@ -559,9 +551,6 @@ integer_literal     ::= [0-9]+
 ### 7.3. Examples
 
 ```sql
--- Simplest query (context must provide property name)
-SELECT *;
-
 -- Find properties by filtering on their tags
 SELECT ip, owner
 FROM PROPERTY server_metadata
@@ -569,7 +558,8 @@ WHERE datacenter = 'dc-101' AND in_service = 'true'
 LIMIT 50;
 
 -- Retrieve a specific property by its unique ID
-SELECT * 
+SELECT *
+FROM PROPERTY server_metadata
 WHERE ID = 'server-1a2b3c';
 
 -- Retrieve a set of properties by their unique IDs
@@ -667,12 +657,9 @@ The `WITH QUERY_TRACE` clause enables distributed tracing of the query execution
 ### 8.4. Examples
 
 ```sql
--- Simplest query (context must provide the trace name, e.g., 'sw_trace')
-SELECT *;
-
 -- Basic selection with filtering and ordering
 SELECT trace_id, service_id, operation_name
-FROM TRACE sw_trace IN (default, updated)
+FROM TRACE sw_trace IN (group1, group2)
 WHERE service_id = 'webapp' AND status = 'success'
 ORDER BY start_time DESC
 LIMIT 100;
