@@ -20,7 +20,6 @@ syntax = "proto3";
 package banyandb.bydbql.v1;
 
 import "banyandb/common/v1/common.proto";
-import "banyandb/common/v1/trace.proto";
 import "banyandb/measure/v1/query.proto";
 import "banyandb/measure/v1/topn.proto";
 import "banyandb/property/v1/rpc.proto";
