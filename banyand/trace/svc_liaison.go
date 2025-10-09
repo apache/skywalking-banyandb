@@ -22,6 +22,7 @@ import (
 	"errors"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -85,7 +86,7 @@ func (l *liaison) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("trace")
 	fs.StringVar(&l.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&l.dataPath, "trace-data-path", "", "the path for trace data (optional)")
-	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
+	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", 3*time.Second, "the timeout for trace data flush")
 	fs.IntVar(&l.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
 	fs.DurationVar(&l.option.syncInterval, "trace-sync-interval", defaultSyncInterval, "the periodic sync interval for trace data")
 	return fs

@@ -18,18 +18,11 @@
 package sidx
 
 import (
-	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-)
-
-const (
-	snapshotSuffix = ".snp"
 )
 
 // snapshot represents an immutable collection of parts at a specific epoch.
@@ -39,19 +32,15 @@ type snapshot struct {
 	// parts contains all active parts sorted by epoch (oldest first)
 	parts []*partWrapper
 
-	// epoch uniquely identifies this snapshot generation
-	epoch uint64
-
 	// ref is the atomic reference counter for safe concurrent access
 	ref int32
 }
 
 // newSnapshot creates a new snapshot with the given parts and epoch.
 // The snapshot starts with a reference count of 1.
-func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
+func newSnapshot(parts []*partWrapper) *snapshot {
 	s := &snapshot{}
 	s.parts = append(s.parts[:0], parts...)
-	s.epoch = epoch
 	s.ref = 1
 
 	// Acquire references to all parts to ensure they remain valid
@@ -60,7 +49,6 @@ func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
 			// Part is being removed, skip it
 			logger.GetLogger().Warn().
 				Uint64("part_id", pw.ID()).
-				Uint64("epoch", epoch).
 				Msg("part unavailable during snapshot creation")
 		}
 	}
@@ -90,7 +78,6 @@ func (s *snapshot) release() {
 	if newRef < 0 {
 		logger.GetLogger().Warn().
 			Int32("ref", newRef).
-			Uint64("epoch", s.epoch).
 			Msg("snapshot reference count went negative")
 		return
 	}
@@ -104,10 +91,6 @@ func (s *snapshot) getParts(minKey, maxKey int64) []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if !pw.isActive() {
-			continue
-		}
-
 		part := pw.p
 		if part == nil || part.partMetadata == nil {
 			continue
@@ -133,7 +116,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if pw.isActive() {
+		if !pw.removable.Load() {
 			result = append(result, pw)
 		}
 	}
@@ -143,18 +126,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 
 // getPartCount returns the number of parts in the snapshot.
 func (s *snapshot) getPartCount() int {
-	count := 0
-	for _, pw := range s.parts {
-		if pw.isActive() {
-			count++
-		}
-	}
-	return count
-}
-
-// getEpoch returns the snapshot's epoch.
-func (s *snapshot) getEpoch() uint64 {
-	return s.epoch
+	return len(s.getPartsAll())
 }
 
 // refCount returns the current reference count (for testing/debugging).
@@ -215,61 +187,24 @@ func (s *snapshot) reset() {
 	}
 
 	s.parts = s.parts[:0]
-	s.epoch = 0
 	s.ref = 0
 }
 
 // String returns a string representation of the snapshot.
 func (s *snapshot) String() string {
 	activeCount := s.getPartCount()
-	return fmt.Sprintf("snapshot{epoch=%d, parts=%d/%d, ref=%d}",
-		s.epoch, activeCount, len(s.parts), s.refCount())
-}
-
-func snapshotName(snapshot uint64) string {
-	return fmt.Sprintf("%016x%s", snapshot, snapshotSuffix)
-}
-
-func parseSnapshot(name string) (uint64, error) {
-	if filepath.Ext(name) != snapshotSuffix {
-		return 0, fmt.Errorf("invalid snapshot file ext")
-	}
-	if len(name) < 16 {
-		return 0, fmt.Errorf("invalid snapshot file name")
-	}
-	return parseEpoch(name[:16])
+	return fmt.Sprintf("snapshot{parts=%d/%d, ref=%d}",
+		activeCount, len(s.parts), s.refCount())
 }
 
 func parseEpoch(epochStr string) (uint64, error) {
 	return strconv.ParseUint(epochStr, 16, 64)
 }
 
-func mustReadSnapshot(fileSystem fs.FileSystem, root string, snapshot uint64) []uint64 {
-	snapshotPath := filepath.Join(root, snapshotName(snapshot))
-	data, err := fileSystem.Read(snapshotPath)
-	if err != nil {
-		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot read snapshot")
-	}
-	var partNames []string
-	if err := json.Unmarshal(data, &partNames); err != nil {
-		logger.GetLogger().Panic().Err(err).Str("path", snapshotPath).Msg("cannot parse snapshot")
-	}
-	var result []uint64
-	for i := range partNames {
-		e, err := parseEpoch(partNames[i])
-		if err != nil {
-			logger.GetLogger().Panic().Err(err).Str("name", partNames[i]).Msg("cannot parse part name")
-		}
-		result = append(result, e)
-	}
-	return result
-}
-
 // copyAllTo creates a new snapshot with all parts from current snapshot.
-func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
+func (s *snapshot) copyAllTo() *snapshot {
 	var result snapshot
 	result.parts = make([]*partWrapper, len(s.parts))
-	result.epoch = epoch
 	result.ref = 1
 
 	// Copy all parts and acquire references
@@ -284,9 +219,8 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
-func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *snapshot {
+func (s *snapshot) merge(nextParts map[uint64]*partWrapper) *snapshot {
 	var result snapshot
-	result.epoch = nextEpoch
 	result.ref = 1
 	for i := 0; i < len(s.parts); i++ {
 		if n, ok := nextParts[s.parts[i].ID()]; ok {
@@ -301,9 +235,8 @@ func (s *snapshot) merge(nextEpoch uint64, nextParts map[uint64]*partWrapper) *s
 }
 
 // remove creates a new snapshot by removing specified parts.
-func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot {
+func (s *snapshot) remove(toRemove map[uint64]struct{}) *snapshot {
 	var result snapshot
-	result.epoch = epoch
 	result.ref = 1
 
 	// Copy parts except those being removed

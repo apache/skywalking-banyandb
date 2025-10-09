@@ -36,6 +36,11 @@ type syncPartContext struct {
 	memPart *memPart
 }
 
+func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for stream")
+	return nil
+}
+
 func (s *syncPartContext) FinishSync() error {
 	s.tsTable.mustAddMemPart(s.memPart)
 	return s.Close()
@@ -146,6 +151,11 @@ type syncSeriesContext struct {
 	fileName string
 }
 
+func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for stream")
+	return nil
+}
+
 func (s *syncSeriesContext) FinishSync() error {
 	if s.streamer != nil {
 		if err := s.streamer.CompleteSegment(); err != nil {
@@ -243,6 +253,11 @@ type syncElementIndexContext struct {
 	tsTable  *tsTable
 	l        *logger.Logger
 	fileName string
+}
+
+func (s *syncElementIndexContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for stream")
+	return nil
 }
 
 func (s *syncElementIndexContext) FinishSync() error {

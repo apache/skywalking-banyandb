@@ -76,49 +76,6 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 	}
 }
 
-func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
-	defer tst.loopCloser.Done()
-	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-	if epochWatcher == nil {
-		return
-	}
-	var flusherWatchers watcher.Epochs
-
-	for {
-		select {
-		case <-tst.loopCloser.CloseNotify():
-			return
-		case e := <-flusherWatcher:
-			flusherWatchers.Add(e)
-		case <-epochWatcher.Watch():
-			if func() bool {
-				tst.incTotalFlushLoopStarted(1)
-				start := time.Now()
-				defer func() {
-					tst.incTotalFlushLoopFinished(1)
-					tst.incTotalFlushLatency(time.Since(start).Seconds())
-				}()
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot != nil {
-					defer curSnapshot.decRef()
-					tst.flush(curSnapshot, flushCh)
-					epoch = curSnapshot.epoch
-					flusherWatchers.Notify(epoch)
-					flusherWatchers = nil
-					if tst.currentEpoch() != epoch {
-						tst.incTotalFlushLoopProgress(1)
-						return false
-					}
-				}
-				epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-				return epochWatcher == nil
-			}() {
-				return
-			}
-		}
-	}
-}
-
 func (tst *tsTable) pauseFlusherToPileupMemPartsWithMerge(
 	curSnapshot *snapshot, flusherWatcher watcher.Channel, flusherWatchers watcher.Epochs,
 	epoch uint64, mergeCh chan *mergerIntroduction,
@@ -175,7 +132,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 	var merged bool
 	var currentSegmentID int64
 	var memParts []*partWrapper
-	mergedIDs := make(map[partHandle]struct{})
+	mergedIDs := make(map[uint64]struct{})
 
 	// Helper function to merge current segment's parts
 	mergeCurrentSegment := func() (bool, error) {
@@ -184,7 +141,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 		}
 
 		// Create a copy of mergedIDs for this merge operation
-		currentMergedIDs := make(map[partHandle]struct{}, len(mergedIDs))
+		currentMergedIDs := make(map[uint64]struct{}, len(mergedIDs))
 		for id := range mergedIDs {
 			currentMergedIDs[id] = struct{}{}
 		}
@@ -231,7 +188,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 		// Add part to current segment
 		currentSegmentID = segID
 		memParts = append(memParts, snp.parts[i])
-		mergedIDs[partHandle{partID: snp.parts[i].ID(), partType: PartTypeCore}] = struct{}{}
+		mergedIDs[snp.parts[i].ID()] = struct{}{}
 	}
 
 	// Merge the last segment if it has parts
@@ -253,6 +210,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	defer releaseFlusherIntroduction(ind)
 	start := time.Now()
 	partsCount := 0
+	partIDMap := make(map[uint64]struct{})
 	for _, pw := range snapshot.parts {
 		if pw.mp == nil || pw.mp.partMetadata.TotalCount < 1 {
 			continue
@@ -263,6 +221,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem))
 		newPW.p.partMetadata.ID = pw.ID()
 		ind.flushed[newPW.ID()] = newPW
+		partIDMap[newPW.ID()] = struct{}{}
 	}
 	if len(ind.flushed) < 1 {
 		return
@@ -274,10 +233,19 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 				Str("sidx_name", name).
 				Msg("flushing sidx")
 		}
-		if err := sidxInstance.Flush(); err != nil {
+		sidxFlusherIntroduced, err := sidxInstance.Flush(partIDMap)
+		if err != nil {
 			tst.l.Warn().Err(err).Str("sidx", name).Msg("sidx flush failed")
 			return
 		}
+		ind.sidxFlusherIntroduced[name] = sidxFlusherIntroduced
+	}
+	if len(ind.sidxFlusherIntroduced) > 0 {
+		defer func() {
+			for _, sidxFlusherIntroduced := range ind.sidxFlusherIntroduced {
+				sidxFlusherIntroduced.Release()
+			}
+		}()
 	}
 	end := time.Now()
 	tst.incTotalFlushed(1)

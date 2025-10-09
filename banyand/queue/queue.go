@@ -132,6 +132,7 @@ func (c *ChunkedSyncPartContext) Close() error {
 
 // PartHandler handles individual parts during sync operations.
 type PartHandler interface {
+	NewPartType(ctx *ChunkedSyncPartContext) error
 	FinishSync() error
 	Close() error
 }

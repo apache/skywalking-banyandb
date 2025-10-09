@@ -331,7 +331,7 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	return nil
 }
 
-func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -368,6 +368,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			var sidxMemPartMap map[string]*sidx.MemPart
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
 					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
@@ -375,9 +376,15 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
+					var siMemPart *sidx.MemPart
+					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+						continue
 					}
+					if sidxMemPartMap == nil {
+						sidxMemPartMap = make(map[string]*sidx.MemPart)
+					}
+					sidxMemPartMap[sidxName] = siMemPart
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
@@ -385,7 +392,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 					w.l.Error().Err(err).Msg("cannot write series index")
 				}
 			}
-			es.tsTable.mustAddTraces(es.traces)
+			es.tsTable.mustAddTraces(es.traces, sidxMemPartMap)
 			releaseTraces(es.traces)
 		}
 		if len(g.segments) > 0 {

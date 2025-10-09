@@ -38,7 +38,6 @@ func TestPartWrapper_BasicLifecycle(t *testing.T) {
 	pw := newPartWrapper(nil, p)
 	require.NotNil(t, pw)
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.True(t, pw.isActive())
 	assert.Equal(t, uint64(1), pw.ID())
 
 	// Test acquire
@@ -61,10 +60,9 @@ func TestPartWrapper_BasicLifecycle(t *testing.T) {
 	// Final release should trigger cleanup
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 }
 
-func TestPartWrapper_StateTransitions(t *testing.T) {
+func TestPartWrapper_MarkForRemovalBehavior(t *testing.T) {
 	p := &part{
 		path:         "/test/part/002",
 		partMetadata: &partMetadata{ID: 2},
@@ -72,29 +70,24 @@ func TestPartWrapper_StateTransitions(t *testing.T) {
 
 	pw := newPartWrapper(nil, p)
 
-	// Initial state should be active
-	assert.True(t, pw.isActive())
-	assert.False(t, pw.isRemoving())
-	assert.False(t, pw.isRemoved())
-	assert.Equal(t, partStateActive, pw.getState())
-
-	// Mark for removal
-	pw.markForRemoval()
-	assert.False(t, pw.isActive())
-	assert.True(t, pw.isRemoving())
-	assert.False(t, pw.isRemoved())
-	assert.Equal(t, partStateRemoving, pw.getState())
-
-	// Should not be able to acquire new references
-	assert.False(t, pw.acquire())
+	// Initial reference count should be 1
 	assert.Equal(t, int32(1), pw.refCount())
 
-	// Release should transition to removed
+	// Mark for removal - should set removable flag
+	pw.markForRemoval()
+	assert.True(t, pw.removable.Load())
+
+	// Should still be able to acquire references until ref count reaches 0
+	assert.True(t, pw.acquire())
+	assert.Equal(t, int32(2), pw.refCount())
+
+	// Release back to 1
 	pw.release()
-	assert.False(t, pw.isActive())
-	assert.False(t, pw.isRemoving())
-	assert.True(t, pw.isRemoved())
-	assert.Equal(t, partStateRemoved, pw.getState())
+	assert.Equal(t, int32(1), pw.refCount())
+
+	// Final release should trigger cleanup
+	pw.release()
+	assert.Equal(t, int32(0), pw.refCount())
 }
 
 func TestPartWrapper_ConcurrentReferenceCounting(t *testing.T) {
@@ -193,12 +186,10 @@ func TestPartWrapper_ConcurrentAcquireWithMarkForRemoval(t *testing.T) {
 
 	// Reference count should be 1 (initial reference)
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.True(t, pw.isRemoving())
 
 	// Final cleanup
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 }
 
 func TestPartWrapper_NilPart(t *testing.T) {
@@ -207,7 +198,6 @@ func TestPartWrapper_NilPart(t *testing.T) {
 
 	assert.Equal(t, int32(1), pw.refCount())
 	assert.Nil(t, pw.p)
-	assert.True(t, pw.isActive())
 
 	// Test acquire/release with nil part
 	assert.True(t, pw.acquire())
@@ -218,7 +208,6 @@ func TestPartWrapper_NilPart(t *testing.T) {
 
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 }
 
 func TestPartWrapper_MultipleReleases(t *testing.T) {
@@ -235,16 +224,13 @@ func TestPartWrapper_MultipleReleases(t *testing.T) {
 
 	pw.release() // ref count = 2
 	assert.Equal(t, int32(2), pw.refCount())
-	assert.True(t, pw.isActive())
 
 	pw.release() // ref count = 1
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.True(t, pw.isActive())
 
 	// Final release should trigger cleanup and set ref to 0
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 
 	// Additional releases should not cause issues (though they log warnings)
 	pw.release()
@@ -257,7 +243,6 @@ func TestPartWrapper_StringRepresentation(t *testing.T) {
 	pw1 := newPartWrapper(nil, nil)
 	str1 := pw1.String()
 	assert.Contains(t, str1, "id=nil")
-	assert.Contains(t, str1, "state=active")
 	assert.Contains(t, str1, "ref=1")
 
 	// Test with real part
@@ -268,25 +253,29 @@ func TestPartWrapper_StringRepresentation(t *testing.T) {
 	pw2 := newPartWrapper(nil, p)
 	str2 := pw2.String()
 	assert.Contains(t, str2, "id=6")
-	assert.Contains(t, str2, "state=active")
 	assert.Contains(t, str2, "ref=1")
 	assert.Contains(t, str2, "path=/test/part/006")
 
-	// Test state changes in string
-	pw2.markForRemoval()
+	// Test reference count changes in string
+	pw2.acquire()
 	str3 := pw2.String()
-	assert.Contains(t, str3, "state=removing")
+	assert.Contains(t, str3, "ref=2")
 
 	pw2.release()
 	str4 := pw2.String()
-	assert.Contains(t, str4, "state=removed")
+	assert.Contains(t, str4, "ref=1")
 }
 
-func TestPartWrapper_StateStringRepresentation(t *testing.T) {
-	assert.Equal(t, "active", partStateActive.String())
-	assert.Equal(t, "removing", partStateRemoving.String())
-	assert.Equal(t, "removed", partStateRemoved.String())
-	assert.Contains(t, partWrapperState(999).String(), "unknown")
+func TestPartWrapper_StringRepresentationWithMemPart(t *testing.T) {
+	// Test with memory part
+	mp := &memPart{
+		partMetadata: &partMetadata{ID: 42},
+	}
+	pw := newPartWrapper(mp, nil)
+	str := pw.String()
+	assert.Contains(t, str, "id=42")
+	assert.Contains(t, str, "ref=1")
+	assert.Contains(t, str, "memPart=true")
 }
 
 func TestPartWrapper_CleanupWithRemovableFlag(t *testing.T) {
@@ -303,11 +292,10 @@ func TestPartWrapper_CleanupWithRemovableFlag(t *testing.T) {
 	// Mark for removal sets the flag
 	pw.markForRemoval()
 	assert.True(t, pw.removable.Load())
-	assert.True(t, pw.isRemoving())
 
 	// Release should trigger cleanup
 	pw.release()
-	assert.True(t, pw.isRemoved())
+	assert.Equal(t, int32(0), pw.refCount())
 }
 
 // Benchmark tests.
@@ -329,7 +317,7 @@ func BenchmarkPartWrapper_AcquireRelease(b *testing.B) {
 	})
 }
 
-func BenchmarkPartWrapper_StateCheck(b *testing.B) {
+func BenchmarkPartWrapper_RefCountCheck(b *testing.B) {
 	p := &part{
 		path:         "/bench/part",
 		partMetadata: &partMetadata{ID: 1},
@@ -339,7 +327,7 @@ func BenchmarkPartWrapper_StateCheck(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = pw.isActive()
+		_ = pw.refCount()
 	}
 }
 
@@ -359,12 +347,10 @@ func TestPartWrapper_CleanupPreventNegativeRefCount(t *testing.T) {
 	// Release back to 1
 	pw.release()
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.True(t, pw.isActive())
 
 	// Final release should trigger cleanup and set ref to 0
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 
 	// Additional releases should not make ref count go further negative than logged
 	// The implementation allows negative counts but logs warnings
@@ -417,7 +403,6 @@ func TestPartWrapper_CleanupWithConcurrentAccess(t *testing.T) {
 	// Final cleanup
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 }
 
 func TestPartWrapper_CleanupStateTransition(t *testing.T) {
@@ -428,23 +413,16 @@ func TestPartWrapper_CleanupStateTransition(t *testing.T) {
 
 	pw := newPartWrapper(nil, p)
 
-	// Verify initial state
-	assert.True(t, pw.isActive())
-	assert.False(t, pw.isRemoving())
-	assert.False(t, pw.isRemoved())
+	// Verify initial reference count
+	assert.Equal(t, int32(1), pw.refCount())
 
-	// Mark for removal should change state but not trigger cleanup yet
+	// Mark for removal should set removable flag but not trigger cleanup yet
 	pw.markForRemoval()
-	assert.False(t, pw.isActive())
-	assert.True(t, pw.isRemoving())
-	assert.False(t, pw.isRemoved())
+	assert.True(t, pw.removable.Load())
 	assert.Equal(t, int32(1), pw.refCount()) // Should still be 1
 
-	// Release should trigger cleanup and change state to removed
+	// Release should trigger cleanup and set ref count to 0
 	pw.release()
-	assert.False(t, pw.isActive())
-	assert.False(t, pw.isRemoving())
-	assert.True(t, pw.isRemoved())
 	assert.Equal(t, int32(0), pw.refCount())
 }
 
@@ -453,15 +431,13 @@ func TestPartWrapper_CleanupWithNilPart(t *testing.T) {
 
 	// Verify cleanup works correctly with nil part
 	assert.Equal(t, int32(1), pw.refCount())
-	assert.True(t, pw.isActive())
 
 	// Mark for removal
 	pw.markForRemoval()
-	assert.True(t, pw.isRemoving())
+	assert.True(t, pw.removable.Load())
 
 	// Release should complete cleanup without issues
 	pw.release()
-	assert.True(t, pw.isRemoved())
 	assert.Equal(t, int32(0), pw.refCount())
 
 	// Additional releases should be handled gracefully
@@ -498,7 +474,6 @@ func TestPartWrapper_CleanupRaceCondition(t *testing.T) {
 
 	// All references should be released, cleanup should have occurred exactly once
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 
 	// Verify that no further operations are possible
 	assert.False(t, pw.acquire())
@@ -515,15 +490,13 @@ func TestPartWrapper_CleanupIdempotency(t *testing.T) {
 	// Release to trigger cleanup
 	pw.release()
 	assert.Equal(t, int32(0), pw.refCount())
-	assert.True(t, pw.isRemoved())
 
 	// Call cleanup directly multiple times - should be safe
 	pw.cleanup()
 	pw.cleanup()
 	pw.cleanup()
 
-	// State should remain consistent
-	assert.True(t, pw.isRemoved())
+	// Reference count should remain consistent
 	assert.Equal(t, int32(0), pw.refCount())
 }
 
