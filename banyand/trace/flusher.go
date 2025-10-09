@@ -192,7 +192,7 @@ func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroductio
 		// merge memory must not be closed by the tsTable.close
 		closeCh := make(chan struct{})
 		newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
-			currentMergedIDs, mergeCh, closeCh, "mem")
+			currentMergedIDs, mergeCh, closeCh, mergeTypeMem)
 		close(closeCh)
 		if err != nil {
 			if errors.Is(err, errClosed) {

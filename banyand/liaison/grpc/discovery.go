@@ -234,7 +234,6 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	case schema.KindTrace:
 		trace := schemaMetadata.Spec.(*databasev1.Trace)
 		id = getID(trace.GetMetadata())
-		e.traceMap[id] = trace
 		// Pre-compute trace ID tag index
 		traceIDTagName := trace.GetTraceIdTagName()
 		traceIDIndex := -1
@@ -244,7 +243,10 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 				break
 			}
 		}
+		e.RWMutex.Lock()
+		e.traceMap[id] = trace
 		e.traceIDIndexMap[id] = traceIDIndex
+		e.RWMutex.Unlock()
 		return
 	default:
 		return

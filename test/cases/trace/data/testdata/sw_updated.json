@@ -1,0 +1,122 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_009"
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_instance_1"
+                }
+            },
+            {
+                "str": {
+                    "value": "/api_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 1234
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            }
+        ],
+        "span": "trace_009_span_1"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_009"
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_instance_2"
+                }
+            },
+            {
+                "str": {
+                    "value": "/data_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 500
+                }
+            },
+            {
+                "str": {
+                    "value": ""
+                }
+            }
+        ],
+        "span": "trace_009_span_2"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "trace_010"
+                }
+            },
+            {
+                "str": {
+                    "value": "error"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_service"
+                }
+            },
+            {
+                "str": {
+                    "value": "api_instance_3"
+                }
+            },
+            {
+                "str": {
+                    "value": "/api_endpoint"
+                }
+            },
+            {
+                "int": {
+                    "value": 91011
+                }
+            },
+            {
+                "str": {
+                    "value": "Connection timeout"
+                }
+            }
+        ],
+        "span": "trace_010_span_1"
+    }
+]

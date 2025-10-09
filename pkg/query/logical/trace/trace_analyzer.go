@@ -33,29 +33,28 @@ const defaultLimit uint32 = 20
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
-	ecc []executor.TraceExecutionContext, traceIDTagName, spanIDTagName, timestampTagName string,
+	ecc []executor.TraceExecutionContext, traceIDTagNames, spanIDTagNames []string,
 ) (logical.Plan, error) {
-	// parse fields
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to number of metadata %d", len(ss), len(metadata))
 	}
-	var orderByTag string
-	if criteria.OrderBy != nil {
-		indexRuleName := criteria.OrderBy.IndexRuleName
-		ok, indexRule := ss[0].IndexRuleDefined(indexRuleName)
-		if !ok {
-			return nil, fmt.Errorf("index rule %s not found", indexRuleName)
-		}
-		ot := indexRule.Tags[len(indexRule.Tags)-1]
-		if ot != timestampTagName {
-			orderByTag = ot
-		}
+	if len(traceIDTagNames) != len(metadata) {
+		return nil, fmt.Errorf("number of traceIDTagNames %d not equal to number of metadata %d", len(traceIDTagNames), len(metadata))
 	}
+
 	var plan logical.UnresolvedPlan
 	var s logical.Schema
 	tagProjection := convertStringProjectionToTags(criteria.GetTagProjection())
 	if len(metadata) == 1 {
-		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagName, spanIDTagName, orderByTag)
+		var orderByTag string
+		if criteria.OrderBy != nil && criteria.OrderBy.IndexRuleName != "" {
+			ok, indexRule := ss[0].IndexRuleDefined(criteria.OrderBy.IndexRuleName)
+			if !ok {
+				return nil, fmt.Errorf("index rule %s not found", criteria.OrderBy.IndexRuleName)
+			}
+			orderByTag = indexRule.Tags[len(indexRule.Tags)-1]
+		}
+		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagNames[0], spanIDTagNames[0], orderByTag, 0)
 		s = ss[0]
 	} else {
 		var err error
@@ -63,10 +62,12 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 			return nil, err
 		}
 		plan = &unresolvedTraceMerger{
-			criteria:      criteria,
-			metadata:      metadata,
-			ecc:           ecc,
-			tagProjection: tagProjection,
+			criteria:        criteria,
+			metadata:        metadata,
+			ecc:             ecc,
+			tagProjection:   tagProjection,
+			traceIDTagNames: traceIDTagNames,
+			spanIDTagNames:  spanIDTagNames,
 		}
 	}
 
@@ -223,7 +224,7 @@ func newTraceLimit(input logical.UnresolvedPlan, offset, num uint32) logical.Unr
 }
 
 func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
-	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, spanIDTagName, orderByTag string,
+	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, spanIDTagName, orderByTag string, groupIndex int,
 ) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return &unresolvedTraceTagFilter{
@@ -236,6 +237,7 @@ func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
 		traceIDTagName: traceIDTagName,
 		spanIDTagName:  spanIDTagName,
 		orderByTag:     orderByTag,
+		groupIndex:     groupIndex,
 	}
 }
 

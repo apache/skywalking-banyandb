@@ -47,6 +47,7 @@ type unresolvedTraceTagFilter struct {
 	spanIDTagName  string
 	orderByTag     string
 	projectionTags [][]*logical.Tag
+	groupIndex     int
 }
 
 func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -145,6 +146,7 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		traceIDs:          traceIDs,
 		minVal:            minVal,
 		maxVal:            maxVal,
+		groupIndex:        uis.groupIndex,
 	}
 }
 
