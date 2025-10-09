@@ -337,7 +337,7 @@ func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	return result
 }
 
-func (tst *tsTable) loadSidxMap(avaiablePartIDs []uint64) {
+func (tst *tsTable) loadSidxMap(availablePartIDs []uint64) {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)
 	if _, err := os.Stat(sidxRootPath); os.IsNotExist(err) {
@@ -361,7 +361,7 @@ func (tst *tsTable) loadSidxMap(avaiablePartIDs []uint64) {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx options, skipping")
 			continue
 		}
-		sidxOpts.AvaiablePartIDs = avaiablePartIDs
+		sidxOpts.AvailablePartIDs = availablePartIDs
 		newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 		if err != nil {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx instance, skipping")

@@ -70,7 +70,7 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 	}
 
 	// Initialize sidx
-	s.init(opts.AvaiablePartIDs)
+	s.init(opts.AvailablePartIDs)
 	return s, nil
 }
 
@@ -658,7 +658,7 @@ func releaseBlockCursor(bc *blockCursor) {
 	blockCursorPool.Put(bc)
 }
 
-func (s *sidx) init(avaiablePartIDs []uint64) {
+func (s *sidx) init(availablePartIDs []uint64) {
 	if _, err := os.Stat(s.root); os.IsNotExist(err) {
 		s.l.Debug().Str("path", s.root).Msg("sidx directory does not exist")
 		return
@@ -696,17 +696,17 @@ func (s *sidx) init(avaiablePartIDs []uint64) {
 		return
 	}
 
-	s.loadSnapshot(loadedParts, avaiablePartIDs)
+	s.loadSnapshot(loadedParts, availablePartIDs)
 
 	s.l.Info().Int("parts", len(loadedParts)).Msg("loaded existing sidx data")
 }
 
-func (s *sidx) loadSnapshot(loadedParts, avaiablePartIDs []uint64) {
+func (s *sidx) loadSnapshot(loadedParts, availablePartIDs []uint64) {
 	snp := newSnapshot(nil)
 	for _, id := range loadedParts {
 		var find bool
-		for j := range avaiablePartIDs {
-			if id == avaiablePartIDs[j] {
+		for j := range availablePartIDs {
+			if id == availablePartIDs[j] {
 				find = true
 				break
 			}
