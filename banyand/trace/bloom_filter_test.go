@@ -29,6 +29,7 @@ func TestEncodeAndDecodeBloomFilter(t *testing.T) {
 	assert := assert.New(t)
 
 	bf := filter.NewBloomFilter(3)
+	defer releaseBloomFilter(bf)
 
 	items := [][]byte{
 		[]byte("skywalking"),
@@ -44,7 +45,8 @@ func TestEncodeAndDecodeBloomFilter(t *testing.T) {
 
 	buf := make([]byte, 0)
 	buf = encodeBloomFilter(buf, bf)
-	bf2 := filter.NewBloomFilter(0)
+	bf2 := generateBloomFilter()
+	defer releaseBloomFilter(bf2)
 	bf2 = decodeBloomFilter(buf, bf2)
 
 	for i := 0; i < 3; i++ {
