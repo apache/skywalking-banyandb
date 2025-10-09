@@ -19,7 +19,6 @@ syntax = "proto3";
 
 package banyandb.bydbql.v1;
 
-import "banyandb/common/v1/common.proto";
 import "banyandb/measure/v1/query.proto";
 import "banyandb/measure/v1/topn.proto";
 import "banyandb/property/v1/rpc.proto";
@@ -30,23 +29,10 @@ import "validate/validate.proto";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1";
 option java_package = "org.apache.skywalking.banyandb.bydbql.v1";
 
-// QueryExecutionContext provides resource context when FROM clause is omitted
-message QueryExecutionContext {
-  // catalog indicates the type of resource (STREAM, MEASURE, PROPERTY, TRACE)
-  common.v1.Catalog catalog = 1 [(validate.rules).enum.defined_only = true];
-  // group indicates where the data point is stored
-  repeated string group = 2 [(validate.rules).repeated.min_items = 1];
-  // name is the identity of the resource
-  string name = 3 [(validate.rules).string.min_len = 1];
-}
-
 // QueryRequest is the main request message for BydbQL queries
 message QueryRequest {
   // query is the BydbQL query string
   string query = 1 [(validate.rules).string.min_len = 1];
-  // execution_context provides resource context when FROM clause is omitted
-  // This field is optional when the FROM clause is present in the query
-  QueryExecutionContext execution_context = 2;
 }
 
 // QueryResponse contains the result of a BydbQL query
@@ -64,59 +50,4 @@ message QueryResponse {
     // topn_result is returned for TopN queries
     measure.v1.TopNResponse topn_result = 5;
   }
-}
-
-// QueryStreamRequest is used for stream-specific queries
-message QueryStreamRequest {
-  // query is the BydbQL query string (typically without FROM clause)
-  string query = 1 [(validate.rules).string.min_len = 1];
-  // group indicates where the data point is stored
-  // This field is extracted from the URL path
-  string group = 2 [(validate.rules).string.min_len = 1];
-  // name is the resource name extracted from the URL path
-  string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// QueryMeasureRequest is used for measure-specific queries
-message QueryMeasureRequest {
-  // query is the BydbQL query string (typically without FROM clause)
-  string query = 1 [(validate.rules).string.min_len = 1];
-  // group indicates where the data point is stored
-  // This field is extracted from the URL path
-  string group = 2 [(validate.rules).string.min_len = 1];
-  // name is the resource name extracted from the URL path
-  string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// QueryPropertyRequest is used for property-specific queries
-message QueryPropertyRequest {
-  // query is the BydbQL query string (typically without FROM clause)
-  string query = 1 [(validate.rules).string.min_len = 1];
-  // group indicates where the data point is stored
-  // This field is extracted from the URL path
-  string group = 2 [(validate.rules).string.min_len = 1];
-  // name is the resource name extracted from the URL path
-  string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// QueryTraceRequest is used for trace-specific queries
-message QueryTraceRequest {
-  // query is the BydbQL query string (typically without FROM clause)
-  string query = 1 [(validate.rules).string.min_len = 1];
-  // group indicates where the data point is stored
-  // This field is extracted from the URL path
-  string group = 2 [(validate.rules).string.min_len = 1];
-  // name is the resource name extracted from the URL path
-  string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// TopNRequest is used for TopN-specific queries
-message TopNRequest {
-  // query is the BydbQL query string (typically without FROM clause)
-  string query = 1 [(validate.rules).string.min_len = 1];
-  // group indicates where the data point is stored
-  // This field is extracted from the URL path
-  string group = 2 [(validate.rules).string.min_len = 1];
-  // name is the resource name extracted from the URL path
-  string name = 3 [(validate.rules).string.min_len = 1];
 }

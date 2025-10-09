@@ -20,11 +20,6 @@ syntax = "proto3";
 package banyandb.bydbql.v1;
 
 import "banyandb/bydbql/v1/query.proto";
-import "banyandb/measure/v1/query.proto";
-import "banyandb/measure/v1/topn.proto";
-import "banyandb/property/v1/rpc.proto";
-import "banyandb/stream/v1/query.proto";
-import "banyandb/trace/v1/query.proto";
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
@@ -40,57 +35,6 @@ service BydbQLService {
   rpc Query(QueryRequest) returns (QueryResponse) {
     option (google.api.http) = {
       post: "/v1/bydbql/query"
-      body: "*"
-    };
-  }
-
-  // QueryStream executes a BydbQL query against a specific stream resource
-  // The stream name is provided in the URL path, eliminating the need
-  // for a FROM clause in the query string
-  rpc QueryStream(QueryStreamRequest) returns (.banyandb.stream.v1.QueryResponse) {
-    option (google.api.http) = {
-      post: "/v1/bydbql/stream/{group}/{name}/query"
-      body: "*"
-    };
-  }
-
-  // QueryMeasure executes a BydbQL query against a specific measure resource
-  // The measure name is provided in the URL path, eliminating the need
-  // for a FROM clause in the query string
-  rpc QueryMeasure(QueryMeasureRequest) returns (measure.v1.QueryResponse) {
-    option (google.api.http) = {
-      post: "/v1/bydbql/measure/{group}/{name}/query"
-      body: "*"
-    };
-  }
-
-  // QueryProperty executes a BydbQL query against a specific property resource
-  // The property name is provided in the URL path, eliminating the need
-  // for a FROM clause in the query string
-  rpc QueryProperty(QueryPropertyRequest) returns (property.v1.QueryResponse) {
-    option (google.api.http) = {
-      post: "/v1/bydbql/property/{group}/{name}/query"
-      body: "*"
-    };
-  }
-
-  // QueryTrace executes a BydbQL query against a specific trace resource
-  // The trace name is provided in the URL path, eliminating the need
-  // for a FROM clause in the query string
-  rpc QueryTrace(QueryTraceRequest) returns (trace.v1.QueryResponse) {
-    option (google.api.http) = {
-      post: "/v1/bydbql/trace/{group}/{name}/query"
-      body: "*"
-    };
-  }
-
-  // TopN executes a BydbQL Top-N query against a specific measure resource
-  // The measure name is provided in the URL path, eliminating the need
-  // for a FROM clause in the query string
-  // This endpoint is specifically for "SHOW TOP N" queries
-  rpc TopN(TopNRequest) returns (measure.v1.TopNResponse) {
-    option (google.api.http) = {
-      post: "/v1/bydbql/measure/{group}/{name}/topn"
       body: "*"
     };
   }

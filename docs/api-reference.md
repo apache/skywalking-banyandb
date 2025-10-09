@@ -97,14 +97,8 @@
     - [Trace](#banyandb-trace-v1-Trace)
   
 - [banyandb/bydbql/v1/query.proto](#banyandb_bydbql_v1_query-proto)
-    - [QueryExecutionContext](#banyandb-bydbql-v1-QueryExecutionContext)
-    - [QueryMeasureRequest](#banyandb-bydbql-v1-QueryMeasureRequest)
-    - [QueryPropertyRequest](#banyandb-bydbql-v1-QueryPropertyRequest)
     - [QueryRequest](#banyandb-bydbql-v1-QueryRequest)
     - [QueryResponse](#banyandb-bydbql-v1-QueryResponse)
-    - [QueryStreamRequest](#banyandb-bydbql-v1-QueryStreamRequest)
-    - [QueryTraceRequest](#banyandb-bydbql-v1-QueryTraceRequest)
-    - [TopNRequest](#banyandb-bydbql-v1-TopNRequest)
   
 - [banyandb/bydbql/v1/rpc.proto](#banyandb_bydbql_v1_rpc-proto)
     - [BydbQLService](#banyandb-bydbql-v1-BydbQLService)
@@ -1667,57 +1661,6 @@ Trace contains all spans that belong to a single trace ID.
 
 
 
-<a name="banyandb-bydbql-v1-QueryExecutionContext"></a>
-
-### QueryExecutionContext
-QueryExecutionContext provides resource context when FROM clause is omitted
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  | catalog indicates the type of resource (STREAM, MEASURE, PROPERTY, TRACE) |
-| group | [string](#string) | repeated | group indicates where the data point is stored |
-| name | [string](#string) |  | name is the identity of the resource |
-
-
-
-
-
-
-<a name="banyandb-bydbql-v1-QueryMeasureRequest"></a>
-
-### QueryMeasureRequest
-QueryMeasureRequest is used for measure-specific queries
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [string](#string) |  | query is the BydbQL query string (typically without FROM clause) |
-| group | [string](#string) |  | group indicates where the data point is stored This field is extracted from the URL path |
-| name | [string](#string) |  | name is the resource name extracted from the URL path |
-
-
-
-
-
-
-<a name="banyandb-bydbql-v1-QueryPropertyRequest"></a>
-
-### QueryPropertyRequest
-QueryPropertyRequest is used for property-specific queries
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [string](#string) |  | query is the BydbQL query string (typically without FROM clause) |
-| group | [string](#string) |  | group indicates where the data point is stored This field is extracted from the URL path |
-| name | [string](#string) |  | name is the resource name extracted from the URL path |
-
-
-
-
-
-
 <a name="banyandb-bydbql-v1-QueryRequest"></a>
 
 ### QueryRequest
@@ -1727,7 +1670,6 @@ QueryRequest is the main request message for BydbQL queries
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | query | [string](#string) |  | query is the BydbQL query string |
-| execution_context | [QueryExecutionContext](#banyandb-bydbql-v1-QueryExecutionContext) |  | execution_context provides resource context when FROM clause is omitted This field is optional when the FROM clause is present in the query |
 
 
 
@@ -1747,57 +1689,6 @@ QueryResponse contains the result of a BydbQL query
 | property_result | [banyandb.property.v1.QueryResponse](#banyandb-property-v1-QueryResponse) |  | property_result is returned for property queries |
 | trace_result | [banyandb.trace.v1.QueryResponse](#banyandb-trace-v1-QueryResponse) |  | trace_result is returned for trace queries |
 | topn_result | [banyandb.measure.v1.TopNResponse](#banyandb-measure-v1-TopNResponse) |  | topn_result is returned for TopN queries |
-
-
-
-
-
-
-<a name="banyandb-bydbql-v1-QueryStreamRequest"></a>
-
-### QueryStreamRequest
-QueryStreamRequest is used for stream-specific queries
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [string](#string) |  | query is the BydbQL query string (typically without FROM clause) |
-| group | [string](#string) |  | group indicates where the data point is stored This field is extracted from the URL path |
-| name | [string](#string) |  | name is the resource name extracted from the URL path |
-
-
-
-
-
-
-<a name="banyandb-bydbql-v1-QueryTraceRequest"></a>
-
-### QueryTraceRequest
-QueryTraceRequest is used for trace-specific queries
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [string](#string) |  | query is the BydbQL query string (typically without FROM clause) |
-| group | [string](#string) |  | group indicates where the data point is stored This field is extracted from the URL path |
-| name | [string](#string) |  | name is the resource name extracted from the URL path |
-
-
-
-
-
-
-<a name="banyandb-bydbql-v1-TopNRequest"></a>
-
-### TopNRequest
-TopNRequest is used for TopN-specific queries
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [string](#string) |  | query is the BydbQL query string (typically without FROM clause) |
-| group | [string](#string) |  | group indicates where the data point is stored This field is extracted from the URL path |
-| name | [string](#string) |  | name is the resource name extracted from the URL path |
 
 
 
@@ -1834,11 +1725,6 @@ BydbQLService provides query interface for BanyanDB Query Language (BydbQL)
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-bydbql-v1-QueryRequest) | [QueryResponse](#banyandb-bydbql-v1-QueryResponse) | Query executes a generic BydbQL query with explicit FROM clause This endpoint requires the query to specify the resource type and name in the FROM clause (e.g., &#34;FROM STREAM sw&#34;, &#34;FROM MEASURE metrics&#34;) |
-| QueryStream | [QueryStreamRequest](#banyandb-bydbql-v1-QueryStreamRequest) | [.banyandb.stream.v1.QueryResponse](#banyandb-stream-v1-QueryResponse) | QueryStream executes a BydbQL query against a specific stream resource The stream name is provided in the URL path, eliminating the need for a FROM clause in the query string |
-| QueryMeasure | [QueryMeasureRequest](#banyandb-bydbql-v1-QueryMeasureRequest) | [.banyandb.measure.v1.QueryResponse](#banyandb-measure-v1-QueryResponse) | QueryMeasure executes a BydbQL query against a specific measure resource The measure name is provided in the URL path, eliminating the need for a FROM clause in the query string |
-| QueryProperty | [QueryPropertyRequest](#banyandb-bydbql-v1-QueryPropertyRequest) | [.banyandb.property.v1.QueryResponse](#banyandb-property-v1-QueryResponse) | QueryProperty executes a BydbQL query against a specific property resource The property name is provided in the URL path, eliminating the need for a FROM clause in the query string |
-| QueryTrace | [QueryTraceRequest](#banyandb-bydbql-v1-QueryTraceRequest) | [.banyandb.trace.v1.QueryResponse](#banyandb-trace-v1-QueryResponse) | QueryTrace executes a BydbQL query against a specific trace resource The trace name is provided in the URL path, eliminating the need for a FROM clause in the query string |
-| TopN | [TopNRequest](#banyandb-bydbql-v1-TopNRequest) | [.banyandb.measure.v1.TopNResponse](#banyandb-measure-v1-TopNResponse) | TopN executes a BydbQL Top-N query against a specific measure resource The measure name is provided in the URL path, eliminating the need for a FROM clause in the query string This endpoint is specifically for &#34;SHOW TOP N&#34; queries |
 
  
 
