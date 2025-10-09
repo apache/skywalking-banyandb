@@ -27,8 +27,6 @@ BydbQL queries will be processed by a classic three-stage compiler front-end arc
 ```
 BydbQL Query String
         ↓
-  Protobuf Request
-        ↓
       Lexer
         ↓
      Parser
