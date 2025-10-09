@@ -28,7 +28,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const topnSchemaPath = "/api/v1/topn-agg/schema"
+const (
+	topnSchemaPath = "/api/v1/topn-agg/schema"
+	topnQueryPath  = "/api/v1/measure/topn"
+	topnListPath   = "/api/v1/topn-agg/schema/lists/{group}"
+)
 
 var topnSchemaPathWithParams = topnSchemaPath + pathTemp
 
@@ -136,7 +140,7 @@ func newTopnCmd() *cobra.Command {
 		Short:   "List topn",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/topn-agg/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath(topnListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
@@ -150,7 +154,7 @@ func newTopnCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/topn"))
+					return request.req.SetBody(request.data).Post(getPath(topnQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}

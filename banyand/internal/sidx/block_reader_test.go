@@ -206,7 +206,7 @@ func Test_blockReader_nextBlock(t *testing.T) {
 					mpp = append(mpp, mp)
 					mp.mustInitFromElements(elems)
 					mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))
-					filePW := newPartWrapper(nil, mustOpenPart(partPath(tmpPath, uint64(i)), fileSystem))
+					filePW := newPartWrapper(nil, mustOpenPart(uint64(i), partPath(tmpPath, uint64(i)), fileSystem))
 					filePW.p.partMetadata.ID = uint64(i)
 					fpp = append(fpp, filePW)
 					pp = append(pp, filePW.p)

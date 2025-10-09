@@ -55,6 +55,7 @@ type localScan struct {
 	maxTraceSize      int
 	minVal            int64
 	maxVal            int64
+	groupIndex        int
 }
 
 func (i *localScan) Close() {
@@ -108,14 +109,15 @@ func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResul
 	}
 
 	// Return a custom iterator that continuously pulls from i.result
-	return &traceResultIterator{result: i.result}, nil
+	return &traceResultIterator{result: i.result, groupIndex: i.groupIndex}, nil
 }
 
 // traceResultIterator implements iter.Iterator[model.TraceResult] by continuously
 // calling Pull() on the TraceQueryResult until it returns nil or encounters an error.
 type traceResultIterator struct {
-	result model.TraceQueryResult
-	err    error
+	result     model.TraceQueryResult
+	err        error
+	groupIndex int
 }
 
 func (tri *traceResultIterator) Next() (model.TraceResult, bool) {
@@ -133,6 +135,9 @@ func (tri *traceResultIterator) Next() (model.TraceResult, bool) {
 		tri.err = traceResult.Error
 		return *traceResult, false
 	}
+
+	// Set the group index
+	traceResult.GroupIndex = tri.groupIndex
 
 	return *traceResult, true
 }
