@@ -81,7 +81,7 @@ func Test_newWriteQueue(t *testing.T) {
 
 	// Wait for the creator to be set to snapshotCreatorSyncer
 	assert.Eventually(t, func() bool {
-		tst.mustAddTraces(ts)
+		tst.mustAddTraces(ts, nil)
 		time.Sleep(100 * time.Millisecond)
 		s := tst.currentSnapshot()
 		if s == nil {

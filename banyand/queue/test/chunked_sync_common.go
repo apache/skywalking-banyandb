@@ -232,9 +232,18 @@ func createTestDataPartWithMetadata(files map[string][]byte, group string, shard
 type MockPartHandler struct {
 	receivedFiles    map[string][]byte
 	syncHandler      *MockChunkedSyncHandler
+	trackingHandler  *MockChunkedSyncHandlerWithTracking
 	receivedChunks   [][]byte
 	finishSyncCalled bool
 	closeCalled      bool
+}
+
+// NewPartType marks the part as new and tracks the call.
+func (m *MockPartHandler) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	if m.trackingHandler != nil {
+		m.trackingHandler.TrackNewPartType(ctx)
+	}
+	return nil
 }
 
 // FinishSync marks the sync as finished and closes the handler.
@@ -310,6 +319,7 @@ func (m *MockChunkedSyncHandler) CreatePartHandler(ctx *queue.ChunkedSyncPartCon
 		ID:                    ctx.ID,
 		Group:                 ctx.Group,
 		ShardID:               ctx.ShardID,
+		PartType:              ctx.PartType,
 		CompressedSizeBytes:   ctx.CompressedSizeBytes,
 		UncompressedSizeBytes: ctx.UncompressedSizeBytes,
 		TotalCount:            ctx.TotalCount,
@@ -388,4 +398,142 @@ func (m *MockChunkedSyncHandler) GetReceivedContexts() []*queue.ChunkedSyncPartC
 		result[i] = contextCopy
 	}
 	return result
+}
+
+// MockChunkedSyncHandlerWithTracking extends MockChunkedSyncHandler with NewPartType call tracking.
+type MockChunkedSyncHandlerWithTracking struct {
+	*MockChunkedSyncHandler
+	newPartTypeContexts []*queue.ChunkedSyncPartContext
+	trackingMu          sync.Mutex
+	newPartTypeCalled   bool
+}
+
+// NewMockChunkedSyncHandlerWithTracking creates a new mock handler with tracking capabilities.
+func NewMockChunkedSyncHandlerWithTracking() *MockChunkedSyncHandlerWithTracking {
+	return &MockChunkedSyncHandlerWithTracking{
+		MockChunkedSyncHandler: NewMockChunkedSyncHandler(),
+		newPartTypeContexts:    make([]*queue.ChunkedSyncPartContext, 0),
+	}
+}
+
+// TrackNewPartType tracks a NewPartType call.
+func (m *MockChunkedSyncHandlerWithTracking) TrackNewPartType(ctx *queue.ChunkedSyncPartContext) {
+	m.trackingMu.Lock()
+	defer m.trackingMu.Unlock()
+	m.newPartTypeCalled = true
+	contextCopy := &queue.ChunkedSyncPartContext{
+		ID:                    ctx.ID,
+		Group:                 ctx.Group,
+		ShardID:               ctx.ShardID,
+		PartType:              ctx.PartType,
+		CompressedSizeBytes:   ctx.CompressedSizeBytes,
+		UncompressedSizeBytes: ctx.UncompressedSizeBytes,
+		TotalCount:            ctx.TotalCount,
+		BlocksCount:           ctx.BlocksCount,
+		MinTimestamp:          ctx.MinTimestamp,
+		MaxTimestamp:          ctx.MaxTimestamp,
+		MinKey:                ctx.MinKey,
+		MaxKey:                ctx.MaxKey,
+	}
+	m.newPartTypeContexts = append(m.newPartTypeContexts, contextCopy)
+}
+
+// NewPartTypeCalled returns whether NewPartType has been called.
+func (m *MockChunkedSyncHandlerWithTracking) NewPartTypeCalled() bool {
+	m.trackingMu.Lock()
+	defer m.trackingMu.Unlock()
+	return m.newPartTypeCalled
+}
+
+// GetNewPartTypeContexts returns all contexts passed to NewPartType.
+func (m *MockChunkedSyncHandlerWithTracking) GetNewPartTypeContexts() []*queue.ChunkedSyncPartContext {
+	m.trackingMu.Lock()
+	defer m.trackingMu.Unlock()
+	result := make([]*queue.ChunkedSyncPartContext, len(m.newPartTypeContexts))
+	copy(result, m.newPartTypeContexts)
+	return result
+}
+
+// ResetNewPartTypeCalls resets the tracking state.
+func (m *MockChunkedSyncHandlerWithTracking) ResetNewPartTypeCalls() {
+	m.trackingMu.Lock()
+	defer m.trackingMu.Unlock()
+	m.newPartTypeCalled = false
+	m.newPartTypeContexts = nil
+}
+
+// CreatePartHandler creates a new part handler with tracking capabilities.
+func (m *MockChunkedSyncHandlerWithTracking) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	partHandler, err := m.MockChunkedSyncHandler.CreatePartHandler(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cast to our enhanced handler and set tracking reference
+	if mockHandler, ok := partHandler.(*MockPartHandler); ok {
+		mockHandler.trackingHandler = m
+	}
+
+	return partHandler, nil
+}
+
+// createTestDataPartWithPartType creates test data part with specified PartType.
+func createTestDataPartWithPartType(
+	files map[string][]byte,
+	group string,
+	shardID uint32,
+	partID uint64,
+	partType string,
+) queue.StreamingPartData {
+	var fileInfos []queue.FileInfo
+
+	for fileName, content := range files {
+		var buf bytes.Buffer
+		if _, err := buf.Write(content); err != nil {
+			panic(fmt.Sprintf("failed to write content to buffer: %v", err))
+		}
+		fileInfos = append(fileInfos, queue.FileInfo{
+			Name:   fileName,
+			Reader: buf.SequentialRead(),
+		})
+	}
+
+	return queue.StreamingPartData{
+		ID:                    partID,
+		Files:                 fileInfos,
+		Group:                 group,
+		ShardID:               shardID,
+		PartType:              partType,
+		Topic:                 data.TopicStreamPartSync.String(),
+		CompressedSizeBytes:   1024,
+		UncompressedSizeBytes: 2048,
+		TotalCount:            100,
+		BlocksCount:           5,
+		MinTimestamp:          time.Now().UnixMilli(),
+		MaxTimestamp:          time.Now().UnixMilli(),
+	}
+}
+
+// TrackingSetup extends Setup with tracking capabilities.
+type TrackingSetup struct {
+	*Setup
+	TrackingHandler *MockChunkedSyncHandlerWithTracking
+}
+
+// setupChunkedSyncTestWithTracking creates a test environment with tracking capabilities.
+func setupChunkedSyncTestWithTracking(t *testing.T, testName string) *TrackingSetup {
+	setup := setupChunkedSyncTest(t, testName)
+
+	trackingHandler := NewMockChunkedSyncHandlerWithTracking()
+
+	// Replace the handler in the server
+	setup.Server.RegisterChunkedSyncHandler(data.TopicStreamPartSync, trackingHandler)
+
+	// Update the MockHandler reference in the setup to point to our tracking handler
+	setup.MockHandler = trackingHandler.MockChunkedSyncHandler
+
+	return &TrackingSetup{
+		Setup:           setup,
+		TrackingHandler: trackingHandler,
+	}
 }

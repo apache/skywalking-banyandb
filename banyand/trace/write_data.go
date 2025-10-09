@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -35,9 +34,39 @@ type syncPartContext struct {
 	l                   *logger.Logger
 	writers             *writers
 	memPart             *memPart
-	sidxPartContext     *sidx.SyncPartContext
+	sidxPartContexts    map[string]*sidx.SyncPartContext
 	traceIDFilterBuffer []byte
 	tagTypeBuffer       []byte
+}
+
+func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	if ctx.PartType != PartTypeCore {
+		sidxPartContext := sidx.NewSyncPartContext()
+		memPart := sidx.GenerateMemPart()
+		memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
+		writers := sidx.GenerateWriters()
+		writers.MustInitForMemPart(memPart)
+		sidxPartContext.Set(ctx.PartType, memPart, writers)
+		if s.sidxPartContexts == nil {
+			s.sidxPartContexts = make(map[string]*sidx.SyncPartContext)
+		}
+		s.sidxPartContexts[ctx.PartType] = sidxPartContext
+		return nil
+	}
+
+	memPart := generateMemPart()
+	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
+	memPart.partMetadata.UncompressedSpanSizeBytes = ctx.UncompressedSizeBytes
+	memPart.partMetadata.TotalCount = ctx.TotalCount
+	memPart.partMetadata.BlocksCount = ctx.BlocksCount
+	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
+	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
+	memPart.partMetadata.ID = ctx.ID
+	writers := generateWriters()
+	writers.mustInitForMemPart(memPart)
+	s.writers = writers
+	s.memPart = memPart
+	return nil
 }
 
 func (s *syncPartContext) FinishSync() error {
@@ -56,15 +85,11 @@ func (s *syncPartContext) FinishSync() error {
 	}
 
 	if s.memPart != nil {
-		s.tsTable.mustAddMemPart(s.memPart)
-	}
-	if s.sidxPartContext != nil {
-		memPart := s.sidxPartContext.GetMemPart()
-		sidxInstance, err := s.tsTable.getOrCreateSidx(s.sidxPartContext.Name())
-		if err != nil {
-			return err
+		sidxPartContexts := make(map[string]*sidx.MemPart, len(s.sidxPartContexts))
+		for _, sidxPartContext := range s.sidxPartContexts {
+			sidxPartContexts[sidxPartContext.Name()] = sidxPartContext.GetMemPart()
 		}
-		sidxInstance.MustAddMemPart(context.TODO(), memPart)
+		s.tsTable.mustAddMemPart(s.memPart, sidxPartContexts)
 	}
 	return s.Close()
 }
@@ -78,9 +103,11 @@ func (s *syncPartContext) Close() error {
 	if s.memPart != nil {
 		s.memPart = nil
 	}
-	if s.sidxPartContext != nil {
-		s.sidxPartContext.Close()
-		s.sidxPartContext = nil
+	if s.sidxPartContexts != nil {
+		for _, sidxPartContext := range s.sidxPartContexts {
+			sidxPartContext.Close()
+		}
+		s.sidxPartContexts = nil
 	}
 	s.tsTable = nil
 	s.traceIDFilterBuffer = nil
@@ -125,37 +152,11 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	}
 
 	tsdb.Tick(ctx.MaxTimestamp)
-
-	if ctx.PartType != PartTypeCore {
-		sidxPartContext := sidx.NewSyncPartContext()
-		memPart := sidx.GenerateMemPart()
-		memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
-		writers := sidx.GenerateWriters()
-		writers.MustInitForMemPart(memPart)
-		sidxPartContext.Set(ctx.PartType, memPart, writers)
-		return &syncPartContext{
-			tsTable:         tsTable,
-			l:               s.l,
-			sidxPartContext: sidxPartContext,
-		}, nil
-	}
-
-	memPart := generateMemPart()
-	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
-	memPart.partMetadata.UncompressedSpanSizeBytes = ctx.UncompressedSizeBytes
-	memPart.partMetadata.TotalCount = ctx.TotalCount
-	memPart.partMetadata.BlocksCount = ctx.BlocksCount
-	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
-	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
-	memPart.partMetadata.ID = ctx.ID
-	writers := generateWriters()
-	writers.mustInitForMemPart(memPart)
-	return &syncPartContext{
+	partCtx := &syncPartContext{
 		tsTable: tsTable,
 		l:       s.l,
-		writers: writers,
-		memPart: memPart,
-	}, nil
+	}
+	return partCtx, partCtx.NewPartType(ctx)
 }
 
 // HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.
@@ -173,7 +174,7 @@ func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, ch
 	sidxName := ctx.PartType
 	fileName := ctx.FileName
 	partCtx := ctx.Handler.(*syncPartContext)
-	writers := partCtx.sidxPartContext.GetWriters()
+	writers := partCtx.sidxPartContexts[sidxName].GetWriters()
 	switch {
 	case fileName == sidx.SidxPrimaryName:
 		writers.SidxPrimaryWriter().MustWrite(chunk)

@@ -25,10 +25,10 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
-	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -185,107 +185,44 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	}
 
 	// Collect parts to sync
-	partsToSync, sidxPartsToSync, err := tst.collectPartsToSync(curSnapshot)
-	if err != nil {
-		return err
-	}
-	if l := tst.l.Debug(); l.Enabled() {
-		for name, sidxParts := range sidxPartsToSync {
-			tst.l.Debug().
-				Str("sidx_name", name).
-				Int("sidx_parts_count", len(sidxParts)).
-				Msg("sidxPartsToSync in syncSnapshot")
-		}
-	}
+	partsToSync, partIDsToSync := tst.collectPartsToSync(curSnapshot)
 
 	// Validate sync preconditions
-	if !tst.needToSync(partsToSync, sidxPartsToSync) {
+	if !tst.needToSync(partsToSync) {
 		return nil
 	}
 
 	// Execute sync operation
-	if err := tst.executeSyncOperation(partsToSync, sidxPartsToSync); err != nil {
+	if err := tst.executeSyncOperation(partsToSync, partIDsToSync); err != nil {
 		return err
 	}
 
 	// Handle sync introductions
-	return tst.handleSyncIntroductions(partsToSync, sidxPartsToSync, syncCh)
+	return tst.handleSyncIntroductions(partsToSync, syncCh)
 }
 
 // collectPartsToSync collects both core and sidx parts that need to be synchronized.
-func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[string][]*sidx.Part, error) {
+func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[uint64]struct{}) {
 	// Get all parts from the current snapshot
 	var partsToSync []*part
+	sidxPartsToSync := make(map[uint64]struct{})
 	for _, pw := range curSnapshot.parts {
 		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
 			partsToSync = append(partsToSync, pw.p)
+			sidxPartsToSync[pw.p.partMetadata.ID] = struct{}{}
 		}
 	}
-
-	sidxPartsToSync := sidx.NewPartsToSync()
-	for name, sidx := range tst.getAllSidx() {
-		if tst.loopCloser != nil && tst.loopCloser.Closed() {
-			return nil, nil, errClosed
-		}
-		sidxPartsToSync[name] = sidx.PartsToSync()
-		if l := tst.l.Debug(); l.Enabled() {
-			tst.l.Debug().
-				Str("sidx_name", name).
-				Int("sidx_parts_count", len(sidxPartsToSync[name])).
-				Msg("get sidx parts to sync")
-		}
-	}
-
-	if l := tst.l.Debug(); l.Enabled() {
-		tst.l.Debug().
-			Int("core_parts_count", len(partsToSync)).
-			Uint64("snapshot_epoch", curSnapshot.epoch).
-			Msg("collected core parts for sync")
-		if len(partsToSync) > 0 {
-			var corePartIDs []uint64
-			for _, part := range partsToSync {
-				corePartIDs = append(corePartIDs, part.partMetadata.ID)
-			}
-			tst.l.Debug().
-				Interface("core_part_ids", corePartIDs).
-				Msg("core parts to sync details")
-		}
-		for sidxName, sidxParts := range sidxPartsToSync {
-			var sidxPartIDs []uint64
-			for _, part := range sidxParts {
-				sidxPartIDs = append(sidxPartIDs, part.ID())
-			}
-			tst.l.Debug().
-				Str("sidx_name", sidxName).
-				Int("sidx_parts_count", len(sidxParts)).
-				Interface("sidx_part_ids", sidxPartIDs).
-				Msg("collected sidx parts for sync")
-		}
-	}
-
-	return partsToSync, sidxPartsToSync, nil
+	return partsToSync, sidxPartsToSync
 }
 
 // needToSync validates that there are parts to sync and nodes available.
-func (tst *tsTable) needToSync(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) bool {
-	hasCoreParts := len(partsToSync) > 0
-	hasSidxParts := false
-	for _, parts := range sidxPartsToSync {
-		if len(parts) > 0 {
-			hasSidxParts = true
-			break
-		}
-	}
-	if !hasCoreParts && !hasSidxParts {
-		return false
-	}
-
+func (tst *tsTable) needToSync(partsToSync []*part) bool {
 	nodes := tst.getNodes()
-	return len(nodes) > 0
+	return len(partsToSync) > 0 && len(nodes) > 0
 }
 
 // executeSyncOperation performs the actual synchronization of parts to nodes.
-func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part) error {
+func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[uint64]struct{}) error {
 	sort.Slice(partsToSync, func(i, j int) bool {
 		return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
 	})
@@ -299,106 +236,10 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, sidxPartsToSync ma
 	}()
 
 	nodes := tst.getNodes()
-	return tst.syncStreamingPartsToNodes(ctx, nodes, partsToSync, sidxPartsToSync, &releaseFuncs)
-}
-
-// handleSyncIntroductions creates and processes sync introductions for both core and sidx parts.
-func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part, syncCh chan *syncIntroduction) error {
-	// Create core sync introduction
-	si := generateSyncIntroduction()
-	defer releaseSyncIntroduction(si)
-	si.applied = make(chan struct{})
-	for _, part := range partsToSync {
-		ph := partHandle{
-			partID:   part.partMetadata.ID,
-			partType: PartTypeCore,
-		}
-		si.synced[ph] = struct{}{}
-	}
-
-	// Create sidx sync introductions
-	sidxSyncIntroductions := tst.createSidxSyncIntroductions(sidxPartsToSync)
-	defer tst.releaseSidxSyncIntroductions(sidxSyncIntroductions)
-
-	// Send sync introductions
-	if err := tst.sendSyncIntroductions(si, sidxSyncIntroductions, syncCh); err != nil {
-		return err
-	}
-
-	// Wait for sync introductions to be applied
-	return tst.waitForSyncIntroductions(si, sidxSyncIntroductions)
-}
-
-// createSidxSyncIntroductions creates sync introductions for sidx parts.
-func (tst *tsTable) createSidxSyncIntroductions(sidxPartsToSync map[string][]*sidx.Part) map[string]*sidx.SyncIntroduction {
-	sidxSyncIntroductions := make(map[string]*sidx.SyncIntroduction)
-	for name, sidxParts := range sidxPartsToSync {
-		if len(sidxParts) > 0 {
-			ssi := sidx.GenerateSyncIntroduction()
-			ssi.Applied = make(chan struct{})
-			for _, part := range sidxParts {
-				ssi.Synced[part.ID()] = struct{}{}
-			}
-			sidxSyncIntroductions[name] = ssi
-		}
-	}
-	return sidxSyncIntroductions
-}
-
-// releaseSidxSyncIntroductions releases sidx sync introductions.
-func (tst *tsTable) releaseSidxSyncIntroductions(sidxSyncIntroductions map[string]*sidx.SyncIntroduction) {
-	for _, ssi := range sidxSyncIntroductions {
-		sidx.ReleaseSyncIntroduction(ssi)
-	}
-}
-
-// sendSyncIntroductions sends sync introductions to their respective channels.
-func (tst *tsTable) sendSyncIntroductions(si *syncIntroduction, sidxSyncIntroductions map[string]*sidx.SyncIntroduction, syncCh chan *syncIntroduction) error {
-	select {
-	case syncCh <- si:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
-
-	for name, ssi := range sidxSyncIntroductions {
-		sidx, ok := tst.getSidx(name)
-		if !ok {
-			return fmt.Errorf("sidx %s not found", name)
-		}
-		select {
-		case sidx.SyncCh() <- ssi:
-		case <-tst.loopCloser.CloseNotify():
-			return errClosed
-		}
-	}
-	return nil
-}
-
-// waitForSyncIntroductions waits for all sync introductions to be applied.
-func (tst *tsTable) waitForSyncIntroductions(si *syncIntroduction, sidxSyncIntroductions map[string]*sidx.SyncIntroduction) error {
-	select {
-	case <-si.applied:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
-
-	for _, ssi := range sidxSyncIntroductions {
-		select {
-		case <-ssi.Applied:
-		case <-tst.loopCloser.CloseNotify():
-			return errClosed
-		}
-	}
-	return nil
-}
-
-// syncStreamingPartsToNodes synchronizes streamingparts to multiple nodes.
-func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []string,
-	partsToSync []*part, sidxPartsToSync map[string][]*sidx.Part, releaseFuncs *[]func(),
-) error {
 	if tst.loopCloser != nil && tst.loopCloser.Closed() {
 		return errClosed
 	}
+	sidxMap := tst.getAllSidx()
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
 			return errClosed
@@ -406,22 +247,23 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 		// Prepare all streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
 		// Add sidx streaming parts
-		for name, sidxParts := range sidxPartsToSync {
-			if len(sidxParts) == 0 {
-				continue
+		for name, sidx := range sidxMap {
+			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(partIDsToSync, tst.group, uint32(tst.shardID), name)
+			if len(sidxStreamingParts) != len(partIDsToSync) {
+				logger.Panicf("sidx streaming parts count mismatch: %d != %d", len(sidxStreamingParts), len(partIDsToSync))
+				return nil
 			}
-			sidx, ok := tst.getSidx(name)
-			if !ok {
-				return fmt.Errorf("sidx %s not found", name)
-			}
-			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(sidxParts, tst.group, uint32(tst.shardID), name)
 			streamingParts = append(streamingParts, sidxStreamingParts...)
-			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
+			releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
+		}
+		if len(streamingParts) != len(partIDsToSync)*len(sidxMap) {
+			logger.Panicf("streaming parts count mismatch: %d != %d", len(streamingParts), len(partIDsToSync)*len(sidxMap))
+			return nil
 		}
 		// Create streaming parts from core trace parts.
 		for _, part := range partsToSync {
 			files, release := createPartFileReaders(part)
-			*releaseFuncs = append(*releaseFuncs, release)
+			releaseFuncs = append(releaseFuncs, release)
 			streamingParts = append(streamingParts, queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,
 				Group:                 tst.group,
@@ -437,9 +279,39 @@ func (tst *tsTable) syncStreamingPartsToNodes(ctx context.Context, nodes []strin
 				PartType:              PartTypeCore,
 			})
 		}
+		sort.Slice(streamingParts, func(i, j int) bool {
+			if streamingParts[i].ID == streamingParts[j].ID {
+				return streamingParts[i].PartType < streamingParts[j].PartType
+			}
+			return streamingParts[i].ID < streamingParts[j].ID
+		})
 		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// handleSyncIntroductions creates and processes sync introductions for both core and sidx parts.
+func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *syncIntroduction) error {
+	// Create core sync introduction
+	si := generateSyncIntroduction()
+	defer releaseSyncIntroduction(si)
+	si.applied = make(chan struct{})
+	for _, part := range partsToSync {
+		si.synced[part.partMetadata.ID] = struct{}{}
+	}
+
+	select {
+	case syncCh <- si:
+	case <-tst.loopCloser.CloseNotify():
+		return errClosed
+	}
+
+	select {
+	case <-si.applied:
+	case <-tst.loopCloser.CloseNotify():
+		return errClosed
 	}
 	return nil
 }

@@ -191,9 +191,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano())
-			releaseTraces(es.traces)
-
+			var sidxMemPartMap map[string]*sidx.MemPart
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
 					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
@@ -201,11 +199,19 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
-					if err := sidxInstance.Write(ctx, sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
+					var siMemPart *sidx.MemPart
+					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+						continue
 					}
+					if sidxMemPartMap == nil {
+						sidxMemPartMap = make(map[string]*sidx.MemPart)
+					}
+					sidxMemPartMap[sidxName] = siMemPart
 				}
 			}
+			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano(), sidxMemPartMap)
+			releaseTraces(es.traces)
 
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {

@@ -325,8 +325,7 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 
 	for partIndex, partInfo := range req.PartsInfo {
 		createNewContext := session.partCtx == nil ||
-			session.partCtx.ID != partInfo.Id ||
-			session.partCtx.PartType != partInfo.PartType
+			session.partCtx.ID != partInfo.Id
 
 		if createNewContext && session.partCtx != nil && session.partCtx.Handler != nil {
 			if err := session.partCtx.Handler.FinishSync(); err != nil {
@@ -354,6 +353,19 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 				return fmt.Errorf("failed to create part handler: %w", err)
 			}
 			session.partCtx.Handler = partHandler
+		} else if session.partCtx.PartType != partInfo.PartType {
+			session.partCtx.CompressedSizeBytes = partInfo.CompressedSizeBytes
+			session.partCtx.UncompressedSizeBytes = partInfo.UncompressedSizeBytes
+			session.partCtx.TotalCount = partInfo.TotalCount
+			session.partCtx.BlocksCount = partInfo.BlocksCount
+			session.partCtx.MinTimestamp = partInfo.MinTimestamp
+			session.partCtx.MaxTimestamp = partInfo.MaxTimestamp
+			session.partCtx.MinKey = partInfo.MinKey
+			session.partCtx.MaxKey = partInfo.MaxKey
+			session.partCtx.PartType = partInfo.PartType
+			if err := session.partCtx.Handler.NewPartType(session.partCtx); err != nil {
+				return fmt.Errorf("failed to new part type: %w", err)
+			}
 		}
 
 		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {

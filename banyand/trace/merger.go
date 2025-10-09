@@ -25,6 +25,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -94,7 +95,7 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 
 func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
 	freeDiskSize := tst.freeDiskSpace(tst.root)
-	var toBeMerged map[partHandle]struct{}
+	var toBeMerged map[uint64]struct{}
 	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
 	if len(dst) < 2 {
 		return nil, nil
@@ -106,7 +107,7 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 	return dst, nil
 }
 
-func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[partHandle]struct{}, merges chan *mergerIntroduction,
+func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
 	closeCh <-chan struct{}, typ string,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
@@ -156,30 +157,33 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+	partIDMap := make(map[uint64]struct{})
+	for _, pw := range parts {
+		partIDMap[pw.ID()] = struct{}{}
+	}
+	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
 	for sidxName, sidxInstance := range tst.getAllSidx() {
 		start = time.Now()
-		var mergedPartsCount uint64
-		var err error
-		if typ == mergeTypeMem {
-			mergedPartsCount, err = sidxInstance.MergeMemParts(closeCh)
-			if err != nil {
-				tst.l.Warn().Err(err).Msg("sidx merge mem parts failed")
-				return nil, err
-			}
-		} else {
-			mergedPartsCount, err = sidxInstance.Merge(closeCh)
-			if err != nil {
-				tst.l.Warn().Err(err).Msg("sidx merge file parts failed")
-				return nil, err
-			}
+		mergerIntroduction, err := sidxInstance.Merge(closeCh, partIDMap, newPartID)
+		if err != nil {
+			tst.l.Warn().Err(err).Msg("sidx merge mem parts failed")
+			return nil, err
 		}
+		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
 		tst.incTotalMergeLatency(elapsed.Seconds(), fmt.Sprintf("%s_%s", typ, sidxName))
 		tst.incTotalMerged(1, fmt.Sprintf("%s_%s", typ, sidxName))
-		tst.incTotalMergedParts(int(mergedPartsCount), fmt.Sprintf("%s_%s", typ, sidxName))
+		tst.incTotalMergedParts(len(parts), fmt.Sprintf("%s_%s", typ, sidxName))
 		if elapsed > 30*time.Second {
-			tst.l.Warn().Uint64("mergedPartsCount", mergedPartsCount).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
+			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
 		}
+	}
+	if len(mergerIntroductionMap) > 0 {
+		defer func() {
+			for _, mergerIntroduction := range mergerIntroductionMap {
+				mergerIntroduction.Release()
+			}
+		}()
 	}
 
 	mi := generateMergerIntroduction()
@@ -187,6 +191,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	mi.creator = creator
 	mi.newPart = newPart
 	mi.merged = merged
+	mi.sidxMergerIntroduced = mergerIntroductionMap
 	mi.applied = make(chan struct{})
 	select {
 	case merges <- mi:
@@ -230,7 +235,7 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[partHandle]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
 	for _, pw := range snapshot.parts {
@@ -245,9 +250,9 @@ func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst
 		return nil, nil
 	}
 
-	toBeMerged := make(map[partHandle]struct{})
+	toBeMerged := make(map[uint64]struct{})
 	for _, pw := range dst {
-		toBeMerged[partHandle{partID: pw.ID(), partType: PartTypeCore}] = struct{}{}
+		toBeMerged[pw.ID()] = struct{}{}
 	}
 	return dst, toBeMerged
 }

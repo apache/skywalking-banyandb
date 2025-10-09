@@ -106,6 +106,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	}
 	snp.incRef()
 	tst.snapshot = &snp
+	tst.loadSidxMap(parts)
 	if needToPersist {
 		tst.persistSnapshot(&snp)
 	}
@@ -123,15 +124,16 @@ func (tst *tsTable) startLoop(cur uint64) {
 	go tst.mergeLoop(mergeCh, flusherWatcher)
 }
 
-func (tst *tsTable) startLoopNoMerge(cur uint64) {
+func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	tst.loopCloser = run.NewCloser(1 + 3)
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
 	syncCh := make(chan *syncIntroduction)
+	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoopNoMerger(flushCh, introducerWatcher, flusherWatcher, cur)
+	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	go tst.syncLoop(syncCh, flusherWatcher)
 }
 
@@ -203,7 +205,6 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
-	tst.loadSidxMap()
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -276,6 +277,22 @@ func (tst *tsTable) getSidx(name string) (sidx.SIDX, bool) {
 	return sidxInstance, ok
 }
 
+func (tst *tsTable) mustGetSidx(name string) sidx.SIDX {
+	sidxInstance, ok := tst.getSidx(name)
+	if !ok {
+		tst.l.Panic().Str("name", name).Msg("sidx not found")
+	}
+	return sidxInstance
+}
+
+func (tst *tsTable) mustGetOrCreateSidx(name string) sidx.SIDX {
+	sidxInstance, err := tst.getOrCreateSidx(name)
+	if err != nil {
+		tst.l.Panic().Str("name", name).Msg("cannot get or create sidx")
+	}
+	return sidxInstance
+}
+
 func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if sidxInstance, ok := tst.getSidx(name); ok {
 		return sidxInstance, nil
@@ -300,6 +317,9 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
 	}
+	if tst.sidxMap == nil {
+		tst.sidxMap = make(map[string]sidx.SIDX)
+	}
 
 	tst.sidxMap[name] = newSidx
 	return newSidx, nil
@@ -317,7 +337,7 @@ func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	return result
 }
 
-func (tst *tsTable) loadSidxMap() {
+func (tst *tsTable) loadSidxMap(availablePartIDs []uint64) {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)
 	if _, err := os.Stat(sidxRootPath); os.IsNotExist(err) {
@@ -341,6 +361,7 @@ func (tst *tsTable) loadSidxMap() {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx options, skipping")
 			continue
 		}
+		sidxOpts.AvailablePartIDs = availablePartIDs
 		newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 		if err != nil {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx instance, skipping")
@@ -378,7 +399,7 @@ func (tst *tsTable) Close() error {
 	return tst.closeSidxMap()
 }
 
-func (tst *tsTable) mustAddMemPart(mp *memPart) {
+func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
@@ -386,6 +407,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	ind.sidxReqsMap = sidxReqsMap
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
 	select {
@@ -402,11 +424,11 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
-func (tst *tsTable) mustAddTraces(ts *traces) {
-	tst.mustAddTracesWithSegmentID(ts, 0)
+func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
+	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
 }
 
-func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
@@ -414,7 +436,8 @@ func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64) {
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
 	mp.segmentID = segmentID
-	tst.mustAddMemPart(mp)
+
+	tst.mustAddMemPart(mp, sidxReqsMap)
 }
 
 type tstIter struct {

@@ -302,7 +302,7 @@ func TestSnapshotMerge(t *testing.T) {
 func TestSnapshotRemove(t *testing.T) {
 	tests := []struct {
 		snapshot    *snapshot
-		mergedParts map[partHandle]struct{}
+		mergedParts map[uint64]struct{}
 		name        string
 		expected    snapshot
 		nextEpoch   uint64
@@ -314,7 +314,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -330,7 +330,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -349,8 +349,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[partHandle]struct{}{
-				{partID: 1, partType: PartTypeCore}: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -366,7 +366,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -383,7 +383,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -407,8 +407,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[partHandle]struct{}{
-				{partID: 1, partType: PartTypeCore}: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -459,8 +459,8 @@ func TestSnapshotFunctionality(t *testing.T) {
 	}
 	defer tst.Close()
 
-	tst.mustAddTraces(tsTS1)
-	tst.mustAddTraces(tsTS2)
+	tst.mustAddTraces(tsTS1, nil)
+	tst.mustAddTraces(tsTS2, nil)
 	time.Sleep(100 * time.Millisecond) // allow time for flushing
 
 	require.Eventually(t, func() bool {

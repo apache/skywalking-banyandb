@@ -37,10 +37,26 @@ type mockSIDX struct {
 	name     string
 }
 
-func (m *mockSIDX) MustAddMemPart(_ context.Context, _ *memPart) {}
+func (m *mockSIDX) ConvertToMemPart(_ []WriteRequest, _ int64) (*MemPart, error) {
+	return nil, nil // Not implemented for tests
+}
 
-func (m *mockSIDX) Write(_ context.Context, _ []WriteRequest, _ int64) error {
-	return nil // Not implemented for tests
+func (m *mockSIDX) IntroduceMemPart(_ uint64, _ *MemPart) {
+	// Not implemented for tests
+}
+
+func (m *mockSIDX) IntroduceFlushed(_ *FlusherIntroduction) {
+	// Not implemented for tests
+}
+
+func (m *mockSIDX) IntroduceMerged(_ *MergerIntroduction) func() {
+	// Not implemented for tests
+	return nil
+}
+
+func (m *mockSIDX) IntroduceSynced(_ map[uint64]struct{}) func() {
+	// Not implemented for tests
+	return nil
 }
 
 func (m *mockSIDX) Query(_ context.Context, _ QueryRequest) (*QueryResponse, error) {
@@ -58,28 +74,20 @@ func (m *mockSIDX) Close() error {
 	return nil
 }
 
-func (m *mockSIDX) Flush() error {
-	return nil
+func (m *mockSIDX) Flush(_ map[uint64]struct{}) (*FlusherIntroduction, error) {
+	return nil, nil
 }
 
-func (m *mockSIDX) Merge(_ <-chan struct{}) (uint64, error) {
-	return 0, nil
-}
-
-func (m *mockSIDX) MergeMemParts(_ <-chan struct{}) (uint64, error) {
-	return 0, nil
+func (m *mockSIDX) Merge(_ <-chan struct{}, _ map[uint64]struct{}, _ uint64) (*MergerIntroduction, error) {
+	return nil, nil
 }
 
 func (m *mockSIDX) PartsToSync() []*part {
 	return nil
 }
 
-func (m *mockSIDX) StreamingParts(_ []*part, _ string, _ uint32, _ string) ([]queue.StreamingPartData, []func()) {
+func (m *mockSIDX) StreamingParts(_ map[uint64]struct{}, _ string, _ uint32, _ string) ([]queue.StreamingPartData, []func()) {
 	return nil, nil
-}
-
-func (m *mockSIDX) SyncCh() chan<- *SyncIntroduction {
-	return make(chan *SyncIntroduction)
 }
 
 // Helper function to create mock QueryResponse with test data.
