@@ -77,12 +77,6 @@ message QueryStreamRequest {
   string name = 3 [(validate.rules).string.min_len = 1];
 }
 
-// QueryStreamResponse is the response for stream-specific queries
-message QueryStreamResponse {
-  // stream_result contains the actual stream query result
-  stream.v1.QueryResponse stream_result = 1;
-}
-
 // QueryMeasureRequest is used for measure-specific queries
 message QueryMeasureRequest {
   // query is the BydbQL query string (typically without FROM clause)
@@ -92,12 +86,6 @@ message QueryMeasureRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// QueryMeasureResponse is the response for measure-specific queries
-message QueryMeasureResponse {
-  // measure_result contains the actual measure query result
-  measure.v1.QueryResponse measure_result = 1;
 }
 
 // QueryPropertyRequest is used for property-specific queries
@@ -111,12 +99,6 @@ message QueryPropertyRequest {
   string name = 3 [(validate.rules).string.min_len = 1];
 }
 
-// QueryPropertyResponse is the response for property-specific queries
-message QueryPropertyResponse {
-  // property_result contains the actual property query result
-  property.v1.QueryResponse property_result = 1;
-}
-
 // QueryTraceRequest is used for trace-specific queries
 message QueryTraceRequest {
   // query is the BydbQL query string (typically without FROM clause)
@@ -128,12 +110,6 @@ message QueryTraceRequest {
   string name = 3 [(validate.rules).string.min_len = 1];
 }
 
-// QueryTraceResponse is the response for trace-specific queries
-message QueryTraceResponse {
-  // trace_result contains the actual trace query result
-  trace.v1.QueryResponse trace_result = 1;
-}
-
 // TopNRequest is used for TopN-specific queries
 message TopNRequest {
   // query is the BydbQL query string (typically without FROM clause)
@@ -143,10 +119,4 @@ message TopNRequest {
   string group = 2 [(validate.rules).string.min_len = 1];
   // name is the resource name extracted from the URL path
   string name = 3 [(validate.rules).string.min_len = 1];
-}
-
-// TopNResponse is the response for TopN-specific queries
-message TopNResponse {
-  // topn_result contains the actual TopN query result
-  measure.v1.TopNResponse topn_result = 1;
 }
