@@ -25,11 +25,6 @@ deps:
 lint:
   use:
     - STANDARD
-  except:
-    - RPC_REQUEST_RESPONSE_UNIQUE
-  ignore_only:
-    RPC_RESPONSE_STANDARD_NAME:
-      - banyandb/bydbql/v1/rpc.proto
 breaking:
   use:
     - FILE
