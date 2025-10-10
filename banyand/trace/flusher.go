@@ -219,6 +219,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		partPath := partPath(tst.root, pw.ID())
 		pw.mp.mustFlush(tst.fileSystem, partPath)
 		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem))
+		defer newPW.p.traceIDFilter.reset()
 		newPW.p.partMetadata.ID = pw.ID()
 		ind.flushed[newPW.ID()] = newPW
 		partIDMap[newPW.ID()] = struct{}{}
