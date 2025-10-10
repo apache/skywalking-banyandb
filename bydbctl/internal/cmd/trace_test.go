@@ -80,9 +80,12 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
@@ -106,8 +109,9 @@ timestamp_tag_name: timestamp`))
 		Expect(resp.Trace.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Trace.Metadata.Name).To(Equal("name1"))
 		Expect(resp.Trace.TraceIdTagName).To(Equal("trace_id"))
+		Expect(resp.Trace.SpanIdTagName).To(Equal("span_id"))
 		Expect(resp.Trace.TimestampTagName).To(Equal("timestamp"))
-		Expect(resp.Trace.Tags).To(HaveLen(2))
+		Expect(resp.Trace.Tags).To(HaveLen(3))
 	})
 
 	It("update trace schema", func() {
@@ -119,11 +123,14 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
   - name: service_name
     type: TAG_TYPE_STRING
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -139,8 +146,8 @@ timestamp_tag_name: timestamp`))
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Trace.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Trace.Metadata.Name).To(Equal("name1"))
-		Expect(resp.Trace.Tags).To(HaveLen(3))
-		Expect(resp.Trace.Tags[2].Name).To(Equal("service_name"))
+		Expect(resp.Trace.Tags).To(HaveLen(4))
+		Expect(resp.Trace.Tags[3].Name).To(Equal("service_name"))
 	})
 
 	It("delete trace schema", func() {
@@ -167,9 +174,12 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()

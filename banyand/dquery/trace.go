@@ -162,7 +162,6 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 
 // BuildTracesFromResult builds traces from the result iterator.
 func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) ([]*tracev1.InternalTrace, error) {
-	traceIndex := make(map[string]int)
 	traces := make([]*tracev1.InternalTrace, 0)
 	for {
 		result, hasNext := resultIterator.Next()
@@ -172,18 +171,12 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 		if !hasNext {
 			break
 		}
-		traceID := result.TID
-		_, exists := traceIndex[traceID]
-		var trace *tracev1.InternalTrace
-		if !exists {
-			trace = &tracev1.InternalTrace{
-				Spans: make([]*tracev1.Span, 0),
-			}
-			traceIndex[traceID] = len(traces)
-			traces = append(traces, trace)
-		} else {
-			trace = traces[traceIndex[traceID]]
+		trace := &tracev1.InternalTrace{
+			TraceId: result.TID,
+			Spans:   make([]*tracev1.Span, 0),
+			SpanIds: result.SpanIDs,
 		}
+		traces = append(traces, trace)
 		for i, spanBytes := range result.Spans {
 			var traceTags []*modelv1.Tag
 			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
@@ -204,7 +197,6 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 				Span: spanBytes,
 			}
 			trace.Spans = append(trace.Spans, span)
-			trace.TraceId = result.TID
 		}
 	}
 	return traces, nil

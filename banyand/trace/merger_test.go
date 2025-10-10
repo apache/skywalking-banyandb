@@ -61,7 +61,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			name: "Merge two non-empty blocks without overlap",
 			left: &blockPointer{
 				block: block{
-					spans: [][]byte{[]byte("span1"), []byte("span2")},
+					spans:   [][]byte{[]byte("span1"), []byte("span2")},
+					spanIDs: []string{"span1", "span2"},
 					tags: []tag{
 						{
 							name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
@@ -72,7 +73,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			},
 			right: &blockPointer{
 				block: block{
-					spans: [][]byte{[]byte("span3"), []byte("span4")},
+					spans:   [][]byte{[]byte("span3"), []byte("span4")},
+					spanIDs: []string{"span3", "span4"},
 					tags: []tag{
 						{
 							name: "strArrTag", valueType: pbv1.ValueTypeStrArr,
@@ -97,7 +99,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 }
 
 var mergedBlock = block{
-	spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3"), []byte("span4")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2"), []byte("span3"), []byte("span4")},
+	spanIDs: []string{"span1", "span2", "span3", "span4"},
 	tags: []tag{
 		{
 			name: "strArrTag", valueType: pbv1.ValueTypeStrArr,

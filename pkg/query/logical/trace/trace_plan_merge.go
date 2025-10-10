@@ -42,6 +42,7 @@ type unresolvedTraceMerger struct {
 	ecc             []executor.TraceExecutionContext
 	tagProjection   [][]*logical.Tag
 	traceIDTagNames []string
+	spanIDTagNames  []string
 }
 
 // Analyze implements logical.UnresolvedPlan.
@@ -74,7 +75,7 @@ func (u *unresolvedTraceMerger) Analyze(s logical.Schema) (logical.Plan, error) 
 				orderByTag = tags[len(tags)-1]
 			}
 		}
-		subPlan := parseTraceTags(u.criteria, u.metadata[i], u.ecc[i], u.tagProjection, u.traceIDTagNames[i], orderByTag, i)
+		subPlan := parseTraceTags(u.criteria, u.metadata[i], u.ecc[i], u.tagProjection, u.traceIDTagNames[i], u.spanIDTagNames[i], orderByTag, i)
 		sp, err := subPlan.Analyze(ss[i])
 		if err != nil {
 			return nil, err

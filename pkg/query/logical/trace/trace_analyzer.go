@@ -33,7 +33,7 @@ const defaultLimit uint32 = 20
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
 func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
-	ecc []executor.TraceExecutionContext, traceIDTagNames []string,
+	ecc []executor.TraceExecutionContext, traceIDTagNames, spanIDTagNames []string,
 ) (logical.Plan, error) {
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to number of metadata %d", len(ss), len(metadata))
@@ -54,7 +54,7 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 			}
 			orderByTag = indexRule.Tags[len(indexRule.Tags)-1]
 		}
-		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagNames[0], orderByTag, 0)
+		plan = parseTraceTags(criteria, metadata[0], ecc[0], tagProjection, traceIDTagNames[0], spanIDTagNames[0], orderByTag, 0)
 		s = ss[0]
 	} else {
 		var err error
@@ -67,6 +67,7 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 			ecc:             ecc,
 			tagProjection:   tagProjection,
 			traceIDTagNames: traceIDTagNames,
+			spanIDTagNames:  spanIDTagNames,
 		}
 	}
 
@@ -223,7 +224,7 @@ func newTraceLimit(input logical.UnresolvedPlan, offset, num uint32) logical.Unr
 }
 
 func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
-	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, orderByTag string, groupIndex int,
+	ec executor.TraceExecutionContext, tagProjection [][]*logical.Tag, traceIDTagName, spanIDTagName, orderByTag string, groupIndex int,
 ) logical.UnresolvedPlan {
 	timeRange := criteria.GetTimeRange()
 	return &unresolvedTraceTagFilter{
@@ -234,6 +235,7 @@ func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
 		projectionTags: tagProjection,
 		ec:             ec,
 		traceIDTagName: traceIDTagName,
+		spanIDTagName:  spanIDTagName,
 		orderByTag:     orderByTag,
 		groupIndex:     groupIndex,
 	}

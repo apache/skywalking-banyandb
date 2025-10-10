@@ -1568,6 +1568,7 @@ InternalTrace is the trace that is used for internal use.
 | spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
 | trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
 | key | [int64](#int64) |  | key is used for sorting. |
+| span_ids | [string](#string) | repeated | span_ids are the ids of the spans that belong to the trace. |
 
 
 
@@ -2483,6 +2484,7 @@ while the group of a Trace corresponds to a physical directory.
 | trace_id_tag_name | [string](#string) |  | trace_id_tag_name is the name of the tag that stores the trace ID. |
 | timestamp_tag_name | [string](#string) |  | timestamp_tag_name is the name of the tag that stores the timestamp. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the trace resource is updated. |
+| span_id_tag_name | [string](#string) |  | span_id_tag_name is the name of the tag that stores the span ID. |
 
 
 

@@ -357,6 +357,7 @@ type TraceResult struct {
 	Error      error
 	TID        string
 	Spans      [][]byte
+	SpanIDs    []string
 	Tags       []Tag
 	Key        int64
 	GroupIndex int
