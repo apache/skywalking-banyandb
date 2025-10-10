@@ -44,6 +44,7 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 },
 	g.Entry("query by trace id", helpers.Args{Input: "eq_trace_id", Duration: 1 * time.Hour}),
 	g.Entry("query by trace ids", helpers.Args{Input: "in_trace_ids", Duration: 1 * time.Hour}),
+	g.Entry("query by empty span ids", helpers.Args{Input: "in_empty_span_ids", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("order by timestamp", helpers.Args{Input: "order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("order by duration", helpers.Args{Input: "order_duration_desc", Duration: 1 * time.Hour}),
 	g.Entry("filter by service id", helpers.Args{Input: "eq_service_order_timestamp_desc", Duration: 1 * time.Hour}),
