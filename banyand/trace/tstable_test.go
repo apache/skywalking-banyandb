@@ -320,9 +320,10 @@ func generateRealisticTraces(numTraces int) *traces {
 		spanIDs:    []string{},
 	}
 
-	// Create a large span payload (>100KB)
+	// Create a large span payload (>100 KiB)
 	// Using a mix of realistic data: stack traces, error messages, metadata
-	spanPayloadTemplate := make([]byte, 110*1024) // 110KB
+	const spanPayloadSizeKiB = 110 // 110 KiB (1 KiB = 1024 bytes)
+	spanPayloadTemplate := make([]byte, spanPayloadSizeKiB*1024)
 	for i := range spanPayloadTemplate {
 		// Fill with semi-realistic data
 		spanPayloadTemplate[i] = byte('A' + (i % 26))
