@@ -347,6 +347,7 @@ func buildSpanIDFilter(criteria *modelv1.Criteria, spanIDTagName string) *spanID
 		return nil
 	}
 
+	var hasSpanIDCondition bool
 	var extractSpanIDs func(*modelv1.Criteria) []string
 	extractSpanIDs = func(c *modelv1.Criteria) []string {
 		if c == nil {
@@ -356,7 +357,8 @@ func buildSpanIDFilter(criteria *modelv1.Criteria, spanIDTagName string) *spanID
 		switch c.GetExp().(type) {
 		case *modelv1.Criteria_Condition:
 			cond := c.GetCondition()
-			if cond.Name == spanIDTagName && cond.Op == modelv1.Condition_BINARY_OP_EQ {
+			if cond.Name == spanIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
+				hasSpanIDCondition = true
 				return extractIDsFromCondition(cond)
 			}
 		case *modelv1.Criteria_Le:
@@ -374,7 +376,7 @@ func buildSpanIDFilter(criteria *modelv1.Criteria, spanIDTagName string) *spanID
 	}
 
 	spanIDs := extractSpanIDs(criteria)
-	if len(spanIDs) > 0 {
+	if hasSpanIDCondition {
 		return newSpanIDFilter(spanIDs)
 	}
 	return nil
