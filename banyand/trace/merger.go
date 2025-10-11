@@ -328,12 +328,16 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 
 var errClosed = fmt.Errorf("the merger is closed")
 
+// forceSlowMerge is used for testing to disable the fast raw merge path.
+var forceSlowMerge = false
+
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, *traceIDFilter, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
 	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
+	var rawBlk rawBlock
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
 			decoder = generateColumnValuesDecoder()
@@ -353,6 +357,15 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		default:
 		}
 		b := br.block
+		// Fast path: if this is the only block for this traceID AND we have no pending block,
+		// copy it raw without unmarshaling
+		nextB := br.peek()
+		if !forceSlowMerge && pendingBlockIsEmpty && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
+			// fast path: only a single block for the trace id and no pending data
+			br.mustReadRaw(&rawBlk, &b.bm)
+			bw.mustWriteRawBlock(&rawBlk)
+			continue
+		}
 
 		if pendingBlockIsEmpty {
 			br.loadBlockData(getDecoder())
@@ -365,8 +378,20 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
+			pendingBlockIsEmpty = true
+			// After writing the pending block, check if the new block can be copied raw
+			// This is the same fast path check as at the beginning of the loop
+			nextB = br.peek()
+			if !forceSlowMerge && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
+				// fast path: only a single block for this new trace id
+				br.mustReadRaw(&rawBlk, &b.bm)
+				bw.mustWriteRawBlock(&rawBlk)
+				continue
+			}
+			// Slow path: start accumulating the new block
 			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
+			pendingBlockIsEmpty = false
 			continue
 		}
 
