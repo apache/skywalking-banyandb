@@ -378,7 +378,6 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
-			pendingBlockIsEmpty = true
 			// After writing the pending block, check if the new block can be copied raw
 			// This is the same fast path check as at the beginning of the loop
 			nextB = br.peek()
