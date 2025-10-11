@@ -19,6 +19,7 @@ package trace
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -303,5 +304,67 @@ func generateHugeTraces(num int) *traces {
 	}...)
 	traces.spans = append(traces.spans, [][]byte{[]byte("span2"), []byte("span3")}...)
 	traces.spanIDs = append(traces.spanIDs, []string{"span2", "span3"}...)
+	return traces
+}
+
+// generateRealisticTraces creates a more realistic dataset for benchmarking:
+// - Each trace has 3-5 spans
+// - Each span is more than 100KB
+// - Creates the specified number of unique traces.
+func generateRealisticTraces(numTraces int) *traces {
+	traces := &traces{
+		traceIDs:   []string{},
+		timestamps: []int64{},
+		tags:       [][]*tagValue{},
+		spans:      [][]byte{},
+		spanIDs:    []string{},
+	}
+
+	// Create a large span payload (>100 KiB)
+	// Using a mix of realistic data: stack traces, error messages, metadata
+	const spanPayloadSizeKiB = 110 // 110 KiB (1 KiB = 1024 bytes)
+	spanPayloadTemplate := make([]byte, spanPayloadSizeKiB*1024)
+	for i := range spanPayloadTemplate {
+		// Fill with semi-realistic data
+		spanPayloadTemplate[i] = byte('A' + (i % 26))
+	}
+
+	timestamp := int64(1000000)
+
+	for traceIdx := 0; traceIdx < numTraces; traceIdx++ {
+		traceID := fmt.Sprintf("trace_%d", traceIdx)
+
+		// Each trace has 3-5 spans
+		numSpans := 3 + (traceIdx % 3) // Will give 3, 4, or 5 spans
+
+		for spanIdx := 0; spanIdx < numSpans; spanIdx++ {
+			spanID := fmt.Sprintf("%s_span_%d", traceID, spanIdx)
+
+			// Create a unique span payload by appending span-specific data
+			spanPayload := make([]byte, len(spanPayloadTemplate))
+			copy(spanPayload, spanPayloadTemplate)
+			// Add span-specific suffix to ensure uniqueness
+			suffix := []byte(fmt.Sprintf("_trace_%d_span_%d", traceIdx, spanIdx))
+			copy(spanPayload[len(spanPayload)-len(suffix):], suffix)
+
+			traces.traceIDs = append(traces.traceIDs, traceID)
+			traces.timestamps = append(traces.timestamps, timestamp)
+			timestamp++
+
+			// Add realistic tags
+			traces.tags = append(traces.tags, []*tagValue{
+				{tag: "http.method", valueType: pbv1.ValueTypeStr, value: []byte("POST"), valueArr: nil},
+				{tag: "http.status", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(200), valueArr: nil},
+				{tag: "http.url", valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("/api/v1/trace/%d", traceIdx)), valueArr: nil},
+				{tag: "service.name", valueType: pbv1.ValueTypeStr, value: []byte("test-service"), valueArr: nil},
+				{tag: "span.kind", valueType: pbv1.ValueTypeStr, value: []byte("server"), valueArr: nil},
+				{tag: "error", valueType: pbv1.ValueTypeBinaryData, value: spanPayload[:1024], valueArr: nil}, // Use part of payload for error
+			})
+
+			traces.spans = append(traces.spans, spanPayload)
+			traces.spanIDs = append(traces.spanIDs, spanID)
+		}
+	}
+
 	return traces
 }
