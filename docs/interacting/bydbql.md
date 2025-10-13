@@ -44,21 +44,21 @@ Abstract Syntax Tree (AST)
 
 BydbQL distinguishes the target data model explicitly through keywords in the `FROM` clause. This allows the parser to apply the correct grammar and transformation rules for the query.
 
-*   **Streams**: `FROM STREAM <name> IN (<groups>)`
-*   **Measures**: `FROM MEASURE <name> IN (<groups>)`
-*   **Properties**: `FROM PROPERTY <name> IN (<groups>)`
-*   **Traces**: `FROM TRACE <name> IN (<groups>)`
+*   **Streams**: `FROM STREAM <name> IN <groups>` or `FROM STREAM <name> IN (<groups>)`
+*   **Measures**: `FROM MEASURE <name> IN <groups>` or `FROM MEASURE <name> IN (<groups>)`
+*   **Properties**: `FROM PROPERTY <name> IN <groups>` or `FROM PROPERTY <name> IN (<groups>)`
+*   **Traces**: `FROM TRACE <name> IN <groups>` or `FROM TRACE <name> IN (<groups>)`
 
 Specialized queries, like Top-N, use a distinct top-level command:
 
-*   **Top-N**: `SHOW TOP <n> FROM MEASURE <name> IN (<groups>)`
+*   **Top-N**: `SHOW TOP <n> FROM MEASURE <name> IN <groups>` or `SHOW TOP <n> FROM MEASURE <name> IN (<groups>)`
 
 ### 2.3. Required Clauses
 
 In BydbQL, the following clauses are **required** for all queries:
 
 *   **`FROM` clause**: Specifies the data model type, resource name, and group list
-*   **`IN (groups)` clause**: Specifies one or more groups to query from
+*   **`IN groups` clause**: Specifies one or more groups to query from. Parentheses around the group list are optional.
 *   **`TIME` clause**: Specifies the time range for the query (required for Streams, Measures, Traces, and Top-N queries; not applicable to Property queries)
 
 ### 2.4. Case Sensitivity
@@ -295,7 +295,7 @@ BydbQL for streams is designed for querying and retrieving raw time-series eleme
 
 ```
 query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_stream_clause ::= "FROM STREAM" identifier "IN" "(" group_list ")"
+from_stream_clause ::= "FROM STREAM" identifier "IN" ["("] group_list [")"]
 projection      ::= "*" | column_list
 column_list     ::= identifier ("," identifier)*
 group_list      ::= identifier ("," identifier)+
@@ -315,11 +315,11 @@ string_literal  ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal ::= [0-9]+
 ```
 
-**Note**: The `TIME` clause and `IN (groups)` clause are **required** for all stream queries. At least one group must be specified.
+**Note**: The `TIME` clause and `IN groups` clause are **required** for all stream queries. At least one group must be specified. Parentheses around the group list are optional.
 
 ### 4.2. Mapping to `stream.v1.QueryRequest`
 
-*   **`FROM STREAM name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+*   **`FROM STREAM name IN groups`** or **`FROM STREAM name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 *   **`SELECT tags`**: Maps to `projection`. Requires a stream schema to resolve tags to their families.
 *   **`TIME` clause (required)**: Maps to `time_range`:
     *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
@@ -420,7 +420,7 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 
 ```
 measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" "(" group_list ")"
+from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"]
 projection        ::= "*" | (column_list | agg_function "(" identifier ")" | "TOP" integer projection)
 column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
 agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
@@ -441,7 +441,7 @@ string_literal    ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal   ::= [0-9]+
 ```
 
-**Note**: The `TIME` clause and `IN (groups)` clause are **required** for all measure queries. At least one group must be specified.
+**Note**: The `TIME` clause and `IN groups` clause are **required** for all measure queries. At least one group must be specified. Parentheses around the group list are optional.
 
 ### 5.2. BydbQL Extensions for `SELECT`
 
@@ -453,7 +453,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
 
-*   **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+*   **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 *   **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
 *   **`SELECT SUM(field)`**: Maps to `agg`.
 *   **`TIME` clause (required)**: Maps to `time_range`:
@@ -589,7 +589,7 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 
 ```
 topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" "(" group_list ")"
+from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"]
 topn_criteria      ::= condition (("AND" | "OR") condition)*
 condition          ::= identifier binary_op (value | value_list)
 time_condition     ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
@@ -607,12 +607,12 @@ string_literal     ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal    ::= [0-9]+
 ```
 
-**Note**: The `TIME` clause and `IN (groups)` clause are **required** for all Top-N queries. At least one group must be specified.
+**Note**: The `TIME` clause and `IN groups` clause are **required** for all Top-N queries. At least one group must be specified. Parentheses around the group list are optional.
 
 ### 6.2. Mapping to `measure.v1.TopNRequest`
 
 *   **`SHOW TOP N`**: Maps to `top_n`.
-*   **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+*   **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 *   **`TIME` clause (required)**: Maps to `time_range`:
     *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
     *   **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
@@ -705,7 +705,7 @@ BydbQL for properties is designed for simple key-value lookups and metadata filt
 
 ```
 property_query      ::= SELECT projection from_property_clause [WHERE criteria] [LIMIT integer] [WITH QUERY_TRACE]
-from_property_clause ::= "FROM PROPERTY" identifier "IN" "(" group_list ")"
+from_property_clause ::= "FROM PROPERTY" identifier "IN" ["("] group_list [")"]
 projection          ::= "*" | column_list
 column_list         ::= identifier ("," identifier)*
 group_list          ::= identifier ("," identifier)+
@@ -719,11 +719,11 @@ string_literal      ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal     ::= [0-9]+
 ```
 
-**Note**: The `IN (groups)` clause is **required** for all property queries. At least one group must be specified. Property queries do **not** require a `TIME` clause.
+**Note**: The `IN groups` clause is **required** for all property queries. At least one group must be specified. Parentheses around the group list are optional. Property queries do **not** require a `TIME` clause.
 
 ### 7.2. Mapping to `property.v1.QueryRequest`
 
-*   **`FROM PROPERTY name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+*   **`FROM PROPERTY name IN groups`** or **`FROM PROPERTY name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 *   **`SELECT tags`**: Maps to `tag_projection`.
 *   **`WHERE ID IN (...)`**: Maps to `ids`.
 *   **`WHERE tag = 'value'`**: Maps to `criteria`.
@@ -771,7 +771,7 @@ BydbQL for traces is designed for querying and retrieving trace data with spans.
 
 ```
 trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_trace_clause     ::= "FROM TRACE" identifier "IN" "(" group_list ")"
+from_trace_clause     ::= "FROM TRACE" identifier "IN" ["("] group_list [")"]
 projection            ::= "*" | column_list | "()"
 column_list           ::= identifier ("," identifier)*
 group_list            ::= identifier ("," identifier)+
@@ -791,7 +791,7 @@ string_literal        ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal       ::= [0-9]+
 ```
 
-**Note**: The `TIME` clause and `IN (groups)` clause are **required** for all trace queries. At least one group must be specified.
+**Note**: The `TIME` clause and `IN groups` clause are **required** for all trace queries. At least one group must be specified. Parentheses around the group list are optional.
 
 ### 8.2. Trace Model Characteristics
 
@@ -816,7 +816,7 @@ BydbQL for traces supports an empty projection syntax `SELECT ()` that allows qu
 
 ### 8.3. Mapping to `trace.v1.QueryRequest`
 
-*   **`FROM TRACE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+*   **`FROM TRACE name IN groups`** or **`FROM TRACE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 *   **`SELECT tags`**: Maps to `tag_projection`. Requires a trace schema to resolve tags to their specifications.
 *   **`SELECT ()`**: Maps to an empty `tag_projection` array, indicating no tag data should be returned (only raw span data).
 *   **`TIME` clause (required)**: Maps to `time_range`:
@@ -958,14 +958,14 @@ LIMIT 100;
 
 ## 9. Summary of BydbQL Capabilities
 
-| Feature             | Streams                               | Measures                               | Top-N                                    | Properties                              | Traces                               |
-|:--------------------|:--------------------------------------|:---------------------------------------|:-----------------------------------------|:----------------------------------------|:-------------------------------------|
-| **Primary Command** | `SELECT ... FROM STREAM ... IN (...)` | `SELECT ... FROM MEASURE ... IN (...)` | `SHOW TOP ... FROM MEASURE ... IN (...)` | `SELECT ... FROM PROPERTY ... IN (...)` | `SELECT ... FROM TRACE ... IN (...)` |
-| **Groups Clause**   | **Required** `IN (groups)`            | **Required** `IN (groups)`             | **Required** `IN (groups)`               | **Required** `IN (groups)`              | **Required** `IN (groups)`           |
-| **Time Clause**     | **Required** `TIME ...`               | **Required** `TIME ...`                | **Required** `TIME ...`                  | Not applicable                          | **Required** `TIME ...`              |
-| **Projection**      | Tags by family                        | Tags & Fields                          | Implicit (entity, value)                 | Flat list of tags                       | Tags by specification                |
-| **Aggregation**     | No                                    | Yes (`SUM`, `MEAN`, etc.)              | Yes (optional)                           | No                                      | No                                   |
-| **Grouping**        | No                                    | Yes (`GROUP BY`)                       | No                                       | No                                      | No                                   |
-| **Filtering**       | Full `WHERE` clause                   | Full `WHERE` clause                    | Simple equality `WHERE`                  | `WHERE` by ID or tags                   | Full `WHERE` clause                  |
-| **Ordering**        | Yes (`ORDER BY`)                      | Yes (`ORDER BY`)                       | Yes (`ORDER BY value`)                   | No                                      | Yes (`ORDER BY`)                     |
-| **Pagination**      | Yes (`LIMIT`/`OFFSET`)                | Yes (`LIMIT`/`OFFSET`)                 | No                                       | `LIMIT` only                            | Yes (`LIMIT`/`OFFSET`)               |
+| Feature             | Streams                                         | Measures                                        | Top-N                                           | Properties                                      | Traces                                          |
+|:--------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|
+| **Primary Command** | `SELECT ... FROM STREAM ... IN ...`             | `SELECT ... FROM MEASURE ... IN ...`            | `SHOW TOP ... FROM MEASURE ... IN ...`          | `SELECT ... FROM PROPERTY ... IN ...`           | `SELECT ... FROM TRACE ... IN ...`              |
+| **Groups Clause**   | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) |
+| **Time Clause**     | **Required** `TIME ...`                         | **Required** `TIME ...`                         | **Required** `TIME ...`                         | Not applicable                                  | **Required** `TIME ...`                         |
+| **Projection**      | Tags by family                                  | Tags & Fields                                   | Implicit (entity, value)                        | Flat list of tags                               | Tags by specification                           |
+| **Aggregation**     | No                                              | Yes (`SUM`, `MEAN`, etc.)                       | Yes (optional)                                  | No                                              | No                                              |
+| **Grouping**        | No                                              | Yes (`GROUP BY`)                                | No                                              | No                                              | No                                              |
+| **Filtering**       | Full `WHERE` clause                             | Full `WHERE` clause                             | Simple equality `WHERE`                         | `WHERE` by ID or tags                           | Full `WHERE` clause                             |
+| **Ordering**        | Yes (`ORDER BY`)                                | Yes (`ORDER BY`)                                | Yes (`ORDER BY value`)                          | No                                              | Yes (`ORDER BY`)                                |
+| **Pagination**      | Yes (`LIMIT`/`OFFSET`)                          | Yes (`LIMIT`/`OFFSET`)                          | No                                              | `LIMIT` only                                    | Yes (`LIMIT`/`OFFSET`)                          |
