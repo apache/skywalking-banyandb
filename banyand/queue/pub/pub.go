@@ -480,3 +480,15 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 		config:    config,
 	}, nil
 }
+
+// HealthyNodes returns a list of node names that are currently healthy and connected.
+func (p *pub) HealthyNodes() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	nodes := make([]string, 0, len(p.active))
+	for name := range p.active {
+		nodes = append(nodes, name)
+	}
+	return nodes
+}

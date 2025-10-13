@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -375,6 +376,7 @@ type queueSupplier struct {
 	traceDataNodeRegistry grpc.NodeRegistry
 	l                     *logger.Logger
 	schemaRepo            *schemaRepo
+	handoffCtrl           *handoffController
 	path                  string
 	option                option
 }
@@ -398,6 +400,7 @@ func newQueueSupplier(path string, svc *liaison, traceDataNodeRegistry grpc.Node
 		path:                  path,
 		option:                opt,
 		schemaRepo:            &svc.schemaRepo,
+		handoffCtrl:           svc.handoffCtrl,
 	}
 }
 
@@ -431,7 +434,10 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 		Location:        path.Join(qs.path, group),
 		Option:          qs.option,
 		Metrics:         qs.newMetrics(p),
-		SubQueueCreator: newWriteQueue,
+		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,
+			l *logger.Logger, option option, metrics any, group string, shardID common.ShardID, getNodes func() []string) (*tsTable, error) {
+			return newWriteQueue(fileSystem, root, position, l, option, metrics, group, shardID, getNodes, qs.handoffCtrl)
+		},
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
 			nodeSet := make(map[string]struct{}, copies)

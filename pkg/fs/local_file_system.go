@@ -301,6 +301,14 @@ func (fs *localFileSystem) MustGetFreeSpace(path string) uint64 {
 	return usage.Free
 }
 
+func (fs *localFileSystem) MustGetTotalSpace(path string) uint64 {
+	usage, err := disk.Usage(path)
+	if err != nil {
+		fs.logger.Panic().Str("path", path).Err(err).Msg("failed to get disk usage")
+	}
+	return usage.Total
+}
+
 func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(string) bool) error {
 	fi, err := os.Stat(srcPath)
 	if err != nil {

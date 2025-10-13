@@ -289,6 +289,10 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 			return err
 		}
 	}
+
+	// After sync attempts, enqueue parts for offline nodes
+	tst.enqueueForOfflineNodes(nodes, partsToSync, partIDsToSync)
+
 	return nil
 }
 

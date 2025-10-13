@@ -424,6 +424,24 @@ func (s *sidx) currentSnapshot() *snapshot {
 	return nil
 }
 
+// PartPaths returns the filesystem paths for the specified partIDs.
+func (s *sidx) PartPaths(partIDs map[uint64]struct{}) map[uint64]string {
+	snapshot := s.currentSnapshot()
+	if snapshot == nil {
+		return nil
+	}
+	defer snapshot.decRef()
+
+	result := make(map[uint64]string)
+	for _, pw := range snapshot.parts {
+		if _, ok := partIDs[pw.p.partMetadata.ID]; ok {
+			result[pw.p.partMetadata.ID] = pw.p.path
+		}
+	}
+
+	return result
+}
+
 // blockCursor represents a cursor for iterating through a loaded block, similar to query_by_ts.go.
 type blockCursor struct {
 	p        *part

@@ -120,6 +120,8 @@ type FileSystem interface {
 	SyncPath(path string)
 	// MustGetFreeSpace returns the free space of the file system.
 	MustGetFreeSpace(path string) uint64
+	// MustGetTotalSpace returns the total space of the file system.
+	MustGetTotalSpace(path string) uint64
 	// CreateHardLink creates hard links in destPath for files in srcPath that pass the filter.
 	CreateHardLink(srcPath, destPath string, filter func(string) bool) error
 }

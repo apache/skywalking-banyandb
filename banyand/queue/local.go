@@ -99,6 +99,10 @@ func (*local) GetPort() *uint32 {
 func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 
+func (*local) HealthyNodes() []string {
+	return nil
+}
+
 type localBatchPublisher struct {
 	ctx      context.Context
 	local    *bus.Bus

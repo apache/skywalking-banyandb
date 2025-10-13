@@ -60,6 +60,9 @@ type SIDX interface {
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// IntroduceSynced introduces a synced map to the SIDX instance.
 	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
+	// PartPaths returns the filesystem paths for the specified partIDs.
+	// Returns a map of partID to filesystem path for parts that exist.
+	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
 }
 
 // WriteRequest contains data for a single write operation within a batch.

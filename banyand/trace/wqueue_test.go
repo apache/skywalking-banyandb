@@ -74,6 +74,7 @@ func Test_newWriteQueue(t *testing.T) {
 		"test-group",
 		common.ShardID(1),
 		func() []string { return []string{"node1", "node2"} },
+		nil, // handoffCtrl
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tst)

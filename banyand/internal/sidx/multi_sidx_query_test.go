@@ -96,6 +96,10 @@ func (m *mockSIDX) StreamingParts(_ map[uint64]struct{}, _ string, _ uint32, _ s
 	return nil, nil
 }
 
+func (m *mockSIDX) PartPaths(_ map[uint64]struct{}) map[uint64]string {
+	return nil
+}
+
 // Helper function to create mock QueryResponse with test data.
 func createMockQueryResponse(keyStart int64, count int, seriesIDBase common.SeriesID) *QueryResponse {
 	keys := make([]int64, count)
