@@ -89,6 +89,13 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		return
 	}
 
+	// Check for context cancellation before starting expensive operations
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 
@@ -111,6 +118,14 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 
 	var totalBlockBytes uint64
 	for it.nextBlock() {
+		// Check for context cancellation during iteration
+		select {
+		case <-ctx.Done():
+			releaseBlockScanResultBatch(batch)
+			return
+		default:
+		}
+
 		p := it.piHeap[0]
 		batch.bss = append(batch.bss, blockScanResult{
 			p: p.p,
