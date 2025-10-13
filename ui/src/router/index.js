@@ -178,36 +178,52 @@ const router = createRouter({
             },
           ],
         },
-        {
-          path: '/banyandb/property',
-          name: 'Property',
-          redirect: '/banyandb/property/start',
-          component: () => import('@/views/Property/index.vue'),
-          children: [
-            {
-              path: '/banyandb/property/start',
-              name: 'propertyStart',
-              component: () => import('@/components/Start/index.vue'),
-              meta: {
-                type: 'property',
+          {
+            path: '/banyandb/property',
+            name: 'Property',
+            redirect: '/banyandb/property/start',
+            component: () => import('@/views/Property/index.vue'),
+            children: [
+              {
+                path: '/banyandb/property/start',
+                name: 'propertyStart',
+                component: () => import('@/components/Start/index.vue'),
+                meta: {
+                  type: 'property',
+                },
               },
-            },
-            {
-              path: '/banyandb/property/operator-read/:type/:operator/:group/:name',
-              name: 'property',
-              component: () => import('@/components/Property/PropertyRead.vue'),
-            },
-            {
-              path: '/banyandb/property/operator-edit/:type/:operator/:group/:name',
-              name: 'edit-property',
-              component: () => import('@/views/Property/createEdit.vue'),
-            },
-            {
-              path: '/banyandb/property/operator-create/:type/:operator/:group',
-              name: 'create-property',
-              component: () => import('@/views/Property/createEdit.vue'),
-            },
-          ],
+              {
+                path: '/banyandb/property/operator-read/:type/:operator/:group/:name',
+                name: 'property',
+                component: () => import('@/components/Property/PropertyRead.vue'),
+              },
+              {
+                path: '/banyandb/property/operator-edit/:type/:operator/:group/:name',
+                name: 'edit-property',
+                component: () => import('@/views/Property/createEdit.vue'),
+              },
+              {
+                path: '/banyandb/property/operator-create/:type/:operator/:group',
+                name: 'create-property',
+                component: () => import('@/views/Property/createEdit.vue'),
+              },
+            ],
+          },
+      ],
+    },
+    {
+      path: '/banyandb/trace',
+      name: 'traceHome',
+      redirect: '/banyandb/trace/start',
+      component: () => import('@/views/Trace/index.vue'),
+    children: [
+        {
+          path: '/banyandb/trace/start',
+          name: 'traceStart',
+          component: () => import('@/components/Start/index.vue'),
+          meta: {
+            type: 'trace',
+          },
         },
       ],
     },
