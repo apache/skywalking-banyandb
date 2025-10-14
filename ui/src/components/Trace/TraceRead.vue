@@ -23,52 +23,28 @@
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch, onMounted } from 'vue';
-  import { RefreshRight, Search } from '@element-plus/icons-vue';
-  import { yamlToJson } from '@/utils/yaml';
+  import { RefreshRight, Search, View } from '@element-plus/icons-vue';
+  import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
+  import { Last15Minutes, Shortcuts } from '../common/data';
 
   const { proxy } = getCurrentInstance();
   const route = useRoute();
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
   const yamlRef = ref(null);
+  const timeRange = ref([]);
   const data = reactive({
     group: route.params.group,
     tableData: [],
     name: route.params.name,
   });
-  const yamlCode = ref(`groups:
-  - ${data.group}
-name: ${data.name}
-timeRange:
-  begin: "2024-01-01T00:00:00Z"
-  end: "2024-12-31T23:59:59Z"
-offset: 0
-limit: 10
-orderBy:
-  indexRuleName: ""
-  sort: "SORT_DESC"
-trace: false`);
+  const yamlCode = ref(``);
 
   const getTraces = (params) => {
     $loadingCreate();
-    const defaultParams = {
-      groups: [data.group],
-      name: data.name,
-      timeRange: {
-        begin: '2024-01-01T00:00:00Z',
-        end: '2024-12-31T23:59:59Z',
-      },
-      offset: 0,
-      limit: 10,
-      orderBy: {
-        indexRuleName: "",
-        sort: 'SORT_DESC',
-      },
-      trace: false,
-    };
-    queryTraces({ ...defaultParams, ...params })
+    queryTraces({ groups: [data.group], name: data.name, ...params })
       .then((res) => {
         if (res.status === 200) {
           data.tableData = res.data.traces || [];
@@ -86,23 +62,45 @@ trace: false`);
       });
   };
 
+  const spanDialogVisible = ref(false);
+  const currentSpanData = ref(null);
+
   const viewSpanDetails = (span) => {
     try {
-      const spanData = JSON.parse(atob(span.span));
-      ElMessage({
-        dangerouslyUseHTMLString: true,
-        message: `<pre>${JSON.stringify(spanData, null, 2)}</pre>`,
-        type: 'info',
-        duration: 10000,
-        showClose: true,
-      });
+      // Decode base64 span data
+      const decodedBytes = atob(span.span);
+      // Try to parse as JSON first
+      try {
+        currentSpanData.value = JSON.parse(decodedBytes);
+      } catch {
+        // If not JSON, display as text
+        currentSpanData.value = decodedBytes;
+      }
+      spanDialogVisible.value = true;
     } catch (err) {
       ElMessage({
-        message: 'Failed to parse span data: ' + err,
+        message: 'Failed to decode span data: ' + err,
         type: 'error',
         duration: 3000,
       });
     }
+  };
+
+  const closeSpanDialog = () => {
+    spanDialogVisible.value = false;
+    currentSpanData.value = null;
+  };
+
+  const formatTagValue = (tagValue) => {
+    if (!tagValue) return 'N/A';
+    // Handle different tag value types
+    if (tagValue.str) return tagValue.str.value;
+    if (tagValue.int) return tagValue.int.value;
+    if (tagValue.strArray) return JSON.stringify(tagValue.strArray.value);
+    if (tagValue.intArray) return JSON.stringify(tagValue.intArray.value);
+    if (tagValue.binaryData) return `<binary data: ${tagValue.binaryData.length} bytes>`;
+    if (tagValue.id) return JSON.stringify(tagValue.id);
+    return JSON.stringify(tagValue);
   };
 
   function searchTraces() {
@@ -123,26 +121,53 @@ trace: false`);
       });
   }
 
-  onMounted(() => {
-    getTraces();
-  });
+  function changeTimeRange() {
+    const json = yamlToJson(yamlCode.value);
+    if (!json.data.timeRange) {
+      json.data.timeRange = {
+        begin: '',
+        end: '',
+      };
+    }
+    json.data.timeRange.begin = timeRange.value[0] ?? null;
+    json.data.timeRange.end = timeRange.value[1] ?? null;
+    yamlCode.value = jsonToYaml(json.data).data;
+  }
+
+  function initTraceData() {
+    if (!(data.group && data.name)) {
+      return;
+    }
+    timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
+    const range = jsonToYaml({
+      timeRange: {
+        begin: timeRange.value[0],
+        end: timeRange.value[1],
+      },
+    }).data;
+    yamlCode.value = `${range}groups:
+  - ${data.group}
+name: ${data.name}
+offset: 1
+limit: 10
+orderBy:
+  indexRuleName: ""
+  sort: "SORT_DESC"`;
+
+    getTraces(yamlToJson(yamlCode.value).data);
+  }
 
   watch(
-    () => route.params,
+    () => route,
     () => {
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      yamlCode.value = `groups:
-  - ${data.group}
-name: ${data.name}
-timeRange:
-  begin: "2024-01-01T00:00:00Z"
-  end: "2024-12-31T23:59:59Z"
-offset: 0
-limit: 10
-trace: false`;
-      getTraces();
+      initTraceData();
+    },
+    {
+      immediate: true,
+      deep: true,
     },
   );
 </script>
@@ -152,63 +177,130 @@ trace: false`;
       <template #header>
         <FormHeader :fields="data" />
       </template>
-      <div class="button-group-operator">
-        <div>
-          <el-button size="small" :icon="Search" @click="searchTraces" plain />
-          <el-button size="small" :icon="RefreshRight" @click="getTraces" plain />
-        </div>
-      </div>
+      <el-row>
+        <el-col :span="10">
+          <div class="flex align-item-center" style="height: 40px; width: 100%">
+            <el-date-picker
+              @change="changeTimeRange"
+              v-model="timeRange"
+              type="datetimerange"
+              :shortcuts="Shortcuts"
+              range-separator="to"
+              start-placeholder="begin"
+              end-placeholder="end"
+            />
+            <el-button :icon="Search" @click="searchTraces" style="margin-left: 10px" color="#6E38F7" plain />
+          </div>
+        </el-col>
+        <el-col :span="14">
+          <div class="flex align-item-center justify-end" style="height: 30px">
+            <el-button :icon="RefreshRight" @click="initTraceData" plain />
+          </div>
+        </el-col>
+      </el-row>
+      
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 250px" :lint="true" />
-      <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
-        <el-table-column label="Trace ID" width="180">
-          <template #default="scope">
-            <span>Trace {{ scope.$index + 1 }}</span>
+      
+      <!-- Traces Table -->
+      <div v-if="data.tableData.length > 0" style="margin-top: 20px">
+        <el-card v-for="(trace, traceIndex) in data.tableData" :key="traceIndex" style="margin-bottom: 15px">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <span><strong>Trace #{{ traceIndex + 1 }}</strong></span>
+              <el-tag type="info">{{ trace.spans ? trace.spans.length : 0 }} Span(s)</el-tag>
+            </div>
           </template>
-        </el-table-column>
-        <el-table-column label="Spans Count" width="150">
-          <template #default="scope">
-            <span>{{ scope.row.spans ? scope.row.spans.length : 0 }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Spans">
-          <template #default="scope">
-            <el-collapse accordion>
-              <el-collapse-item
-                v-for="(span, spanIndex) in scope.row.spans"
-                :key="spanIndex"
-                :title="`Span ${spanIndex + 1}`"
-              >
-                <div class="span-details">
-                  <div v-if="span.tags && span.tags.length > 0">
-                    <strong>Tags:</strong>
-                    <el-table :data="span.tags" size="small" style="margin-top: 10px">
-                      <el-table-column label="Key" prop="key" width="200"></el-table-column>
-                      <el-table-column label="Value">
-                        <template #default="tagScope">
-                          <span>{{ JSON.stringify(tagScope.row.value) }}</span>
-                        </template>
-                      </el-table-column>
-                    </el-table>
-                  </div>
-                  <div style="margin-top: 10px">
-                    <strong>Span Data:</strong>
-                    <el-button
-                      size="small"
-                      type="primary"
-                      @click="viewSpanDetails(span)"
-                      style="margin-left: 10px"
-                      plain
-                    >
-                      View Details
-                    </el-button>
-                  </div>
+          
+          <!-- Spans Table for this trace -->
+          <el-table :data="trace.spans" border style="width: 100%">
+            <el-table-column type="expand">
+              <template #default="props">
+                <div style="padding: 15px">
+                  <h4 style="margin-top: 0">Indexed Tags:</h4>
+                  <el-table :data="props.row.tags" size="small" border v-if="props.row.tags && props.row.tags.length > 0">
+                    <el-table-column label="Tag Name" width="250">
+                      <template #default="tagScope">
+                        <el-tag size="small">{{ tagScope.row.key }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="Value">
+                      <template #default="tagScope">
+                        <code>{{ formatTagValue(tagScope.row.value) }}</code>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <el-empty v-else description="No indexed tags" :image-size="60" />
+                  
+                  <h4 style="margin-top: 20px; margin-bottom: 10px">Raw Span Data:</h4>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    @click="viewSpanDetails(props.row)"
+                    :icon="View"
+                  >
+                    View Raw Span Data (bytes)
+                  </el-button>
                 </div>
-              </el-collapse-item>
-            </el-collapse>
-          </template>
-        </el-table-column>
-      </el-table>
+              </template>
+            </el-table-column>
+            <el-table-column label="Span #" width="100">
+              <template #default="scope">
+                <strong>#{{ scope.$index + 1 }}</strong>
+              </template>
+            </el-table-column>
+            <el-table-column label="Indexed Tags Count" width="180">
+              <template #default="scope">
+                <el-tag size="small" type="success">{{ scope.row.tags ? scope.row.tags.length : 0 }} tag(s)</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Tag Summary" min-width="300">
+              <template #default="scope">
+                <div v-if="scope.row.tags && scope.row.tags.length > 0">
+                  <el-tag
+                    v-for="(tag, idx) in scope.row.tags.slice(0, 3)"
+                    :key="idx"
+                    size="small"
+                    style="margin-right: 5px; margin-bottom: 5px"
+                  >
+                    {{ tag.key }}
+                  </el-tag>
+                  <span v-if="scope.row.tags.length > 3">+{{ scope.row.tags.length - 3 }} more</span>
+                </div>
+                <el-empty v-else description="No tags" :image-size="30" />
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" width="120">
+              <template #default="scope">
+                <el-button
+                  link
+                  type="primary"
+                  size="small"
+                  @click="viewSpanDetails(scope.row)"
+                >
+                  View Data
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </div>
+      <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
+
+    <!-- Span Data Dialog -->
+    <el-dialog
+      v-model="spanDialogVisible"
+      title="Raw Span Data"
+      width="70%"
+      @close="closeSpanDialog"
+    >
+      <div v-if="currentSpanData !== null">
+        <pre style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow: auto; max-height: 500px">{{ typeof currentSpanData === 'object' ? JSON.stringify(currentSpanData, null, 2) : currentSpanData }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="closeSpanDialog">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 <style lang="scss" scoped>
@@ -221,10 +313,6 @@ trace: false`;
     flex-direction: row;
     justify-content: space-between;
     margin-bottom: 10px;
-  }
-
-  .span-details {
-    padding: 10px;
   }
 </style>
 
