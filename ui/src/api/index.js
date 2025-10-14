@@ -194,3 +194,49 @@ export function applyProperty(group, name, id, data) {
     data: data,
   });
 }
+
+// Trace APIs
+export function getTraceList(name) {
+  return request({
+    url: `/api/v1/trace/schema/lists/${name}`,
+    method: 'get',
+  });
+}
+
+export function getTrace(group, name) {
+  return request({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'get',
+  });
+}
+
+export function createTrace(data) {
+  return request({
+    url: `/api/v1/trace/schema`,
+    method: 'post',
+    data: data,
+  });
+}
+
+export function updateTrace(group, name, data) {
+  return request({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'put',
+    data: data,
+  });
+}
+
+export function deleteTrace(group, name) {
+  return request({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'delete',
+  });
+}
+
+export function queryTraces(data) {
+  return request({
+    url: `/api/v1/trace/data`,
+    method: 'post',
+    data: data,
+  });
+}

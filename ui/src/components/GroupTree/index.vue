@@ -161,7 +161,7 @@
               });
           });
         });
-        if (props.type === 'stream' || props.type === 'measure') {
+        if (props.type === 'stream' || props.type === 'measure' || props.type === 'trace') {
           const promiseIndexRule = data.groupLists.map((item) => {
             const name = item.metadata.name;
             return new Promise((resolve, reject) => {

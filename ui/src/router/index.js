@@ -209,21 +209,66 @@ const router = createRouter({
               },
             ],
           },
-      ],
-    },
-    {
-      path: '/banyandb/trace',
-      name: 'traceHome',
-      redirect: '/banyandb/trace/start',
-      component: () => import('@/views/Trace/index.vue'),
-    children: [
         {
-          path: '/banyandb/trace/start',
-          name: 'traceStart',
-          component: () => import('@/components/Start/index.vue'),
-          meta: {
-            type: 'trace',
-          },
+          path: '/banyandb/trace',
+          name: 'traceHome',
+          redirect: '/banyandb/trace/start',
+          component: () => import('@/views/Trace/index.vue'),
+          children: [
+            {
+              path: '/banyandb/trace/start',
+              name: 'traceStart',
+              component: () => import('@/components/Start/index.vue'),
+              meta: {
+                type: 'trace',
+              },
+            },
+            {
+              path: '/banyandb/trace/operator-read/:type/:operator/:group/:name',
+              name: 'trace',
+              component: () => import('@/components/Trace/TraceRead.vue'),
+            },
+            {
+              path: '/banyandb/trace/operator-edit/:type/:operator/:group/:name',
+              name: 'edit-trace',
+              component: () => import('@/views/Trace/createEdit.vue'),
+            },
+            {
+              path: '/banyandb/trace/operator-create/:type/:operator/:group',
+              name: 'create-trace',
+              component: () => import('@/views/Trace/createEdit.vue'),
+            },
+            {
+              path: '/banyandb/trace/index-rule/operator-read/:type/:operator/:group/:name',
+              name: 'trace-index-rule',
+              component: () => import('@/components/IndexRule/index.vue'),
+            },
+            {
+              path: '/banyandb/:schema/index-rule/operator-create/:type/:operator/:group',
+              name: 'trace-create-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue'),
+            },
+            {
+              path: '/banyandb/:schema/index-rule/operator-edit/:type/:operator/:group/:name',
+              name: 'trace-edit-index-rule',
+              component: () => import('@/components/IndexRule/Editor.vue'),
+            },
+            {
+              path: '/banyandb/trace/index-rule-binding/operator-read/:type/:operator/:group/:name',
+              name: 'trace-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/index.vue'),
+            },
+            {
+              path: '/banyandb/:schema/index-rule-binding/operator-create/:type/:operator/:group',
+              name: 'trace-create-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
+            },
+            {
+              path: '/banyandb/:schema/index-rule-binding/operator-edit/:type/:operator/:group/:name',
+              name: 'trace-edit-index-rule-binding',
+              component: () => import('@/components/IndexRuleBinding/Editor.vue'),
+            },
+          ],
         },
       ],
     },
