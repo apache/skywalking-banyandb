@@ -38,13 +38,18 @@
     tableData: [],
     name: route.params.name,
   });
-  const yamlCode = ref(`name: ${data.name}
-groups:
+  const yamlCode = ref(`groups:
   - ${data.group}
+name: ${data.name}
 timeRange:
   begin: "2024-01-01T00:00:00Z"
   end: "2024-12-31T23:59:59Z"
-limit: 10`);
+offset: 0
+limit: 10
+orderBy:
+  indexRuleName: ""
+  sort: "SORT_DESC"
+trace: false`);
 
   const getTraces = (params) => {
     $loadingCreate();
@@ -55,7 +60,13 @@ limit: 10`);
         begin: '2024-01-01T00:00:00Z',
         end: '2024-12-31T23:59:59Z',
       },
+      offset: 0,
       limit: 10,
+      orderBy: {
+        indexRuleName: "",
+        sort: 'SORT_DESC',
+      },
+      trace: false,
     };
     queryTraces({ ...defaultParams, ...params })
       .then((res) => {
@@ -122,13 +133,15 @@ limit: 10`);
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      yamlCode.value = `name: ${data.name}
-groups:
+      yamlCode.value = `groups:
   - ${data.group}
+name: ${data.name}
 timeRange:
   begin: "2024-01-01T00:00:00Z"
   end: "2024-12-31T23:59:59Z"
-limit: 10`;
+offset: 0
+limit: 10
+trace: false`;
       getTraces();
     },
   );
@@ -145,7 +158,7 @@ limit: 10`;
           <el-button size="small" :icon="RefreshRight" @click="getTraces" plain />
         </div>
       </div>
-      <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
+      <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 250px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
         <el-table-column label="Trace ID" width="180">
           <template #default="scope">
