@@ -22,7 +22,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { reactive, ref, watch, onMounted } from 'vue';
+  import { reactive, ref, watch } from 'vue';
   import { RefreshRight, Search, View } from '@element-plus/icons-vue';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
@@ -48,6 +48,7 @@
       .then((res) => {
         if (res.status === 200) {
           data.tableData = res.data.traces || [];
+          console.log(data);
         }
       })
       .catch((err) => {
@@ -148,10 +149,10 @@
     yamlCode.value = `${range}groups:
   - ${data.group}
 name: ${data.name}
-offset: 1
+offset: 0
 limit: 10
 orderBy:
-  indexRuleName: ""
+  indexRuleName: "latency"
   sort: "SORT_DESC"`;
 
     getTraces(yamlToJson(yamlCode.value).data);
