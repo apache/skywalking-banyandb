@@ -164,7 +164,9 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 			case blockCh <- batch:
 			case <-ctx.Done():
 				releaseBlockScanResultBatch(batch)
-				bsn.l.Warn().Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
+				if dl := bsn.l.Debug(); dl.Enabled() {
+					dl.Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
+				}
 				return
 			}
 			batch = generateBlockScanResultBatch()
