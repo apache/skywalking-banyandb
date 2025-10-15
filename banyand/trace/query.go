@@ -355,11 +355,13 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 
 			if batch.err != nil {
 				qr.err = batch.err
-				if batch.cursors != nil {
-					for _, bc := range batch.cursors {
-						releaseBlockCursor(bc)
+				if batch.cursorCh != nil {
+					// Drain and release any cursors from the channel
+					for result := range batch.cursorCh {
+						if result.cursor != nil {
+							releaseBlockCursor(result.cursor)
+						}
 					}
-					batch.cursors = nil
 				}
 				return true
 			}
@@ -368,9 +370,25 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 			qr.currentIndex = 0
 			qr.currentCursorGroups = make(map[string][]*blockCursor, len(batch.traceIDs))
 
-			for _, bc := range batch.cursors {
-				traceID := bc.bm.traceID
-				qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], bc)
+			// Stream cursors from channel and group by traceID
+			if batch.cursorCh != nil {
+				for result := range batch.cursorCh {
+					if result.err != nil {
+						qr.err = result.err
+						// Release any cursors we've already collected
+						for _, cursors := range qr.currentCursorGroups {
+							for _, bc := range cursors {
+								releaseBlockCursor(bc)
+							}
+						}
+						qr.currentCursorGroups = nil
+						return true
+					}
+					if result.cursor != nil {
+						traceID := result.cursor.bm.traceID
+						qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
+					}
+				}
 			}
 
 			if len(batch.keys) > 0 {
@@ -450,7 +468,8 @@ func (qr *queryResult) releaseCurrentBatch() {
 		qr.currentCursorGroups = nil
 	}
 	if qr.currentBatch != nil {
-		qr.currentBatch.cursors = nil
+		// Note: cursorCh should be fully consumed by ensureCurrentBatch
+		// so no need to drain it here
 		qr.currentBatch = nil
 	}
 	qr.currentIndex = 0
@@ -474,8 +493,13 @@ func (qr *queryResult) Release() {
 				if batch == nil {
 					continue
 				}
-				for _, bc := range batch.cursors {
-					releaseBlockCursor(bc)
+				// Drain and release cursors from the channel
+				if batch.cursorCh != nil {
+					for result := range batch.cursorCh {
+						if result.cursor != nil {
+							releaseBlockCursor(result.cursor)
+						}
+					}
 				}
 			default:
 				goto done

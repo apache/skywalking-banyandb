@@ -121,13 +121,20 @@ func TestQueryResult(t *testing.T) {
 					cursors = append(cursors, bc)
 				}
 
+				// Create cursor channel and send cursors through it
+				cursorCh := make(chan scanCursorResult, len(cursors))
+				for _, cursor := range cursors {
+					cursorCh <- scanCursorResult{cursor: cursor}
+				}
+				close(cursorCh)
+
 				cursorBatch := make(chan *scanBatch, 1)
 				cursorBatch <- &scanBatch{
 					traceBatch: traceBatch{
 						traceIDs: []string{tt.traceID},
 						keys:     map[string]int64{tt.traceID: 0},
 					},
-					cursors: cursors,
+					cursorCh: cursorCh,
 				}
 				close(cursorBatch)
 
