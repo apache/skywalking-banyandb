@@ -39,7 +39,7 @@
     group: route.params.group,
     tableData: [],
     name: route.params.name,
-    indexRule: null,
+    indexRule: '',
   });
   const yamlCode = ref(``);
 
@@ -60,9 +60,12 @@
       const response = await getindexRuleList(data.group);
       if (response.status === 200 && response.data.indexRule && response.data.indexRule.length > 0) {
         data.indexRule = response.data.indexRule[0].metadata;
+      } else {
+        data.indexRule = '';
       }
     } catch (err) {
       console.error('Failed to fetch indexRule:', err);
+      data.indexRule = '';
       ElMessage({
         message: 'Failed to fetch index rule: ' + err,
         type: 'error',
@@ -123,8 +126,8 @@ name: ${data.name}
 offset: 0
 limit: 10
 orderBy:
-  indexRuleName: "${data.indexRule.name}"
-  sort: "SORT_DESC"`;
+  indexRuleName: ${data.indexRule.name}
+  sort: SORT_DESC`;
 
     getTraces(yamlToJson(yamlCode.value).data);
   }
@@ -135,7 +138,7 @@ orderBy:
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      data.indexRule = null; // Reset indexRule when route changes
+      data.indexRule = '';
       initTraceData();
     },
     {
