@@ -30,6 +30,7 @@ tmp
 # go cache
 .gocache
 .gomodcache
+.cache
 
 # Test binary, build with `go test -c`
 *.test
