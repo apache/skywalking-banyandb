@@ -500,8 +500,7 @@ TIME > '-30m'
 WHERE path = '/api/v1/users';
 
 -- Find the top 10 instances with the highest CPU usage for a specific service
-SELECT TOP 10
-    instance,
+SELECT TOP 10 instance ASC,
     cpu_usage
 FROM MEASURE instance_metrics IN us-west
 TIME > '-30m'
