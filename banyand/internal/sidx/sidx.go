@@ -20,19 +20,13 @@ package sidx
 import (
 	"container/heap"
 	"context"
-	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"sync/atomic"
 
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -99,242 +93,6 @@ func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart,
 	mp.mustInitFromElements(es)
 	mp.partMetadata.SegmentID = segmentID
 	return mp, nil
-}
-
-// Query implements SIDX interface.
-func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	// Increment query counter
-	s.totalQueries.Add(1)
-
-	// Get current snapshot
-	snap := s.currentSnapshot()
-	if snap == nil {
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// Extract parameters directly from request
-	minKey, maxKey := extractKeyRange(req)
-	asc := extractOrdering(req)
-
-	// Select relevant parts
-	parts := selectPartsForQuery(snap, minKey, maxKey)
-	if len(parts) == 0 {
-		snap.decRef()
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// Sort SeriesIDs for efficient processing
-	seriesIDs := make([]common.SeriesID, len(req.SeriesIDs))
-	copy(seriesIDs, req.SeriesIDs)
-	sort.Slice(seriesIDs, func(i, j int) bool {
-		return seriesIDs[i] < seriesIDs[j]
-	})
-
-	// Initialize block scanner using request parameters directly
-	bs := &blockScanner{
-		pm:        s.pm,
-		filter:    req.Filter,
-		l:         s.l,
-		parts:     parts,
-		seriesIDs: seriesIDs,
-		minKey:    minKey,
-		maxKey:    maxKey,
-		asc:       asc,
-	}
-
-	// Execute query with worker pool pattern directly
-	defer func() {
-		if bs != nil {
-			bs.close()
-		}
-		if snap != nil {
-			snap.decRef()
-		}
-	}()
-
-	response := s.executeBlockScannerQuery(ctx, bs, req)
-	if response == nil {
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// If there's an error in the response, return it as a function error
-	if response.Error != nil {
-		return nil, response.Error
-	}
-
-	return response, nil
-}
-
-// extractKeyRange extracts min/max key range from QueryRequest.
-func extractKeyRange(req QueryRequest) (int64, int64) {
-	minKey := int64(math.MinInt64)
-	maxKey := int64(math.MaxInt64)
-
-	if req.MinKey != nil {
-		minKey = *req.MinKey
-	}
-	if req.MaxKey != nil {
-		maxKey = *req.MaxKey
-	}
-
-	return minKey, maxKey
-}
-
-// extractOrdering extracts ordering direction from QueryRequest.
-func extractOrdering(req QueryRequest) bool {
-	if req.Order == nil {
-		return true // Default ascending
-	}
-	return req.Order.Sort != modelv1.Sort_SORT_DESC
-}
-
-// selectPartsForQuery selects relevant parts from snapshot based on key range.
-func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
-	var selectedParts []*part
-
-	for _, pw := range snap.parts {
-		if pw.overlapsKeyRange(minKey, maxKey) {
-			selectedParts = append(selectedParts, pw.p)
-		}
-	}
-
-	return selectedParts
-}
-
-// executeBlockScannerQuery coordinates the worker pool with block scanner following tsResult pattern.
-func (s *sidx) executeBlockScannerQuery(ctx context.Context, bs *blockScanner, req QueryRequest) *QueryResponse {
-	workerSize := cgroups.CPUs()
-	batchCh := make(chan *blockScanResultBatch, workerSize)
-
-	// Determine which tags to load once for all workers (shared optimization)
-	tagsToLoad := make(map[string]struct{})
-	if len(req.TagProjection) > 0 {
-		// Load only projected tags
-		for _, proj := range req.TagProjection {
-			for _, tagName := range proj.Names {
-				tagsToLoad[tagName] = struct{}{}
-			}
-		}
-	}
-
-	// Initialize worker result shards
-	shards := make([]*QueryResponse, workerSize)
-	for i := range shards {
-		shards[i] = &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}
-	}
-
-	// Launch worker pool
-	var workerWg sync.WaitGroup
-	workerWg.Add(workerSize)
-
-	for i := range workerSize {
-		go func(workerID int) {
-			defer workerWg.Done()
-			s.processWorkerBatches(workerID, batchCh, shards[workerID], tagsToLoad, req, s.pm)
-		}(i)
-	}
-
-	// Start block scanning
-	go func() {
-		bs.scan(ctx, batchCh)
-		close(batchCh)
-	}()
-
-	workerWg.Wait()
-
-	// Merge results from all workers
-	return s.mergeWorkerResults(shards, req.MaxElementSize)
-}
-
-// processWorkerBatches processes batches in a worker goroutine using heap-based approach.
-func (s *sidx) processWorkerBatches(
-	_ int, batchCh chan *blockScanResultBatch, shard *QueryResponse,
-	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory,
-) {
-	tmpBlock := generateBlock()
-	defer releaseBlock(tmpBlock)
-
-	asc := extractOrdering(req)
-	blockHeap := generateBlockCursorHeap(asc)
-	defer releaseBlockCursorHeap(blockHeap)
-
-	for batch := range batchCh {
-		if batch.err != nil {
-			shard.Error = batch.err
-			releaseBlockScanResultBatch(batch)
-			continue
-		}
-
-		// Load all blocks in this batch and create block cursors
-		for _, bs := range batch.bss {
-			bc := generateBlockCursor()
-			bc.init(bs.p, &bs.bm, req)
-
-			if s.loadBlockCursor(bc, tmpBlock, bs, tagsToLoad, req, pm) {
-				// Set starting index based on sort order
-				if asc {
-					bc.idx = 0
-				} else {
-					bc.idx = len(bc.userKeys) - 1
-				}
-				blockHeap.Push(bc)
-			} else {
-				releaseBlockCursor(bc)
-			}
-		}
-
-		releaseBlockScanResultBatch(batch)
-	}
-
-	// Initialize heap and merge results
-	if blockHeap.Len() > 0 {
-		heap.Init(blockHeap)
-		result := blockHeap.merge(req.MaxElementSize)
-		shard.CopyFrom(result)
-	}
-}
-
-// mergeWorkerResults merges results from all worker shards with error handling.
-func (s *sidx) mergeWorkerResults(shards []*QueryResponse, maxElementSize int) *QueryResponse {
-	// Check for errors first
-	var err error
-	for i := range shards {
-		if shards[i].Error != nil {
-			err = multierr.Append(err, shards[i].Error)
-		}
-	}
-
-	if err != nil {
-		return &QueryResponse{Error: err}
-	}
-
-	// Merge results - shards are already in the requested order
-	// Just use ascending merge since shards are pre-sorted
-	return mergeQueryResponseShards(shards, maxElementSize)
 }
 
 // Stats implements SIDX interface.
@@ -567,7 +325,9 @@ func (bch *blockCursorHeap) reset() {
 }
 
 // merge performs heap-based merge similar to query_by_ts.go.
-func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
+// It returns a QueryResponse along with a flag indicating whether the merge
+// stopped because the MaxElementSize limit has been reached.
+func (bch *blockCursorHeap) merge(limit int) (*QueryResponse, bool) {
 	step := -1
 	if bch.asc {
 		step = 1
@@ -579,25 +339,23 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 		SIDs: make([]common.SeriesID, 0),
 	}
 
-	// Initialize unique data tracker if limit is specified
-	if limit > 0 {
-		result.InitUniqueTracker(limit)
-	}
+	limitHit := false
 
 	for bch.Len() > 0 {
+		if limit > 0 && result.Len() >= limit {
+			limitHit = true
+			break
+		}
+
 		topBC := bch.bcc[0]
 		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
 			heap.Pop(bch)
 			continue
 		}
 
-		// Try to copy the element (returns false if filtered out by key range)
-		if topBC.copyTo(result) {
-			// Check unique Data element limit after copying
-			if !result.ShouldAddData(result.Data[len(result.Data)-1]) {
-				break
-			}
-		}
+		// Copy the element (may be filtered out by key range)
+		topBC.copyTo(result)
+
 		topBC.idx += step
 
 		if bch.asc {
@@ -615,7 +373,7 @@ func (bch *blockCursorHeap) merge(limit int) *QueryResponse {
 		}
 	}
 
-	return result
+	return result, limitHit
 }
 
 var blockCursorHeapPool = pool.Register[*blockCursorHeap]("sidx-blockCursorHeap")

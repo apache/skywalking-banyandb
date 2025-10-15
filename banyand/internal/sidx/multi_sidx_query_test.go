@@ -66,6 +66,14 @@ func (m *mockSIDX) Query(_ context.Context, _ QueryRequest) (*QueryResponse, err
 	return m.response, nil
 }
 
+func (m *mockSIDX) StreamingQuery(_ context.Context, _ QueryRequest) (<-chan *QueryResponse, <-chan error) {
+	results := make(chan *QueryResponse)
+	errs := make(chan error)
+	close(results)
+	close(errs)
+	return results, errs
+}
+
 func (m *mockSIDX) Stats(_ context.Context) (*Stats, error) {
 	return &Stats{}, nil
 }
