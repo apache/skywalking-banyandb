@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -111,7 +113,6 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		case blockCh <- batch:
 		case <-ctx.Done():
 			releaseBlockScanResultBatch(batch)
-			bsn.l.Warn().Err(it.Error()).Msg("cannot init iter")
 		}
 		return
 	}
@@ -127,39 +128,44 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 
 		p := it.piHeap[0]
+
+		// Get block size before adding to batch
+		blockSize := p.curBlock.uncompressedSize
+
+		// Check if adding this block would exceed quota
+		quota := bsn.pm.AvailableBytes()
+		if quota >= 0 && totalBlockBytes+blockSize > uint64(quota) {
+			if len(batch.bss) > 0 {
+				// Send current batch without error
+				select {
+				case blockCh <- batch:
+				case <-ctx.Done():
+					releaseBlockScanResultBatch(batch)
+				}
+				return
+			}
+			// Batch is empty, send error
+			err := fmt.Errorf("sidx block scan quota exceeded: block size %s, quota is %s", humanize.Bytes(blockSize), humanize.Bytes(uint64(quota)))
+			batch.err = err
+			select {
+			case blockCh <- batch:
+			case <-ctx.Done():
+				releaseBlockScanResultBatch(batch)
+				return
+			}
+			return
+		}
+
+		// Quota OK, add block to batch
 		batch.bss = append(batch.bss, blockScanResult{
 			p: p.p,
 		})
 		bs := &batch.bss[len(batch.bss)-1]
 		bs.bm.copyFrom(p.curBlock)
+		totalBlockBytes += blockSize
 
-		quota := bsn.pm.AvailableBytes()
-		for i := range batch.bss {
-			totalBlockBytes += batch.bss[i].bm.uncompressedSize
-			if quota >= 0 && totalBlockBytes > uint64(quota) {
-				err := fmt.Errorf("sidx block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
-				batch.err = err
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-					bsn.l.Warn().Err(err).Msg("quota exceeded, context canceled")
-				}
-				return
-			}
-		}
-
+		// Check if batch is full
 		if len(batch.bss) >= cap(batch.bss) {
-			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
-				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-					bsn.l.Warn().Err(err).Msg("cannot acquire resource")
-				}
-				return
-			}
 			select {
 			case blockCh <- batch:
 			case <-ctx.Done():
