@@ -16,7 +16,7 @@
 # under the License.
 
 
-SELECT TOP 2 value DESC, entity_id, service_id, value::field, MEAN(value) FROM MEASURE service_instance_latency_minute IN sw_metrics
+SELECT TOP 2 value DESC, entity_id, service_id, value::field, MEAN(value) FROM MEASURE service_instance_latency_minute IN sw_metric
 TIME > '-15m'
 WHERE service_id = 'svc_1'
 GROUP BY entity_id, value::field

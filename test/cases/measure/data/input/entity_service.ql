@@ -18,4 +18,4 @@
 
 SELECT id, service_id, layer FROM MEASURE service_traffic IN index_mode
 TIME > '-15m'
-WHERE (service_id = 'service_1' AND id = '1')
+WHERE service_id = 'service_1' AND id = '1'

@@ -16,5 +16,5 @@
 # under the License.
 
 
-SELECT entity_id, total::field, value::field FROM MEASURE service_latency_minute IN sw_metrics
-TIME > '-15m'
+select entity_id, total::field, value::field from measure service_latency_minute in sw_metric
+time > '-15m'

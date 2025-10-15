@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT id, total::field, value::field, MIN(value) FROM MEASURE service_cpm_minute IN sw_metrics
+SELECT id, total::field, value::field, MIN(value) FROM MEASURE service_cpm_minute IN sw_metric
 TIME > '-15m'
-GROUP BY id, value::field
+GROUP BY id, value

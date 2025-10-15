@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT TOP 2 value DESC, id, value::field, MEAN(value) FROM MEASURE service_cpm_minute IN sw_metrics
+SELECT TOP 2 value DESC, id, value::field, MEAN(value) FROM MEASURE service_cpm_minute IN sw_metric
 TIME > '-15m'
-GROUP BY id, value::field
+GROUP BY id, value

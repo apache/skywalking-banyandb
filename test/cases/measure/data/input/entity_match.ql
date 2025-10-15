@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT service_id, endpoint_name FROM MEASURE endpoint_traffic IN sw_metrics
+SELECT service_id, endpoint_name FROM MEASURE endpoint_traffic IN sw_metric
 TIME > '-15m'
-WHERE (service_id = 'service_1' AND endpoint_name MATCH('endpoint-1', '', 'AND'))
+WHERE service_id = 'service_1' AND endpoint_name MATCH('endpoint-1', '', 'AND')

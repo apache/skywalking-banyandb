@@ -16,5 +16,5 @@
 # under the License.
 
 
-SELECT service_id, entity_id, summation::field, count::field, value::field FROM MEASURE instance_clr_cpu_minute IN sw_metrics
+SELECT service_id, entity_id, summation, count::field, value FROM MEASURE instance_clr_cpu_minute IN sw_metric
 TIME > '-15m'

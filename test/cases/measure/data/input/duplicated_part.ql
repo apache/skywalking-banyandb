@@ -16,5 +16,5 @@
 # under the License.
 
 
-SELECT id, entity_id, total::field, value::field FROM MEASURE duplicated IN exception
+SELECT id, entity_id, total, value FROM MEASURE duplicated IN exception
 TIME > '-15m'

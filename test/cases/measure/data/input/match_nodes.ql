@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT name FROM MEASURE service_instance_traffic IN sw_metrics
+SELECT name FROM MEASURE service_instance_traffic IN sw_metric
 TIME > '-15m'
 WHERE name MATCH('us')
