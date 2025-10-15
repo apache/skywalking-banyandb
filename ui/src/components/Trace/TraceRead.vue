@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-  import { queryTraces } from '@/api/index';
+  import { queryTraces, getindexRuleList } from '@/api/index';
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
@@ -39,6 +39,7 @@
     group: route.params.group,
     tableData: [],
     name: route.params.name,
+    indexRule: null,
   });
   const yamlCode = ref(``);
 
@@ -49,7 +50,25 @@
       data.tableData = response.data.traces || [];
     }
     $loadingClose();
-    console.log(data.tableData);
+  };
+
+  const getIndexRule = async () => {
+    if (!data.group) {
+      return;
+    }
+    try {
+      const response = await getindexRuleList(data.group);
+      if (response.status === 200 && response.data.indexRule && response.data.indexRule.length > 0) {
+        data.indexRule = response.data.indexRule[0].metadata;
+      }
+    } catch (err) {
+      console.error('Failed to fetch indexRule:', err);
+      ElMessage({
+        message: 'Failed to fetch index rule: ' + err,
+        type: 'error',
+        duration: 3000,
+      });
+    }
   };
 
   function searchTraces() {
@@ -83,8 +102,12 @@
     yamlCode.value = jsonToYaml(json.data).data;
   }
 
-  function initTraceData() {
+  async function initTraceData() {
     if (!(data.group && data.name)) {
+      return;
+    }
+    await getIndexRule();
+    if (!data.indexRule) {
       return;
     }
     timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
@@ -100,7 +123,7 @@ name: ${data.name}
 offset: 0
 limit: 10
 orderBy:
-  indexRuleName: "latency"
+  indexRuleName: "${data.indexRule.name}"
   sort: "SORT_DESC"`;
 
     getTraces(yamlToJson(yamlCode.value).data);
@@ -112,6 +135,7 @@ orderBy:
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
+      data.indexRule = null; // Reset indexRule when route changes
       initTraceData();
     },
     {
