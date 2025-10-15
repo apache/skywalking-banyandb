@@ -419,9 +419,10 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY column_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
 from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"]
-projection        ::= "*" | (column_list | agg_function "(" identifier ")" | "TOP" integer projection)
+projection        ::= "*" | (column_list | agg_function "(" identifier ")" | top_clause)
+top_clause        ::= "TOP" integer identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
 agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
 group_list        ::= identifier ("," identifier)+
@@ -466,6 +467,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
     *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
     *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
 *   **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
+    *   **Note**: When the query contains an aggregate function (e.g., `SUM`, `AVG`, `COUNT`, `MAX`, `MIN`) with `GROUP BY`, the `GROUP BY` clause **must include at least one field**. This ensures proper aggregation behavior in measure queries.
 *   **`SELECT TOP N ...`**: Maps to the `top` message.
 *   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
