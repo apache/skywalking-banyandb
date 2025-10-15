@@ -363,9 +363,22 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 		idx   int
 	}
 
+	// Track all error channels separately from shards with data
+	type errChannelInfo struct {
+		errCh <-chan error
+		idx   int
+	}
+	allErrChannels := make([]errChannelInfo, 0, len(instances))
+
 	sources := make([]shardSource, 0, len(instances))
 	for idx, instance := range instances {
 		resultsCh, errCh := instance.StreamingQuery(r.streamCtx, r.req)
+
+		// Track error channel regardless of whether shard has data
+		if errCh != nil {
+			allErrChannels = append(allErrChannels, errChannelInfo{errCh: errCh, idx: idx})
+		}
+
 		shard := &sidxStreamShard{
 			id:      idx,
 			results: resultsCh,
@@ -374,6 +387,7 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 			return fmt.Errorf("sidx[%d] prepare failed: %w", idx, err)
 		}
 		if shard.done {
+			// Shard has no data, but we still track its error channel above
 			continue
 		}
 		sources = append(sources, shardSource{
@@ -383,39 +397,42 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 		})
 	}
 
+	// Add shards with data to the heap
 	for _, src := range sources {
 		heap.Push(r.heap, src.shard)
 	}
 
-	if len(sources) == 0 {
-		return nil
-	}
+	// Create error event channel and start error forwarding goroutines
+	// for ALL error channels, even from shards without data
+	if len(allErrChannels) > 0 {
+		r.errEvents = make(chan sidxStreamError, len(allErrChannels))
 
-	r.errEvents = make(chan sidxStreamError, len(sources))
-
-	for _, src := range sources {
-		if src.errCh == nil {
-			continue
+		for _, errSrc := range allErrChannels {
+			r.errWg.Add(1)
+			go func(index int, ch <-chan error) {
+				defer r.errWg.Done()
+				forwardSIDXError(r.streamCtx, index, ch, r.errEvents)
+			}(errSrc.idx, errSrc.errCh)
 		}
-		r.errWg.Add(1)
-		go func(index int, ch <-chan error) {
-			defer r.errWg.Done()
-			forwardSIDXError(r.streamCtx, index, ch, r.errEvents)
-		}(src.idx, src.errCh)
-	}
 
-	go func() {
-		r.errWg.Wait()
-		close(r.errEvents)
-	}()
+		go func() {
+			r.errWg.Wait()
+			close(r.errEvents)
+		}()
+	}
 
 	return nil
 }
 
 func (r *sidxStreamRunner) run(out chan<- traceBatch) {
-	if r.heap.Len() == 0 {
-		r.cancel()
+	// Always drain error events before returning, even on early exit
+	// Drain BEFORE cancel to give error forwarding goroutines a chance
+	defer func() {
 		r.drainErrorEvents(out)
+		r.cancel()
+	}()
+
+	if r.heap.Len() == 0 {
 		return
 	}
 
@@ -473,9 +490,6 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			return
 		}
 	}
-
-	r.cancel()
-	r.drainErrorEvents(out)
 }
 
 func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
@@ -483,6 +497,7 @@ func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
 		return true
 	}
 
+	// Check for errors without blocking
 	select {
 	case ev, ok := <-r.errEvents:
 		if !ok {
@@ -496,6 +511,7 @@ func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
 		r.emitError(out, eventErr)
 		return false
 	default:
+		// No error available yet, continue processing
 		return true
 	}
 }
@@ -561,31 +577,64 @@ func (r *sidxStreamRunner) advanceShard(shard *sidxStreamShard) error {
 
 func (r *sidxStreamRunner) emitError(out chan<- traceBatch, err error) {
 	r.recordSpanErr(err)
+	// Always try to send error even if context is canceled
+	// The receiver needs to know about the error
 	select {
-	case <-r.ctx.Done():
 	case out <- traceBatch{err: err}:
+	case <-r.ctx.Done():
+		// Context canceled, but still try to send error with non-blocking attempt
+		select {
+		case out <- traceBatch{err: err}:
+		default:
+			// Channel might be blocked or closed, can't send error
+		}
 	}
 }
 
 func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
-	for r.errEvents != nil {
+	if r.errEvents == nil {
+		return
+	}
+
+	// Read from errEvents until it's closed or we find an error
+	// The channel will be closed after all error forwarding goroutines finish
+	for {
 		select {
 		case ev, ok := <-r.errEvents:
 			if !ok {
-				r.errEvents = nil
+				// Channel closed, all error forwarding goroutines finished
 				return
 			}
 			if ev.err == nil {
+				// No error in this event, continue reading
 				continue
 			}
+			// Found an error, emit it and return
 			eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
 			r.emitError(out, eventErr)
 			return
 		case <-r.ctx.Done():
-			if r.spanErr == nil {
-				r.spanErr = r.ctx.Err()
+			// Context canceled, but still do non-blocking drain
+			// to catch any errors that arrived before cancellation
+			for {
+				select {
+				case ev, ok := <-r.errEvents:
+					if !ok {
+						return
+					}
+					if ev.err != nil {
+						eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
+						r.emitError(out, eventErr)
+						return
+					}
+				default:
+					// No more errors available
+					if r.spanErr == nil {
+						r.spanErr = r.ctx.Err()
+					}
+					return
+				}
 			}
-			return
 		}
 	}
 }

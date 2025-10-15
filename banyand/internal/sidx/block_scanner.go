@@ -137,7 +137,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		for i := range batch.bss {
 			totalBlockBytes += batch.bss[i].bm.uncompressedSize
 			if quota >= 0 && totalBlockBytes > uint64(quota) {
-				err := fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+				err := fmt.Errorf("sidx block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
 				batch.err = err
 				select {
 				case blockCh <- batch:

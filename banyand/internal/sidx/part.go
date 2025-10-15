@@ -603,7 +603,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 
 	for i := 1; i <= len(es.seriesIDs); i++ {
 		// Process block when series changes or at end
-		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+		if (i-blockStart) > maxBlockLength || i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
 			seriesData := es.data[blockStart:i]
