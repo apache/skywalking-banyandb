@@ -23,7 +23,7 @@
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch } from 'vue';
-  import { RefreshRight, Search } from '@element-plus/icons-vue';
+  import { RefreshRight, Search, Download } from '@element-plus/icons-vue';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
@@ -132,6 +132,42 @@ orderBy:
     getTraces(yamlToJson(yamlCode.value).data);
   }
 
+  function downloadSingleSpan(span, traceIndex, spanIndex) {
+    if (!span) {
+      ElMessage({
+        message: 'No span data to download',
+        type: 'warning',
+        duration: 3000,
+      });
+      return;
+    }
+
+    try {
+      const jsonData = JSON.stringify(span, null, 2);
+      const blob = new Blob([jsonData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `trace-${traceIndex + 1}-span-${spanIndex + 1}-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      ElMessage({
+        message: `Span #${spanIndex + 1} downloaded successfully`,
+        type: 'success',
+        duration: 2000,
+      });
+    } catch (err) {
+      ElMessage({
+        message: 'Failed to download span data: ' + err.message,
+        type: 'error',
+        duration: 3000,
+      });
+    }
+  }
+
   watch(
     () => route,
     () => {
@@ -183,9 +219,36 @@ orderBy:
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span><strong>Trace #{{ traceIndex + 1 }}</strong></span>
-              <el-tag type="info">{{ trace.spans ? trace.spans.length : 0 }} Span(s)</el-tag>
+              <div style="display: flex; align-items: center; gap: 10px">
+                <el-tag type="info">{{ trace.spans ? trace.spans.length : 0 }} Span(s)</el-tag>
+              </div>
             </div>
           </template>
+          
+          <!-- Spans List -->
+          <div v-if="trace.spans && trace.spans.length > 0">
+            <el-table :data="trace.spans" stripe border style="width: 100%">
+              <el-table-column type="index" label="#" width="60" />
+              <el-table-column prop="span" label="Span Data" show-overflow-tooltip>
+                <template #default="scope">
+                  <el-text class="span-data" size="small">{{ scope.row.span }}</el-text>
+                </template>
+              </el-table-column>
+              <el-table-column label="Download" width="120" align="center">
+                <template #default="scope">
+                  <el-button 
+                    :icon="Download" 
+                    size="small" 
+                    @click="downloadSingleSpan(scope.row, traceIndex, scope.$index)"
+                    plain
+                  >
+                    Download
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-else description="No spans in this trace" :image-size="80" />
         </el-card>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
@@ -203,6 +266,12 @@ orderBy:
     flex-direction: row;
     justify-content: space-between;
     margin-bottom: 10px;
+  }
+
+  .span-data {
+    font-family: 'Courier New', Courier, monospace;
+    word-break: break-all;
+    font-size: 12px;
   }
 </style>
 
