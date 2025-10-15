@@ -180,6 +180,11 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 }
 
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
+	startTime := time.Now()
+	defer func() {
+		tst.incTotalSyncLoopLatency(time.Since(startTime).Seconds())
+	}()
+
 	if tst.loopCloser != nil && tst.loopCloser.Closed() {
 		return errClosed
 	}
@@ -334,13 +339,16 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 	if !result.Success {
 		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
 	}
-	tst.l.Info().
-		Str("node", node).
-		Str("session", result.SessionID).
-		Uint64("bytes", result.TotalBytes).
-		Int64("duration_ms", result.DurationMs).
-		Uint32("chunks", result.ChunksCount).
-		Uint32("parts", result.PartsCount).
-		Msg("chunked sync completed successfully")
+	tst.incTotalSyncLoopBytes(result.TotalBytes)
+	if dl := tst.l.Debug(); dl.Enabled() {
+		dl.
+			Str("node", node).
+			Str("session", result.SessionID).
+			Uint64("bytes", result.TotalBytes).
+			Int64("duration_ms", result.DurationMs).
+			Uint32("chunks", result.ChunksCount).
+			Uint32("parts", result.PartsCount).
+			Msg("chunked sync completed successfully")
+	}
 	return nil
 }

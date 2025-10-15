@@ -85,16 +85,15 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 		}
 		defer curSnapshot.decRef()
 		if curSnapshot.epoch != epoch {
-			// Use existing metric methods for measure
-			tst.incTotalFlushLoopStarted(1)
-			defer tst.incTotalFlushLoopFinished(1)
+			tst.incTotalSyncLoopStarted(1)
+			defer tst.incTotalSyncLoopFinished(1)
 			var err error
 			if err = tst.syncSnapshot(curSnapshot, syncCh); err != nil {
 				if tst.loopCloser.Closed() {
 					return true
 				}
 				tst.l.Error().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
-				tst.incTotalFlushLoopErr(1)
+				tst.incTotalSyncLoopErr(1)
 				time.Sleep(2 * time.Second)
 				return false
 			}
@@ -182,6 +181,11 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 }
 
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
+	startTime := time.Now()
+	defer func() {
+		tst.incTotalSyncLoopLatency(time.Since(startTime).Seconds())
+	}()
+
 	var partsToSync []*part
 	for _, pw := range curSnapshot.parts {
 		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
@@ -256,14 +260,17 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		if !result.Success {
 			return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
 		}
-		tst.l.Info().
-			Str("node", node).
-			Str("session", result.SessionID).
-			Uint64("bytes", result.TotalBytes).
-			Int64("duration_ms", result.DurationMs).
-			Uint32("chunks", result.ChunksCount).
-			Uint32("parts", result.PartsCount).
-			Msg("chunked sync completed successfully")
+		tst.incTotalSyncLoopBytes(result.TotalBytes)
+		if dl := tst.l.Debug(); dl.Enabled() {
+			dl.
+				Str("node", node).
+				Str("session", result.SessionID).
+				Uint64("bytes", result.TotalBytes).
+				Int64("duration_ms", result.DurationMs).
+				Uint32("chunks", result.ChunksCount).
+				Uint32("parts", result.PartsCount).
+				Msg("chunked sync completed successfully")
+		}
 	}
 
 	si := generateSyncIntroduction()
