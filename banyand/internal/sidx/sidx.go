@@ -32,7 +32,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
-const maxBlockLength = 8 * 1024
+const (
+	maxBlockLength           = 8 * 1024
+	maxUncompressedBlockSize = 2 * 1024 * 1024
+)
 
 // sidx implements the SIDX interface with introduction channels for async operations.
 type sidx struct {

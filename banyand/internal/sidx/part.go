@@ -600,10 +600,26 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 	// Group elements by seriesID and write to blocks
 	currentSeriesID := es.seriesIDs[0]
 	blockStart := 0
+	var accumulatedSize uint64
 
 	for i := 1; i <= len(es.seriesIDs); i++ {
-		// Process block when series changes or at end
-		if (i-blockStart) > maxBlockLength || i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+		// Calculate size of current element if not at end
+		if i < len(es.seriesIDs) {
+			// Add userKey size (8 bytes)
+			accumulatedSize += 8
+			// Add data payload size
+			accumulatedSize += uint64(len(es.data[i-1]))
+			// Add tag sizes
+			for _, tag := range es.tags[i-1] {
+				if tag != nil {
+					accumulatedSize += uint64(tag.size())
+				}
+			}
+		}
+
+		// Process block when series changes, size limit reached, count limit reached, or at end
+		seriesChanged := i < len(es.seriesIDs) && es.seriesIDs[i] != currentSeriesID
+		if (i-blockStart) > maxBlockLength || accumulatedSize >= maxUncompressedBlockSize || i == len(es.seriesIDs) || seriesChanged {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
 			seriesData := es.data[blockStart:i]
@@ -615,6 +631,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]
 				blockStart = i
+				accumulatedSize = 0
 			}
 		}
 	}
