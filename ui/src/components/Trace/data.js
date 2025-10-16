@@ -27,16 +27,6 @@ export const strategyGroup = [
     label: 'STRATEGY_REPLACE',
   },
 ];
-
-export const tagTypeOptions = [
-  { value: 'TAG_TYPE_STRING', label: 'TAG_TYPE_STRING' },
-  { value: 'TAG_TYPE_INT', label: 'TAG_TYPE_INT' },
-  { value: 'TAG_TYPE_STRING_ARRAY', label: 'TAG_TYPE_STRING_ARRAY' },
-  { value: 'TAG_TYPE_INT_ARRAY', label: 'TAG_TYPE_INT_ARRAY' },
-  { value: 'TAG_TYPE_DATA_BINARY', label: 'TAG_TYPE_DATA_BINARY' },
-  { value: 'TAG_TYPE_TIMESTAMP', label: 'TAG_TYPE_TIMESTAMP' },
-];
-
 export const formConfig = [
   {
     label: 'Strategy',

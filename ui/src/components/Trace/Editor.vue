@@ -22,7 +22,6 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute, useRouter } from 'vue-router';
   import { updateTrace, createTrace, getTrace } from '@/api';
-  import TraceTagEditor from './TraceTagEditor.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { rules, strategyGroup, formConfig } from './data';
 
@@ -242,7 +241,6 @@
           </el-table>
         </el-form-item>
       </el-form>
-      <TraceTagEditor ref="tagEditorRef"></TraceTagEditor>
     </el-card>
   </div>
 </template>
