@@ -234,20 +234,28 @@ func TestSIDX_WriteQueryIntegration(t *testing.T) {
 
 	// Test 1: Query single series
 	queryReq := createTestQueryRequest(1)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
-
-	series1Keys := collectAllKeys(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+	var series1Keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		series1Keys = append(series1Keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
 	assert.Greater(t, len(series1Keys), 0, "Should find data for series 1")
 
 	// Test 2: Query multiple series
 	queryReq2 := createTestQueryRequest(1, 2)
-	response2, err := sidx.Query(ctx, queryReq2)
-	require.NoError(t, err)
-	require.NotNil(t, response2)
-
-	allKeys := collectAllKeys(t, response2)
+	resultsCh2, errCh2 := sidx.StreamingQuery(ctx, queryReq2)
+	var allKeys []int64
+	for res := range resultsCh2 {
+		require.NoError(t, res.Error)
+		allKeys = append(allKeys, res.Keys...)
+	}
+	if err, ok := <-errCh2; ok {
+		require.NoError(t, err)
+	}
 	assert.GreaterOrEqual(t, len(allKeys), len(series1Keys), "Should find at least as much data for multiple series")
 
 	// Test 3: Query with key range that spans both series
@@ -259,11 +267,15 @@ func TestSIDX_WriteQueryIntegration(t *testing.T) {
 		MaxKey:    &maxKey,
 	}
 
-	response3, err := sidx.Query(ctx, queryReq3)
-	require.NoError(t, err)
-	require.NotNil(t, response3)
-
-	rangeKeys := collectAllKeys(t, response3)
+	resultsCh3, errCh3 := sidx.StreamingQuery(ctx, queryReq3)
+	var rangeKeys []int64
+	for res := range resultsCh3 {
+		require.NoError(t, res.Error)
+		rangeKeys = append(rangeKeys, res.Keys...)
+	}
+	if err, ok := <-errCh3; ok {
+		require.NoError(t, err)
+	}
 	for _, key := range rangeKeys {
 		assert.GreaterOrEqual(t, key, minKey)
 		assert.LessOrEqual(t, key, maxKey)
@@ -294,14 +306,23 @@ func TestSIDX_DataConsistency(t *testing.T) {
 
 	// Query back and verify data integrity
 	queryReq := createTestQueryRequest(1)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	var keys []int64
+	var data [][]byte
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+		data = append(data, res.Data...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
 
 	actualData := make(map[int64]string)
-	for i, key := range response.Keys {
-		if i < len(response.Data) {
-			actualData[key] = string(response.Data[i])
+	for i, key := range keys {
+		if i < len(data) {
+			actualData[key] = string(data[i])
 		}
 	}
 
@@ -343,11 +364,15 @@ func TestSIDX_LargeDataset(t *testing.T) {
 		SeriesIDs: []common.SeriesID{1, 2, 3}, // Query subset of series
 	}
 
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
-
-	totalElements := response.Len()
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+	totalElements := 0
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		totalElements += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
 
 	assert.Greater(t, totalElements, 0, "Should find elements in large dataset")
 }
@@ -434,13 +459,18 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 			start := time.Now()
 			for time.Since(start) < duration {
 				queryReq := createTestQueryRequest(1)
-				response, errQuery := sidx.Query(ctx, queryReq)
-				if errQuery != nil {
+				resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+				count := 0
+				for res := range resultsCh {
+					if res.Error != nil {
+						continue
+					}
+					count += res.Len()
+				}
+				if err, ok := <-errCh; ok && err != nil {
 					continue // Continue on error during concurrent access
 				}
-				if response != nil {
-					_ = response.Len() // Just access the data
-				}
+				_ = count // Just access the data
 			}
 		}(i)
 	}
@@ -472,20 +502,21 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 
 	// Final verification - should still be able to query
 	queryReq := createTestQueryRequest(1)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+	count := 0
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		count += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
 }
 
 // Utility functions.
 
 func ptrInt64(v int64) *int64 {
 	return &v
-}
-
-func collectAllKeys(t *testing.T, response *QueryResponse) []int64 {
-	require.NoError(t, nil) // No error expected since we already have the response
-	return response.Keys
 }
 
 // TestQueryResult_MaxElementSize verifies that MaxElementSize limits the total number of elements appended.

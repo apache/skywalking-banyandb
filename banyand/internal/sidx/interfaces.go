@@ -44,10 +44,6 @@ type SIDX interface {
 	IntroduceMerged(nextIntroduction *MergerIntroduction) func()
 	// ConvertToMemPart converts a write request to a memPart.
 	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
-	// Query executes a query with key range and tag filtering.
-	// Returns a QueryResponse directly with all results loaded.
-	// Both setup/validation errors and execution errors are returned via the error return value.
-	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
 	// StreamingQuery executes the query and streams batched QueryResponse objects.
 	// The returned QueryResponse channel contains ordered batches limited by req.MaxElementSize
 	// unique Data elements (when positive). The error channel delivers any fatal execution error.
@@ -403,7 +399,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		log.Fatalf("write failed: %v", err)
 //	}
 
-// Example: Using Querier interface independently
+// Example: Using StreamingQuery interface independently
 //
 //	querier := NewQuerier(options)
 //	req := QueryRequest{
@@ -411,21 +407,15 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		Filter: createKeyRangeFilter(100, 200),
 //		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 //	}
-//	result, err := querier.Query(ctx, req)
-//	if err != nil {
-//		log.Fatalf("query setup failed: %v", err)
-//	}
-//	defer result.Release()
-//
-//	for {
-//		batch := result.Pull()
-//		if batch == nil {
-//			break // No more results
-//		}
+//	resultsCh, errCh := querier.StreamingQuery(ctx, req)
+//	for batch := range resultsCh {
 //		if batch.Error != nil {
 //			log.Printf("query execution error: %v", batch.Error)
 //		}
 //		// Process batch.Keys, batch.Data, batch.Tags, etc.
+//	}
+//	if err := <-errCh; err != nil {
+//		log.Fatalf("query failed: %v", err)
 //	}
 
 // Example: Interface composition in SIDX
@@ -441,8 +431,8 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		return s.writer.Write(ctx, reqs)
 //	}
 //
-//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
-//		return s.querier.Query(ctx, req)
+//	func (s *sidxImpl) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
+//		return s.querier.StreamingQuery(ctx, req)
 //	}
 //
 //	func (s *sidxImpl) Flush() error {

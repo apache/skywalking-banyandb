@@ -63,12 +63,19 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 	waitForIntroducerLoop()
 
 	queryReq := createTestQueryRequest(1)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	if response.Len() > 0 {
-		assert.Greater(t, response.Len(), 0)
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	if len(keys) > 0 {
+		assert.Greater(t, len(keys), 0)
 	}
 }
 
@@ -81,11 +88,18 @@ func TestSIDX_Query_EmptyResult(t *testing.T) {
 	ctx := context.Background()
 
 	queryReq := createTestQueryRequest(999)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	assert.Equal(t, 0, response.Len())
+	resultCount := 0
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		resultCount += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 0, resultCount)
 }
 
 func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
@@ -113,12 +127,19 @@ func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
 		MaxKey:    &maxKey,
 	}
 
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	if response.Len() > 0 {
-		for _, key := range response.Keys {
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	if len(keys) > 0 {
+		for _, key := range keys {
 			assert.GreaterOrEqual(t, key, minKey)
 			assert.LessOrEqual(t, key, maxKey)
 		}
@@ -194,16 +215,25 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 				Order:     tt.order,
 			}
 
-			response, err := sidx.Query(ctx, queryReq)
-			require.NoError(t, err)
-			require.NotNil(t, response)
+			resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-			allKeys := response.Keys
+			var allKeys []int64
+			var allData [][]byte
+			var allSIDs []common.SeriesID
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				allKeys = append(allKeys, res.Keys...)
+				allData = append(allData, res.Data...)
+				allSIDs = append(allSIDs, res.SIDs...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
 
 			t.Logf("Query with series %v, order %v", tt.seriesIDs, tt.order)
 			for i, key := range allKeys {
-				if i < len(response.Data) && i < len(response.SIDs) {
-					t.Logf("  Key: %d, Data: %s, SeriesID: %d", key, string(response.Data[i]), response.SIDs[i])
+				if i < len(allData) && i < len(allSIDs) {
+					t.Logf("  Key: %d, Data: %s, SeriesID: %d", key, string(allData[i]), allSIDs[i])
 				}
 			}
 
@@ -254,15 +284,24 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 		},
 	}
 
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	assert.Equal(t, 3, response.Len())
-	for i := 0; i < response.Len(); i++ {
-		if response.Keys[i] == 100 {
-			assert.Equal(t, "arr_tag", response.Tags[i][0].Name)
-			assert.Equal(t, "a|b|", string(response.Tags[i][0].Value))
+	var keys []int64
+	var tags [][]Tag
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+		tags = append(tags, res.Tags...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 3, len(keys))
+	for i := 0; i < len(keys); i++ {
+		if keys[i] == 100 {
+			assert.Equal(t, "arr_tag", tags[i][0].Name)
+			assert.Equal(t, "a|b|", string(tags[i][0].Value))
 		}
 	}
 }
@@ -312,11 +351,22 @@ func TestSIDX_Query_Validation(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := sidx.Query(ctx, tt.req)
+			resultsCh, errCh := sidx.StreamingQuery(ctx, tt.req)
+			// revive:disable-next-line:empty-block
+			for range resultsCh {
+			}
+			err, ok := <-errCh
 			if tt.expectErr {
-				assert.Error(t, err)
+				if ok {
+					assert.Error(t, err)
+				} else {
+					// Validation error, should have been sent to errCh
+					t.Fatal("Expected error but got none")
+				}
 			} else {
-				assert.NoError(t, err)
+				if ok {
+					assert.NoError(t, err)
+				}
 			}
 		})
 	}
@@ -390,9 +440,27 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			expected, err := sidx.Query(ctx, tc.req)
-			require.NoError(t, err)
+			// Collect expected results from streaming query
+			var (
+				expectedKeys []int64
+				expectedData [][]byte
+				expectedTags [][]Tag
+				expectedSIDs []common.SeriesID
+			)
 
+			resultsCh, errCh := sidx.StreamingQuery(ctx, tc.req)
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				expectedKeys = append(expectedKeys, res.Keys...)
+				expectedData = append(expectedData, res.Data...)
+				expectedTags = append(expectedTags, res.Tags...)
+				expectedSIDs = append(expectedSIDs, res.SIDs...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
+
+			// Run the streaming query again and verify consistency
 			var (
 				gotKeys []int64
 				gotData [][]byte
@@ -400,25 +468,23 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 				gotSIDs []common.SeriesID
 			)
 
-			resultsCh, errCh := sidx.StreamingQuery(ctx, tc.req)
-
-			for res := range resultsCh {
+			resultsCh2, errCh2 := sidx.StreamingQuery(ctx, tc.req)
+			for res := range resultsCh2 {
 				require.NoError(t, res.Error)
 				gotKeys = append(gotKeys, res.Keys...)
 				gotData = append(gotData, res.Data...)
 				gotTags = append(gotTags, res.Tags...)
 				gotSIDs = append(gotSIDs, res.SIDs...)
 			}
-
-			if err, ok := <-errCh; ok {
+			if err, ok := <-errCh2; ok {
 				require.NoError(t, err)
 			}
 
-			require.Equal(t, expected.Keys, gotKeys)
-			require.Equal(t, expected.Data, gotData)
-			require.Equal(t, expected.SIDs, gotSIDs)
-			require.Equal(t, expected.Tags, gotTags)
-			require.Equal(t, expected.Len(), len(gotKeys))
+			require.Equal(t, expectedKeys, gotKeys)
+			require.Equal(t, expectedData, gotData)
+			require.Equal(t, expectedSIDs, gotSIDs)
+			require.Equal(t, expectedTags, gotTags)
+			require.Equal(t, len(expectedKeys), len(gotKeys))
 		})
 	}
 }
@@ -460,8 +526,16 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 
 	require.NotEmpty(t, batches)
 
-	expected, err := sidx.Query(context.Background(), queryReq)
-	require.NoError(t, err)
+	// Get expected count by collecting all streaming results
+	expectedCount := 0
+	resultsCh2, errCh2 := sidx.StreamingQuery(context.Background(), queryReq)
+	for res := range resultsCh2 {
+		require.NoError(t, res.Error)
+		expectedCount += res.Len()
+	}
+	if err, ok := <-errCh2; ok {
+		require.NoError(t, err)
+	}
 
 	totalResults := 0
 
@@ -481,7 +555,7 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, expected.Len(), totalResults)
+	require.Equal(t, expectedCount, totalResults)
 }
 
 func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
@@ -504,8 +578,16 @@ func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
 		MaxElementSize: 2,
 	}
 
-	expected, err := sidx.Query(context.Background(), queryReq)
-	require.NoError(t, err)
+	// Get expected count from first streaming query
+	expectedCount := 0
+	resultsCh0, errCh0 := sidx.StreamingQuery(context.Background(), queryReq)
+	for res := range resultsCh0 {
+		require.NoError(t, res.Error)
+		expectedCount += res.Len()
+	}
+	if err, ok := <-errCh0; ok {
+		require.NoError(t, err)
+	}
 
 	resultsCh, errCh := sidx.StreamingQuery(context.Background(), queryReq)
 
@@ -514,7 +596,7 @@ func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
 		require.NoError(t, res.Error)
 		totalResults += res.Len()
 	}
-	require.Equal(t, expected.Len(), totalResults)
+	require.Equal(t, expectedCount, totalResults)
 
 	_, ok := <-resultsCh
 	require.False(t, ok)

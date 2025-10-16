@@ -282,8 +282,9 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 
 // blockCursorHeap implements heap.Interface for sorting block cursors.
 type blockCursorHeap struct {
-	bcc []*blockCursor
-	asc bool
+	bcc         []*blockCursor
+	asc         bool
+	initialized bool
 }
 
 func (bch blockCursorHeap) Len() int {
@@ -325,31 +326,51 @@ func (bch *blockCursorHeap) reset() {
 		releaseBlockCursor(bch.bcc[i])
 	}
 	bch.bcc = bch.bcc[:0]
+	bch.initialized = false
+}
+
+// pushCursors adds cursors to the heap and initializes it if necessary.
+func (bch *blockCursorHeap) pushCursors(cursors []*blockCursor) {
+	if len(cursors) == 0 {
+		return
+	}
+
+	for i := range cursors {
+		if bch.initialized {
+			heap.Push(bch, cursors[i])
+		} else {
+			bch.Push(cursors[i])
+		}
+	}
+
+	if !bch.initialized && bch.Len() > 0 {
+		heap.Init(bch)
+		bch.initialized = true
+	}
 }
 
 // merge performs heap-based merge similar to query_by_ts.go.
 // It returns a QueryResponse along with a flag indicating whether the merge
 // stopped because the MaxElementSize limit has been reached.
-func (bch *blockCursorHeap) merge(limit int) (*QueryResponse, bool) {
+func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
+	if !bch.initialized || bch.Len() == 0 {
+		return nil
+	}
+
 	step := -1
 	if bch.asc {
 		step = 1
 	}
-	result := &QueryResponse{
+
+	// Initialize first batch
+	batch := &QueryResponse{
 		Keys: make([]int64, 0),
 		Data: make([][]byte, 0),
 		Tags: make([][]Tag, 0),
 		SIDs: make([]common.SeriesID, 0),
 	}
 
-	limitHit := false
-
 	for bch.Len() > 0 {
-		if limit > 0 && result.Len() >= limit {
-			limitHit = true
-			break
-		}
-
 		topBC := bch.bcc[0]
 		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
 			heap.Pop(bch)
@@ -357,7 +378,7 @@ func (bch *blockCursorHeap) merge(limit int) (*QueryResponse, bool) {
 		}
 
 		// Copy the element (may be filtered out by key range)
-		topBC.copyTo(result)
+		topBC.copyTo(batch)
 
 		topBC.idx += step
 
@@ -374,9 +395,43 @@ func (bch *blockCursorHeap) merge(limit int) (*QueryResponse, bool) {
 				heap.Fix(bch, 0)
 			}
 		}
+
+		// Send the batch when it reaches batchSize
+		if batchSize > 0 && batch.Len() >= batchSize {
+			if stats != nil {
+				stats.record(batch)
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case resultsCh <- batch:
+			}
+
+			// Create a new batch and continue
+			batch = &QueryResponse{
+				Keys: make([]int64, 0),
+				Data: make([][]byte, 0),
+				Tags: make([][]Tag, 0),
+				SIDs: make([]common.SeriesID, 0),
+			}
+		}
 	}
 
-	return result, limitHit
+	// Send remaining elements in the last batch
+	if batch.Len() > 0 {
+		if stats != nil {
+			stats.record(batch)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case resultsCh <- batch:
+		}
+	}
+
+	return nil
 }
 
 var blockCursorHeapPool = pool.Register[*blockCursorHeap]("sidx-blockCursorHeap")

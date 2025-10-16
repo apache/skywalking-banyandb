@@ -50,13 +50,7 @@ That's it! The test will validate bounded memory usage and generate detailed ana
 
 The streaming architecture prevents loading all blocks at once:
 
-**Old Approach (caused quota errors):**
-```go
-// Loads ALL matching blocks → 2.7GB → Quota exceeded
-blocks := sidx.Query(ctx, request)
-```
-
-**New Streaming Approach:**
+**Streaming Approach:**
 ```go
 // Loads MaxTraceSize batches → ~30MB per batch → Success
 for batch := range sidx.StreamingQuery(ctx, request) {
