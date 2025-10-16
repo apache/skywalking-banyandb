@@ -28,6 +28,7 @@
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { Last15Minutes, Shortcuts } from '../common/data';
+  import JSZip from 'jszip';
 
   const { proxy } = getCurrentInstance();
   const route = useRoute();
@@ -137,7 +138,7 @@ orderBy:
     selectedSpans.value[traceIndex] = selection;
   }
 
-  function downloadMultipleSpans(traceIndex) {
+  async function downloadMultipleSpans(traceIndex) {
     const selection = selectedSpans.value[traceIndex];
     if (!selection || selection.length === 0) {
       ElMessage({
@@ -149,10 +150,13 @@ orderBy:
     }
 
     try {
+      const zip = new JSZip();
+      const trace = data.tableData[traceIndex];
       const timestamp = Date.now();
       let successCount = 0;
 
-      selection.forEach((span, index) => {
+      // Add each span to the ZIP file
+      for (const span of selection) {
         if (span && span.span) {
           const base64Data = span.span;
           const binaryString = atob(base64Data);
@@ -160,31 +164,38 @@ orderBy:
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          const blob = new Blob([bytes], { type: 'application/octet-stream' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          
           // Find the original index of the span in the trace
-          const trace = data.tableData[traceIndex];
           const spanIndex = trace.spans.indexOf(span);
-          
-          link.download = `trace-${traceIndex + 1}-span-${spanIndex + 1}-${timestamp}.bin`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+          // Add the binary data to the ZIP file
+          zip.file(`span-${spanIndex + 1}.bin`, bytes);
           successCount++;
-
-          // Add a small delay between downloads to avoid browser issues
-          if (index < selection.length - 1) {
-            setTimeout(() => {}, 100);
-          }
         }
-      });
+      };
+
+      if (successCount === 0) {
+        ElMessage({
+          message: 'No valid spans to download',
+          type: 'warning',
+          duration: 3000,
+        });
+        return;
+      }
+
+      // Generate the ZIP file
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      
+      // Download the ZIP file
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `trace-${traceIndex + 1}-spans-${timestamp}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
 
       ElMessage({
-        message: `Successfully downloaded ${successCount} span(s)`,
+        message: `Successfully downloaded ${successCount} span(s) as compressed file`,
         type: 'success',
         duration: 2000,
       });
