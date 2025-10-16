@@ -66,9 +66,6 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
-	// TODO: remove this once we have a proper timeout mechanism
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	result := queryResult{
 		ctx:           ctx,
@@ -103,7 +100,8 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp)
 
-	pipelineCtx, cancel := context.WithCancel(ctx)
+	// TODO: remove this once we have a proper timeout mechanism
+	pipelineCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
 
