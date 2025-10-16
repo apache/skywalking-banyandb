@@ -42,6 +42,7 @@
     indexRule: '',
   });
   const yamlCode = ref(``);
+  const selectedSpans = ref({});
 
   const getTraces = async (params) => {
     $loadingCreate();
@@ -132,10 +133,15 @@ orderBy:
     getTraces(yamlToJson(yamlCode.value).data);
   }
 
-  function downloadSingleSpan(span, traceIndex, spanIndex) {
-    if (!span) {
+  function handleSelectionChange(traceIndex, selection) {
+    selectedSpans.value[traceIndex] = selection;
+  }
+
+  function downloadMultipleSpans(traceIndex) {
+    const selection = selectedSpans.value[traceIndex];
+    if (!selection || selection.length === 0) {
       ElMessage({
-        message: 'No span data to download',
+        message: 'Please select at least one span to download',
         type: 'warning',
         duration: 3000,
       });
@@ -143,31 +149,53 @@ orderBy:
     }
 
     try {
-      const jsonData = JSON.stringify(span, null, 2);
-      const blob = new Blob([jsonData], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `trace-${traceIndex + 1}-span-${spanIndex + 1}-${Date.now()}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      const timestamp = Date.now();
+      let successCount = 0;
+
+      selection.forEach((span, index) => {
+        if (span && span.span) {
+          const base64Data = span.span;
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          
+          // Find the original index of the span in the trace
+          const trace = data.tableData[traceIndex];
+          const spanIndex = trace.spans.indexOf(span);
+          
+          link.download = `trace-${traceIndex + 1}-span-${spanIndex + 1}-${timestamp}.bin`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          successCount++;
+
+          // Add a small delay between downloads to avoid browser issues
+          if (index < selection.length - 1) {
+            setTimeout(() => {}, 100);
+          }
+        }
+      });
 
       ElMessage({
-        message: `Span #${spanIndex + 1} downloaded successfully`,
+        message: `Successfully downloaded ${successCount} span(s)`,
         type: 'success',
         duration: 2000,
       });
     } catch (err) {
       ElMessage({
-        message: 'Failed to download span data: ' + err.message,
+        message: 'Failed to download spans: ' + err.message,
         type: 'error',
         duration: 3000,
       });
     }
   }
-
   watch(
     () => route,
     () => {
@@ -220,30 +248,33 @@ orderBy:
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span><strong>Trace #{{ traceIndex + 1 }}</strong></span>
               <div style="display: flex; align-items: center; gap: 10px">
+                <el-button 
+                  :icon="Download" 
+                  size="small" 
+                  @click="downloadMultipleSpans(traceIndex)"
+                  plain
+                  type="primary"
+                >
+                  Download Selected
+                </el-button>
                 <el-tag type="info">{{ trace.spans ? trace.spans.length : 0 }} Span(s)</el-tag>
               </div>
             </div>
           </template>
-          
           <!-- Spans List -->
           <div v-if="trace.spans && trace.spans.length > 0">
-            <el-table :data="trace.spans" stripe border style="width: 100%">
+            <el-table 
+              :data="trace.spans" 
+              stripe 
+              border 
+              style="width: 100%"
+              @selection-change="(selection) => handleSelectionChange(traceIndex, selection)"
+            >
+              <el-table-column type="selection" width="55" />
               <el-table-column type="index" label="#" width="60" />
-              <el-table-column prop="span" label="Span Data" show-overflow-tooltip>
+              <el-table-column prop="span" label="Span" show-overflow-tooltip>
                 <template #default="scope">
                   <el-text class="span-data" size="small">{{ scope.row.span }}</el-text>
-                </template>
-              </el-table-column>
-              <el-table-column label="Download" width="120" align="center">
-                <template #default="scope">
-                  <el-button 
-                    :icon="Download" 
-                    size="small" 
-                    @click="downloadSingleSpan(scope.row, traceIndex, scope.$index)"
-                    plain
-                  >
-                    Download
-                  </el-button>
                 </template>
               </el-table-column>
             </el-table>
