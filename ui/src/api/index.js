@@ -29,7 +29,7 @@ export function getGroupList() {
   });
 }
 
-export function getStreamOrMeasureList(type, name) {
+export function getAllTypesOfResourceList(type, name) {
   return request({
     url: `/api/v1/${type}/schema/lists/${name}`,
     method: 'get',
@@ -51,7 +51,7 @@ export function getTableList(data, type) {
   });
 }
 
-export function deleteStreamOrMeasure(type, group, name) {
+export function deleteAllTypesOfResource(type, group, name) {
   return request({
     url: `/api/v1/${type}/schema/${group}/${name}`,
     method: 'delete',
@@ -195,14 +195,6 @@ export function applyProperty(group, name, id, data) {
   });
 }
 
-// Trace APIs
-export function getTraceList(name) {
-  return request({
-    url: `/api/v1/trace/schema/lists/${name}`,
-    method: 'get',
-  });
-}
-
 export function getTrace(group, name) {
   return request({
     url: `/api/v1/trace/schema/${group}/${name}`,
@@ -223,13 +215,6 @@ export function updateTrace(group, name, data) {
     url: `/api/v1/trace/schema/${group}/${name}`,
     method: 'put',
     data: data,
-  });
-}
-
-export function deleteTrace(group, name) {
-  return request({
-    url: `/api/v1/trace/schema/${group}/${name}`,
-    method: 'delete',
   });
 }
 

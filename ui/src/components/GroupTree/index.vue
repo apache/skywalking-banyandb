@@ -24,8 +24,8 @@
     getindexRuleBindingList,
     getGroupList,
     getTopNAggregationList,
-    getStreamOrMeasureList,
-    deleteStreamOrMeasure,
+    getAllTypesOfResourceList,
+    deleteAllTypesOfResource,
     deleteGroup,
     createGroup,
     editGroup,
@@ -149,9 +149,10 @@
           const type = props.type;
           const name = item.metadata.name;
           return new Promise((resolve, reject) => {
-            getStreamOrMeasureList(type, name)
+            getAllTypesOfResourceList(type, name)
               .then((res) => {
                 if (res.status === 200) {
+                  console.log(type);
                   item.children = res.data[props.type === 'property' ? 'properties' : type];
                   resolve();
                 }
@@ -518,7 +519,7 @@
   }
   function deleteResource() {
     // delete Resources
-    deleteStreamOrMeasure(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
+    deleteAllTypesOfResource(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
       if (res.status === 200) {
         if (res.data.deleted) {
           ElMessage({
