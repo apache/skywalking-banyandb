@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -65,6 +66,9 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	// TODO: remove this once we have a proper timeout mechanism
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	result := queryResult{
 		ctx:           ctx,
