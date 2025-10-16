@@ -127,6 +127,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
+tagProjection: ["trace_id", "service_id"]
 orderBy:
   indexRuleName: ${data.indexRule.name}
   sort: SORT_DESC`;
@@ -207,6 +208,14 @@ orderBy:
       });
     }
   }
+
+  const getTagValue = (data) => {
+    if (!data.value) {
+      return '';
+    }
+    return JSON.stringify(data.value);
+  };
+
   watch(
     () => route,
     () => {
@@ -283,9 +292,16 @@ orderBy:
             >
               <el-table-column type="selection" width="55" />
               <el-table-column type="index" label="#" width="60" />
-              <el-table-column prop="span" label="Span" show-overflow-tooltip>
+              <el-table-column label="Tags">
                 <template #default="scope">
-                  <el-text class="span-data" size="small">{{ scope.row.span }}</el-text>
+                  <el-table :data="scope.row.tags">
+                    <el-table-column label="Key" prop="key" width="150"></el-table-column>
+                    <el-table-column label="Value" prop="value">
+                      <template #default="scope">
+                        {{ getTagValue(scope.row) }}
+                      </template>
+                    </el-table-column>
+                  </el-table>
                 </template>
               </el-table-column>
             </el-table>
