@@ -101,11 +101,12 @@ func (s *seriesIndexCallback) Rev(_ context.Context, message bus.Message) (resp 
 		return
 	}
 
-	s.l.Info().
-		Str("group", group).
-		Int("documentCount", len(documents)).
-		Time("segmentTime", segmentTime).
-		Msg("successfully inserted documents to series index")
+	if dl := s.l.Debug(); dl.Enabled() {
+		dl.Str("group", group).
+			Int("documentCount", len(documents)).
+			Time("segmentTime", segmentTime).
+			Msg("successfully inserted documents to series index")
+	}
 
 	return
 }
