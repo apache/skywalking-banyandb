@@ -85,7 +85,7 @@
       <el-form-item label="Tag Type" prop="value" label-width="150">
         <el-select v-model="formData.value" placeholder="Select type" style="width: 100%">
           <el-option
-            v-for="item in TagTypeOptions"
+            v-for="item in tagTypeOptions"
             :key="item.value"
             :label="item.label"
             :value="item.value"

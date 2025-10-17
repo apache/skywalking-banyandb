@@ -48,10 +48,16 @@
   const getTraces = async (params) => {
     $loadingCreate();
     const response = await queryTraces({ groups: [data.group], name: data.name, ...params })
-    if (response.status === 200) {
-      data.tableData = response.data.traces || [];
-    }
     $loadingClose();
+    if (response.error) {
+      ElMessage({
+        message: response.error.message,
+        type: 'error',
+        duration: 3000,
+      });
+      return;
+    }
+    data.tableData = response.traces || [];
   };
 
   const getIndexRule = async () => {

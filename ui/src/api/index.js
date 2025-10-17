@@ -20,6 +20,7 @@
 // api file
 
 import request from '@/utils/axios';
+import { httpQuery } from './base';
 
 // Some request methods
 export function getGroupList() {
@@ -218,10 +219,10 @@ export function updateTrace(group, name, data) {
   });
 }
 
-export function queryTraces(data) {
-  return request({
+export function queryTraces(json) {
+  return httpQuery({
     url: `/api/v1/trace/data`,
-    method: 'post',
-    data: data,
+    json,
+    method: 'POST',
   });
 }
