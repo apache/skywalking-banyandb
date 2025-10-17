@@ -50,6 +50,7 @@
     const response = await queryTraces({ groups: [data.group], name: data.name, ...params })
     $loadingClose();
     if (response.error) {
+      data.tableData = [];
       ElMessage({
         message: response.error.message,
         type: 'error',
