@@ -59,14 +59,16 @@
         return;
       }
       const { trace } = response;
-      formData.traceIdTagName = trace.traceIdTagName;
-      formData.timestampTagName = trace.timestampTagName;
-      formData.spanIdTagName = trace.spanIdTagName;
-      formData.tags = trace.tags.map((d) => ({
-        ...d,
-        key: d.name,
-        value: d.type,
-      }));
+      Object.assign(formData, {
+        traceIdTagName: trace.traceIdTagName,
+        timestampTagName: trace.timestampTagName,
+        spanIdTagName: trace.spanIdTagName,
+        tags: trace.tags.map((d) => ({
+          ...d,
+          key: d.name,
+          value: d.type,
+        })),
+      });
     }
   }
   const openEditTag = (index) => {
@@ -209,7 +211,7 @@
         </el-form-item>
         <el-form-item label="Tags" prop="tags" label-width="200">
           <el-button size="small" type="primary" color="#6E38F7" @click="openAddTag">Add Tag</el-button>
-          <el-table style="margin-top: 10px" :data="formData.tags" border>
+          <el-table style="margin-top: 10px; max-height: 400px; overflow: auto" :data="formData.tags" border>
             <el-table-column label="Name" prop="key"></el-table-column>
             <el-table-column label="Type" prop="value"></el-table-column>
             <el-table-column label="Operator" width="150">
