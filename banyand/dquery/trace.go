@@ -174,7 +174,6 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 		trace := &tracev1.InternalTrace{
 			TraceId: result.TID,
 			Spans:   make([]*tracev1.Span, 0),
-			SpanIds: result.SpanIDs,
 		}
 		traces = append(traces, trace)
 		for i, spanBytes := range result.Spans {
@@ -193,8 +192,9 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 				}
 			}
 			span := &tracev1.Span{
-				Tags: traceTags,
-				Span: spanBytes,
+				Tags:   traceTags,
+				Span:   spanBytes,
+				SpanId: result.SpanIDs[i],
 			}
 			trace.Spans = append(trace.Spans, span)
 		}
