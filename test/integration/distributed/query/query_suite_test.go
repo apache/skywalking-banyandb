@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
@@ -96,6 +97,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	test_stream.PreloadSchema(ctx, schemaRegistry)
 	test_measure.PreloadSchema(ctx, schemaRegistry)
 	test_trace.PreloadSchema(ctx, schemaRegistry)
+	test_property.PreloadSchema(ctx, schemaRegistry)
 	By("Starting data node 0")
 	closeDataNode0 := setup.DataNode(ep)
 	By("Starting data node 1")
