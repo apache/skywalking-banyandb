@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -39,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
