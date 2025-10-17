@@ -334,7 +334,7 @@ integer_literal ::= [0-9]+
 *   **`ORDER BY` clause**: Maps to `order_by`. Supports the following forms:
     *   **`ORDER BY field`**: Maps to `order_by` with ascending sort by default.
     *   **`ORDER BY field DESC` / `ORDER BY field ASC`**: Adds an explicit sort direction while targeting the specified field.
-    *   **`ORDER BY DESC` / `ORDER BY ASC`**: Shorthand that omits the field and relies on the resource's default order key. Use this when you only need to flip the default ordering direction.
+    *   **`ORDER BY TIME DESC` / `ORDER BY TIME ASC`**: Shorthand that relies on the timestamps.
 *   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset`.
 *   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 

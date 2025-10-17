@@ -17,4 +17,4 @@
 
 SELECT trace_id, duration, data_binary FROM STREAM sw IN default
 TIME > '-15m'
-ORDER BY ASC
+ORDER BY TIME ASC
