@@ -119,7 +119,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
 	}
 
-	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh, tqo.MaxTraceSize)
+	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh)
 
 	return &result, nil
 }
@@ -357,14 +357,6 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 
 			if batch.err != nil {
 				qr.err = batch.err
-				if batch.cursorCh != nil {
-					// Drain and release any cursors from the channel
-					for result := range batch.cursorCh {
-						if result.cursor != nil {
-							releaseBlockCursor(result.cursor)
-						}
-					}
-				}
 				return true
 			}
 
@@ -482,34 +474,16 @@ func (qr *queryResult) Release() {
 		qr.cancel()
 	}
 
-	qr.releaseCurrentBatch()
-
 	if qr.cursorBatchCh != nil {
-		for {
-			select {
-			case batch, ok := <-qr.cursorBatchCh:
-				if !ok {
-					qr.cursorBatchCh = nil
-					goto done
-				}
-				if batch == nil {
-					continue
-				}
-				// Drain and release cursors from the channel
-				if batch.cursorCh != nil {
-					for result := range batch.cursorCh {
-						if result.cursor != nil {
-							releaseBlockCursor(result.cursor)
-						}
-					}
-				}
-			default:
-				goto done
-			}
+		for range qr.cursorBatchCh {
+			_ = 0
 		}
+		qr.cursorBatchCh = nil
 	}
 
-done:
+	qr.releaseCurrentBatch()
+
+	// Now safe to release snapshots - all workers have finished
 	for i := range qr.snapshots {
 		qr.snapshots[i].decRef()
 	}

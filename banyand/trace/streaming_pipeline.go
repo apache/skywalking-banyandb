@@ -29,7 +29,6 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -292,7 +291,6 @@ type sidxStreamRunner struct {
 	batchesEmitted int
 	duplicates     int
 	batchSize      int
-	limitReached   bool
 }
 
 func tagSIDXStreamSpan(span *query.Span, req sidx.QueryRequest, maxTraceSize int, instanceCount int) {
@@ -426,10 +424,10 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 
 func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 	// Always drain error events before returning, even on early exit
-	// Drain BEFORE cancel to give error forwarding goroutines a chance
+	// Cancel first to stop SIDX goroutines, then drain any pending errors
 	defer func() {
-		r.drainErrorEvents(out)
 		r.cancel()
+		r.drainErrorEvents(out)
 	}()
 
 	if r.heap.Len() == 0 {
@@ -437,11 +435,6 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 	}
 
 	for r.heap.Len() > 0 {
-		if r.maxTraceSize > 0 && r.total >= r.maxTraceSize {
-			r.limitReached = true
-			break
-		}
-
 		if err := r.streamCtx.Err(); err != nil {
 			if r.spanErr == nil {
 				r.spanErr = err
@@ -472,11 +465,6 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			if !r.emitBatch(out) {
 				return
 			}
-		}
-
-		if added && r.maxTraceSize > 0 && r.total >= r.maxTraceSize {
-			r.limitReached = true
-			break
 		}
 
 		if err := r.advanceShard(shard); err != nil {
@@ -609,7 +597,12 @@ func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
 				// No error in this event, continue reading
 				continue
 			}
-			// Found an error, emit it and return
+			// Skip context.Canceled errors if we're shutting down normally
+			// (these are expected cleanup errors, not actual failures)
+			if stdErrors.Is(ev.err, context.Canceled) {
+				continue
+			}
+			// Found a real error, emit it and return
 			eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
 			r.emitError(out, eventErr)
 			return
@@ -622,7 +615,7 @@ func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
 					if !ok {
 						return
 					}
-					if ev.err != nil {
+					if ev.err != nil && !stdErrors.Is(ev.err, context.Canceled) {
 						eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
 						r.emitError(out, eventErr)
 						return
@@ -664,9 +657,6 @@ func (r *sidxStreamRunner) finishSpan() {
 	if r.duplicates > 0 {
 		r.span.Tagf("duplicate_trace_ids", "%d", r.duplicates)
 	}
-	if r.limitReached {
-		r.span.Tag("max_trace_limit_hit", "true")
-	}
 	if r.spanErr != nil && !stdErrors.Is(r.spanErr, context.Canceled) {
 		r.span.Error(r.spanErr)
 	}
@@ -678,256 +668,44 @@ func (t *trace) startBlockScanStage(
 	parts []*part,
 	qo queryOptions,
 	batches <-chan traceBatch,
-	maxTraceSize int,
 ) <-chan *scanBatch {
 	out := make(chan *scanBatch)
 
-	workerCount := cgroups.CPUs()
-	if workerCount < 1 {
-		workerCount = 1
-	}
-
-	jobCh := make(chan traceBatch)
-	resultCh := make(chan *scanBatch)
-
-	var workerGroup sync.WaitGroup
-	workerGroup.Add(workerCount)
-
-	t.launchBlockScanWorkers(ctx, parts, qo, workerCount, jobCh, resultCh, &workerGroup)
-
-	go func() {
-		workerGroup.Wait()
-		close(resultCh)
-	}()
-
-	go func() {
-		t.dispatchTraceBatches(ctx, batches, jobCh, maxTraceSize)
-	}()
-
 	go func() {
 		defer close(out)
-		t.collectScanResults(ctx, resultCh, out)
+
+		for batch := range batches {
+			if batch.err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &scanBatch{traceBatch: batch, err: batch.err}:
+				}
+				continue
+			}
+
+			// Create the cursor channel and scanBatch
+			cursorCh := make(chan scanCursorResult)
+			sb := &scanBatch{
+				traceBatch: batch,
+				cursorCh:   cursorCh,
+			}
+
+			// Send batch downstream first so consumer can start reading
+			select {
+			case <-ctx.Done():
+				close(cursorCh)
+				return
+			case out <- sb:
+			}
+
+			// Now scan inline and populate the channel
+			t.scanTraceIDsInline(ctx, parts, qo, batch.traceIDs, cursorCh)
+			close(cursorCh)
+		}
 	}()
 
 	return out
-}
-
-func (t *trace) launchBlockScanWorkers(
-	ctx context.Context,
-	parts []*part,
-	qo queryOptions,
-	workerCount int,
-	jobCh <-chan traceBatch,
-	resultCh chan<- *scanBatch,
-	wg *sync.WaitGroup,
-) {
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			defer wg.Done()
-			for batch := range jobCh {
-				sb := t.processTraceBatch(ctx, parts, qo, batch)
-				if sb == nil {
-					continue
-				}
-
-				select {
-				case <-ctx.Done():
-					if sb.err == nil {
-						drainAndReleaseCursorChannel(sb.cursorCh)
-					}
-					return
-				case resultCh <- sb:
-				}
-			}
-		}()
-	}
-}
-
-func (t *trace) dispatchTraceBatches(
-	ctx context.Context,
-	batches <-chan traceBatch,
-	jobCh chan<- traceBatch,
-	maxTraceSize int,
-) {
-	defer close(jobCh)
-
-	total := 0
-	sequence := 0
-	limitReached := false
-
-	for batch := range batches {
-		if limitReached {
-			continue
-		}
-
-		if batch.err != nil {
-			batch.seq = sequence
-			sequence++
-			if !sendTraceBatch(ctx, jobCh, batch) {
-				return
-			}
-			limitReached = true
-			continue
-		}
-
-		if len(batch.traceIDs) == 0 {
-			continue
-		}
-
-		var reached bool
-		batch, total, reached = limitTraceBatch(batch, maxTraceSize, total)
-		if len(batch.traceIDs) == 0 {
-			if reached {
-				limitReached = true
-			}
-			continue
-		}
-
-		batch.seq = sequence
-		sequence++
-		if !sendTraceBatch(ctx, jobCh, batch) {
-			return
-		}
-		if reached {
-			limitReached = true
-		}
-	}
-}
-
-func limitTraceBatch(batch traceBatch, maxTraceSize int, total int) (traceBatch, int, bool) {
-	if maxTraceSize <= 0 {
-		total += len(batch.traceIDs)
-		return batch, total, false
-	}
-
-	remaining := maxTraceSize - total
-	if remaining <= 0 {
-		batch.traceIDs = batch.traceIDs[:0]
-		return batch, total, true
-	}
-
-	if len(batch.traceIDs) > remaining {
-		batch.traceIDs = append([]string(nil), batch.traceIDs[:remaining]...)
-	}
-
-	total += len(batch.traceIDs)
-
-	return batch, total, total >= maxTraceSize
-}
-
-func sendTraceBatch(ctx context.Context, jobCh chan<- traceBatch, batch traceBatch) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case jobCh <- batch:
-		return true
-	}
-}
-
-func (t *trace) collectScanResults(
-	ctx context.Context,
-	resultCh <-chan *scanBatch,
-	out chan<- *scanBatch,
-) {
-	pending := make(map[int]*scanBatch)
-	nextSeq := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			releasePendingBatches(pending)
-			return
-		case sb, ok := <-resultCh:
-			if !ok {
-				flushPendingBatches(out, pending, nextSeq)
-				return
-			}
-			if sb == nil {
-				continue
-			}
-			if !t.processScanBatch(ctx, sb, pending, &nextSeq, out) {
-				releasePendingBatches(pending)
-				return
-			}
-		}
-	}
-}
-
-func (t *trace) processScanBatch(
-	ctx context.Context,
-	sb *scanBatch,
-	pending map[int]*scanBatch,
-	nextSeq *int,
-	out chan<- *scanBatch,
-) bool {
-	if sb.err != nil {
-		releasePendingBatches(pending)
-		return sendScanBatch(ctx, out, sb)
-	}
-
-	if sb.seq == *nextSeq {
-		if !sendScanBatch(ctx, out, sb) {
-			return false
-		}
-		(*nextSeq)++
-		return t.flushReadyBatches(ctx, pending, nextSeq, out)
-	}
-
-	pending[sb.seq] = sb
-	return true
-}
-
-func (t *trace) flushReadyBatches(
-	ctx context.Context,
-	pending map[int]*scanBatch,
-	nextSeq *int,
-	out chan<- *scanBatch,
-) bool {
-	for {
-		sb, exists := pending[*nextSeq]
-		if !exists {
-			return true
-		}
-		delete(pending, *nextSeq)
-		if !sendScanBatch(ctx, out, sb) {
-			releasePendingBatches(pending)
-			return false
-		}
-		(*nextSeq)++
-	}
-}
-
-func flushPendingBatches(out chan<- *scanBatch, pending map[int]*scanBatch, nextSeq int) {
-	for {
-		sb, exists := pending[nextSeq]
-		if !exists {
-			break
-		}
-		out <- sb
-		delete(pending, nextSeq)
-		nextSeq++
-	}
-}
-
-func sendScanBatch(ctx context.Context, out chan<- *scanBatch, sb *scanBatch) bool {
-	select {
-	case <-ctx.Done():
-		if sb.err == nil {
-			drainAndReleaseCursorChannel(sb.cursorCh)
-		}
-		return false
-	case out <- sb:
-		return true
-	}
-}
-
-func releasePendingBatches(pending map[int]*scanBatch) {
-	for seq, sb := range pending {
-		if sb != nil && sb.err == nil {
-			drainAndReleaseCursorChannel(sb.cursorCh)
-		}
-		delete(pending, seq)
-	}
 }
 
 type scanCursorResult struct {
@@ -935,136 +713,104 @@ type scanCursorResult struct {
 	err    error
 }
 
-func (t *trace) scanTraceIDs(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string) <-chan scanCursorResult {
-	out := make(chan scanCursorResult)
-
-	go func() {
-		defer close(out)
-
-		if len(parts) == 0 || len(traceIDs) == 0 {
-			return
-		}
-
-		sortedIDs := append([]string(nil), traceIDs...)
-		sort.Strings(sortedIDs)
-
-		recordBlock, finish := startBlockScanSpan(ctx, sortedIDs, parts)
-		if finish == nil {
-			finish = func(error) {}
-		}
-
-		var (
-			spanErr        error
-			spanBlockBytes uint64
-			cursorCount    int
-		)
-
-		defer func() {
-			finish(spanErr)
-		}()
-
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		tstIter := generateTstIter()
-		defer releaseTstIter(tstIter)
-
-		tstIter.init(bma, parts, sortedIDs)
-		if initErr := tstIter.Error(); initErr != nil {
-			spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
-			select {
-			case out <- scanCursorResult{err: spanErr}:
-			case <-ctx.Done():
-			}
-			return
-		}
-
-		quota := t.pm.AvailableBytes()
-		hit := 0
-
-		for tstIter.nextBlock() {
-			if hit%checkDoneEvery == 0 {
-				select {
-				case <-ctx.Done():
-					spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
-						cursorCount, len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
-					return
-				default:
-				}
-			}
-			hit++
-
-			// Create block cursor and get size before checking quota
-			bc := generateBlockCursor()
-			p := tstIter.piPool[tstIter.idx]
-			bc.init(p.p, p.curBlock, qo)
-			blockSize := bc.bm.uncompressedSpanSizeBytes
-
-			// Check if adding this block would exceed quota
-			if quota >= 0 && spanBlockBytes+blockSize > uint64(quota) {
-				releaseBlockCursor(bc)
-				if cursorCount > 0 {
-					// Have results, return them successfully by just closing channel
-					return
-				}
-				// No results, send error
-				spanErr = fmt.Errorf("block scan quota exceeded: block size %d bytes, quota is %d bytes", blockSize, quota)
-				select {
-				case out <- scanCursorResult{err: spanErr}:
-				case <-ctx.Done():
-				}
-				return
-			}
-
-			// Quota OK, send cursor
-			if recordBlock != nil {
-				recordBlock(bc)
-			}
-			spanBlockBytes += blockSize
-			cursorCount++
-
-			select {
-			case out <- scanCursorResult{cursor: bc}:
-			case <-ctx.Done():
-				releaseBlockCursor(bc)
-				spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks", cursorCount)
-				return
-			}
-		}
-
-		if iterErr := tstIter.Error(); iterErr != nil {
-			spanErr = fmt.Errorf("cannot iterate tstIter: %w", iterErr)
-			select {
-			case out <- scanCursorResult{err: spanErr}:
-			case <-ctx.Done():
-			}
-			return
-		}
-	}()
-
-	return out
-}
-
-func (t *trace) processTraceBatch(ctx context.Context, parts []*part, qo queryOptions, batch traceBatch) *scanBatch {
-	if batch.err != nil {
-		return &scanBatch{traceBatch: batch, err: batch.err}
-	}
-
-	sb := &scanBatch{traceBatch: batch}
-
-	// Pass the cursor channel through for true streaming - no blocking!
-	sb.cursorCh = t.scanTraceIDs(ctx, parts, qo, batch.traceIDs)
-
-	return sb
-}
-
-func drainAndReleaseCursorChannel(cursorCh <-chan scanCursorResult) {
-	if cursorCh == nil {
+func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string, out chan<- scanCursorResult) {
+	if len(parts) == 0 || len(traceIDs) == 0 {
 		return
 	}
-	for result := range cursorCh {
-		if result.cursor != nil {
-			releaseBlockCursor(result.cursor)
+
+	sortedIDs := append([]string(nil), traceIDs...)
+	sort.Strings(sortedIDs)
+
+	recordBlock, finish := startBlockScanSpan(ctx, sortedIDs, parts)
+	if finish == nil {
+		finish = func(error) {}
+	}
+
+	var (
+		spanErr        error
+		spanBlockBytes uint64
+		cursorCount    int
+	)
+
+	defer func() {
+		finish(spanErr)
+	}()
+
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	tstIter := generateTstIter()
+	defer releaseTstIter(tstIter)
+
+	tstIter.init(bma, parts, sortedIDs)
+	if initErr := tstIter.Error(); initErr != nil {
+		spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
+		select {
+		case out <- scanCursorResult{err: spanErr}:
+		case <-ctx.Done():
 		}
+		return
+	}
+
+	quota := t.pm.AvailableBytes()
+	hit := 0
+
+	for tstIter.nextBlock() {
+		if hit%checkDoneEvery == 0 {
+			select {
+			case <-ctx.Done():
+				spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
+					cursorCount, len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
+				return
+			default:
+			}
+		}
+		hit++
+
+		// Create block cursor and get size before checking quota
+		bc := generateBlockCursor()
+		p := tstIter.piPool[tstIter.idx]
+		bc.init(p.p, p.curBlock, qo)
+		blockSize := bc.bm.uncompressedSpanSizeBytes
+
+		// Check if adding this block would exceed quota
+		if quota >= 0 && spanBlockBytes+blockSize > uint64(quota) {
+			releaseBlockCursor(bc)
+			if cursorCount > 0 {
+				// Have results, return them successfully by just closing channel
+				return
+			}
+			// No results, send error
+			spanErr = fmt.Errorf("block scan quota exceeded: block size %d bytes, quota is %d bytes", blockSize, quota)
+			select {
+			case out <- scanCursorResult{err: spanErr}:
+			case <-ctx.Done():
+			}
+			return
+		}
+
+		// Quota OK, send cursor
+		if recordBlock != nil {
+			recordBlock(bc)
+		}
+		spanBlockBytes += blockSize
+		cursorCount++
+
+		select {
+		case out <- scanCursorResult{cursor: bc}:
+		case <-ctx.Done():
+			releaseBlockCursor(bc)
+			spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks", cursorCount)
+			return
+		}
+	}
+
+	if iterErr := tstIter.Error(); iterErr != nil {
+		spanErr = fmt.Errorf("cannot iterate tstIter: %w", iterErr)
+		select {
+		case out <- scanCursorResult{err: spanErr}:
+		case <-ctx.Done():
+		}
+		return
 	}
 }

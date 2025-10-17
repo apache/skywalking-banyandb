@@ -71,6 +71,9 @@ func startBlockScanSpan(ctx context.Context, traceIDs []string, parts []*part) (
 	span.Tag("part_header", partMetadataHeader)
 	span.Tag("part_count", strconv.Itoa(len(parts)))
 	for i := range parts {
+		if parts[i] == nil {
+			continue
+		}
 		span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path), parts[i].partMetadata.String())
 	}
 
