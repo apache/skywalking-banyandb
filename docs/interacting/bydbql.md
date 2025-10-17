@@ -303,7 +303,7 @@ criteria        ::= condition (("AND" | "OR") condition)*
 condition       ::= identifier binary_op (value | value_list)
 time_condition  ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op       ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "MATCH"
-order_expression::= identifier ["ASC" | "DESC"]
+order_expression::= [identifier] ["ASC" | "DESC"]
 value           ::= string_literal | integer_literal | "NULL"
 value_list      ::= "(" value ("," value)* ")"
 timestamp       ::= string_literal | integer_literal
@@ -331,7 +331,10 @@ integer_literal ::= [0-9]+
     *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
     *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
 *   **`WHERE conditions`**: Maps to `criteria`.
-*   **`ORDER BY field`**: Maps to `order_by`.
+*   **`ORDER BY` clause**: Maps to `order_by`. Supports the following forms:
+    *   **`ORDER BY field`**: Maps to `order_by` with ascending sort by default.
+    *   **`ORDER BY field DESC` / `ORDER BY field ASC`**: Adds an explicit sort direction while targeting the specified field.
+    *   **`ORDER BY DESC` / `ORDER BY ASC`**: Shorthand that omits the field and relies on the resource's default order key. Use this when you only need to flip the default ordering direction.
 *   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset`.
 *   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
