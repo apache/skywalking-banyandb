@@ -454,6 +454,18 @@ The text of each license is also included at licenses/ui-licenses/LICENSE-[proje
  
 
 ========================================================================
+(MIT AND Zlib) licenses
+========================================================================
+
+    pako 1.0.11 (MIT AND Zlib)
+
+========================================================================
+(MIT OR GPL-3.0-or-later) licenses
+========================================================================
+
+    jszip 3.10.1 (MIT OR GPL-3.0-or-later)
+
+========================================================================
 0BSD licenses
 ========================================================================
 
@@ -505,8 +517,7 @@ MIT licenses
     @floating-ui/utils 0.2.10 MIT
     @jridgewell/sourcemap-codec 1.5.5 MIT
     @parcel/watcher 2.5.1 MIT
-    @parcel/watcher-linux-x64-glibc 2.5.1 MIT
-    @parcel/watcher-linux-x64-musl 2.5.1 MIT
+    @parcel/watcher-darwin-x64 2.5.1 MIT
     @popperjs/core 2.11.7 MIT
     @types/lodash 4.17.20 MIT
     @types/lodash-es 4.17.12 MIT
@@ -562,7 +573,6 @@ MIT licenses
     isarray 1.0.0 MIT
     js-yaml 4.1.0 MIT
     jsonfile 6.2.0 MIT
-    jszip 3.10.1 (MIT OR GPL-3.0-or-later)
     lie 3.3.0 MIT
     lodash 4.17.21 MIT
     lodash-es 4.17.21 MIT
@@ -576,14 +586,13 @@ MIT licenses
     mitt 3.0.1 MIT
     nanoid 3.3.11 MIT
     node-addon-api 7.1.1 MIT
-    pako 1.0.11 (MIT AND Zlib)
     picomatch 2.3.1 MIT
     pinia 2.3.1 MIT
     postcss 8.5.6 MIT
     process-nextick-args 2.0.1 MIT
     proxy-from-env 1.1.0 MIT
-    readdirp 4.1.2 MIT
     readable-stream 2.3.8 MIT
+    readdirp 4.1.2 MIT
     safe-buffer 5.1.2 MIT
     sass 1.93.1 MIT
     setimmediate 1.0.5 MIT
