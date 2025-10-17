@@ -23,7 +23,8 @@
   import { useRoute, useRouter } from 'vue-router';
   import { updateTrace, createTrace, getTrace } from '@/api';
   import FormHeader from '../common/FormHeader.vue';
-  import { rules, strategyGroup, formConfig } from './data';
+  import TagEditor from './TagEditor.vue';
+  import { rules, formConfig, traceFieldsConfig } from './data';
 
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
@@ -34,7 +35,6 @@
   const ruleForm = ref();
   const { operator, name, group, type } = route.params;
   const formData = reactive({
-    strategy: strategyGroup[0].value,
     group: group || '',
     operator,
     type,
@@ -87,7 +87,6 @@
       if (valid) {
         $loadingCreate();
         const param = {
-          strategy: formData.strategy,
           trace: {
             metadata: {
               group: formData.group,
@@ -240,8 +239,23 @@
             </el-table-column>
           </el-table>
         </el-form-item>
+        <el-form-item
+          v-for="item in traceFieldsConfig"
+          :key="item.prop"
+          :label="item.label"
+          :prop="item.prop"
+          label-width="200"
+        >
+          <el-input
+            v-if="item.type === 'input'"
+            v-model="formData[item.prop]"
+            :disabled="item.disabled"
+            autocomplete="off"
+          ></el-input>
+        </el-form-item>
       </el-form>
     </el-card>
+    <TagEditor ref="tagEditorRef" />
   </div>
 </template>
 <style lang="scss" scoped>

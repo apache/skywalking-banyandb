@@ -17,23 +17,7 @@
  * under the License.
  */
 
-export const strategyGroup = [
-  {
-    value: 'STRATEGY_MERGE',
-    label: 'STRATEGY_MERGE',
-  },
-  {
-    value: 'STRATEGY_REPLACE',
-    label: 'STRATEGY_REPLACE',
-  },
-];
 export const formConfig = [
-  {
-    label: 'Strategy',
-    prop: 'strategy',
-    type: 'select',
-    selectGroup: strategyGroup,
-  },
   {
     label: 'Group',
     prop: 'group',
@@ -46,6 +30,9 @@ export const formConfig = [
     type: 'input',
     disabled: false,
   },
+];
+
+export const traceFieldsConfig = [
   {
     label: 'Trace ID Tag Name',
     prop: 'traceIdTagName',
@@ -75,3 +62,25 @@ export const rules = {
   tags: [{ required: true, message: 'Please add at least one tag', trigger: 'change' }],
 };
 
+export const tagTypeOptions = [
+  {
+    value: 'TAG_TYPE_INT',
+    label: 'INT',
+  },
+  {
+    value: 'TAG_TYPE_STRING',
+    label: 'STRING',
+  },
+  {
+    value: 'TAG_TYPE_INT_ARRAY',
+    label: 'INT_ARRAY',
+  },
+  {
+    value: 'TAG_TYPE_STRING_ARRAY',
+    label: 'STRING_ARRAY',
+  },
+  {
+    value: 'TAG_TYPE_DATA_BINARY',
+    label: 'DATA_BINARY',
+  },
+];
