@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package data includes utilities for property test data management and verification.
 package data
 
 import (
@@ -111,10 +112,12 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
 }
 
+// Write writes a property with the given name to the "ui_menu" group and "sw" name.
 func Write(conn *grpclib.ClientConn, name string) {
 	WriteToGroup(conn, "ui_menu", "sw", name)
 }
 
+// WriteToGroup writes a property with the given name to the specified group and name.
 func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string) {
 	metadata := &commonv1.Metadata{
 		Name:  name,
@@ -131,6 +134,7 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string) {
 	content, err := dataFS.ReadFile(fmt.Sprintf("testdata/%s.json", fileName))
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(protojson.Unmarshal(content, &request)).ShouldNot(gm.HaveOccurred())
+	request.Property.Metadata = metadata
 
 	_, err = c.Apply(ctx, &request)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())

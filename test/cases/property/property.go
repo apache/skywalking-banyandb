@@ -15,14 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package property includes test cases for property queries.
 package property
 
 import (
+	g "github.com/onsi/ginkgo/v2"
+	gm "github.com/onsi/gomega"
+
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	propertyTestData "github.com/apache/skywalking-banyandb/test/cases/property/data"
-	g "github.com/onsi/ginkgo/v2"
-	gm "github.com/onsi/gomega"
 )
 
 var (
