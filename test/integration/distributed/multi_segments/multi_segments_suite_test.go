@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
+	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -97,6 +99,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	test_stream.PreloadSchema(ctx, schemaRegistry)
 	test_measure.PreloadSchema(ctx, schemaRegistry)
 	test_trace.PreloadSchema(ctx, schemaRegistry)
+	test_property.PreloadSchema(ctx, schemaRegistry)
 
 	By("Starting data node 0")
 	closeDataNode0 := setup.DataNode(ep)
@@ -133,6 +136,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   baseTime,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   baseTime,
+	}
+	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   baseTime,
 	}
