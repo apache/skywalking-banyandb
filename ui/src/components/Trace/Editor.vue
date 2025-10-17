@@ -175,7 +175,7 @@
           </el-col>
           <el-col :span="4">
             <div class="flex align-item-center justify-end" style="height: 30px">
-              <el-button size="small" type="primary" @click="submit(ruleFormRef)" color="#6E38F7">Submit</el-button>
+              <el-button size="small" type="primary" @click="submit()" color="#6E38F7">Submit</el-button>
             </div>
           </el-col>
         </el-row>
