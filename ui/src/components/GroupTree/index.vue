@@ -44,6 +44,7 @@
     CatalogToGroupType,
     GroupTypeToCatalog,
     TypeMap,
+    SupportedIndexRuleTypes,
   } from './data';
 
    // props data
@@ -152,7 +153,7 @@
             getAllTypesOfResourceList(type, name)
               .then((res) => {
                 if (res.status === 200) {
-                  item.children = res.data[props.type === 'property' ? 'properties' : type];
+                  item.children = res.data[type];
                   resolve();
                 }
               })
@@ -161,7 +162,7 @@
               });
           });
         });
-        if (props.type === 'stream' || props.type === 'measure' || props.type === 'trace') {
+        if (SupportedIndexRuleTypes.includes(props.type)) {
           const promiseIndexRule = data.groupLists.map((item) => {
             const name = item.metadata.name;
             return new Promise((resolve, reject) => {
