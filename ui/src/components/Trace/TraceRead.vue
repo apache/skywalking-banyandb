@@ -233,21 +233,28 @@ orderBy:
   }
 
   const getTagValue = (data) => {
-    if (data.value === 'null' || data.value === null || data.value === undefined) {
+    let value = data.value;
+
+    const isNullish = (val) => val === null || val === undefined || val === 'null';
+    if (isNullish(value)) {
       return 'N/A';
     }
-    if (typeof data.value !== 'object') {
-      return data.value;
+    for (let i = 0; i < 2; i++) {
+      if (typeof value !== 'object') {
+        return value;
+      }
+      for (const key in value) {
+        if (Object.hasOwn(value, key)) {
+          value = value[key];
+          break;
+        }
+      }
+      if (isNullish(value)) {
+        return 'N/A';
+      }
     }
-    const value = Object.values(data.value)[0];
-    if (!value) {
-      return 'N/A';
-    }
-    const param = Object.values(value)[0];
-    if (!param) {
-      return 'N/A';
-    }
-    return param;
+    
+    return value;
   };
 
   const arraySpanMethod = ({ row, column, rowIndex, columnIndex }) => {
