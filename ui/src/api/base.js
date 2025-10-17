@@ -34,8 +34,6 @@ class HTTPError extends Error {
   }
 }
 
-export const BasePath = `/graphql`;
-
 export async function httpQuery({ url = '', method = 'GET', json, headers = {} }) {
   const timeoutId = setTimeout(() => {
     abortRequestsAndUpdate();
@@ -52,12 +50,14 @@ export async function httpQuery({ url = '', method = 'GET', json, headers = {} }
     signal: globalAbortController.signal,
   })
     .catch((error) => {
-      throw new HTTPError(error);
+      return {
+        error: new Error(error || 'Unknown error'),
+      };
     })
     .finally(() => {
       clearTimeout(timeoutId);
     });
-  if (response.ok) {
+  if (response && response.ok) {
     return response.json();
   } else {
     console.error(new HTTPError(response));

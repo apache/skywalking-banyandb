@@ -94,7 +94,7 @@
         ElMessage({
           dangerouslyUseHTMLString: true,
           showClose: true,
-          message: err.message,
+          message: err.message, 
           type: 'error',
           duration: 5000,
         });
