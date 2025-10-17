@@ -562,7 +562,7 @@ MIT licenses
     isarray 1.0.0 MIT
     js-yaml 4.1.0 MIT
     jsonfile 6.2.0 MIT
-    jszip 3.10.1 MIT
+    jszip 3.10.1 (MIT OR GPL-3.0-or-later)
     lie 3.3.0 MIT
     lodash 4.17.21 MIT
     lodash-es 4.17.21 MIT
