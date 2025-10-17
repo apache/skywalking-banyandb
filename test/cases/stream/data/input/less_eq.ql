@@ -15,26 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "sw"
-groups: ["default"]
-projection:
-  tagFamilies:
-  - name: "searchable"
-    tags: ["trace_id", "span_id", "start_time"]
-criteria:
-  le:
-    op: "LOGICAL_OP_AND"
-    left:
-      condition:
-        name: "span_id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "1"
-    right:
-      condition:
-        name: "start_time"
-        op: "BINARY_OP_EQ"
-        value:
-          int:
-            value: 1622933202000000000
+SELECT trace_id, duration, data_binary FROM STREAM sw IN default
+TIME > '-15m'
+WHERE duration <= 500

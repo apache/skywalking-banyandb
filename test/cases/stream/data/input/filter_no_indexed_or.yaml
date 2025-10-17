@@ -42,12 +42,9 @@ criteria:
               int:
                 value: 1622933202000000000
         right:
-          le:
-            op: "LOGICAL_OP_AND"
-            left:
-              condition:
-                name: "state"
-                op: "BINARY_OP_EQ"
-                value:
-                  int:
-                    value: "0"
+          condition:
+            name: "state"
+            op: "BINARY_OP_EQ"
+            value:
+              int:
+                value: "0"

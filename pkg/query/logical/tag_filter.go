@@ -393,6 +393,10 @@ func newInTag(tagName string, values LiteralExpr) *inTag {
 	}
 }
 
+func (h *inTag) String() string {
+	return convert.JSONToString(h)
+}
+
 func (h *inTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
 	expr, err := tagExpr(accessor, registry, h.Name, nil)
 	if err != nil {
