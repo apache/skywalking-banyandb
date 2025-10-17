@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -94,6 +95,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ctx := context.Background()
 	test_stream.LoadSchemaWithStages(ctx, schemaRegistry)
 	test_measure.LoadSchemaWithStages(ctx, schemaRegistry)
+	test_property.PreloadSchema(ctx, schemaRegistry)
 	By("Starting hot data node")
 	var closeDataNode0 func()
 	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=hot", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")

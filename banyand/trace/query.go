@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"container/heap"
 	"context"
 	"fmt"
 	"sort"
@@ -49,23 +48,14 @@ type queryOptions struct {
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
-	if tqo.TimeRange == nil {
-		return nil, errors.New("invalid query options: timeRange are required")
+	if err := validateTraceQueryOptions(tqo); err != nil {
+		return nil, err
 	}
-	if len(tqo.TraceIDs) == 0 && tqo.Order == nil {
-		return nil, errors.New("invalid query options: either traceIDs or order must be specified")
-	}
-	var tsdb storage.TSDB[*tsTable, option]
+
 	var err error
-	db := t.tsdb.Load()
-	if db == nil {
-		tsdb, err = t.schemaRepo.loadTSDB(t.group)
-		if err != nil {
-			return nil, err
-		}
-		t.tsdb.Store(tsdb)
-	} else {
-		tsdb = db.(storage.TSDB[*tsTable, option])
+	tsdb, err := t.ensureTSDB()
+	if err != nil {
+		return nil, err
 	}
 
 	segments, err := tsdb.SelectSegments(*tqo.TimeRange)
@@ -86,8 +76,9 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 			result.Release()
 		}
 	}()
+
 	sort.Strings(tqo.TraceIDs)
-	var parts []*part
+
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
 		traceIDs:          tqo.TraceIDs,
@@ -95,265 +86,404 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		maxTimestamp:      tqo.TimeRange.End.UnixNano(),
 	}
 
-	// Process entities to get series IDs for sidx queries
-	if len(tqo.Entities) > 0 {
-		// Create series from entities for lookup
-		series := make([]*pbv1.Series, len(tqo.Entities))
-		for i, entityValues := range tqo.Entities {
-			series[i] = &pbv1.Series{
-				Subject:      tqo.Name,
-				EntityValues: entityValues,
-			}
-		}
-
-		// Use segment lookup to find actual series that exist in the data
-		qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
-		for _, segment := range segments {
-			sl, lookupErr := segment.Lookup(ctx, series)
-			if lookupErr != nil {
-				return nil, fmt.Errorf("cannot lookup series: %w", lookupErr)
-			}
-			for _, s := range sl {
-				qo.seriesToEntity[s.ID] = s.EntityValues
-			}
-		}
-	}
-	var n int
-	tables := make([]*tsTable, 0)
-	for _, segment := range segments {
-		tt, _ := segment.Tables()
-		tables = append(tables, tt...)
+	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
+		return nil, err
 	}
 
-	// Check if we need to use sidx for ordering when no trace IDs are provided
-	if len(tqo.TraceIDs) == 0 && tqo.Order != nil {
-		// Extract sidx name from index rule
-		sidxName := "default" // fallback to default sidx
-		if tqo.Order.Index != nil {
-			sidxName = tqo.Order.Index.GetMetadata().GetName()
-		}
+	tables := collectTables(segments)
 
-		// Collect sidx instances from all tables
-		var sidxInstances []sidx.SIDX
-		for _, table := range tables {
-			if sidxInstance, exists := table.getSidx(sidxName); exists {
-				sidxInstances = append(sidxInstances, sidxInstance)
-			}
-		}
-
-		if len(sidxInstances) > 0 {
-			// Query sidx for trace IDs
-			var seriesIDs []common.SeriesID
-			for seriesID := range qo.seriesToEntity {
-				seriesIDs = append(seriesIDs, seriesID)
-			}
-			traceIDs, keys, sidxErr := t.querySidxForTraceIDs(ctx, sidxInstances, tqo, seriesIDs)
-			result.keys = keys
-			if sidxErr != nil {
-				t.l.Warn().Err(sidxErr).Str("sidx", sidxName).Msg("sidx query failed, falling back to normal query")
-			} else if len(traceIDs) > 0 {
-				// Store original sidx order before sorting for partIter
-				result.originalSidxOrder = make([]string, len(traceIDs))
-				copy(result.originalSidxOrder, traceIDs)
-
-				// Create sidx order map for efficient heap operations
-				result.sidxOrderMap = make(map[string]int)
-				for i, traceID := range result.originalSidxOrder {
-					result.sidxOrderMap[traceID] = i
-				}
-
-				qo.traceIDs = traceIDs
-				sort.Strings(qo.traceIDs) // Sort for partIter efficiency
-			}
-		}
-	}
-	if len(qo.traceIDs) == 0 {
+	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(tqo, qo, tables)
+	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
 		return nilResult, nil
 	}
+
+	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp)
+
+	pipelineCtx, cancel := context.WithCancel(ctx)
+	result.ctx = pipelineCtx
+	result.cancel = cancel
+
+	if result.keys == nil {
+		result.keys = make(map[string]int64)
+	}
+
+	var traceBatchCh <-chan traceBatch
+	switch {
+	case len(qo.traceIDs) > 0:
+		traceBatchCh = staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
+	case useSIDXStreaming:
+		traceBatchCh = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+	default:
+		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
+	}
+
+	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh, tqo.MaxTraceSize)
+
+	return &result, nil
+}
+
+func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
+	if tqo.TimeRange == nil {
+		return errors.New("invalid query options: timeRange are required")
+	}
+	if len(tqo.TraceIDs) == 0 && tqo.Order == nil {
+		return errors.New("invalid query options: either traceIDs or order must be specified")
+	}
+	return nil
+}
+
+func (t *trace) ensureTSDB() (storage.TSDB[*tsTable, option], error) {
+	if db := t.tsdb.Load(); db != nil {
+		return db.(storage.TSDB[*tsTable, option]), nil
+	}
+
+	tsdb, err := t.schemaRepo.loadTSDB(t.group)
+	if err != nil {
+		return nil, err
+	}
+	t.tsdb.Store(tsdb)
+	return tsdb, nil
+}
+
+func (t *trace) resolveSeriesEntities(
+	ctx context.Context,
+	segments []storage.Segment[*tsTable, option],
+	qo *queryOptions,
+	name string,
+	entities [][]*modelv1.TagValue,
+) error {
+	if len(entities) == 0 {
+		return nil
+	}
+
+	series := make([]*pbv1.Series, len(entities))
+	for i, entityValues := range entities {
+		series[i] = &pbv1.Series{
+			Subject:      name,
+			EntityValues: entityValues,
+		}
+	}
+
+	qo.seriesToEntity = make(map[common.SeriesID][]*modelv1.TagValue)
+	for _, segment := range segments {
+		sl, err := segment.Lookup(ctx, series)
+		if err != nil {
+			return fmt.Errorf("cannot lookup series: %w", err)
+		}
+		for _, s := range sl {
+			qo.seriesToEntity[s.ID] = s.EntityValues
+		}
+	}
+
+	return nil
+}
+
+func collectTables(segments []storage.Segment[*tsTable, option]) []*tsTable {
+	tables := make([]*tsTable, 0)
+	for _, segment := range segments {
+		if tt, _ := segment.Tables(); len(tt) > 0 {
+			tables = append(tables, tt...)
+		}
+	}
+	return tables
+}
+
+func (t *trace) prepareSIDXStreaming(
+	tqo model.TraceQueryOptions,
+	qo queryOptions,
+	tables []*tsTable,
+) ([]sidx.SIDX, sidx.QueryRequest, bool) {
+	if len(tqo.TraceIDs) > 0 || tqo.Order == nil {
+		return nil, sidx.QueryRequest{}, false
+	}
+
+	sidxName := "default"
+	if tqo.Order.Index != nil {
+		sidxName = tqo.Order.Index.GetMetadata().GetName()
+	}
+
+	sidxInstances := make([]sidx.SIDX, 0, len(tables))
+	for _, table := range tables {
+		if instance, exists := table.getSidx(sidxName); exists {
+			sidxInstances = append(sidxInstances, instance)
+		}
+	}
+	if len(sidxInstances) == 0 {
+		return nil, sidx.QueryRequest{}, false
+	}
+
+	seriesIDs := make([]common.SeriesID, 0, len(qo.seriesToEntity))
+	for seriesID := range qo.seriesToEntity {
+		seriesIDs = append(seriesIDs, seriesID)
+	}
+	if len(seriesIDs) == 0 {
+		seriesIDs = []common.SeriesID{1}
+	}
+
+	req := sidx.QueryRequest{
+		Filter:         tqo.SkippingFilter,
+		Order:          tqo.Order,
+		MaxElementSize: tqo.MaxTraceSize,
+		MinKey:         &tqo.MinVal,
+		MaxKey:         &tqo.MaxVal,
+		SeriesIDs:      seriesIDs,
+	}
+	if tqo.TagProjection != nil {
+		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
+	}
+
+	return sidxInstances, req, true
+}
+
+func (t *trace) attachSnapshots(
+	qr *queryResult,
+	tables []*tsTable,
+	minTimestamp int64,
+	maxTimestamp int64,
+) []*part {
+	parts := make([]*part, 0)
 	for i := range tables {
 		s := tables[i].currentSnapshot()
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
-		if n < 1 {
+
+		var count int
+		parts, count = s.getParts(parts, minTimestamp, maxTimestamp)
+		if count < 1 {
 			s.decRef()
 			continue
 		}
-		result.snapshots = append(result.snapshots, s)
-	}
 
-	if err = t.searchBlocks(ctx, &result, parts, qo); err != nil {
-		return nil, err
+		qr.snapshots = append(qr.snapshots, s)
 	}
-
-	return &result, nil
-}
-
-func (t *trace) searchBlocks(ctx context.Context, result *queryResult, parts []*part, qo queryOptions) error {
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
-	defFn := startBlockScanSpan(ctx, qo.traceIDs, parts, result)
-	defer defFn()
-	tstIter := generateTstIter()
-	defer releaseTstIter(tstIter)
-	tstIter.init(bma, parts, qo.traceIDs)
-	if tstIter.Error() != nil {
-		return fmt.Errorf("cannot init tstIter: %w", tstIter.Error())
-	}
-	var hit int
-	var spanBlockBytes uint64
-	quota := t.pm.AvailableBytes()
-	for tstIter.nextBlock() {
-		if hit%checkDoneEvery == 0 {
-			select {
-			case <-ctx.Done():
-				return errors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
-					len(result.data), len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
-			default:
-			}
-		}
-		hit++
-		bc := generateBlockCursor()
-		p := tstIter.piPool[tstIter.idx]
-		bc.init(p.p, p.curBlock, qo)
-		result.data = append(result.data, bc)
-		spanBlockBytes += bc.bm.uncompressedSpanSizeBytes
-		if quota >= 0 && spanBlockBytes > uint64(quota) {
-			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", spanBlockBytes, quota)
-		}
-	}
-	if tstIter.Error() != nil {
-		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
-	}
-	return t.pm.AcquireResource(ctx, spanBlockBytes)
+	return parts
 }
 
 type queryResult struct {
-	ctx               context.Context
-	tagProjection     *model.TagProjection
-	sidxOrderMap      map[string]int
-	keys              map[string]int64
-	data              []*blockCursor
-	snapshots         []*snapshot
-	segments          []storage.Segment[*tsTable, option]
-	originalSidxOrder []string
-	hit               int
-	loaded            bool
+	ctx                 context.Context
+	err                 error
+	cancel              context.CancelFunc
+	tagProjection       *model.TagProjection
+	keys                map[string]int64
+	cursorBatchCh       <-chan *scanBatch
+	currentBatch        *scanBatch
+	currentCursorGroups map[string][]*blockCursor
+	snapshots           []*snapshot
+	segments            []storage.Segment[*tsTable, option]
+	currentIndex        int
+	hit                 int
 }
 
 func (qr *queryResult) Pull() *model.TraceResult {
-	select {
-	case <-qr.ctx.Done():
-		return &model.TraceResult{
-			Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit),
-		}
-	default:
-	}
-	if !qr.loaded {
-		if len(qr.data) == 0 {
-			return nil
-		}
-
-		cursorChan := make(chan int, len(qr.data))
-		for i := 0; i < len(qr.data); i++ {
-			go func(i int) {
-				select {
-				case <-qr.ctx.Done():
-					cursorChan <- i
-					return
-				default:
-				}
-				tmpBlock := generateBlock()
-				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock) {
-					cursorChan <- i
-					return
-				}
-				cursorChan <- -1
-			}(i)
-		}
-
-		blankCursorList := []int{}
-		for completed := 0; completed < len(qr.data); completed++ {
-			result := <-cursorChan
-			if result != -1 {
-				blankCursorList = append(blankCursorList, result)
-			}
-		}
+	for {
 		select {
 		case <-qr.ctx.Done():
 			return &model.TraceResult{
-				Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: blank/total=%d/%d", len(blankCursorList), len(qr.data)),
+				Error: errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit),
 			}
 		default:
 		}
-		sort.Slice(blankCursorList, func(i, j int) bool {
-			return blankCursorList[i] > blankCursorList[j]
-		})
-		for _, index := range blankCursorList {
-			qr.data = append(qr.data[:index], qr.data[index+1:]...)
-		}
-		qr.loaded = true
 
-		// Resort data according to original sidx order if available
-		if len(qr.originalSidxOrder) > 0 {
-			qr.resortDataBySidxOrder()
+		// Ensure we have a batch ready or surface any pending error.
+		if qr.err != nil {
+			return &model.TraceResult{Error: qr.err}
 		}
 
-		heap.Init(qr)
+		if !qr.ensureCurrentBatch() {
+			return nil
+		}
+
+		if qr.currentBatch == nil || qr.currentIndex >= len(qr.currentBatch.traceIDs) {
+			qr.releaseCurrentBatch()
+			continue
+		}
+
+		traceID := qr.currentBatch.traceIDs[qr.currentIndex]
+		cursors := qr.currentCursorGroups[traceID]
+
+		if len(cursors) == 0 {
+			qr.currentIndex++
+			delete(qr.currentCursorGroups, traceID)
+			continue
+		}
+
+		filtered, err := qr.loadTraceCursors(cursors)
+		if err != nil {
+			qr.err = err
+			return &model.TraceResult{Error: err}
+		}
+		if len(filtered) == 0 {
+			qr.currentIndex++
+			delete(qr.currentCursorGroups, traceID)
+			continue
+		}
+
+		result := &model.TraceResult{}
+		for _, bc := range filtered {
+			bc.copyAllTo(result)
+			releaseBlockCursor(bc)
+		}
+		result.Key = qr.keys[traceID]
+		result.TID = traceID
+
+		qr.hit++
+		qr.currentIndex++
+		delete(qr.currentCursorGroups, traceID)
+
+		return result
 	}
-	if len(qr.data) == 0 {
-		return nil
-	}
-	if len(qr.data) == 1 {
-		r := &model.TraceResult{}
-		bc := qr.data[0]
-		bc.copyAllTo(r)
-		r.Key = qr.keys[bc.bm.traceID]
-		qr.data = qr.data[:0]
-		releaseBlockCursor(bc)
-		return r
-	}
-	return qr.merge()
 }
 
-// resortDataBySidxOrder reorders the data to match the original sidx order.
-func (qr *queryResult) resortDataBySidxOrder() {
-	if len(qr.originalSidxOrder) == 0 || len(qr.data) == 0 {
-		return
+func (qr *queryResult) ensureCurrentBatch() bool {
+	if qr.currentBatch != nil && qr.currentIndex < len(qr.currentBatch.traceIDs) {
+		return true
 	}
 
-	// Sort data according to the original sidx order using the pre-computed map
-	sort.Slice(qr.data, func(i, j int) bool {
-		traceIDi := qr.data[i].bm.traceID
-		traceIDj := qr.data[j].bm.traceID
+	qr.releaseCurrentBatch()
 
-		orderi, existi := qr.sidxOrderMap[traceIDi]
-		orderj, existj := qr.sidxOrderMap[traceIDj]
+	for {
+		select {
+		case batch, ok := <-qr.cursorBatchCh:
+			if !ok {
+				qr.cursorBatchCh = nil
+				return false
+			}
+			if batch == nil {
+				continue
+			}
 
-		// If both trace IDs are in the original order, use that ordering
-		if existi && existj {
-			return orderi < orderj
-		}
-		// If only one is in the original order, prioritize it
-		if existi {
+			if batch.err != nil {
+				qr.err = batch.err
+				if batch.cursors != nil {
+					for _, bc := range batch.cursors {
+						releaseBlockCursor(bc)
+					}
+					batch.cursors = nil
+				}
+				return true
+			}
+
+			qr.currentBatch = batch
+			qr.currentIndex = 0
+			qr.currentCursorGroups = make(map[string][]*blockCursor, len(batch.traceIDs))
+
+			for _, bc := range batch.cursors {
+				traceID := bc.bm.traceID
+				qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], bc)
+			}
+
+			if len(batch.keys) > 0 {
+				if qr.keys == nil {
+					qr.keys = make(map[string]int64, len(batch.keys))
+				}
+				for k, v := range batch.keys {
+					qr.keys[k] = v
+				}
+			}
+
+			return true
+
+		case <-qr.ctx.Done():
+			qr.err = errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit)
 			return true
 		}
-		if existj {
-			return false
+	}
+}
+
+func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor, error) {
+	if len(cursors) == 0 {
+		return nil, nil
+	}
+
+	cursorChan := make(chan int, len(cursors))
+	for i := range cursors {
+		go func(idx int) {
+			select {
+			case <-qr.ctx.Done():
+				cursorChan <- idx
+				return
+			default:
+			}
+			tmpBlock := generateBlock()
+			defer releaseBlock(tmpBlock)
+			if !cursors[idx].loadData(tmpBlock) {
+				cursorChan <- idx
+				return
+			}
+			cursorChan <- -1
+		}(i)
+	}
+
+	var blankCursorIdx []int
+	for completed := 0; completed < len(cursors); completed++ {
+		select {
+		case <-qr.ctx.Done():
+			return nil, errors.WithMessagef(qr.ctx.Err(), "interrupt while loading trace data")
+		case idx := <-cursorChan:
+			if idx != -1 {
+				blankCursorIdx = append(blankCursorIdx, idx)
+			}
 		}
-		// If neither is in the original order, use alphabetical ordering
-		return traceIDi < traceIDj
-	})
+	}
+
+	if len(blankCursorIdx) > 0 {
+		sort.Slice(blankCursorIdx, func(i, j int) bool {
+			return blankCursorIdx[i] > blankCursorIdx[j]
+		})
+		for _, idx := range blankCursorIdx {
+			releaseBlockCursor(cursors[idx])
+			cursors = append(cursors[:idx], cursors[idx+1:]...)
+		}
+	}
+
+	return cursors, nil
+}
+
+func (qr *queryResult) releaseCurrentBatch() {
+	if qr.currentCursorGroups != nil {
+		for _, group := range qr.currentCursorGroups {
+			for _, bc := range group {
+				releaseBlockCursor(bc)
+			}
+		}
+		qr.currentCursorGroups = nil
+	}
+	if qr.currentBatch != nil {
+		qr.currentBatch.cursors = nil
+		qr.currentBatch = nil
+	}
+	qr.currentIndex = 0
 }
 
 func (qr *queryResult) Release() {
-	for i, v := range qr.data {
-		releaseBlockCursor(v)
-		qr.data[i] = nil
+	if qr.cancel != nil {
+		qr.cancel()
 	}
-	qr.data = qr.data[:0]
+
+	qr.releaseCurrentBatch()
+
+	if qr.cursorBatchCh != nil {
+		for {
+			select {
+			case batch, ok := <-qr.cursorBatchCh:
+				if !ok {
+					qr.cursorBatchCh = nil
+					goto done
+				}
+				if batch == nil {
+					continue
+				}
+				for _, bc := range batch.cursors {
+					releaseBlockCursor(bc)
+				}
+			default:
+				goto done
+			}
+		}
+	}
+
+done:
 	for i := range qr.snapshots {
 		qr.snapshots[i].decRef()
 	}
@@ -361,71 +491,7 @@ func (qr *queryResult) Release() {
 	for i := range qr.segments {
 		qr.segments[i].DecRef()
 	}
-}
-
-func (qr queryResult) Len() int {
-	return len(qr.data)
-}
-
-func (qr queryResult) Less(i, j int) bool {
-	traceIDi := qr.data[i].bm.traceID
-	traceIDj := qr.data[j].bm.traceID
-
-	if len(qr.originalSidxOrder) == 0 {
-		return traceIDi < traceIDj
-	}
-
-	orderi, existi := qr.sidxOrderMap[traceIDi]
-	orderj, existj := qr.sidxOrderMap[traceIDj]
-
-	// If both trace IDs are in the original order, use that ordering
-	if existi && existj {
-		return orderi < orderj
-	}
-	// If only one is in the original order, prioritize it
-	if existi {
-		return true
-	}
-	if existj {
-		return false
-	}
-	// If neither is in the original order, use alphabetical ordering as fallback
-	return traceIDi < traceIDj
-}
-
-func (qr queryResult) Swap(i, j int) {
-	qr.data[i], qr.data[j] = qr.data[j], qr.data[i]
-}
-
-func (qr *queryResult) Push(x interface{}) {
-	qr.data = append(qr.data, x.(*blockCursor))
-}
-
-func (qr *queryResult) Pop() interface{} {
-	old := qr.data
-	n := len(old)
-	x := old[n-1]
-	qr.data = old[0 : n-1]
-	releaseBlockCursor(x)
-	return x
-}
-
-func (qr *queryResult) merge() *model.TraceResult {
-	result := &model.TraceResult{}
-	var lastTraceID string
-
-	for qr.Len() > 0 {
-		topBC := qr.data[0]
-		if lastTraceID != "" && topBC.bm.traceID != lastTraceID {
-			return result
-		}
-		lastTraceID = topBC.bm.traceID
-		topBC.copyAllTo(result)
-		result.Key = qr.keys[topBC.bm.traceID]
-		heap.Pop(qr)
-	}
-
-	return result
+	qr.segments = qr.segments[:0]
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {

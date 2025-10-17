@@ -104,18 +104,35 @@ func TestQueryResult(t *testing.T) {
 				ti := &tstIter{}
 				ti.init(bma, pp, []string{tt.traceID})
 
-				var result queryResult
+				var (
+					result  queryResult
+					cursors []*blockCursor
+				)
 				result.ctx = context.TODO()
-				// Query all tags
 				result.tagProjection = allTagProjections
+				result.keys = map[string]int64{tt.traceID: 0}
+
 				for ti.nextBlock() {
 					bc := generateBlockCursor()
 					p := ti.piPool[ti.idx]
 					opts := queryOpts
 					opts.TagProjection = allTagProjections
 					bc.init(p.p, p.curBlock, opts)
-					result.data = append(result.data, bc)
+					cursors = append(cursors, bc)
 				}
+
+				cursorBatch := make(chan *scanBatch, 1)
+				cursorBatch <- &scanBatch{
+					traceBatch: traceBatch{
+						traceIDs: []string{tt.traceID},
+						keys:     map[string]int64{tt.traceID: 0},
+					},
+					cursors: cursors,
+				}
+				close(cursorBatch)
+
+				result.cursorBatchCh = cursorBatch
+
 				defer result.Release()
 
 				var got []model.TraceResult

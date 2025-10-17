@@ -20,6 +20,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -37,8 +38,13 @@ type (
 )
 
 // Tracer is a simple tracer for query.
+// Thread-safety: StartSpan and span mutations are thread-safe and can be called
+// concurrently from multiple goroutines. However, ToProto() returns a direct pointer
+// to internal data and must only be called after all span operations have completed
+// to avoid data races on concurrent reads/writes.
 type Tracer struct {
 	data *commonv1.Trace
+	mu   sync.Mutex
 }
 
 // NewTracer creates a new tracer.
@@ -79,19 +85,27 @@ func (t *Tracer) StartSpan(ctx context.Context, format string, args ...interface
 	}
 	sv := ctx.Value(spanKey)
 	if sv == nil {
+		t.mu.Lock()
 		t.data.Spans = append(t.data.Spans, s.data)
+		t.mu.Unlock()
 		return s, context.WithValue(ctx, spanKey, s)
 	}
 	parentSpan, ok := ctx.Value(spanKey).(*Span)
 	if ok {
 		parentSpan.addChild(s.data)
 	} else {
+		t.mu.Lock()
 		t.data.Spans = append(t.data.Spans, s.data)
+		t.mu.Unlock()
 	}
 	return s, context.WithValue(ctx, spanKey, s)
 }
 
 // ToProto returns the proto representation of the tracer.
+// WARNING: This method returns a direct pointer to the internal trace data without locking.
+// It MUST only be called after all span operations are complete and no further mutations
+// will occur. Calling this concurrently with in-flight span mutations will cause data races.
+// Typical usage: call this once at the end of query processing to serialize the trace.
 func (t *Tracer) ToProto() *commonv1.Trace {
 	return t.data
 }
@@ -100,12 +114,25 @@ func (t *Tracer) ToProto() *commonv1.Trace {
 type Span struct {
 	data   *commonv1.Span
 	tracer *Tracer
+	mu     sync.Mutex
 }
 
 func (s *Span) addChild(child *commonv1.Span) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data.Children = append(s.data.Children, child)
 	if child.Error {
-		s.Error(fmt.Errorf("sub span error"))
+		// Inline error handling to avoid recursive lock
+		if !s.data.Error {
+			s.data.Error = true
+			s.data.Tags = append(s.data.Tags, &commonv1.Tag{
+				Key:   "error_msg",
+				Value: "sub span error",
+			})
+			s.tracer.mu.Lock()
+			s.tracer.data.Error = true
+			s.tracer.mu.Unlock()
+		}
 	}
 }
 
@@ -114,13 +141,31 @@ func (s *Span) AddSubTrace(trace *commonv1.Trace) {
 	if trace == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hasError := false
 	for i := range trace.Spans {
-		s.addChild(trace.Spans[i])
+		s.data.Children = append(s.data.Children, trace.Spans[i])
+		if trace.Spans[i].Error {
+			hasError = true
+		}
+	}
+	if hasError && !s.data.Error {
+		s.data.Error = true
+		s.data.Tags = append(s.data.Tags, &commonv1.Tag{
+			Key:   "error_msg",
+			Value: "sub span error",
+		})
+		s.tracer.mu.Lock()
+		s.tracer.data.Error = true
+		s.tracer.mu.Unlock()
 	}
 }
 
 // Tag adds a tag to the span.
 func (s *Span) Tag(key, value string) *Span {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
 		Key:   key,
 		Value: value,
@@ -130,6 +175,8 @@ func (s *Span) Tag(key, value string) *Span {
 
 // Tagf adds a formatted tag to the span.
 func (s *Span) Tagf(key, format string, args ...any) *Span {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
 		Key:   key,
 		Value: fmt.Sprintf(format, args...),
@@ -139,17 +186,27 @@ func (s *Span) Tagf(key, format string, args ...any) *Span {
 
 // Error marks the span as an error span.
 func (s *Span) Error(err error) *Span {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.data.Error {
 		return s
 	}
 	s.data.Error = true
-	s.Tag("error_msg", err.Error())
+	// Inline Tag() to avoid recursive lock
+	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
+		Key:   "error_msg",
+		Value: err.Error(),
+	})
+	s.tracer.mu.Lock()
 	s.tracer.data.Error = true
+	s.tracer.mu.Unlock()
 	return s
 }
 
 // Stop stops the span.
 func (s *Span) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data.EndTime = timestamppb.Now()
 	s.data.Duration = s.data.EndTime.AsTime().Sub(s.data.StartTime.AsTime()).Nanoseconds()
 }

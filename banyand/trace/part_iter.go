@@ -334,8 +334,88 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 	return nil
 }
 
+func (pmi *partMergeIter) peekBlockMetadata() (*blockMetadata, bool) {
+	if len(pmi.primaryBuf) == 0 {
+		return nil, false
+	}
+	bm := generateBlockMetadata()
+	_, err := bm.unmarshal(pmi.primaryBuf, pmi.tagType)
+	if err != nil {
+		return nil, false
+	}
+	return bm, true
+}
+
 func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer) {
 	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm)
+}
+
+func (pmi *partMergeIter) mustReadRaw(r *rawBlock, bm *blockMetadata) {
+	r.bm = bm
+	// spans
+	if bm.spans != nil && bm.spans.size > 0 {
+		// Validate the reader is aligned to the expected offset
+		if bm.spans.offset != pmi.seqReaders.spans.bytesRead {
+			logger.Panicf("offset %d must be equal to bytesRead %d", bm.spans.offset, pmi.seqReaders.spans.bytesRead)
+		}
+		r.spans = bytes.ResizeOver(r.spans[:0], int(bm.spans.size))
+		pmi.seqReaders.spans.mustReadFull(r.spans)
+	} else {
+		r.spans = r.spans[:0]
+	}
+	// tags
+	if len(bm.tags) > 0 {
+		if r.tags == nil {
+			r.tags = make(map[string][]byte, len(bm.tags))
+		}
+		if r.tagMetadata == nil {
+			r.tagMetadata = make(map[string][]byte, len(bm.tags))
+		}
+		for name, db := range bm.tags {
+			// read tag metadata block
+			// Validate the tag metadata reader alignment
+			if db.offset != pmi.seqReaders.tagMetadata[name].bytesRead {
+				logger.Panicf("offset %d must be equal to bytesRead %d", db.offset, pmi.seqReaders.tagMetadata[name].bytesRead)
+			}
+			mb := r.tagMetadata[name]
+			mb = bytes.ResizeOver(mb[:0], int(db.size))
+			pmi.seqReaders.tagMetadata[name].mustReadFull(mb)
+			r.tagMetadata[name] = mb
+			// parse to locate tag values range
+			tm := generateTagMetadata()
+			if err := tm.unmarshal(mb); err != nil {
+				logger.Panicf("cannot unmarshal tag metadata: %v", err)
+			}
+			// read tag values
+			// Validate the tag values reader alignment
+			if tm.offset != pmi.seqReaders.tags[name].bytesRead {
+				logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, pmi.seqReaders.tags[name].bytesRead)
+			}
+			vb := r.tags[name]
+			vb = bytes.ResizeOver(vb[:0], int(tm.size))
+			pmi.seqReaders.tags[name].mustReadFull(vb)
+			r.tags[name] = vb
+			releaseTagMetadata(tm)
+		}
+		for k := range r.tags {
+			if _, ok := bm.tags[k]; !ok {
+				delete(r.tags, k)
+			}
+		}
+		for k := range r.tagMetadata {
+			if _, ok := bm.tags[k]; !ok {
+				delete(r.tagMetadata, k)
+			}
+		}
+	} else {
+		// Clear maps for tags that are not present
+		for k := range r.tags {
+			delete(r.tags, k)
+		}
+		for k := range r.tagMetadata {
+			delete(r.tagMetadata, k)
+		}
+	}
 }
 
 func generatePartMergeIter() *partMergeIter {

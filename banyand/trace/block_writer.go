@@ -264,6 +264,86 @@ func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	bw.maxTimestamp = 0
 }
 
+func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
+	bm := r.bm
+	if bm.count == 0 {
+		return
+	}
+	hasWrittenBlocks := len(bw.traceIDs) > 0
+	var tidLast string
+	var isSeenTid bool
+
+	if hasWrittenBlocks {
+		tidLast = bw.traceIDs[len(bw.traceIDs)-1]
+		if bm.traceID < tidLast {
+			logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", bm.traceID, tidLast)
+		}
+		isSeenTid = bm.traceID == tidLast
+	}
+	bw.traceIDs = append(bw.traceIDs, bm.traceID)
+	bw.tagType.copyFrom(bm.tagType)
+
+	tm := &bm.timestamps
+	if bw.totalCount == 0 || tm.min < bw.totalMinTimestamp {
+		bw.totalMinTimestamp = tm.min
+	}
+	if bw.totalCount == 0 || tm.max > bw.totalMaxTimestamp {
+		bw.totalMaxTimestamp = tm.max
+	}
+	if !hasWrittenBlocks || tm.min < bw.minTimestamp {
+		bw.minTimestamp = tm.min
+	}
+	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
+		bw.maxTimestamp = tm.max
+	}
+	if isSeenTid && tm.min < bw.minTimestampLast {
+		logger.Panicf("the block for tid=%s cannot contain timestamp smaller than %d, but it contains timestamp %d", bm.traceID, bw.minTimestampLast, tm.min)
+	}
+	bw.minTimestampLast = tm.min
+
+	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
+	bw.totalCount += bm.count
+	bw.totalBlocksCount++
+
+	newBm := generateBlockMetadata()
+	newBm.copyFrom(bm)
+
+	newBm.spans.offset = bw.writers.spanWriter.bytesWritten
+	bw.writers.spanWriter.MustWrite(r.spans)
+
+	for name := range bm.tags {
+		tmw, tw := bw.writers.getWriters(name)
+		newDB := newBm.getTagMetadata(name)
+
+		// Unmarshal the tag metadata to update the tag value offset
+		tm := generateTagMetadata()
+		if err := tm.unmarshal(r.tagMetadata[name]); err != nil {
+			logger.Panicf("cannot unmarshal tag metadata for %s: %v", name, err)
+		}
+
+		// Update the tag value offset to point to the correct location in the new file
+		tm.offset = tw.bytesWritten
+		tw.MustWrite(r.tags[name])
+
+		// Now marshal the updated metadata and write it
+		bb := bigValuePool.Generate()
+		bb.Buf = tm.marshal(bb.Buf[:0])
+		newDB.offset = tmw.bytesWritten
+		newDB.size = uint64(len(bb.Buf))
+		tmw.MustWrite(bb.Buf)
+		bigValuePool.Release(bb)
+		releaseTagMetadata(tm)
+	}
+
+	bw.primaryBlockData = newBm.marshal(bw.primaryBlockData)
+	releaseBlockMetadata(newBm)
+
+	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
+		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
+		bw.primaryBlockData = bw.primaryBlockData[:0]
+	}
+}
+
 func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 	pm.UncompressedSpanSizeBytes = bw.totalUncompressedSpanSizeBytes
 	pm.TotalCount = bw.totalCount

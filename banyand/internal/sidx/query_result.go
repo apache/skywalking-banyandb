@@ -210,15 +210,6 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, result *QueryResponse) {
 	elemCount := len(block.userKeys)
 
-	// Initialize unique Data tracking if needed
-	if qr.request.MaxElementSize > 0 && result.uniqueTracker == nil {
-		result.InitUniqueTracker(qr.request.MaxElementSize)
-		// Initialize tracker with existing data
-		for _, data := range result.Data {
-			result.uniqueTracker.ShouldAdd(data)
-		}
-	}
-
 	for i := 0; i < elemCount; i++ {
 		// Filter by key range from QueryRequest
 		key := block.userKeys[i]
@@ -229,8 +220,8 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 			continue
 		}
 
-		// Check unique Data element limit using QueryResponse's tracker
-		if !result.ShouldAddData(block.data[i]) {
+		// Enforce MaxElementSize by total element count
+		if qr.request.MaxElementSize > 0 && result.Len() >= qr.request.MaxElementSize {
 			break
 		}
 
@@ -408,31 +399,45 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		SIDs: make([]common.SeriesID, 0, limit),
 	}
 
-	// Initialize unique data tracker if limit is specified
-	if limit > 0 {
-		result.InitUniqueTracker(limit)
-	}
-
 	step := -1
 	if qrh.asc {
 		step = 1
 	}
 
 	for qrh.Len() > 0 {
+		if limit > 0 && result.Len() >= limit {
+			break
+		}
+
 		topCursor := qrh.cursors[0]
 		idx := topCursor.idx
 		resp := topCursor.response
 
-		// Check unique Data element limit before adding
-		if !result.ShouldAddData(resp.Data[idx]) {
-			break
+		if idx < 0 || idx >= resp.Len() {
+			heap.Pop(qrh)
+			continue
+		}
+
+		var (
+			data []byte
+			tags []Tag
+			sid  common.SeriesID
+		)
+		if idx < len(resp.Data) {
+			data = resp.Data[idx]
+		}
+		if idx < len(resp.Tags) {
+			tags = resp.Tags[idx]
+		}
+		if idx < len(resp.SIDs) {
+			sid = resp.SIDs[idx]
 		}
 
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
-		result.Data = append(result.Data, resp.Data[idx])
-		result.Tags = append(result.Tags, resp.Tags[idx])
-		result.SIDs = append(result.SIDs, resp.SIDs[idx])
+		result.Data = append(result.Data, data)
+		result.Tags = append(result.Tags, tags)
+		result.SIDs = append(result.SIDs, sid)
 
 		// Advance cursor
 		topCursor.idx += step
