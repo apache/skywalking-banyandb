@@ -19,7 +19,7 @@
 <script setup>
   import { reactive, ref, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { getCurrentInstance } from '@vue/runtime-core';
+  import { getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import { updateTrace, createTrace, getTrace } from '@/api';
   import FormHeader from '../common/FormHeader.vue';
