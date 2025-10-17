@@ -47,7 +47,7 @@
 
   const getTraces = async (params) => {
     $loadingCreate();
-    const response = await queryTraces({ groups: [data.group], name: data.name, ...params })
+    const response = await queryTraces({ groups: [data.group], name: data.name, ...params });
     $loadingClose();
     if (response.error) {
       data.tableData = [];
@@ -178,7 +178,7 @@ orderBy:
           zip.file(`span-${spanIndex + 1}.bin`, bytes);
           successCount++;
         }
-      };
+      }
 
       if (successCount === 0) {
         ElMessage({
@@ -191,7 +191,7 @@ orderBy:
 
       // Generate the ZIP file
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      
+
       // Download the ZIP file
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
@@ -265,19 +265,21 @@ orderBy:
           </div>
         </el-col>
       </el-row>
-      
+
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 250px" :lint="true" />
-      
+
       <!-- Traces Table -->
       <div v-if="data.tableData.length > 0" style="margin-top: 20px">
         <el-card v-for="(trace, traceIndex) in data.tableData" :key="traceIndex" style="margin-bottom: 15px">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span><strong>Trace #{{ traceIndex + 1 }}</strong></span>
+              <span
+                ><strong>Trace #{{ traceIndex + 1 }}</strong></span
+              >
               <div style="display: flex; align-items: center; gap: 10px">
-                <el-button 
-                  :icon="Download" 
-                  size="small" 
+                <el-button
+                  :icon="Download"
+                  size="small"
                   @click="downloadMultipleSpans(traceIndex)"
                   plain
                   type="primary"
@@ -290,10 +292,10 @@ orderBy:
           </template>
           <!-- Spans List -->
           <div v-if="trace.spans && trace.spans.length > 0">
-            <el-table 
-              :data="trace.spans" 
-              stripe 
-              border 
+            <el-table
+              :data="trace.spans"
+              stripe
+              border
               style="width: 100%"
               @selection-change="(selection) => handleSelectionChange(traceIndex, selection)"
             >
@@ -318,7 +320,6 @@ orderBy:
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
-
   </div>
 </template>
 <style lang="scss" scoped>
@@ -339,4 +340,3 @@ orderBy:
     font-size: 12px;
   }
 </style>
-

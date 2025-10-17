@@ -142,7 +142,7 @@
         openResources();
       }
     });
-  }
+  };
   function openResources() {
     const routeConfig = {
       name: formData.type,
@@ -256,4 +256,3 @@
     margin: 15px;
   }
 </style>
-

@@ -47,8 +47,8 @@
     SupportedIndexRuleTypes,
   } from './data';
 
-   // props data
-   const props = defineProps({
+  // props data
+  const props = defineProps({
     type: {
       type: String,
       required: true,

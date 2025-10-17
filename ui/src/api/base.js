@@ -26,22 +26,17 @@ export function abortRequestsAndUpdate() {
 class HTTPError extends Error {
   response;
 
-  constructor(response, detailText = "") {
+  constructor(response, detailText = '') {
     super(detailText || response.statusText);
 
-    this.name = "HTTPError";
+    this.name = 'HTTPError';
     this.response = response;
   }
 }
 
 export const BasePath = `/graphql`;
 
-export async function httpQuery({
-  url = "",
-  method = "GET",
-  json,
-  headers = {},
-}) {
+export async function httpQuery({ url = '', method = 'GET', json, headers = {} }) {
   const timeoutId = setTimeout(() => {
     abortRequestsAndUpdate();
   }, Timeout);
@@ -49,8 +44,8 @@ export async function httpQuery({
   const response = await fetch(url, {
     method,
     headers: {
-      "Content-Type": "application/json",
-      accept: "application/json",
+      'Content-Type': 'application/json',
+      accept: 'application/json',
       ...headers,
     },
     body: JSON.stringify(json),

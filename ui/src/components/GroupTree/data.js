@@ -127,4 +127,8 @@ export const TypeMap = {
   indexRuleBinding: 'index-rule-binding',
   children: 'children',
 };
-export const SupportedIndexRuleTypes = [CatalogToGroupType.CATALOG_STREAM, CatalogToGroupType.CATALOG_MEASURE, CatalogToGroupType.CATALOG_TRACE];
+export const SupportedIndexRuleTypes = [
+  CatalogToGroupType.CATALOG_STREAM,
+  CatalogToGroupType.CATALOG_MEASURE,
+  CatalogToGroupType.CATALOG_TRACE,
+];
