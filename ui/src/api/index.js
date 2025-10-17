@@ -197,25 +197,25 @@ export function applyProperty(group, name, id, data) {
 }
 
 export function getTrace(group, name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/trace/schema/${group}/${name}`,
     method: 'get',
   });
 }
 
-export function createTrace(data) {
-  return request({
+export function createTrace(json) {
+  return httpQuery({
     url: `/api/v1/trace/schema`,
-    method: 'post',
-    data: data,
+    method: 'POST',
+    json,
   });
 }
 
-export function updateTrace(group, name, data) {
-  return request({
+export function updateTrace(group, name, json) {
+  return httpQuery({
     url: `/api/v1/trace/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
+    json,
+    method: 'PUT',
   });
 }
 

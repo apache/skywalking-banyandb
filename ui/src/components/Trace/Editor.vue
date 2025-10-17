@@ -45,27 +45,28 @@
     tags: [],
   });
 
-  function initTrace() {
+  async function initTrace() {
     if (operator === 'edit') {
       $loadingCreate();
-      getTrace(group, name)
-        .then((res) => {
-          if (res.status === 200) {
-            const { trace } = res.data;
-
-            formData.traceIdTagName = trace.traceIdTagName;
-            formData.timestampTagName = trace.timestampTagName;
-            formData.spanIdTagName = trace.spanIdTagName;
-            formData.tags = trace.tags.map((d) => ({
-              ...d,
-              key: d.name,
-              value: d.type,
-            }));
-          }
-        })
-        .finally(() => {
-          $loadingClose();
+      const response = await getTrace(group, name);
+      $loadingClose();
+      if (response.error) {
+        ElMessage({
+          message: response.error.message,
+          type: 'error',
+          duration: 3000,
         });
+        return;
+      }
+      const { trace } = response;
+      formData.traceIdTagName = trace.traceIdTagName;
+      formData.timestampTagName = trace.timestampTagName;
+      formData.spanIdTagName = trace.spanIdTagName;
+      formData.tags = trace.tags.map((d) => ({
+        ...d,
+        key: d.name,
+        value: d.type,
+      }));
     }
   }
   const openEditTag = (index) => {
@@ -83,7 +84,7 @@
   };
   const submit = async () => {
     if (!ruleForm.value) return;
-    await ruleForm.value.validate((valid) => {
+    await ruleForm.value.validate(async (valid) => {
       if (valid) {
         $loadingCreate();
         const param = {
@@ -99,57 +100,47 @@
           },
         };
         if (operator === 'create') {
-          createTrace(param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Created successfully',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteGroup', formData.group);
-                openResources();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
-            });
-          return;
-        }
-        updateTrace(formData.group, formData.name, param)
-          .then((res) => {
-            if (res.status === 200) {
-              ElMessage({
-                message: 'Updated successfully',
-                type: 'success',
-                duration: 5000,
-              });
-              $bus.emit('refreshAside');
-              $bus.emit('deleteResource', formData.name);
-              openResources();
-            }
-          })
-          .catch((err) => {
+          const response = await createTrace(param);
+          $loadingClose();
+          if (response.error) {
             ElMessage({
-              message: 'Please refresh and try again. Error: ' + err,
+              message: response.error.message,
               type: 'error',
               duration: 3000,
             });
-          })
-          .finally(() => {
-            $loadingClose();
+            return;
+          }
+          ElMessage({
+            message: 'Created successfully',
+            type: 'success',
+            duration: 5000,
           });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteGroup', formData.group);
+          openResources();
+          return;
+        }
+        const response = await updateTrace(formData.group, formData.name, param);
+        $loadingClose();
+        if (response.error) {
+          ElMessage({
+            message: response.error.message,
+            type: 'error',
+            duration: 3000,
+          });
+          return;
+        }
+        ElMessage({
+          message: 'Updated successfully',
+          type: 'success',
+          duration: 5000,
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteResource', formData.name);
+        openResources();
       }
     });
-  };
+  }
   function openResources() {
     const routeConfig = {
       name: formData.type,
