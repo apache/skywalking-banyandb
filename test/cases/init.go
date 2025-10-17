@@ -27,6 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
+	caseproperty "github.com/apache/skywalking-banyandb/test/cases/property/data"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
@@ -68,4 +69,7 @@ func Initialize(addr string, now time.Time) {
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
 	time.Sleep(5 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
+	// property
+	caseproperty.Write(conn, "sw1")
+	caseproperty.Write(conn, "sw2")
 }

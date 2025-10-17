@@ -41,6 +41,7 @@ import (
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 )
@@ -53,6 +54,7 @@ func Standalone(flags ...string) (string, string, func()) {
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
 		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", "", "", flags...)
 }
 
@@ -62,6 +64,7 @@ func StandaloneWithAuth(username, password string, flags ...string) (string, str
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
 		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", username, password, flags...)
 }
 
@@ -71,6 +74,7 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
 		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, certFile, keyFile, "", "", flags...)
 }
 
@@ -104,6 +108,7 @@ func ClosableStandalone(path string, ports []int, flags ...string) (string, stri
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
 		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", flags...)
 }
 
@@ -210,6 +215,9 @@ func (p *preloadService) PreRun(ctx context.Context) error {
 	}
 	if p.name == "trace" {
 		return test_trace.PreloadSchema(ctx, p.registry)
+	}
+	if p.name == "property" {
+		return test_property.PreloadSchema(ctx, p.registry)
 	}
 	return test_measure.PreloadSchema(ctx, p.registry)
 }
