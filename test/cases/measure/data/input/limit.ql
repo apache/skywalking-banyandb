@@ -15,38 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "service_cpm_minute"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-  - name: "default"
-    tags: ["id", "entity_id"]
-fieldProjection:
-  names: ["total", "value"]
-criteria:
-  le:
-    op: "LOGICAL_OP_OR"
-    left:
-      condition:
-        name: "entity_id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "entity_4"
-    right:
-      le:
-        op: "LOGICAL_OP_OR"
-        left:
-          condition:
-            name: "entity_id"
-            op: "BINARY_OP_EQ"
-            value:
-              str:
-                value: "entity_5"
-        right:
-          condition:
-            name: "entity_id"
-            op: "BINARY_OP_EQ"
-            value:
-              str:
-                value: "unknown"
+
+SELECT entity_id, total::field, value::field FROM MEASURE service_cpm_minute IN sw_metric
+TIME > '-15m'
+LIMIT 1
+OFFSET 3
