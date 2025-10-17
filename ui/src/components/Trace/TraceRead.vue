@@ -253,7 +253,7 @@ orderBy:
         return 'N/A';
       }
     }
-    
+
     return value;
   };
 
