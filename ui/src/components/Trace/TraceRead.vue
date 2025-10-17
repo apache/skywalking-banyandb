@@ -41,9 +41,10 @@
     tableData: [],
     name: route.params.name,
     indexRule: '',
+    spanTags: ['group_id', 'span_id'],
   });
   const yamlCode = ref(``);
-  const selectedSpans = ref({});
+  const selectedSpans = ref([]);
 
   const getTraces = async (params) => {
     $loadingCreate();
@@ -58,7 +59,25 @@
       });
       return;
     }
-    data.tableData = response.traces || [];
+    data.tableData = (response.traces || [])
+      .map((trace, index) => {
+        return trace.spans.map((span, i) => {
+          const tagsMap = {};
+          for (const tag of span.tags) {
+            if (!data.spanTags.includes(tag.key)) {
+              data.spanTags.push(tag.key);
+            }
+            tagsMap[tag.key] = tag.value;
+          }
+          return {
+            [`group_id`]: String(index),
+            [`span_id`]: `${index}-${i}`,
+            span: span.span,
+            ...tagsMap,
+          };
+        });
+      })
+      .flat();
   };
 
   const getIndexRule = async () => {
@@ -141,12 +160,12 @@ orderBy:
     getTraces(yamlToJson(yamlCode.value).data);
   }
 
-  function handleSelectionChange(traceIndex, selection) {
-    selectedSpans.value[traceIndex] = selection;
+  function handleSelectionChange(selection) {
+    selectedSpans.value = selection;
   }
 
-  async function downloadMultipleSpans(traceIndex) {
-    const selection = selectedSpans.value[traceIndex];
+  async function downloadMultipleSpans() {
+    const selection = selectedSpans.value;
     if (!selection || selection.length === 0) {
       ElMessage({
         message: 'Please select at least one span to download',
@@ -158,23 +177,21 @@ orderBy:
 
     try {
       const zip = new JSZip();
-      const trace = data.tableData[traceIndex];
       const timestamp = Date.now();
       let successCount = 0;
 
       // Add each span to the ZIP file
-      for (const span of selection) {
+      for (let i = 0; i < selection.length; i++) {
+        const span = selection[i];
         if (span && span.span) {
           const base64Data = span.span;
           const binaryString = atob(base64Data);
           const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+          for (let j = 0; j < binaryString.length; j++) {
+            bytes[j] = binaryString.charCodeAt(j);
           }
-          // Find the original index of the span in the trace
-          const spanIndex = trace.spans.indexOf(span);
           // Add the binary data to the ZIP file
-          zip.file(`span-${spanIndex + 1}.bin`, bytes);
+          zip.file(`span-${i + 1}.bin`, bytes);
           successCount++;
         }
       }
@@ -195,7 +212,7 @@ orderBy:
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `trace-${traceIndex + 1}-spans-${timestamp}.zip`;
+      link.download = `spans-${timestamp}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -216,10 +233,50 @@ orderBy:
   }
 
   const getTagValue = (data) => {
-    if (!data.value) {
-      return '';
+    if (data.value === 'null' || data.value === null || data.value === undefined) {
+      return 'N/A';
     }
-    return JSON.stringify(data.value);
+    if (typeof data.value !== 'object') {
+      return data.value;
+    }
+    const value = Object.values(data.value)[0];
+    if (!value) {
+      return 'N/A';
+    }
+    const param = Object.values(value)[0];
+    if (!param) {
+      return 'N/A';
+    }
+    return param;
+  };
+
+  const arraySpanMethod = ({ row, column, rowIndex, columnIndex }) => {
+    // Only merge the groupId column (first column after selection)
+    if (columnIndex === 1) {
+      const currentGroupId = row.groupId;
+      // Check if this is the first row with this groupId
+      if (rowIndex === 0 || data.tableData[rowIndex - 1].groupId !== currentGroupId) {
+        // Count how many rows have the same groupId
+        let rowspan = 1;
+        for (let i = rowIndex + 1; i < data.tableData.length; i++) {
+          if (data.tableData[i].groupId === currentGroupId) {
+            rowspan++;
+          } else {
+            break;
+          }
+        }
+        return {
+          rowspan: rowspan,
+          colspan: 1,
+        };
+      } else {
+        // This row's groupId is merged with a previous row
+        return {
+          rowspan: 0,
+          colspan: 0,
+        };
+      }
+    }
   };
 
   watch(
@@ -267,55 +324,28 @@ orderBy:
 
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 250px" :lint="true" />
 
-      <!-- Traces Table -->
+      <!-- Trace Data Table -->
       <div v-if="data.tableData.length > 0" style="margin-top: 20px">
-        <el-card v-for="(trace, traceIndex) in data.tableData" :key="traceIndex" style="margin-bottom: 15px">
-          <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span
-                ><strong>Trace #{{ traceIndex + 1 }}</strong></span
-              >
-              <div style="display: flex; align-items: center; gap: 10px">
-                <el-button
-                  :icon="Download"
-                  size="small"
-                  @click="downloadMultipleSpans(traceIndex)"
-                  plain
-                  type="primary"
-                >
-                  Download Selected
-                </el-button>
-                <el-tag type="info">{{ trace.spans ? trace.spans.length : 0 }} Span(s)</el-tag>
-              </div>
-            </div>
-          </template>
-          <!-- Spans List -->
-          <div v-if="trace.spans && trace.spans.length > 0">
-            <el-table
-              :data="trace.spans"
-              stripe
-              border
-              style="width: 100%"
-              @selection-change="(selection) => handleSelectionChange(traceIndex, selection)"
-            >
-              <el-table-column type="selection" width="55" />
-              <el-table-column type="index" label="#" width="60" />
-              <el-table-column label="Tags">
-                <template #default="scope">
-                  <el-table :data="scope.row.tags">
-                    <el-table-column label="Key" prop="key" width="150"></el-table-column>
-                    <el-table-column label="Value" prop="value">
-                      <template #default="scope">
-                        {{ getTagValue(scope.row) }}
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-          <el-empty v-else description="No spans in this trace" :image-size="80" />
-        </el-card>
+        <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center">
+          <span
+            ><strong>Total {{ data.tableData.length }} span(s)</strong></span
+          >
+          <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
+        </div>
+        <el-table
+          :data="data.tableData"
+          :border="true"
+          style="width: 100%; background-color: #f5f7fa"
+          @selection-change="handleSelectionChange"
+          :span-method="arraySpanMethod"
+        >
+          <el-table-column type="selection" width="55" />
+          <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag">
+            <template #default="scope">
+              {{ getTagValue({ value: scope.row[tag] }) }}
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
