@@ -19,7 +19,7 @@
 
 <script setup>
   import { queryTraces, getindexRuleList } from '@/api/index';
-  import { getCurrentInstance } from '@vue/runtime-core';
+  import { getCurrentInstance } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch } from 'vue';
@@ -92,7 +92,6 @@
       })
       .catch((err) => {
         ElMessage({
-          dangerouslyUseHTMLString: true,
           showClose: true,
           message: err.message, 
           type: 'error',
