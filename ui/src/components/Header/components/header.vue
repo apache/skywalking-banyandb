@@ -81,6 +81,7 @@
         <el-menu-item index="/banyandb/dashboard">Dashboard</el-menu-item>
         <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
         <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
+        <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
         <el-menu-item index="/banyandb/property">Property</el-menu-item>
       </el-menu>
     </div>

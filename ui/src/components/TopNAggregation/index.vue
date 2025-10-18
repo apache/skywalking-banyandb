@@ -96,7 +96,7 @@ fieldValueSort: 1`;
         ElMessage({
           dangerouslyUseHTMLString: true,
           showClose: true,
-          message: `<div>${err.message}</div>`,
+          message: err.message,
           type: 'error',
           duration: 5000,
         });

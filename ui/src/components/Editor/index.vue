@@ -92,7 +92,7 @@
       data.form.group = route.params.group;
       data.form.name = route.params.name;
       data.form.modRevision = route.params.modRevision;
-      data.type = route.params.type + '';
+      data.type = String(route.params.type);
       data.operator = route.params.operator;
       initData();
     },

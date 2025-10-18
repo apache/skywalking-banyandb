@@ -48,6 +48,7 @@ Release Notes.
   - Implement disk monitor with forced retention cleanup for data/standalone servers
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
 - Implement cluster mode for trace.
+- Implement Trace views.
 
 ### Bug Fixes
 

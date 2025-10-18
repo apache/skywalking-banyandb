@@ -20,6 +20,7 @@
 // api file
 
 import request from '@/utils/axios';
+import { httpQuery } from './base';
 
 // Some request methods
 export function getGroupList() {
@@ -29,7 +30,7 @@ export function getGroupList() {
   });
 }
 
-export function getStreamOrMeasureList(type, name) {
+export function getAllTypesOfResourceList(type, name) {
   return request({
     url: `/api/v1/${type}/schema/lists/${name}`,
     method: 'get',
@@ -51,7 +52,7 @@ export function getTableList(data, type) {
   });
 }
 
-export function deleteStreamOrMeasure(type, group, name) {
+export function deleteAllTypesOfResource(type, group, name) {
   return request({
     url: `/api/v1/${type}/schema/${group}/${name}`,
     method: 'delete',
@@ -192,5 +193,36 @@ export function applyProperty(group, name, id, data) {
     url: `/api/v1/property/data/${group}/${name}/${id}`,
     method: 'put',
     data: data,
+  });
+}
+
+export function getTrace(group, name) {
+  return httpQuery({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'get',
+  });
+}
+
+export function createTrace(json) {
+  return httpQuery({
+    url: `/api/v1/trace/schema`,
+    method: 'POST',
+    json,
+  });
+}
+
+export function updateTrace(group, name, json) {
+  return httpQuery({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    json,
+    method: 'PUT',
+  });
+}
+
+export function queryTraces(json) {
+  return httpQuery({
+    url: `/api/v1/trace/data`,
+    json,
+    method: 'POST',
   });
 }
