@@ -18,6 +18,7 @@
 traces:
   - spans:
     - span: trace_010_span_1
+      spanId: span_010_1
       tags:
       - key: duration
         value:
@@ -27,8 +28,10 @@ traces:
         value:
           str:
             value: trace_010
+    traceId: trace_010
   - spans:
     - span: trace_009_span_1
+      spanId: span_009_1
       tags:
       - key: duration
         value:
@@ -39,6 +42,7 @@ traces:
           str:
             value: trace_009
     - span: trace_009_span_2
+      spanId: span_009_2
       tags:
       - key: duration
         value:
@@ -48,8 +52,10 @@ traces:
         value:
           str:
             value: trace_009
+    traceId: trace_009
   - spans:
     - span: trace_003_span_1
+      spanId: span_003_1
       tags:
       - key: duration
         value:
@@ -60,6 +66,7 @@ traces:
           str:
             value: trace_003
     - span: trace_003_span_2
+      spanId: span_003_2
       tags:
       - key: duration
         value:
@@ -70,6 +77,7 @@ traces:
           str:
             value: trace_003
     - span: trace_003_span_3
+      spanId: span_003_3
       tags:
       - key: duration
         value:
@@ -79,3 +87,4 @@ traces:
         value:
           str:
             value: trace_003
+    traceId: trace_003
