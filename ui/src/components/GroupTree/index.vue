@@ -24,8 +24,8 @@
     getindexRuleBindingList,
     getGroupList,
     getTopNAggregationList,
-    getStreamOrMeasureList,
-    deleteStreamOrMeasure,
+    getAllTypesOfResourceList,
+    deleteAllTypesOfResource,
     deleteGroup,
     createGroup,
     editGroup,
@@ -44,7 +44,17 @@
     CatalogToGroupType,
     GroupTypeToCatalog,
     TypeMap,
+    SupportedIndexRuleTypes,
   } from './data';
+
+  // props data
+  const props = defineProps({
+    type: {
+      type: String,
+      required: true,
+      default: '',
+    },
+  });
 
   const router = useRouter();
   const route = useRoute();
@@ -76,7 +86,7 @@
   });
   const groupForm = reactive({
     name: '',
-    catalog: 'CATALOG_STREAM',
+    catalog: GroupTypeToCatalog[props.type] || 'CATALOG_STREAM',
     shardNum: 1,
     segmentIntervalUnit: 'UNIT_DAY',
     segmentIntervalNum: 1,
@@ -123,15 +133,6 @@
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
 
-  // props data
-  const props = defineProps({
-    type: {
-      type: String,
-      required: true,
-      default: '',
-    },
-  });
-
   // emit event
   const emit = defineEmits(['setWidth']);
   onMounted(() => {
@@ -149,10 +150,10 @@
           const type = props.type;
           const name = item.metadata.name;
           return new Promise((resolve, reject) => {
-            getStreamOrMeasureList(type, name)
+            getAllTypesOfResourceList(type, name)
               .then((res) => {
                 if (res.status === 200) {
-                  item.children = res.data[props.type === 'property' ? 'properties' : type];
+                  item.children = res.data[type];
                   resolve();
                 }
               })
@@ -161,7 +162,7 @@
               });
           });
         });
-        if (props.type === 'stream' || props.type === 'measure') {
+        if (SupportedIndexRuleTypes.includes(props.type)) {
           const promiseIndexRule = data.groupLists.map((item) => {
             const name = item.metadata.name;
             return new Promise((resolve, reject) => {
@@ -518,7 +519,7 @@
   }
   function deleteResource() {
     // delete Resources
-    deleteStreamOrMeasure(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
+    deleteAllTypesOfResource(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
       if (res.status === 200) {
         if (res.data.deleted) {
           ElMessage({
@@ -583,7 +584,7 @@
   function clearGroupForm() {
     data.dialogGroupVisible = false;
     groupForm.name = '';
-    groupForm.catalog = 'CATALOG_STREAM';
+    groupForm.catalog = GroupTypeToCatalog[props.type] || 'CATALOG_STREAM';
     groupForm.shardNum = 1;
     groupForm.segmentIntervalUnit = 'UNIT_DAY';
     groupForm.segmentIntervalNum = 1;
@@ -716,9 +717,12 @@
         </el-form-item>
         <el-form-item label="Group type" :label-width="data.formLabelWidth" prop="catalog">
           <el-select v-model="groupForm.catalog" placeholder="please select" style="width: 100%">
-            <el-option label="Stream" value="CATALOG_STREAM"></el-option>
-            <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
-            <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
+            <el-option
+              v-for="(catalog, type) in GroupTypeToCatalog"
+              :key="catalog"
+              :label="type.charAt(0).toUpperCase() + type.slice(1)"
+              :value="catalog"
+            ></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="Shard num" :label-width="data.formLabelWidth" prop="shardNum">
