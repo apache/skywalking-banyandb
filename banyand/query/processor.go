@@ -589,15 +589,15 @@ func (p *traceQueryProcessor) processTraceResults(resultIterator iter.Iterator[m
 			TraceId: result.TID,
 			Key:     result.Key,
 			Spans:   make([]*tracev1.Span, 0, len(result.Spans)),
-			SpanIds: result.SpanIDs,
 		}
 		// Convert each span in the trace result
 		for i, spanBytes := range result.Spans {
 			traceTags := p.buildTraceTags(&result, queryCriteria, execPlan, i, traceIDInclusionMap, spanIDInclusionMap)
 
 			span := &tracev1.Span{
-				Tags: traceTags,
-				Span: spanBytes,
+				Tags:   traceTags,
+				Span:   spanBytes,
+				SpanId: result.SpanIDs[i],
 			}
 			trace.Spans = append(trace.Spans, span)
 		}

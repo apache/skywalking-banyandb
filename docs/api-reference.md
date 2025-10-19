@@ -1568,7 +1568,6 @@ InternalTrace is the trace that is used for internal use.
 | spans | [Span](#banyandb-trace-v1-Span) | repeated | spans are the spans that belong to this trace. |
 | trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
 | key | [int64](#int64) |  | key is used for sorting. |
-| span_ids | [string](#string) | repeated | span_ids are the ids of the spans that belong to the trace. |
 
 
 
@@ -1625,6 +1624,7 @@ Span is a single operation within a trace.
 | ----- | ---- | ----- | ----------- |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tags are the indexed tags of the span. |
 | span | [bytes](#bytes) |  | span is the raw span data. |
+| span_id | [string](#string) |  | span_id is the unique identifier of the span. |
 
 
 
@@ -1640,6 +1640,7 @@ Trace contains all spans that belong to a single trace ID.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | spans | [Span](#banyandb-trace-v1-Span) | repeated | spans is the list of spans that belong to this trace. |
+| trace_id | [string](#string) |  | trace_id is the unique identifier of the trace. |
 
 
 
