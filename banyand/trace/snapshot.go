@@ -59,14 +59,28 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64) ([]*part, int) {
+func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64, traceIDs []string) ([]*part, int) {
+	shouldSkip := func(p *part) bool {
+		if p.traceIDFilter.filter == nil {
+			return false
+		}
+		for _, traceID := range traceIDs {
+			if p.traceIDFilter.filter.MightContain([]byte(traceID)) {
+				return false
+			}
+		}
+		return true
+	}
+
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
-		// TODO: filter parts
+		if shouldSkip(p.p) {
+			continue
+		}
 		dst = append(dst, p.p)
 		count++
 	}

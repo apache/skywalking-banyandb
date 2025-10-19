@@ -97,7 +97,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		return nilResult, nil
 	}
 
-	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp)
+	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp, qo.traceIDs)
 
 	pipelineCtx, cancel := context.WithCancel(ctx)
 	result.ctx = pipelineCtx
@@ -240,6 +240,7 @@ func (t *trace) attachSnapshots(
 	tables []*tsTable,
 	minTimestamp int64,
 	maxTimestamp int64,
+	traceIDs []string,
 ) []*part {
 	parts := make([]*part, 0)
 	for i := range tables {
@@ -249,7 +250,7 @@ func (t *trace) attachSnapshots(
 		}
 
 		var count int
-		parts, count = s.getParts(parts, minTimestamp, maxTimestamp)
+		parts, count = s.getParts(parts, minTimestamp, maxTimestamp, traceIDs)
 		if count < 1 {
 			s.decRef()
 			continue

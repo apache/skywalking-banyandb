@@ -137,7 +137,7 @@ func Test_tstIter(t *testing.T) {
 			s = new(snapshot)
 		}
 		defer s.decRef()
-		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
+		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, nil)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
 		ti.init(bma, pp, []string{tt.tid})
