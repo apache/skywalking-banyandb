@@ -212,14 +212,13 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 		b.tags[i].valueType = valueType
 		tm.name = name
 		tm.valueType = valueType
-	} else {
-		b.tags[i].valueType = pbv1.ValueTypeUnknown
-		for j := range b.tags[i].values {
-			b.tags[i].values[j] = nil
-		}
+		b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
 		return
 	}
-	b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
+	b.tags[i].valueType = pbv1.ValueTypeUnknown
+	for j := range b.tags[i].values {
+		b.tags[i].values[j] = nil
+	}
 }
 
 func (b *block) spanSize() uint64 {
