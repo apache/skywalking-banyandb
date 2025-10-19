@@ -196,9 +196,9 @@ func setupBenchmarkSIDX(b *testing.B, numSeries, pointsPerSeries, maxElementSize
 	}
 
 	request := QueryRequest{
-		SeriesIDs:      seriesIDs,
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: maxElementSize,
+		SeriesIDs:    seriesIDs,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: maxElementSize,
 	}
 	expected := numSeries * pointsPerSeries
 	return sidx, request, expected
@@ -356,7 +356,7 @@ func BenchmarkSIDXStreamingQuery_LimitedMemoryUsage(b *testing.B) {
 				var before runtime.MemStats
 				runtime.ReadMemStats(&before)
 
-				// Execute query with MaxElementSize limiting to numElementsToRetrieve
+				// Execute query with MaxBatchSize limiting to numElementsToRetrieve
 				resultsCh, errCh := sidx.StreamingQuery(ctx, req)
 				count := drainStreamingResults(b, resultsCh, errCh)
 
@@ -470,11 +470,11 @@ func setupLargeDatasetSIDX(b *testing.B, totalElements, elementSizeKB, maxElemen
 	minKey := int64(1)
 	maxKey := int64(maxElementsToRetrieve)
 	request := QueryRequest{
-		SeriesIDs:      []common.SeriesID{common.SeriesID(1)},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: maxElementsToRetrieve,
-		MinKey:         &minKey,
-		MaxKey:         &maxKey,
+		SeriesIDs:    []common.SeriesID{common.SeriesID(1)},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: maxElementsToRetrieve,
+		MinKey:       &minKey,
+		MaxKey:       &maxKey,
 	}
 
 	return sidx, request

@@ -164,8 +164,8 @@ func expectTag(t *testing.T, tags map[string]string, key, want string) {
 
 func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 2,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 2,
 	}
 
 	responses := []*sidx.QueryResponse{
@@ -222,8 +222,8 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 
 func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
-		MaxElementSize: 2,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
+		MaxBatchSize: 2,
 	}
 
 	responses := []*sidx.QueryResponse{
@@ -280,8 +280,8 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 
 func TestStreamSIDXTraceBatches_Tracing(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
-		MaxElementSize: 2,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
+		MaxBatchSize: 2,
 	}
 
 	responses := []*sidx.QueryResponse{
@@ -344,7 +344,7 @@ func TestStreamSIDXTraceBatches_Tracing(t *testing.T) {
 	expectTag(t, tags, "order_sort", req.Order.Sort.String())
 	expectTag(t, tags, "order_type", "0")
 	expectTag(t, tags, "series_id_candidates", "0")
-	expectTag(t, tags, "max_element_size", strconv.Itoa(req.MaxElementSize))
+	expectTag(t, tags, "max_batch_size", strconv.Itoa(req.MaxBatchSize))
 	expectTag(t, tags, "max_trace_size", strconv.Itoa(maxTraceSize))
 	expectTag(t, tags, "sidx_instance_count", "1")
 	expectTag(t, tags, "batches_emitted", strconv.Itoa(len(batches)))
@@ -357,8 +357,8 @@ func TestStreamSIDXTraceBatches_Tracing(t *testing.T) {
 
 func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 1,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 1,
 	}
 
 	streamErr := errors.New("stream failure")
@@ -495,8 +495,8 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := sidx.QueryRequest{
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-				MaxElementSize: 2,
+				Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+				MaxBatchSize: 2,
 			}
 
 			var responses []*sidx.QueryResponse
@@ -569,8 +569,8 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 // drainErrorEvents is always called via defer, even on early returns.
 func TestStreamSIDXTraceBatches_DrainErrorEventsGuaranteed(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 10,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 10,
 	}
 
 	scanErr := errors.New("scan error from defer test")
@@ -616,8 +616,8 @@ func TestStreamSIDXTraceBatches_DrainErrorEventsGuaranteed(t *testing.T) {
 // emitError tries to send even when context is canceled.
 func TestStreamSIDXTraceBatches_ErrorEmissionResilience(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 1,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 1,
 	}
 
 	scanErr := errors.New("scan error during processing")
@@ -774,8 +774,8 @@ func (f *fakeSIDXInfinite) IntroduceSynced(map[uint64]struct{}) func() { return 
 // the streaming pipeline continues streaming from an infinite channel until context is canceled.
 func TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 5,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 5,
 	}
 
 	sidxInstance := &fakeSIDXInfinite{
@@ -831,8 +831,8 @@ func TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled(t *testing
 // and cancels the SIDX context to close the infinite channel.
 func TestStreamSIDXTraceBatches_InfiniteChannelCancellation(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 5,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 5,
 	}
 
 	sidxInstance := &fakeSIDXInfinite{
@@ -880,8 +880,8 @@ func TestStreamSIDXTraceBatches_InfiniteChannelCancellation(t *testing.T) {
 // all goroutines are properly cleaned up when context is canceled.
 func TestStreamSIDXTraceBatches_InfiniteChannelGoroutineCleanup(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 5,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 5,
 	}
 
 	sidxInstance := &fakeSIDXInfinite{
@@ -936,8 +936,8 @@ func TestStreamSIDXTraceBatches_InfiniteChannelGoroutineCleanup(t *testing.T) {
 // and properly merge their results until context is canceled.
 func TestStreamSIDXTraceBatches_MultipleInfiniteSIDX(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 10,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 10,
 	}
 
 	const targetTraceIDs = 50
@@ -1014,8 +1014,8 @@ func TestStreamSIDXTraceBatches_MultipleInfiniteSIDX(t *testing.T) {
 // tracing works correctly with infinite channels and shows proper cleanup.
 func TestStreamSIDXTraceBatches_InfiniteChannelWithTracing(t *testing.T) {
 	req := sidx.QueryRequest{
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 10,
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 10,
 	}
 
 	const targetTraceIDs = 30

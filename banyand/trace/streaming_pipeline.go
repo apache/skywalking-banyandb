@@ -312,7 +312,7 @@ func tagSIDXStreamSpan(span *query.Span, req sidx.QueryRequest, maxTraceSize int
 		span.Tag("order_sort", "none")
 	}
 	span.Tagf("series_id_candidates", "%d", len(req.SeriesIDs))
-	span.Tagf("max_element_size", "%d", req.MaxElementSize)
+	span.Tagf("max_batch_size", "%d", req.MaxBatchSize)
 	span.Tagf("max_trace_size", "%d", maxTraceSize)
 	span.Tagf("sidx_instance_count", "%d", instanceCount)
 }
@@ -330,7 +330,7 @@ func newSIDXStreamRunner(
 		asc = false
 	}
 
-	batchSize := req.MaxElementSize
+	batchSize := req.MaxBatchSize
 	if batchSize <= 0 {
 		if maxTraceSize > 0 {
 			batchSize = maxTraceSize

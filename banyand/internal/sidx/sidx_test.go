@@ -519,8 +519,8 @@ func ptrInt64(v int64) *int64 {
 	return &v
 }
 
-// TestQueryResult_MaxElementSize verifies that MaxElementSize limits the total number of elements appended.
-func TestQueryResult_MaxElementSize(t *testing.T) {
+// TestQueryResult_MaxBatchSize verifies that MaxBatchSize limits the total number of elements appended.
+func TestQueryResult_MaxBatchSize(t *testing.T) {
 	tests := []struct {
 		name           string
 		inputKeys      []int64
@@ -583,7 +583,7 @@ func TestQueryResult_MaxElementSize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			qr := &queryResult{
 				request: QueryRequest{
-					MaxElementSize: tt.maxElementSize,
+					MaxBatchSize: tt.maxElementSize,
 				},
 			}
 
@@ -616,7 +616,7 @@ func TestQueryResult_MaxElementSize(t *testing.T) {
 func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.T) {
 	qr := &queryResult{
 		request: QueryRequest{
-			MaxElementSize: 2,
+			MaxBatchSize: 2,
 		},
 	}
 

@@ -351,7 +351,7 @@ func (bch *blockCursorHeap) pushCursors(cursors []*blockCursor) {
 
 // merge performs heap-based merge similar to query_by_ts.go.
 // It returns a QueryResponse along with a flag indicating whether the merge
-// stopped because the MaxElementSize limit has been reached.
+// stopped because the MaxBatchSize limit has been reached.
 func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
 	if !bch.initialized || bch.Len() == 0 {
 		return nil

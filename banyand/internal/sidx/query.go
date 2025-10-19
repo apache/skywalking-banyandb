@@ -31,7 +31,7 @@ import (
 
 // StreamingQuery implements the streaming query API defined on SIDX.
 func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-	chanSize := req.MaxElementSize
+	chanSize := req.MaxBatchSize
 	if chanSize < 0 {
 		chanSize = 0
 	}
@@ -123,7 +123,7 @@ func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context,
 	}
 
 	span, spanCtx := tracer.StartSpan(ctx, "sidx.run-streaming-query")
-	span.Tagf("max_element_size", "%d", req.MaxElementSize)
+	span.Tagf("max_batch_size", "%d", req.MaxBatchSize)
 	if req.Filter != nil {
 		span.Tag("filter_present", "true")
 	} else {
@@ -273,7 +273,7 @@ func (s *sidx) processStreamingLoop(
 					loopSpan.Tag("termination_reason", "channel_closed")
 					loopSpan.Tagf("total_batches", "%d", batchCount)
 				}
-				return resources.heap.merge(ctx, req.MaxElementSize, resultsCh, stats)
+				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
 			}
 			batchCount++
 			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats); err != nil {
@@ -338,7 +338,7 @@ func (s *sidx) handleStreamingBatch(
 		batchSpan.Tagf("heap_size_after_push", "%d", resources.heap.Len())
 	}
 
-	return resources.heap.merge(ctx, req.MaxElementSize, resultsCh, stats)
+	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
 }
 
 func determineTagsToLoad(req QueryRequest) map[string]struct{} {

@@ -45,7 +45,7 @@ type SIDX interface {
 	// ConvertToMemPart converts a write request to a memPart.
 	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
 	// StreamingQuery executes the query and streams batched QueryResponse objects.
-	// The returned QueryResponse channel contains ordered batches limited by req.MaxElementSize
+	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
 	// unique Data elements (when positive). The error channel delivers any fatal execution error.
 	StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error)
 	// Stats returns current system statistics and performance metrics.
@@ -73,13 +73,13 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	Filter         index.Filter
-	Order          *index.OrderBy
-	MinKey         *int64
-	MaxKey         *int64
-	SeriesIDs      []common.SeriesID
-	TagProjection  []model.TagProjection
-	MaxElementSize int
+	Filter        index.Filter
+	Order         *index.OrderBy
+	MinKey        *int64
+	MaxKey        *int64
+	SeriesIDs     []common.SeriesID
+	TagProjection []model.TagProjection
+	MaxBatchSize  int
 }
 
 // QueryResponse contains a batch of query results and execution metadata.
@@ -323,8 +323,8 @@ func (qr QueryRequest) Validate() error {
 	if len(qr.SeriesIDs) == 0 {
 		return fmt.Errorf("at least one SeriesID is required")
 	}
-	if qr.MaxElementSize < 0 {
-		return fmt.Errorf("maxElementSize cannot be negative")
+	if qr.MaxBatchSize < 0 {
+		return fmt.Errorf("maxBatchSize cannot be negative")
 	}
 	// Validate key range
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
@@ -339,7 +339,7 @@ func (qr *QueryRequest) Reset() {
 	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
-	qr.MaxElementSize = 0
+	qr.MaxBatchSize = 0
 	qr.MinKey = nil
 	qr.MaxKey = nil
 }
@@ -365,7 +365,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.TagProjection = nil
 	}
 
-	qr.MaxElementSize = other.MaxElementSize
+	qr.MaxBatchSize = other.MaxBatchSize
 
 	// Copy key range pointers
 	if other.MinKey != nil {
