@@ -448,10 +448,7 @@ type tstIter struct {
 }
 
 func (ti *tstIter) reset() {
-	for i := range ti.parts {
-		ti.parts[i] = nil
-	}
-	ti.parts = ti.parts[:0]
+	ti.parts = nil
 
 	for i := range ti.piPool {
 		ti.piPool[i].reset()
