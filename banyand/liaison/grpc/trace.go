@@ -374,7 +374,8 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		traces := make([]*tracev1.Trace, 0, len(d.InternalTraces))
 		for _, internalTrace := range d.InternalTraces {
 			trace := &tracev1.Trace{
-				Spans: internalTrace.Spans,
+				Spans:   internalTrace.Spans,
+				TraceId: internalTrace.TraceId,
 			}
 			traces = append(traces, trace)
 		}
