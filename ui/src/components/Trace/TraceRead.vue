@@ -41,7 +41,7 @@
     tableData: [],
     name: route.params.name,
     indexRule: '',
-    spanTags: ['group_id', 'span_id'],
+    spanTags: ['traceId', 'spanId'],
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
@@ -59,9 +59,10 @@
       });
       return;
     }
+    data.spanTags = ['traceId', 'spanId'];
     data.tableData = (response.traces || [])
-      .map((trace, index) => {
-        return trace.spans.map((span, i) => {
+      .map((trace) => {
+        return trace.spans.map((span) => {
           const tagsMap = {};
           for (const tag of span.tags) {
             if (!data.spanTags.includes(tag.key)) {
@@ -70,9 +71,8 @@
             tagsMap[tag.key] = tag.value;
           }
           return {
-            [`group_id`]: String(index),
-            [`span_id`]: `${index}-${i}`,
-            span: span.span,
+            traceId: trace.traceId,
+            ...span,
             ...tagsMap,
           };
         });
@@ -152,7 +152,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ["trace_id", "service_id"]
+tagProjection: ["start_time", "service_id"]
 orderBy:
   indexRuleName: ${data.indexRule.name}
   sort: SORT_DESC`;
@@ -257,16 +257,16 @@ orderBy:
     return value;
   };
 
-  const arraySpanMethod = ({ row, column, rowIndex, columnIndex }) => {
-    // Only merge the groupId column (first column after selection)
+  const objectSpanMethod = ({ row, column, rowIndex, columnIndex }) => {
+    // Only merge the traceId column (first column after selection)
     if (columnIndex === 1) {
-      const currentGroupId = row.groupId;
-      // Check if this is the first row with this groupId
-      if (rowIndex === 0 || data.tableData[rowIndex - 1].groupId !== currentGroupId) {
-        // Count how many rows have the same groupId
+      const currentTraceId = row.traceId;
+      // Check if this is the first row with this traceId
+      if (rowIndex === 0 || data.tableData[rowIndex - 1].traceId !== currentTraceId) {
+        // Count how many rows have the same traceId
         let rowspan = 1;
         for (let i = rowIndex + 1; i < data.tableData.length; i++) {
-          if (data.tableData[i].groupId === currentGroupId) {
+          if (data.tableData[i].traceId === currentTraceId) {
             rowspan++;
           } else {
             break;
@@ -277,7 +277,7 @@ orderBy:
           colspan: 1,
         };
       } else {
-        // This row's groupId is merged with a previous row
+        // This row's traceId is merged with a previous row
         return {
           rowspan: 0,
           colspan: 0,
@@ -344,7 +344,7 @@ orderBy:
           :border="true"
           style="width: 100%; background-color: #f5f7fa"
           @selection-change="handleSelectionChange"
-          :span-method="arraySpanMethod"
+          :span-method="objectSpanMethod"
         >
           <el-table-column type="selection" width="55" />
           <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag">
