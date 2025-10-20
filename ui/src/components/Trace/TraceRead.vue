@@ -155,7 +155,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ${data.indexRule?.tags?.length > 0 ? `[${data.indexRule?.tags}]` : []}
+tagProjection: ${Array.isArray(data.indexRule?.tags) && data.indexRule.tags.length ? JSON.stringify(data.indexRule.tags) : '[]'}
 orderBy:
   indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
