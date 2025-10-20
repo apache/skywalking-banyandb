@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-  import { queryTraces, getindexRuleList } from '@/api/index';
+  import { queryTraces, getindexRuleList, getTrace } from '@/api/index';
   import { getCurrentInstance } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
@@ -108,6 +108,22 @@
     }
   };
 
+  const getTagProjection = async () => {
+    if (!(data.group && data.name)) {
+      return [];
+    }
+    const response = await getTrace(data.group, data.name);
+    if (response.error) {
+      ElMessage({
+        message: response.error.message,
+        type: 'error',
+        duration: 3000,
+      });
+      return [];
+    }
+    return response.trace.tags.map((tag) => tag.name);
+  };
+
   function searchTraces() {
     yamlRef.value
       .checkYaml(yamlCode.value)
@@ -143,6 +159,7 @@
       return;
     }
     await getIndexRule();
+    const tagProjection = await getTagProjection();
     timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
     const range = jsonToYaml({
       timeRange: {
@@ -155,7 +172,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ${Array.isArray(data.indexRule?.tags) && data.indexRule.tags.length ? JSON.stringify(data.indexRule.tags) : '[]'}
+# tagProjection: ${Array.isArray(tagProjection) && tagProjection ? JSON.stringify(tagProjection) : '[]'}
 orderBy:
   indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
