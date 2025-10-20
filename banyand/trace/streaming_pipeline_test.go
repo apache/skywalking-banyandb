@@ -1076,9 +1076,21 @@ func TestStreamSIDXTraceBatches_InfiniteChannelWithTracing(t *testing.T) {
 
 	// Verify trace_ids_emitted matches what we collected
 	// (Note: may be slightly more than targetTraceIDs due to in-flight batches at cancellation)
+	// The runner may have consumed trace IDs (incrementing r.total) but not yet emitted them
+	// when cancellation occurs, especially with fewer CPU cores
 	emittedTag := tags["trace_ids_emitted"]
-	if emittedTag != strconv.Itoa(totalTraceIDs) {
-		t.Fatalf("trace_ids_emitted tag mismatch: got %q, want %q", emittedTag, strconv.Itoa(totalTraceIDs))
+	emittedCount, err := strconv.Atoi(emittedTag)
+	if err != nil {
+		t.Fatalf("failed to parse trace_ids_emitted: %v", err)
+	}
+	if emittedCount < totalTraceIDs {
+		t.Fatalf("trace_ids_emitted should be >= totalTraceIDs: got %d, want >= %d", emittedCount, totalTraceIDs)
+	}
+	// Allow some buffer for in-flight batches, but not too much (e.g., at most one MaxBatchSize worth)
+	maxExpected := totalTraceIDs + req.MaxBatchSize
+	if emittedCount > maxExpected {
+		t.Fatalf("trace_ids_emitted unexpectedly high: got %d, want <= %d (totalTraceIDs=%d + MaxBatchSize=%d)",
+			emittedCount, maxExpected, totalTraceIDs, req.MaxBatchSize)
 	}
 
 	expectTag(t, tags, "max_trace_size", "0")
