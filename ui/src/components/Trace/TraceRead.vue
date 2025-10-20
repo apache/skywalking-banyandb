@@ -98,7 +98,6 @@
         data.indexRule = null;
       }
     } catch (err) {
-      console.error('Failed to fetch indexRule:', err);
       data.indexRule = null;
       ElMessage({
         message: 'Failed to fetch index rule: ' + (err?.message || String(err)),
@@ -172,7 +171,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-# tagProjection: ${Array.isArray(tagProjection) && tagProjection ? JSON.stringify(tagProjection) : '[]'}
+tagProjection: ${Array.isArray(tagProjection) && tagProjection ? JSON.stringify(tagProjection) : '[]'}
 orderBy:
   indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
@@ -260,7 +259,8 @@ orderBy:
     }
     for (let i = 0; i < 2; i++) {
       if (typeof value !== 'object') {
-        return value;
+        const strValue = value.toString();
+        return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
       }
       for (const key in value) {
         if (Object.hasOwn(value, key)) {
@@ -273,7 +273,8 @@ orderBy:
       }
     }
 
-    return value;
+    const strValue = value.toString();
+    return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
   };
 
   const objectSpanMethod = ({ row, column, rowIndex, columnIndex }) => {
@@ -358,20 +359,22 @@ orderBy:
           >
           <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
         </div>
-        <el-table
-          :data="data.tableData"
-          :border="true"
-          style="width: 100%; background-color: #f5f7fa"
-          @selection-change="handleSelectionChange"
-          :span-method="objectSpanMethod"
-        >
-          <el-table-column type="selection" width="55" />
-          <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag">
-            <template #default="scope">
-              {{ getTagValue({ value: scope.row[tag] }) }}
-            </template>
-          </el-table-column>
-        </el-table>
+        <div class="table-container">
+          <el-table
+            :data="data.tableData"
+            :border="true"
+            style="width: 100%"
+            @selection-change="handleSelectionChange"
+            :span-method="objectSpanMethod"
+          >
+            <el-table-column type="selection" width="55" />
+            <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag" min-width="200">
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row[tag] }) }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
@@ -393,5 +396,10 @@ orderBy:
     font-family: 'Courier New', Courier, monospace;
     word-break: break-all;
     font-size: 12px;
+  }
+
+  .table-container {
+    overflow-x: auto;
+    width: 100%;
   }
 </style>
