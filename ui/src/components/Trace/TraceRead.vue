@@ -48,12 +48,12 @@
 
   const getTraces = async (params) => {
     if (!data.indexRule?.metadata?.name) {
-    ElMessage({
-      message: 'No index rule found',
-      type: 'error',
-    });
-    return;
-  }
+      ElMessage({
+        message: 'No index rule found',
+        type: 'error',
+      });
+      return;
+    }
     $loadingCreate();
     const response = await queryTraces({ groups: [data.group], name: data.name, ...params });
     $loadingClose();
@@ -62,7 +62,6 @@
       ElMessage({
         message: response.error.message,
         type: 'error',
-        duration: 3000,
       });
       return;
     }
@@ -156,7 +155,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ${data.indexRule?.tags?.length > 0 ? `[${data.indexRule?.tags }]` : []}
+tagProjection: ${data.indexRule?.tags?.length > 0 ? `[${data.indexRule?.tags}]` : []}
 orderBy:
   indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
