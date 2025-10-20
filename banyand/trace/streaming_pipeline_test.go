@@ -513,11 +513,24 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 			}
 
 			scanErr := errors.New(tt.scanError)
-			sidxInstance := &fakeSIDXWithImmediateError{
-				fakeSIDX: &fakeSIDX{
-					responses: responses,
-				},
-				err: scanErr,
+
+			// For "error_with_partial_data" test, use fakeSIDXWithErr which sends data first, then error
+			// For other tests, use fakeSIDXWithImmediateError which sends error immediately
+			var sidxInstance sidx.SIDX
+			if tt.withData {
+				sidxInstance = &fakeSIDXWithErr{
+					fakeSIDX: &fakeSIDX{
+						responses: responses,
+					},
+					err: scanErr,
+				}
+			} else {
+				sidxInstance = &fakeSIDXWithImmediateError{
+					fakeSIDX: &fakeSIDX{
+						responses: responses,
+					},
+					err: scanErr,
+				}
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())

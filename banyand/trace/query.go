@@ -36,7 +36,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-const checkDoneEvery = 128
+const (
+	checkDoneEvery = 128
+	queryTimeout   = 20 * time.Second
+)
 
 var nilResult = model.TraceQueryResult(nil)
 
@@ -100,8 +103,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp)
 
-	// TODO: remove this once we have a proper timeout mechanism
-	pipelineCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
 
