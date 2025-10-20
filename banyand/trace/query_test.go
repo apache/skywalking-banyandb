@@ -98,7 +98,7 @@ func TestQueryResult(t *testing.T) {
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, nil)
+				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, []string{tt.traceID})
 				bma := generateBlockMetadataArray()
 				defer releaseBlockMetadataArray(bma)
 				ti := &tstIter{}

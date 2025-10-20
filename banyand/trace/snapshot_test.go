@@ -29,6 +29,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -119,13 +121,107 @@ func TestSnapshotGetParts(t *testing.T) {
 			},
 			count: 2,
 		},
+		{
+			name: "Test with non-empty snapshot and matching traceID",
+			snapshot: func() *snapshot {
+				bf1 := filter.NewBloomFilter(0)
+				bf1.SetN(2)
+				bf1.ResizeBits((2*filter.B + 63) / 64)
+				bf1.Add(convert.StringToBytes("trace1"))
+				bf1.Add(convert.StringToBytes("trace2"))
+
+				bf2 := filter.NewBloomFilter(0)
+				bf2.SetN(1)
+				bf2.ResizeBits((1*filter.B + 63) / 64)
+				bf2.Add(convert.StringToBytes("trace3"))
+
+				return &snapshot{
+					parts: []*partWrapper{
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 0,
+									MaxTimestamp: 5,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf1,
+								},
+							},
+						},
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 6,
+									MaxTimestamp: 10,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf2,
+								},
+							},
+						},
+					},
+				}
+			}(),
+			dst: []*part{},
+			opts: queryOptions{
+				minTimestamp: 0,
+				maxTimestamp: 10,
+				traceIDs:     []string{"trace1"},
+			},
+			expected: []*part{
+				{
+					partMetadata: partMetadata{
+						MinTimestamp: 0,
+						MaxTimestamp: 5,
+					},
+				},
+			},
+			count: 1,
+		},
+		{
+			name: "Test with non-empty snapshot and non-matching traceID",
+			snapshot: func() *snapshot {
+				bf := filter.NewBloomFilter(0)
+				bf.SetN(2)
+				bf.ResizeBits((2*filter.B + 63) / 64)
+				bf.Add(convert.StringToBytes("trace1"))
+				bf.Add(convert.StringToBytes("trace2"))
+
+				return &snapshot{
+					parts: []*partWrapper{
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 0,
+									MaxTimestamp: 5,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf,
+								},
+							},
+						},
+					},
+				}
+			}(),
+			dst: []*part{},
+			opts: queryOptions{
+				minTimestamp: 0,
+				maxTimestamp: 10,
+				traceIDs:     []string{"trace0"},
+			},
+			expected: []*part{},
+			count:    0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp, nil)
-			assert.Equal(t, tt.expected, result)
+			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp, tt.opts.traceIDs)
 			assert.Equal(t, tt.count, count)
+			require.Equal(t, len(tt.expected), len(result))
+			for i := range tt.expected {
+				assert.Equal(t, tt.expected[i].partMetadata, result[i].partMetadata)
+			}
 		})
 	}
 }

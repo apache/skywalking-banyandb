@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -65,7 +66,7 @@ func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64,
 			return false
 		}
 		for _, traceID := range traceIDs {
-			if p.traceIDFilter.filter.MightContain([]byte(traceID)) {
+			if p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
 				return false
 			}
 		}
