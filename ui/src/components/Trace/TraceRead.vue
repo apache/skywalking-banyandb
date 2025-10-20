@@ -101,7 +101,7 @@
       console.error('Failed to fetch indexRule:', err);
       data.indexRule = null;
       ElMessage({
-        message: 'Failed to fetch index rule: ' + err,
+        message: 'Failed to fetch index rule: ' + (err?.message || String(err)),
         type: 'error',
         duration: 3000,
       });
@@ -155,7 +155,7 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ${data.indexRule?.tags?.length > 0 ? `[${data.indexRule?.tags}]` : []}
+tagProjection: ${Array.isArray(data.indexRule?.tags) && data.indexRule.tags.length ? JSON.stringify(data.indexRule.tags) : '[]'}
 orderBy:
   indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
