@@ -21,6 +21,7 @@
   import { reactive } from 'vue';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
+  import { ElMessage } from 'element-plus';
   import { getSecondaryDataModel } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
 

@@ -15,26 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "sw"
-groups: ["default"]
-projection:
-  tagFamilies:
-  - name: "searchable"
-    tags: ["trace_id", "span_id", "start_time"]
-criteria:
-  le:
-    op: "LOGICAL_OP_AND"
-    left:
-      condition:
-        name: "span_id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "1"
-    right:
-      condition:
-        name: "start_time"
-        op: "BINARY_OP_EQ"
-        value:
-          int:
-            value: 1622933202000000000
+SHOW TOP 2
+FROM MEASURE not_in_svc2_svc4 IN sw_metric
+TIME > '-15m'
+AGGREGATE BY MAX
+ORDER BY DESC
