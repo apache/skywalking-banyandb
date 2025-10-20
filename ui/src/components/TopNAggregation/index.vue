@@ -21,6 +21,7 @@
   import { reactive, ref } from 'vue';
   import { watch } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
+  import { ElMessage } from 'element-plus';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
   import { getTopNAggregationData } from '@/api/index';
