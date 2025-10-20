@@ -101,7 +101,7 @@
       console.error('Failed to fetch indexRule:', err);
       data.indexRule = null;
       ElMessage({
-        message: 'Failed to fetch index rule: ' + err,
+        message: 'Failed to fetch index rule: ' + (err?.message || String(err)),
         type: 'error',
         duration: 3000,
       });
