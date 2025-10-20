@@ -40,13 +40,20 @@
     group: route.params.group,
     tableData: [],
     name: route.params.name,
-    indexRule: '',
+    indexRule: null,
     spanTags: ['traceId', 'spanId'],
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
 
   const getTraces = async (params) => {
+    if (!data.indexRule?.metadata?.name) {
+    ElMessage({
+      message: 'No index rule found',
+      type: 'error',
+    });
+    return;
+  }
     $loadingCreate();
     const response = await queryTraces({ groups: [data.group], name: data.name, ...params });
     $loadingClose();
@@ -87,13 +94,13 @@
     try {
       const response = await getindexRuleList(data.group);
       if (response.status === 200 && response.data.indexRule && response.data.indexRule.length > 0) {
-        data.indexRule = response.data.indexRule[0].metadata;
+        data.indexRule = response.data.indexRule[0];
       } else {
-        data.indexRule = '';
+        data.indexRule = null;
       }
     } catch (err) {
       console.error('Failed to fetch indexRule:', err);
-      data.indexRule = '';
+      data.indexRule = null;
       ElMessage({
         message: 'Failed to fetch index rule: ' + err,
         type: 'error',
@@ -137,9 +144,6 @@
       return;
     }
     await getIndexRule();
-    if (!data.indexRule) {
-      return;
-    }
     timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
     const range = jsonToYaml({
       timeRange: {
@@ -152,11 +156,10 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ["start_time", "service_id"]
+tagProjection: ${data.indexRule?.tags?.length > 0 ? `[${data.indexRule?.tags }]` : []}
 orderBy:
-  indexRuleName: ${data.indexRule.name}
+  indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
-
     getTraces(yamlToJson(yamlCode.value).data);
   }
 
@@ -292,7 +295,7 @@ orderBy:
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      data.indexRule = '';
+      data.indexRule = null;
       initTraceData();
     },
     {
