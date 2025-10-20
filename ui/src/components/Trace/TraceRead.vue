@@ -41,6 +41,7 @@
     tableData: [],
     name: route.params.name,
     indexRule: null,
+    spanTags: [],
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
