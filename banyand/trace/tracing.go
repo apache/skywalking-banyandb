@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-// TODO: check the header.
 const (
 	partMetadataHeader = "MinTimestamp, MaxTimestamp, CompressionSize, UncompressedSize, TotalCount, BlocksCount"
 	blockHeader        = "PartID, TraceID, Count, UncompressedSize"
