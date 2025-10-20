@@ -41,7 +41,6 @@
     tableData: [],
     name: route.params.name,
     indexRule: null,
-    spanTags: ['traceId', 'spanId'],
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
@@ -65,7 +64,7 @@
       });
       return;
     }
-    data.spanTags = ['traceId', 'spanId'];
+    data.spanTags = [];
     data.tableData = (response.traces || [])
       .map((trace) => {
         return trace.spans.map((span) => {
@@ -367,7 +366,17 @@ orderBy:
             @selection-change="handleSelectionChange"
             :span-method="objectSpanMethod"
           >
-            <el-table-column type="selection" width="55" />
+            <el-table-column type="selection" width="55" fixed />
+            <el-table-column label="traceId" prop="traceId" width="200" fixed>
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row.traceId }) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="spanId" prop="spanId" width="300" fixed>
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row.spanId }) }}
+              </template>
+            </el-table-column>
             <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag" min-width="200">
               <template #default="scope">
                 {{ getTagValue({ value: scope.row[tag] }) }}
