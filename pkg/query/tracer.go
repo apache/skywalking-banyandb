@@ -27,6 +27,11 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 )
 
+const (
+	// maxChildSpans is the maximum number of direct child spans allowed under a parent span.
+	maxChildSpans = 20
+)
+
 var (
 	spanKey   = spanContextKey{}
 	tracerKey = tracerContextKey{}
@@ -124,14 +129,20 @@ func (t *Tracer) DoneAsyncOp() {
 
 // Span is a span of the tracer.
 type Span struct {
-	data   *commonv1.Span
-	tracer *Tracer
-	mu     sync.Mutex
+	data            *commonv1.Span
+	tracer          *Tracer
+	mu              sync.Mutex
+	ignoredChildren int
 }
 
 func (s *Span) addChild(child *commonv1.Span) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Check if we've reached the maximum number of child spans
+	if len(s.data.Children) >= maxChildSpans {
+		s.ignoredChildren++
+		return
+	}
 	s.data.Children = append(s.data.Children, child)
 	if child.Error {
 		// Inline error handling to avoid recursive lock
@@ -157,6 +168,11 @@ func (s *Span) AddSubTrace(trace *commonv1.Trace) {
 	defer s.mu.Unlock()
 	hasError := false
 	for i := range trace.Spans {
+		// Check if we've reached the maximum number of child spans
+		if len(s.data.Children) >= maxChildSpans {
+			s.ignoredChildren++
+			continue
+		}
 		s.data.Children = append(s.data.Children, trace.Spans[i])
 		if trace.Spans[i].Error {
 			hasError = true
@@ -215,10 +231,29 @@ func (s *Span) Error(err error) *Span {
 	return s
 }
 
+// recordIgnoredChildren adds a tag to record the number of ignored child spans.
+// Must be called with s.mu held.
+func (s *Span) recordIgnoredChildren() {
+	if s.ignoredChildren == 0 {
+		return
+	}
+	// Check for existing "ignored_child_spans" tag to avoid duplicates
+	for _, tag := range s.data.Tags {
+		if tag.Key == "ignored_child_spans" {
+			return
+		}
+	}
+	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
+		Key:   "ignored_child_spans",
+		Value: fmt.Sprintf("%d", s.ignoredChildren),
+	})
+}
+
 // Stop stops the span.
 func (s *Span) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.recordIgnoredChildren()
 	s.data.EndTime = timestamppb.Now()
 	s.data.Duration = s.data.EndTime.AsTime().Sub(s.data.StartTime.AsTime()).Nanoseconds()
 }

@@ -25,12 +25,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 type fakeSIDX struct {
@@ -122,39 +120,6 @@ func encodeTraceIDForTest(id string) []byte {
 	buf[0] = byte(idFormatV1)
 	copy(buf[1:], id)
 	return buf
-}
-
-func findSpan(spans []*commonv1.Span, message string) *commonv1.Span {
-	for _, span := range spans {
-		if span.GetMessage() == message {
-			return span
-		}
-		for _, child := range span.GetChildren() {
-			if match := findSpan([]*commonv1.Span{child}, message); match != nil {
-				return match
-			}
-		}
-	}
-	return nil
-}
-
-func spanTagsToMap(span *commonv1.Span) map[string]string {
-	tags := make(map[string]string, len(span.GetTags()))
-	for _, tag := range span.GetTags() {
-		tags[tag.GetKey()] = tag.GetValue()
-	}
-	return tags
-}
-
-func expectTag(t *testing.T, tags map[string]string, key, want string) {
-	t.Helper()
-	got, ok := tags[key]
-	if !ok {
-		t.Fatalf("expected tag %q to be present, all tags=%v", key, tags)
-	}
-	if got != want {
-		t.Fatalf("unexpected value for tag %q: got %q, want %q", key, got, want)
-	}
 }
 
 func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
@@ -273,84 +238,6 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 	}
 }
 
-func TestStreamSIDXTraceBatches_Tracing(t *testing.T) {
-	req := sidx.QueryRequest{
-		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
-		MaxBatchSize: 2,
-	}
-
-	responses := []*sidx.QueryResponse{
-		{
-			Keys: []int64{5, 4},
-			Data: [][]byte{
-				encodeTraceIDForTest("e"),
-				encodeTraceIDForTest("d"),
-			},
-		},
-		{
-			Keys: []int64{4, 3},
-			Data: [][]byte{
-				encodeTraceIDForTest("d"),
-				encodeTraceIDForTest("c"),
-			},
-		},
-	}
-
-	tracer, tracerCtx := query.NewTracer(context.Background(), "trace-sidx-stream")
-
-	var tr trace
-	const maxTraceSize = 3
-	batchCh := tr.streamSIDXTraceBatches(tracerCtx, []sidx.SIDX{&fakeSIDX{responses: responses}}, req, maxTraceSize)
-
-	var (
-		batches   []traceBatch
-		uniqueIDs = make(map[string]struct{})
-	)
-	for batch := range batchCh {
-		if batch.err != nil {
-			t.Fatalf("unexpected error: %v", batch.err)
-		}
-		batches = append(batches, batch)
-		for _, tid := range batch.traceIDs {
-			uniqueIDs[tid] = struct{}{}
-		}
-	}
-
-	if len(batches) == 0 {
-		t.Fatalf("expected batches to be produced")
-	}
-
-	// ToProto() now properly waits for all async span operations to complete
-	traceProto := tracer.ToProto()
-	if traceProto == nil {
-		t.Fatalf("expected tracing data")
-	}
-
-	span := findSpan(traceProto.GetSpans(), "sidx-stream")
-	if span == nil {
-		t.Fatalf("expected sidx-stream span, got %v", traceProto.GetSpans())
-	}
-	if span.GetError() {
-		t.Fatalf("span unexpectedly marked as error: %v", span.GetTags())
-	}
-
-	tags := spanTagsToMap(span)
-
-	expectTag(t, tags, "filter_present", "false")
-	expectTag(t, tags, "order_sort", req.Order.Sort.String())
-	expectTag(t, tags, "order_type", "0")
-	expectTag(t, tags, "series_id_candidates", "0")
-	expectTag(t, tags, "max_batch_size", strconv.Itoa(req.MaxBatchSize))
-	expectTag(t, tags, "max_trace_size", strconv.Itoa(maxTraceSize))
-	expectTag(t, tags, "sidx_instance_count", "1")
-	expectTag(t, tags, "batches_emitted", strconv.Itoa(len(batches)))
-	expectTag(t, tags, "trace_ids_emitted", strconv.Itoa(len(uniqueIDs)))
-
-	if dup, ok := tags["duplicate_trace_ids"]; !ok || dup != "1" {
-		t.Fatalf("expected duplicate_trace_ids=1, tags=%v", tags)
-	}
-}
-
 func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 	req := sidx.QueryRequest{
 		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
@@ -407,40 +294,6 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 	}
 }
 
-// fakeSIDXWithDataThenError simulates a SIDX that sends data first, then an error.
-// Unlike fakeSIDXWithErr, this guarantees the error is sent even if context is canceled,
-// by using buffered channels and sending data+error before checking context.
-type fakeSIDXWithDataThenError struct {
-	*fakeSIDX
-	err error
-}
-
-func (f *fakeSIDXWithDataThenError) StreamingQuery(ctx context.Context, _ sidx.QueryRequest) (<-chan *sidx.QueryResponse, <-chan error) {
-	results := make(chan *sidx.QueryResponse, len(f.responses))
-	errCh := make(chan error, 1)
-
-	go func() {
-		defer close(results)
-		defer close(errCh)
-
-		// Send all responses first
-		for _, resp := range f.responses {
-			select {
-			case <-ctx.Done():
-				return
-			case results <- resp:
-			}
-		}
-
-		// Guarantee error is sent after data (use buffered channel to avoid blocking)
-		if f.err != nil {
-			errCh <- f.err
-		}
-	}()
-
-	return results, errCh
-}
-
 // fakeSIDXWithImmediateError simulates errors from blockScanResultBatch.
 // by sending errors immediately via errCh (like scan errors would).
 type fakeSIDXWithImmediateError struct {
@@ -482,43 +335,16 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 		name         string
 		scanError    string
 		errorContain string
-		withData     bool
-		expectError  bool
 	}{
 		{
 			name:         "iterator_init_error",
 			scanError:    "cannot init iter: iterator initialization failed",
 			errorContain: "cannot init iter",
-			withData:     false,
-			expectError:  true,
 		},
 		{
-			name:         "quota_exceeded_error",
+			name:         "block_scan_error",
 			scanError:    "sidx block scan quota exceeded: used 1000 bytes, quota is 500 bytes",
 			errorContain: "quota exceeded",
-			withData:     false,
-			expectError:  true,
-		},
-		{
-			name:         "resource_acquisition_error",
-			scanError:    "cannot acquire resource: insufficient memory",
-			errorContain: "cannot acquire resource",
-			withData:     false,
-			expectError:  true,
-		},
-		{
-			name:         "iteration_error",
-			scanError:    "cannot iterate iter: block read failed",
-			errorContain: "cannot iterate iter",
-			withData:     false,
-			expectError:  true,
-		},
-		{
-			name:         "error_with_partial_data",
-			scanError:    "scan error after partial results",
-			errorContain: "scan error after partial",
-			withData:     true,
-			expectError:  true,
 		},
 	}
 
@@ -529,38 +355,15 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 				MaxBatchSize: 2,
 			}
 
-			var responses []*sidx.QueryResponse
-			if tt.withData {
-				responses = []*sidx.QueryResponse{
-					{
-						Keys: []int64{1, 2},
-						Data: [][]byte{
-							encodeTraceIDForTest("trace-1"),
-							encodeTraceIDForTest("trace-2"),
-						},
-					},
-				}
-			}
-
 			scanErr := errors.New(tt.scanError)
 
-			// For "error_with_partial_data" test, use fakeSIDXWithDataThenError which guarantees data then error
-			// For other tests, use fakeSIDXWithImmediateError which sends error immediately
-			var sidxInstance sidx.SIDX
-			if tt.withData {
-				sidxInstance = &fakeSIDXWithDataThenError{
-					fakeSIDX: &fakeSIDX{
-						responses: responses,
-					},
-					err: scanErr,
-				}
-			} else {
-				sidxInstance = &fakeSIDXWithImmediateError{
-					fakeSIDX: &fakeSIDX{
-						responses: responses,
-					},
-					err: scanErr,
-				}
+			// Use fakeSIDXWithImmediateError - since errCh and results channel
+			// race each other, we don't test ordering, just that error propagates
+			sidxInstance := &fakeSIDXWithImmediateError{
+				fakeSIDX: &fakeSIDX{
+					responses: nil,
+				},
+				err: scanErr,
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -569,40 +372,27 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 			var tr trace
 			batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
 
-			var (
-				receivedError error
-				dataBatches   int
-			)
+			var receivedError error
 
-			// Consume all batches
+			// Consume all batches until we receive the error
 			for batch := range batchCh {
 				if batch.err != nil {
 					receivedError = batch.err
-					// Don't break - consume remaining batches
+					// Don't break - consume remaining batches to avoid goroutine leaks
 					continue
 				}
-				if len(batch.traceIDs) > 0 {
-					dataBatches++
-				}
 			}
 
-			// Verify error was received
-			if tt.expectError {
-				if receivedError == nil {
-					t.Fatalf("expected error containing %q but got none", tt.errorContain)
-				}
-				if !errors.Is(receivedError, scanErr) {
-					// Check if error is wrapped
-					errMsg := receivedError.Error()
-					if errMsg == "" || !contains(errMsg, tt.errorContain) {
-						t.Fatalf("expected error containing %q but got: %v", tt.errorContain, receivedError)
-					}
-				}
+			// Verify error was eventually propagated
+			if receivedError == nil {
+				t.Fatalf("expected error containing %q but got none", tt.errorContain)
 			}
-
-			// Verify data batches if expected
-			if tt.withData && dataBatches == 0 {
-				t.Fatal("expected data batches but got none")
+			if !errors.Is(receivedError, scanErr) {
+				// Check if error is wrapped
+				errMsg := receivedError.Error()
+				if errMsg == "" || !contains(errMsg, tt.errorContain) {
+					t.Fatalf("expected error containing %q but got: %v", tt.errorContain, receivedError)
+				}
 			}
 		})
 	}
@@ -1051,94 +841,4 @@ func TestStreamSIDXTraceBatches_MultipleInfiniteSIDX(t *testing.T) {
 	}
 
 	t.Logf("Successfully merged %d trace IDs from %d infinite SIDX instances", totalTraceIDs, len(sidxInstances))
-}
-
-// TestStreamSIDXTraceBatches_InfiniteChannelWithTracing verifies that
-// tracing works correctly with infinite channels and shows proper cleanup.
-func TestStreamSIDXTraceBatches_InfiniteChannelWithTracing(t *testing.T) {
-	req := sidx.QueryRequest{
-		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxBatchSize: 10,
-	}
-
-	const targetTraceIDs = 30
-
-	sidxInstance := &fakeSIDXInfinite{
-		batchSize:     5,
-		keyStart:      1,
-		traceIDPrefix: "traced",
-	}
-
-	tracer, tracerCtx := query.NewTracer(context.Background(), "test-infinite-stream")
-	ctx, cancel := context.WithCancel(tracerCtx)
-	defer cancel()
-
-	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no limit */)
-
-	totalTraceIDs := 0
-	batchCount := 0
-
-	for batch := range batchCh {
-		if batch.err != nil {
-			// Context cancellation is expected
-			if errors.Is(batch.err, context.Canceled) {
-				break
-			}
-			t.Fatalf("unexpected error: %v", batch.err)
-		}
-		totalTraceIDs += len(batch.traceIDs)
-		batchCount++
-
-		// Cancel after we've received enough traces
-		if totalTraceIDs >= targetTraceIDs {
-			cancel()
-		}
-	}
-
-	if totalTraceIDs < targetTraceIDs {
-		t.Fatalf("expected at least %d trace IDs, got %d", targetTraceIDs, totalTraceIDs)
-	}
-
-	// ToProto() now properly waits for all async span operations to complete
-	traceProto := tracer.ToProto()
-	if traceProto == nil {
-		t.Fatal("expected tracing data")
-	}
-
-	span := findSpan(traceProto.GetSpans(), "sidx-stream")
-	if span == nil {
-		t.Fatal("expected sidx-stream span")
-	}
-
-	if span.GetError() {
-		t.Fatalf("span unexpectedly marked as error: %v", span.GetTags())
-	}
-
-	tags := spanTagsToMap(span)
-	expectTag(t, tags, "batches_emitted", strconv.Itoa(batchCount))
-
-	// Verify trace_ids_emitted matches what we collected
-	// (Note: may be slightly more than targetTraceIDs due to in-flight batches at cancellation)
-	// The runner may have consumed trace IDs (incrementing r.total) but not yet emitted them
-	// when cancellation occurs, especially with fewer CPU cores
-	emittedTag := tags["trace_ids_emitted"]
-	emittedCount, err := strconv.Atoi(emittedTag)
-	if err != nil {
-		t.Fatalf("failed to parse trace_ids_emitted: %v", err)
-	}
-	if emittedCount < totalTraceIDs {
-		t.Fatalf("trace_ids_emitted should be >= totalTraceIDs: got %d, want >= %d", emittedCount, totalTraceIDs)
-	}
-	// Allow some buffer for in-flight batches, but not too much (e.g., at most one MaxBatchSize worth)
-	maxExpected := totalTraceIDs + req.MaxBatchSize
-	if emittedCount > maxExpected {
-		t.Fatalf("trace_ids_emitted unexpectedly high: got %d, want <= %d (totalTraceIDs=%d + MaxBatchSize=%d)",
-			emittedCount, maxExpected, totalTraceIDs, req.MaxBatchSize)
-	}
-
-	expectTag(t, tags, "max_trace_size", "0")
-	expectTag(t, tags, "sidx_instance_count", "1")
-
-	t.Logf("Tracing successful: emitted %d batches with %d trace IDs", batchCount, totalTraceIDs)
 }

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	pkgerrors "github.com/pkg/errors"
 
@@ -246,25 +247,25 @@ func (t *trace) streamSIDXTraceBatches(
 	tracingCtx := ctx
 	var span *query.Span
 	if tracer != nil {
-		var spanCtx context.Context
-		span, spanCtx = tracer.StartSpan(ctx, "sidx-stream")
-		tracingCtx = spanCtx
+		span, tracingCtx = tracer.StartSpan(ctx, "sidx-stream")
 		tagSIDXStreamSpan(span, req, maxTraceSize, len(sidxInstances))
-		// Register that we'll be doing async operations on this span
-		tracer.AddAsyncOp()
 	}
-
 	streamCtx, cancel := context.WithCancel(tracingCtx)
-	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize, span)
-
+	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
 	go func() {
-		defer close(out)
-		defer cancel()
 		defer func() {
-			// Finish span operations and signal completion
-			runner.finish()
-			if tracer != nil {
-				tracer.DoneAsyncOp()
+			cancel()
+			close(out)
+			if span != nil {
+				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
+				span.Tagf("trace_ids_emitted", "%d", runner.total.Load())
+				if dups := runner.duplicates.Load(); dups > 0 {
+					span.Tagf("duplicate_trace_ids", "%d", dups)
+				}
+				if runner.spanErr != nil && !stdErrors.Is(runner.spanErr, context.Canceled) {
+					span.Error(runner.spanErr)
+				}
+				span.Stop()
 			}
 		}()
 
@@ -276,7 +277,6 @@ func (t *trace) streamSIDXTraceBatches(
 
 		runner.run(out)
 	}()
-
 	return out
 }
 
@@ -285,7 +285,6 @@ type sidxStreamRunner struct {
 	ctx            context.Context
 	spanErr        error
 	cancelFunc     context.CancelFunc
-	span           *query.Span
 	errEvents      chan sidxStreamError
 	heap           *sidxStreamHeap
 	seenTraceIDs   map[string]struct{}
@@ -294,9 +293,9 @@ type sidxStreamRunner struct {
 	errWg          sync.WaitGroup
 	maxTraceSize   int
 	nextSeq        int
-	total          int
-	batchesEmitted int
-	duplicates     int
+	total          atomic.Int64
+	batchesEmitted atomic.Int64
+	duplicates     atomic.Int64
 	batchSize      int
 }
 
@@ -330,7 +329,6 @@ func newSIDXStreamRunner(
 	cancel context.CancelFunc,
 	req sidx.QueryRequest,
 	maxTraceSize int,
-	span *query.Span,
 ) *sidxStreamRunner {
 	asc := true
 	if req.Order != nil && req.Order.Sort == modelv1.Sort_SORT_DESC {
@@ -353,7 +351,6 @@ func newSIDXStreamRunner(
 		req:          req,
 		maxTraceSize: maxTraceSize,
 		batchSize:    batchSize,
-		span:         span,
 		heap:         &sidxStreamHeap{asc: asc},
 		seenTraceIDs: make(map[string]struct{}),
 		batch:        newTraceBatch(0, batchSize),
@@ -530,7 +527,7 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 	}
 
 	if _, exists := r.seenTraceIDs[traceID]; exists {
-		r.duplicates++
+		r.duplicates.Add(1)
 		return false, nil
 	}
 
@@ -540,7 +537,7 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 		r.batch.keys = make(map[string]int64)
 	}
 	r.batch.keys[traceID] = shard.currentKey()
-	r.total++
+	r.total.Add(1)
 
 	return true, nil
 }
@@ -553,7 +550,7 @@ func (r *sidxStreamRunner) emitBatch(out chan<- traceBatch) bool {
 		}
 		return false
 	case out <- r.batch:
-		r.batchesEmitted++
+		r.batchesEmitted.Add(1)
 		r.batch = newTraceBatch(r.nextSeq, r.batchSize)
 		r.nextSeq++
 		return true
@@ -649,25 +646,6 @@ func (r *sidxStreamRunner) cancel() {
 	if r.cancelFunc != nil {
 		r.cancelFunc()
 	}
-}
-
-func (r *sidxStreamRunner) finish() {
-	r.finishSpan()
-}
-
-func (r *sidxStreamRunner) finishSpan() {
-	if r.span == nil {
-		return
-	}
-	r.span.Tagf("batches_emitted", "%d", r.batchesEmitted)
-	r.span.Tagf("trace_ids_emitted", "%d", r.total)
-	if r.duplicates > 0 {
-		r.span.Tagf("duplicate_trace_ids", "%d", r.duplicates)
-	}
-	if r.spanErr != nil && !stdErrors.Is(r.spanErr, context.Canceled) {
-		r.span.Error(r.spanErr)
-	}
-	r.span.Stop()
 }
 
 func (t *trace) startBlockScanStage(
