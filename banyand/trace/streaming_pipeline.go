@@ -250,6 +250,8 @@ func (t *trace) streamSIDXTraceBatches(
 		span, spanCtx = tracer.StartSpan(ctx, "sidx-stream")
 		tracingCtx = spanCtx
 		tagSIDXStreamSpan(span, req, maxTraceSize, len(sidxInstances))
+		// Register that we'll be doing async operations on this span
+		tracer.AddAsyncOp()
 	}
 
 	streamCtx, cancel := context.WithCancel(tracingCtx)
@@ -258,16 +260,21 @@ func (t *trace) streamSIDXTraceBatches(
 	go func() {
 		defer close(out)
 		defer cancel()
+		defer func() {
+			// Finish span operations and signal completion
+			runner.finish()
+			if tracer != nil {
+				tracer.DoneAsyncOp()
+			}
+		}()
 
 		if err := runner.prepare(sidxInstances); err != nil {
 			runner.cancel()
 			runner.emitError(out, err)
-			runner.finish()
 			return
 		}
 
 		runner.run(out)
-		runner.finish()
 	}()
 
 	return out

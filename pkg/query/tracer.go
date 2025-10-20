@@ -39,12 +39,13 @@ type (
 
 // Tracer is a simple tracer for query.
 // Thread-safety: StartSpan and span mutations are thread-safe and can be called
-// concurrently from multiple goroutines. However, ToProto() returns a direct pointer
-// to internal data and must only be called after all span operations have completed
-// to avoid data races on concurrent reads/writes.
+// concurrently from multiple goroutines. ToProto() is safe to call concurrently
+// with span operations - it will wait for any async operations to complete.
 type Tracer struct {
 	data *commonv1.Trace
 	mu   sync.Mutex
+	// wg tracks async operations that may mutate spans after they're created
+	wg sync.WaitGroup
 }
 
 // NewTracer creates a new tracer.
@@ -102,12 +103,23 @@ func (t *Tracer) StartSpan(ctx context.Context, format string, args ...interface
 }
 
 // ToProto returns the proto representation of the tracer.
-// WARNING: This method returns a direct pointer to the internal trace data without locking.
-// It MUST only be called after all span operations are complete and no further mutations
-// will occur. Calling this concurrently with in-flight span mutations will cause data races.
-// Typical usage: call this once at the end of query processing to serialize the trace.
+// This method waits for any async span operations to complete before returning,
+// ensuring thread-safe access to the trace data.
 func (t *Tracer) ToProto() *commonv1.Trace {
+	// Wait for any async operations that might still be mutating span data
+	t.wg.Wait()
 	return t.data
+}
+
+// AddAsyncOp registers an async operation that will mutate span data.
+// Must be paired with a call to DoneAsyncOp() when the operation completes.
+func (t *Tracer) AddAsyncOp() {
+	t.wg.Add(1)
+}
+
+// DoneAsyncOp marks an async operation as complete.
+func (t *Tracer) DoneAsyncOp() {
+	t.wg.Done()
 }
 
 // Span is a span of the tracer.

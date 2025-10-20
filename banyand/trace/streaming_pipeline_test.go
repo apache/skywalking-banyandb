@@ -94,6 +94,7 @@ func (f *fakeSIDXWithErr) StreamingQuery(ctx context.Context, _ sidx.QueryReques
 
 	go func() {
 		defer close(results)
+		defer close(errCh)
 
 		for _, resp := range f.responses {
 			select {
@@ -111,12 +112,6 @@ func (f *fakeSIDXWithErr) StreamingQuery(ctx context.Context, _ sidx.QueryReques
 			case errCh <- f.err:
 			}
 		}
-	}()
-
-	go func() {
-		defer close(errCh)
-		// Just wait for context cancellation to close the channel
-		<-ctx.Done()
 	}()
 
 	return results, errCh
@@ -325,6 +320,7 @@ func TestStreamSIDXTraceBatches_Tracing(t *testing.T) {
 		t.Fatalf("expected batches to be produced")
 	}
 
+	// ToProto() now properly waits for all async span operations to complete
 	traceProto := tracer.ToProto()
 	if traceProto == nil {
 		t.Fatalf("expected tracing data")
@@ -409,6 +405,40 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 	if !errors.Is(errBatch.err, streamErr) {
 		t.Fatalf("unexpected error: %v", errBatch.err)
 	}
+}
+
+// fakeSIDXWithDataThenError simulates a SIDX that sends data first, then an error.
+// Unlike fakeSIDXWithErr, this guarantees the error is sent even if context is canceled,
+// by using buffered channels and sending data+error before checking context.
+type fakeSIDXWithDataThenError struct {
+	*fakeSIDX
+	err error
+}
+
+func (f *fakeSIDXWithDataThenError) StreamingQuery(ctx context.Context, _ sidx.QueryRequest) (<-chan *sidx.QueryResponse, <-chan error) {
+	results := make(chan *sidx.QueryResponse, len(f.responses))
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(results)
+		defer close(errCh)
+
+		// Send all responses first
+		for _, resp := range f.responses {
+			select {
+			case <-ctx.Done():
+				return
+			case results <- resp:
+			}
+		}
+
+		// Guarantee error is sent after data (use buffered channel to avoid blocking)
+		if f.err != nil {
+			errCh <- f.err
+		}
+	}()
+
+	return results, errCh
 }
 
 // fakeSIDXWithImmediateError simulates errors from blockScanResultBatch.
@@ -514,11 +544,11 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 
 			scanErr := errors.New(tt.scanError)
 
-			// For "error_with_partial_data" test, use fakeSIDXWithErr which sends data first, then error
+			// For "error_with_partial_data" test, use fakeSIDXWithDataThenError which guarantees data then error
 			// For other tests, use fakeSIDXWithImmediateError which sends error immediately
 			var sidxInstance sidx.SIDX
 			if tt.withData {
-				sidxInstance = &fakeSIDXWithErr{
+				sidxInstance = &fakeSIDXWithDataThenError{
 					fakeSIDX: &fakeSIDX{
 						responses: responses,
 					},
@@ -1070,6 +1100,7 @@ func TestStreamSIDXTraceBatches_InfiniteChannelWithTracing(t *testing.T) {
 		t.Fatalf("expected at least %d trace IDs, got %d", targetTraceIDs, totalTraceIDs)
 	}
 
+	// ToProto() now properly waits for all async span operations to complete
 	traceProto := tracer.ToProto()
 	if traceProto == nil {
 		t.Fatal("expected tracing data")
