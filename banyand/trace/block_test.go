@@ -311,7 +311,7 @@ func Test_marshalAndUnmarshalTag(t *testing.T) {
 	defer releaseSeqReader(valueReader)
 	valueReader.init(dataBuffer)
 
-	unmarshaled2.unmarshalTagFromSeqReaders(decoder, tagIndex, bm.getTagMetadata(name), bm.tagType, metaReader, valueReader)
+	unmarshaled2.unmarshalTagFromSeqReaders(decoder, tagIndex, bm.getTagMetadata(name), name, bm.tagType, metaReader, valueReader)
 
 	if diff := cmp.Diff(unmarshaled2.tags[0], b.tags[0],
 		cmp.AllowUnexported(tag{}),
