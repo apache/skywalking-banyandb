@@ -32,12 +32,9 @@ criteria:
           str:
             value: "1"
     right:
-      le:
-        op: "LOGICAL_OP_AND"
-        left:
-          condition:
-            name: "start_time"
-            op: "BINARY_OP_EQ"
-            value:
-              int:
-                value: 1622933202000000000
+      condition:
+        name: "start_time"
+        op: "BINARY_OP_EQ"
+        value:
+          int:
+            value: 1622933202000000000

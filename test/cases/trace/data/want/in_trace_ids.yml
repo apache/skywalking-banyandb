@@ -18,76 +18,91 @@
 traces:
   - spans:
     - span: trace_001_span_1
+      spanId: span_001_1
       tags:
       - key: trace_id
         value:
           str:
             value: trace_001
     - span: trace_001_span_2
+      spanId: span_001_2
       tags:
       - key: trace_id
         value:
           str:
             value: trace_001
     - span: trace_001_span_3
+      spanId: span_001_3
       tags:
       - key: trace_id
         value:
           str:
             value: trace_001
     - span: trace_001_span_4
+      spanId: span_001_4
       tags:
       - key: trace_id
         value:
           str:
             value: trace_001
     - span: trace_001_span_5
+      spanId: span_001_5
       tags:
       - key: trace_id
         value:
           str:
             value: trace_001
+    traceId: trace_001
   - spans:
     - span: trace_002_span_1
+      spanId: span_002_1
       tags:
       - key: trace_id
         value:
           str:
             value: trace_002
     - span: trace_002_span_2
+      spanId: span_002_2
       tags:
       - key: trace_id
         value:
           str:
             value: trace_002
     - span: trace_002_span_3
+      spanId: span_002_3
       tags:
       - key: trace_id
         value:
           str:
             value: trace_002
     - span: trace_002_span_4
+      spanId: span_002_4
       tags:
       - key: trace_id
         value:
           str:
             value: trace_002
+    traceId: trace_002
   - spans:
     - span: trace_003_span_1
+      spanId: span_003_1
       tags:
       - key: trace_id
         value:
           str:
             value: trace_003
     - span: trace_003_span_2
+      spanId: span_003_2
       tags:
       - key: trace_id
         value:
           str:
             value: trace_003
     - span: trace_003_span_3
+      spanId: span_003_3
       tags:
       - key: trace_id
         value:
           str:
             value: trace_003
+    traceId: trace_003

@@ -190,7 +190,7 @@ func (b *block) unmarshalTag(decoder *encoding.BytesBlockDecoder, i int,
 }
 
 func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, i int, tagMetadataBlock *dataBlock,
-	tagType map[string]pbv1.ValueType, metaReader, valueReader *seqReader,
+	name string, tagType map[string]pbv1.ValueType, metaReader, valueReader *seqReader,
 ) {
 	if tagMetadataBlock.offset != metaReader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tagMetadataBlock.offset, metaReader.bytesRead)
@@ -207,17 +207,18 @@ func (b *block) unmarshalTagFromSeqReaders(decoder *encoding.BytesBlockDecoder, 
 	bigValuePool.Release(bb)
 
 	b.resizeTags(len(b.tags))
-	// TODO: avoid sorting the tagType map
-	keys := make([]string, 0, len(tagType))
-	for k := range tagType {
-		keys = append(keys, k)
+	b.tags[i].name = name
+	if valueType, ok := tagType[name]; ok {
+		b.tags[i].valueType = valueType
+		tm.name = name
+		tm.valueType = valueType
+		b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
+		return
 	}
-	sort.Strings(keys)
-	b.tags[i].name = keys[i]
-	b.tags[i].valueType = tagType[keys[i]]
-	tm.name = keys[i]
-	tm.valueType = tagType[keys[i]]
-	b.tags[i].mustSeqReadValues(decoder, valueReader, *tm, uint64(b.Len()))
+	b.tags[i].valueType = pbv1.ValueTypeUnknown
+	for j := range b.tags[i].values {
+		b.tags[i].values[j] = nil
+	}
 }
 
 func (b *block) spanSize() uint64 {
@@ -262,7 +263,7 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders 
 	sort.Strings(keys)
 	for i, name := range keys {
 		block := bm.tags[name]
-		b.unmarshalTagFromSeqReaders(decoder, i, block, bm.tagType, seqReaders.tagMetadata[name], seqReaders.tags[name])
+		b.unmarshalTagFromSeqReaders(decoder, i, block, name, bm.tagType, seqReaders.tagMetadata[name], seqReaders.tags[name])
 	}
 }
 
