@@ -62,7 +62,7 @@ type snapshot struct {
 
 func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64, traceIDs []string) ([]*part, int) {
 	shouldSkip := func(p *part) bool {
-		if p.traceIDFilter.filter == nil {
+		if p.traceIDFilter.filter == nil || len(traceIDs) == 0 {
 			return false
 		}
 		for _, traceID := range traceIDs {
