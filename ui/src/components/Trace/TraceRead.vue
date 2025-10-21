@@ -18,7 +18,7 @@
 -->
 
 <script setup>
-  import { queryTraces, getindexRuleList } from '@/api/index';
+  import { queryTraces, getindexRuleList, getTrace } from '@/api/index';
   import { getCurrentInstance } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
@@ -40,13 +40,20 @@
     group: route.params.group,
     tableData: [],
     name: route.params.name,
-    indexRule: '',
-    spanTags: ['traceId', 'spanId'],
+    indexRule: null,
+    spanTags: [],
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
 
   const getTraces = async (params) => {
+    if (!data.indexRule?.metadata?.name) {
+      ElMessage({
+        message: 'No index rule found',
+        type: 'error',
+      });
+      return;
+    }
     $loadingCreate();
     const response = await queryTraces({ groups: [data.group], name: data.name, ...params });
     $loadingClose();
@@ -55,11 +62,10 @@
       ElMessage({
         message: response.error.message,
         type: 'error',
-        duration: 3000,
       });
       return;
     }
-    data.spanTags = ['traceId', 'spanId'];
+    data.spanTags = [];
     data.tableData = (response.traces || [])
       .map((trace) => {
         return trace.spans.map((span) => {
@@ -87,19 +93,34 @@
     try {
       const response = await getindexRuleList(data.group);
       if (response.status === 200 && response.data.indexRule && response.data.indexRule.length > 0) {
-        data.indexRule = response.data.indexRule[0].metadata;
+        data.indexRule = response.data.indexRule[0];
       } else {
-        data.indexRule = '';
+        data.indexRule = null;
       }
     } catch (err) {
-      console.error('Failed to fetch indexRule:', err);
-      data.indexRule = '';
+      data.indexRule = null;
       ElMessage({
-        message: 'Failed to fetch index rule: ' + err,
+        message: 'Failed to fetch index rule: ' + (err?.message || String(err)),
         type: 'error',
         duration: 3000,
       });
     }
+  };
+
+  const getTagProjection = async () => {
+    if (!(data.group && data.name)) {
+      return [];
+    }
+    const response = await getTrace(data.group, data.name);
+    if (response.error) {
+      ElMessage({
+        message: response.error.message,
+        type: 'error',
+        duration: 3000,
+      });
+      return [];
+    }
+    return response.trace.tags.map((tag) => tag.name);
   };
 
   function searchTraces() {
@@ -137,9 +158,7 @@
       return;
     }
     await getIndexRule();
-    if (!data.indexRule) {
-      return;
-    }
+    const tagProjection = await getTagProjection();
     timeRange.value = [new Date(new Date().getTime() - Last15Minutes), new Date()];
     const range = jsonToYaml({
       timeRange: {
@@ -152,11 +171,10 @@
 name: ${data.name}
 offset: 0
 limit: 10
-tagProjection: ["start_time", "service_id"]
+tagProjection: ${Array.isArray(tagProjection) && tagProjection ? JSON.stringify(tagProjection) : '[]'}
 orderBy:
-  indexRuleName: ${data.indexRule.name}
+  indexRuleName: ${data.indexRule?.metadata?.name || ''}
   sort: SORT_DESC`;
-
     getTraces(yamlToJson(yamlCode.value).data);
   }
 
@@ -241,7 +259,8 @@ orderBy:
     }
     for (let i = 0; i < 2; i++) {
       if (typeof value !== 'object') {
-        return value;
+        const strValue = value.toString();
+        return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
       }
       for (const key in value) {
         if (Object.hasOwn(value, key)) {
@@ -254,7 +273,8 @@ orderBy:
       }
     }
 
-    return value;
+    const strValue = value.toString();
+    return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
   };
 
   const objectSpanMethod = ({ row, column, rowIndex, columnIndex }) => {
@@ -292,7 +312,7 @@ orderBy:
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      data.indexRule = '';
+      data.indexRule = null;
       initTraceData();
     },
     {
@@ -339,20 +359,32 @@ orderBy:
           >
           <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
         </div>
-        <el-table
-          :data="data.tableData"
-          :border="true"
-          style="width: 100%; background-color: #f5f7fa"
-          @selection-change="handleSelectionChange"
-          :span-method="objectSpanMethod"
-        >
-          <el-table-column type="selection" width="55" />
-          <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag">
-            <template #default="scope">
-              {{ getTagValue({ value: scope.row[tag] }) }}
-            </template>
-          </el-table-column>
-        </el-table>
+        <div class="table-container">
+          <el-table
+            :data="data.tableData"
+            :border="true"
+            style="width: 100%"
+            @selection-change="handleSelectionChange"
+            :span-method="objectSpanMethod"
+          >
+            <el-table-column type="selection" width="55" fixed />
+            <el-table-column label="traceId" prop="traceId" width="200" fixed>
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row.traceId }) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="spanId" prop="spanId" width="300" fixed>
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row.spanId }) }}
+              </template>
+            </el-table-column>
+            <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag" min-width="200">
+              <template #default="scope">
+                {{ getTagValue({ value: scope.row[tag] }) }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
@@ -374,5 +406,10 @@ orderBy:
     font-family: 'Courier New', Courier, monospace;
     word-break: break-all;
     font-size: 12px;
+  }
+
+  .table-container {
+    overflow-x: auto;
+    width: 100%;
   }
 </style>
