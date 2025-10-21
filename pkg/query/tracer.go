@@ -259,19 +259,24 @@ func (t *Tracer) DeepCopy() *commonv1.Trace {
 		return nil
 	}
 
-	// Lock the tracer to get a consistent snapshot
+	// Lock the tracer to snapshot the structure, then unlock before locking spans
+	// to avoid deadlock (other methods lock span -> tracer)
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	traceID := t.data.TraceId
+	traceError := t.data.Error
+	spansToCopy := t.data.Spans
+	spanMap := t.spanMap
+	t.mu.Unlock()
 
 	result := &commonv1.Trace{
-		TraceId: t.data.TraceId,
-		Error:   t.data.Error,
+		TraceId: traceID,
+		Error:   traceError,
 	}
 
-	if len(t.data.Spans) > 0 {
-		result.Spans = make([]*commonv1.Span, len(t.data.Spans))
-		for i, span := range t.data.Spans {
-			result.Spans[i] = t.deepCopySpanWithLock(span)
+	if len(spansToCopy) > 0 {
+		result.Spans = make([]*commonv1.Span, len(spansToCopy))
+		for i, span := range spansToCopy {
+			result.Spans[i] = deepCopySpanWithLock(span, spanMap)
 		}
 	}
 
@@ -279,14 +284,14 @@ func (t *Tracer) DeepCopy() *commonv1.Trace {
 }
 
 // deepCopySpanWithLock creates a deep copy of a span with proper locking.
-// Must be called with tracer mutex held.
-func (t *Tracer) deepCopySpanWithLock(src *commonv1.Span) *commonv1.Span {
+// Locks the span wrapper if available to ensure thread-safe reading.
+func deepCopySpanWithLock(src *commonv1.Span, spanMap map[*commonv1.Span]*Span) *commonv1.Span {
 	if src == nil {
 		return nil
 	}
 
 	// Look up the span wrapper and lock it while copying
-	if wrapper, ok := t.spanMap[src]; ok {
+	if wrapper, ok := spanMap[src]; ok {
 		wrapper.mu.Lock()
 		defer wrapper.mu.Unlock()
 	}
@@ -319,7 +324,7 @@ func (t *Tracer) deepCopySpanWithLock(src *commonv1.Span) *commonv1.Span {
 	if len(src.Children) > 0 {
 		result.Children = make([]*commonv1.Span, len(src.Children))
 		for i, child := range src.Children {
-			result.Children[i] = t.deepCopySpanWithLock(child)
+			result.Children[i] = deepCopySpanWithLock(child, spanMap)
 		}
 	}
 
