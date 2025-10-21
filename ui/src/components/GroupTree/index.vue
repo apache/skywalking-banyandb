@@ -140,99 +140,82 @@
   });
 
   // init data
-  function getGroupLists() {
+  async function getGroupLists() {
     filterText.value = '';
     loading.value = true;
-    getGroupList().then((res) => {
-      if (res.status === 200) {
-        data.groupLists = res.data.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
-        let promise = data.groupLists.map((item) => {
-          const type = props.type;
-          const name = item.metadata.name;
-          return new Promise((resolve, reject) => {
-            getAllTypesOfResourceList(type, name)
-              .then((res) => {
-                if (res.status === 200) {
-                  item.children = res.data[type];
-                  resolve();
-                }
-              })
-              .catch((err) => {
-                reject(err);
-              });
-          });
-        });
-        if (SupportedIndexRuleTypes.includes(props.type)) {
-          const promiseIndexRule = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getindexRuleList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.indexRule = res.data.indexRule;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          const promiseIndexRuleBinding = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getindexRuleBindingList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.indexRuleBinding = res.data.indexRuleBinding;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          promise = promise.concat(promiseIndexRule);
-          promise = promise.concat(promiseIndexRuleBinding);
+    const res = await getGroupList();
+    if (res.error) {
+      loading.value = false;
+      return;
+    }
+    data.groupLists = res.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
+    let promise = data.groupLists.map((item) => {
+      const type = props.type;
+      const name = item.metadata.name;
+      return new Promise(async (resolve, reject) => {
+        const response = await getAllTypesOfResourceList(type, name)
+        if (response.error) {
+          reject(response.error);
         }
-        if (props.type === 'measure') {
-          const TopNAggregationRule = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getTopNAggregationList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.topNAggregation = res.data.topNAggregation;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          promise = promise.concat(TopNAggregationRule);
-        }
-        Promise.all(promise)
-          .then(() => {
-            data.groupLists = processGroupTree();
-            initActiveNode();
-          })
-          .catch((err) => {
-            ElMessage({
-              message: `An error occurred while obtaining group data. Please refresh and try again. Error: ${err}`,
-              type: 'error',
-              duration: 3000,
-            });
-          })
-          .finally(() => {
-            loading.value = false;
-          });
-      } else {
-        loading.value = false;
-      }
+        item.children = response[type];
+        resolve();
+      });
     });
+    if (SupportedIndexRuleTypes.includes(props.type)) {
+      const promiseIndexRule = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return new Promise(async (resolve, reject) => {
+          const res = await getindexRuleList(name)
+          if (res.error) {
+            reject(res.error);
+          }
+          item.indexRule = res.indexRule;
+          resolve();
+        });
+      });
+      const promiseIndexRuleBinding = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return new Promise(async (resolve, reject) => {
+          const res = await getindexRuleBindingList(name)
+          if (res.error) {
+            reject(res.error);
+          }
+            item.indexRuleBinding = res.indexRuleBinding;
+            resolve();
+        });
+      });
+      promise = promise.concat(promiseIndexRule);
+      promise = promise.concat(promiseIndexRuleBinding);
+    }
+    if (props.type === 'measure') {
+      const TopNAggregationRule = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return new Promise(async (resolve, reject) => {
+          const res = await getTopNAggregationList(name)
+          if (res.error) {
+            reject(res.error);
+          }
+          item.topNAggregation = res.topNAggregation;
+          resolve();
+        });
+      });
+      promise = promise.concat(TopNAggregationRule);
+    }
+    Promise.all(promise)
+      .then(() => {
+        data.groupLists = processGroupTree();
+        initActiveNode();
+      })
+      .catch((err) => {
+        ElMessage({
+          message: `An error occurred while obtaining group data. Please refresh and try again. Error: ${err}`,
+          type: 'error',
+          duration: 3000,
+        });
+      })
+      .finally(() => {
+        loading.value = false;
+      });
   }
 
   function processGroupTree() {
@@ -486,52 +469,62 @@
       return deleteResource();
     });
   }
-  function deleteSecondaryDataModelFunction(param) {
-    deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-          $bus.emit('deleteResource', currentNode.value.type);
-        }
-      }
-    });
+  async function deleteSecondaryDataModelFunction(param) {
+    const res = await deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
+        message: 'Delete succeeded',
+        type: 'success',
+      });
+      getGroupLists();
+      $bus.emit('deleteResource', currentNode.value.type);
+    }
   }
-  function deleteGroupFunction() {
+  async function deleteGroupFunction() {
     // delete group
-    deleteGroup(currentNode.value.name).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-        }
-        $bus.emit('deleteGroup', currentNode.value.name);
-      }
-    });
+    const res = await deleteGroup(currentNode.value.name);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
+        message: 'Delete succeeded',
+        type: 'success',
+      });
+      getGroupLists();
+    }
+    $bus.emit('deleteGroup', currentNode.value.name);
   }
-  function deleteResource() {
+  async function deleteResource() {
     // delete Resources
-    deleteAllTypesOfResource(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
+    const res = await deleteAllTypesOfResource(props.type, currentNode.value.group, currentNode.value.name);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
             message: 'Delete succeeded',
             type: 'success',
             duration: 5000,
           });
           getGroupLists();
-        }
         $bus.emit('deleteResource', currentNode.value.name);
       }
-    });
   }
 
   // create/edit group
@@ -540,43 +533,44 @@
   }
 
   function createGroupFunction() {
-    ruleForm.value.validate((valid) => {
+    ruleForm.value.validate(async (valid) => {
       if (valid) {
-        createGroup(getGroupForm.value)
-          .then((res) => {
-            if (res.status === 200) {
-              getGroupLists();
-              ElMessage({
-                message: 'Created successfully',
-                type: 'success',
-                duration: 3000,
-              });
-            }
-          })
-          .finally(() => {
-            data.dialogGroupVisible = false;
+        const res = await createGroup(getGroupForm.value);
+        data.dialogGroupVisible = false;
+        if (res.error) {
+          ElMessage({
+            message: `Create failed: ${res.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        getGroupLists();
+        ElMessage({
+          message: 'Created successfully',
+          type: 'success',
+        });
       }
-    });
+    })
   }
   function editGroupFunction() {
     const name = currentNode.value.name;
-    ruleForm.value.validate((valid) => {
+    ruleForm.value.validate(async (valid) => {
       if (valid) {
-        editGroup(name, getGroupForm.value)
-          .then((res) => {
-            if (res.status === 200) {
-              getGroupLists();
-              ElMessage({
-                message: 'Update succeeded',
-                type: 'success',
-                duration: 3000,
-              });
-            }
-          })
-          .finally(() => {
-            data.dialogGroupVisible = false;
+        const res = await editGroup(name, getGroupForm.value);
+        data.dialogGroupVisible = false;
+        if (res.error) {
+          ElMessage({
+            message: `Update failed: ${res.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+          getGroupLists();
+          ElMessage({
+            message: 'Update succeeded',
+            type: 'success',
+            });
+      
       }
     });
   }

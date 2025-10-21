@@ -25,8 +25,7 @@
 //
 // Keep a minimal stub to surface a clear runtime error if accidentally imported.
 
-export default function deprecatedAxios() {
-  throw new Error(
-    "ui/src/utils/axios.js is deprecated. Use httpQuery from '@/api/base' instead.",
-  );
-}
+// DELETED: this file is removed in a follow-up commit
+// (kept empty temporarily to ensure safe removal)
+
+export default null;
