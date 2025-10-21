@@ -153,7 +153,7 @@
       const type = props.type;
       const name = item.metadata.name;
       return new Promise(async (resolve, reject) => {
-        const response = await getAllTypesOfResourceList(type, name)
+        const response = await getAllTypesOfResourceList(type, name);
         if (response.error) {
           reject(response.error);
         }
@@ -165,7 +165,7 @@
       const promiseIndexRule = data.groupLists.map((item) => {
         const name = item.metadata.name;
         return new Promise(async (resolve, reject) => {
-          const res = await getindexRuleList(name)
+          const res = await getindexRuleList(name);
           if (res.error) {
             reject(res.error);
           }
@@ -176,12 +176,12 @@
       const promiseIndexRuleBinding = data.groupLists.map((item) => {
         const name = item.metadata.name;
         return new Promise(async (resolve, reject) => {
-          const res = await getindexRuleBindingList(name)
+          const res = await getindexRuleBindingList(name);
           if (res.error) {
             reject(res.error);
           }
-            item.indexRuleBinding = res.indexRuleBinding;
-            resolve();
+          item.indexRuleBinding = res.indexRuleBinding;
+          resolve();
         });
       });
       promise = promise.concat(promiseIndexRule);
@@ -191,7 +191,7 @@
       const TopNAggregationRule = data.groupLists.map((item) => {
         const name = item.metadata.name;
         return new Promise(async (resolve, reject) => {
-          const res = await getTopNAggregationList(name)
+          const res = await getTopNAggregationList(name);
           if (res.error) {
             reject(res.error);
           }
@@ -518,13 +518,13 @@
     }
     if (res.deleted) {
       ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-        $bus.emit('deleteResource', currentNode.value.name);
-      }
+        message: 'Delete succeeded',
+        type: 'success',
+        duration: 5000,
+      });
+      getGroupLists();
+      $bus.emit('deleteResource', currentNode.value.name);
+    }
   }
 
   // create/edit group
@@ -550,7 +550,7 @@
           type: 'success',
         });
       }
-    })
+    });
   }
   function editGroupFunction() {
     const name = currentNode.value.name;
@@ -565,12 +565,11 @@
           });
           return;
         }
-          getGroupLists();
-          ElMessage({
-            message: 'Update succeeded',
-            type: 'success',
-            });
-      
+        getGroupLists();
+        ElMessage({
+          message: 'Update succeeded',
+          type: 'success',
+        });
       }
     });
   }

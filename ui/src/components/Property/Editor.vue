@@ -22,7 +22,7 @@
   import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute, useRouter } from 'vue-router';
   import { updateProperty, createProperty } from '@/api';
-  import { getStreamOrMeasure } from '@/api/index';
+  import { getResourceOfAllType } from '@/api/index';
   import TagEditor from './TagEditor.vue';
   import { rules, strategyGroup, formConfig } from './data';
 
@@ -46,7 +46,7 @@
   function initProperty() {
     if (operator === 'edit') {
       $loadingCreate();
-      getStreamOrMeasure(type, group, name)
+      getResourceOfAllType(type, group, name)
         .then((res) => {
           if (res.status === 200) {
             const { property } = res.data;

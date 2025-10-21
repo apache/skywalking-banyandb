@@ -21,7 +21,7 @@
   import { reactive, ref } from 'vue';
   import { useRoute } from 'vue-router';
   import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { getStreamOrMeasure, getTableList } from '@/api/index';
+  import { getResourceOfAllType, getTableList } from '@/api/index';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
@@ -173,29 +173,30 @@ orderBy:
     json.data.timeRange.end = data.timeValue ? new Date(data.timeValue[1]) : null;
     data.code = jsonToYaml(json.data).data;
   }
-  function initData() {
+  async function initData() {
     $loadingCreate();
-    getStreamOrMeasure(data.type, data.group, data.name)
-      .then((res) => {
-        if (res.status === 200) {
-          data.resourceData = res.data[data.type];
-          data.tableTags = res.data[data.type].tagFamilies[0].tags.map((item) => {
-            item.label = item.name;
-            return item;
-          });
-          data.options = res.data[data.type].tagFamilies.map((item, index) => {
-            return { label: item.name, value: index };
-          });
-          data.tagFamily = 0;
-          data.fields = res.data[data.type].fields ? res.data[data.type].fields : [];
-          handleCodeData();
-        }
-      })
-      .finally(() => {
-        $loadingClose();
+    const res = await getResourceOfAllType(data.type, data.group, data.name);
+    $loadingClose();
+    if (res.error) {
+      ElMessage({
+        message: `Get ${data.type} failed: ${res.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    data.resourceData = res[data.type];
+    data.tableTags = res[data.type].tagFamilies[0].tags.map((item) => {
+      item.label = item.name;
+      return item;
+    });
+    data.options = res[data.type].tagFamilies.map((item, index) => {
+      return { label: item.name, value: index };
+    });
+    data.tagFamily = 0;
+    data.fields = res[data.type].fields ? res[data.type].fields : [];
+    handleCodeData();
   }
-  function getTableData() {
+  async function getTableData() {
     data.tableData = [];
     data.loading = true;
     setTableFilterConfig();
@@ -211,19 +212,20 @@ orderBy:
     }
     paramList.name = data.resourceData.metadata.name;
     paramList.groups = [data.resourceData.metadata.group];
-    getTableList(paramList, data.type)
-      .then((res) => {
-        if (res.status === 200) {
-          if (data.type === 'stream') {
-            setTableData(res.data.elements);
-          } else {
-            setTableData(res.data.dataPoints);
-          }
-        }
-      })
-      .catch(() => {
-        data.loading = false;
+    const res = await getTableList(paramList, data.type);
+    data.loading = false;
+    if (res.error) {
+      ElMessage({
+        message: `Get ${data.type} failed: ${res.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    if (data.type === 'stream') {
+      setTableData(res.elements);
+    } else {
+      setTableData(res.dataPoints);
+    }
   }
   function setTableData(elements) {
     const tags = data.resourceData.tagFamilies[data.tagFamily].tags;

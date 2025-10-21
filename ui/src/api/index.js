@@ -17,11 +17,8 @@
  * under the License.
  */
 
-// api file
-
 import { httpQuery } from './base';
 
-// Some request methods
 export function getGroupList() {
   return httpQuery({
     url: '/api/v1/group/schema/lists',
@@ -36,7 +33,7 @@ export function getAllTypesOfResourceList(type, name) {
   });
 }
 
-export function getStreamOrMeasure(type, group, name) {
+export function getResourceOfAllType(type, group, name) {
   return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
     method: 'GET',

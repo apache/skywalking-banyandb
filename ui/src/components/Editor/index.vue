@@ -18,14 +18,13 @@
 -->
 
 <script lang="ts" setup>
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { reactive, ref } from 'vue';
+  import { reactive, ref, watch, getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import TagEditor from './tagEditor.vue';
   import FieldsEditor from './fieldsEditor.vue';
   import type { FormInstance } from 'element-plus';
   import { ElMessage } from 'element-plus';
-  import { createResources, editResources, getStreamOrMeasure } from '@/api/index';
+  import { createResources, editResources, getResourceOfAllType } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
 
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
@@ -103,7 +102,7 @@
   );
   const submit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return;
-    await formEl.validate((valid) => {
+    await formEl.validate(async (valid) => {
       if (valid) {
         const arr = tagEditorRef.value.getTagFamilies();
         const tagFamilies = [];
@@ -166,41 +165,42 @@
         }
         $loadingCreate();
         let params = {};
-        params[data.type + ''] = form;
+        params[data.type.toString()] = form;
         if (data.operator === 'edit' && data.form.group && data.form.name) {
-          return editResources(data.type, data.form.group, data.form.name, params)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Edit successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteResource', data.form.name);
-                openResourses();
-              }
-            })
-            .finally(() => {
-              $loadingClose();
+          const res = await editResources(data.type, data.form.group, data.form.name, params);
+          $loadingClose();
+          if (res.error) {
+            ElMessage({
+              message: `Edit failed: ${res.error.message}`,
+              type: 'error',
             });
-        }
-        createResources(data.type, params)
-          .then((res) => {
-            if (res.status === 200) {
-              ElMessage({
-                message: 'Create successed',
-                type: 'success',
-                duration: 5000,
-              });
-              $bus.emit('refreshAside');
-              $bus.emit('deleteGroup', data.form.group);
-              openResourses();
-            }
-          })
-          .finally(() => {
-            $loadingClose();
+            return;
+          }
+          ElMessage({
+            message: 'Edit successed',
+            type: 'success',
           });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteResource', data.form.name);
+          openResourses();
+          return;
+        }
+        const res = await createResources(data.type, params);
+        $loadingClose();
+        if (res.error) {
+          ElMessage({
+            message: `Create failed: ${res.error.message}`,
+            type: 'error',
+          });
+          return;
+        }
+        ElMessage({
+          message: 'Create successed',
+          type: 'success',
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteGroup', data.form.group);
+        openResourses();
       }
     });
   };
@@ -222,60 +222,62 @@
     };
     $bus.emit('AddTabs', add);
   }
-  function initData() {
-    if (data.operator === 'edit' && data.form.group && data.form.name) {
-      $loadingCreate();
-      getStreamOrMeasure(data.type, data.form.group, data.form.name)
-        .then((res) => {
-          if (res.status === 200) {
-            data.form.indexMode = res.data[String(data.type)]?.indexMode || false;
-            const tagFamilies = res.data[String(data.type)]?.tagFamilies || [];
-            const entity = res.data[String(data.type)]?.entity?.tagNames || [];
-            const shardingKey = res.data[String(data.type)]?.shardingKey?.tagNames || [];
-            const arr = [];
-            tagFamilies.forEach((item) => {
-              item.tags.forEach((tag) => {
-                const entityIndex = entity.findIndex((entityItem) => {
-                  return entityItem === tag.name;
-                });
-                const shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
-                  return shardingKeyItem === tag.name;
-                });
-                const obj = {
-                  tagFamily: item.name,
-                  tag: tag.name,
-                  type: tag.type,
-                  entity: entityIndex >= 0 ? true : false,
-                  shardingKey: shardingKeyIndex >= 0 ? true : false,
-                };
-                arr.push(obj);
-              });
-            });
-            tagEditorRef.value.setTagFamilies(arr);
-            if (data.type === 'measure') {
-              const fields = res.data[data.type + ''].fields;
-              const intervalArr = res.data[data.type + ''].interval.split('');
-              let interval = 0;
-              let intervalUnit = '';
-              intervalArr.forEach((char) => {
-                let code = char.charCodeAt();
-                if (code >= 48 && code < 58) {
-                  interval = interval * 10 + (char - 0);
-                } else {
-                  intervalUnit = intervalUnit + char;
-                }
-              });
-              data.form.interval = interval;
-              data.form.intervalUnit = intervalUnit;
-              fieldEditorRef.value.setFields(fields);
-            }
-            data.form.modRevision = res.data[data.type + ''].metadata.modRevision;
-          }
-        })
-        .finally(() => {
-          $loadingClose();
-        });
+  async function initData() {
+    if (data.operator !== 'edit' && !data.form.group && !data.form.name) {
+      return;
     }
+    $loadingCreate();
+    const res = await getResourceOfAllType(data.type, data.form.group, data.form.name);
+    $loadingClose();
+    if (res.error) {
+      ElMessage({
+        message: `Get ${data.type} detail failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    data.form.indexMode = res[String(data.type)]?.indexMode || false;
+    const tagFamilies = res[String(data.type)]?.tagFamilies || [];
+    const entity = res[String(data.type)]?.entity?.tagNames || [];
+    const shardingKey = res[String(data.type)]?.shardingKey?.tagNames || [];
+    const arr = [];
+    tagFamilies.forEach((item) => {
+      item.tags.forEach((tag) => {
+        const entityIndex = entity.findIndex((entityItem) => {
+          return entityItem === tag.name;
+        });
+        const shardingKeyIndex = shardingKey.findIndex((shardingKeyItem) => {
+          return shardingKeyItem === tag.name;
+        });
+        const obj = {
+          tagFamily: item.name,
+          tag: tag.name,
+          type: tag.type,
+          entity: entityIndex >= 0 ? true : false,
+          shardingKey: shardingKeyIndex >= 0 ? true : false,
+        };
+        arr.push(obj);
+      });
+    });
+    tagEditorRef.value.setTagFamilies(arr);
+    if (data.type === 'measure') {
+      const fields = res[data.type.toString()].fields;
+      const intervalArr = res[data.type.toString()].interval.split('');
+      let interval = 0;
+      let intervalUnit = '';
+      intervalArr.forEach((char) => {
+        let code = char.charCodeAt();
+        if (code >= 48 && code < 58) {
+          interval = interval * 10 + (char - 0);
+        } else {
+          intervalUnit = intervalUnit + char;
+        }
+      });
+      data.form.interval = interval;
+      data.form.intervalUnit = intervalUnit;
+      fieldEditorRef.value.setFields(fields);
+    }
+    data.form.modRevision = res[data.type.toString()].metadata.modRevision;
   }
 </script>
 

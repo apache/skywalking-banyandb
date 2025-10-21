@@ -90,20 +90,19 @@
     if (!data.group) {
       return;
     }
-    try {
-      const response = await getindexRuleList(data.group);
-      if (response.status === 200 && response.data.indexRule && response.data.indexRule.length > 0) {
-        data.indexRule = response.data.indexRule[0];
-      } else {
-        data.indexRule = null;
-      }
-    } catch (err) {
+    const response = await getindexRuleList(data.group);
+    if (response.error) {
       data.indexRule = null;
       ElMessage({
-        message: 'Failed to fetch index rule: ' + (err?.message || String(err)),
+        message: 'Failed to fetch index rule: ' + (response.error?.message || String(response.error)),
         type: 'error',
-        duration: 3000,
       });
+      return;
+    }
+    if (response.indexRule?.length) {
+      data.indexRule = response.indexRule[0];
+    } else {
+      data.indexRule = null;
     }
   };
 

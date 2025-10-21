@@ -19,10 +19,9 @@
 
 <script setup>
   import { fetchProperties, deleteProperty } from '@/api/index';
-  import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { reactive, ref, watch, onMounted } from 'vue';
+  import { reactive, ref, watch, onMounted, getCurrentInstance } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { yamlToJson } from '@/utils/yaml';
   import PropertyEditor from './PropertyEditor.vue';
@@ -44,29 +43,23 @@
   });
   const yamlCode = ref(`name: ${data.name}
 limit: 10`);
-  const getProperties = (params) => {
+  const getProperties = async (params) => {
     $loadingCreate();
-    fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params })
-      .then((res) => {
-        if (res.status === 200) {
-          data.tableData = res.data.properties.map((item) => {
-            item.tags.forEach((tag) => {
-              tag.value = JSON.stringify(tag.value);
-            });
-            return item;
-          });
-        }
-      })
-      .catch((err) => {
-        ElMessage({
-          message: 'An error occurred while obtaining group data. Please refresh and try again. Error: ' + err,
-          type: 'error',
-          duration: 3000,
-        });
-      })
-      .finally(() => {
-        $loadingClose();
+    const res = await fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params });
+    $loadingClose();
+    if (res.error) {
+      ElMessage({
+        message: `Failed to fetch properties: ${res.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    data.tableData = (res.properties || []).map((item) => {
+      item.tags.forEach((tag) => {
+        tag.value = JSON.stringify(tag.value);
+      });
+      return item;
+    });
   };
   const openPropertyView = (data) => {
     propertyValueViewerRef?.value.openDialog(data);
@@ -107,30 +100,23 @@ limit: 10`);
         });
       });
   }
-  const deleteTableData = (index) => {
+  const deleteTableData = async (index) => {
     const item = data.tableData[index];
     $loadingCreate();
-    deleteProperty(item.metadata.group, item.metadata.name, item.id)
-      .then((res) => {
-        if (res.status === 200) {
-          ElMessage({
-            message: 'successed',
-            type: 'success',
-            duration: 5000,
-          });
-          getProperties();
-        }
-      })
-      .catch((err) => {
-        ElMessage({
-          message: 'Please refresh and try again. Error: ' + err,
-          type: 'error',
-          duration: 3000,
-        });
-      })
-      .finally(() => {
-        $loadingClose();
+    const res = await deleteProperty(item.metadata.group, item.metadata.name, item.id);
+    $loadingClose();
+    if (res.error) {
+      ElMessage({
+        message: `Failed to delete property: ${res.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    ElMessage({
+      message: 'successed',
+      type: 'success',
+    });
+    getProperties();
   };
   onMounted(() => {
     getProperties();

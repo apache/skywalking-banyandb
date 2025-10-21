@@ -18,8 +18,7 @@
 -->
 
 <script lang="ts" setup>
-  import { reactive, ref } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { reactive, ref, watch, getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import type { FormInstance } from 'element-plus';
   import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
@@ -139,9 +138,9 @@
       deep: true,
     },
   );
-  const submit = async (formEl: FormInstance | undefined) => {
+  const submit = async(formEl: FormInstance | undefined) => {
     if (!formEl) return;
-    await formEl.validate((valid) => {
+    await formEl.validate(async (valid) => {
       if (valid) {
         const param = {
           indexRule: {
@@ -156,54 +155,42 @@
         };
         $loadingCreate();
         if (data.operator === 'create') {
-          return createSecondaryDataModel('index-rule', param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Create successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteGroup', data.form.group);
-                openIndexRule();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
+          const res = await createSecondaryDataModel('index-rule', param);
+          $loadingClose();
+          if (res.error) {
+            ElMessage({
+              message: `Failed to create index rule: ${res.error.message}`,
+              type: 'error',
             });
-        } else {
-          return updateSecondaryDataModel('index-rule', data.form.group, data.form.name, param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Edit successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteResource', data.form.group);
-                openIndexRule();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
-            });
+            return;
+          }
+          ElMessage({
+            message: 'Create successed',
+            type: 'success',
+            duration: 5000,
+          });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteGroup', data.form.group);
+          openIndexRule();
+          return;
         }
+        const res = await updateSecondaryDataModel('index-rule', data.form.group, data.form.name, param);
+        $loadingClose();
+        if (res.error) {
+          ElMessage({
+            message: `Failed to update index rule: ${res.error.message}`,
+            type: 'error',
+          });
+          return;
+        }
+        ElMessage({
+          message: 'Edit successed',
+          type: 'success',
+          duration: 5000,
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteResource', data.form.group);
+        openIndexRule();
       }
     });
   };
@@ -227,32 +214,26 @@
     $bus.emit('AddTabs', add);
   }
 
-  function initData() {
+  async function initData() {
     if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
-      getSecondaryDataModel('index-rule', data.form.group, data.form.name)
-        .then((res) => {
-          if (res.status === 200) {
-            const indexRule = res.data.indexRule;
-            data.form = {
-              group: indexRule.metadata.group,
-              name: indexRule.metadata.name,
-              analyzer: indexRule.analyzer,
-              tags: indexRule.tags,
-              type: indexRule.type,
-            };
-          }
-        })
-        .catch((err) => {
-          ElMessage({
-            message: 'Please refresh and try again. Error: ' + err,
-            type: 'error',
-            duration: 3000,
-          });
-        })
-        .finally(() => {
-          $loadingClose();
+      const res = await getSecondaryDataModel('index-rule', data.form.group, data.form.name);
+      $loadingClose();
+      if (res.error) {
+        ElMessage({
+          message: `Failed to fetch index rule: ${res.error.message}`,
+          type: 'error',
         });
+        return;
+      }
+      const indexRule = res.data.indexRule;
+      data.form = {
+        group: indexRule.metadata.group,
+        name: indexRule.metadata.name,
+        analyzer: indexRule.analyzer,
+        tags: indexRule.tags,
+        type: indexRule.type,
+      };
     }
   }
 </script>

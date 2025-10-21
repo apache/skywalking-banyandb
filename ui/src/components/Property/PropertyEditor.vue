@@ -70,7 +70,7 @@
   };
   const confirmApply = async () => {
     if (!ruleForm.value) return;
-    await ruleForm.value.validate((valid) => {
+    await ruleForm.value.validate(async (valid) => {
       if (valid) {
         $loadingCreate();
         const param = {
@@ -91,28 +91,21 @@
             }),
           },
         };
-        applyProperty(formData.group, formData.name, formData.id, param)
-          .then((res) => {
-            if (res.status === 200) {
-              ElMessage({
-                message: 'successed',
-                type: 'success',
-                duration: 5000,
-              });
-              showDialog.value = false;
-              promiseResolve();
-            }
-          })
-          .catch((err) => {
-            ElMessage({
-              message: 'Please refresh and try again. Error: ' + err,
-              type: 'error',
-              duration: 3000,
-            });
-          })
-          .finally(() => {
-            $loadingClose();
+        const res = await applyProperty(formData.group, formData.name, formData.id, param);
+        $loadingClose();
+        if (res.error) {
+          ElMessage({
+            message: `Failed to apply property: ${res.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        ElMessage({
+          message: 'successed',
+          type: 'success',
+        });
+        showDialog.value = false;
+        promiseResolve();
       }
     });
   };
