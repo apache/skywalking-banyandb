@@ -456,6 +456,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 type traceExecutionPlan struct {
 	traceIDTagNames   []string
 	spanIDTagNames    []string
+	timestampTagNames []string
 	metadata          []*commonv1.Metadata
 	schemas           []logical.Schema
 	executionContexts []trace.Trace
@@ -468,6 +469,7 @@ func (p *traceQueryProcessor) setupTraceExecutionPlan(queryCriteria *tracev1.Que
 		executionContexts: make([]trace.Trace, 0, len(queryCriteria.Groups)),
 		traceIDTagNames:   make([]string, 0, len(queryCriteria.Groups)),
 		spanIDTagNames:    make([]string, 0, len(queryCriteria.Groups)),
+		timestampTagNames: make([]string, 0, len(queryCriteria.Groups)),
 	}
 
 	for i := range queryCriteria.Groups {
@@ -495,6 +497,7 @@ func (p *traceQueryProcessor) setupTraceExecutionPlan(queryCriteria *tracev1.Que
 		plan.metadata = append(plan.metadata, meta)
 		plan.traceIDTagNames = append(plan.traceIDTagNames, ec.GetSchema().GetTraceIdTagName())
 		plan.spanIDTagNames = append(plan.spanIDTagNames, ec.GetSchema().GetSpanIdTagName())
+		plan.timestampTagNames = append(plan.timestampTagNames, ec.GetSchema().GetTimestampTagName())
 	}
 
 	return plan, nil
@@ -508,6 +511,10 @@ func (p *traceQueryProcessor) validateTagNames(plan *traceExecutionPlan, ec trac
 	if len(plan.spanIDTagNames) > 0 && plan.spanIDTagNames[0] != ec.GetSchema().GetSpanIdTagName() {
 		return common.NewError("span id tag name mismatch for trace %s: %s != %s",
 			meta.GetName(), plan.spanIDTagNames[0], ec.GetSchema().GetSpanIdTagName())
+	}
+	if len(plan.timestampTagNames) > 0 && plan.timestampTagNames[0] != ec.GetSchema().GetTimestampTagName() {
+		return common.NewError("timestamp tag name mismatch for trace %s: %s != %s",
+			meta.GetName(), plan.timestampTagNames[0], ec.GetSchema().GetTimestampTagName())
 	}
 	return nil
 }
@@ -696,7 +703,8 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		traceExecContexts[i] = ec
 	}
 
-	plan, err := logical_trace.Analyze(queryCriteria, execPlan.metadata, execPlan.schemas, traceExecContexts, execPlan.traceIDTagNames, execPlan.spanIDTagNames)
+	plan, err := logical_trace.Analyze(queryCriteria, execPlan.metadata, execPlan.schemas, traceExecContexts,
+		execPlan.traceIDTagNames, execPlan.spanIDTagNames, execPlan.timestampTagNames)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return

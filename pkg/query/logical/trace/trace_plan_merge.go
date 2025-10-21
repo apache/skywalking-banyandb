@@ -37,12 +37,13 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedTraceMerger)(nil)
 
 type unresolvedTraceMerger struct {
-	criteria        *tracev1.QueryRequest
-	metadata        []*commonv1.Metadata
-	ecc             []executor.TraceExecutionContext
-	tagProjection   [][]*logical.Tag
-	traceIDTagNames []string
-	spanIDTagNames  []string
+	criteria          *tracev1.QueryRequest
+	metadata          []*commonv1.Metadata
+	ecc               []executor.TraceExecutionContext
+	tagProjection     [][]*logical.Tag
+	traceIDTagNames   []string
+	spanIDTagNames    []string
+	timestampTagNames []string
 }
 
 // Analyze implements logical.UnresolvedPlan.
@@ -75,7 +76,7 @@ func (u *unresolvedTraceMerger) Analyze(s logical.Schema) (logical.Plan, error) 
 				orderByTag = tags[len(tags)-1]
 			}
 		}
-		subPlan := parseTraceTags(u.criteria, u.metadata[i], u.ecc[i], u.tagProjection, u.traceIDTagNames[i], u.spanIDTagNames[i], orderByTag, i)
+		subPlan := parseTraceTags(u.criteria, u.metadata[i], u.ecc[i], u.tagProjection, u.traceIDTagNames[i], u.spanIDTagNames[i], u.timestampTagNames[i], orderByTag, i)
 		sp, err := subPlan.Analyze(ss[i])
 		if err != nil {
 			return nil, err

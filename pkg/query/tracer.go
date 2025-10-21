@@ -47,8 +47,10 @@ type (
 // concurrently from multiple goroutines. ToProto() is safe to call concurrently
 // with span operations - it will wait for any async operations to complete.
 type Tracer struct {
-	data *commonv1.Trace
-	mu   sync.Mutex
+	spanMap map[*commonv1.Span]*Span // map from span data to span wrapper
+	data    *commonv1.Trace
+	spans   []*Span // all spans created by this tracer
+	mu      sync.Mutex
 }
 
 // NewTracer creates a new tracer.
@@ -61,6 +63,7 @@ func NewTracer(ctx context.Context, id string) (*Tracer, context.Context) {
 		data: &commonv1.Trace{
 			TraceId: id,
 		},
+		spanMap: make(map[*commonv1.Span]*Span),
 	}
 	return t, context.WithValue(ctx, tracerKey, t)
 }
@@ -87,6 +90,13 @@ func (t *Tracer) StartSpan(ctx context.Context, format string, args ...interface
 		},
 		tracer: t,
 	}
+
+	// Track span in tracer
+	t.mu.Lock()
+	t.spans = append(t.spans, s)
+	t.spanMap[s.data] = s
+	t.mu.Unlock()
+
 	sv := ctx.Value(spanKey)
 	if sv == nil {
 		t.mu.Lock()
@@ -107,7 +117,7 @@ func (t *Tracer) StartSpan(ctx context.Context, format string, args ...interface
 
 // ToProto returns the proto representation of the tracer.
 func (t *Tracer) ToProto() *commonv1.Trace {
-	return t.data
+	return t.DeepCopy()
 }
 
 // Span is a span of the tracer.
@@ -239,4 +249,91 @@ func (s *Span) Stop() {
 	s.recordIgnoredChildren()
 	s.data.EndTime = timestamppb.Now()
 	s.data.Duration = s.data.EndTime.AsTime().Sub(s.data.StartTime.AsTime()).Nanoseconds()
+}
+
+// DeepCopy creates a deep copy of the trace.
+// This method is thread-safe and can be called concurrently with span operations.
+// It captures a consistent snapshot of the trace tree by locking the tracer and each span as needed.
+func (t *Tracer) DeepCopy() *commonv1.Trace {
+	if t == nil || t.data == nil {
+		return nil
+	}
+
+	// Lock the tracer to get a consistent snapshot
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	result := &commonv1.Trace{
+		TraceId: t.data.TraceId,
+		Error:   t.data.Error,
+	}
+
+	if len(t.data.Spans) > 0 {
+		result.Spans = make([]*commonv1.Span, len(t.data.Spans))
+		for i, span := range t.data.Spans {
+			result.Spans[i] = t.deepCopySpanWithLock(span)
+		}
+	}
+
+	return result
+}
+
+// deepCopySpanWithLock creates a deep copy of a span with proper locking.
+// Must be called with tracer mutex held.
+func (t *Tracer) deepCopySpanWithLock(src *commonv1.Span) *commonv1.Span {
+	if src == nil {
+		return nil
+	}
+
+	// Look up the span wrapper and lock it while copying
+	if wrapper, ok := t.spanMap[src]; ok {
+		wrapper.mu.Lock()
+		defer wrapper.mu.Unlock()
+	}
+
+	result := &commonv1.Span{
+		Error:    src.Error,
+		Message:  src.Message,
+		Duration: src.Duration,
+	}
+
+	// Deep copy StartTime
+	if src.StartTime != nil {
+		result.StartTime = timestamppb.New(src.StartTime.AsTime())
+	}
+
+	// Deep copy EndTime
+	if src.EndTime != nil {
+		result.EndTime = timestamppb.New(src.EndTime.AsTime())
+	}
+
+	// Deep copy Tags
+	if len(src.Tags) > 0 {
+		result.Tags = make([]*commonv1.Tag, len(src.Tags))
+		for i, tag := range src.Tags {
+			result.Tags[i] = deepCopyTag(tag)
+		}
+	}
+
+	// Deep copy Children recursively
+	if len(src.Children) > 0 {
+		result.Children = make([]*commonv1.Span, len(src.Children))
+		for i, child := range src.Children {
+			result.Children[i] = t.deepCopySpanWithLock(child)
+		}
+	}
+
+	return result
+}
+
+// deepCopyTag creates a deep copy of a tag.
+func deepCopyTag(src *commonv1.Tag) *commonv1.Tag {
+	if src == nil {
+		return nil
+	}
+
+	return &commonv1.Tag{
+		Key:   src.Key,
+		Value: src.Value,
+	}
 }
