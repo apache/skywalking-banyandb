@@ -49,8 +49,6 @@ type (
 type Tracer struct {
 	data *commonv1.Trace
 	mu   sync.Mutex
-	// wg tracks async operations that may mutate spans after they're created
-	wg sync.WaitGroup
 }
 
 // NewTracer creates a new tracer.
@@ -108,23 +106,8 @@ func (t *Tracer) StartSpan(ctx context.Context, format string, args ...interface
 }
 
 // ToProto returns the proto representation of the tracer.
-// This method waits for any async span operations to complete before returning,
-// ensuring thread-safe access to the trace data.
 func (t *Tracer) ToProto() *commonv1.Trace {
-	// Wait for any async operations that might still be mutating span data
-	t.wg.Wait()
 	return t.data
-}
-
-// AddAsyncOp registers an async operation that will mutate span data.
-// Must be paired with a call to DoneAsyncOp() when the operation completes.
-func (t *Tracer) AddAsyncOp() {
-	t.wg.Add(1)
-}
-
-// DoneAsyncOp marks an async operation as complete.
-func (t *Tracer) DoneAsyncOp() {
-	t.wg.Done()
 }
 
 // Span is a span of the tracer.

@@ -122,6 +122,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	}
 
 	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh)
+	result.traceBatchCh = traceBatchCh
 
 	return &result, nil
 }
@@ -271,6 +272,7 @@ type queryResult struct {
 	tagProjection       *model.TagProjection
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
+	traceBatchCh        <-chan traceBatch
 	currentBatch        *scanBatch
 	currentCursorGroups map[string][]*blockCursor
 	snapshots           []*snapshot
@@ -350,7 +352,6 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 		select {
 		case batch, ok := <-qr.cursorBatchCh:
 			if !ok {
-				qr.cursorBatchCh = nil
 				return false
 			}
 			if batch == nil {
@@ -476,20 +477,24 @@ func (qr *queryResult) Release() {
 		qr.cancel()
 	}
 
-	if qr.cursorBatchCh != nil {
-		// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
-		for batch := range qr.cursorBatchCh {
-			if batch != nil && batch.cursorCh != nil {
-				// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
-				for result := range batch.cursorCh {
-					if result.cursor != nil {
-						releaseBlockCursor(result.cursor)
-					}
+	for range qr.traceBatchCh {
+		// Drain the trace batch channel to ensure scanTraceIDsInline goroutine finishes
+		_ = 0
+	}
+	qr.traceBatchCh = nil
+
+	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
+	for batch := range qr.cursorBatchCh {
+		if batch != nil && batch.cursorCh != nil {
+			// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
+			for result := range batch.cursorCh {
+				if result.cursor != nil {
+					releaseBlockCursor(result.cursor)
 				}
 			}
 		}
-		qr.cursorBatchCh = nil
 	}
+	qr.cursorBatchCh = nil
 
 	qr.releaseCurrentBatch()
 

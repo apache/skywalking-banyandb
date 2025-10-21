@@ -138,7 +138,12 @@ func TestQueryResult(t *testing.T) {
 				}
 				close(cursorBatch)
 
+				// Create and close traceBatch channel (required for Release())
+				traceBatchCh := make(chan traceBatch)
+				close(traceBatchCh)
+
 				result.cursorBatchCh = cursorBatch
+				result.traceBatchCh = traceBatchCh
 
 				defer result.Release()
 
@@ -385,11 +390,16 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 				}
 				close(cursorBatch)
 
+				// Create and close traceBatch channel (required for Release())
+				traceBatchCh := make(chan traceBatch)
+				close(traceBatchCh)
+
 				// Set up query result
 				var result queryResult
 				result.ctx = context.TODO()
 				result.tagProjection = allTagProjections
 				result.cursorBatchCh = cursorBatch
+				result.traceBatchCh = traceBatchCh
 
 				defer result.Release()
 

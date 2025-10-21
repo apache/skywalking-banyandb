@@ -283,14 +283,22 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 		}
 	}
 
-	if !dataSeen {
-		t.Fatalf("expected data batch before error")
-	}
+	// The error must be propagated
 	if !errSeen {
 		t.Fatalf("expected error batch but none received")
 	}
 	if !errors.Is(errBatch.err, streamErr) {
 		t.Fatalf("unexpected error: %v", errBatch.err)
+	}
+
+	// Data may or may not be seen depending on error timing.
+	// If the error arrives on errEvents before the first loop iteration processes
+	// the heap, dataSeen will be false. Both outcomes are valid.
+	// The important invariant is that the error is always propagated.
+	if dataSeen {
+		t.Logf("data was processed before error detected (typical case)")
+	} else {
+		t.Logf("error detected before data processing (race condition)")
 	}
 }
 

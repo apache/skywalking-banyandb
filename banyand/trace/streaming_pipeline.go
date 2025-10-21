@@ -254,19 +254,19 @@ func (t *trace) streamSIDXTraceBatches(
 	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
 	go func() {
 		defer func() {
-			cancel()
-			close(out)
 			if span != nil {
 				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
 				span.Tagf("trace_ids_emitted", "%d", runner.total.Load())
 				if dups := runner.duplicates.Load(); dups > 0 {
 					span.Tagf("duplicate_trace_ids", "%d", dups)
 				}
-				if runner.spanErr != nil && !stdErrors.Is(runner.spanErr, context.Canceled) {
-					span.Error(runner.spanErr)
+				if err := runner.getSpanErr(); err != nil && !stdErrors.Is(err, context.Canceled) {
+					span.Error(err)
 				}
 				span.Stop()
 			}
+			cancel()
+			close(out)
 		}()
 
 		if err := runner.prepare(sidxInstances); err != nil {
@@ -283,7 +283,7 @@ func (t *trace) streamSIDXTraceBatches(
 type sidxStreamRunner struct {
 	streamCtx      context.Context
 	ctx            context.Context
-	spanErr        error
+	spanErr        atomic.Value // stores error
 	cancelFunc     context.CancelFunc
 	errEvents      chan sidxStreamError
 	heap           *sidxStreamHeap
@@ -440,9 +440,7 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 
 	for r.heap.Len() > 0 {
 		if err := r.streamCtx.Err(); err != nil {
-			if r.spanErr == nil {
-				r.spanErr = err
-			}
+			r.recordSpanErr(err)
 			return
 		}
 
@@ -545,9 +543,7 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 func (r *sidxStreamRunner) emitBatch(out chan<- traceBatch) bool {
 	select {
 	case <-r.streamCtx.Done():
-		if r.spanErr == nil {
-			r.spanErr = r.streamCtx.Err()
-		}
+		r.recordSpanErr(r.streamCtx.Err())
 		return false
 	case out <- r.batch:
 		r.batchesEmitted.Add(1)
@@ -626,9 +622,7 @@ func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
 					}
 				default:
 					// No more errors available
-					if r.spanErr == nil {
-						r.spanErr = r.ctx.Err()
-					}
+					r.recordSpanErr(r.ctx.Err())
 					return
 				}
 			}
@@ -637,9 +631,17 @@ func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
 }
 
 func (r *sidxStreamRunner) recordSpanErr(err error) {
-	if r.spanErr == nil {
-		r.spanErr = err
+	// Only store the first error
+	if r.spanErr.Load() == nil {
+		r.spanErr.Store(err)
 	}
+}
+
+func (r *sidxStreamRunner) getSpanErr() error {
+	if v := r.spanErr.Load(); v != nil {
+		return v.(error)
+	}
+	return nil
 }
 
 func (r *sidxStreamRunner) cancel() {
