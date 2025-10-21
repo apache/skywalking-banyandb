@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -367,7 +368,7 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 		tf.filter.SetN(len(bw.traceIDs))
 		tf.filter.ResizeBits((len(bw.traceIDs)*filter.B + 63) / 64)
 		for _, traceID := range bw.traceIDs {
-			tf.filter.Add([]byte(traceID))
+			tf.filter.Add(convert.StringToBytes(traceID))
 		}
 	}
 	tt.copyFrom(bw.tagType)
