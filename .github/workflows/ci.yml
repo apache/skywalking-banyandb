@@ -54,6 +54,12 @@ jobs:
           cache: true
       - name: Generate codes
         run: make generate
+      - name: Build UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+          cd ..
       - name: Upload generated files
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +69,7 @@ jobs:
             **/*.pb.gw.go
             **/*.pb.validate.go
             **/*_mock.go
+            ui/dist/**
           retention-days: 1
   check:
     name: Check
