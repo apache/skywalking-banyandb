@@ -150,41 +150,37 @@
     data.groupLists = res.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
     let promise = data.groupLists.map((item) => {
       const name = item.metadata.name;
-      return new Promise(async(resolve, reject) => {
+      return (async () => {
         const response = await getAllTypesOfResourceList(props.type, name);
         if (response.error) {
-          reject(response.error);
-          return;
+          ElMessage.error(response.error.message);
         }
         const key = props.type === CatalogToGroupType.CATALOG_PROPERTY ? 'properties' : props.type;
         item.children = response[key];
-        resolve();
-      });
+      })();
     });
     if (SupportedIndexRuleTypes.includes(props.type)) {
       const promiseIndexRule = data.groupLists.map((item) => {
         const name = item.metadata.name;
-        return new Promise(async (resolve, reject) => {
+        return (async () => {
           const res = await getindexRuleList(name);
           if (res.error) {
-            reject(res.error);
+            ElMessage.error(res.error.message);
             return;
           }
           item.indexRule = res.indexRule;
-          resolve();
-        });
+        })();
       });
       const promiseIndexRuleBinding = data.groupLists.map((item) => {
         const name = item.metadata.name;
-        return new Promise(async (resolve, reject) => {
+        return (async () => {
           const res = await getindexRuleBindingList(name);
           if (res.error) {
-            reject(res.error);
+            ElMessage.error(res.error.message);
             return;
           }
           item.indexRuleBinding = res.indexRuleBinding;
-          resolve();
-        });
+        })();
       });
       promise = promise.concat(promiseIndexRule);
       promise = promise.concat(promiseIndexRuleBinding);
@@ -192,15 +188,13 @@
     if (props.type === CatalogToGroupType.CATALOG_MEASURE) {
       const TopNAggregationRule = data.groupLists.map((item) => {
         const name = item.metadata.name;
-        return new Promise(async (resolve, reject) => {
+        return (async () => {
           const res = await getTopNAggregationList(name);
           if (res.error) {
-            reject(res.error);
-            return;
+            ElMessage.error(res.error.message);
           }
           item.topNAggregation = res.topNAggregation;
-          resolve();
-        });
+        })();
       });
       promise = promise.concat(TopNAggregationRule);
     }
@@ -652,7 +646,7 @@
   watch(filterText, (val) => {
     treeRef.value?.filter(val);
   });
-  
+
   // Watch route changes to update active node without reloading the tree
   watch(
     () => route.params,
@@ -666,7 +660,7 @@
         }
       }
     },
-    { deep: true }
+    { deep: true },
   );
 </script>
 
