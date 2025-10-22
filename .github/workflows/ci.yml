@@ -60,6 +60,8 @@ jobs:
           name: build-artifacts
           path: |
             **/*.pb.go
+            **/*.pb.gw.go
+            **/*.pb.validate.go
             **/*_mock.go
           retention-days: 1
   check:
