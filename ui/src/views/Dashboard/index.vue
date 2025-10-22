@@ -217,11 +217,11 @@
       end: utcTime.value.end,
     };
     params.tagProjection = tagProjection;
-    const res = await getTableList(params, 'measure');
-    if (res.status === 200) {
-      return res.data.dataPoints;
+    const response = await getTableList(params, 'measure');
+    if (response.error) {
+      return null;
     }
-    return null;
+    return response.dataPoints;
   }
 
   async function fetchGroupList() {

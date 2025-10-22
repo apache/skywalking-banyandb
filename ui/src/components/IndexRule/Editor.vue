@@ -226,7 +226,7 @@
         });
         return;
       }
-      const indexRule = res.data.indexRule;
+      const indexRule = res.indexRule;
       data.form = {
         group: indexRule.metadata.group,
         name: indexRule.metadata.name,
