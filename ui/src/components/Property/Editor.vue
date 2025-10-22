@@ -17,12 +17,10 @@
   ~ under the License.
 -->
 <script setup>
-  import { reactive, ref, onMounted } from 'vue';
+  import { reactive, ref, onMounted, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { getCurrentInstance } from '@vue/runtime-core';
   import { useRoute, useRouter } from 'vue-router';
-  import { updateProperty, createProperty } from '@/api';
-  import { getStreamOrMeasure } from '@/api/index';
+  import { updateProperty, createProperty, getResourceOfAllType } from '@/api/index';
   import TagEditor from './TagEditor.vue';
   import { rules, strategyGroup, formConfig } from './data';
 
@@ -46,7 +44,7 @@
   function initProperty() {
     if (operator === 'edit') {
       $loadingCreate();
-      getStreamOrMeasure(type, group, name)
+      getResourceOfAllType(type, group, name)
         .then((res) => {
           if (res.status === 200) {
             const { property } = res.data;
@@ -78,7 +76,7 @@
   };
   const submit = async () => {
     if (!ruleForm.value) return;
-    await ruleForm.value.validate((valid) => {
+    await ruleForm.value.validate(async (valid) => {
       if (valid) {
         $loadingCreate();
         const param = {
@@ -93,54 +91,40 @@
           },
         };
         if (operator === 'create') {
-          createProperty(param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteGroup', formData.group);
-                openResourses();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
+          const response = await createProperty(param);
+          $loadingClose();
+          if (response.error) {
+            ElMessage.error({
+              message: `Failed to create property: ${response.error.message}`,
+              type: 'error',
             });
+            return;
+          }
+          ElMessage.success({
+            message: 'Create successed',
+            type: 'success',
+          });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteResource', formData.name);
+          openResourses();
           return;
         }
-        updateProperty(formData.group, formData.name, param)
-          .then((res) => {
-            if (res.status === 200) {
-              ElMessage({
-                message: 'successed',
-                type: 'success',
-                duration: 5000,
-              });
-              $bus.emit('refreshAside');
-              $bus.emit('deleteResource', formData.name);
-              openResourses();
-            }
-          })
-          .catch((err) => {
-            ElMessage({
-              message: 'Please refresh and try again. Error: ' + err,
-              type: 'error',
-              duration: 3000,
-            });
-          })
-          .finally(() => {
-            $loadingClose();
+        const response = await updateProperty(formData.group, formData.name, param);
+        $loadingClose();
+        if (response.error) {
+          ElMessage.error({
+            message: `Failed to update property: ${response.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        ElMessage.success({
+          message: 'Update successed',
+          type: 'success',
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteResource', formData.name);
+        openResourses();
       }
     });
   };

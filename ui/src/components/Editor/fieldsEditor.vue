@@ -18,9 +18,8 @@
 -->
 
 <script lang="ts" setup>
-  import { reactive } from '@vue/reactivity';
   import type { FormInstance } from 'element-plus';
-  import { ref } from 'vue';
+  import { ref, reactive } from 'vue';
 
   const ruleFormRef = ref<FormInstance>();
   const data = reactive({

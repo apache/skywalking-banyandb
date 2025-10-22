@@ -49,6 +49,7 @@ Release Notes.
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
 - Implement cluster mode for trace.
 - Implement Trace views.
+- Use Fetch request to instead of axios request and remove axios.
 - Implement bydbQL.
 
 ### Bug Fixes
