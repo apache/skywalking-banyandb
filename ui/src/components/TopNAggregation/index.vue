@@ -24,6 +24,7 @@
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
   import { getTopNAggregationData } from '@/api/index';
+  import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
 

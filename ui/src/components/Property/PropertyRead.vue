@@ -24,6 +24,7 @@
   import { RefreshRight, Search } from '@element-plus/icons-vue';
   import { fetchProperties, deleteProperty } from '@/api/index';
   import { yamlToJson } from '@/utils/yaml';
+  import CodeMirror from '@/components/CodeMirror/index.vue';
   import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
