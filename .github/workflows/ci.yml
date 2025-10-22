@@ -135,15 +135,30 @@ jobs:
         run: make build
       - name: Build release
         run: make release
-  test:
-    uses: ./.github/workflows/test.yml
-    with:
-      options: --vv --fail-fast --label-filter \\!slow
-      timeout-minutes: 60
+  test-banyand:
+    name: Test Banyand
+    needs: [check, build]
+    uses: ./.github/workflows/test-banyand.yml
+  test-bydbctl:
+    name: Test Bydbctl
+    needs: [check, build]
+    uses: ./.github/workflows/test-bydbctl.yml
+  test-pkg:
+    name: Test Pkg
+    needs: [check, build]
+    uses: ./.github/workflows/test-pkg.yml
+  test-integration:
+    name: Test Integration
+    needs: [check, build]
+    uses: ./.github/workflows/test-integration.yml
+  e2e:
+    name: E2E Tests
+    needs: [check, build]
+    uses: ./.github/workflows/e2e.yml
       
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
-    needs: [check, build, test]
+    needs: [check, build, test-banyand, test-bydbctl, test-pkg, test-integration, e2e]
     steps:
       - run: echo 'success'

@@ -340,7 +340,14 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+
+				// Collect all trace IDs from all batches to filter parts
+				var allTraceIDs []string
+				for _, batchTraceIDs := range tt.traceIDs {
+					allTraceIDs = append(allTraceIDs, batchTraceIDs...)
+				}
+
+				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, allTraceIDs)
 
 				// Create multiple batches, each simulating a batch from sidx
 				cursorBatch := make(chan *scanBatch, len(tt.traceIDs))

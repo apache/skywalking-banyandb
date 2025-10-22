@@ -71,12 +71,12 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 
 include scripts/build/ginkgo.mk
 
-test-ci: $(GINKGO) ## Run the unit tests in CI
+test-ci: $(GINKGO) ## Run the unit tests in CI. Usage: make test-ci PKG=./banyand/trace
 	$(GINKGO) --race \
 	  -ldflags \
 	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
 	  $(TEST_CI_OPTS) \
-	  ./... 
+	  $(PKG) 
 
 PKG ?= ./...
 GO_VERSION := $(shell grep -E '^go [0-9]+\.[0-9]+' go.mod | awk '{print $$2}')

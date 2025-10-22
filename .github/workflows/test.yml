@@ -26,6 +26,14 @@ on:
         required: false
         type: number
         default: 60
+      pkg:
+        required: false
+        type: string
+        default: ./...
+      coverage-flag:
+        required: false
+        type: string
+        default: unittests
 
 jobs:
   test:
@@ -77,7 +85,7 @@ jobs:
       - name: Build
         run: make build
       - name: Test integration and banyand
-        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
+        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
         run: |
           ls /tmp
@@ -85,7 +93,10 @@ jobs:
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:
-          name: test-data-${{ matrix.test.name }}
+          name: test-data-${{ matrix.tz }}
           path: "/tmp/banyandb-test-*"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+          flags: ${{ inputs.coverage-flag }}

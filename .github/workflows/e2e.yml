@@ -17,7 +17,7 @@
 name: OAP-E2E
 
 on:
-  pull_request:
+  workflow_call:
   schedule:
     - cron: '0 18 * * *'
 
@@ -65,8 +65,7 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
+      - name: Update dependencies
         run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate codes
         run: make generate
