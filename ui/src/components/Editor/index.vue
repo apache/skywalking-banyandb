@@ -223,7 +223,7 @@
     $bus.emit('AddTabs', add);
   }
   async function initData() {
-    if (data.operator !== 'edit' && !data.form.group && !data.form.name) {
+    if (data.operator !== 'edit' || !data.form.group || !data.form.name) {
       return;
     }
     $loadingCreate();
