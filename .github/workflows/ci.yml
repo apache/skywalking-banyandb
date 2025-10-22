@@ -35,7 +35,7 @@ jobs:
         with:
           fetch-tags: true
       - name: Cache Go Modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-go
         with:
           path: |
@@ -45,14 +45,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Cache Tools
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
           key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
           restore-keys: |
             ${{ runner.os }}-check-tool-
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: 20.12
           cache: 'npm'
@@ -71,7 +71,7 @@ jobs:
             exit 1; \
           fi
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
       - name: Check License Header
@@ -100,7 +100,7 @@ jobs:
         with:
           fetch-tags: true
       - name: Cache Go Modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-go
         with:
           path: |
@@ -110,20 +110,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - name: Cache Tools
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
           key: ${{ runner.os }}-build-tool-${{ hashFiles('**/version.mk') }}
           restore-keys: |
             ${{ runner.os }}-build-tool-
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: 20.12
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
       - name: Update dependencies 
@@ -147,10 +147,14 @@ jobs:
     name: Test Pkg
     needs: [check, build]
     uses: ./.github/workflows/test-pkg.yml
-  test-integration:
-    name: Test Integration
+  test-integration-standalone:
+    name: Test Integration Standalone
     needs: [check, build]
-    uses: ./.github/workflows/test-integration.yml
+    uses: ./.github/workflows/test-integration-standalone.yml
+  test-integration-distributed:
+    name: Test Integration Distributed
+    needs: [check, build]
+    uses: ./.github/workflows/test-integration-distributed.yml
   e2e:
     name: E2E Tests
     needs: [check, build]
@@ -159,6 +163,6 @@ jobs:
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
-    needs: [check, build, test-banyand, test-bydbctl, test-pkg, test-integration, e2e]
+    needs: [check, build, test-banyand, test-bydbctl, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
     steps:
       - run: echo 'success'

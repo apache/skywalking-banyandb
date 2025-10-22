@@ -14,16 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Test Bydbctl
+name: Test Integration Distributed
 
 on:
   workflow_call:
 
 jobs:
-  test-bydbctl:
+  test-integration-distributed:
+    strategy:
+      matrix:
+        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     uses: ./.github/workflows/test.yml
     with:
       options: --vv --fail-fast --label-filter \\!slow
-      timeout-minutes: 30
-      pkg: ./bydbctl/...
-      coverage-flag: bydbctl
+      timeout-minutes: 60
+      pkg: ./test/integration/distributed/...
+      coverage-flag: integration-distributed
+      timezone: ${{ matrix.tz }}
+

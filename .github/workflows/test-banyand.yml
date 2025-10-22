@@ -24,6 +24,6 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       options: --vv --fail-fast --label-filter \\!slow
-      timeout-minutes: 60
+      timeout-minutes: 30
       pkg: ./banyand/...
       coverage-flag: banyand

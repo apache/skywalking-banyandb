@@ -14,16 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Test Integration
+name: Test Integration Standalone
 
 on:
   workflow_call:
 
 jobs:
-  test-integration:
+  test-integration-standalone:
+    strategy:
+      matrix:
+        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     uses: ./.github/workflows/test.yml
     with:
       options: --vv --fail-fast --label-filter \\!slow
       timeout-minutes: 60
-      pkg: ./test/integration/...
-      coverage-flag: integration
+      pkg: ./test/integration/standalone/...
+      coverage-flag: integration-standalone
+      timezone: ${{ matrix.tz }}
+

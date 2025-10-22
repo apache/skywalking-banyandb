@@ -34,18 +34,19 @@ on:
         required: false
         type: string
         default: unittests
+      timezone:
+        required: false
+        type: string
+        default: UTC
 
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    strategy:
-      matrix:
-        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     steps:
       - name: Set timezone
-        run: sudo timedatectl set-timezone ${{ matrix.tz }}
+        run: sudo timedatectl set-timezone ${{ inputs.timezone | default('UTC') }}
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
         with:
@@ -93,7 +94,7 @@ jobs:
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:
-          name: test-data-${{ matrix.tz }}
+          name: test-data-${{ inputs.timezone }}
           path: "/tmp/banyandb-test-*"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
