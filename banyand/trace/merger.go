@@ -321,8 +321,6 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	tt.mustWriteTagType(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
-
-	tf.reset()
 	return newPartWrapper(nil, p), nil
 }
 

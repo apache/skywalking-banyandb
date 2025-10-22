@@ -38,16 +38,17 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedTraceTagFilter)(nil)
 
 type unresolvedTraceTagFilter struct {
-	startTime      time.Time
-	endTime        time.Time
-	ec             executor.TraceExecutionContext
-	metadata       *commonv1.Metadata
-	criteria       *modelv1.Criteria
-	traceIDTagName string
-	spanIDTagName  string
-	orderByTag     string
-	projectionTags [][]*logical.Tag
-	groupIndex     int
+	startTime        time.Time
+	endTime          time.Time
+	ec               executor.TraceExecutionContext
+	metadata         *commonv1.Metadata
+	criteria         *modelv1.Criteria
+	traceIDTagName   string
+	spanIDTagName    string
+	orderByTag       string
+	timestampTagName string
+	projectionTags   [][]*logical.Tag
+	groupIndex       int
 }
 
 func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -71,7 +72,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	if err != nil {
 		return nil, err
 	}
-	if uis.orderByTag == "" {
+	if uis.orderByTag == "" || uis.orderByTag == uis.timestampTagName {
 		minVal = uis.startTime.UnixNano()
 		maxVal = uis.endTime.UnixNano()
 	}

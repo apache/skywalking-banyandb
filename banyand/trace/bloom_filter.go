@@ -62,3 +62,21 @@ func releaseBloomFilter(bf *filter.BloomFilter) {
 }
 
 var bloomFilterPool = pool.Register[*filter.BloomFilter]("trace-bloomFilter")
+
+func generateTraceIDBloomFilter() *filter.BloomFilter {
+	v := traceIDBloomFilterPool.Get()
+	if v == nil {
+		v = filter.NewBloomFilter(0)
+	}
+	return v
+}
+
+func releaseTraceIDBloomFilter(bf *filter.BloomFilter) {
+	if bf == nil {
+		return
+	}
+	bf.Reset()
+	traceIDBloomFilterPool.Put(bf)
+}
+
+var traceIDBloomFilterPool = pool.Register[*filter.BloomFilter]("trace-traceIDBloomFilter")

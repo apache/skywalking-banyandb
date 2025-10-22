@@ -368,3 +368,211 @@ func generateRealisticTraces(numTraces int) *traces {
 
 	return traces
 }
+
+// Test_tstIter_reset_does_not_corrupt_parts verifies the fix for the bug where
+// tstIter.reset() was corrupting the input parts array through slice aliasing.
+// This test ensures that parts array elements remain intact after init/release cycles.
+func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
+	createMockPart := func(id uint64) *part {
+		return &part{
+			partMetadata: partMetadata{
+				ID:           id,
+				MinTimestamp: 0,
+				MaxTimestamp: 100,
+			},
+		}
+	}
+
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	t.Run("single_cycle_preserves_parts", func(t *testing.T) {
+		// Create parts array with 3 elements
+		parts := []*part{
+			createMockPart(1),
+			createMockPart(2),
+			createMockPart(3),
+		}
+
+		// Store original pointers
+		originalPtrs := make([]*part, len(parts))
+		copy(originalPtrs, parts)
+
+		// Initialize and release tstIter
+		ti := generateTstIter()
+		ti.init(bma, parts, []string{"trace1"})
+		releaseTstIter(ti)
+
+		// Verify parts array is intact
+		require.NotNil(t, parts[0], "parts[0] should not be nil after release")
+		require.NotNil(t, parts[1], "parts[1] should not be nil after release")
+		require.NotNil(t, parts[2], "parts[2] should not be nil after release")
+
+		// Verify elements are the same objects
+		require.Equal(t, originalPtrs[0], parts[0], "parts[0] should be the same object")
+		require.Equal(t, originalPtrs[1], parts[1], "parts[1] should be the same object")
+		require.Equal(t, originalPtrs[2], parts[2], "parts[2] should be the same object")
+
+		t.Log("✓ Single cycle: parts array preserved correctly")
+	})
+
+	t.Run("multiple_cycles_no_corruption", func(t *testing.T) {
+		// This test simulates scanTraceIDsInline being called multiple times
+		// which is the real-world scenario where the bug occurred
+
+		parts := []*part{
+			createMockPart(10),
+			createMockPart(20),
+			createMockPart(30),
+		}
+
+		originalPtrs := make([]*part, len(parts))
+		copy(originalPtrs, parts)
+
+		traceIDs := []string{"trace1", "trace2", "trace3"}
+
+		// Simulate 5 cycles of getting, using, and releasing tstIter from pool
+		for cycle := 0; cycle < 5; cycle++ {
+			// Verify parts are intact at start of cycle
+			for i, p := range parts {
+				require.NotNil(t, p, "Cycle %d: parts[%d] should not be nil at cycle start", cycle, i)
+				require.Equal(t, originalPtrs[i], p, "Cycle %d: parts[%d] should be same object", cycle, i)
+			}
+
+			// Simulate scanTraceIDsInline: get tstIter, use it, release it
+			ti := generateTstIter()
+			ti.init(bma, parts, traceIDs)
+
+			// Verify tstIter was initialized correctly
+			require.Equal(t, 3, len(ti.parts), "Cycle %d: tstIter should have 3 parts", cycle)
+
+			releaseTstIter(ti)
+
+			// Verify parts are still intact after release
+			for i, p := range parts {
+				require.NotNil(t, p, "Cycle %d: parts[%d] should not be nil after release", cycle, i)
+				require.Equal(t, originalPtrs[i], p, "Cycle %d: parts[%d] should be same object after release", cycle, i)
+			}
+
+			t.Logf("Cycle %d: ✓ Parts intact", cycle)
+		}
+
+		t.Log("✓ Multiple cycles: no corruption detected")
+	})
+
+	t.Run("parts_array_length_preserved", func(t *testing.T) {
+		// Verify that the parts array length is preserved across cycles
+		parts := []*part{
+			createMockPart(100),
+			createMockPart(101),
+		}
+
+		originalLen := len(parts)
+		originalCap := cap(parts)
+
+		ti := generateTstIter()
+		ti.init(bma, parts, []string{"trace1"})
+		releaseTstIter(ti)
+
+		// Verify length and capacity are preserved
+		require.Equal(t, originalLen, len(parts), "parts length should be preserved")
+		require.Equal(t, originalCap, cap(parts), "parts capacity should be preserved")
+
+		t.Log("✓ Parts array length and capacity preserved")
+	})
+
+	t.Run("reused_tstiter_works_correctly", func(t *testing.T) {
+		// Verify that reusing the same tstIter from pool works correctly
+
+		parts1 := []*part{
+			createMockPart(1),
+			createMockPart(2),
+		}
+
+		parts2 := []*part{
+			createMockPart(3),
+			createMockPart(4),
+			createMockPart(5),
+		}
+
+		// First use: with parts1
+		ti := generateTstIter()
+		ti.init(bma, parts1, []string{"a", "b"})
+		require.Equal(t, 2, len(ti.parts), "First init: tstIter should have 2 parts")
+		releaseTstIter(ti)
+
+		// Verify parts1 is intact
+		require.NotNil(t, parts1[0], "parts1[0] should not be nil after first release")
+		require.NotNil(t, parts1[1], "parts1[1] should not be nil after first release")
+
+		// Second use: reuse tstIter with parts2 (different size)
+		ti = generateTstIter()
+		ti.init(bma, parts2, []string{"c", "d", "e"})
+		require.Equal(t, 3, len(ti.parts), "Second init: tstIter should have 3 parts")
+		releaseTstIter(ti)
+
+		// Verify parts2 is intact
+		require.NotNil(t, parts2[0], "parts2[0] should not be nil after second release")
+		require.NotNil(t, parts2[1], "parts2[1] should not be nil after second release")
+		require.NotNil(t, parts2[2], "parts2[2] should not be nil after second release")
+
+		// Verify parts1 is still intact (wasn't corrupted by reuse)
+		require.NotNil(t, parts1[0], "parts1[0] should still be non-nil")
+		require.NotNil(t, parts1[1], "parts1[1] should still be non-nil")
+
+		t.Log("✓ Reused tstIter works correctly with different parts arrays")
+	})
+}
+
+// Test_tstIter_reset_clears_but_preserves_input verifies that reset() properly
+// clears the tstIter's internal state without modifying the input.
+func Test_tstIter_reset_clears_but_preserves_input(t *testing.T) {
+	createMockPart := func(id uint64) *part {
+		return &part{
+			partMetadata: partMetadata{
+				ID:           id,
+				MinTimestamp: 0,
+				MaxTimestamp: 100,
+			},
+		}
+	}
+
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	parts := []*part{
+		createMockPart(1),
+		createMockPart(2),
+		createMockPart(3),
+	}
+
+	originalPtrs := make([]*part, len(parts))
+	copy(originalPtrs, parts)
+
+	// Initialize tstIter
+	ti := generateTstIter()
+	ti.init(bma, parts, []string{"trace1"})
+
+	require.Equal(t, 3, len(ti.parts), "After init: tstIter should have 3 parts")
+	require.NotNil(t, ti.parts[0], "After init: ti.parts[0] should not be nil")
+
+	// Call reset directly (normally called by releaseTstIter)
+	ti.reset()
+
+	// Verify tstIter internal state is cleared
+	require.Equal(t, 0, len(ti.parts), "After reset: tstIter.parts length should be 0")
+	require.Nil(t, ti.err, "After reset: tstIter.err should be nil")
+	require.Equal(t, 0, ti.idx, "After reset: tstIter.idx should be 0")
+
+	// Verify original parts array is NOT modified
+	require.NotNil(t, parts[0], "Original parts[0] should not be nil after reset")
+	require.NotNil(t, parts[1], "Original parts[1] should not be nil after reset")
+	require.NotNil(t, parts[2], "Original parts[2] should not be nil after reset")
+
+	// Verify elements are still the same objects
+	require.Equal(t, originalPtrs[0], parts[0], "Original parts[0] should be same object")
+	require.Equal(t, originalPtrs[1], parts[1], "Original parts[1] should be same object")
+	require.Equal(t, originalPtrs[2], parts[2], "Original parts[2] should be same object")
+
+	t.Log("✓ Reset clears tstIter state without modifying input")
+}

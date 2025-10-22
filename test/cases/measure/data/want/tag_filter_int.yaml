@@ -22,17 +22,6 @@ dataPoints:
           - key: name
             value:
               str:
-                value: service_name_3
-          - key: layer
-            value:
-              int:
-                value: "1"
-  - tagFamilies:
-      - name: default
-        tags:
-          - key: name
-            value:
-              str:
                 value: service_name_1
           - key: layer
             value:

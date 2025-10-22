@@ -138,7 +138,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
-			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) {
+			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) ||
+			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
 			br.loadBlockData(getDecoder())
@@ -154,7 +155,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock.bm.seriesID = b.bm.seriesID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if len(tmpBlock.userKeys) <= maxBlockLength {
+		if len(tmpBlock.userKeys) <= maxBlockLength && tmpBlock.block.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.userKeys) == 0 {
 				pendingBlockIsEmpty = true
 			}

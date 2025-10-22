@@ -18,114 +18,20 @@
 package sidx
 
 import (
-	"container/heap"
 	"context"
 	"math"
 	"sort"
 	"sync"
 
-	"go.uber.org/multierr"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-// Query implements SIDX interface.
-func (s *sidx) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	// The blocking query path returns the full result set. Treat MaxElementSize as
-	// a streaming-only hint so it does not truncate the blocking response.
-	req.MaxElementSize = 0
-
-	// StreamingQuery shares the validation logic but not execution flow.
-	// We retain the existing blocking semantics here.
-
-	// Increment query counter
-	s.totalQueries.Add(1)
-
-	// Get current snapshot
-	snap := s.currentSnapshot()
-	if snap == nil {
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// Extract parameters directly from request
-	minKey, maxKey := extractKeyRange(req)
-	asc := extractOrdering(req)
-
-	// Select relevant parts
-	parts := selectPartsForQuery(snap, minKey, maxKey)
-	if len(parts) == 0 {
-		snap.decRef()
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// Sort SeriesIDs for efficient processing
-	seriesIDs := make([]common.SeriesID, len(req.SeriesIDs))
-	copy(seriesIDs, req.SeriesIDs)
-	sort.Slice(seriesIDs, func(i, j int) bool {
-		return seriesIDs[i] < seriesIDs[j]
-	})
-
-	// Initialize block scanner using request parameters directly
-	bs := &blockScanner{
-		pm:        s.pm,
-		filter:    req.Filter,
-		l:         s.l,
-		parts:     parts,
-		seriesIDs: seriesIDs,
-		minKey:    minKey,
-		maxKey:    maxKey,
-		asc:       asc,
-	}
-
-	// Execute query with worker pool pattern directly
-	defer func() {
-		if bs != nil {
-			bs.close()
-		}
-		if snap != nil {
-			snap.decRef()
-		}
-	}()
-
-	response := s.executeBlockScannerQuery(ctx, bs, req)
-	if response == nil {
-		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}, nil
-	}
-
-	// If there's an error in the response, return it as a function error
-	if response.Error != nil {
-		return nil, response.Error
-	}
-
-	return response, nil
-}
-
 // StreamingQuery implements the streaming query API defined on SIDX.
 func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-	chanSize := req.MaxElementSize
+	chanSize := req.MaxBatchSize
 	if chanSize < 0 {
 		chanSize = 0
 	}
@@ -164,6 +70,13 @@ func (s *streamingStats) record(chunk *QueryResponse) {
 	s.elements += chunk.Len()
 }
 
+type batchMetrics struct {
+	totalBatchBlockCount   int
+	totalCursorsBuilt      int
+	totalHeapSizeAfterPush int
+	batchesProcessed       int
+}
+
 // runStreamingQuery executes the streaming query workflow and pushes batches to resultsCh.
 func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsCh chan<- *QueryResponse) (err error) {
 	s.totalQueries.Add(1)
@@ -193,13 +106,11 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 	}
 	defer resources.cleanup()
 
-	manager := newStreamingHeapManager(resources.heap)
-
-	if loopErr := s.processStreamingLoop(ctx, req, resources, manager, resultsCh, &stats); loopErr != nil {
-		heapInitialized = manager.initializedState()
+	if loopErr := s.processStreamingLoop(ctx, req, resources, resultsCh, &stats); loopErr != nil {
+		heapInitialized = resources.heap.initialized
 		return loopErr
 	}
-	heapInitialized = manager.initializedState()
+	heapInitialized = resources.heap.initialized
 
 	return nil
 }
@@ -212,75 +123,6 @@ type streamingQueryResources struct {
 	asc        bool
 }
 
-type streamingHeapManager struct {
-	heap        *blockCursorHeap
-	initialized bool
-}
-
-func newStreamingHeapManager(heap *blockCursorHeap) *streamingHeapManager {
-	return &streamingHeapManager{
-		heap: heap,
-	}
-}
-
-func (m *streamingHeapManager) push(cursors []*blockCursor) {
-	if len(cursors) == 0 {
-		return
-	}
-
-	for i := range cursors {
-		if m.initialized {
-			heap.Push(m.heap, cursors[i])
-		} else {
-			m.heap.Push(cursors[i])
-		}
-	}
-
-	if !m.initialized && m.heap.Len() > 0 {
-		heap.Init(m.heap)
-		m.initialized = true
-	}
-}
-
-func (m *streamingHeapManager) flush(ctx context.Context, maxElementSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
-	if !m.initialized {
-		return nil
-	}
-
-	for m.heap.Len() > 0 {
-		limitReached, err := flushStreamingHeap(ctx, m.heap, maxElementSize, resultsCh, stats)
-		if err != nil {
-			return err
-		}
-		if m.heap.Len() == 0 || !limitReached {
-			return nil
-		}
-	}
-
-	return nil
-}
-
-func (m *streamingHeapManager) drainRemaining(ctx context.Context, maxElementSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
-	if !m.initialized {
-		return nil
-	}
-
-	for m.heap.Len() > 0 {
-		if _, err := flushStreamingHeap(ctx, m.heap, maxElementSize, resultsCh, stats); err != nil {
-			return err
-		}
-		if m.heap.Len() == 0 {
-			break
-		}
-	}
-
-	return nil
-}
-
-func (m *streamingHeapManager) initializedState() bool {
-	return m.initialized
-}
-
 func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context, *query.Span) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
@@ -288,7 +130,7 @@ func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context,
 	}
 
 	span, spanCtx := tracer.StartSpan(ctx, "sidx.run-streaming-query")
-	span.Tagf("max_element_size", "%d", req.MaxElementSize)
+	span.Tagf("max_batch_size", "%d", req.MaxBatchSize)
 	if req.Filter != nil {
 		span.Tag("filter_present", "true")
 	} else {
@@ -326,6 +168,12 @@ func (s *sidx) prepareStreamingResources(
 	snap *snapshot,
 	span *query.Span,
 ) (*streamingQueryResources, bool) {
+	var prepareSpan *query.Span
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		prepareSpan, ctx = tracer.StartSpan(ctx, "sidx.prepare-streaming-resources")
+		defer prepareSpan.Stop()
+	}
+
 	minKey, maxKey := extractKeyRange(req)
 	asc := extractOrdering(req)
 
@@ -335,6 +183,12 @@ func (s *sidx) prepareStreamingResources(
 		span.Tagf("max_key", "%d", maxKey)
 		span.Tagf("ascending", "%t", asc)
 		span.Tagf("part_count", "%d", len(parts))
+	}
+	if prepareSpan != nil {
+		prepareSpan.Tagf("min_key", "%d", minKey)
+		prepareSpan.Tagf("max_key", "%d", maxKey)
+		prepareSpan.Tagf("ascending", "%t", asc)
+		prepareSpan.Tagf("part_count", "%d", len(parts))
 	}
 	if len(parts) == 0 {
 		return nil, false
@@ -348,10 +202,16 @@ func (s *sidx) prepareStreamingResources(
 	if span != nil {
 		span.Tagf("series_id_count", "%d", len(seriesIDs))
 	}
+	if prepareSpan != nil {
+		prepareSpan.Tagf("series_id_count", "%d", len(seriesIDs))
+	}
 
 	tagsToLoad := determineTagsToLoad(req)
 	if span != nil {
 		span.Tagf("projected_tags", "%d", len(tagsToLoad))
+	}
+	if prepareSpan != nil {
+		prepareSpan.Tagf("projected_tags", "%d", len(tagsToLoad))
 	}
 
 	bs := &blockScanner{
@@ -391,19 +251,47 @@ func (s *sidx) processStreamingLoop(
 	ctx context.Context,
 	req QueryRequest,
 	resources *streamingQueryResources,
-	manager *streamingHeapManager,
 	resultsCh chan<- *QueryResponse,
 	stats *streamingStats,
 ) error {
+	var loopSpan *query.Span
+	var metrics *batchMetrics
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		metrics = &batchMetrics{}
+		loopSpan, ctx = tracer.StartSpan(ctx, "sidx.process-streaming-loop")
+		defer func() {
+			if loopSpan != nil {
+				loopSpan.Tagf("total_batches_processed", "%d", stats.batches)
+				s.addBatchMetricsToSpan(loopSpan, metrics)
+				loopSpan.Stop()
+			}
+		}()
+	}
+
+	batchCount := 0
 	for {
 		select {
 		case <-ctx.Done():
+			if loopSpan != nil {
+				loopSpan.Tag("termination_reason", "context_canceled")
+				loopSpan.Tagf("batches_before_cancel", "%d", batchCount)
+			}
 			return ctx.Err()
 		case batch, ok := <-resources.blockCh:
 			if !ok {
-				return manager.drainRemaining(ctx, req.MaxElementSize, resultsCh, stats)
+				if loopSpan != nil {
+					loopSpan.Tag("termination_reason", "channel_closed")
+					loopSpan.Tagf("total_batches", "%d", batchCount)
+				}
+				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
 			}
-			if err := s.handleStreamingBatch(ctx, batch, resources, manager, req, resultsCh, stats); err != nil {
+			batchCount++
+			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats, metrics); err != nil {
+				if loopSpan != nil {
+					loopSpan.Tag("termination_reason", "batch_error")
+					loopSpan.Tagf("batches_before_error", "%d", batchCount)
+					loopSpan.Error(err)
+				}
 				return err
 			}
 		}
@@ -414,15 +302,21 @@ func (s *sidx) handleStreamingBatch(
 	ctx context.Context,
 	batch *blockScanResultBatch,
 	resources *streamingQueryResources,
-	manager *streamingHeapManager,
 	req QueryRequest,
 	resultsCh chan<- *QueryResponse,
 	stats *streamingStats,
+	metrics *batchMetrics,
 ) error {
 	if batch.err != nil {
 		err := batch.err
 		releaseBlockScanResultBatch(batch)
 		return err
+	}
+
+	// Collect batch block count metric
+	if metrics != nil {
+		batchBlockCount := len(batch.bss)
+		metrics.totalBatchBlockCount += batchBlockCount
 	}
 
 	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc)
@@ -431,9 +325,37 @@ func (s *sidx) handleStreamingBatch(
 		return cursorsErr
 	}
 
-	manager.push(cursors)
+	// Collect cursors built metric
+	if metrics != nil {
+		cursorsBuilt := len(cursors)
+		metrics.totalCursorsBuilt += cursorsBuilt
+	}
 
-	return manager.flush(ctx, req.MaxElementSize, resultsCh, stats)
+	resources.heap.pushCursors(cursors)
+
+	// Collect heap size metric
+	if metrics != nil {
+		heapSize := resources.heap.Len()
+		metrics.totalHeapSizeAfterPush += heapSize
+		metrics.batchesProcessed++
+	}
+
+	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
+}
+
+func (s *sidx) addBatchMetricsToSpan(span *query.Span, metrics *batchMetrics) {
+	if span == nil || metrics == nil {
+		return
+	}
+	span.Tagf("batches_processed", "%d", metrics.batchesProcessed)
+	span.Tagf("total_batch_block_count", "%d", metrics.totalBatchBlockCount)
+	span.Tagf("total_cursors_built", "%d", metrics.totalCursorsBuilt)
+	span.Tagf("total_heap_size_after_push", "%d", metrics.totalHeapSizeAfterPush)
+	if metrics.batchesProcessed > 0 {
+		span.Tagf("avg_batch_block_count", "%.2f", float64(metrics.totalBatchBlockCount)/float64(metrics.batchesProcessed))
+		span.Tagf("avg_cursors_built", "%.2f", float64(metrics.totalCursorsBuilt)/float64(metrics.batchesProcessed))
+		span.Tagf("avg_heap_size_after_push", "%.2f", float64(metrics.totalHeapSizeAfterPush)/float64(metrics.batchesProcessed))
+	}
 }
 
 func determineTagsToLoad(req QueryRequest) map[string]struct{} {
@@ -458,7 +380,20 @@ func (s *sidx) buildCursorsForBatch(
 	req QueryRequest,
 	asc bool,
 ) ([]*blockCursor, error) {
+	var buildSpan *query.Span
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		buildSpan, ctx = tracer.StartSpan(ctx, "sidx.build-cursors-for-batch")
+		defer func() {
+			if buildSpan != nil {
+				buildSpan.Stop()
+			}
+		}()
+	}
+
 	if len(batch.bss) == 0 {
+		if buildSpan != nil {
+			buildSpan.Tag("empty_batch", "true")
+		}
 		return nil, nil
 	}
 
@@ -468,6 +403,12 @@ func (s *sidx) buildCursorsForBatch(
 	}
 	if workerCount > len(batch.bss) {
 		workerCount = len(batch.bss)
+	}
+
+	if buildSpan != nil {
+		buildSpan.Tagf("block_scan_results", "%d", len(batch.bss))
+		buildSpan.Tagf("worker_count", "%d", workerCount)
+		buildSpan.Tagf("tags_to_load", "%d", len(tagsToLoad))
 	}
 
 	jobCh := make(chan blockScanResult, workerCount)
@@ -525,6 +466,9 @@ func (s *sidx) buildCursorsForBatch(
 			for bc := range resultCh {
 				releaseBlockCursor(bc)
 			}
+			if buildSpan != nil {
+				buildSpan.Tag("canceled", "job_distribution")
+			}
 			return nil, ctx.Err()
 		case jobCh <- batch.bss[i]:
 		}
@@ -539,9 +483,17 @@ func (s *sidx) buildCursorsForBatch(
 		cursors = append(cursors, bc)
 	}
 
+	if buildSpan != nil {
+		buildSpan.Tagf("cursors_created", "%d", len(cursors))
+	}
+
 	if err := ctx.Err(); err != nil {
 		for i := range cursors {
 			releaseBlockCursor(cursors[i])
+		}
+		if buildSpan != nil {
+			buildSpan.Tag("canceled", "after_workers")
+			buildSpan.Error(err)
 		}
 		return nil, err
 	}
@@ -583,166 +535,4 @@ func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
 	}
 
 	return selectedParts
-}
-
-// flushStreamingHeap drains block cursors into QueryResponse batches and pushes them to resultsCh.
-// It returns true when the current batch hit the MaxElementSize constraint so the caller can resume
-// flushing in a subsequent iteration.
-func flushStreamingHeap(
-	ctx context.Context, blockHeap *blockCursorHeap, maxElementSize int, resultsCh chan<- *QueryResponse, stats *streamingStats,
-) (bool, error) {
-	limitReached := false
-
-	for blockHeap.Len() > 0 {
-		chunk, hitLimit := blockHeap.merge(maxElementSize)
-		if chunk == nil || chunk.Len() == 0 {
-			if hitLimit {
-				return true, nil
-			}
-			// Safeguard against tight loops if no data was emitted.
-			if blockHeap.Len() == 0 {
-				return limitReached, nil
-			}
-			continue
-		}
-
-		if stats != nil {
-			stats.record(chunk)
-		}
-
-		select {
-		case <-ctx.Done():
-			return limitReached, ctx.Err()
-		case resultsCh <- chunk:
-		}
-
-		if hitLimit {
-			limitReached = true
-			break
-		}
-
-		// If no limit is provided, merge drains the entire heap in one iteration.
-		if maxElementSize <= 0 {
-			break
-		}
-	}
-
-	return limitReached, nil
-}
-
-// executeBlockScannerQuery coordinates the worker pool with block scanner following tsResult pattern.
-func (s *sidx) executeBlockScannerQuery(ctx context.Context, bs *blockScanner, req QueryRequest) *QueryResponse {
-	workerSize := cgroups.CPUs()
-	batchCh := make(chan *blockScanResultBatch, workerSize)
-
-	// Determine which tags to load once for all workers (shared optimization)
-	tagsToLoad := make(map[string]struct{})
-	if len(req.TagProjection) > 0 {
-		// Load only projected tags
-		for _, proj := range req.TagProjection {
-			for _, tagName := range proj.Names {
-				tagsToLoad[tagName] = struct{}{}
-			}
-		}
-	}
-
-	// Initialize worker result shards
-	shards := make([]*QueryResponse, workerSize)
-	for i := range shards {
-		shards[i] = &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
-		}
-	}
-
-	// Launch worker pool
-	var workerWg sync.WaitGroup
-	workerWg.Add(workerSize)
-
-	for i := range workerSize {
-		go func(workerID int) {
-			defer workerWg.Done()
-			s.processWorkerBatches(workerID, batchCh, shards[workerID], tagsToLoad, req, s.pm)
-		}(i)
-	}
-
-	// Start block scanning
-	go func() {
-		bs.scan(ctx, batchCh)
-		close(batchCh)
-	}()
-
-	workerWg.Wait()
-
-	// Merge results from all workers
-	return s.mergeWorkerResults(shards, req.MaxElementSize)
-}
-
-// processWorkerBatches processes batches in a worker goroutine using heap-based approach.
-func (s *sidx) processWorkerBatches(
-	_ int, batchCh chan *blockScanResultBatch, shard *QueryResponse,
-	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory,
-) {
-	tmpBlock := generateBlock()
-	defer releaseBlock(tmpBlock)
-
-	asc := extractOrdering(req)
-	blockHeap := generateBlockCursorHeap(asc)
-	defer releaseBlockCursorHeap(blockHeap)
-
-	for batch := range batchCh {
-		if batch.err != nil {
-			shard.Error = batch.err
-			releaseBlockScanResultBatch(batch)
-			continue
-		}
-
-		// Load all blocks in this batch and create block cursors
-		for _, bs := range batch.bss {
-			bc := generateBlockCursor()
-			bc.init(bs.p, &bs.bm, req)
-
-			if s.loadBlockCursor(bc, tmpBlock, bs, tagsToLoad, req, pm) {
-				// Set starting index based on sort order
-				if asc {
-					bc.idx = 0
-				} else {
-					bc.idx = len(bc.userKeys) - 1
-				}
-				blockHeap.Push(bc)
-			} else {
-				releaseBlockCursor(bc)
-			}
-		}
-
-		releaseBlockScanResultBatch(batch)
-	}
-
-	// Initialize heap and merge results
-	if blockHeap.Len() > 0 {
-		heap.Init(blockHeap)
-		result, _ := blockHeap.merge(req.MaxElementSize)
-		shard.CopyFrom(result)
-	}
-}
-
-// mergeWorkerResults merges results from all worker shards with error handling.
-func (s *sidx) mergeWorkerResults(shards []*QueryResponse, maxElementSize int) *QueryResponse {
-	// Check for errors first
-	var err error
-	for i := range shards {
-		if shards[i].Error != nil {
-			err = multierr.Append(err, shards[i].Error)
-		}
-	}
-
-	if err != nil {
-		return &QueryResponse{Error: err}
-	}
-
-	// Merge results - shards are already in the requested order
-	// Just use ascending merge since shards are pre-sorted
-	return mergeQueryResponseShards(shards, maxElementSize)
 }

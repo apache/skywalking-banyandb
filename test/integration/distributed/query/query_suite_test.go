@@ -71,6 +71,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Env:   "dev",
 		Level: flags.LogLevel,
 	})).To(Succeed())
+	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
 	By("Starting etcd server")
 	ports, err := test.AllocateFreePorts(2)

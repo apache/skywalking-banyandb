@@ -363,7 +363,7 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 
 	if len(bw.traceIDs) > 0 {
 		if tf.filter == nil {
-			tf.filter = generateBloomFilter()
+			tf.filter = generateTraceIDBloomFilter()
 		}
 		tf.filter.SetN(len(bw.traceIDs))
 		tf.filter.ResizeBits((len(bw.traceIDs)*filter.B + 63) / 64)

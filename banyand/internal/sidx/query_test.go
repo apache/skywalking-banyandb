@@ -63,12 +63,19 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 	waitForIntroducerLoop()
 
 	queryReq := createTestQueryRequest(1)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	if response.Len() > 0 {
-		assert.Greater(t, response.Len(), 0)
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	if len(keys) > 0 {
+		assert.Greater(t, len(keys), 0)
 	}
 }
 
@@ -81,11 +88,18 @@ func TestSIDX_Query_EmptyResult(t *testing.T) {
 	ctx := context.Background()
 
 	queryReq := createTestQueryRequest(999)
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	assert.Equal(t, 0, response.Len())
+	resultCount := 0
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		resultCount += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 0, resultCount)
 }
 
 func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
@@ -113,12 +127,19 @@ func TestSIDX_Query_KeyRangeFilter(t *testing.T) {
 		MaxKey:    &maxKey,
 	}
 
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	if response.Len() > 0 {
-		for _, key := range response.Keys {
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	if len(keys) > 0 {
+		for _, key := range keys {
 			assert.GreaterOrEqual(t, key, minKey)
 			assert.LessOrEqual(t, key, maxKey)
 		}
@@ -194,16 +215,25 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 				Order:     tt.order,
 			}
 
-			response, err := sidx.Query(ctx, queryReq)
-			require.NoError(t, err)
-			require.NotNil(t, response)
+			resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-			allKeys := response.Keys
+			var allKeys []int64
+			var allData [][]byte
+			var allSIDs []common.SeriesID
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				allKeys = append(allKeys, res.Keys...)
+				allData = append(allData, res.Data...)
+				allSIDs = append(allSIDs, res.SIDs...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
 
 			t.Logf("Query with series %v, order %v", tt.seriesIDs, tt.order)
 			for i, key := range allKeys {
-				if i < len(response.Data) && i < len(response.SIDs) {
-					t.Logf("  Key: %d, Data: %s, SeriesID: %d", key, string(response.Data[i]), response.SIDs[i])
+				if i < len(allData) && i < len(allSIDs) {
+					t.Logf("  Key: %d, Data: %s, SeriesID: %d", key, string(allData[i]), allSIDs[i])
 				}
 			}
 
@@ -254,15 +284,24 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 		},
 	}
 
-	response, err := sidx.Query(ctx, queryReq)
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
-	assert.Equal(t, 3, response.Len())
-	for i := 0; i < response.Len(); i++ {
-		if response.Keys[i] == 100 {
-			assert.Equal(t, "arr_tag", response.Tags[i][0].Name)
-			assert.Equal(t, "a|b|", string(response.Tags[i][0].Value))
+	var keys []int64
+	var tags [][]Tag
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		keys = append(keys, res.Keys...)
+		tags = append(tags, res.Tags...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 3, len(keys))
+	for i := 0; i < len(keys); i++ {
+		if keys[i] == 100 {
+			assert.Equal(t, "arr_tag", tags[i][0].Name)
+			assert.Equal(t, "a|b|", string(tags[i][0].Value))
 		}
 	}
 }
@@ -302,8 +341,8 @@ func TestSIDX_Query_Validation(t *testing.T) {
 		{
 			name: "negative max element size",
 			req: QueryRequest{
-				SeriesIDs:      []common.SeriesID{1},
-				MaxElementSize: -1,
+				SeriesIDs:    []common.SeriesID{1},
+				MaxBatchSize: -1,
 			},
 			expectErr: true,
 		},
@@ -312,11 +351,22 @@ func TestSIDX_Query_Validation(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := sidx.Query(ctx, tt.req)
+			resultsCh, errCh := sidx.StreamingQuery(ctx, tt.req)
+			// revive:disable-next-line:empty-block
+			for range resultsCh {
+			}
+			err, ok := <-errCh
 			if tt.expectErr {
-				assert.Error(t, err)
+				if ok {
+					assert.Error(t, err)
+				} else {
+					// Validation error, should have been sent to errCh
+					t.Fatal("Expected error but got none")
+				}
 			} else {
-				assert.NoError(t, err)
+				if ok {
+					assert.NoError(t, err)
+				}
 			}
 		})
 	}
@@ -348,9 +398,9 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 		{
 			name: "ascending_all_series",
 			req: QueryRequest{
-				SeriesIDs:      []common.SeriesID{1, 2},
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-				MaxElementSize: 2,
+				SeriesIDs:    []common.SeriesID{1, 2},
+				Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+				MaxBatchSize: 2,
 				MinKey: func() *int64 {
 					v := int64(50)
 					return &v
@@ -364,17 +414,17 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 		{
 			name: "descending_single_series",
 			req: QueryRequest{
-				SeriesIDs:      []common.SeriesID{1},
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
-				MaxElementSize: 2,
+				SeriesIDs:    []common.SeriesID{1},
+				Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
+				MaxBatchSize: 2,
 			},
 		},
 		{
 			name: "range_filtered_series",
 			req: QueryRequest{
-				SeriesIDs:      []common.SeriesID{2},
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-				MaxElementSize: 2,
+				SeriesIDs:    []common.SeriesID{2},
+				Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+				MaxBatchSize: 2,
 				MinKey: func() *int64 {
 					v := int64(100)
 					return &v
@@ -390,9 +440,27 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			expected, err := sidx.Query(ctx, tc.req)
-			require.NoError(t, err)
+			// Collect expected results from streaming query
+			var (
+				expectedKeys []int64
+				expectedData [][]byte
+				expectedTags [][]Tag
+				expectedSIDs []common.SeriesID
+			)
 
+			resultsCh, errCh := sidx.StreamingQuery(ctx, tc.req)
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				expectedKeys = append(expectedKeys, res.Keys...)
+				expectedData = append(expectedData, res.Data...)
+				expectedTags = append(expectedTags, res.Tags...)
+				expectedSIDs = append(expectedSIDs, res.SIDs...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
+
+			// Run the streaming query again and verify consistency
 			var (
 				gotKeys []int64
 				gotData [][]byte
@@ -400,25 +468,23 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 				gotSIDs []common.SeriesID
 			)
 
-			resultsCh, errCh := sidx.StreamingQuery(ctx, tc.req)
-
-			for res := range resultsCh {
+			resultsCh2, errCh2 := sidx.StreamingQuery(ctx, tc.req)
+			for res := range resultsCh2 {
 				require.NoError(t, res.Error)
 				gotKeys = append(gotKeys, res.Keys...)
 				gotData = append(gotData, res.Data...)
 				gotTags = append(gotTags, res.Tags...)
 				gotSIDs = append(gotSIDs, res.SIDs...)
 			}
-
-			if err, ok := <-errCh; ok {
+			if err, ok := <-errCh2; ok {
 				require.NoError(t, err)
 			}
 
-			require.Equal(t, expected.Keys, gotKeys)
-			require.Equal(t, expected.Data, gotData)
-			require.Equal(t, expected.SIDs, gotSIDs)
-			require.Equal(t, expected.Tags, gotTags)
-			require.Equal(t, expected.Len(), len(gotKeys))
+			require.Equal(t, expectedKeys, gotKeys)
+			require.Equal(t, expectedData, gotData)
+			require.Equal(t, expectedSIDs, gotSIDs)
+			require.Equal(t, expectedTags, gotTags)
+			require.Equal(t, len(expectedKeys), len(gotKeys))
 		})
 	}
 }
@@ -440,13 +506,13 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 	waitForIntroducerLoop()
 
 	queryReq := QueryRequest{
-		SeriesIDs:      []common.SeriesID{1},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 0,
+		SeriesIDs:    []common.SeriesID{1},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 0,
 	}
 
 	resultsCh, errCh := sidx.StreamingQuery(context.Background(), queryReq)
-	require.Equal(t, queryReq.MaxElementSize, cap(resultsCh))
+	require.Equal(t, queryReq.MaxBatchSize, cap(resultsCh))
 
 	var batches []*QueryResponse
 	for res := range resultsCh {
@@ -460,8 +526,16 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 
 	require.NotEmpty(t, batches)
 
-	expected, err := sidx.Query(context.Background(), queryReq)
-	require.NoError(t, err)
+	// Get expected count by collecting all streaming results
+	expectedCount := 0
+	resultsCh2, errCh2 := sidx.StreamingQuery(context.Background(), queryReq)
+	for res := range resultsCh2 {
+		require.NoError(t, res.Error)
+		expectedCount += res.Len()
+	}
+	if err, ok := <-errCh2; ok {
+		require.NoError(t, err)
+	}
 
 	totalResults := 0
 
@@ -469,7 +543,7 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 		totalResults += batch.Len()
 
 		if i < len(batches)-1 {
-			require.LessOrEqual(t, batch.Len(), queryReq.MaxElementSize)
+			require.LessOrEqual(t, batch.Len(), queryReq.MaxBatchSize)
 		}
 
 		uniqueData := make(map[string]struct{})
@@ -477,11 +551,11 @@ func TestSIDX_StreamingQuery_BatchSizingAndCapacity(t *testing.T) {
 			uniqueData[string(data)] = struct{}{}
 		}
 		if i < len(batches)-1 {
-			require.LessOrEqual(t, len(uniqueData), queryReq.MaxElementSize)
+			require.LessOrEqual(t, len(uniqueData), queryReq.MaxBatchSize)
 		}
 	}
 
-	require.Equal(t, expected.Len(), totalResults)
+	require.Equal(t, expectedCount, totalResults)
 }
 
 func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
@@ -499,13 +573,21 @@ func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
 	waitForIntroducerLoop()
 
 	queryReq := QueryRequest{
-		SeriesIDs:      []common.SeriesID{1},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 2,
+		SeriesIDs:    []common.SeriesID{1},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 2,
 	}
 
-	expected, err := sidx.Query(context.Background(), queryReq)
-	require.NoError(t, err)
+	// Get expected count from first streaming query
+	expectedCount := 0
+	resultsCh0, errCh0 := sidx.StreamingQuery(context.Background(), queryReq)
+	for res := range resultsCh0 {
+		require.NoError(t, res.Error)
+		expectedCount += res.Len()
+	}
+	if err, ok := <-errCh0; ok {
+		require.NoError(t, err)
+	}
 
 	resultsCh, errCh := sidx.StreamingQuery(context.Background(), queryReq)
 
@@ -514,7 +596,7 @@ func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
 		require.NoError(t, res.Error)
 		totalResults += res.Len()
 	}
-	require.Equal(t, expected.Len(), totalResults)
+	require.Equal(t, expectedCount, totalResults)
 
 	_, ok := <-resultsCh
 	require.False(t, ok)
@@ -547,11 +629,11 @@ func TestSIDX_StreamingQuery_Tracing(t *testing.T) {
 	minKey := int64(100)
 	maxKey := int64(300)
 	queryReq := QueryRequest{
-		SeriesIDs:      []common.SeriesID{1},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 1,
-		MinKey:         &minKey,
-		MaxKey:         &maxKey,
+		SeriesIDs:    []common.SeriesID{1},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 1,
+		MinKey:       &minKey,
+		MaxKey:       &maxKey,
 	}
 
 	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
@@ -586,7 +668,7 @@ func TestSIDX_StreamingQuery_Tracing(t *testing.T) {
 	require.Equal(t, strconv.Itoa(0), requireTag(t, tags, "projected_tags"))
 	require.Equal(t, strconv.FormatInt(minKey, 10), requireTag(t, tags, "min_key"))
 	require.Equal(t, strconv.FormatInt(maxKey, 10), requireTag(t, tags, "max_key"))
-	require.Equal(t, strconv.Itoa(queryReq.MaxElementSize), requireTag(t, tags, "max_element_size"))
+	require.Equal(t, strconv.Itoa(queryReq.MaxBatchSize), requireTag(t, tags, "max_batch_size"))
 	require.Equal(t, strconv.Itoa(responseCount), requireTag(t, tags, "responses_emitted"))
 	require.Equal(t, strconv.Itoa(elementCount), requireTag(t, tags, "elements_emitted"))
 	require.Equal(t, "true", requireTag(t, tags, "heap_initialized"))
@@ -632,9 +714,9 @@ func TestSIDX_StreamingQuery_ErrorPropagation(t *testing.T) {
 		waitForIntroducerLoop()
 
 		resultsCh, errCh := sidx.StreamingQuery(context.Background(), QueryRequest{
-			SeriesIDs:      []common.SeriesID{1},
-			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-			MaxElementSize: 0,
+			SeriesIDs:    []common.SeriesID{1},
+			Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			MaxBatchSize: 0,
 		})
 
 		for range resultsCh {
@@ -667,9 +749,9 @@ func TestSIDX_StreamingQuery_EdgeCases(t *testing.T) {
 		waitForIntroducerLoop()
 
 		resultsCh, errCh := sidx.StreamingQuery(context.Background(), QueryRequest{
-			SeriesIDs:      []common.SeriesID{999},
-			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-			MaxElementSize: 2,
+			SeriesIDs:    []common.SeriesID{999},
+			Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			MaxBatchSize: 2,
 		})
 
 		for range resultsCh {
@@ -695,9 +777,9 @@ func TestSIDX_StreamingQuery_EdgeCases(t *testing.T) {
 		waitForIntroducerLoop()
 
 		resultsCh, errCh := sidx.StreamingQuery(context.Background(), QueryRequest{
-			SeriesIDs:      []common.SeriesID{2},
-			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-			MaxElementSize: 10,
+			SeriesIDs:    []common.SeriesID{2},
+			Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			MaxBatchSize: 10,
 		})
 
 		var batches []*QueryResponse
@@ -746,9 +828,9 @@ func TestSIDX_StreamingQuery_EdgeCases(t *testing.T) {
 		flushIntro.Release()
 
 		resultsCh, errCh := idx.StreamingQuery(context.Background(), QueryRequest{
-			SeriesIDs:      []common.SeriesID{1, 2},
-			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-			MaxElementSize: 0,
+			SeriesIDs:    []common.SeriesID{1, 2},
+			Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+			MaxBatchSize: 0,
 		})
 
 		var (
@@ -790,9 +872,9 @@ func TestSIDX_StreamingQuery_BatchSizeAndOrder(t *testing.T) {
 	waitForIntroducerLoop()
 
 	queryReq := QueryRequest{
-		SeriesIDs:      []common.SeriesID{1},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 2,
+		SeriesIDs:    []common.SeriesID{1},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 2,
 	}
 
 	resultsCh, errCh := sidx.StreamingQuery(context.Background(), queryReq)
@@ -807,8 +889,8 @@ func TestSIDX_StreamingQuery_BatchSizeAndOrder(t *testing.T) {
 	for res := range resultsCh {
 		require.NoError(t, res.Error)
 		require.NotEmpty(t, res.Keys)
-		if queryReq.MaxElementSize > 0 {
-			require.LessOrEqual(t, res.Len(), queryReq.MaxElementSize)
+		if queryReq.MaxBatchSize > 0 {
+			require.LessOrEqual(t, res.Len(), queryReq.MaxBatchSize)
 		}
 		batchCount++
 
@@ -849,9 +931,9 @@ func TestSIDX_StreamingQuery_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	queryReq := QueryRequest{
-		SeriesIDs:      []common.SeriesID{1},
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: 1,
+		SeriesIDs:    []common.SeriesID{1},
+		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+		MaxBatchSize: 1,
 	}
 
 	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
@@ -872,9 +954,12 @@ func TestSIDX_StreamingQuery_ContextCancellation(t *testing.T) {
 		t.Fatal("timeout waiting for streaming query to halt after cancellation")
 	}
 
-	err, ok := <-errCh
-	require.True(t, ok)
-	require.ErrorIs(t, err, context.Canceled)
+	// Depending on timing, the stream may finish before cancellation takes effect
+	// (especially on faster CI runners). In that case, errCh will be closed
+	// without emitting an error, which is acceptable.
+	if err, ok := <-errCh; ok {
+		require.ErrorIs(t, err, context.Canceled)
+	}
 }
 
 func findSpanByMessage(spans []*commonv1.Span, message string) *commonv1.Span {

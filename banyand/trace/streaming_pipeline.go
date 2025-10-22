@@ -24,12 +24,12 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	pkgerrors "github.com/pkg/errors"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -41,8 +41,8 @@ type traceBatch struct {
 }
 
 type scanBatch struct {
-	err     error
-	cursors []*blockCursor
+	err      error
+	cursorCh <-chan scanCursorResult
 	traceBatch
 }
 
@@ -247,39 +247,44 @@ func (t *trace) streamSIDXTraceBatches(
 	tracingCtx := ctx
 	var span *query.Span
 	if tracer != nil {
-		var spanCtx context.Context
-		span, spanCtx = tracer.StartSpan(ctx, "sidx-stream")
-		tracingCtx = spanCtx
+		span, tracingCtx = tracer.StartSpan(ctx, "sidx-stream")
 		tagSIDXStreamSpan(span, req, maxTraceSize, len(sidxInstances))
 	}
-
 	streamCtx, cancel := context.WithCancel(tracingCtx)
-	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize, span)
-
+	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
 	go func() {
-		defer close(out)
-		defer cancel()
+		defer func() {
+			if span != nil {
+				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
+				span.Tagf("trace_ids_emitted", "%d", runner.total.Load())
+				if dups := runner.duplicates.Load(); dups > 0 {
+					span.Tagf("duplicate_trace_ids", "%d", dups)
+				}
+				if err := runner.getSpanErr(); err != nil && !stdErrors.Is(err, context.Canceled) {
+					span.Error(err)
+				}
+				span.Stop()
+			}
+			cancel()
+			close(out)
+		}()
 
 		if err := runner.prepare(sidxInstances); err != nil {
 			runner.cancel()
 			runner.emitError(out, err)
-			runner.finish()
 			return
 		}
 
 		runner.run(out)
-		runner.finish()
 	}()
-
 	return out
 }
 
 type sidxStreamRunner struct {
 	streamCtx      context.Context
 	ctx            context.Context
-	spanErr        error
+	spanErr        atomic.Value // stores error
 	cancelFunc     context.CancelFunc
-	span           *query.Span
 	errEvents      chan sidxStreamError
 	heap           *sidxStreamHeap
 	seenTraceIDs   map[string]struct{}
@@ -288,11 +293,10 @@ type sidxStreamRunner struct {
 	errWg          sync.WaitGroup
 	maxTraceSize   int
 	nextSeq        int
-	total          int
-	batchesEmitted int
-	duplicates     int
+	total          atomic.Int64
+	batchesEmitted atomic.Int64
+	duplicates     atomic.Int64
 	batchSize      int
-	limitReached   bool
 }
 
 func tagSIDXStreamSpan(span *query.Span, req sidx.QueryRequest, maxTraceSize int, instanceCount int) {
@@ -314,7 +318,7 @@ func tagSIDXStreamSpan(span *query.Span, req sidx.QueryRequest, maxTraceSize int
 		span.Tag("order_sort", "none")
 	}
 	span.Tagf("series_id_candidates", "%d", len(req.SeriesIDs))
-	span.Tagf("max_element_size", "%d", req.MaxElementSize)
+	span.Tagf("max_batch_size", "%d", req.MaxBatchSize)
 	span.Tagf("max_trace_size", "%d", maxTraceSize)
 	span.Tagf("sidx_instance_count", "%d", instanceCount)
 }
@@ -325,14 +329,13 @@ func newSIDXStreamRunner(
 	cancel context.CancelFunc,
 	req sidx.QueryRequest,
 	maxTraceSize int,
-	span *query.Span,
 ) *sidxStreamRunner {
 	asc := true
 	if req.Order != nil && req.Order.Sort == modelv1.Sort_SORT_DESC {
 		asc = false
 	}
 
-	batchSize := req.MaxElementSize
+	batchSize := req.MaxBatchSize
 	if batchSize <= 0 {
 		if maxTraceSize > 0 {
 			batchSize = maxTraceSize
@@ -348,7 +351,6 @@ func newSIDXStreamRunner(
 		req:          req,
 		maxTraceSize: maxTraceSize,
 		batchSize:    batchSize,
-		span:         span,
 		heap:         &sidxStreamHeap{asc: asc},
 		seenTraceIDs: make(map[string]struct{}),
 		batch:        newTraceBatch(0, batchSize),
@@ -363,9 +365,22 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 		idx   int
 	}
 
+	// Track all error channels separately from shards with data
+	type errChannelInfo struct {
+		errCh <-chan error
+		idx   int
+	}
+	allErrChannels := make([]errChannelInfo, 0, len(instances))
+
 	sources := make([]shardSource, 0, len(instances))
 	for idx, instance := range instances {
 		resultsCh, errCh := instance.StreamingQuery(r.streamCtx, r.req)
+
+		// Track error channel regardless of whether shard has data
+		if errCh != nil {
+			allErrChannels = append(allErrChannels, errChannelInfo{errCh: errCh, idx: idx})
+		}
+
 		shard := &sidxStreamShard{
 			id:      idx,
 			results: resultsCh,
@@ -374,6 +389,7 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 			return fmt.Errorf("sidx[%d] prepare failed: %w", idx, err)
 		}
 		if shard.done {
+			// Shard has no data, but we still track its error channel above
 			continue
 		}
 		sources = append(sources, shardSource{
@@ -383,52 +399,48 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 		})
 	}
 
+	// Add shards with data to the heap
 	for _, src := range sources {
 		heap.Push(r.heap, src.shard)
 	}
 
-	if len(sources) == 0 {
-		return nil
-	}
+	// Create error event channel and start error forwarding goroutines
+	// for ALL error channels, even from shards without data
+	if len(allErrChannels) > 0 {
+		r.errEvents = make(chan sidxStreamError, len(allErrChannels))
 
-	r.errEvents = make(chan sidxStreamError, len(sources))
-
-	for _, src := range sources {
-		if src.errCh == nil {
-			continue
+		for _, errSrc := range allErrChannels {
+			r.errWg.Add(1)
+			go func(index int, ch <-chan error) {
+				defer r.errWg.Done()
+				forwardSIDXError(r.streamCtx, index, ch, r.errEvents)
+			}(errSrc.idx, errSrc.errCh)
 		}
-		r.errWg.Add(1)
-		go func(index int, ch <-chan error) {
-			defer r.errWg.Done()
-			forwardSIDXError(r.streamCtx, index, ch, r.errEvents)
-		}(src.idx, src.errCh)
-	}
 
-	go func() {
-		r.errWg.Wait()
-		close(r.errEvents)
-	}()
+		go func() {
+			r.errWg.Wait()
+			close(r.errEvents)
+		}()
+	}
 
 	return nil
 }
 
 func (r *sidxStreamRunner) run(out chan<- traceBatch) {
-	if r.heap.Len() == 0 {
+	// Always drain error events before returning, even on early exit
+	// Cancel first to stop SIDX goroutines, then drain any pending errors
+	defer func() {
 		r.cancel()
 		r.drainErrorEvents(out)
+	}()
+
+	if r.heap.Len() == 0 {
 		return
 	}
 
 	for r.heap.Len() > 0 {
-		if r.maxTraceSize > 0 && r.total >= r.maxTraceSize {
-			r.limitReached = true
-			break
-		}
-
 		if err := r.streamCtx.Err(); err != nil {
-			if r.spanErr == nil {
-				r.spanErr = err
-			}
+			r.recordSpanErr(err)
 			return
 		}
 
@@ -457,11 +469,6 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			}
 		}
 
-		if added && r.maxTraceSize > 0 && r.total >= r.maxTraceSize {
-			r.limitReached = true
-			break
-		}
-
 		if err := r.advanceShard(shard); err != nil {
 			r.emitError(out, err)
 			return
@@ -473,9 +480,6 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			return
 		}
 	}
-
-	r.cancel()
-	r.drainErrorEvents(out)
 }
 
 func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
@@ -483,6 +487,7 @@ func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
 		return true
 	}
 
+	// Check for errors without blocking
 	select {
 	case ev, ok := <-r.errEvents:
 		if !ok {
@@ -496,6 +501,7 @@ func (r *sidxStreamRunner) pollErrEvents(out chan<- traceBatch) bool {
 		r.emitError(out, eventErr)
 		return false
 	default:
+		// No error available yet, continue processing
 		return true
 	}
 }
@@ -519,7 +525,7 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 	}
 
 	if _, exists := r.seenTraceIDs[traceID]; exists {
-		r.duplicates++
+		r.duplicates.Add(1)
 		return false, nil
 	}
 
@@ -529,7 +535,7 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 		r.batch.keys = make(map[string]int64)
 	}
 	r.batch.keys[traceID] = shard.currentKey()
-	r.total++
+	r.total.Add(1)
 
 	return true, nil
 }
@@ -537,12 +543,10 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 func (r *sidxStreamRunner) emitBatch(out chan<- traceBatch) bool {
 	select {
 	case <-r.streamCtx.Done():
-		if r.spanErr == nil {
-			r.spanErr = r.streamCtx.Err()
-		}
+		r.recordSpanErr(r.streamCtx.Err())
 		return false
 	case out <- r.batch:
-		r.batchesEmitted++
+		r.batchesEmitted.Add(1)
 		r.batch = newTraceBatch(r.nextSeq, r.batchSize)
 		r.nextSeq++
 		return true
@@ -561,39 +565,83 @@ func (r *sidxStreamRunner) advanceShard(shard *sidxStreamShard) error {
 
 func (r *sidxStreamRunner) emitError(out chan<- traceBatch, err error) {
 	r.recordSpanErr(err)
+	// Always try to send error even if context is canceled
+	// The receiver needs to know about the error
 	select {
-	case <-r.ctx.Done():
 	case out <- traceBatch{err: err}:
+	case <-r.ctx.Done():
+		// Context canceled, but still try to send error with non-blocking attempt
+		select {
+		case out <- traceBatch{err: err}:
+		default:
+			// Channel might be blocked or closed, can't send error
+		}
 	}
 }
 
 func (r *sidxStreamRunner) drainErrorEvents(out chan<- traceBatch) {
-	for r.errEvents != nil {
+	if r.errEvents == nil {
+		return
+	}
+
+	// Read from errEvents until it's closed or we find an error
+	// The channel will be closed after all error forwarding goroutines finish
+	for {
 		select {
 		case ev, ok := <-r.errEvents:
 			if !ok {
-				r.errEvents = nil
+				// Channel closed, all error forwarding goroutines finished
 				return
 			}
 			if ev.err == nil {
+				// No error in this event, continue reading
 				continue
 			}
+			// Skip context.Canceled errors if we're shutting down normally
+			// (these are expected cleanup errors, not actual failures)
+			if stdErrors.Is(ev.err, context.Canceled) {
+				continue
+			}
+			// Found a real error, emit it and return
 			eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
 			r.emitError(out, eventErr)
 			return
 		case <-r.ctx.Done():
-			if r.spanErr == nil {
-				r.spanErr = r.ctx.Err()
+			// Context canceled, but still do non-blocking drain
+			// to catch any errors that arrived before cancellation
+			for {
+				select {
+				case ev, ok := <-r.errEvents:
+					if !ok {
+						return
+					}
+					if ev.err != nil && !stdErrors.Is(ev.err, context.Canceled) {
+						eventErr := fmt.Errorf("sidx[%d] streaming error: %w", ev.index, ev.err)
+						r.emitError(out, eventErr)
+						return
+					}
+				default:
+					// No more errors available
+					r.recordSpanErr(r.ctx.Err())
+					return
+				}
 			}
-			return
 		}
 	}
 }
 
 func (r *sidxStreamRunner) recordSpanErr(err error) {
-	if r.spanErr == nil {
-		r.spanErr = err
+	// Only store the first error
+	if r.spanErr.Load() == nil {
+		r.spanErr.Store(err)
 	}
+}
+
+func (r *sidxStreamRunner) getSpanErr() error {
+	if v := r.spanErr.Load(); v != nil {
+		return v.(error)
+	}
+	return nil
 }
 
 func (r *sidxStreamRunner) cancel() {
@@ -602,288 +650,59 @@ func (r *sidxStreamRunner) cancel() {
 	}
 }
 
-func (r *sidxStreamRunner) finish() {
-	r.finishSpan()
-}
-
-func (r *sidxStreamRunner) finishSpan() {
-	if r.span == nil {
-		return
-	}
-	r.span.Tagf("batches_emitted", "%d", r.batchesEmitted)
-	r.span.Tagf("trace_ids_emitted", "%d", r.total)
-	if r.duplicates > 0 {
-		r.span.Tagf("duplicate_trace_ids", "%d", r.duplicates)
-	}
-	if r.limitReached {
-		r.span.Tag("max_trace_limit_hit", "true")
-	}
-	if r.spanErr != nil && !stdErrors.Is(r.spanErr, context.Canceled) {
-		r.span.Error(r.spanErr)
-	}
-	r.span.Stop()
-}
-
 func (t *trace) startBlockScanStage(
 	ctx context.Context,
 	parts []*part,
 	qo queryOptions,
 	batches <-chan traceBatch,
-	maxTraceSize int,
 ) <-chan *scanBatch {
 	out := make(chan *scanBatch)
 
-	workerCount := cgroups.CPUs()
-	if workerCount < 1 {
-		workerCount = 1
-	}
-
-	jobCh := make(chan traceBatch)
-	resultCh := make(chan *scanBatch)
-
-	var workerGroup sync.WaitGroup
-	workerGroup.Add(workerCount)
-
-	t.launchBlockScanWorkers(ctx, parts, qo, workerCount, jobCh, resultCh, &workerGroup)
-
-	go func() {
-		workerGroup.Wait()
-		close(resultCh)
-	}()
-
-	go func() {
-		t.dispatchTraceBatches(ctx, batches, jobCh, maxTraceSize)
-	}()
-
 	go func() {
 		defer close(out)
-		t.collectScanResults(ctx, resultCh, out)
+
+		for batch := range batches {
+			if batch.err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &scanBatch{traceBatch: batch, err: batch.err}:
+				}
+				continue
+			}
+
+			// Create the cursor channel and scanBatch
+			cursorCh := make(chan scanCursorResult)
+			sb := &scanBatch{
+				traceBatch: batch,
+				cursorCh:   cursorCh,
+			}
+
+			// Send batch downstream first so consumer can start reading
+			select {
+			case <-ctx.Done():
+				close(cursorCh)
+				return
+			case out <- sb:
+			}
+
+			// Now scan inline and populate the channel
+			t.scanTraceIDsInline(ctx, parts, qo, batch.traceIDs, cursorCh)
+			close(cursorCh)
+		}
 	}()
 
 	return out
 }
 
-func (t *trace) launchBlockScanWorkers(
-	ctx context.Context,
-	parts []*part,
-	qo queryOptions,
-	workerCount int,
-	jobCh <-chan traceBatch,
-	resultCh chan<- *scanBatch,
-	wg *sync.WaitGroup,
-) {
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			defer wg.Done()
-			for batch := range jobCh {
-				sb := t.processTraceBatch(ctx, parts, qo, batch)
-				if sb == nil {
-					continue
-				}
-
-				select {
-				case <-ctx.Done():
-					if sb.err == nil {
-						releaseBlockCursors(sb.cursors)
-					}
-					return
-				case resultCh <- sb:
-				}
-			}
-		}()
-	}
+type scanCursorResult struct {
+	cursor *blockCursor
+	err    error
 }
 
-func (t *trace) dispatchTraceBatches(
-	ctx context.Context,
-	batches <-chan traceBatch,
-	jobCh chan<- traceBatch,
-	maxTraceSize int,
-) {
-	defer close(jobCh)
-
-	total := 0
-	sequence := 0
-	limitReached := false
-
-	for batch := range batches {
-		if limitReached {
-			continue
-		}
-
-		if batch.err != nil {
-			batch.seq = sequence
-			sequence++
-			if !sendTraceBatch(ctx, jobCh, batch) {
-				return
-			}
-			limitReached = true
-			continue
-		}
-
-		if len(batch.traceIDs) == 0 {
-			continue
-		}
-
-		var reached bool
-		batch, total, reached = limitTraceBatch(batch, maxTraceSize, total)
-		if len(batch.traceIDs) == 0 {
-			if reached {
-				limitReached = true
-			}
-			continue
-		}
-
-		batch.seq = sequence
-		sequence++
-		if !sendTraceBatch(ctx, jobCh, batch) {
-			return
-		}
-		if reached {
-			limitReached = true
-		}
-	}
-}
-
-func limitTraceBatch(batch traceBatch, maxTraceSize int, total int) (traceBatch, int, bool) {
-	if maxTraceSize <= 0 {
-		total += len(batch.traceIDs)
-		return batch, total, false
-	}
-
-	remaining := maxTraceSize - total
-	if remaining <= 0 {
-		batch.traceIDs = batch.traceIDs[:0]
-		return batch, total, true
-	}
-
-	if len(batch.traceIDs) > remaining {
-		batch.traceIDs = append([]string(nil), batch.traceIDs[:remaining]...)
-	}
-
-	total += len(batch.traceIDs)
-
-	return batch, total, total >= maxTraceSize
-}
-
-func sendTraceBatch(ctx context.Context, jobCh chan<- traceBatch, batch traceBatch) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case jobCh <- batch:
-		return true
-	}
-}
-
-func (t *trace) collectScanResults(
-	ctx context.Context,
-	resultCh <-chan *scanBatch,
-	out chan<- *scanBatch,
-) {
-	pending := make(map[int]*scanBatch)
-	nextSeq := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			releasePendingBatches(pending)
-			return
-		case sb, ok := <-resultCh:
-			if !ok {
-				flushPendingBatches(out, pending, nextSeq)
-				return
-			}
-			if sb == nil {
-				continue
-			}
-			if !t.processScanBatch(ctx, sb, pending, &nextSeq, out) {
-				releasePendingBatches(pending)
-				return
-			}
-		}
-	}
-}
-
-func (t *trace) processScanBatch(
-	ctx context.Context,
-	sb *scanBatch,
-	pending map[int]*scanBatch,
-	nextSeq *int,
-	out chan<- *scanBatch,
-) bool {
-	if sb.err != nil {
-		releasePendingBatches(pending)
-		return sendScanBatch(ctx, out, sb)
-	}
-
-	if sb.seq == *nextSeq {
-		if !sendScanBatch(ctx, out, sb) {
-			return false
-		}
-		(*nextSeq)++
-		return t.flushReadyBatches(ctx, pending, nextSeq, out)
-	}
-
-	pending[sb.seq] = sb
-	return true
-}
-
-func (t *trace) flushReadyBatches(
-	ctx context.Context,
-	pending map[int]*scanBatch,
-	nextSeq *int,
-	out chan<- *scanBatch,
-) bool {
-	for {
-		sb, exists := pending[*nextSeq]
-		if !exists {
-			return true
-		}
-		delete(pending, *nextSeq)
-		if !sendScanBatch(ctx, out, sb) {
-			releasePendingBatches(pending)
-			return false
-		}
-		(*nextSeq)++
-	}
-}
-
-func flushPendingBatches(out chan<- *scanBatch, pending map[int]*scanBatch, nextSeq int) {
-	for {
-		sb, exists := pending[nextSeq]
-		if !exists {
-			break
-		}
-		out <- sb
-		delete(pending, nextSeq)
-		nextSeq++
-	}
-}
-
-func sendScanBatch(ctx context.Context, out chan<- *scanBatch, sb *scanBatch) bool {
-	select {
-	case <-ctx.Done():
-		if sb.err == nil {
-			releaseBlockCursors(sb.cursors)
-		}
-		return false
-	case out <- sb:
-		return true
-	}
-}
-
-func releasePendingBatches(pending map[int]*scanBatch) {
-	for seq, sb := range pending {
-		if sb != nil && sb.err == nil {
-			releaseBlockCursors(sb.cursors)
-		}
-		delete(pending, seq)
-	}
-}
-
-func (t *trace) scanTraceIDs(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string) (result []*blockCursor, err error) {
+func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string, out chan<- scanCursorResult) {
 	if len(parts) == 0 || len(traceIDs) == 0 {
-		return nil, nil
+		return
 	}
 
 	sortedIDs := append([]string(nil), traceIDs...)
@@ -894,14 +713,14 @@ func (t *trace) scanTraceIDs(ctx context.Context, parts []*part, qo queryOptions
 		finish = func(error) {}
 	}
 
+	var (
+		spanErr        error
+		spanBlockBytes uint64
+		cursorCount    int
+	)
+
 	defer func() {
-		finish(err)
-		if err != nil {
-			for i := range result {
-				releaseBlockCursor(result[i])
-			}
-			result = nil
-		}
+		finish(spanErr)
 	}()
 
 	bma := generateBlockMetadataArray()
@@ -912,76 +731,73 @@ func (t *trace) scanTraceIDs(ctx context.Context, parts []*part, qo queryOptions
 
 	tstIter.init(bma, parts, sortedIDs)
 	if initErr := tstIter.Error(); initErr != nil {
-		err = fmt.Errorf("cannot init tstIter: %w", initErr)
+		spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
+		select {
+		case out <- scanCursorResult{err: spanErr}:
+		case <-ctx.Done():
+		}
 		return
 	}
 
-	var (
-		spanBlockBytes uint64
-		hit            int
-	)
-
 	quota := t.pm.AvailableBytes()
+	hit := 0
 
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
 			case <-ctx.Done():
-				err = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
-					len(result), len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
+				spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
+					cursorCount, len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
 				return
 			default:
 			}
 		}
 		hit++
 
+		// Create block cursor and get size before checking quota
 		bc := generateBlockCursor()
 		p := tstIter.piPool[tstIter.idx]
 		bc.init(p.p, p.curBlock, qo)
-		result = append(result, bc)
+		blockSize := bc.bm.uncompressedSpanSizeBytes
+
+		// Check if adding this block would exceed quota
+		if quota >= 0 && spanBlockBytes+blockSize > uint64(quota) {
+			releaseBlockCursor(bc)
+			if cursorCount > 0 {
+				// Have results, return them successfully by just closing channel
+				return
+			}
+			// No results, send error
+			spanErr = fmt.Errorf("block scan quota exceeded: block size %d bytes, quota is %d bytes", blockSize, quota)
+			select {
+			case out <- scanCursorResult{err: spanErr}:
+			case <-ctx.Done():
+			}
+			return
+		}
+
+		// Quota OK, send cursor
 		if recordBlock != nil {
 			recordBlock(bc)
 		}
-		spanBlockBytes += bc.bm.uncompressedSpanSizeBytes
+		spanBlockBytes += blockSize
+		cursorCount++
 
-		if quota >= 0 && spanBlockBytes > uint64(quota) {
-			err = fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", spanBlockBytes, quota)
+		select {
+		case out <- scanCursorResult{cursor: bc}:
+		case <-ctx.Done():
+			releaseBlockCursor(bc)
+			spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks", cursorCount)
 			return
 		}
 	}
 
 	if iterErr := tstIter.Error(); iterErr != nil {
-		err = fmt.Errorf("cannot iterate tstIter: %w", iterErr)
+		spanErr = fmt.Errorf("cannot iterate tstIter: %w", iterErr)
+		select {
+		case out <- scanCursorResult{err: spanErr}:
+		case <-ctx.Done():
+		}
 		return
-	}
-
-	if acquireErr := t.pm.AcquireResource(ctx, spanBlockBytes); acquireErr != nil {
-		err = fmt.Errorf("cannot acquire resource: %w", acquireErr)
-		return
-	}
-
-	return
-}
-
-func (t *trace) processTraceBatch(ctx context.Context, parts []*part, qo queryOptions, batch traceBatch) *scanBatch {
-	if batch.err != nil {
-		return &scanBatch{traceBatch: batch, err: batch.err}
-	}
-
-	sb := &scanBatch{traceBatch: batch}
-
-	cursors, err := t.scanTraceIDs(ctx, parts, qo, batch.traceIDs)
-	if err != nil {
-		sb.err = err
-		return sb
-	}
-
-	sb.cursors = cursors
-	return sb
-}
-
-func releaseBlockCursors(cursors []*blockCursor) {
-	for _, bc := range cursors {
-		releaseBlockCursor(bc)
 	}
 }

@@ -413,6 +413,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		ind.memPart.decRef()
 		return
 	}
 	select {
@@ -448,10 +449,7 @@ type tstIter struct {
 }
 
 func (ti *tstIter) reset() {
-	for i := range ti.parts {
-		ti.parts[i] = nil
-	}
-	ti.parts = ti.parts[:0]
+	ti.parts = nil
 
 	for i := range ti.piPool {
 		ti.piPool[i].reset()

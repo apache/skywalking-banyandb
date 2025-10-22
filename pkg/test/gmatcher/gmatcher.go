@@ -20,8 +20,11 @@ package gmatcher
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/onsi/gomega"
+
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 // HaveZeroRef returns a matcher that checks if all pools have 0 references.
@@ -36,7 +39,40 @@ type ZeroRefMatcher struct{}
 
 // FailureMessage implements types.GomegaMatcher.
 func (p *ZeroRefMatcher) FailureMessage(actual interface{}) (message string) {
-	return fmt.Sprintf("expected all pools to have 0 references, got %v", actual)
+	data, ok := actual.(map[string]int)
+	if !ok {
+		return fmt.Sprintf("expected all pools to have 0 references, got %v", actual)
+	}
+
+	// Get stack traces for leaked pools
+	allStacks := pool.AllStacks()
+
+	var leakedPools []string
+	for poolName, refs := range data {
+		if refs > 0 {
+			leakedPools = append(leakedPools, fmt.Sprintf("%s: %d refs", poolName, refs))
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("expected all pools to have 0 references, but found leaks:\n")
+	sb.WriteString(strings.Join(leakedPools, ", "))
+	sb.WriteString("\n\n")
+
+	// Include stack traces for leaked pools
+	if len(allStacks) > 0 {
+		sb.WriteString("Stack traces for leaked objects:\n")
+		for poolName, stacks := range allStacks {
+			if refs, exists := data[poolName]; exists && refs > 0 {
+				sb.WriteString(fmt.Sprintf("\n========== Pool: %s (Count: %d) ==========\n", poolName, len(stacks)))
+				for i, stack := range stacks {
+					sb.WriteString(fmt.Sprintf("\n--- Stack #%d ---\n%s\n", i+1, stack))
+				}
+			}
+		}
+	}
+
+	return sb.String()
 }
 
 // Match implements types.GomegaMatcher.
@@ -45,9 +81,9 @@ func (p *ZeroRefMatcher) Match(actual interface{}) (success bool, err error) {
 	if !ok {
 		return false, fmt.Errorf("expected map[string]int, got %T", actual)
 	}
-	for pooName, refers := range data {
+	for _, refers := range data {
 		if refers > 0 {
-			return false, fmt.Errorf("pool %s has %d references", pooName, refers)
+			return false, nil
 		}
 	}
 	return true, nil

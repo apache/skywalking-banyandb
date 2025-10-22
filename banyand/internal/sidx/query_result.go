@@ -220,8 +220,8 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 			continue
 		}
 
-		// Enforce MaxElementSize by total element count
-		if qr.request.MaxElementSize > 0 && result.Len() >= qr.request.MaxElementSize {
+		// Enforce MaxBatchSize by total element count
+		if qr.request.MaxBatchSize > 0 && result.Len() >= qr.request.MaxBatchSize {
 			break
 		}
 

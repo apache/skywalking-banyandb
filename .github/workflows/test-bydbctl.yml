@@ -14,20 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Flaky Test
+name: Test Bydbctl
 
 on:
-  schedule:
-    - cron: '50 * * * *'
-
-env:
-  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+  workflow_call:
 
 jobs:
-  test:
-    if: github.repository == 'apache/skywalking-banyandb'
+  test-bydbctl:
     uses: ./.github/workflows/test.yml
     with:
-      test-name: Flaky Tests
-      options:  --vv --repeat 3 --label-filter '(integration&&!slow)||banyand'
-      timeout-minutes: 50
+      test-name: Bydbctl Tests
+      options: --vv --fail-fast --label-filter \\!slow
+      timeout-minutes: 30
+      pkg: ./bydbctl/...
+      coverage-flag: bydbctl
