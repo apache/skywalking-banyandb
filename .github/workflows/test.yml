@@ -19,6 +19,10 @@ name: Reusable Test
 on:
   workflow_call:
     inputs:
+      test-name:
+        required: false
+        type: string
+        default: Test
       options:
         required: false
         type: string
@@ -41,7 +45,7 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: ${{ inputs.test-name }} (${{ inputs.timezone }})
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
@@ -51,6 +55,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
       - name: Cache Go Modules
         uses: actions/cache@v4
         id: cache-go
@@ -81,10 +89,6 @@ jobs:
       - name: Update dependencies 
         if: steps.cache-go.outputs.cache-hit != 'true'
         run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Generate mocks
-        run: make generate
-      - name: Build
-        run: make build
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}

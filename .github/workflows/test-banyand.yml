@@ -23,6 +23,7 @@ jobs:
   test-banyand:
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Banyand Tests
       options: --vv --fail-fast --label-filter \\!slow
       timeout-minutes: 30
       pkg: ./banyand/...

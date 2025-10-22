@@ -23,6 +23,7 @@ jobs:
   test-bydbctl:
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Bydbctl Tests
       options: --vv --fail-fast --label-filter \\!slow
       timeout-minutes: 30
       pkg: ./bydbctl/...

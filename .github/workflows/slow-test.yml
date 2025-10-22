@@ -29,6 +29,7 @@ jobs:
     if: github.repository == 'apache/skywalking-banyandb'
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Slow Tests
       options: --label-filter slow
       timeout-minutes: 120
 
@@ -36,5 +37,6 @@ jobs:
     if: github.repository == 'apache/skywalking-banyandb'
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Property Repair Tests
       options: --label-filter property_repair
       timeout-minutes: 120

@@ -23,6 +23,7 @@ jobs:
   test-pkg:
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Pkg Tests
       options: --vv --fail-fast --label-filter \\!slow
       timeout-minutes: 30
       pkg: ./pkg/...

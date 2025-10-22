@@ -47,6 +47,7 @@ jobs:
             config: test/e2e-v2/cases/event/banyandb/e2e.yaml
           - name: BanyanDB Cluster Mode
             config: test/e2e-v2/cases/cluster/e2e.yaml
+          # TODO: Enable Lifecycle test when it is ready
           # - name: Lifecycle
           #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
     env:
@@ -56,6 +57,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
       - uses: actions/setup-node@v3
         with:
           node-version: 20.12
@@ -67,8 +72,6 @@ jobs:
           go-version-file: 'go.mod'
       - name: Update dependencies
         run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Generate codes
-        run: make generate
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
       - name: Build binary

@@ -26,6 +26,7 @@ jobs:
         tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Integration Standalone
       options: --vv --fail-fast --label-filter \\!slow
       timeout-minutes: 60
       pkg: ./test/integration/standalone/...
