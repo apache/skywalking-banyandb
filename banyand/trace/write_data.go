@@ -70,7 +70,7 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 
 func (s *syncPartContext) FinishSync() error {
 	if len(s.traceIDFilterBuffer) > 0 && s.memPart != nil {
-		bf := generateBloomFilter()
+		bf := generateTraceIDBloomFilter()
 		s.memPart.traceIDFilter.filter = decodeBloomFilter(s.traceIDFilterBuffer, bf)
 	}
 	if len(s.tagTypeBuffer) > 0 && s.memPart != nil {

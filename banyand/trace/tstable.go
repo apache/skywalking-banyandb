@@ -413,6 +413,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		ind.memPart.decRef()
 		return
 	}
 	select {
