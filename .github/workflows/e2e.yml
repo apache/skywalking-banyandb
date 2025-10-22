@@ -67,11 +67,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies
-        run: GOPROXY=https://proxy.golang.org go mod download
+          cache: true
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
       - name: Build binary

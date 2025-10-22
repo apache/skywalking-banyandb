@@ -34,16 +34,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v4
-        id: cache-go
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
@@ -61,9 +51,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
+          cache: true
       - name: Generate codes
         run: make generate
       - name: Upload generated files
@@ -87,16 +75,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts
-      - name: Cache Go Modules
-        uses: actions/cache@v4
-        id: cache-go
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
@@ -127,21 +105,19 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+          cache: true
       - name: Check License Header
         run: make license-check
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
       - name: Check requirements
         run: make check-req
+      - name: Build binaries and UI dist
+        run: make build
       - name: Lint
         run: make lint
       - name: Generate dependencies licenses
         run: make license-dep
       - name: Check
         run: make check
-      - name: Build
-        run: make build
       - name: Build Release
         run: make release
   test-banyand:
