@@ -652,6 +652,22 @@
   watch(filterText, (val) => {
     treeRef.value?.filter(val);
   });
+  
+  // Watch route changes to update active node without reloading the tree
+  watch(
+    () => route.params,
+    (newParams) => {
+      const { group, name, type } = newParams;
+      if (group && name && type) {
+        data.activeNode = `${group}_${type}_${name}`;
+        // Expand and highlight the node
+        if (treeRef.value) {
+          treeRef.value.setCurrentKey(data.activeNode);
+        }
+      }
+    },
+    { deep: true }
+  );
 </script>
 
 <template>
