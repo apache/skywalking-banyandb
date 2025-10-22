@@ -19,6 +19,7 @@
 
 <script setup>
   import { ref, watchEffect, computed } from 'vue';
+  import { ElMessage } from 'element-plus';
   import { getGroupList, getTableList } from '@/api/index';
   import { Shortcuts } from '../../components/common/data';
 
@@ -216,19 +217,20 @@
       end: utcTime.value.end,
     };
     params.tagProjection = tagProjection;
-    const res = await getTableList(params, 'measure');
-    if (res.status === 200) {
-      return res.data.dataPoints;
+    const response = await getTableList(params, 'measure');
+    if (response.error) {
+      return null;
     }
-    return null;
+    return response.dataPoints;
   }
 
   async function fetchGroupList() {
-    const res = await getGroupList();
-    if (res.status === 200) {
-      return res.data;
+    const response = await getGroupList();
+
+    if (response.error) {
+      return ElMessage.error(response.error.message || 'Failed to fetch group list');
     }
-    return null;
+    return response;
   }
 
   function groupBy(data, key) {

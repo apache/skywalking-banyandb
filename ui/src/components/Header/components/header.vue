@@ -18,10 +18,9 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
+  import { reactive, watch, getCurrentInstance } from 'vue';
   import { ElImage, ElMenu, ElMenuItem } from 'element-plus';
   import { useRoute } from 'vue-router';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
   import userImg from '@/assets/banyandb_small.jpg';
 
   // Eventbus

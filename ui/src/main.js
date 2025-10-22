@@ -23,7 +23,6 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
 
-import axios from 'axios';
 import mitt from 'mitt';
 
 import * as echarts from 'echarts/core';
@@ -61,7 +60,6 @@ echarts.use([
   UniversalTransition,
   CanvasRenderer,
 ]);
-app.config.globalProperties.$http = axios;
 app.config.globalProperties.$loading = ElLoading;
 app.config.globalProperties.$loadingCreate = () => {
   app.config.globalProperties.instance = ElLoading.service({

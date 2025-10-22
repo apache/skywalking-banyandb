@@ -18,8 +18,7 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { reactive, watch, getCurrentInstance } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { getSecondaryDataModel } from '@/api/index';
@@ -54,27 +53,23 @@
     },
   );
 
-  function initData() {
-    if (data.type && data.group && data.name) {
-      $loadingCreate();
-      getSecondaryDataModel(data.type, data.group, data.name)
-        .then((result) => {
-          data.indexRuleBinding = result.data.indexRuleBinding;
-        })
-        .catch((err) => {
-          ElMessage({
-            message: 'Please refresh and try again. Error: ' + err,
-            type: 'error',
-            duration: 3000,
-          });
-        })
-        .finally(() => {
-          $loadingClose();
-        });
+  async function initData() {
+    if (!(data.type && data.group && data.name)) {
+      return;
     }
+    $loadingCreate();
+    const response = await getSecondaryDataModel('index-rule-binding', data.group, data.name);
+    $loadingClose();
+    if (response.error) {
+      ElMessage.error({
+        message: `Failed to fetch index rule binding: ${response.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    data.indexRuleBinding = response.indexRuleBinding;
   }
 </script>
-
 <template>
   <div>
     <el-card>
