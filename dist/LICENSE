@@ -375,6 +375,7 @@ MIT licenses
     github.com/Masterminds/semver/v3 v3.4.0 MIT
     github.com/Microsoft/go-winio v0.6.2 MIT
     github.com/VictoriaMetrics/fastcache v1.13.0 MIT
+    github.com/alecthomas/participle/v2 v2.1.4 MIT
     github.com/axiomhq/hyperloglog v0.2.5 MIT
     github.com/benbjohnson/clock v1.3.5 MIT
     github.com/beorn7/perks v1.0.1 MIT
@@ -517,8 +518,7 @@ MIT licenses
     @floating-ui/utils 0.2.10 MIT
     @jridgewell/sourcemap-codec 1.5.5 MIT
     @parcel/watcher 2.5.1 MIT
-    @parcel/watcher-linux-x64-glibc 2.5.1 MIT
-    @parcel/watcher-linux-x64-musl 2.5.1 MIT
+    @parcel/watcher-darwin-arm64 2.5.1 MIT
     @popperjs/core 2.11.7 MIT
     @types/lodash 4.17.20 MIT
     @types/lodash-es 4.17.12 MIT
