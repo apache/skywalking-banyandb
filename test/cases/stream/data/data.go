@@ -33,16 +33,21 @@ import (
 	"github.com/google/go-cmp/cmp"
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sigs.k8s.io/yaml"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -56,12 +61,17 @@ var wantFS embed.FS
 //go:embed testdata/*.json
 var dataFS embed.FS
 
+//go:embed input/*.ql
+var qlFS embed.FS
+
 // VerifyFn verify whether the query response matches the wanted result.
+// It also validates that the corresponding QL file can produce the same QueryRequest.
 var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
 	i, err := inputFS.ReadFile("input/" + args.Input + ".yaml")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &streamv1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
+	verifyQLWithRequest(innerGm, args, query, sharedContext.Connection)
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
 	query.Stages = args.Stages
 	c := streamv1.NewStreamServiceClient(sharedContext.Connection)
@@ -160,6 +170,71 @@ func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Meta
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}
+}
+
+// verifyQLWithRequest verifies that the QL file produces an equivalent QueryRequest to the YAML.
+func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *streamv1.QueryRequest, conn *grpclib.ClientConn) {
+	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+	var qlQueryStr string
+	for _, line := range strings.Split(string(qlContent), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if qlQueryStr != "" {
+				qlQueryStr += " "
+			}
+			qlQueryStr += trimmed
+		}
+	}
+
+	// generate mock metadata repo
+	ctrl := gomock.NewController(g.GinkgoT())
+	defer ctrl.Finish()
+	mockRepo := metadata.NewMockRepo(ctrl)
+	stream := schema.NewMockStream(ctrl)
+	stream.EXPECT().GetStream(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error) {
+		client := databasev1.NewStreamRegistryServiceClient(conn)
+		resp, getErr := client.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
+		if getErr != nil {
+			return nil, getErr
+		}
+		return resp.GetStream(), nil
+	}).AnyTimes()
+	mockRepo.EXPECT().StreamRegistry().AnyTimes().Return(stream)
+
+	// parse QL to QueryRequest
+	query, errStrs := bydbql.ParseQuery(qlQueryStr)
+	innerGm.Expect(errStrs).To(gm.BeNil())
+	transformer := bydbql.NewTransformer(mockRepo)
+	transform, err := transformer.Transform(context.Background(), query)
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+	qlQuery, ok := transform.QueryRequest.(*streamv1.QueryRequest)
+	innerGm.Expect(ok).To(gm.BeTrue())
+	// ignore timestamp and element_id fields in comparison
+	equal := cmp.Equal(qlQuery, yamlQuery,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&streamv1.QueryRequest{}, "time_range"),
+		protocmp.Transform())
+	if !equal {
+		// empty the time range for better output
+		qlQuery.TimeRange = nil
+	}
+	innerGm.Expect(equal).To(gm.BeTrue(), "QL:\n%s\nYAML:\n%s", qlQuery.String(), yamlQuery.String())
+
+	// simple check the QL can be executed
+	client := bydbqlv1.NewBydbQLServiceClient(conn)
+	ctx := context.Background()
+	bydbqlResp, err := client.Query(ctx, &bydbqlv1.QueryRequest{
+		Query: qlQueryStr,
+	})
+	if args.WantErr {
+		innerGm.Expect(err).To(gm.HaveOccurred())
+		return
+	}
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+	innerGm.Expect(bydbqlResp).NotTo(gm.BeNil())
+	_, ok = bydbqlResp.Result.(*bydbqlv1.QueryResponse_StreamResult)
+	innerGm.Expect(ok).To(gm.BeTrue())
 }
 
 // Write data into the server.

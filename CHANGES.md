@@ -49,6 +49,7 @@ Release Notes.
   - Add comprehensive disk management documentation with configuration guides and troubleshooting
 - Implement cluster mode for trace.
 - Implement Trace views.
+- Implement bydbQL.
 
 ### Bug Fixes
 
