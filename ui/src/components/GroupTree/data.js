@@ -109,7 +109,7 @@ export const TargetTypes = {
 export const CatalogToGroupType = {
   CATALOG_MEASURE: 'measure',
   CATALOG_STREAM: 'stream',
-  CATALOG_PROPERTIES: 'properties',
+  CATALOG_PROPERTY: 'property',
   CATALOG_TRACE: 'trace',
 };
 
@@ -117,7 +117,7 @@ export const CatalogToGroupType = {
 export const GroupTypeToCatalog = {
   measure: 'CATALOG_MEASURE',
   stream: 'CATALOG_STREAM',
-  properties: 'CATALOG_PROPERTIES',
+  property: 'CATALOG_PROPERTY',
   trace: 'CATALOG_TRACE',
 };
 

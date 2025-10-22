@@ -20,6 +20,7 @@
 <script setup>
   import { reactive } from 'vue';
   import { useRoute } from 'vue-router';
+
   const route = useRoute();
   const data = reactive({
     type: '',

@@ -18,10 +18,8 @@
 -->
 
 <script lang="ts" setup>
-  import { reactive } from '@vue/reactivity';
-  import { watch } from '@vue/runtime-core';
-  import type { TableColumnCtx, FormInstance, FormRules } from 'element-plus';
-  import { ref } from 'vue';
+  import type { TableColumnCtx, FormInstance } from 'element-plus';
+  import { ref, reactive, watch } from 'vue';
 
   const ruleFormRef = ref<FormInstance>();
   const data = reactive({

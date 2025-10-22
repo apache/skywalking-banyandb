@@ -18,8 +18,7 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { reactive, watch, getCurrentInstance } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { getSecondaryDataModel } from '@/api/index';
@@ -61,7 +60,7 @@
     $loadingCreate();
     const result = await getSecondaryDataModel(data.type, data.group, data.name);
     $loadingClose();
-    if (!(result.data && result.data.indexRule)) {
+    if (!result.indexRule) {
       ElMessage({
         message: `Please refresh and try again.`,
         type: 'error',
@@ -69,7 +68,7 @@
       });
       return;
     }
-    data.indexRule = { ...result.data.indexRule, noSort: String(result.data.indexRule.noSort) };
+    data.indexRule = { ...result.indexRule, noSort: String(result.indexRule.noSort) };
   }
 </script>
 

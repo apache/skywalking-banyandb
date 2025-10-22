@@ -18,8 +18,7 @@
 -->
 
 <script lang="ts" setup>
-  import { reactive, ref } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { reactive, ref, watch, getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import type { FormInstance } from 'element-plus';
   import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
@@ -159,7 +158,7 @@
   );
   const submit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return;
-    await formEl.validate((valid) => {
+    await formEl.validate(async (valid) => {
       if (valid) {
         const param = {
           top_n_aggregation: {
@@ -180,54 +179,40 @@
         };
         $loadingCreate();
         if (data.operator === 'create') {
-          return createSecondaryDataModel('topn-agg', param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Create successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteGroup', data.form.group);
-                openTopNAgg();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
+          const response = await createSecondaryDataModel('topn-agg', param);
+          $loadingClose();
+          if (response.error) {
+            ElMessage.error({
+              message: `Failed to create topN aggregation: ${response.error.message}`,
+              type: 'error',
             });
-        } else {
-          return updateSecondaryDataModel('topn-agg', data.form.group, data.form.name, param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Edit successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteResource', data.form.group);
-                openTopNAgg();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
-            });
+            return;
+          }
+          ElMessage.success({
+            message: 'Create successed',
+            type: 'success',
+          });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteGroup', data.form.group);
+          openTopNAgg();
+          return;
         }
+        const response = await updateSecondaryDataModel('topn-agg', data.form.group, data.form.name, param);
+        $loadingClose();
+        if (response.error) {
+          ElMessage.error({
+            message: `Failed to update topN aggregation: ${response.error.message}`,
+            type: 'error',
+          });
+          return;
+        }
+        ElMessage({
+          message: 'Edit successed',
+          type: 'success',
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteResource', data.form.group);
+        openTopNAgg();
       }
     });
   };
@@ -251,36 +236,30 @@
     $bus.emit('AddTabs', add);
   }
 
-  function initData() {
+  async function initData() {
     if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
-      getSecondaryDataModel('topn-agg', data.form.group, data.form.name)
-        .then((res) => {
-          if (res.status === 200) {
-            const topNAggregation = res.data.topNAggregation;
-            data.form = {
-              group: topNAggregation.metadata.group,
-              name: topNAggregation.metadata.name,
-              sourceMeasureGroup: topNAggregation.sourceMeasure.group,
-              sourceMeasureName: topNAggregation.sourceMeasure.name,
-              fieldName: topNAggregation.fieldName,
-              fieldValueSort: topNAggregation.fieldValueSort,
-              groupByTagNames: topNAggregation.groupByTagNames,
-              countersNumber: topNAggregation.countersNumber,
-              lruSize: topNAggregation.lruSize,
-            };
-          }
-        })
-        .catch((err) => {
-          ElMessage({
-            message: 'Please refresh and try again. Error: ' + err,
-            type: 'error',
-            duration: 3000,
-          });
-        })
-        .finally(() => {
-          $loadingClose();
+      const response = await getSecondaryDataModel('topn-agg', data.form.group, data.form.name);
+      $loadingClose();
+      if (response.error) {
+        ElMessage.error({
+          message: `Failed to fetch topN aggregation: ${response.error.message}`,
+          type: 'error',
         });
+        return;
+      }
+      const topNAggregation = response.topNAggregation;
+      data.form = {
+        group: topNAggregation.metadata.group,
+        name: topNAggregation.metadata.name,
+        sourceMeasureGroup: topNAggregation.sourceMeasure.group,
+        sourceMeasureName: topNAggregation.sourceMeasure.name,
+        fieldName: topNAggregation.fieldName,
+        fieldValueSort: topNAggregation.fieldValueSort,
+        groupByTagNames: topNAggregation.groupByTagNames,
+        countersNumber: topNAggregation.countersNumber,
+        lruSize: topNAggregation.lruSize,
+      };
     }
   }
 </script>

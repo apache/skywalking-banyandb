@@ -18,12 +18,12 @@
 -->
 
 <script setup>
-  import { applyProperty } from '@/api';
-  import { reactive, ref } from 'vue';
-  import { getCurrentInstance } from '@vue/runtime-core';
-  import TagEditor from './TagEditor.vue';
+  import { reactive, ref, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
+  import TagEditor from './TagEditor.vue';
+  import { applyProperty } from '@/api';
   import { rules, strategyGroup, formConfig } from './data';
+
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
   const showDialog = ref(false);
@@ -70,7 +70,7 @@
   };
   const confirmApply = async () => {
     if (!ruleForm.value) return;
-    await ruleForm.value.validate((valid) => {
+    await ruleForm.value.validate(async (valid) => {
       if (valid) {
         $loadingCreate();
         const param = {
@@ -91,28 +91,21 @@
             }),
           },
         };
-        applyProperty(formData.group, formData.name, formData.id, param)
-          .then((res) => {
-            if (res.status === 200) {
-              ElMessage({
-                message: 'successed',
-                type: 'success',
-                duration: 5000,
-              });
-              showDialog.value = false;
-              promiseResolve();
-            }
-          })
-          .catch((err) => {
-            ElMessage({
-              message: 'Please refresh and try again. Error: ' + err,
-              type: 'error',
-              duration: 3000,
-            });
-          })
-          .finally(() => {
-            $loadingClose();
+        const response = await applyProperty(formData.group, formData.name, formData.id, param);
+        $loadingClose();
+        if (response.error) {
+          ElMessage({
+            message: `Failed to apply property: ${response.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        ElMessage({
+          message: 'successed',
+          type: 'success',
+        });
+        showDialog.value = false;
+        promiseResolve();
       }
     });
   };
