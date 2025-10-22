@@ -18,15 +18,13 @@
 -->
 
 <script setup>
-  import { reactive, ref } from 'vue';
+  import { reactive, ref, watch, getCurrentInstance, computed } from 'vue';
   import { useRoute } from 'vue-router';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { getResourceOfAllType, getTableList } from '@/api/index';
+  import { ElMessage } from 'element-plus';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { getResourceOfAllType, getTableList } from '@/api/index';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
-  import { ElMessage } from 'element-plus';
-  import { computed } from '@vue/runtime-core';
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
 
@@ -82,10 +80,6 @@
     timeValue: null,
     loading: false,
     total: 100,
-    /* queryInfo: {
-        pagenum: 1,
-        pagesize: 100
-    }, */
     tableTags: [],
     tableData: [],
     code: null,
@@ -175,25 +169,25 @@ orderBy:
   }
   async function initData() {
     $loadingCreate();
-    const res = await getResourceOfAllType(data.type, data.group, data.name);
+    const response = await getResourceOfAllType(data.type, data.group, data.name);
     $loadingClose();
-    if (res.error) {
+    if (response.error) {
       ElMessage({
-        message: `Get ${data.type} failed: ${res.error.message}`,
+        message: `Get ${data.type} failed: ${response.error.message}`,
         type: 'error',
       });
       return;
     }
-    data.resourceData = res[data.type];
-    data.tableTags = res[data.type].tagFamilies[0].tags.map((item) => {
+    data.resourceData = response[data.type];
+    data.tableTags = response[data.type].tagFamilies[0].tags.map((item) => {
       item.label = item.name;
       return item;
     });
-    data.options = res[data.type].tagFamilies.map((item, index) => {
+    data.options = response[data.type].tagFamilies.map((item, index) => {
       return { label: item.name, value: index };
     });
     data.tagFamily = 0;
-    data.fields = res[data.type].fields ? res[data.type].fields : [];
+    data.fields = response[data.type].fields ? response[data.type].fields : [];
     handleCodeData();
   }
   async function getTableData() {

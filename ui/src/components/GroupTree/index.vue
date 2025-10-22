@@ -18,6 +18,10 @@
 -->
 
 <script setup>
+  import { ref, reactive, onMounted, computed, watch, getCurrentInstance } from 'vue';
+  import { ElMessage, ElMessageBox } from 'element-plus';
+  import { useRouter, useRoute } from 'vue-router';
+  import { Search } from '@element-plus/icons-vue';
   import {
     deleteSecondaryDataModel,
     getindexRuleList,
@@ -30,11 +34,6 @@
     createGroup,
     editGroup,
   } from '@/api/index';
-  import { ElMessage, ElMessageBox } from 'element-plus';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { useRouter, useRoute } from 'vue-router';
-  import { ref, reactive, onMounted, computed } from 'vue';
-  import { Search } from '@element-plus/icons-vue';
   import StageEditor from './StageEditor.vue';
   import {
     StageFields,

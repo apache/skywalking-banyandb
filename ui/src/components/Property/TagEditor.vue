@@ -21,7 +21,6 @@
   import { reactive, ref } from 'vue';
 
   const showDialog = ref(false);
-  //const editValue = ref(false)
   const ruleForm = ref();
   const title = ref('');
   const formData = reactive({

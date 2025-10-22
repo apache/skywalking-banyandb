@@ -21,8 +21,8 @@
   import { reactive, ref, watch, getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import type { FormInstance } from 'element-plus';
-  import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
   import { ElMessage } from 'element-plus';
+  import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
 
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
@@ -138,7 +138,7 @@
       deep: true,
     },
   );
-  const submit = async(formEl: FormInstance | undefined) => {
+  const submit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return;
     await formEl.validate(async (valid) => {
       if (valid) {

@@ -18,11 +18,11 @@
 -->
 
 <script setup>
-  import { fetchProperties, deleteProperty } from '@/api/index';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch, onMounted, getCurrentInstance } from 'vue';
   import { RefreshRight, Search } from '@element-plus/icons-vue';
+  import { fetchProperties, deleteProperty } from '@/api/index';
   import { yamlToJson } from '@/utils/yaml';
   import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
@@ -103,11 +103,11 @@ limit: 10`);
   const deleteTableData = async (index) => {
     const item = data.tableData[index];
     $loadingCreate();
-    const res = await deleteProperty(item.metadata.group, item.metadata.name, item.id);
+    const response = await deleteProperty(item.metadata.group, item.metadata.name, item.id);
     $loadingClose();
-    if (res.error) {
+    if (response.error) {
       ElMessage({
-        message: `Failed to delete property: ${res.error.message}`,
+        message: `Failed to delete property: ${response.error.message}`,
         type: 'error',
       });
       return;

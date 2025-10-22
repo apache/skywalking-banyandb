@@ -18,12 +18,12 @@
 -->
 
 <script setup>
-  import { applyProperty } from '@/api';
-  import { reactive, ref } from 'vue';
-  import { getCurrentInstance } from '@vue/runtime-core';
-  import TagEditor from './TagEditor.vue';
+  import { reactive, ref, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
+  import TagEditor from './TagEditor.vue';
+  import { applyProperty } from '@/api';
   import { rules, strategyGroup, formConfig } from './data';
+
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
   const showDialog = ref(false);
@@ -91,11 +91,11 @@
             }),
           },
         };
-        const res = await applyProperty(formData.group, formData.name, formData.id, param);
+        const response = await applyProperty(formData.group, formData.name, formData.id, param);
         $loadingClose();
-        if (res.error) {
+        if (response.error) {
           ElMessage({
-            message: `Failed to apply property: ${res.error.message}`,
+            message: `Failed to apply property: ${response.error.message}`,
             type: 'error',
           });
           return;

@@ -17,9 +17,8 @@
   ~ under the License.
 -->
 <script setup>
-  import { reactive, ref, onMounted } from 'vue';
+  import { reactive, ref, onMounted, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import { updateTrace, createTrace, getTrace } from '@/api';
   import FormHeader from '../common/FormHeader.vue';
@@ -54,7 +53,6 @@
         ElMessage({
           message: response.error.message,
           type: 'error',
-          duration: 3000,
         });
         return;
       }
@@ -128,7 +126,6 @@
           ElMessage({
             message: response.error.message,
             type: 'error',
-            duration: 3000,
           });
           return;
         }

@@ -18,8 +18,7 @@
 -->
 
 <script setup>
-  import { reactive, ref } from 'vue';
-  import { watch } from '@vue/runtime-core';
+  import { reactive, ref, watch } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
@@ -72,15 +71,14 @@ fieldValueSort: 1`;
       ...param,
     });
     loading.value = false;
-    if (!result.data) {
-      ElMessage({
-        message: `Please refresh and try again. Error: ${err}`,
+    if (result.error) {
+      ElMessage.error({
+        message: `Failed to fetch topN aggregation data: ${result.error.message}`,
         type: 'error',
-        duration: 3000,
       });
       return;
     }
-    data.lists = result.data.lists
+    data.lists = (result.lists || [])
       .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
       .flat();
     changePage(0);

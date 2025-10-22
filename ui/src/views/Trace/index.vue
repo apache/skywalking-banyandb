@@ -18,9 +18,9 @@
 -->
 
 <script setup>
+  import { reactive } from 'vue';
   import GroupTree from '@/components/GroupTree/index.vue';
   import TopNav from '@/components/TopNav/index.vue';
-  import { reactive } from 'vue';
 
   const data = reactive({
     width: '200px',
