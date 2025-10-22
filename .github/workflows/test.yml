@@ -82,11 +82,15 @@ jobs:
       - if: ${{ failure() }}
         run: |
           ls /tmp
+      - name: Sanitize test name for artifact
+        if: ${{ failure() }}
+        id: sanitize-name
+        run: echo "sanitized=$(echo '${{ inputs.test-name }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:
-          name: test-data-${{ inputs.timezone }}
+          name: test-data-${{ steps.sanitize-name.outputs.sanitized }}
           path: "/tmp/banyandb-test-*"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
