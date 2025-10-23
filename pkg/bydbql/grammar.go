@@ -100,10 +100,11 @@ type GrammarTopNAggregateFunction struct {
 
 // GrammarFromClause represents FROM clause.
 type GrammarFromClause struct {
-	From         string           `parser:"@'FROM'"`
-	ResourceType string           `parser:"@('STREAM'|'MEASURE'|'TRACE'|'PROPERTY')"`
-	ResourceName string           `parser:"@Ident"`
-	In           *GrammarInClause `parser:"@@"`
+	From         string              `parser:"@'FROM'"`
+	ResourceType string              `parser:"@('STREAM'|'MEASURE'|'TRACE'|'PROPERTY')"`
+	ResourceName string              `parser:"@Ident"`
+	In           *GrammarInClause    `parser:"@@"`
+	Stage        *GrammarStageClause `parser:"@@?"`
 }
 
 // GrammarInClause represents IN clause.
@@ -112,6 +113,15 @@ type GrammarInClause struct {
 	LParen bool     `parser:"@'('?"`
 	Groups []string `parser:"@Ident ( ',' @Ident )*"`
 	RParen bool     `parser:"@')'?"`
+}
+
+// GrammarStageClause represents STAGES clause.
+type GrammarStageClause struct {
+	On      string   `parser:"@'ON'"`
+	LParen  bool     `parser:"@'('?"`
+	Stages  []string `parser:"@Ident ( ',' @Ident )*"`
+	RParen  bool     `parser:"@')'?"`
+	Stages2 string   `parser:"@'STAGES'"`
 }
 
 // GrammarTimeClause represents TIME clause.
@@ -641,6 +651,14 @@ func (g *GrammarFromClause) toAST() (*FromClause, error) {
 			return nil, fmt.Errorf("missing closing parenthesis in IN clause")
 		}
 		from.Groups = g.In.Groups
+	}
+
+	// Parse stages
+	if g.Stage != nil {
+		if g.Stage.LParen && !g.Stage.RParen {
+			return nil, fmt.Errorf("missing closing parenthesis in STAGES clause")
+		}
+		from.Stages = g.Stage.Stages
 	}
 
 	return from, nil

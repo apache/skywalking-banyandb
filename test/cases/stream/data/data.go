@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -187,6 +188,15 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 		}
 	}
 
+	// Auto-inject stages clause if args.Stages is not empty
+	if len(args.Stages) > 0 {
+		stageClause := " ON " + strings.Join(args.Stages, ", ") + " STAGES"
+		// Use regex to find and replace IN clause with groups
+		// Pattern: IN followed by groups (with or without parentheses)
+		re := regexp.MustCompile(`(?i)\s+IN\s+(\([^)]+\)|[a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*)`)
+		qlQueryStr = re.ReplaceAllString(qlQueryStr, " IN $1"+stageClause)
+	}
+
 	// generate mock metadata repo
 	ctrl := gomock.NewController(g.GinkgoT())
 	defer ctrl.Finish()
@@ -210,10 +220,10 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	qlQuery, ok := transform.QueryRequest.(*streamv1.QueryRequest)
 	innerGm.Expect(ok).To(gm.BeTrue())
-	// ignore timestamp and element_id fields in comparison
+	// ignore timestamp, element_id, and stages fields in comparison
 	equal := cmp.Equal(qlQuery, yamlQuery,
 		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&streamv1.QueryRequest{}, "time_range"),
+		protocmp.IgnoreFields(&streamv1.QueryRequest{}, "time_range", "stages"),
 		protocmp.Transform())
 	if !equal {
 		// empty the time range for better output

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -195,6 +196,15 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 		qlQueryStr += trimmed
 	}
 
+	// Auto-inject stages clause if args.Stages is not empty
+	if len(args.Stages) > 0 {
+		stageClause := " ON " + strings.Join(args.Stages, ", ") + " STAGES"
+		// Use regex to find and replace IN clause with groups
+		// Pattern: IN followed by groups (with or without parentheses)
+		re := regexp.MustCompile(`(?i)\s+IN\s+(\([^)]+\)|[a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*)`)
+		qlQueryStr = re.ReplaceAllString(qlQueryStr, " IN $1"+stageClause)
+	}
+
 	ctrl := gomock.NewController(g.GinkgoT())
 	defer ctrl.Finish()
 
@@ -222,7 +232,7 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 
 	equal := cmp.Equal(qlQuery, yamlQuery,
 		protocmp.IgnoreUnknown(),
-		protocmp.IgnoreFields(&tracev1.QueryRequest{}, "time_range"),
+		protocmp.IgnoreFields(&tracev1.QueryRequest{}, "time_range", "stages"),
 		protocmp.Transform())
 	if !equal {
 		qlQuery.TimeRange = nil

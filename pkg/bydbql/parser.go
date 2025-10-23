@@ -30,7 +30,7 @@ import (
 // Keywords list - single source of truth for all BydbQL keywords.
 var bydbqlKeywords = []string{
 	"SELECT", "SHOW", "TOP", "FROM", "STREAM", "MEASURE", "TRACE", "PROPERTY",
-	"IN", "TIME", "BETWEEN", "AND", "OR", "WHERE", "GROUP", "BY", "ORDER",
+	"IN", "ON", "STAGES", "TIME", "BETWEEN", "AND", "OR", "WHERE", "GROUP", "BY", "ORDER",
 	"ASC", "DESC", "LIMIT", "OFFSET", "WITH", "QUERY_TRACE", "SUM", "MEAN",
 	"AVG", "COUNT", "MAX", "MIN", "TAG", "FIELD", "NOT", "HAVING", "MATCH",
 	"AGGREGATE", "NULL",

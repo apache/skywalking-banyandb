@@ -119,6 +119,7 @@ func (f *AggregateFunction) expressionNode() {}
 type FromClause struct {
 	ResourceName string
 	Groups       []string
+	Stages       []string
 	ResourceType ResourceType
 }
 

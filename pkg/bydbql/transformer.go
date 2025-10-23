@@ -179,6 +179,7 @@ func (t *Transformer) transformStreamQuery(ctx context.Context, query *ParsedQue
 			Criteria:   criteria,
 			Projection: projection,
 			Trace:      statement.QueryTrace,
+			Stages:     statement.From.Stages,
 		},
 	}, nil
 }
@@ -277,6 +278,7 @@ func (t *Transformer) transformMeasureQuery(ctx context.Context, query *ParsedQu
 			Limit:           limit,
 			OrderBy:         orderBy,
 			Trace:           statement.QueryTrace,
+			Stages:          statement.From.Stages,
 		},
 	}, nil
 }
@@ -360,6 +362,7 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, query *ParsedQuer
 			Criteria:      criteria,
 			TagProjection: tagProjection,
 			Trace:         statement.QueryTrace,
+			Stages:        statement.From.Stages,
 		},
 	}, nil
 }
@@ -499,6 +502,7 @@ func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, query *Pars
 			Conditions:     conditions,
 			FieldValueSort: sort,
 			Trace:          statement.QueryTrace,
+			Stages:         statement.From.Stages,
 		},
 	}, nil
 }

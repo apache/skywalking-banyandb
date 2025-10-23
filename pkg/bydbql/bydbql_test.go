@@ -211,6 +211,58 @@ var _ = Describe("Parser", func() {
 					Expect(stmt.From.Groups[2]).To(Equal("eu-central"))
 				})
 
+				It("parses FROM clause with single stage", func() {
+					parsed, err := ParseQuery("SELECT * FROM STREAM sw IN default ON warn STAGES")
+					Expect(err).To(BeNil())
+					Expect(parsed).NotTo(BeNil())
+
+					stmt, ok := parsed.Statement.(*SelectStatement)
+					Expect(ok).To(BeTrue())
+					Expect(stmt.From).NotTo(BeNil())
+					Expect(stmt.From.Stages).To(HaveLen(1))
+					Expect(stmt.From.Stages[0]).To(Equal("warn"))
+				})
+
+				It("parses FROM clause with multiple stages without parentheses", func() {
+					parsed, err := ParseQuery("SELECT * FROM STREAM sw IN default ON warn, code STAGES")
+					Expect(err).To(BeNil())
+					Expect(parsed).NotTo(BeNil())
+
+					stmt, ok := parsed.Statement.(*SelectStatement)
+					Expect(ok).To(BeTrue())
+					Expect(stmt.From).NotTo(BeNil())
+					Expect(stmt.From.Stages).To(HaveLen(2))
+					Expect(stmt.From.Stages[0]).To(Equal("warn"))
+					Expect(stmt.From.Stages[1]).To(Equal("code"))
+				})
+
+				It("parses FROM clause with multiple stages with parentheses", func() {
+					parsed, err := ParseQuery("SELECT * FROM MEASURE metrics IN us-west ON (warn, code) STAGES")
+					Expect(err).To(BeNil())
+					Expect(parsed).NotTo(BeNil())
+
+					stmt, ok := parsed.Statement.(*SelectStatement)
+					Expect(ok).To(BeTrue())
+					Expect(stmt.From).NotTo(BeNil())
+					Expect(stmt.From.Stages).To(HaveLen(2))
+					Expect(stmt.From.Stages[0]).To(Equal("warn"))
+					Expect(stmt.From.Stages[1]).To(Equal("code"))
+				})
+
+				It("parses TRACE query with stages", func() {
+					parsed, err := ParseQuery("SELECT trace_id FROM TRACE sw_trace IN group1 ON warn, code STAGES TIME > '-30m'")
+					Expect(err).To(BeNil())
+					Expect(parsed).NotTo(BeNil())
+
+					stmt, ok := parsed.Statement.(*SelectStatement)
+					Expect(ok).To(BeTrue())
+					Expect(stmt.From).NotTo(BeNil())
+					Expect(stmt.From.ResourceType).To(Equal(ResourceTypeTrace))
+					Expect(stmt.From.Stages).To(HaveLen(2))
+					Expect(stmt.From.Stages[0]).To(Equal("warn"))
+					Expect(stmt.From.Stages[1]).To(Equal("code"))
+				})
+
 				It("parses TOP N query with groups without parentheses", func() {
 					parsed, err := ParseQuery("SHOW TOP 10 FROM MEASURE service_latency IN production, staging ORDER BY DESC")
 					Expect(err).To(BeNil())
@@ -223,6 +275,20 @@ var _ = Describe("Parser", func() {
 					Expect(stmt.From.Groups).To(HaveLen(2))
 					Expect(stmt.From.Groups[0]).To(Equal("production"))
 					Expect(stmt.From.Groups[1]).To(Equal("staging"))
+				})
+
+				It("parses TOP N query with stages", func() {
+					parsed, err := ParseQuery("SHOW TOP 10 FROM MEASURE service_latency IN production ON warn, code STAGES TIME > '-30m' ORDER BY DESC")
+					Expect(err).To(BeNil())
+					Expect(parsed).NotTo(BeNil())
+
+					stmt, ok := parsed.Statement.(*TopNStatement)
+					Expect(ok).To(BeTrue())
+					Expect(stmt.TopN).To(Equal(10))
+					Expect(stmt.From).NotTo(BeNil())
+					Expect(stmt.From.Stages).To(HaveLen(2))
+					Expect(stmt.From.Stages[0]).To(Equal("warn"))
+					Expect(stmt.From.Stages[1]).To(Equal("code"))
 				})
 
 				It("parses TRACE query with groups without parentheses", func() {
