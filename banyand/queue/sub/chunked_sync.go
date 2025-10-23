@@ -160,10 +160,12 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 				chunksReceived: 0,
 				partsProgress:  make(map[int]*partProgress),
 			}
-			s.log.Info().Str("session_id", sessionID).
-				Str("topic", req.GetMetadata().Topic).
-				Uint32("total_parts", req.GetMetadata().TotalParts).
-				Msg("started chunked sync session")
+			if dl := s.log.Debug(); dl.Enabled() {
+				dl.Str("session_id", sessionID).
+					Str("topic", req.GetMetadata().Topic).
+					Uint32("total_parts", req.GetMetadata().TotalParts).
+					Msg("started chunked sync session")
+			}
 		}
 
 		if currentSession == nil {
@@ -274,11 +276,14 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 		}
 
 		buffer.chunks[req.ChunkIndex] = req
-		s.log.Info().Str("session_id", req.SessionId).
-			Uint32("chunk_index", req.ChunkIndex).
-			Uint32("expected_index", buffer.expectedIndex).
-			Uint32("buffered_chunks", uint32(len(buffer.chunks))).
-			Msg("buffered out-of-order chunk")
+		if dl := s.log.Debug(); dl.Enabled() {
+			dl.Str("session_id", req.SessionId).
+				Str("topic", session.metadata.Topic).
+				Uint32("chunk_index", req.ChunkIndex).
+				Uint32("expected_index", buffer.expectedIndex).
+				Uint32("buffered_chunks", uint32(len(buffer.chunks))).
+				Msg("buffered out-of-order chunk")
+		}
 		s.updateChunkOrderMetrics("chunk_buffered", req.SessionId)
 
 		return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
@@ -288,6 +293,7 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 	if req.ChunkIndex < buffer.expectedIndex {
 		s.log.Warn().
 			Str("session_id", req.SessionId).
+			Str("topic", session.metadata.Topic).
 			Uint32("chunk_index", req.ChunkIndex).
 			Uint32("expected_index", buffer.expectedIndex).
 			Msg("received duplicate or old chunk, ignoring")
@@ -371,6 +377,7 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {
 			s.log.Error().Err(err).
 				Str("session_id", req.SessionId).
+				Str("topic", session.metadata.Topic).
 				Int("part_index", partIndex).
 				Msg("failed to process part")
 			return err
@@ -387,10 +394,13 @@ func (s *server) processBufferedChunks(stream clusterv1.ChunkedSyncService_SyncP
 		if chunk, exists := buffer.chunks[buffer.expectedIndex]; exists {
 			delete(buffer.chunks, buffer.expectedIndex)
 
-			s.log.Debug().Str("session_id", session.sessionID).
-				Uint32("chunk_index", buffer.expectedIndex).
-				Uint32("remaining_buffered", uint32(len(buffer.chunks))).
-				Msg("processing buffered chunk")
+			if dl := s.log.Debug(); dl.Enabled() {
+				dl.Str("session_id", session.sessionID).
+					Str("topic", session.metadata.Topic).
+					Uint32("chunk_index", buffer.expectedIndex).
+					Uint32("remaining_buffered", uint32(len(buffer.chunks))).
+					Msg("processing buffered chunk")
+			}
 
 			if err := s.processExpectedChunk(stream, session, chunk); err != nil {
 				return err
@@ -448,6 +458,7 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 	for _, fileInfo := range partInfo.Files {
 		if fileInfo.Offset >= uint32(len(req.ChunkData)) {
 			s.log.Warn().Str("session_id", session.sessionID).
+				Str("topic", session.metadata.Topic).
 				Str("file_name", fileInfo.Name).
 				Uint32("offset", fileInfo.Offset).
 				Uint32("chunk_size", uint32(len(req.ChunkData))).
@@ -517,12 +528,14 @@ func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartSe
 		PartsResults:       partsResults,
 	}
 
-	s.log.Info().
-		Str("session_id", session.sessionID).
-		Bool("success", syncResult.Success).
-		Uint64("bytes_received", syncResult.TotalBytesReceived).
-		Int64("duration_ms", syncResult.DurationMs).
-		Msg("completed chunked sync session")
+	if dl := s.log.Debug(); dl.Enabled() {
+		dl.Str("session_id", session.sessionID).
+			Str("topic", session.metadata.Topic).
+			Bool("success", syncResult.Success).
+			Uint64("bytes_received", syncResult.TotalBytesReceived).
+			Int64("duration_ms", syncResult.DurationMs).
+			Msg("completed chunked sync session")
+	}
 
 	return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_SYNC_COMPLETE, "", syncResult)
 }

@@ -58,6 +58,7 @@ var (
 
 var _ = SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
+	pool.EnableStackTracking(true)
 	Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,

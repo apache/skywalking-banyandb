@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -35,7 +36,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-const checkDoneEvery = 128
+const (
+	checkDoneEvery = 128
+	queryTimeout   = 20 * time.Second
+)
 
 var nilResult = model.TraceQueryResult(nil)
 
@@ -99,7 +103,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp, qo.traceIDs)
 
-	pipelineCtx, cancel := context.WithCancel(ctx)
+	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
 
@@ -117,7 +121,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
 	}
 
-	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh, tqo.MaxTraceSize)
+	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh)
 
 	return &result, nil
 }
@@ -221,12 +225,12 @@ func (t *trace) prepareSIDXStreaming(
 	}
 
 	req := sidx.QueryRequest{
-		Filter:         tqo.SkippingFilter,
-		Order:          tqo.Order,
-		MaxElementSize: tqo.MaxTraceSize,
-		MinKey:         &tqo.MinVal,
-		MaxKey:         &tqo.MaxVal,
-		SeriesIDs:      seriesIDs,
+		Filter:       tqo.SkippingFilter,
+		Order:        tqo.Order,
+		MaxBatchSize: tqo.MaxTraceSize,
+		MinKey:       &tqo.MinVal,
+		MaxKey:       &tqo.MaxVal,
+		SeriesIDs:    seriesIDs,
 	}
 	if tqo.TagProjection != nil {
 		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
@@ -347,7 +351,6 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 		select {
 		case batch, ok := <-qr.cursorBatchCh:
 			if !ok {
-				qr.cursorBatchCh = nil
 				return false
 			}
 			if batch == nil {
@@ -356,12 +359,6 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 
 			if batch.err != nil {
 				qr.err = batch.err
-				if batch.cursors != nil {
-					for _, bc := range batch.cursors {
-						releaseBlockCursor(bc)
-					}
-					batch.cursors = nil
-				}
 				return true
 			}
 
@@ -369,9 +366,25 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 			qr.currentIndex = 0
 			qr.currentCursorGroups = make(map[string][]*blockCursor, len(batch.traceIDs))
 
-			for _, bc := range batch.cursors {
-				traceID := bc.bm.traceID
-				qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], bc)
+			// Stream cursors from channel and group by traceID
+			if batch.cursorCh != nil {
+				for result := range batch.cursorCh {
+					if result.err != nil {
+						qr.err = result.err
+						// Release any cursors we've already collected
+						for _, cursors := range qr.currentCursorGroups {
+							for _, bc := range cursors {
+								releaseBlockCursor(bc)
+							}
+						}
+						qr.currentCursorGroups = nil
+						return true
+					}
+					if result.cursor != nil {
+						traceID := result.cursor.bm.traceID
+						qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
+					}
+				}
 			}
 
 			if len(batch.keys) > 0 {
@@ -451,7 +464,8 @@ func (qr *queryResult) releaseCurrentBatch() {
 		qr.currentCursorGroups = nil
 	}
 	if qr.currentBatch != nil {
-		qr.currentBatch.cursors = nil
+		// Note: cursorCh should be fully consumed by ensureCurrentBatch
+		// so no need to drain it here
 		qr.currentBatch = nil
 	}
 	qr.currentIndex = 0
@@ -462,29 +476,22 @@ func (qr *queryResult) Release() {
 		qr.cancel()
 	}
 
-	qr.releaseCurrentBatch()
-
-	if qr.cursorBatchCh != nil {
-		for {
-			select {
-			case batch, ok := <-qr.cursorBatchCh:
-				if !ok {
-					qr.cursorBatchCh = nil
-					goto done
+	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
+	for batch := range qr.cursorBatchCh {
+		if batch != nil && batch.cursorCh != nil {
+			// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
+			for result := range batch.cursorCh {
+				if result.cursor != nil {
+					releaseBlockCursor(result.cursor)
 				}
-				if batch == nil {
-					continue
-				}
-				for _, bc := range batch.cursors {
-					releaseBlockCursor(bc)
-				}
-			default:
-				goto done
 			}
 		}
 	}
+	qr.cursorBatchCh = nil
 
-done:
+	qr.releaseCurrentBatch()
+
+	// Now safe to release snapshots - all workers have finished
 	for i := range qr.snapshots {
 		qr.snapshots[i].decRef()
 	}

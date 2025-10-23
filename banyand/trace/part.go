@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"path"
@@ -29,7 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -85,7 +83,7 @@ func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
 	p.tagType = mp.tagType
-	p.traceIDFilter = mp.traceIDFilter
+	p.traceIDFilter.filter = mp.traceIDFilter.filter
 
 	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
@@ -158,219 +156,13 @@ func (mp *memPart) reset() {
 	}
 }
 
-// Marshal serializes the memPart to []byte for network transmission.
-// The format is:
-// - partMetadata (JSON)
-// - meta buffer length + data
-// - primary buffer length + data
-// - tags count + (name + buffer length + data) for each
-// - tagMetadata count + (name + buffer length + data) for each.
-func (mp *memPart) Marshal() ([]byte, error) {
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-
-	// Marshal partMetadata as JSON
-	metadataBytes, err := json.Marshal(mp.partMetadata)
-	if err != nil {
-		return nil, fmt.Errorf("cannot marshal partMetadata: %w", err)
-	}
-	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(metadataBytes)))
-	bb.Buf = append(bb.Buf, metadataBytes...)
-
-	// Marshal tagType
-	var tagTypeBuf []byte
-	tagTypeBuf = mp.tagType.marshal(tagTypeBuf)
-	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(tagTypeBuf)))
-	bb.Buf = append(bb.Buf, tagTypeBuf...)
-
-	// Marshal traceIDFilter
-	if mp.traceIDFilter.filter != nil {
-		var filterBuf []byte
-		filterBuf = encodeBloomFilter(filterBuf, mp.traceIDFilter.filter)
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(filterBuf)))
-		bb.Buf = append(bb.Buf, filterBuf...)
-	} else {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, 0)
-	}
-
-	// Marshal meta buffer
-	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.meta.Buf)))
-	bb.Buf = append(bb.Buf, mp.meta.Buf...)
-
-	// Marshal primary buffer
-	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.primary.Buf)))
-	bb.Buf = append(bb.Buf, mp.primary.Buf...)
-
-	// Marshal spans
-	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.spans.Buf)))
-	bb.Buf = append(bb.Buf, mp.spans.Buf...)
-
-	// Marshal tags
-	if mp.tags == nil {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, 0)
-	} else {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.tags)))
-		for name, t := range mp.tags {
-			// Write name length and name
-			nameBytes := []byte(name)
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(nameBytes)))
-			bb.Buf = append(bb.Buf, nameBytes...)
-			// Write buffer length and data
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(t.Buf)))
-			bb.Buf = append(bb.Buf, t.Buf...)
-		}
-	}
-
-	// Marshal tagMetadata
-	if mp.tagMetadata == nil {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, 0)
-	} else {
-		bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(mp.tagMetadata)))
-		for name, tm := range mp.tagMetadata {
-			// Write name length and name
-			nameBytes := []byte(name)
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(nameBytes)))
-			bb.Buf = append(bb.Buf, nameBytes...)
-			// Write buffer length and data
-			bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(tm.Buf)))
-			bb.Buf = append(bb.Buf, tm.Buf...)
-		}
-	}
-
-	result := make([]byte, len(bb.Buf))
-	copy(result, bb.Buf)
-	return result, nil
-}
-
-// Unmarshal deserializes the memPart from []byte.
-func (mp *memPart) Unmarshal(data []byte) error {
-	mp.reset()
-
-	// Unmarshal partMetadata
-	tail, metadataLen := encoding.BytesToVarUint64(data)
-	if uint64(len(tail)) < metadataLen {
-		return fmt.Errorf("insufficient data for partMetadata: need %d bytes, have %d", metadataLen, len(tail))
-	}
-	metadataBytes := tail[:metadataLen]
-	tail = tail[metadataLen:]
-	if err := json.Unmarshal(metadataBytes, &mp.partMetadata); err != nil {
-		return fmt.Errorf("cannot unmarshal partMetadata: %w", err)
-	}
-
-	// Unmarshal tagType
-	tail, tagTypeLen := encoding.BytesToVarUint64(tail)
-	if uint64(len(tail)) < tagTypeLen {
-		return fmt.Errorf("insufficient data for tagType: need %d bytes, have %d", tagTypeLen, len(tail))
-	}
-	tagTypeBytes := tail[:tagTypeLen]
-	tail = tail[tagTypeLen:]
-	if err := mp.tagType.unmarshal(tagTypeBytes); err != nil {
-		return fmt.Errorf("cannot unmarshal tagType: %w", err)
-	}
-
-	// Unmarshal traceIDFilter
-	tail, filterLen := encoding.BytesToVarUint64(tail)
-	if filterLen > 0 {
-		if uint64(len(tail)) < filterLen {
-			return fmt.Errorf("insufficient data for traceIDFilter: need %d bytes, have %d", filterLen, len(tail))
-		}
-		filterBytes := tail[:filterLen]
-		tail = tail[filterLen:]
-		bf := generateBloomFilter()
-		mp.traceIDFilter.filter = decodeBloomFilter(filterBytes, bf)
-	} else {
-		mp.traceIDFilter.filter = nil
-	}
-
-	// Unmarshal meta buffer
-	tail, metaLen := encoding.BytesToVarUint64(tail)
-	if uint64(len(tail)) < metaLen {
-		return fmt.Errorf("insufficient data for meta buffer: need %d bytes, have %d", metaLen, len(tail))
-	}
-	mp.meta.Buf = append(mp.meta.Buf[:0], tail[:metaLen]...)
-	tail = tail[metaLen:]
-
-	// Unmarshal primary buffer
-	tail, primaryLen := encoding.BytesToVarUint64(tail)
-	if uint64(len(tail)) < primaryLen {
-		return fmt.Errorf("insufficient data for primary buffer: need %d bytes, have %d", primaryLen, len(tail))
-	}
-	mp.primary.Buf = append(mp.primary.Buf[:0], tail[:primaryLen]...)
-	tail = tail[primaryLen:]
-
-	// Unmarshal spans
-	tail, spansLen := encoding.BytesToVarUint64(tail)
-	if uint64(len(tail)) < spansLen {
-		return fmt.Errorf("insufficient data for spans buffer: need %d bytes, have %d", spansLen, len(tail))
-	}
-	mp.spans.Buf = append(mp.spans.Buf[:0], tail[:spansLen]...)
-	tail = tail[spansLen:]
-
-	var nameLen, bufLen uint64
-	// Unmarshal tags
-	tail, tagsCount := encoding.BytesToVarUint64(tail)
-	if tagsCount > 0 {
-		mp.tags = make(map[string]*bytes.Buffer)
-		for i := uint64(0); i < tagsCount; i++ {
-			// Read name length and name
-			tail, nameLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < nameLen {
-				return fmt.Errorf("insufficient data for tag name: need %d bytes, have %d", nameLen, len(tail))
-			}
-			name := string(tail[:nameLen])
-			tail = tail[nameLen:]
-
-			// Read buffer length and data
-			tail, bufLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < bufLen {
-				return fmt.Errorf("insufficient data for tag buffer: need %d bytes, have %d", bufLen, len(tail))
-			}
-			t := &bytes.Buffer{}
-			t.Buf = append(t.Buf[:0], tail[:bufLen]...)
-			mp.tags[name] = t
-			tail = tail[bufLen:]
-		}
-	}
-
-	// Unmarshal tagMetadata
-	tail, tagMetadataCount := encoding.BytesToVarUint64(tail)
-	if tagMetadataCount > 0 {
-		mp.tagMetadata = make(map[string]*bytes.Buffer)
-		for i := uint64(0); i < tagMetadataCount; i++ {
-			// Read name length and name
-			tail, nameLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < nameLen {
-				return fmt.Errorf("insufficient data for tag metadata name: need %d bytes, have %d", nameLen, len(tail))
-			}
-			name := string(tail[:nameLen])
-			tail = tail[nameLen:]
-
-			// Read buffer length and data
-			tail, bufLen = encoding.BytesToVarUint64(tail)
-			if uint64(len(tail)) < bufLen {
-				return fmt.Errorf("insufficient data for tag metadata buffer: need %d bytes, have %d", bufLen, len(tail))
-			}
-			tm := &bytes.Buffer{}
-			tm.Buf = append(tm.Buf[:0], tail[:bufLen]...)
-			mp.tagMetadata[name] = tm
-			tail = tail[bufLen:]
-		}
-	}
-
-	if len(tail) > 0 {
-		return fmt.Errorf("unexpected trailing data: %d bytes", len(tail))
-	}
-
-	return nil
-}
-
 func (mp *memPart) mustInitFromPart(p *part) {
 	mp.reset()
 
 	// Copy part metadata, tagType and traceIDFilter
 	mp.partMetadata = p.partMetadata
 	mp.tagType = p.tagType
-	mp.traceIDFilter = p.traceIDFilter
+	mp.traceIDFilter.filter = p.traceIDFilter.filter
 
 	// Read primary data
 	sr := p.primary.SequentialRead()
@@ -484,7 +276,6 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
-	mp.traceIDFilter.reset()
 
 	fileSystem.SyncPath(path)
 }

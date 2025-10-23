@@ -131,8 +131,10 @@ func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 		aggregator := t.getOrCreateGroup(groupKey)
 		aggregator.removeExistedItem(key)
 		if aggregator.checkSortKeyInBufferRange(sortKey) {
-			if e := t.l.Debug(); e.Enabled() {
-				e.Str("group", groupKey).Uint64("key", key).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
+			if t.l != nil {
+				if e := t.l.Debug(); e.Enabled() {
+					e.Str("group", groupKey).Uint64("key", key).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
+				}
 			}
 			aggregator.put(key, sortKey, item)
 			aggregator.doCleanUp()
@@ -158,16 +160,18 @@ func (t *topNAggregatorGroup) Snapshot() interface{} {
 		groupRanks[group] = items
 	}
 	if len(groupRanks) > 0 {
-		if e := t.l.Debug(); e.Enabled() {
-			sb := strings.Builder{}
-			for g, item := range groupRanks {
-				sb.WriteString("{")
-				sb.WriteString(g)
-				sb.WriteString(":")
-				sb.WriteString(strconv.Itoa(len(item)))
-				sb.WriteString("}")
+		if t.l != nil {
+			if e := t.l.Debug(); e.Enabled() {
+				sb := strings.Builder{}
+				for g, item := range groupRanks {
+					sb.WriteString("{")
+					sb.WriteString(g)
+					sb.WriteString(":")
+					sb.WriteString(strconv.Itoa(len(item)))
+					sb.WriteString("}")
+				}
+				t.l.Debug().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 			}
-			t.l.Debug().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 		}
 	}
 	return groupRanks
