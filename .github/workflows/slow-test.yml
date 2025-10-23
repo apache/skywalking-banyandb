@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Slow Test  
+name: Slow Test
 
 on:
   schedule:
@@ -24,9 +24,13 @@ env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
-  
+  prepare:
+    if: github.repository == 'apache/skywalking-banyandb'
+    uses: ./.github/workflows/prepare.yml
+
   test:
     if: github.repository == 'apache/skywalking-banyandb'
+    needs: [prepare]
     uses: ./.github/workflows/test.yml
     with:
       test-name: Slow Tests
@@ -35,8 +39,14 @@ jobs:
 
   property-repair:
     if: github.repository == 'apache/skywalking-banyandb'
+    needs: [prepare]
     uses: ./.github/workflows/test.yml
     with:
       test-name: Property Repair Tests
       options: --label-filter property_repair
       timeout-minutes: 120
+
+  e2e:
+    if: github.repository == 'apache/skywalking-banyandb'
+    needs: [prepare]
+    uses: ./.github/workflows/e2e.yml

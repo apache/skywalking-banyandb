@@ -18,8 +18,6 @@ name: OAP-E2E
 
 on:
   workflow_call:
-  schedule:
-    - cron: '0 18 * * *'
 
 env:
   SW_AGENT_JDK_VERSION: 8
@@ -30,11 +28,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  DockerImage:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'true'
+          setup-docker: 'true'
+      - name: Build and upload docker image
+        uses: ./.github/actions/build-docker-image
+        with:
+          tag: ${{ github.sha }}
+
   StoragePlugins:
-    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
     name: Storage E2E
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    needs: [DockerImage]
     strategy:
       fail-fast: false
       matrix:
@@ -53,36 +70,28 @@ jobs:
     env:
       TAG: ${{ github.sha }}
     steps:
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Download build artifacts
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'true'
+          setup-docker: 'false'
+      - name: Download docker image artifact
         uses: actions/download-artifact@v4
         with:
-          name: build-artifacts
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-      - name: Build binary
-        run: make release
-      - name: Build docker image
+          name: banyandb-docker-image
+          path: /tmp
+      - name: Load docker image
         run: |
-          make -C test/docker build | make -C test/docker build
+          docker load --input /tmp/banyandb-testing-image.tar.gz
           docker image ls
       - name: Generate data for lifecycle
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
-          bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh 
+          bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
         uses: apache/skywalking-infra-e2e@7e4b5b68716fdb7b79b21fa8908f9db497e1b115
         with:
@@ -109,7 +118,6 @@ jobs:
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
-    if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: [StoragePlugins]
