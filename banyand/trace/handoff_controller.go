@@ -38,32 +38,28 @@ import (
 
 // handoffController manages handoff queues for multiple data nodes.
 type handoffController struct {
-	l          *logger.Logger
-	fileSystem fs.FileSystem
-	nodeQueues map[string]*handoffNodeQueue // key: node address
-	root       string                       // <root>/handoff/nodes/
-	mu         sync.RWMutex
-
-	// Node status monitoring and replay control
 	tire2Client        queueClient
-	allDataNodes       []string            // All configured data nodes
-	healthyNodes       map[string]struct{} // Currently healthy nodes
+	fileSystem         fs.FileSystem
+	inFlightSends      map[string]map[uint64]struct{}
+	l                  *logger.Logger
+	replayTriggerChan  chan string
+	nodeQueues         map[string]*handoffNodeQueue
+	replayStopChan     chan struct{}
+	healthyNodes       map[string]struct{}
 	statusChangeChan   chan nodeStatusChange
 	stopMonitor        chan struct{}
+	root               string
+	allDataNodes       []string
 	monitorWg          sync.WaitGroup
-	checkInterval      time.Duration
 	replayWg           sync.WaitGroup
-	replayStopChan     chan struct{}
-	replayTriggerChan  chan string                    // Node addresses to trigger replay
-	inFlightSends      map[string]map[uint64]struct{} // node -> set of partIDs being sent
+	checkInterval      time.Duration
+	replayBatchSize    int
+	replayPollInterval time.Duration
+	maxTotalSizeBytes  uint64
+	currentTotalSize   uint64
+	mu                 sync.RWMutex
 	inFlightMu         sync.RWMutex
-	replayBatchSize    int           // Parts per node per round
-	replayPollInterval time.Duration // How often to check for work
-
-	// Size tracking for volume control
-	maxTotalSizeBytes uint64       // Maximum total size across all nodes
-	currentTotalSize  uint64       // Current total size across all nodes
-	sizeMu            sync.RWMutex // Protects size tracking
+	sizeMu             sync.RWMutex
 }
 
 // nodeStatusChange represents a node status transition.
@@ -80,7 +76,8 @@ type queueClient interface {
 
 // newHandoffController creates a new handoff controller.
 func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client queueClient,
-	dataNodeList []string, maxSizeMB int, l *logger.Logger) (*handoffController, error) {
+	dataNodeList []string, maxSizeMB int, l *logger.Logger,
+) (*handoffController, error) {
 	handoffRoot := filepath.Join(root, "handoff", "nodes")
 
 	hc := &handoffController{
@@ -182,7 +179,8 @@ func (hc *handoffController) loadExistingQueues() error {
 
 // enqueueForNode adds a part to the handoff queue for a specific node.
 func (hc *handoffController) enqueueForNode(nodeAddr string, partID uint64, partType string, sourcePath string,
-	group string, shardID uint32) error {
+	group string, shardID uint32,
+) error {
 	// Read part size from metadata
 	partSize := hc.readPartSizeFromMetadata(sourcePath, partType)
 
@@ -221,7 +219,8 @@ func (hc *handoffController) enqueueForNode(nodeAddr string, partID uint64, part
 
 // enqueueForNodes adds a part to the handoff queues for multiple offline nodes.
 func (hc *handoffController) enqueueForNodes(offlineNodes []string, partID uint64, partType string, sourcePath string,
-	group string, shardID uint32) error {
+	group string, shardID uint32,
+) error {
 	meta := &handoffMetadata{
 		EnqueueTimestamp: time.Now().UnixNano(),
 		Group:            group,
@@ -405,9 +404,9 @@ func (hc *handoffController) getAllNodeQueues() []string {
 
 // partInfo contains information about a part to be enqueued.
 type partInfo struct {
-	partID  uint64
 	path    string
 	group   string
+	partID  uint64
 	shardID common.ShardID
 }
 

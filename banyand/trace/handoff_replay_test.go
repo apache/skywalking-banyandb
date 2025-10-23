@@ -35,10 +35,10 @@ import (
 
 // simpleMockClient is a minimal mock for testing replay functionality
 type simpleMockClient struct {
-	mu           sync.Mutex
+	sendError    error
 	healthyNodes []string
 	sendCalled   int
-	sendError    error
+	mu           sync.Mutex
 }
 
 func newSimpleMockClient(healthyNodes []string) *simpleMockClient {

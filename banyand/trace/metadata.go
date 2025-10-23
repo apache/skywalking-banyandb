@@ -435,7 +435,8 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 		Option:          qs.option,
 		Metrics:         qs.newMetrics(p),
 		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,
-			l *logger.Logger, option option, metrics any, group string, shardID common.ShardID, getNodes func() []string) (*tsTable, error) {
+			l *logger.Logger, option option, metrics any, group string, shardID common.ShardID, getNodes func() []string,
+		) (*tsTable, error) {
 			return newWriteQueue(fileSystem, root, position, l, option, metrics, group, shardID, getNodes, qs.handoffCtrl)
 		},
 		GetNodes: func(shardID common.ShardID) []string {

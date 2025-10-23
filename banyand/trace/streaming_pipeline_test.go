@@ -79,7 +79,8 @@ func (f *fakeSIDX) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (*sidx.Me
 func (f *fakeSIDX) StreamingParts(map[uint64]struct{}, string, uint32, string) ([]queue.StreamingPartData, []func()) {
 	panic("not implemented")
 }
-func (f *fakeSIDX) IntroduceSynced(map[uint64]struct{}) func() { return func() {} }
+func (f *fakeSIDX) PartPaths(map[uint64]struct{}) map[uint64]string { return map[uint64]string{} }
+func (f *fakeSIDX) IntroduceSynced(map[uint64]struct{}) func()      { return func() {} }
 
 type fakeSIDXWithErr struct {
 	*fakeSIDX
@@ -608,6 +609,10 @@ func (f *fakeSIDXInfinite) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (
 
 func (f *fakeSIDXInfinite) StreamingParts(map[uint64]struct{}, string, uint32, string) ([]queue.StreamingPartData, []func()) {
 	panic("not implemented")
+}
+
+func (f *fakeSIDXInfinite) PartPaths(map[uint64]struct{}) map[uint64]string {
+	return map[uint64]string{}
 }
 func (f *fakeSIDXInfinite) IntroduceSynced(map[uint64]struct{}) func() { return func() {} }
 

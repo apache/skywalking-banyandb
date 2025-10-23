@@ -325,30 +325,6 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *sy
 	return nil
 }
 
-// handleSyncIntroductions creates and processes sync introductions for both core and sidx parts.
-func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *syncIntroduction) error {
-	// Create core sync introduction
-	si := generateSyncIntroduction()
-	defer releaseSyncIntroduction(si)
-	si.applied = make(chan struct{})
-	for _, part := range partsToSync {
-		si.synced[part.partMetadata.ID] = struct{}{}
-	}
-
-	select {
-	case syncCh <- si:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
-
-	select {
-	case <-si.applied:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
-	return nil
-}
-
 // syncStreamingPartsToNode synchronizes streaming parts to a node.
 func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
 	// Get chunked sync client for this node

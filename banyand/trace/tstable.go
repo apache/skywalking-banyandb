@@ -108,7 +108,6 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	snp.incRef()
 	tst.snapshot = &snp
 	tst.loadSidxMap(parts)
-	tst.loadSidxMap(parts)
 	if needToPersist {
 		tst.persistSnapshot(&snp)
 	}
@@ -295,22 +294,6 @@ func (tst *tsTable) mustGetOrCreateSidx(name string) sidx.SIDX {
 	return sidxInstance
 }
 
-func (tst *tsTable) mustGetSidx(name string) sidx.SIDX {
-	sidxInstance, ok := tst.getSidx(name)
-	if !ok {
-		tst.l.Panic().Str("name", name).Msg("sidx not found")
-	}
-	return sidxInstance
-}
-
-func (tst *tsTable) mustGetOrCreateSidx(name string) sidx.SIDX {
-	sidxInstance, err := tst.getOrCreateSidx(name)
-	if err != nil {
-		tst.l.Panic().Str("name", name).Msg("cannot get or create sidx")
-	}
-	return sidxInstance
-}
-
 func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if sidxInstance, ok := tst.getSidx(name); ok {
 		return sidxInstance, nil
@@ -334,9 +317,6 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
-	}
-	if tst.sidxMap == nil {
-		tst.sidxMap = make(map[string]sidx.SIDX)
 	}
 	if tst.sidxMap == nil {
 		tst.sidxMap = make(map[string]sidx.SIDX)
@@ -499,11 +479,8 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 
 func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
 	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
-func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
-	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
 }
 
-func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
 func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
 	if len(ts.traceIDs) == 0 {
 		return
@@ -512,8 +489,6 @@ func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidx
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
 	mp.segmentID = segmentID
-
-	tst.mustAddMemPart(mp, sidxReqsMap)
 
 	tst.mustAddMemPart(mp, sidxReqsMap)
 }

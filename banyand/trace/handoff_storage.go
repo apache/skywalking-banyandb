@@ -37,20 +37,20 @@ const (
 
 // handoffMetadata contains metadata for a handoff queue entry.
 type handoffMetadata struct {
-	EnqueueTimestamp int64  `json:"enqueue_timestamp"` // When queued (UnixNano)
-	Group            string `json:"group"`             // Stream group
-	ShardID          uint32 `json:"shard_id"`          // Shard identifier
-	PartType         string `json:"part_type"`         // Core or sidx type
-	PartSizeBytes    uint64 `json:"part_size_bytes"`   // Total size of part in bytes
+	Group            string `json:"group"`
+	PartType         string `json:"part_type"`
+	EnqueueTimestamp int64  `json:"enqueue_timestamp"`
+	PartSizeBytes    uint64 `json:"part_size_bytes"`
+	ShardID          uint32 `json:"shard_id"`
 }
 
 // handoffNodeQueue manages the handoff queue for a single data node.
 // It uses a per-node directory with hardlinked part directories.
 type handoffNodeQueue struct {
-	nodeAddr   string // Node address (e.g., "node1.example.com:17912")
-	root       string // Root path for this node's queue
 	fileSystem fs.FileSystem
 	l          *logger.Logger
+	nodeAddr   string
+	root       string
 	mu         sync.RWMutex
 }
 
@@ -161,8 +161,8 @@ func (hnq *handoffNodeQueue) enqueue(partID uint64, partType string, sourcePath 
 
 // partTypePair represents a pending part with its type.
 type partTypePair struct {
-	PartID   uint64
 	PartType string
+	PartID   uint64
 }
 
 // listPending returns a sorted list of all pending part IDs with their types.

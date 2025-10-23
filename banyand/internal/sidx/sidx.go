@@ -156,6 +156,57 @@ func (s *sidx) Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, 
 	return flushIntro, nil
 }
 
+// PartPaths implements SIDX interface and returns on-disk paths for the requested part IDs.
+func (s *sidx) PartPaths(partIDs map[uint64]struct{}) map[uint64]string {
+	if len(partIDs) == 0 {
+		return map[uint64]string{}
+	}
+
+	snap := s.currentSnapshot()
+	if snap == nil {
+		return map[uint64]string{}
+	}
+	defer snap.decRef()
+
+	result := make(map[uint64]string, len(partIDs))
+
+	for _, pw := range snap.parts {
+		var (
+			id   uint64
+			path string
+		)
+
+		switch {
+		case pw.p != nil && pw.p.partMetadata != nil:
+			id = pw.p.partMetadata.ID
+			path = pw.p.path
+		case pw.mp != nil && pw.mp.partMetadata != nil:
+			id = pw.mp.partMetadata.ID
+		default:
+			continue
+		}
+
+		if _, ok := partIDs[id]; !ok {
+			continue
+		}
+		// Skip mem parts since they do not have stable on-disk paths yet.
+		if pw.isMemPart() || pw.p == nil {
+			continue
+		}
+		if path == "" {
+			path = partPath(s.root, id)
+		}
+		result[id] = path
+
+		// All requested IDs found.
+		if len(result) == len(partIDs) {
+			break
+		}
+	}
+
+	return result
+}
+
 // Close implements SIDX interface.
 func (s *sidx) Close() error {
 	// Close current snapshot

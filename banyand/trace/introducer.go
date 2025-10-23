@@ -223,10 +223,6 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 }
 
 func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
-	next := nextIntroduction.memPart
-	for name, memPart := range nextIntroduction.sidxReqsMap {
-		tst.mustGetOrCreateSidx(name).IntroduceMemPart(next.p.partMetadata.ID, memPart)
-	}
 	cur := tst.currentSnapshot()
 	if cur != nil {
 		defer cur.decRef()
@@ -234,6 +230,7 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 		cur = new(snapshot)
 	}
 
+	next := nextIntroduction.memPart
 	nextSnp := cur.copyAllTo(epoch)
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
@@ -247,9 +244,6 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 }
 
 func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoch uint64) {
-	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
-		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
-	}
 	cur := tst.currentSnapshot()
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")
@@ -268,12 +262,6 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 }
 
 func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint64) {
-	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
-		deferFuncs := tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
-		if deferFuncs != nil {
-			defer deferFuncs()
-		}
-	}
 	cur := tst.currentSnapshot()
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")

@@ -45,20 +45,20 @@ import (
 )
 
 type liaison struct {
-	pm                    protector.Memory
 	metadata              metadata.Repo
 	pipeline              queue.Server
 	omr                   observability.MetricsRegistry
 	lfs                   fs.FileSystem
 	writeListener         bus.MessageListener
 	dataNodeSelector      node.Selector
+	pm                    protector.Memory
+	handoffCtrl           *handoffController
 	l                     *logger.Logger
 	schemaRepo            schemaRepo
-	handoffCtrl           *handoffController
 	dataPath              string
 	root                  string
-	option                option
 	dataNodeList          []string
+	option                option
 	maxDiskUsagePercent   int
 	handoffMaxSizePercent int
 }
