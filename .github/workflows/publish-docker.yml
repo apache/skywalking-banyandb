@@ -39,10 +39,15 @@ jobs:
     env:
       TAG: ${{ github.sha }}
     steps:
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-docker: 'true'
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
@@ -51,20 +56,8 @@ jobs:
           key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-build-tool-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
       - name: Generate codes
         run: make generate
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
       - name: Build Linux binaries
         run: |
           TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release

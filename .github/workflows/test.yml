@@ -49,16 +49,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
-      - name: Set timezone
-        run: sudo timedatectl set-timezone ${{ inputs.timezone || 'UTC' }}
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - name: Set timezone
+        run: sudo timedatectl set-timezone ${{ inputs.timezone || 'UTC' }}
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          name: build-artifacts
+          download-artifacts: 'true'
+          setup-docker: 'false'
       - name: Cache tools
         uses: actions/cache@v4
         id: cache-tool
@@ -67,16 +68,6 @@ jobs:
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-test-tool-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
