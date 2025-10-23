@@ -28,62 +28,21 @@ env:
 jobs:
   prepare:
     name: Prepare (Generate)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
-        with:
-          fetch-tags: true
-      - name: Cache Tools
-        uses: actions/cache@v4
-        id: cache-tool
-        with:
-          path: bin
-          key: ${{ runner.os }}-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-tool-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-      - name: Generate codes
-        run: make generate
-      - name: Build UI
-        run: |
-          cd ui
-          npm ci
-          npm run build
-          cd ..
-      - name: Upload generated files
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: |
-            **/*.pb.go
-            **/*.pb.gw.go
-            **/*.pb.validate.go
-            **/*_mock.go
-            ui/dist/**
-          retention-days: 1
+    uses: ./.github/workflows/prepare.yml
   check:
     name: Check
     runs-on: ubuntu-latest
     needs: [prepare]
     steps:
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          name: build-artifacts
+          download-artifacts: 'true'
+          setup-docker: 'false'
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
@@ -92,11 +51,6 @@ jobs:
           key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
           restore-keys: |
             ${{ runner.os }}-check-tool-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
       - name: npm ci and format
         run: |
           cd ui
@@ -110,11 +64,6 @@ jobs:
             git status -s; \
             exit 1; \
           fi
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
       - name: Check License Header
         run: make license-check
       - name: Check requirements
@@ -127,8 +76,6 @@ jobs:
         run: make license-dep
       - name: Check
         run: make check
-      - name: Build Release
-        run: make release
   test-banyand:
     name: Test Banyand
     needs: [check]
@@ -153,7 +100,7 @@ jobs:
     name: E2E Tests
     needs: [check]
     uses: ./.github/workflows/e2e.yml
-      
+
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04

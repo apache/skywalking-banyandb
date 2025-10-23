@@ -24,7 +24,10 @@ env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
+  prepare:
+    uses: ./.github/workflows/prepare.yml
   test:
+    needs: [prepare]
     if: github.repository == 'apache/skywalking-banyandb'
     uses: ./.github/workflows/test.yml
     with:
