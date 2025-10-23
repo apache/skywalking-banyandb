@@ -18,12 +18,11 @@
 -->
 
 <script lang="ts" setup>
-  import { reactive, ref } from 'vue';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
+  import { reactive, ref, watch, getCurrentInstance } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import type { FormInstance } from 'element-plus';
-  import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
   import { ElMessage } from 'element-plus';
+  import { createSecondaryDataModel, getSecondaryDataModel, updateSecondaryDataModel } from '@/api/index';
   import FormHeader from '../common/FormHeader.vue';
 
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
@@ -94,7 +93,7 @@
   );
   const submit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return;
-    await formEl.validate((valid) => {
+    await formEl.validate(async (valid) => {
       if (valid) {
         const param = {
           indexRuleBinding: {
@@ -113,54 +112,40 @@
         };
         $loadingCreate();
         if (data.operator === 'create') {
-          return createSecondaryDataModel('index-rule-binding', param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Create successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteGroup', data.form.group);
-                openIndexRuleBinding();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
+          const response = await createSecondaryDataModel('index-rule-binding', param);
+          $loadingClose();
+          if (response.error) {
+            ElMessage({
+              message: `Failed to create index rule binding: ${response.error.message}`,
+              type: 'error',
             });
-        } else {
-          return updateSecondaryDataModel('index-rule-binding', data.form.group, data.form.name, param)
-            .then((res) => {
-              if (res.status === 200) {
-                ElMessage({
-                  message: 'Edit successed',
-                  type: 'success',
-                  duration: 5000,
-                });
-                $bus.emit('refreshAside');
-                $bus.emit('deleteResource', data.form.group);
-                openIndexRuleBinding();
-              }
-            })
-            .catch((err) => {
-              ElMessage({
-                message: 'Please refresh and try again. Error: ' + err,
-                type: 'error',
-                duration: 3000,
-              });
-            })
-            .finally(() => {
-              $loadingClose();
-            });
+            return;
+          }
+          ElMessage({
+            message: 'Create successed',
+            type: 'success',
+          });
+          $bus.emit('refreshAside');
+          $bus.emit('deleteGroup', data.form.group);
+          openIndexRuleBinding();
+          return;
         }
+        const response = await updateSecondaryDataModel('index-rule-binding', data.form.group, data.form.name, param);
+        $loadingClose();
+        if (response.error) {
+          ElMessage({
+            message: `Failed to update index rule binding: ${response.error.message}`,
+            type: 'error',
+          });
+          return;
+        }
+        ElMessage({
+          message: 'Update successed',
+          type: 'success',
+        });
+        $bus.emit('refreshAside');
+        $bus.emit('deleteResource', data.form.group);
+        openIndexRuleBinding();
       }
     });
   };
@@ -184,32 +169,26 @@
     $bus.emit('AddTabs', add);
   }
 
-  function initData() {
+  async function initData() {
     if (data.operator === 'edit' && data.form.group && data.form.name) {
       $loadingCreate();
-      getSecondaryDataModel('index-rule-binding', data.form.group, data.form.name)
-        .then((res) => {
-          if (res.status === 200) {
-            const indexRuleBinding = res.data.indexRuleBinding;
-            data.form = {
-              group: indexRuleBinding.metadata.group,
-              name: indexRuleBinding.metadata.name,
-              beginAt: indexRuleBinding.beginAt,
-              expireAt: indexRuleBinding.expireAt,
-              rules: indexRuleBinding.rules,
-            };
-          }
-        })
-        .catch((err) => {
-          ElMessage({
-            message: 'Please refresh and try again. Error: ' + err,
-            type: 'error',
-            duration: 3000,
-          });
-        })
-        .finally(() => {
-          $loadingClose();
+      const response = await getSecondaryDataModel('index-rule-binding', data.form.group, data.form.name);
+      $loadingClose();
+      if (response.error) {
+        ElMessage.error({
+          message: `Failed to fetch index rule binding: ${response.error.message}`,
+          type: 'error',
         });
+        return;
+      }
+      const indexRuleBinding = response.indexRuleBinding;
+      data.form = {
+        group: indexRuleBinding.metadata.group,
+        name: indexRuleBinding.metadata.name,
+        beginAt: indexRuleBinding.beginAt,
+        expireAt: indexRuleBinding.expireAt,
+        rules: indexRuleBinding.rules,
+      };
     }
   }
 </script>

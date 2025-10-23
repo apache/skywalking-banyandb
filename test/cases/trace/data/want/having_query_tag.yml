@@ -18,11 +18,8 @@
 traces:
   - spans:
     - span: zipkin_trace_001_span_001
+      spanId: span_001
       tags:
-      - key: span_id
-        value:
-          str:
-            value: span_001
       - key: operation_name
         value:
           str:
@@ -38,12 +35,13 @@ traces:
         value:
           str:
             value: zipkin_trace_001
-    - span: zipkin_trace_001_span_002
-      tags:
       - key: span_id
         value:
           str:
-            value: span_002
+            value: span_001
+    - span: zipkin_trace_001_span_002
+      spanId: span_002
+      tags:
       - key: operation_name
         value:
           str:
@@ -58,4 +56,8 @@ traces:
         value:
           str:
             value: zipkin_trace_001
-            
+      - key: span_id
+        value:
+          str:
+            value: span_002
+    traceId: zipkin_trace_001

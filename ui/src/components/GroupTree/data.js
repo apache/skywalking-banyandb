@@ -110,6 +110,7 @@ export const CatalogToGroupType = {
   CATALOG_MEASURE: 'measure',
   CATALOG_STREAM: 'stream',
   CATALOG_PROPERTY: 'property',
+  CATALOG_TRACE: 'trace',
 };
 
 // group type to catalog
@@ -117,6 +118,7 @@ export const GroupTypeToCatalog = {
   measure: 'CATALOG_MEASURE',
   stream: 'CATALOG_STREAM',
   property: 'CATALOG_PROPERTY',
+  trace: 'CATALOG_TRACE',
 };
 
 export const TypeMap = {
@@ -125,3 +127,8 @@ export const TypeMap = {
   indexRuleBinding: 'index-rule-binding',
   children: 'children',
 };
+export const SupportedIndexRuleTypes = [
+  CatalogToGroupType.CATALOG_STREAM,
+  CatalogToGroupType.CATALOG_MEASURE,
+  CatalogToGroupType.CATALOG_TRACE,
+];

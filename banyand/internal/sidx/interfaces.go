@@ -44,10 +44,10 @@ type SIDX interface {
 	IntroduceMerged(nextIntroduction *MergerIntroduction) func()
 	// ConvertToMemPart converts a write request to a memPart.
 	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
-	// Query executes a query with key range and tag filtering.
-	// Returns a QueryResponse directly with all results loaded.
-	// Both setup/validation errors and execution errors are returned via the error return value.
-	Query(ctx context.Context, req QueryRequest) (*QueryResponse, error)
+	// StreamingQuery executes the query and streams batched QueryResponse objects.
+	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
+	// unique Data elements (when positive). The error channel delivers any fatal execution error.
+	StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error)
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
@@ -60,9 +60,6 @@ type SIDX interface {
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// IntroduceSynced introduces a synced map to the SIDX instance.
 	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
-	// PartPaths returns the filesystem paths for the specified partIDs.
-	// Returns a map of partID to filesystem path for parts that exist.
-	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
 }
 
 // WriteRequest contains data for a single write operation within a batch.
@@ -76,26 +73,25 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	Filter         index.Filter
-	Order          *index.OrderBy
-	MinKey         *int64
-	MaxKey         *int64
-	SeriesIDs      []common.SeriesID
-	TagProjection  []model.TagProjection
-	MaxElementSize int
+	Filter        index.Filter
+	Order         *index.OrderBy
+	MinKey        *int64
+	MaxKey        *int64
+	SeriesIDs     []common.SeriesID
+	TagProjection []model.TagProjection
+	MaxBatchSize  int
 }
 
 // QueryResponse contains a batch of query results and execution metadata.
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
 // Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
 type QueryResponse struct {
-	Error         error
-	uniqueTracker *UniqueDataTracker
-	Keys          []int64
-	Data          [][]byte
-	Tags          [][]Tag
-	SIDs          []common.SeriesID
-	Metadata      ResponseMetadata
+	Error    error
+	Keys     []int64
+	Data     [][]byte
+	Tags     [][]Tag
+	SIDs     []common.SeriesID
+	Metadata ResponseMetadata
 }
 
 // Len returns the number of results in the QueryResponse.
@@ -111,8 +107,6 @@ func (qr *QueryResponse) Reset() {
 	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.Metadata = ResponseMetadata{}
-	// Reset unique data tracker
-	qr.uniqueTracker = nil
 }
 
 // Validate validates a QueryResponse for correctness.
@@ -143,83 +137,6 @@ func (qr *QueryResponse) Validate() error {
 	}
 
 	return nil
-}
-
-// UniqueDataTracker tracks unique data elements for limit enforcement.
-type UniqueDataTracker struct {
-	dataMap map[string]struct{}
-	count   int
-	limit   int
-}
-
-// NewUniqueDataTracker creates a new UniqueDataTracker for the given limit.
-// If limit is 0 or negative, no tracking is performed.
-func NewUniqueDataTracker(limit int) *UniqueDataTracker {
-	if limit <= 0 {
-		return &UniqueDataTracker{limit: 0}
-	}
-	return &UniqueDataTracker{
-		limit:   limit,
-		dataMap: make(map[string]struct{}),
-	}
-}
-
-// ShouldAdd checks if a data element should be added based on uniqueness and limit.
-// Returns true if the element should be added, false if it would exceed the limit.
-func (udt *UniqueDataTracker) ShouldAdd(data []byte) bool {
-	if udt.limit <= 0 {
-		return true // No limit, always add
-	}
-
-	dataStr := string(data)
-	if _, exists := udt.dataMap[dataStr]; !exists {
-		// New unique data element
-		if udt.count >= udt.limit {
-			return false // Would exceed limit
-		}
-		udt.dataMap[dataStr] = struct{}{}
-		udt.count++
-	}
-	return true
-}
-
-// Count returns the current count of unique data elements.
-func (udt *UniqueDataTracker) Count() int {
-	return udt.count
-}
-
-// IsLimitReached returns true if the limit has been reached.
-func (udt *UniqueDataTracker) IsLimitReached() bool {
-	return udt.limit > 0 && udt.count >= udt.limit
-}
-
-// InitUniqueTracker initializes the unique data tracker with the given limit.
-func (qr *QueryResponse) InitUniqueTracker(limit int) {
-	qr.uniqueTracker = NewUniqueDataTracker(limit)
-}
-
-// ShouldAddData checks if a data element should be added based on uniqueness and limit.
-func (qr *QueryResponse) ShouldAddData(data []byte) bool {
-	if qr.uniqueTracker == nil {
-		return true // No tracker, always add
-	}
-	return qr.uniqueTracker.ShouldAdd(data)
-}
-
-// UniqueDataCount returns the current count of unique data elements.
-func (qr *QueryResponse) UniqueDataCount() int {
-	if qr.uniqueTracker == nil {
-		return 0
-	}
-	return qr.uniqueTracker.Count()
-}
-
-// IsUniqueLimitReached returns true if the unique data limit has been reached.
-func (qr *QueryResponse) IsUniqueLimitReached() bool {
-	if qr.uniqueTracker == nil {
-		return false
-	}
-	return qr.uniqueTracker.IsLimitReached()
 }
 
 // CopyFrom copies the QueryResponse from other to qr.
@@ -261,19 +178,6 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 
 	// Copy metadata
 	qr.Metadata = other.Metadata
-
-	// Copy unique tracker if present
-	if other.uniqueTracker != nil {
-		qr.uniqueTracker = NewUniqueDataTracker(other.uniqueTracker.limit)
-		qr.uniqueTracker.count = other.uniqueTracker.count
-		// Deep copy the data map
-		qr.uniqueTracker.dataMap = make(map[string]struct{}, len(other.uniqueTracker.dataMap))
-		for k := range other.uniqueTracker.dataMap {
-			qr.uniqueTracker.dataMap[k] = struct{}{}
-		}
-	} else {
-		qr.uniqueTracker = nil
-	}
 }
 
 // Stats contains system statistics and performance metrics.
@@ -419,8 +323,8 @@ func (qr QueryRequest) Validate() error {
 	if len(qr.SeriesIDs) == 0 {
 		return fmt.Errorf("at least one SeriesID is required")
 	}
-	if qr.MaxElementSize < 0 {
-		return fmt.Errorf("maxElementSize cannot be negative")
+	if qr.MaxBatchSize < 0 {
+		return fmt.Errorf("maxBatchSize cannot be negative")
 	}
 	// Validate key range
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
@@ -435,7 +339,7 @@ func (qr *QueryRequest) Reset() {
 	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
-	qr.MaxElementSize = 0
+	qr.MaxBatchSize = 0
 	qr.MinKey = nil
 	qr.MaxKey = nil
 }
@@ -461,7 +365,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.TagProjection = nil
 	}
 
-	qr.MaxElementSize = other.MaxElementSize
+	qr.MaxBatchSize = other.MaxBatchSize
 
 	// Copy key range pointers
 	if other.MinKey != nil {
@@ -495,7 +399,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		log.Fatalf("write failed: %v", err)
 //	}
 
-// Example: Using Querier interface independently
+// Example: Using StreamingQuery interface independently
 //
 //	querier := NewQuerier(options)
 //	req := QueryRequest{
@@ -503,21 +407,15 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		Filter: createKeyRangeFilter(100, 200),
 //		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 //	}
-//	result, err := querier.Query(ctx, req)
-//	if err != nil {
-//		log.Fatalf("query setup failed: %v", err)
-//	}
-//	defer result.Release()
-//
-//	for {
-//		batch := result.Pull()
-//		if batch == nil {
-//			break // No more results
-//		}
+//	resultsCh, errCh := querier.StreamingQuery(ctx, req)
+//	for batch := range resultsCh {
 //		if batch.Error != nil {
 //			log.Printf("query execution error: %v", batch.Error)
 //		}
 //		// Process batch.Keys, batch.Data, batch.Tags, etc.
+//	}
+//	if err := <-errCh; err != nil {
+//		log.Fatalf("query failed: %v", err)
 //	}
 
 // Example: Interface composition in SIDX
@@ -533,8 +431,8 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		return s.writer.Write(ctx, reqs)
 //	}
 //
-//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
-//		return s.querier.Query(ctx, req)
+//	func (s *sidxImpl) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
+//		return s.querier.StreamingQuery(ctx, req)
 //	}
 //
 //	func (s *sidxImpl) Flush() error {

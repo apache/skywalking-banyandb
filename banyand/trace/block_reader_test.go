@@ -169,6 +169,7 @@ func Test_blockReader_TagTypePerPart(t *testing.T) {
 			timestamps: []int64{ts},
 			tags:       [][]*tagValue{{tv}},
 			spans:      [][]byte{[]byte("span")},
+			spanIDs:    []string{"span"},
 		}
 		return tr
 	}

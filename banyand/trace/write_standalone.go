@@ -170,21 +170,26 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 	return et, nil
 }
 
-func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest) error {
-	req := writeEvent.Request
-	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
-	if !ok {
-		return fmt.Errorf("cannot find trace definition: %s", req.GetMetadata())
-	}
-
+func extractTraceSpanInfo(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest) (string, error) {
 	idx, err := getTagIndex(stm, stm.schema.TraceIdTagName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	traceID := req.Tags[idx].GetStr().GetValue()
 	tracesInTable.traces.traceIDs = append(tracesInTable.traces.traceIDs, traceID)
+
+	idx, err = getTagIndex(stm, stm.schema.SpanIdTagName)
+	if err != nil {
+		return "", err
+	}
+	spanID := req.Tags[idx].GetStr().GetValue()
+	tracesInTable.traces.spanIDs = append(tracesInTable.traces.spanIDs, spanID)
 	tracesInTable.traces.spans = append(tracesInTable.traces.spans, req.Span)
 
+	return traceID, nil
+}
+
+func validateTags(stm *trace, req *tracev1.WriteRequest) error {
 	tLen := len(req.GetTags())
 	if tLen < 1 {
 		return fmt.Errorf("%s has no tag family", req)
@@ -199,12 +204,17 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			len(is.indexRuleLocators), len(stm.GetSchema().GetTags()))
 	}
 
+	return nil
+}
+
+func buildTagsAndMap(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest) ([]*tagValue, map[string]*tagValue) {
 	tags := make([]*tagValue, 0, len(stm.schema.Tags))
 	tagMap := make(map[string]*tagValue, len(stm.schema.Tags))
 	tagSpecs := stm.GetSchema().GetTags()
+
 	for i := range tagSpecs {
 		tagSpec := tagSpecs[i]
-		if tagSpec.Name == stm.schema.TraceIdTagName {
+		if tagSpec.Name == stm.schema.TraceIdTagName || tagSpec.Name == stm.schema.SpanIdTagName {
 			continue
 		}
 		if tagSpec.Name == stm.schema.TimestampTagName {
@@ -223,6 +233,10 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	}
 	tracesInTable.traces.tags = append(tracesInTable.traces.tags, tags)
 
+	return tags, tagMap
+}
+
+func buildSidxTags(tags []*tagValue) []sidx.Tag {
 	sidxTags := make([]sidx.Tag, 0, len(tags))
 	for _, tag := range tags {
 		if tag.valueArr != nil {
@@ -239,7 +253,10 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 			})
 		}
 	}
+	return sidxTags
+}
 
+func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest, traceID string, tagMap map[string]*tagValue, sidxTags []sidx.Tag) error {
 	indexRules := stm.GetIndexRules()
 	for _, indexRule := range indexRules {
 		tagName := indexRule.Tags[len(indexRule.Tags)-1]
@@ -329,6 +346,28 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	}
 
 	return nil
+}
+
+func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest) error {
+	req := writeEvent.Request
+	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
+	if !ok {
+		return fmt.Errorf("cannot find trace definition: %s", req.GetMetadata())
+	}
+
+	traceID, err := extractTraceSpanInfo(stm, tracesInTable, req)
+	if err != nil {
+		return err
+	}
+
+	if err := validateTags(stm, req); err != nil {
+		return err
+	}
+
+	tags, tagMap := buildTagsAndMap(stm, tracesInTable, req)
+	sidxTags := buildSidxTags(tags)
+
+	return processIndexRules(stm, tracesInTable, req, traceID, tagMap, sidxTags)
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {

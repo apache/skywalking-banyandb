@@ -18,23 +18,22 @@
 -->
 
 <script setup>
+  import { ref, reactive, onMounted, computed, watch, getCurrentInstance } from 'vue';
+  import { ElMessage, ElMessageBox } from 'element-plus';
+  import { useRouter, useRoute } from 'vue-router';
+  import { Search } from '@element-plus/icons-vue';
   import {
     deleteSecondaryDataModel,
     getindexRuleList,
     getindexRuleBindingList,
     getGroupList,
     getTopNAggregationList,
-    getStreamOrMeasureList,
-    deleteStreamOrMeasure,
+    getAllTypesOfResourceList,
+    deleteAllTypesOfResource,
     deleteGroup,
     createGroup,
     editGroup,
   } from '@/api/index';
-  import { ElMessage, ElMessageBox } from 'element-plus';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { useRouter, useRoute } from 'vue-router';
-  import { ref, reactive, onMounted, computed } from 'vue';
-  import { Search } from '@element-plus/icons-vue';
   import StageEditor from './StageEditor.vue';
   import {
     StageFields,
@@ -44,7 +43,17 @@
     CatalogToGroupType,
     GroupTypeToCatalog,
     TypeMap,
+    SupportedIndexRuleTypes,
   } from './data';
+
+  // props data
+  const props = defineProps({
+    type: {
+      type: String,
+      required: true,
+      default: '',
+    },
+  });
 
   const router = useRouter();
   const route = useRoute();
@@ -76,7 +85,7 @@
   });
   const groupForm = reactive({
     name: '',
-    catalog: 'CATALOG_STREAM',
+    catalog: GroupTypeToCatalog[props.type] || 'CATALOG_STREAM',
     shardNum: 1,
     segmentIntervalUnit: 'UNIT_DAY',
     segmentIntervalNum: 1,
@@ -123,15 +132,6 @@
   // Eventbus
   const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
 
-  // props data
-  const props = defineProps({
-    type: {
-      type: String,
-      required: true,
-      default: '',
-    },
-  });
-
   // emit event
   const emit = defineEmits(['setWidth']);
   onMounted(() => {
@@ -139,99 +139,80 @@
   });
 
   // init data
-  function getGroupLists() {
+  async function getGroupLists() {
     filterText.value = '';
     loading.value = true;
-    getGroupList().then((res) => {
-      if (res.status === 200) {
-        data.groupLists = res.data.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
-        let promise = data.groupLists.map((item) => {
-          const type = props.type;
-          const name = item.metadata.name;
-          return new Promise((resolve, reject) => {
-            getStreamOrMeasureList(type, name)
-              .then((res) => {
-                if (res.status === 200) {
-                  item.children = res.data[props.type === 'property' ? 'properties' : type];
-                  resolve();
-                }
-              })
-              .catch((err) => {
-                reject(err);
-              });
-          });
-        });
-        if (props.type === 'stream' || props.type === 'measure') {
-          const promiseIndexRule = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getindexRuleList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.indexRule = res.data.indexRule;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          const promiseIndexRuleBinding = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getindexRuleBindingList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.indexRuleBinding = res.data.indexRuleBinding;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          promise = promise.concat(promiseIndexRule);
-          promise = promise.concat(promiseIndexRuleBinding);
+    const res = await getGroupList();
+    if (res.error) {
+      loading.value = false;
+      return;
+    }
+    data.groupLists = res.group.filter((d) => CatalogToGroupType[d.catalog] === props.type);
+    let promise = data.groupLists.map((item) => {
+      const name = item.metadata.name;
+      return (async () => {
+        const response = await getAllTypesOfResourceList(props.type, name);
+        if (response.error) {
+          ElMessage.error(response.error.message);
         }
-        if (props.type === 'measure') {
-          const TopNAggregationRule = data.groupLists.map((item) => {
-            const name = item.metadata.name;
-            return new Promise((resolve, reject) => {
-              getTopNAggregationList(name)
-                .then((res) => {
-                  if (res.status === 200) {
-                    item.topNAggregation = res.data.topNAggregation;
-                    resolve();
-                  }
-                })
-                .catch((err) => {
-                  reject(err);
-                });
-            });
-          });
-          promise = promise.concat(TopNAggregationRule);
-        }
-        Promise.all(promise)
-          .then(() => {
-            data.groupLists = processGroupTree();
-            initActiveNode();
-          })
-          .catch((err) => {
-            ElMessage({
-              message: `An error occurred while obtaining group data. Please refresh and try again. Error: ${err}`,
-              type: 'error',
-              duration: 3000,
-            });
-          })
-          .finally(() => {
-            loading.value = false;
-          });
-      } else {
-        loading.value = false;
-      }
+        const key = props.type === CatalogToGroupType.CATALOG_PROPERTY ? 'properties' : props.type;
+        item.children = response[key];
+      })();
     });
+    if (SupportedIndexRuleTypes.includes(props.type)) {
+      const promiseIndexRule = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return (async () => {
+          const res = await getindexRuleList(name);
+          if (res.error) {
+            ElMessage.error(res.error.message);
+            return;
+          }
+          item.indexRule = res.indexRule;
+        })();
+      });
+      const promiseIndexRuleBinding = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return (async () => {
+          const res = await getindexRuleBindingList(name);
+          if (res.error) {
+            ElMessage.error(res.error.message);
+            return;
+          }
+          item.indexRuleBinding = res.indexRuleBinding;
+        })();
+      });
+      promise = promise.concat(promiseIndexRule);
+      promise = promise.concat(promiseIndexRuleBinding);
+    }
+    if (props.type === CatalogToGroupType.CATALOG_MEASURE) {
+      const TopNAggregationRule = data.groupLists.map((item) => {
+        const name = item.metadata.name;
+        return (async () => {
+          const res = await getTopNAggregationList(name);
+          if (res.error) {
+            ElMessage.error(res.error.message);
+          }
+          item.topNAggregation = res.topNAggregation;
+        })();
+      });
+      promise = promise.concat(TopNAggregationRule);
+    }
+    Promise.all(promise)
+      .then(() => {
+        data.groupLists = processGroupTree();
+        initActiveNode();
+      })
+      .catch((err) => {
+        ElMessage({
+          message: `An error occurred while obtaining group data. Please refresh and try again. Error: ${err}`,
+          type: 'error',
+          duration: 3000,
+        });
+      })
+      .finally(() => {
+        loading.value = false;
+      });
   }
 
   function processGroupTree() {
@@ -485,52 +466,62 @@
       return deleteResource();
     });
   }
-  function deleteSecondaryDataModelFunction(param) {
-    deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-          $bus.emit('deleteResource', currentNode.value.type);
-        }
-      }
-    });
+  async function deleteSecondaryDataModelFunction(param) {
+    const res = await deleteSecondaryDataModel(param, currentNode.value.group, currentNode.value.type);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
+        message: 'Delete succeeded',
+        type: 'success',
+      });
+      getGroupLists();
+      $bus.emit('deleteResource', currentNode.value.type);
+    }
   }
-  function deleteGroupFunction() {
+  async function deleteGroupFunction() {
     // delete group
-    deleteGroup(currentNode.value.name).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-        }
-        $bus.emit('deleteGroup', currentNode.value.name);
-      }
-    });
+    const res = await deleteGroup(currentNode.value.name);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
+        message: 'Delete succeeded',
+        type: 'success',
+      });
+      getGroupLists();
+    }
+    $bus.emit('deleteGroup', currentNode.value.name);
   }
-  function deleteResource() {
+  async function deleteResource() {
     // delete Resources
-    deleteStreamOrMeasure(props.type, currentNode.value.group, currentNode.value.name).then((res) => {
-      if (res.status === 200) {
-        if (res.data.deleted) {
-          ElMessage({
-            message: 'Delete succeeded',
-            type: 'success',
-            duration: 5000,
-          });
-          getGroupLists();
-        }
-        $bus.emit('deleteResource', currentNode.value.name);
-      }
-    });
+    const res = await deleteAllTypesOfResource(props.type, currentNode.value.group, currentNode.value.name);
+    if (res.error) {
+      ElMessage({
+        message: `Delete failed: ${res.error.message}`,
+        type: 'error',
+      });
+      return;
+    }
+    if (res.deleted) {
+      ElMessage({
+        message: 'Delete succeeded',
+        type: 'success',
+        duration: 5000,
+      });
+      getGroupLists();
+      $bus.emit('deleteResource', currentNode.value.name);
+    }
   }
 
   // create/edit group
@@ -539,43 +530,43 @@
   }
 
   function createGroupFunction() {
-    ruleForm.value.validate((valid) => {
+    ruleForm.value.validate(async (valid) => {
       if (valid) {
-        createGroup(getGroupForm.value)
-          .then((res) => {
-            if (res.status === 200) {
-              getGroupLists();
-              ElMessage({
-                message: 'Created successfully',
-                type: 'success',
-                duration: 3000,
-              });
-            }
-          })
-          .finally(() => {
-            data.dialogGroupVisible = false;
+        const res = await createGroup(getGroupForm.value);
+        data.dialogGroupVisible = false;
+        if (res.error) {
+          ElMessage({
+            message: `Create failed: ${res.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        getGroupLists();
+        ElMessage({
+          message: 'Created successfully',
+          type: 'success',
+        });
       }
     });
   }
   function editGroupFunction() {
     const name = currentNode.value.name;
-    ruleForm.value.validate((valid) => {
+    ruleForm.value.validate(async (valid) => {
       if (valid) {
-        editGroup(name, getGroupForm.value)
-          .then((res) => {
-            if (res.status === 200) {
-              getGroupLists();
-              ElMessage({
-                message: 'Update succeeded',
-                type: 'success',
-                duration: 3000,
-              });
-            }
-          })
-          .finally(() => {
-            data.dialogGroupVisible = false;
+        const res = await editGroup(name, getGroupForm.value);
+        data.dialogGroupVisible = false;
+        if (res.error) {
+          ElMessage({
+            message: `Update failed: ${res.error.message}`,
+            type: 'error',
           });
+          return;
+        }
+        getGroupLists();
+        ElMessage({
+          message: 'Update succeeded',
+          type: 'success',
+        });
       }
     });
   }
@@ -583,7 +574,7 @@
   function clearGroupForm() {
     data.dialogGroupVisible = false;
     groupForm.name = '';
-    groupForm.catalog = 'CATALOG_STREAM';
+    groupForm.catalog = GroupTypeToCatalog[props.type] || 'CATALOG_STREAM';
     groupForm.shardNum = 1;
     groupForm.segmentIntervalUnit = 'UNIT_DAY';
     groupForm.segmentIntervalNum = 1;
@@ -655,6 +646,22 @@
   watch(filterText, (val) => {
     treeRef.value?.filter(val);
   });
+
+  // Watch route changes to update active node without reloading the tree
+  watch(
+    () => route.params,
+    (newParams) => {
+      const { group, name, type } = newParams;
+      if (group && name && type) {
+        data.activeNode = `${group}_${type}_${name}`;
+        // Expand and highlight the node
+        if (treeRef.value) {
+          treeRef.value.setCurrentKey(data.activeNode);
+        }
+      }
+    },
+    { deep: true },
+  );
 </script>
 
 <template>
@@ -716,9 +723,12 @@
         </el-form-item>
         <el-form-item label="Group type" :label-width="data.formLabelWidth" prop="catalog">
           <el-select v-model="groupForm.catalog" placeholder="please select" style="width: 100%">
-            <el-option label="Stream" value="CATALOG_STREAM"></el-option>
-            <el-option label="Measure" value="CATALOG_MEASURE"></el-option>
-            <el-option label="Property" value="CATALOG_PROPERTY"></el-option>
+            <el-option
+              v-for="(catalog, type) in GroupTypeToCatalog"
+              :key="catalog"
+              :label="type.charAt(0).toUpperCase() + type.slice(1)"
+              :value="catalog"
+            ></el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="Shard num" :label-width="data.formLabelWidth" prop="shardNum">

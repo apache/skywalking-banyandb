@@ -18,10 +18,9 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
+  import { reactive, watch, getCurrentInstance } from 'vue';
   import { ElImage, ElMenu, ElMenuItem } from 'element-plus';
   import { useRoute } from 'vue-router';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
   import userImg from '@/assets/banyandb_small.jpg';
 
   // Eventbus
@@ -81,6 +80,7 @@
         <el-menu-item index="/banyandb/dashboard">Dashboard</el-menu-item>
         <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
         <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
+        <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
         <el-menu-item index="/banyandb/property">Property</el-menu-item>
       </el-menu>
     </div>

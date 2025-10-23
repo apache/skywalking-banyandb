@@ -40,12 +40,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
+	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
@@ -97,6 +99,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	test_stream.PreloadSchema(ctx, schemaRegistry)
 	test_measure.PreloadSchema(ctx, schemaRegistry)
 	test_trace.PreloadSchema(ctx, schemaRegistry)
+	test_property.PreloadSchema(ctx, schemaRegistry)
 
 	By("Starting data node 0")
 	closeDataNode0 := setup.DataNode(ep)
@@ -133,6 +136,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		BaseTime:   baseTime,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
+		Connection: connection,
+		BaseTime:   baseTime,
+	}
+	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
 		BaseTime:   baseTime,
 	}

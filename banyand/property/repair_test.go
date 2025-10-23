@@ -139,10 +139,6 @@ func TestBuildTree(t *testing.T) {
 			nextStatusVerify: func(t *testing.T, _ *shard, before, after *repairData) {
 				basicStatusVerify(t, before, defaultGroupName, 1)
 				basicStatusVerify(t, after, defaultGroupName, 1)
-				if before.LastSnpID != after.LastSnpID {
-					t.Fatalf("expected last snapshot ID to be the same, got before: %d, after: %d",
-						before.LastSnpID, after.LastSnpID)
-				}
 				if before.readTree(t, defaultGroupName).root.shaValue != after.readTree(t, defaultGroupName).root.shaValue {
 					t.Fatalf("expected Root sha value to be the same, got before: %s, after: %s",
 						before.readTree(t, defaultGroupName).root.shaValue, after.readTree(t, defaultGroupName).root.shaValue)

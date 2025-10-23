@@ -238,6 +238,9 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
 	tst.replaceSnapshot(&nextSnp)
+	for name, memPart := range nextIntroduction.sidxReqsMap {
+		tst.mustGetOrCreateSidx(name).IntroduceMemPart(next.p.partMetadata.ID, memPart)
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -256,6 +259,9 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	nextSnp.creator = snapshotCreatorFlusher
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
+	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
+		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -279,6 +285,12 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp.creator = nextIntroduction.creator
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
+	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
+		deferFuncs := tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
+		if deferFuncs != nil {
+			defer deferFuncs()
+		}
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

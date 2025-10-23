@@ -23,14 +23,11 @@ package trace
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -136,67 +133,6 @@ func (t *trace) parseSpec() {
 	var is indexSchema
 	is.parse(t.schema)
 	t.indexSchema.Store(is)
-}
-
-// querySidxForTraceIDs queries sidx instances to get ordered trace IDs.
-func (t *trace) querySidxForTraceIDs(ctx context.Context, sidxInstances []sidx.SIDX,
-	tqo model.TraceQueryOptions, seriesIDs []common.SeriesID,
-) ([]string, map[string]int64, error) {
-	// Convert TraceQueryOptions to sidx.QueryRequest
-	req := sidx.QueryRequest{
-		Filter:         tqo.SkippingFilter,
-		Order:          tqo.Order,
-		MaxElementSize: tqo.MaxTraceSize,
-		MinKey:         &tqo.MinVal,
-		MaxKey:         &tqo.MaxVal,
-	}
-
-	// Convert TagProjection to slice format if needed
-	if tqo.TagProjection != nil {
-		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
-	}
-
-	// Use the provided series IDs for targeted querying
-	if len(seriesIDs) > 0 {
-		req.SeriesIDs = seriesIDs
-	} else {
-		req.SeriesIDs = []common.SeriesID{1}
-	}
-
-	// Query multiple sidx instances
-	response, err := sidx.QueryMultipleSIDX(ctx, sidxInstances, req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("sidx query failed: %w", err)
-	}
-
-	if response == nil || len(response.Data) == 0 {
-		return nil, nil, nil
-	}
-
-	// Extract trace IDs from response data and deduplicate them while preserving order
-	// Since each trace may be indexed by multiple series, we get duplicates
-	// We need to keep only the first occurrence of each trace ID to preserve ordering
-	seenTraceIDs := make(map[string]bool)
-	var traceIDs []string
-	keys := make(map[string]int64)
-
-	for i, data := range response.Data {
-		if len(data) > 0 {
-			var traceID string
-			if idFormat(data[0]) == idFormatV1 {
-				traceID = string(data[1:])
-			} else {
-				logger.Panicf("invalid trace ID format: %x", data)
-			}
-			if !seenTraceIDs[traceID] {
-				seenTraceIDs[traceID] = true
-				traceIDs = append(traceIDs, traceID)
-				keys[traceID] = response.Keys[i]
-			}
-		}
-	}
-
-	return traceIDs, keys, nil
 }
 
 func openTrace(schema *databasev1.Trace, l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo) *trace {

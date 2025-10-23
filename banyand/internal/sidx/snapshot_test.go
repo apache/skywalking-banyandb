@@ -601,8 +601,11 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 					queryReq := QueryRequest{
 						SeriesIDs: []common.SeriesID{1},
 					}
-					_, err := sidx.Query(ctx, queryReq)
-					if err != nil {
+					resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+					// revive:disable-next-line:empty-block
+					for range resultsCh {
+					}
+					if err, ok := <-errCh; ok && err != nil {
 						t.Errorf("query failed: %v", err)
 					}
 				}

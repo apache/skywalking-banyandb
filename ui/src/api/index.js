@@ -17,180 +17,208 @@
  * under the License.
  */
 
-// api file
+import { httpQuery } from './base';
 
-import request from '@/utils/axios';
-
-// Some request methods
 export function getGroupList() {
-  return request({
+  return httpQuery({
     url: '/api/v1/group/schema/lists',
-    method: 'get',
+    method: 'GET',
   });
 }
 
-export function getStreamOrMeasureList(type, name) {
-  return request({
+export function getAllTypesOfResourceList(type, name) {
+  return httpQuery({
     url: `/api/v1/${type}/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
-export function getStreamOrMeasure(type, group, name) {
-  return request({
+export function getResourceOfAllType(type, group, name) {
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTableList(data, type) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/data`,
-    data: data,
-    method: 'post',
+    json: data,
+    method: 'POST',
   });
 }
 
-export function deleteStreamOrMeasure(type, group, name) {
-  return request({
+export function deleteAllTypesOfResource(type, group, name) {
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'delete',
+    method: 'DELETE',
   });
 }
 
 export function deleteGroup(group) {
-  return request({
+  return httpQuery({
     url: `/api/v1/group/schema/${group}`,
-    method: 'delete',
+    method: 'DELETE',
   });
 }
 
 export function createGroup(data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/group/schema`,
-    method: 'post',
-    data: data,
+    method: 'POST',
+    json: data,
   });
 }
 
 export function editGroup(group, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/group/schema/${group}`,
-    method: 'put',
-    data: data,
+    method: 'PUT',
+    json: data,
   });
 }
 
 export function createResources(type, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema`,
-    method: 'post',
-    data: data,
+    method: 'POST',
+    json: data,
   });
 }
 
 export function editResources(type, group, name, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
+    method: 'PUT',
+    json: data,
   });
 }
 
 export function getindexRuleList(name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/index-rule/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getindexRuleBindingList(name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/index-rule-binding/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTopNAggregationList(name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/topn-agg/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTopNAggregationData(data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/measure/topn`,
-    data,
-    method: 'post',
+    json: data,
+    method: 'POST',
   });
 }
 
 export function getSecondaryDataModel(type, group, name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function createSecondaryDataModel(type, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema`,
-    method: 'post',
-    data: data,
+    method: 'POST',
+    json: data,
   });
 }
 
 export function updateSecondaryDataModel(type, group, name, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
+    method: 'PUT',
+    json: data,
   });
 }
 
 export function deleteSecondaryDataModel(type, group, name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'delete',
+    method: 'DELETE',
   });
 }
 
 export function fetchProperties(data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/property/data/query`,
-    method: 'post',
-    data,
+    method: 'POST',
+    json: data,
   });
 }
 
 export function deleteProperty(group, name) {
-  return request({
+  return httpQuery({
     url: `/api/v1/property/schema/${group}/${name}`,
-    method: 'delete',
+    method: 'DELETE',
   });
 }
 
 export function updateProperty(group, name, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/property/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
+    method: 'PUT',
+    json: data,
   });
 }
 
 export function createProperty(data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/property/schema`,
-    method: 'post',
-    data: data,
+    method: 'POST',
+    json: data,
   });
 }
 
 export function applyProperty(group, name, id, data) {
-  return request({
+  return httpQuery({
     url: `/api/v1/property/data/${group}/${name}/${id}`,
-    method: 'put',
-    data: data,
+    method: 'PUT',
+    json: data,
+  });
+}
+
+export function getTrace(group, name) {
+  return httpQuery({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'get',
+  });
+}
+
+export function createTrace(json) {
+  return httpQuery({
+    url: `/api/v1/trace/schema`,
+    method: 'POST',
+    json,
+  });
+}
+
+export function updateTrace(group, name, json) {
+  return httpQuery({
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    json,
+    method: 'PUT',
+  });
+}
+
+export function queryTraces(json) {
+  return httpQuery({
+    url: `/api/v1/trace/data`,
+    json,
+    method: 'POST',
   });
 }

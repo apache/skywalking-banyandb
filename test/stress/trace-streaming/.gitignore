@@ -1,0 +1,17 @@
+# Generated memory monitoring data
+memory_*.csv
+*.png
+
+# pprof profiles
+profiles/
+
+# Test binaries
+*.test
+
+# Temporary files
+*.pprof
+*.prof
+*.log
+
+# Docker compose overrides
+docker-compose.override.yml

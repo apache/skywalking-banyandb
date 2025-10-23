@@ -21,6 +21,7 @@
   import GroupTree from '@/components/GroupTree/index.vue';
   import TopNav from '@/components/TopNav/index.vue';
   import { reactive } from 'vue';
+  import { CatalogToGroupType } from '@/components/GroupTree/data';
 
   const data = reactive({
     width: '200px',
@@ -35,7 +36,7 @@
   <div class="size">
     <el-container>
       <el-aside :width="data.width" class="bd-top flex" style="position: relative; background-color: white">
-        <GroupTree type="measure" @setWidth="setWidth" />
+        <GroupTree :type="CatalogToGroupType.CATALOG_MEASURE" @setWidth="setWidth" />
       </el-aside>
       <el-main>
         <TopNav></TopNav>

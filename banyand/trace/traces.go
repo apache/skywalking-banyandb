@@ -104,6 +104,7 @@ type traces struct {
 	timestamps []int64
 	tags       [][]*tagValue
 	spans      [][]byte
+	spanIDs    []string
 }
 
 func (t *traces) reset() {
@@ -116,6 +117,7 @@ func (t *traces) reset() {
 	}
 	t.tags = t.tags[:0]
 	t.spans = t.spans[:0]
+	t.spanIDs = t.spanIDs[:0]
 }
 
 func (t *traces) Len() int {
@@ -131,6 +133,7 @@ func (t *traces) Swap(i, j int) {
 	t.timestamps[i], t.timestamps[j] = t.timestamps[j], t.timestamps[i]
 	t.tags[i], t.tags[j] = t.tags[j], t.tags[i]
 	t.spans[i], t.spans[j] = t.spans[j], t.spans[i]
+	t.spanIDs[i], t.spanIDs[j] = t.spanIDs[j], t.spanIDs[i]
 }
 
 func generateTraces() *traces {

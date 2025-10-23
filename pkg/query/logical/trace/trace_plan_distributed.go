@@ -136,13 +136,17 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 	}
 	tracer := query.GetTracer(ctx)
 	var span *query.Span
+	var err error
 	if tracer != nil {
 		span, _ = tracer.StartSpan(ctx, "distributed-client")
 		queryRequest.Trace = true
 		span.Tag("request", convert.BytesToString(logger.Proto(queryRequest)))
 		defer func() {
-			// TODO: handle error
-			span.Stop()
+			if err != nil {
+				span.Error(err)
+			} else {
+				span.Stop()
+			}
 		}()
 	}
 	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicTraceQuery,
@@ -151,7 +155,7 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 		return iter.Empty[model.TraceResult](), err
 	}
 	var allErr error
-	var ct []sort.Iterator[*comparableTrace]
+	var st []sort.Iterator[*comparableTrace]
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
@@ -164,18 +168,31 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 			if span != nil {
 				span.AddSubTrace(resp.TraceQueryResult)
 			}
-			ct = append(ct,
+			st = append(st,
 				newSortableTraces(resp.InternalTraces, p.sortByTraceID))
 		}
 	}
-	sortIter := sort.NewItemIter(ct, p.desc)
+	sortIter := sort.NewItemIter(st, p.desc)
 	var result []*tracev1.InternalTrace
-	seen := make(map[string]bool)
+	seen := make(map[string]*tracev1.InternalTrace)
 	for sortIter.Next() {
 		trace := sortIter.Val().InternalTrace
-		if !seen[trace.TraceId] {
-			seen[trace.TraceId] = true
+		if _, ok := seen[trace.TraceId]; !ok {
+			seen[trace.TraceId] = trace
 			result = append(result, trace)
+		} else {
+			for _, span := range trace.Spans {
+				spanExists := false
+				for _, existingSpan := range seen[trace.TraceId].Spans {
+					if existingSpan.SpanId == span.SpanId {
+						spanExists = true
+						break
+					}
+				}
+				if !spanExists {
+					seen[trace.TraceId].Spans = append(seen[trace.TraceId].Spans, span)
+				}
+			}
 		}
 	}
 
@@ -212,7 +229,6 @@ type comparableTrace struct {
 func newComparableTrace(t *tracev1.InternalTrace, sortByTraceID bool) (*comparableTrace, error) {
 	var sortField []byte
 	if sortByTraceID {
-		// For traces, we use trace ID as sort field when sorting by time
 		sortField = []byte(t.TraceId)
 	} else {
 		sortField = convert.Int64ToBytes(t.Key)
@@ -348,34 +364,27 @@ func (t *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
 	t.index++
 
 	result := model.TraceResult{
-		TID: trace.TraceId,
+		TID:     trace.TraceId,
+		Spans:   make([][]byte, 0, len(trace.Spans)),
+		SpanIDs: make([]string, 0, len(trace.Spans)),
+		Tags:    make([]model.Tag, 0, len(trace.Spans)),
 	}
-
-	// Extract tags and spans from all spans in this trace
-	var allSpans [][]byte
 	tagMap := make(map[string][]*modelv1.TagValue)
 
 	for _, span := range trace.Spans {
 		// Add span data
-		allSpans = append(allSpans, span.Span)
-
+		result.Spans = append(result.Spans, span.Span)
 		// Extract tags from this span and aggregate by name
 		for _, tag := range span.Tags {
 			tagMap[tag.Key] = append(tagMap[tag.Key], tag.Value)
 		}
+		result.SpanIDs = append(result.SpanIDs, span.SpanId)
 	}
-
-	// Convert tagMap to []model.Tag
-	var allTags []model.Tag
 	for tagName, values := range tagMap {
-		allTags = append(allTags, model.Tag{
+		result.Tags = append(result.Tags, model.Tag{
 			Name:   tagName,
 			Values: values,
 		})
 	}
-
-	result.Spans = allSpans
-	result.Tags = allTags
-
 	return result, true
 }

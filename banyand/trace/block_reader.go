@@ -29,6 +29,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+type rawBlock struct {
+	bm          *blockMetadata
+	tags        map[string][]byte
+	tagMetadata map[string][]byte
+	spans       []byte
+}
+
 type seqReader struct {
 	sr        fs.SeqReader
 	r         fs.Reader
@@ -127,6 +134,7 @@ type blockReader struct {
 	err           error
 	block         *blockPointer
 	pih           partMergeIterHeap
+	peekBlock     blockPointer
 	nextBlockNoop bool
 }
 
@@ -138,6 +146,7 @@ func (br *blockReader) reset() {
 	br.pih = br.pih[:0]
 	br.nextBlockNoop = false
 	br.err = nil
+	br.peekBlock.reset()
 }
 
 func (br *blockReader) init(pii []*partMergeIter) {
@@ -207,6 +216,51 @@ func (br *blockReader) nextMetadata() error {
 
 func (br *blockReader) loadBlockData(decoder *encoding.BytesBlockDecoder) {
 	br.pih[0].mustLoadBlockData(decoder, br.block)
+}
+
+func (br *blockReader) peek() *blockPointer {
+	// Peek at the next block that will be processed to determine if current traceID is unique
+	// We need to check two things:
+	// 1. Does the current partMergeIter (pih[0]) have another block with the same traceID?
+	// 2. Do any other partMergeIters have a block with the same traceID?
+
+	if len(br.pih) == 0 {
+		return nil
+	}
+
+	currentTraceID := br.block.bm.traceID
+
+	// First check if pih[0] has another block
+	if nextBM, ok := br.pih[0].peekBlockMetadata(); ok {
+		// If the next block in the same part has the same traceID, we can't use fast path
+		if nextBM.traceID == currentTraceID {
+			// Reuse peekBlock to avoid allocation
+			br.peekBlock.reset()
+			br.peekBlock.bm = *nextBM
+			releaseBlockMetadata(nextBM)
+			return &br.peekBlock
+		}
+		releaseBlockMetadata(nextBM)
+		// The next block in pih[0] has a different traceID
+		// But we still need to check other parts in the heap
+	}
+
+	// Check if any other part (pih[1], pih[2], etc.) has the same traceID
+	// Note: The heap is a min-heap, not fully sorted, so we must check ALL elements
+	for i := 1; i < len(br.pih); i++ {
+		if br.pih[i].block.bm.traceID == currentTraceID {
+			// Another part has the same traceID
+			return &br.pih[i].block
+		}
+	}
+
+	// No other blocks with this traceID - it's unique
+	return nil
+}
+
+func (br *blockReader) mustReadRaw(r *rawBlock, bm *blockMetadata) {
+	// Delegate to the current partMergeIter to read raw block
+	br.pih[0].mustReadRaw(r, bm)
 }
 
 func (br *blockReader) error() error {

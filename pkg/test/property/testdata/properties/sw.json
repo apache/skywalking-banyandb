@@ -1,0 +1,16 @@
+{
+  "metadata" : {
+    "group" : "sw",
+    "name" : "ui_menu"
+  },
+  "tags" : [ {
+    "name" : "menu_name",
+    "type" : "TAG_TYPE_STRING"
+  }, {
+    "name" : "configuration",
+    "type" : "TAG_TYPE_STRING"
+  }, {
+    "name" : "update_time",
+    "type" : "TAG_TYPE_INT"
+  } ]
+}

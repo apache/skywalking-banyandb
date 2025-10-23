@@ -18,15 +18,13 @@
 -->
 
 <script setup>
-  import { reactive, ref } from 'vue';
+  import { reactive, ref, watch, getCurrentInstance, computed } from 'vue';
   import { useRoute } from 'vue-router';
-  import { watch, getCurrentInstance } from '@vue/runtime-core';
-  import { getStreamOrMeasure, getTableList } from '@/api/index';
+  import { ElMessage } from 'element-plus';
   import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { getResourceOfAllType, getTableList } from '@/api/index';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
-  import { ElMessage } from 'element-plus';
-  import { computed } from '@vue/runtime-core';
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
 
@@ -82,10 +80,6 @@
     timeValue: null,
     loading: false,
     total: 100,
-    /* queryInfo: {
-        pagenum: 1,
-        pagesize: 100
-    }, */
     tableTags: [],
     tableData: [],
     code: null,
@@ -173,29 +167,30 @@ orderBy:
     json.data.timeRange.end = data.timeValue ? new Date(data.timeValue[1]) : null;
     data.code = jsonToYaml(json.data).data;
   }
-  function initData() {
+  async function initData() {
     $loadingCreate();
-    getStreamOrMeasure(data.type, data.group, data.name)
-      .then((res) => {
-        if (res.status === 200) {
-          data.resourceData = res.data[data.type];
-          data.tableTags = res.data[data.type].tagFamilies[0].tags.map((item) => {
-            item.label = item.name;
-            return item;
-          });
-          data.options = res.data[data.type].tagFamilies.map((item, index) => {
-            return { label: item.name, value: index };
-          });
-          data.tagFamily = 0;
-          data.fields = res.data[data.type].fields ? res.data[data.type].fields : [];
-          handleCodeData();
-        }
-      })
-      .finally(() => {
-        $loadingClose();
+    const response = await getResourceOfAllType(data.type, data.group, data.name);
+    $loadingClose();
+    if (response.error) {
+      ElMessage({
+        message: `Get ${data.type} failed: ${response.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    data.resourceData = response[data.type];
+    data.tableTags = response[data.type].tagFamilies[0].tags.map((item) => {
+      item.label = item.name;
+      return item;
+    });
+    data.options = response[data.type].tagFamilies.map((item, index) => {
+      return { label: item.name, value: index };
+    });
+    data.tagFamily = 0;
+    data.fields = response[data.type].fields ? response[data.type].fields : [];
+    handleCodeData();
   }
-  function getTableData() {
+  async function getTableData() {
     data.tableData = [];
     data.loading = true;
     setTableFilterConfig();
@@ -211,19 +206,20 @@ orderBy:
     }
     paramList.name = data.resourceData.metadata.name;
     paramList.groups = [data.resourceData.metadata.group];
-    getTableList(paramList, data.type)
-      .then((res) => {
-        if (res.status === 200) {
-          if (data.type === 'stream') {
-            setTableData(res.data.elements);
-          } else {
-            setTableData(res.data.dataPoints);
-          }
-        }
-      })
-      .catch(() => {
-        data.loading = false;
+    const res = await getTableList(paramList, data.type);
+    data.loading = false;
+    if (res.error) {
+      ElMessage({
+        message: `Get ${data.type} failed: ${res.error.message}`,
+        type: 'error',
       });
+      return;
+    }
+    if (data.type === 'stream') {
+      setTableData(res.elements);
+    } else {
+      setTableData(res.dataPoints);
+    }
   }
   function setTableData(elements) {
     const tags = data.resourceData.tagFamilies[data.tagFamily].tags;
@@ -319,7 +315,7 @@ orderBy:
         ElMessage({
           dangerouslyUseHTMLString: true,
           showClose: true,
-          message: `<div>${err.message}</div>`,
+          message: err.message,
           type: 'error',
           duration: 5000,
         });
