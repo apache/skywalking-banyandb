@@ -61,6 +61,7 @@ limitations under the License. -->
   import TableItem from "./TableItem.vue";
   import { TraceConstant, StatisticsConstant } from "./data.js";
   import { TraceGraphType } from "../VisGraph/constant.js";
+  import { ArrowLeft, MoreFilled, DCaret, ArrowRight } from "@element-plus/icons-vue";
 
   const props = defineProps({
     tableData: Array,

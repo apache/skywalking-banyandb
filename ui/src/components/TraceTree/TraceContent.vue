@@ -79,6 +79,7 @@ limitations under the License. -->
 <script setup>
   import { ref, computed } from "vue";
   import { ElMessage } from "element-plus";
+  import { CopyDocument } from "@element-plus/icons-vue";
   import MinTimeline from "./MinTimeline.vue";
   import { saveFileAsJSON } from "@/utils/file.js";
   import TimelineTool from "./TimelineTool.vue";

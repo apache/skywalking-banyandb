@@ -111,6 +111,7 @@ limitations under the License. -->
 </template>
 <script setup>
   import { ref, computed } from "vue";
+  import { ArrowDown } from "@element-plus/icons-vue";
   import { TraceGraphType } from "../VisGraph/constant.js";
 
   const emits = defineEmits(["selectedSpan"]);

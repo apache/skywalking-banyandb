@@ -29,6 +29,7 @@ limitations under the License. -->
 <script setup>
   import { ref, watch } from "vue";
   import { GraphTypeOptions } from "./VisGraph/constant";
+  import { DCaret } from "@element-plus/icons-vue";
 
   const emit = defineEmits(["toggleMinTimeline", "updateSpansGraphType"]);
   const reorderedOptions = [
