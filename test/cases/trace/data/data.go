@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -33,16 +34,21 @@ import (
 	"github.com/google/go-cmp/cmp"
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sigs.k8s.io/yaml"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	metadata "github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -53,6 +59,9 @@ var inputFS embed.FS
 //go:embed want/*.yml
 var wantFS embed.FS
 
+//go:embed input/*.ql
+var qlFS embed.FS
+
 //go:embed testdata/*.json
 var dataFS embed.FS
 
@@ -62,6 +71,9 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	query := &tracev1.QueryRequest{}
 	helpers.UnmarshalYAML(i, query)
+	if !args.WantErr {
+		verifyQLWithRequest(innerGm, args, query, sharedContext.Connection)
+	}
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
 	query.Stages = args.Stages
 	c := tracev1.NewTraceServiceClient(sharedContext.Connection)
@@ -166,6 +178,75 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	innerGm.Expect(resp.TraceQueryResult).NotTo(gm.BeNil())
 	innerGm.Expect(resp.TraceQueryResult.GetSpans()).NotTo(gm.BeEmpty())
+}
+
+func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev1.QueryRequest, conn *grpclib.ClientConn) {
+	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+
+	var qlQueryStr string
+	for _, line := range strings.Split(string(qlContent), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if qlQueryStr != "" {
+			qlQueryStr += " "
+		}
+		qlQueryStr += trimmed
+	}
+
+	// Auto-inject stages clause if args.Stages is not empty
+	if len(args.Stages) > 0 {
+		stageClause := " ON " + strings.Join(args.Stages, ", ") + " STAGES"
+		// Use regex to find and replace IN clause with groups
+		// Pattern: IN followed by groups (with or without parentheses)
+		re := regexp.MustCompile(`(?i)\s+IN\s+(\([^)]+\)|[a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*)`)
+		qlQueryStr = re.ReplaceAllString(qlQueryStr, " IN $1"+stageClause)
+	}
+
+	ctrl := gomock.NewController(g.GinkgoT())
+	defer ctrl.Finish()
+
+	mockRepo := metadata.NewMockRepo(ctrl)
+	trace := schema.NewMockTrace(ctrl)
+	trace.EXPECT().GetTrace(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Trace, error) {
+		client := databasev1.NewTraceRegistryServiceClient(conn)
+		resp, getErr := client.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: metadata})
+		if getErr != nil {
+			return nil, getErr
+		}
+		return resp.GetTrace(), nil
+	}).AnyTimes()
+	mockRepo.EXPECT().TraceRegistry().AnyTimes().Return(trace)
+
+	parsed, errStrs := bydbql.ParseQuery(qlQueryStr)
+	innerGm.Expect(errStrs).To(gm.BeNil())
+
+	transformer := bydbql.NewTransformer(mockRepo)
+	result, err := transformer.Transform(context.Background(), parsed)
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+
+	qlQuery, ok := result.QueryRequest.(*tracev1.QueryRequest)
+	innerGm.Expect(ok).To(gm.BeTrue())
+
+	equal := cmp.Equal(qlQuery, yamlQuery,
+		protocmp.IgnoreUnknown(),
+		protocmp.IgnoreFields(&tracev1.QueryRequest{}, "time_range", "stages"),
+		protocmp.Transform())
+	if !equal {
+		qlQuery.TimeRange = nil
+	}
+	innerGm.Expect(equal).To(gm.BeTrue(), "QL:\n%s\nYAML:\n%s", qlQuery.String(), yamlQuery.String())
+
+	bydbqlClient := bydbqlv1.NewBydbQLServiceClient(conn)
+	bydbqlResp, err := bydbqlClient.Query(context.Background(), &bydbqlv1.QueryRequest{
+		Query: qlQueryStr,
+	})
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
+	innerGm.Expect(bydbqlResp).NotTo(gm.BeNil())
+	_, ok = bydbqlResp.Result.(*bydbqlv1.QueryResponse_TraceResult)
+	innerGm.Expect(ok).To(gm.BeTrue())
 }
 
 func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration) {

@@ -7,6 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2
 	github.com/RoaringBitmap/roaring v1.9.4
+	github.com/alecthomas/participle/v2 v2.1.4
 	github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe
 	github.com/aws/aws-sdk-go-v2 v1.39.0
 	github.com/aws/aws-sdk-go-v2/config v1.31.9

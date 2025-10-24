@@ -150,6 +150,8 @@ func (m Metadata) equal(other Metadata) bool {
 }
 
 // Stream allows CRUD stream schemas in a group.
+//
+//go:generate mockgen -destination=schema_stream_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema Stream
 type Stream interface {
 	GetStream(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Stream, error)
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
@@ -177,6 +179,8 @@ type IndexRuleBinding interface {
 }
 
 // Measure allows CRUD measure schemas in a group.
+//
+//go:generate mockgen -destination=schema_measure_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema Measure
 type Measure interface {
 	GetMeasure(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error)
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
@@ -187,6 +191,8 @@ type Measure interface {
 }
 
 // Trace allows CRUD trace schemas in a group.
+//
+//go:generate mockgen -destination=schema_trace_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema Trace
 type Trace interface {
 	GetTrace(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Trace, error)
 	ListTrace(ctx context.Context, opt ListOpt) ([]*databasev1.Trace, error)
@@ -208,6 +214,8 @@ type Group interface {
 }
 
 // TopNAggregation allows CRUD top-n aggregation schemas in a group.
+//
+//go:generate mockgen -destination=schema_topn_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema TopNAggregation
 type TopNAggregation interface {
 	GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error)
 	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
@@ -225,6 +233,8 @@ type Node interface {
 }
 
 // Property allows CRUD property schemas in a group.
+//
+//go:generate mockgen -destination=schema_property_mock.go -package=schema github.com/apache/skywalking-banyandb/banyand/metadata/schema Property
 type Property interface {
 	GetProperty(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Property, error)
 	ListProperty(ctx context.Context, opt ListOpt) ([]*databasev1.Property, error)
