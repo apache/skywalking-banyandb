@@ -104,7 +104,7 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 	if grammar.Select != nil {
 		// Extract resource type from SELECT statement
 		resourceType := grammar.Select.From.ResourceType
-		switch resourceType {
+		switch strings.ToUpper(resourceType) {
 		case "STREAM":
 			return t.transformStreamQuery(ctx, grammar)
 		case "MEASURE":
@@ -119,7 +119,7 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 	}
 	if grammar.TopN != nil {
 		resourceType := grammar.TopN.From.ResourceType
-		if resourceType == "MEASURE" {
+		if strings.ToUpper(resourceType) == "MEASURE" {
 			return t.transformTopNMeasureQuery(ctx, grammar)
 		}
 		return nil, fmt.Errorf("unsupported resource type in topn statement: %s", resourceType)
@@ -362,7 +362,7 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	if statement.Projection != nil && len(statement.Projection.Columns) > 0 {
 		for _, c := range statement.Projection.Columns {
 			// check if column is a field type
-			if c.TypeSpec != nil && *c.TypeSpec == columnTypeField {
+			if c.TypeSpec != nil && strings.ToUpper(*c.TypeSpec) == columnTypeField {
 				colName, nameErr := c.Identifier.ToString(c.TypeSpec != nil)
 				if nameErr != nil {
 					return nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
@@ -462,7 +462,7 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 		} else if len(statement.Projection.Columns) > 0 {
 			// select specific columns
 			for _, col := range statement.Projection.Columns {
-				if col.TypeSpec != nil && *col.TypeSpec == columnTypeField {
+				if col.TypeSpec != nil && strings.ToUpper(*col.TypeSpec) == columnTypeField {
 					colName, nameErr := col.Identifier.ToString(col.TypeSpec != nil)
 					if nameErr != nil {
 						return nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
@@ -664,7 +664,7 @@ func (t *Transformer) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv1
 
 		colType := columnTypeAuto
 		if c.TypeSpec != nil {
-			colType = *c.TypeSpec
+			colType = strings.ToUpper(*c.TypeSpec)
 		}
 
 		if colType == columnTypeAuto {
@@ -729,13 +729,17 @@ func (t *Transformer) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv1
 }
 
 func (t *Transformer) convertAggregation(projection *GrammarProjection, allFields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Aggregation, error) {
-	if projection == nil || len(projection.Columns) == 0 {
-		return nil, nil
+	var columns []*GrammarColumn
+	if projection != nil && len(projection.Columns) > 0 {
+		columns = append(columns, projection.Columns...)
+	}
+	if projection.TopN != nil && len(projection.TopN.OtherColumns) > 0 {
+		columns = append(columns, projection.TopN.OtherColumns...)
 	}
 
 	// find the aggregation column
 	var aggCol *GrammarColumn
-	for _, col := range projection.Columns {
+	for _, col := range columns {
 		if col.Aggregate != nil {
 			if aggCol != nil {
 				return nil, errors.New("only one aggregation function is allowed in SELECT")
@@ -1073,14 +1077,14 @@ func (t *Transformer) convertHavingPredicate(
 		Op:   op,
 	}
 
-	var values []*GrammarValue
+	var err error
 	if pred.Values.Single != nil {
-		values = []*GrammarValue{pred.Values.Single}
+		err = t.setGrammarConditionValue(cond, pred.Values.Single, tagSpec)
 	} else if pred.Values.Array != nil {
-		values = pred.Values.Array
+		err = t.setGrammarMultiValueCondition(cond, pred.Values.Array, tagSpec)
 	}
 
-	if err := t.setGrammarMultiValueCondition(cond, values, tagSpec); err != nil {
+	if err != nil {
 		return nil, fmt.Errorf("failed to set condition for tag %s: %w", identifierName, err)
 	}
 
@@ -1305,13 +1309,16 @@ func (t *Transformer) convertTagAndField(
 	}
 
 	for _, col := range combinedColumns {
+		if col.Aggregate != nil {
+			continue
+		}
 		colName, nameErr := col.Identifier.ToString(col.TypeSpec != nil)
 		if nameErr != nil {
 			return nil, nil, nil, nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
 		}
 		colType := columnTypeAuto
 		if col.TypeSpec != nil {
-			colType = *col.TypeSpec
+			colType = strings.ToUpper(*col.TypeSpec)
 		}
 		if addErr := t.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, colName, colType, col.Aggregate); addErr != nil {
 			return nil, nil, nil, nil, addErr
