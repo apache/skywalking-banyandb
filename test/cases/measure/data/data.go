@@ -183,9 +183,9 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 
 	mockRepo := metadatapkg.NewMockRepo(ctrl)
 	measure := schema.NewMockMeasure(ctrl)
-	measure.EXPECT().GetMeasure(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, meatadata *commonv1.Metadata) (*databasev1.Measure, error) {
+	measure.EXPECT().GetMeasure(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Measure, error) {
 		client := databasev1.NewMeasureRegistryServiceClient(conn)
-		resp, getErr := client.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: meatadata})
+		resp, getErr := client.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
 		if getErr != nil {
 			return nil, getErr
 		}

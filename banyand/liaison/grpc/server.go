@@ -149,7 +149,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		nodeRegistry:     nr.PropertyNodeRegistry,
 		discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
 	}
-	bydnQLSVC := &bydbQLService{
+	bydbQLSVC := &bydbQLService{
 		repo:           schemaRegistry,
 		transformer:    bydbql.NewTransformer(schemaRegistry),
 		streamSvc:      streamSVC,
@@ -163,7 +163,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		traceSVC:   traceSVC,
-		bydbQLSVC:  bydnQLSVC,
+		bydbQLSVC:  bydbQLSVC,
 		groupRepo:  gr,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,

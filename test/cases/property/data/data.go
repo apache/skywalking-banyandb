@@ -146,9 +146,9 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 
 	mockRepo := metadatapkg.NewMockRepo(ctrl)
 	measure := schema.NewMockProperty(ctrl)
-	measure.EXPECT().GetProperty(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, meatadata *commonv1.Metadata) (*databasev1.Property, error) {
+	measure.EXPECT().GetProperty(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.Property, error) {
 		client := databasev1.NewPropertyRegistryServiceClient(conn)
-		resp, getErr := client.Get(ctx, &databasev1.PropertyRegistryServiceGetRequest{Metadata: meatadata})
+		resp, getErr := client.Get(ctx, &databasev1.PropertyRegistryServiceGetRequest{Metadata: metadata})
 		if getErr != nil {
 			return nil, getErr
 		}
