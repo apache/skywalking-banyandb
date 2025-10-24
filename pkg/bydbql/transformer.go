@@ -119,7 +119,7 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 	}
 	if grammar.TopN != nil {
 		resourceType := grammar.TopN.From.ResourceType
-		if strings.ToUpper(resourceType) == "MEASURE" {
+		if strings.EqualFold(resourceType, "MEASURE") {
 			return t.transformTopNMeasureQuery(ctx, grammar)
 		}
 		return nil, fmt.Errorf("unsupported resource type in topn statement: %s", resourceType)
@@ -362,7 +362,7 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	if statement.Projection != nil && len(statement.Projection.Columns) > 0 {
 		for _, c := range statement.Projection.Columns {
 			// check if column is a field type
-			if c.TypeSpec != nil && strings.ToUpper(*c.TypeSpec) == columnTypeField {
+			if c.TypeSpec != nil && strings.EqualFold(*c.TypeSpec, columnTypeField) {
 				colName, nameErr := c.Identifier.ToString(c.TypeSpec != nil)
 				if nameErr != nil {
 					return nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
@@ -462,7 +462,7 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 		} else if len(statement.Projection.Columns) > 0 {
 			// select specific columns
 			for _, col := range statement.Projection.Columns {
-				if col.TypeSpec != nil && strings.ToUpper(*col.TypeSpec) == columnTypeField {
+				if col.TypeSpec != nil && strings.EqualFold(*col.TypeSpec, columnTypeField) {
 					colName, nameErr := col.Identifier.ToString(col.TypeSpec != nil)
 					if nameErr != nil {
 						return nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
