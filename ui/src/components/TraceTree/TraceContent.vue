@@ -44,7 +44,7 @@ limitations under the License. -->
           <span class="grey mr-5">Trace ID</span>
           <span class="value">{{ trace.traceId }}</span>
           <span class="value ml-5 cp" @click="handleCopyTraceId">
-            <Icon size="middle" iconName="copy" />
+            <el-icon><CopyDocument /></el-icon>
           </span>
         </div>
       </div>
@@ -79,7 +79,6 @@ limitations under the License. -->
 <script setup>
   import { ref, computed } from "vue";
   import { ElMessage } from "element-plus";
-  import { ArrowDown } from "@element-plus/icons-vue";
   import MinTimeline from "./MinTimeline.vue";
   import { saveFileAsJSON } from "@/utils/file.js";
   import TimelineTool from "./TimelineTool.vue";

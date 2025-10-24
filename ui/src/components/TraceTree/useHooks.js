@@ -51,8 +51,8 @@ export const useRangeTimestampHandler = ({
   isSmallerThanOpositeX,
   setTimestamp,
 }) => {
-  const currentX = ref<number>(NaN);
-  const mouseDownX = ref<number>(NaN);
+  const currentX = ref(NaN);
+  const mouseDownX = ref(NaN);
   const isDragging = ref(false);
   const selectedTimestampComputed = ref(selectedTimestamp);
   const opositeX = computed(() => {

@@ -17,15 +17,12 @@ limitations under the License. -->
     <div class="flex-h trace-type item">
       <el-radio-group v-model="spansGraphType" size="small">
         <el-radio-button v-for="option in reorderedOptions" :key="option.value" :value="option.value">
-          <Icon :iconName="option.icon" />
           {{ option.label }}
         </el-radio-button>
       </el-radio-group>
     </div>
     <div>
-      <el-button size="small" @click="onToggleMinTimeline">
-        <Icon iconName="sort" size="middle" />
-      </el-button>
+      <el-button :icon="DCaret" size="small" @click="onToggleMinTimeline" />
     </div>
   </div>
 </template>

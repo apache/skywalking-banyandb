@@ -69,35 +69,15 @@ limitations under the License. -->
         @click="selectSpan"
         @click.stop
       >
-        <Icon
+        <el-icon
           :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
           @click.stop="toggle"
           v-if="data.children && data.children.length"
-          iconName="arrow-down"
-          size="sm"
           class="mr-5"
           @click="hideActionBox"
-        />
-        <el-tooltip
-          :content="data.type === 'Entry' ? 'Entry' : 'Exit'"
-          placement="top"
-          :show-after="300"
-          v-if="['Entry', 'Exit'].includes(data.type)"
         >
-          <span>
-            <Icon :iconName="data.type === 'Entry' ? 'entry' : 'exit'" size="sm" class="mr-5" />
-          </span>
-        </el-tooltip>
-        <el-tooltip v-if="isCrossThread" content="CROSS_THREAD" placement="top" :show-after="300">
-          <span>
-            <Icon iconName="cross" size="sm" class="mr-5" />
-          </span>
-        </el-tooltip>
-        <el-tooltip :content="data.endpointName" placement="top" :show-after="300">
-          <span class="link-span">
-            {{ data.endpointName }}
-          </span>
-        </el-tooltip>
+          <ArrowDown />
+        </el-icon>
       </div>
       <!-- <div class="start-time">
         {{ data.startTime ? dateFormat(data.startTime) : "" }}
@@ -112,19 +92,6 @@ limitations under the License. -->
       </div>
       <div class="self">
         {{ data.dur ? data.dur + "" : "0" }}
-      </div>
-      <div class="api">
-        <el-tooltip :show-after="300" :content="data.component || '-'" placement="top">
-          <span>{{ data.component || "-" }}</span>
-        </el-tooltip>
-      </div>
-      <div class="application">
-        <el-tooltip :show-after="300" :content="data.serviceCode || '-'" placement="top">
-          <span>{{ data.serviceCode }}</span>
-        </el-tooltip>
-      </div>
-      <div class="application">
-        <span>{{ data.attachedEvents && data.attachedEvents.length }}</span>
       </div>
     </div>
     <div v-show="data.children && data.children.length > 0 && displayChildren" class="children-trace">
@@ -177,10 +144,6 @@ limitations under the License. -->
     const result = (selfTime.value / execTime.value) * 100;
     const resultStr = result.toFixed(4) + "%";
     return resultStr === "0.0000%" ? "0.9%" : resultStr;
-  });
-  const isCrossThread = computed(() => {
-    const key = props.data.refs?.findIndex((d) => d.type === "CROSS_THREAD") ?? -1;
-    return key > -1 ? true : false;
   });
   const inTimeRange = computed(() => {
     if (props.selectedMinTimestamp === undefined || props.selectedMaxTimestamp === undefined) {

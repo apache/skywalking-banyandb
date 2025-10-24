@@ -11,9 +11,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <div class="trace-t-loading" v-show="loading">
-    <Icon iconName="spinner" size="sm" />
-  </div>
   <TableContainer
     v-if="type === TraceGraphType.TABLE"
     :tableData="segmentId"
@@ -24,7 +21,7 @@ limitations under the License. -->
     :selectedMinTimestamp="selectedMinTimestamp"
     @select="handleSelectSpan"
   >
-    <div class="trace-tips" v-if="!segmentId.length">{{ $t("noData") }}</div>
+    <div class="trace-tips" v-if="!segmentId.length">No data</div>
   </TableContainer>
   <div v-else ref="traceGraph" class="d3-graph"></div>
   <div id="trace-action-box">

@@ -14,9 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
   <div class="trace-statistics">
-    <div class="trace-t-loading" v-show="loading">
-      <Icon iconName="spinner" size="sm" />
-    </div>
     <TableContainer
       :tableData="tableData"
       :type="TraceGraphType.STATISTICS"

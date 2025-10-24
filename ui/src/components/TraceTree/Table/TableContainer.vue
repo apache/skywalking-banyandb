@@ -24,14 +24,16 @@ limitations under the License. -->
           :key="componentKey"
           v-if="item.key !== 'endpointName' && item.key !== 'type'"
         >
-          <Icon iconName="sort" size="sm" />
+          <el-icon><DCaret /></el-icon>
         </span>
       </div>
     </div>
     <div class="trace-table-header" v-else>
       <div class="method" :style="`width: ${method}px`">
         <span class="cp dragger" ref="dragger">
-          <Icon iconName="settings_ethernet" size="sm" />
+          <el-icon><ArrowLeft /></el-icon>
+          <el-icon><MoreFilled /></el-icon>
+          <el-icon><ArrowRight /></el-icon>
         </span>
         {{ headerData[0].value }}
       </div>
