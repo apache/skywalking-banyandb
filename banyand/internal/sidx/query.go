@@ -189,6 +189,14 @@ func (s *sidx) prepareStreamingResources(
 		prepareSpan.Tagf("max_key", "%d", maxKey)
 		prepareSpan.Tagf("ascending", "%t", asc)
 		prepareSpan.Tagf("part_count", "%d", len(parts))
+		// Sample the first few part paths
+		sampleSize := 5
+		if len(parts) < sampleSize {
+			sampleSize = len(parts)
+		}
+		for i := 0; i < sampleSize; i++ {
+			prepareSpan.Tag("part_path_"+string(rune('0'+i)), parts[i].path)
+		}
 	}
 	if len(parts) == 0 {
 		return nil, false
@@ -380,20 +388,7 @@ func (s *sidx) buildCursorsForBatch(
 	req QueryRequest,
 	asc bool,
 ) ([]*blockCursor, error) {
-	var buildSpan *query.Span
-	if tracer := query.GetTracer(ctx); tracer != nil {
-		buildSpan, ctx = tracer.StartSpan(ctx, "sidx.build-cursors-for-batch")
-		defer func() {
-			if buildSpan != nil {
-				buildSpan.Stop()
-			}
-		}()
-	}
-
 	if len(batch.bss) == 0 {
-		if buildSpan != nil {
-			buildSpan.Tag("empty_batch", "true")
-		}
 		return nil, nil
 	}
 
@@ -403,12 +398,6 @@ func (s *sidx) buildCursorsForBatch(
 	}
 	if workerCount > len(batch.bss) {
 		workerCount = len(batch.bss)
-	}
-
-	if buildSpan != nil {
-		buildSpan.Tagf("block_scan_results", "%d", len(batch.bss))
-		buildSpan.Tagf("worker_count", "%d", workerCount)
-		buildSpan.Tagf("tags_to_load", "%d", len(tagsToLoad))
 	}
 
 	jobCh := make(chan blockScanResult, workerCount)
@@ -466,9 +455,6 @@ func (s *sidx) buildCursorsForBatch(
 			for bc := range resultCh {
 				releaseBlockCursor(bc)
 			}
-			if buildSpan != nil {
-				buildSpan.Tag("canceled", "job_distribution")
-			}
 			return nil, ctx.Err()
 		case jobCh <- batch.bss[i]:
 		}
@@ -483,17 +469,9 @@ func (s *sidx) buildCursorsForBatch(
 		cursors = append(cursors, bc)
 	}
 
-	if buildSpan != nil {
-		buildSpan.Tagf("cursors_created", "%d", len(cursors))
-	}
-
 	if err := ctx.Err(); err != nil {
 		for i := range cursors {
 			releaseBlockCursor(cursors[i])
-		}
-		if buildSpan != nil {
-			buildSpan.Tag("canceled", "after_workers")
-			buildSpan.Error(err)
 		}
 		return nil, err
 	}

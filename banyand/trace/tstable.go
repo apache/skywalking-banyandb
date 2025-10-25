@@ -460,7 +460,7 @@ func (ti *tstIter) reset() {
 	ti.idx = 0
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, groupedTids [][]string) {
 	ti.reset()
 	ti.parts = parts
 
@@ -470,7 +470,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
 		ti.piPool[i] = &partIter{}
-		ti.piPool[i].init(bma, p, tids)
+		ti.piPool[i].init(bma, p, groupedTids[i])
 	}
 
 	if len(ti.piPool) == 0 {

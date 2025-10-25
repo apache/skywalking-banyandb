@@ -30,6 +30,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -700,6 +701,21 @@ type scanCursorResult struct {
 	err    error
 }
 
+// shouldScanPart checks if a part should be scanned for the given traceIDs using bloom filter.
+// Returns true if bloom filter is nil OR any traceID might be in the part.
+// Returns false if bloom filter confirms no traceIDs exist in the part.
+func shouldScanPart(p *part, traceIDs []string) bool {
+	if p.traceIDFilter.filter == nil || len(traceIDs) == 0 {
+		return true
+	}
+	for _, traceID := range traceIDs {
+		if p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string, out chan<- scanCursorResult) {
 	if len(parts) == 0 || len(traceIDs) == 0 {
 		return
@@ -708,10 +724,68 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 	sortedIDs := append([]string(nil), traceIDs...)
 	sort.Strings(sortedIDs)
 
-	recordBlock, finish := startBlockScanSpan(ctx, sortedIDs, parts)
-	if finish == nil {
-		finish = func(error) {}
+	// Track part selection performance
+	ctx, finishPartSelection := startPartSelectionSpan(ctx, len(parts), len(sortedIDs))
+
+	// Filter parts using bloom filters to skip parts that don't contain any of the traceIDs
+	filteredParts := make([]*part, 0, len(parts))
+	for _, p := range parts {
+		if shouldScanPart(p, sortedIDs) {
+			filteredParts = append(filteredParts, p)
+		}
 	}
+
+	bloomFilteredParts := len(filteredParts)
+
+	// If no parts contain any of the traceIDs, return early
+	if bloomFilteredParts == 0 {
+		finishPartSelection(&partSelectionMetrics{bloomFilteredParts: bloomFilteredParts}, 0)
+		return
+	}
+
+	// Group trace IDs by part using bloom filters
+	groupedIDs := make([][]string, len(filteredParts))
+	totalGroupedIDs := 0
+	for _, traceID := range sortedIDs {
+		for i, p := range filteredParts {
+			if p.traceIDFilter.filter == nil || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+				groupedIDs[i] = append(groupedIDs[i], traceID)
+				totalGroupedIDs++
+			}
+		}
+	}
+
+	// Compact filteredParts and groupedIDs in-place to remove parts with no matching trace IDs
+	partsBeforeCompact := len(filteredParts)
+	writeIdx := 0
+	for i := range filteredParts {
+		if len(groupedIDs[i]) > 0 {
+			filteredParts[writeIdx] = filteredParts[i]
+			groupedIDs[writeIdx] = groupedIDs[i]
+			writeIdx++
+		}
+	}
+	filteredParts = filteredParts[:writeIdx]
+	groupedIDs = groupedIDs[:writeIdx]
+
+	if len(filteredParts) == 0 {
+		finishPartSelection(&partSelectionMetrics{
+			bloomFilteredParts: bloomFilteredParts,
+			partsBeforeCompact: partsBeforeCompact,
+		}, 0)
+		return
+	}
+
+	// Use compacted filteredParts for scanning
+	parts = filteredParts
+
+	finishPartSelection(&partSelectionMetrics{
+		bloomFilteredParts: bloomFilteredParts,
+		totalGroupedIDs:    totalGroupedIDs,
+		partsBeforeCompact: partsBeforeCompact,
+	}, len(parts))
+
+	recordBlock, finishSpan := startAggregatedBlockScanSpan(ctx, sortedIDs, parts)
 
 	var (
 		spanErr        error
@@ -720,7 +794,7 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 	)
 
 	defer func() {
-		finish(spanErr)
+		finishSpan(cursorCount, spanBlockBytes, spanErr)
 	}()
 
 	bma := generateBlockMetadataArray()
@@ -729,7 +803,7 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 	tstIter := generateTstIter()
 	defer releaseTstIter(tstIter)
 
-	tstIter.init(bma, parts, sortedIDs)
+	tstIter.init(bma, parts, groupedIDs)
 	if initErr := tstIter.Error(); initErr != nil {
 		spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
 		select {
@@ -778,7 +852,7 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 
 		// Quota OK, send cursor
 		if recordBlock != nil {
-			recordBlock(bc)
+			recordBlock(bc, blockSize)
 		}
 		spanBlockBytes += blockSize
 		cursorCount++

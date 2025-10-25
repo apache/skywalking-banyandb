@@ -102,7 +102,11 @@ func TestQueryResult(t *testing.T) {
 				bma := generateBlockMetadataArray()
 				defer releaseBlockMetadataArray(bma)
 				ti := &tstIter{}
-				ti.init(bma, pp, []string{tt.traceID})
+				groupedTids := make([][]string, len(pp))
+				for i := range groupedTids {
+					groupedTids[i] = []string{tt.traceID}
+				}
+				ti.init(bma, pp, groupedTids)
 
 				var (
 					result  queryResult
@@ -355,7 +359,11 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 				for batchIdx, batchTraceIDs := range tt.traceIDs {
 					bma := generateBlockMetadataArray()
 					ti := &tstIter{}
-					ti.init(bma, pp, batchTraceIDs)
+					groupedTids := make([][]string, len(pp))
+					for i := range groupedTids {
+						groupedTids[i] = batchTraceIDs
+					}
+					ti.init(bma, pp, groupedTids)
 
 					var cursors []*blockCursor
 					for ti.nextBlock() {
