@@ -13,91 +13,53 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <div class="trace-query-content">
-    <div class="trace-info">
-      <div class="flex-h" style="justify-content: space-between">
-        <h3>{{ trace.label }}</h3>
-        <div class="flex-h">
-          <el-dropdown @command="handleDownload" trigger="click">
-            <el-button size="small">
-              Download
-              <el-icon class="el-icon--right"><arrow-down /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="json">Download JSON</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </div>
-      <div class="trace-meta flex-h">
-        <div>
-          <span class="grey mr-5">Duration</span>
-          <span class="value">{{ trace.duration }}ms</span>
-        </div>
-        <div>
-          <span class="grey mr-5">Total Spans</span>
-          <span class="value">{{ trace.children?.length || 0 }}</span>
-        </div>
-        <div class="trace-id-container flex-h" style="align-items: center">
-          <span class="grey mr-5">Trace ID</span>
-          <span class="value">{{ trace.traceId }}</span>
-          <span class="value ml-5 cp" @click="handleCopyTraceId">
-            <el-icon><CopyDocument /></el-icon>
-          </span>
-        </div>
-      </div>
-    </div>
-    <div class="flex-h">
-      <div class="detail-section-timeline flex-v">
-        <MinTimeline
-          v-show="minTimelineVisible"
-          :trace="trace"
-          :minTimestamp="minTimestamp"
-          :maxTimestamp="maxTimestamp"
-          @updateSelectedMaxTimestamp="handleSelectedMaxTimestamp"
-          @updateSelectedMinTimestamp="handleSelectedMinTimestamp"
-        />
-        <TimelineTool @toggleMinTimeline="toggleMinTimeline" @updateSpansGraphType="handleSpansGraphTypeUpdate" />
-        <component
-          :is="graphs[spansGraphType]"
-          :data="trace.spans"
-          :traceId="trace?.traceId"
-          :showBtnDetail="false"
-          headerType="Trace"
-          :selectedMaxTimestamp="selectedMaxTimestamp"
-          :selectedMinTimestamp="selectedMinTimestamp"
-          :minTimestamp="minTimestamp"
-          :maxTimestamp="maxTimestamp"
-        />
-      </div>
-    </div>
+  <div class="detail-section-timeline" style="display: flex; flex-direction: column;">
+    <MinTimeline
+      v-show="minTimelineVisible"
+      :spanList="spanList"
+      :minTimestamp="minTimestamp"
+      :maxTimestamp="maxTimestamp"
+      @updateSelectedMaxTimestamp="handleSelectedMaxTimestamp"
+      @updateSelectedMinTimestamp="handleSelectedMinTimestamp"
+    />
+    <TimelineTool @toggleMinTimeline="toggleMinTimeline" @updateSpansGraphType="handleSpansGraphTypeUpdate" />
+    <component
+      :is="graphs[spansGraphType]"
+      :data="traceData"
+      :traceId="trace?.traceId"
+      :selectedMaxTimestamp="selectedMaxTimestamp"
+      :selectedMinTimestamp="selectedMinTimestamp"
+      :minTimestamp="minTimestamp"
+      :maxTimestamp="maxTimestamp"
+    />
   </div>
 </template>
 
 <script setup>
   import { ref, computed } from "vue";
-  import { ElMessage } from "element-plus";
-  import { CopyDocument } from "@element-plus/icons-vue";
   import MinTimeline from "./MinTimeline.vue";
-  import { saveFileAsJSON } from "@/utils/file.js";
   import TimelineTool from "./TimelineTool.vue";
   import graphs from "./VisGraph/index";
   import { GraphTypeOptions } from "./VisGraph/constant";
-  import copy from "@/utils/copy.js";
+  import { getAllNodes } from "./VisGraph/D3Graph/utils/helper";
 
   const props = defineProps({
     trace: Object,
   });
+  const traceData = computed(() => {
+    return props.trace.spans.map(span => convertTree(span));
+  });
+  const spanList = computed(() => {
+    return getAllNodes({ label: "TRACE_ROOT", children: traceData.value });
+  });
   // Time range like xScale domain [0, max]
   const minTimestamp = computed(() => {
-    if (!props.trace.spans.length) return 0;
-    return Math.min(...props.trace.spans.map((s) => s.startTime || 0));
+    if (!traceData.value.length) return 0;
+    return Math.min(...spanList.value.filter(s => s.startTime > 0).map((s) => s.startTime));
   });
 
   const maxTimestamp = computed(() => {
-    const timestamps = props.trace.spans.map((span) => span.endTime || 0);
+    const timestamps = spanList.value.map((span) => span.endTime || 0);
     if (timestamps.length === 0) return 0;
 
     return Math.max(...timestamps);
@@ -123,35 +85,32 @@ limitations under the License. -->
     spansGraphType.value = value;
   }
 
-  function handleDownload() {
-    const trace = props.trace;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const baseFilename = `trace-${trace.traceId}-${timestamp}`;
-    const spans = trace.spans.map((span) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { duration, label, ...newSpan } = span;
-      return newSpan;
-    });
-    try {
-      saveFileAsJSON(spans, `${baseFilename}.json`);
-      ElMessage.success("Trace data downloaded as JSON");
-    } catch (error) {
-      console.error("Download error:", error);
-      ElMessage.error("Failed to download file");
+  function convertTree(d, spans) {
+    d.endTime = new Date(d.endTime).getTime();
+    d.startTime = new Date(d.startTime).getTime();
+    d.duration = Number(d.duration);
+    d.label = d.message;
+    
+    if (d.children && d.children.length > 0) {
+      let dur = d.endTime - d.startTime;
+      for (const i of d.children) {
+        i.endTime = new Date(i.endTime).getTime();
+        i.startTime = new Date(i.startTime).getTime();
+        dur -= i.endTime - i.startTime;
+      }
+      d.dur = dur < 0 ? 0 : dur;
+      for (const i of d.children) {
+        convertTree(i, spans);
+      }
+    } else {
+      d.dur = d.endTime - d.startTime;
     }
-  }
-  function handleCopyTraceId() {
-    if (!props.trace?.traceId) return;
-    copy(props.trace?.traceId);
+    
+    return d;
   }
 </script>
 
 <style lang="scss" scoped>
-  .trace-info {
-    padding-bottom: 15px;
-    border-bottom: 1px solid var(--el-border-color-light);
-  }
-
   .trace-info h3 {
     margin: 0 0 10px;
     color: var(--el-text-color-primary);

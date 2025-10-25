@@ -15,41 +15,6 @@
  * limitations under the License.
  */
 
-export const ProfileConstant = [
-  {
-    label: "method",
-    value: "Span",
-  },
-  {
-    label: "start-time",
-    value: "Start Time",
-  },
-  {
-    label: "exec-ms",
-    value: "Exec(ms)",
-  },
-  {
-    label: "exec-percent",
-    value: "Exec(%)",
-  },
-  {
-    label: "self",
-    value: "Self(ms)",
-  },
-  {
-    label: "api",
-    value: "API",
-  },
-  {
-    label: "application",
-    value: "Service",
-  },
-  {
-    label: "application",
-    value: "Operation",
-  },
-];
-
 export const TraceConstant = [
   {
     label: "method",
@@ -70,18 +35,6 @@ export const TraceConstant = [
   {
     label: "self",
     value: "Self(ms)",
-  },
-  {
-    label: "api",
-    value: "API",
-  },
-  {
-    label: "application",
-    value: "Service",
-  },
-  {
-    label: "application",
-    value: "Attached Events",
   },
 ];
 

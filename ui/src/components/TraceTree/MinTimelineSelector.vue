@@ -144,10 +144,10 @@ limitations under the License. -->
     return adjustPercentValue(minOpositeX.value);
   });
 
-  const boundaryRight = computed(() => adjustPercentValue(maxOpositeX.value));
+  const boundaryRight = computed(() => adjustPercentValue(maxOpositeX.value) || 0);
 
-  const minMouseDownX = computed(() => minRangeHandler.value.mouseDownX.value);
-  const minCurrentX = computed(() => minRangeHandler.value.currentX.value);
-  const maxMouseDownX = computed(() => maxRangeHandler.value.mouseDownX.value);
-  const maxCurrentX = computed(() => maxRangeHandler.value.currentX.value);
+  const minMouseDownX = computed(() => minRangeHandler.value.mouseDownX.value || 0);
+  const minCurrentX = computed(() => minRangeHandler.value.currentX.value || 0);
+  const maxMouseDownX = computed(() => maxRangeHandler.value.mouseDownX.value || 0);
+  const maxCurrentX = computed(() => maxRangeHandler.value.currentX.value || 0);
 </script>

@@ -53,12 +53,8 @@ limitations under the License. -->
         'trace-item',
         'level' + ((data.level || 0) - 1),
         { 'trace-item-error': data.isError },
-        { profiled: data.profiled === false },
-        `trace-item-${data.key}`,
         { highlighted: inTimeRange },
       ]"
-      :data-text="data.profiled === false ? 'No Thread Dump' : ''"
-      @click="hideActionBox"
     >
       <div
         :class="['method', 'level' + ((data.level || 0) - 1)]"
@@ -66,24 +62,22 @@ limitations under the License. -->
           'text-indent': ((data.level || 0) - 1) * 10 + 'px',
           width: `${method}px`,
         }"
-        @click="selectSpan"
         @click.stop
       >
         <el-icon
           :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
           @click.stop="toggle"
           v-if="data.children && data.children.length"
-          class="mr-5"
-          @click="hideActionBox"
         >
           <ArrowDown />
         </el-icon>
+        {{ data.message }}
       </div>
-      <!-- <div class="start-time">
-        {{ data.startTime ? dateFormat(data.startTime) : "" }}
-      </div> -->
+      <div class="start-time">
+        {{ new Date(data.startTime).toLocaleString() }}
+      </div>
       <div class="exec-ms">
-        {{ data.endTime - data.startTime ? data.endTime - data.startTime : "0" }}
+        {{ data.endTime - data.startTime}}ms
       </div>
       <div class="exec-percent">
         <div class="outer-progress_bar" :style="{ width: outterPercent }">
@@ -91,7 +85,7 @@ limitations under the License. -->
         </div>
       </div>
       <div class="self">
-        {{ data.dur ? data.dur + "" : "0" }}
+        {{ data.duration }}
       </div>
     </div>
     <div v-show="data.children && data.children.length > 0 && displayChildren" class="children-trace">
@@ -101,10 +95,8 @@ limitations under the License. -->
         :key="index"
         :data="child"
         :type="type"
-        :headerType="headerType"
         :selectedMaxTimestamp="selectedMaxTimestamp"
         :selectedMinTimestamp="selectedMinTimestamp"
-        @selectedSpan="selectItem"
       />
     </div>
   </div>
@@ -114,19 +106,15 @@ limitations under the License. -->
   import { ArrowDown } from "@element-plus/icons-vue";
   import { TraceGraphType } from "../VisGraph/constant.js";
 
-  const emits = defineEmits(["selectedSpan"]);
   const props = defineProps({
     data: Object,
     method: Number,
     type: String,
-    headerType: String,
     traceId: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
   const displayChildren = ref(true);
-  const showDetail = ref(false);
-  const selfTime = computed(() => (props.data.dur ? props.data.dur : 0));
   const execTime = computed(() =>
     props.data.endTime - props.data.startTime > 0 ? props.data.endTime - props.data.startTime : 0,
   );
@@ -142,7 +130,7 @@ limitations under the License. -->
     }
   });
   const innerPercent = computed(() => {
-    const result = (selfTime.value / execTime.value) * 100;
+    const result = (props.data.duration / execTime.value) * 100;
     const resultStr = result.toFixed(4) + "%";
     return resultStr === "0.0000%" ? "0.9%" : resultStr;
   });
@@ -156,79 +144,9 @@ limitations under the License. -->
   function toggle() {
     displayChildren.value = !displayChildren.value;
   }
-  function selectItem(span) {
-    emits("selectedSpan", span);
-  }
-  function showSelectSpan(dom) {
-    if (!dom) {
-      return;
-    }
-    const items = Array.from(document.querySelectorAll(".trace-item"));
-    for (const item of items) {
-      item.style.background = "transparent";
-    }
-    dom.style.background = "var(--sw-trace-table-selected)";
-    const p = document.getElementsByClassName("profiled")[0];
-    if (p) {
-      p.style.background = "var(--border-color-primary)";
-    }
-  }
-  function selectSpan(event) {
-    emits("selectedSpan", props.data);
-    const dom = event
-      .composedPath()
-      .find((d) => d.className.includes("trace-item"));
-    selectedItem(props.data);
-    viewSpanDetail(dom);
-    if (props.type === TraceGraphType.STATISTICS) {
-      return;
-    }
-    const item = document.querySelector("#trace-action-box");
-    const tableBox = document.querySelector(".trace-table-charts")?.getBoundingClientRect();
-    if (!tableBox || !item) {
-      return;
-    }
-    const offsetX = event.x - tableBox.x;
-    const offsetY = event.y - tableBox.y;
-    item.style.display = "block";
-    item.style.top = `${offsetY + 20}px`;
-    item.style.left = `${offsetX + 10}px`;
-  }
-  function viewSpan(event) {
-    showDetail.value = true;
-    const dom = event
-      .composedPath()
-      .find((d) => d.className.includes("trace-item"));
-    selectedItem(props.data);
-    viewSpanDetail(dom);
-  }
-  function selectedItem(span) {
-    emits("selectedSpan", span);
-  }
-  function viewSpanDetail(dom) {
-    showSelectSpan(dom);
-    if (props.type === TraceGraphType.STATISTICS) {
-      showDetail.value = true;
-    }
-  }
-  function hideActionBox() {
-    const item = document.querySelector("#trace-action-box");
-    if (item) {
-      item.style.display = "none";
-    }
-  }
 </script>
 <style lang="scss" scoped>
   @import url("./table.scss");
-
-  .event-tag {
-    width: 12px;
-    height: 12px;
-    border-radius: 12px;
-    border: 1px solid #e66;
-    color: #e66;
-    display: inline-block;
-  }
 
   .trace-item.level0 {
     &:hover {
@@ -238,43 +156,6 @@ limitations under the License. -->
 
   .highlighted {
     color: var(--el-color-primary);
-  }
-
-  .profiled {
-    background-color: var(--sw-table-header);
-    position: relative;
-  }
-
-  .profiled::before {
-    content: attr(data-text);
-    position: absolute;
-    top: 30px;
-    left: 220px;
-    width: 100px;
-    padding: 10px;
-    border-radius: 5px;
-    border: 1px solid var(--disabled-color);
-    background-color: var(--font-color);
-    color: var(--text-color);
-    text-align: center;
-    box-shadow: var(--box-shadow-color) 0 2px 3px;
-    display: none;
-  }
-
-  .profiled::after {
-    content: "";
-    position: absolute;
-    left: 250px;
-    top: 20px;
-    border: 6px solid var(--font-color);
-    border-color: transparent transparent var(--font-color);
-    display: none;
-  }
-
-  .profiled:hover::before,
-  .profiled:hover::after {
-    display: block;
-    z-index: 999;
   }
 
   .trace-item-error {

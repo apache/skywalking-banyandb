@@ -26,7 +26,7 @@ limitations under the License. -->
       :x="`${marker.position}%`"
       :y="12"
       font-size="10"
-      fill="var(--sw-font-grey-color)"
+      fill="#999"
       text-anchor="right"
       :transform="`translate(${index === markers.length - 1 ? -50 : 5}, 0)`"
     >

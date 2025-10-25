@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-export function debounce(callback: Function, dur: number) {
-  let timer: any;
+export function debounce(callback, dur) {
+  let timer;
 
   return function () {
     if (timer) {
@@ -27,3 +27,4 @@ export function debounce(callback: Function, dur: number) {
     }, dur);
   };
 }
+

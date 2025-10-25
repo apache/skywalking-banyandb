@@ -15,7 +15,6 @@ limitations under the License. -->
     v-if="type === TraceGraphType.TABLE"
     :tableData="segmentId"
     :type="type"
-    :headerType="headerType"
     :traceId="traceId"
     :selectedMaxTimestamp="selectedMaxTimestamp"
     :selectedMinTimestamp="selectedMinTimestamp"
@@ -45,13 +44,12 @@ limitations under the License. -->
   import { debounce } from "@/utils/debounce";
   import { mutationObserver } from "@/utils/mutation";
   import { TraceGraphType } from "../constant";
-  import { buildSegmentForest, collapseTree, getRefsAllNodes } from "./utils/helper";
+  import { getAllNodes } from "./utils/helper";
 
   const props = defineProps({
     data: Array,
     traceId: String,
     type: String,
-    headerType: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
     minTimestamp: Number,
@@ -60,10 +58,8 @@ limitations under the License. -->
   const emits = defineEmits(["select"]);
   const loading = ref(false);
   const showDetail = ref(false);
-  const fixSpansSize = ref(0);
   const segmentId = ref([]);
   const currentSpan = ref(null);
-  const refSpans = ref([]);
   const tree = ref(null);
   const traceGraph = ref(null);
   const parentSpans = ref([]);
@@ -90,7 +86,6 @@ limitations under the License. -->
   }
   onMounted(async () => {
     loading.value = true;
-    changeTree();
     await nextTick();
     draw();
     loading.value = false;
@@ -104,8 +99,9 @@ limitations under the License. -->
   });
 
   function draw() {
+    // const transformedData = props.data;
     if (props.type === TraceGraphType.TABLE) {
-      segmentId.value = setLevel(segmentId.value);
+      segmentId.value = setLevel(props.data);
       return;
     }
     if (!traceGraph.value) {
@@ -115,33 +111,23 @@ limitations under the License. -->
     if (props.type === TraceGraphType.LIST) {
       tree.value = new ListGraph({ el: traceGraph.value, handleSelectSpan: handleSelectSpan });
       tree.value.init({
-        data: { label: "TRACE_ROOT", children: segmentId.value },
-        row: getRefsAllNodes({ label: "TRACE_ROOT", children: segmentId.value }),
-        fixSpansSize: fixSpansSize.value,
+        data: { label: "TRACE_ROOT", children: props.data },
+        row: getAllNodes({ label: "TRACE_ROOT", children: props.data }),
         selectedMaxTimestamp: props.selectedMaxTimestamp,
         selectedMinTimestamp: props.selectedMinTimestamp,
       });
       tree.value.draw();
-      selectInitialSpan();
+      // selectInitialSpan();
       return;
     }
     if (props.type === TraceGraphType.TREE) {
       tree.value = new TreeGraph({ el: traceGraph.value, handleSelectSpan });
       tree.value.init({
-        data: { label: `${props.traceId}`, children: segmentId.value },
-        row: getRefsAllNodes({ label: "TRACE_ROOT", children: segmentId.value }),
+        data: { label: `${props.traceId}`, children: props.data },
+        row: getAllNodes({ label: "TRACE_ROOT", children: props.data }),
         selectedMaxTimestamp: props.selectedMaxTimestamp,
         selectedMinTimestamp: props.selectedMinTimestamp,
       });
-    }
-  }
-  function selectInitialSpan() {
-    if (segmentId.value && segmentId.value.length > 0) {
-      const root = segmentId.value[0];
-      // traceStore.setCurrentSpan(root);
-      if (tree.value && typeof tree.value.highlightSpan === "function") {
-        tree.value.highlightSpan(root);
-      }
     }
   }
   function handleSelectSpan(i) {
@@ -207,22 +193,10 @@ limitations under the License. -->
     const box = document.querySelector("#trace-action-box");
     box.style.display = "none";
   }
-  function changeTree() {
-    if (!props.data.length) {
-      return [];
-    }
-    const { roots, fixSpansSize: fixSize, refSpans: refs } = buildSegmentForest(props.data, props.traceId);
-    segmentId.value = roots;
-    fixSpansSize.value = fixSize;
-    refSpans.value = refs;
-    for (const root of segmentId.value) {
-      collapseTree(root, refSpans.value);
-    }
-  }
   function setLevel(arr, level = 1, totalExec) {
     for (const item of arr) {
       item.level = level;
-      totalExec = totalExec || item.endTime - item.startTime;
+      totalExec = totalExec || new Date(item.endTime).getTime() - new Date(item.startTime).getTime();
       item.totalExec = totalExec;
       if (item.children && item.children.length > 0) {
         setLevel(item.children, level + 1, totalExec);
@@ -237,18 +211,6 @@ limitations under the License. -->
     mutationObserver.deleteObserve("trigger-resize");
     window.removeEventListener("spanPanelToggled", draw);
   });
-  watch(
-    () => props.data,
-    () => {
-      if (!props.data.length) {
-        return;
-      }
-      loading.value = true;
-      changeTree();
-      draw();
-      loading.value = false;
-    },
-  );
   watch(
     () => [props.selectedMaxTimestamp, props.selectedMinTimestamp],
     ([newMax, newMin]) => {

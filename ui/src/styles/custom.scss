@@ -64,3 +64,7 @@ html {
   --active-color: var(--el-color-primary);
   --disabled-color: #ccc;
 }
+
+div {
+  box-sizing: border-box;
+}

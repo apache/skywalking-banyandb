@@ -16,7 +16,6 @@ limitations under the License. -->
       :data="data"
       :traceId="traceId"
       :type="TraceGraphType.TABLE"
-      :headerType="headerType"
       @select="getSelectedSpan"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
@@ -36,7 +35,6 @@ limitations under the License. -->
     selectedMinTimestamp: Number,
     minTimestamp: Number,
     maxTimestamp: Number,
-    headerType: String,
   });
   const emits = defineEmits(["select"]);
 

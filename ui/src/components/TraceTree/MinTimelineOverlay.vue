@@ -18,9 +18,9 @@ limitations under the License. -->
       v-if="mouseDownX !== undefined && currentX !== undefined"
       :x="`${Math.min(mouseDownX, currentX)}%`"
       y="0"
-      :width="`${Math.abs(mouseDownX - currentX)}%`"
+      :width="`${Math.abs(mouseDownX - currentX) || 0}%`"
       height="100%"
-      fill="var(--el-color-primary-light-5)"
+      fill="var(--el-color-secondary-light-6)"
       fill-opacity="0.2"
       pointer-events="none"
     />
@@ -42,7 +42,7 @@ limitations under the License. -->
       :y1="0"
       :x2="`${hoverX}%`"
       y2="100%"
-      stroke="var(--el-color-primary-light-5)"
+      stroke="var(--el-color-secondary-light-6)"
       stroke-width="1"
       pointer-events="none"
     />
@@ -68,7 +68,7 @@ limitations under the License. -->
       return;
     }
     const x = calculateX(rootEl.value.getBoundingClientRect(), e.pageX);
-    currentX.value = x;
+    currentX.value = x || 0;
   }
   function handleMouseUp(e) {
     if (!isDragging.value || !rootEl.value || mouseDownXRef.value === undefined) {
@@ -110,7 +110,7 @@ limitations under the License. -->
     if (!rootEl.value) {
       return;
     }
-    const x = calculateX(rootEl.value.getBoundingClientRect(), e.pageX);
+    const x = calculateX(rootEl.value.getBoundingClientRect(), e.pageX) || 0;
     currentX.value = x;
     mouseDownX.value = x;
     mouseDownXRef.value = x;

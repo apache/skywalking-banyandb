@@ -216,21 +216,29 @@ export function buildSegmentForest(data, traceId) {
   return { roots, fixSpansSize: fixSpans.length, refSpans };
 }
 
-export function collapseTree(d, refSpans) {
-  if (d.children) {
-    const item = refSpans.find((s) => s.parentSpanId === d.spanId && s.parentSegmentId === d.segmentId);
+export function convertTree(d, spans) {
+  // Convert timestamps for current node
+  d.endTime = new Date(d.endTime).getTime();
+  d.startTime = new Date(d.startTime).getTime();
+  d.duration = Number(d.duration);
+  d.label = d.message;
+  
+  if (d.children && d.children.length > 0) {
     let dur = d.endTime - d.startTime;
     for (const i of d.children) {
+      i.endTime = new Date(i.endTime).getTime();
+      i.startTime = new Date(i.startTime).getTime();
       dur -= i.endTime - i.startTime;
     }
     d.dur = dur < 0 ? 0 : dur;
-    if (item) {
-      d.children = d.children?.sort(compare("startTime"));
-    }
     for (const i of d.children) {
-      collapseTree(i, refSpans);
+      convertTree(i, spans);
     }
+  } else {
+    d.dur = d.endTime - d.startTime;
   }
+  
+  return d;
 }
 
 function traverseTree(node, spanId, segmentId, data) {
@@ -246,15 +254,7 @@ function traverseTree(node, spanId, segmentId, data) {
   }
 }
 
-function compare(p) {
-  return (m, n) => {
-    const a = m[p];
-    const b = n[p];
-    return a - b;
-  };
-}
-
-export function getRefsAllNodes(tree) {
+export function getAllNodes(tree) {
   const nodes = [];
   const stack = [tree];
 

@@ -80,7 +80,7 @@ export default class ListGraph {
     L${d.target.y} ${d.target.x - 20}
     L${d.target.y} ${d.target.x - 5}`;
   }
-  init({ data, row, fixSpansSize, selectedMaxTimestamp, selectedMinTimestamp }) {
+  init({ data, row, selectedMaxTimestamp, selectedMinTimestamp }) {
     d3.select(`.${this.el?.className} .trace-xaxis`).remove();
     d3.select("#trace-action-box").style("display", "none");
     this.row = row;
@@ -98,7 +98,7 @@ export default class ListGraph {
       if (d >= 1000) return (d / 1000).toFixed(2) + "s";
       return d.toFixed(2);
     });
-    this.svg.attr("height", (this.row.length + fixSpansSize + 1) * this.barHeight);
+    this.svg.attr("height", (this.row.length + 1) * this.barHeight);
     this.svg
       .append("g")
       .attr("class", "trace-xaxis")
@@ -190,25 +190,9 @@ export default class ListGraph {
       .attr("y", -6)
       .attr("fill", (d) => (d.data.isError ? `var(--el-color-danger)` : `var(--font-color)`))
       .html((d) => {
-        const { label } = d.data;
-        if (d.data.label === "TRACE_ROOT") {
-          return "";
-        }
-        return (label || "").length > 30 ? `${label?.slice(0, 30)}...` : `${label}`;
-      });
-    nodeEnter
-      .append("text")
-      .attr("class", "node-text")
-      .attr("x", 35)
-      .attr("y", 12)
-      .attr("fill", (d) => (d.data.isError ? `var(--el-color-danger)` : `var(--disabled-color)`))
-      .style("font-size", "11px")
-      .text((d) => {
-        const { layer, component, event, startTime, startTimeNanos } = d.data;
-        const text = `${layer || ""} ${
-          component ? "- " + component : event ? this.visDate(startTime) + ":" + startTimeNanos : ""
-        }`;
-        return text.length > 20 ? `${text?.slice(0, 20)}...` : `${text}`;
+        const { message } = d.data;
+        if (!message) return "";
+        return message.length > 30 ? `${message?.slice(0, 30)}...` : `${message}`;
       });
     nodeEnter
       .append("rect")
@@ -218,8 +202,8 @@ export default class ListGraph {
       .attr("width", (d) => {
         if (!d.data.endTime || !d.data.startTime) return 0;
         // Calculate the actual start and end times within the visible range
-        let spanStart = d.data.startTime;
-        let spanEnd = d.data.endTime;
+        let spanStart = new Date(d.data.startTime).getTime();
+        let spanEnd = new Date(d.data.endTime).getTime();
 
         const isIn = d.data.startTime > this.maxTimestamp || d.data.endTime < this.minTimestamp;
         if (isIn) return 0;
@@ -243,7 +227,7 @@ export default class ListGraph {
         return this.width * (1 - xScaleWidth) - d.y - 25 + this.xScale(spanStart - min) || 0;
       })
       .attr("y", -2)
-      .style("fill", `#ccc`);
+      .style("fill", `#6e38f7`);
     const nodeUpdate = nodeEnter.merge(node);
     nodeUpdate
       .transition()
@@ -281,7 +265,7 @@ export default class ListGraph {
       .insert("path", "g")
       .attr("class", "trace-link")
       .attr("fill", "none")
-      .attr("stroke", "var(--sw-trace-list-path)")
+      .attr("stroke", "rgba(0, 0, 0, 0.1)")
       .attr("stroke-width", 2)
       .attr("transform", `translate(5, 0)`)
       .attr("d", () => {

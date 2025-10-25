@@ -17,7 +17,6 @@ limitations under the License. -->
     <TableContainer
       :tableData="tableData"
       :type="TraceGraphType.STATISTICS"
-      :headerType="headerType"
       :traceId="traceId"
     >
       <div class="trace-tips" v-if="!tableData.length">No data</div>
@@ -33,8 +32,6 @@ limitations under the License. -->
   const props = defineProps({
     data: Array,
     traceId: String,
-    showBtnDetail: Boolean,
-    headerType: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });

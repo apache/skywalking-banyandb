@@ -13,30 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <rect :x="`${startPct}%`" :y="0" :width="`${widthPct}%`" :height="barHeight" fill="#ccc" rx="2" ry="2" />
-  <!-- Label and Duration Text -->
-  <text
-    v-if="showLabel"
-    :x="0"
-    :y="barHeight - 7"
-    font-size="10"
-    fill="var(--sw-font-grey-color)"
-    text-anchor="start"
-    class="span-label"
-  >
-    {{ span.label || "Unknown" }}
-  </text>
-  <text
-    v-if="showDuration"
-    :x="`${100}%`"
-    :y="barHeight - 7"
-    font-size="10"
-    fill="var(--sw-font-grey-color)"
-    text-anchor="end"
-    class="span-duration"
-  >
-    {{ span.duration }}ms
-  </text>
+  <rect :x="`${startPct}%`" :y="0" :width="`${widthPct}%`" :height="barHeight" fill="var(--el-color-primary)" rx="2" ry="2" />
 </template>
 
 <script setup>
@@ -46,9 +23,6 @@ limitations under the License. -->
     span: Object,
     minTimestamp: Number,
     maxTimestamp: Number,
-    depth: Number,
-    showDuration: Boolean,
-    showLabel: Boolean,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });

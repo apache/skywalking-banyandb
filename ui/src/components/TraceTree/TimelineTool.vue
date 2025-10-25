@@ -13,14 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <div class="timeline-tool flex-h">
-    <div class="flex-h trace-type item">
+  <div class="timeline-tool">
       <el-radio-group v-model="spansGraphType" size="small">
         <el-radio-button v-for="option in reorderedOptions" :key="option.value" :value="option.value">
           {{ option.label }}
         </el-radio-button>
       </el-radio-group>
-    </div>
     <div>
       <el-button :icon="DCaret" size="small" @click="onToggleMinTimeline" />
     </div>
@@ -54,5 +52,7 @@ limitations under the License. -->
     justify-content: space-between;
     padding: 10px 5px;
     border-bottom: 1px solid var(--el-border-color-light);
+    display: flex;
+    flex-direction: row;
   }
 </style>

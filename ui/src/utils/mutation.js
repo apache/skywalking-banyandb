@@ -16,29 +16,30 @@
  */
 
 export class mutationObserver {
-  private static mutationObserverMap: Map<string, MutationObserver> = new Map<string, MutationObserver>();
+  static mutationObserverMap = new Map();
 
-  static create(key: string, callback: MutationCallback) {
+  static create(key, callback) {
     const observer = new MutationObserver(callback);
     mutationObserver.mutationObserverMap.set(key, observer);
   }
 
-  static observe(key: string, target: Node, options?: MutationObserverInit) {
+  static observe(key, target, options) {
     const observer = mutationObserver.mutationObserverMap.get(key);
     if (observer) {
       observer.observe(target, options);
     }
   }
 
-  static deleteObserve(key: string): void {
+  static deleteObserve(key) {
     this.disconnect(key);
     this.mutationObserverMap.delete(key);
   }
 
-  static disconnect(key: string): void {
+  static disconnect(key) {
     const observer = this.mutationObserverMap.get(key);
     if (observer) {
       observer.disconnect();
     }
   }
 }
+

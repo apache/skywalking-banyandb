@@ -20,10 +20,10 @@ limitations under the License. -->
       </svg>
     </div>
     <div
-      class="timeline-content scroll_bar_style"
-      :style="{ paddingRight: (trace.spans.length + 1) * rowHeight < 200 ? '20px' : '14px' }"
+      class="timeline-content"
+      :style="{ paddingRight: (spanList.length + 1) * rowHeight < 200 ? '20px' : '14px' }"
     >
-      <svg ref="svgEle" width="100%" :height="`${(trace.spans.length + 1) * rowHeight}px`">
+      <svg ref="svgEle" width="100%" :height="`${(spanList.length + 1) * rowHeight}px`">
         <MinTimelineOverlay
           :minTimestamp="minTimestamp"
           :maxTimestamp="maxTimestamp"
@@ -39,7 +39,7 @@ limitations under the License. -->
           @setSelectedMaxTimestamp="setSelectedMaxTimestamp"
         />
         <g
-          v-for="(item, index) in trace.spans"
+          v-for="(item, index) in spanList"
           :key="index"
           :transform="`translate(0, ${(index + 1) * rowHeight + 3})`"
         >
@@ -57,7 +57,7 @@ limitations under the License. -->
   import MinTimelineSelector from "./MinTimelineSelector.vue";
 
   const props = defineProps({
-    trace: Object,
+    spanList: Array,
     minTimestamp: Number,
     maxTimestamp: Number,
   });
@@ -66,9 +66,7 @@ limitations under the License. -->
 
   const selectedMinTimestamp = ref(props.minTimestamp);
   const selectedMaxTimestamp = ref(props.maxTimestamp);
-
   const emit = defineEmits(["updateSelectedMaxTimestamp", "updateSelectedMinTimestamp"]);
-
   const setSelectedMinTimestamp = (value) => {
     selectedMinTimestamp.value = value;
     emit("updateSelectedMinTimestamp", value);

@@ -20,7 +20,7 @@
   import { reactive, ref, watch, getCurrentInstance, computed } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { Search, RefreshRight, TrendCharts } from '@element-plus/icons-vue';
   import { getResourceOfAllType, getTableList } from '@/api/index';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
@@ -404,7 +404,7 @@ orderBy:
         </el-col>
         <el-col :span="8">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="RefreshRight" @click="showTracesDialog = true" plain />
+            <el-button :icon="TrendCharts" @click="showTracesDialog = true" plain />
             <el-button :icon="RefreshRight" @click="getTableData" plain />
           </div>
         </el-col>
@@ -459,7 +459,7 @@ orderBy:
   </div>
   <el-dialog
     v-model="showTracesDialog"
-    full-screen
+    width="90%"
     :destroy-on-close="true"
     @closed="showTracesDialog = false"
   >

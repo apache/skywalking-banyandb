@@ -48,7 +48,6 @@ limitations under the License. -->
       :data="item"
       :key="`key${index}`"
       :type="type"
-      :headerType="headerType"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
       @selectedSpan="selectItem"
@@ -66,7 +65,6 @@ limitations under the License. -->
   const props = defineProps({
     tableData: Array,
     type: String,
-    headerType: String,
     traceId: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
@@ -79,11 +77,9 @@ limitations under the License. -->
   const dragger = ref(null);
   let headerData = TraceConstant;
 
-  if (props.type === TraceGraphType.STATISTICS) {
-    headerData = StatisticsConstant;
-  }
   onMounted(() => {
     if (props.type === TraceGraphType.STATISTICS) {
+      headerData = StatisticsConstant;
       return;
     }
     const drag = dragger.value;
