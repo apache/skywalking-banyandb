@@ -21,7 +21,7 @@
   import GroupTree from '@/components/GroupTree/index.vue';
   import TopNav from '@/components/TopNav/index.vue';
   import { reactive } from 'vue';
-  import { CatalogToGroupType } from '@/components/GroupTree/data';
+  import { CatalogToGroupType } from '@/components/common/data';
 
   const data = reactive({
     width: '200px',
