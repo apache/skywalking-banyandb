@@ -146,7 +146,6 @@ limit: 10`;
       </template>
       <div class="button-group-operator">
         <el-button size="small" :icon="Search" @click="searchProperties" plain />
-        <el-button size="small" :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
         <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
@@ -192,6 +191,9 @@ limit: 10`;
           </template>
         </el-table-column>
       </el-table>
+      <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain style="margin-top: 20px">
+        <span>Debug Trace</span>
+      </el-button>
     </el-card>
     <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>

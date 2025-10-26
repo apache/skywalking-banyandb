@@ -165,7 +165,6 @@ fieldValueSort: 1`;
         </el-col>
         <el-col :span="14">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
             <el-button :icon="RefreshRight" @click="initTopNAggregationData" plain />
           </div>
         </el-col>
@@ -193,6 +192,9 @@ fieldValueSort: 1`;
         @prev-click="changePage"
         @next-click="changePage"
       />
+      <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain :style="{ marginTop: '20px' }">
+        <span>Debug Trace</span>
+      </el-button>
     </el-card>
   </div>
   <el-dialog

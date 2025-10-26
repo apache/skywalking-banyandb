@@ -347,7 +347,6 @@ orderBy:
         </el-col>
         <el-col :span="14">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
             <el-button :icon="RefreshRight" @click="initTraceData" plain />
           </div>
         </el-col>
@@ -388,6 +387,9 @@ orderBy:
               </template>
             </el-table-column>
           </el-table>
+          <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain :style="{ marginTop: '20px' }">
+            <span>Debug Trace</span>
+          </el-button>
         </div>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
