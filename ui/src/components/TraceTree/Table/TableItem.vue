@@ -52,6 +52,11 @@ limitations under the License. -->
       <div class="self">
         {{ data.endTime - data.startTime}}
       </div>
+      <div class="tags">
+        <div class="tag" v-for="(tag, index) in visibleTags" :key="index">
+          {{ tag.key }}: {{ tag.value.length > 0 ? tag.value.slice(0, 20) + '...' : tag.value }}
+        </div>
+      </div>
     </div>
     <div v-show="data.children && data.children.length > 0 && displayChildren" class="children-trace">
       <table-item
@@ -76,6 +81,8 @@ limitations under the License. -->
     selectedMinTimestamp: Number,
   });
   const displayChildren = ref(true);
+  const MAX_VISIBLE_TAGS = 1;
+  
   const outterPercent = computed(() => {
     if (props.data.level === 1) {
       return "100%";
@@ -92,6 +99,26 @@ limitations under the License. -->
 
     return props.data.startTime <= props.selectedMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
   });
+  
+  const visibleTags = computed(() => {
+    if (!props.data.tags || props.data.tags.length === 0) {
+      return [];
+    }
+    return props.data.tags.slice(0, MAX_VISIBLE_TAGS);
+  });
+  
+  const hasMoreTags = computed(() => {
+    return props.data.tags && props.data.tags.length > MAX_VISIBLE_TAGS;
+  });
+  
+  const remainingTagsTooltip = computed(() => {
+    if (!props.data.tags || props.data.tags.length <= MAX_VISIBLE_TAGS) {
+      return '';
+    }
+    const remainingTags = props.data.tags.slice(MAX_VISIBLE_TAGS);
+    return remainingTags.map(tag => `${tag.key}: ${tag.value}`).join('\n');
+  });
+  
   function toggle() {
     displayChildren.value = !displayChildren.value;
   }
@@ -170,5 +197,29 @@ limitations under the License. -->
 
   .link-span {
     text-decoration: underline;
+  }
+
+  .tags {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      background-color: #f0f0f0;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    
+    .more-tags {
+      cursor: help;
+      color: #666;
+      font-weight: bold;
+      padding: 2px 6px;
+      &:hover {
+        color: var(--el-color-primary);
+      }
+    }
   }
 </style>
