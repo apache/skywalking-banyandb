@@ -23,12 +23,13 @@
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch } from 'vue';
-  import { RefreshRight, Search, Download } from '@element-plus/icons-vue';
+  import { RefreshRight, Search, Download, TrendCharts } from '@element-plus/icons-vue';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { Last15Minutes, Shortcuts } from '../common/data';
   import JSZip from 'jszip';
+  import TraceTree from '../TraceTree/TraceContent.vue';
 
   const { proxy } = getCurrentInstance();
   const route = useRoute();
@@ -45,6 +46,8 @@
   });
   const yamlCode = ref(``);
   const selectedSpans = ref([]);
+  const showTracesDialog = ref(false);
+  const traceData = ref(null);
 
   const getTraces = async (params) => {
     if (!data.indexRule?.metadata?.name) {
@@ -65,6 +68,7 @@
       });
       return;
     }
+    traceData.value = response.traces;
     data.spanTags = [];
     data.tableData = (response.traces || [])
       .map((trace) => {
@@ -343,6 +347,7 @@ orderBy:
         </el-col>
         <el-col :span="14">
           <div class="flex align-item-center justify-end" style="height: 30px">
+            <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
             <el-button :icon="RefreshRight" @click="initTraceData" plain />
           </div>
         </el-col>
@@ -388,6 +393,17 @@ orderBy:
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
   </div>
+  <el-dialog
+    v-model="showTracesDialog"
+    width="90%"
+    :destroy-on-close="true"
+    @closed="showTracesDialog = false"
+    class="trace-dialog"
+  >
+    <div style="max-height: 74vh; overflow-y: auto;">
+      <TraceTree :trace="traceData" />
+    </div>
+  </el-dialog>
 </template>
 <style lang="scss" scoped>
   :deep(.el-card) {
