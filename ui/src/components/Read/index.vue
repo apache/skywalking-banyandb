@@ -145,7 +145,6 @@
       timeRange = jsonToYaml(timeRange).data;
       data.code = `${timeRange}offset: 0
 limit: 10
-trace: true
 orderBy:
   indexRuleName: ""
   sort: SORT_UNSPECIFIED
