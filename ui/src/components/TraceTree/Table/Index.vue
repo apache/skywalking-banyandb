@@ -35,7 +35,6 @@ limitations under the License. -->
   const segmentId = ref([]);
   onMounted(() => {
     segmentId.value = setLevel(props.data);
-    console.log(segmentId.value);
   });
 
   function setLevel(arr, level = 1, totalExec) {
