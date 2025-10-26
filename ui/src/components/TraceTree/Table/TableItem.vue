@@ -47,9 +47,10 @@ limitations under the License. -->
         {{ (data.duration / 1000 / 1000).toFixed(3) }}
       </div>
       <div class="exec-percent">
-        <div class="outer-progress_bar" :style="{ width: outterPercent }">
-          <div class="inner-progress_bar" :style="{ width: innerPercent }"></div>
-        </div>
+        {{ outterPercent }}
+      </div>
+      <div class="exec-percent">
+        {{ innerPercent }}
       </div>
       <div class="self">
         {{ (data.selfDuration / 1000 / 1000).toFixed(3) }}
@@ -107,13 +108,13 @@ limitations under the License. -->
     const exec = props.data.endTime - props.data.startTime ? props.data.endTime - props.data.startTime : 0;
     let result = (exec / props.data.totalExec) * 100;
     result = result > 100 ? 100 : result;
-    const resultStr = result.toFixed(4) + '%';
-    return resultStr === '0.0000%' ? '0.9%' : resultStr;
+    const resultStr = result.toFixed(2) + '%';
+    return resultStr === '0.00%' ? '0.9%' : resultStr;
   });
   const innerPercent = computed(() => {
     const result = (props.data.selfDuration / props.data.duration) * 100;
-    const resultStr = result.toFixed(4) + '%';
-    return resultStr === '0.0000%' ? '0.9%' : resultStr;
+    const resultStr = result.toFixed(2) + '%';
+    return resultStr === '0.00%' ? '0.9%' : resultStr;
   });
   const inTimeRange = computed(() => {
     if (props.selectedMinTimestamp === undefined || props.selectedMaxTimestamp === undefined) {
@@ -191,7 +192,7 @@ limitations under the License. -->
   }
 
   .trace-item div.exec-percent {
-    width: 100px;
+    width: 120px;
     height: 30px;
     padding: 0 8px;
 

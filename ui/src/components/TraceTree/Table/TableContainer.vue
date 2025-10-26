@@ -51,7 +51,7 @@ limitations under the License. -->
     selectedMinTimestamp: Number,
   });
 
-  const method = ref(300);
+  const method = ref(460);
   const dragger = ref(null);
 
   onMounted(() => {
