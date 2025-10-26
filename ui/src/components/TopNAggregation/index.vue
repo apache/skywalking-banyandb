@@ -22,11 +22,12 @@
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
-  import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { Search, RefreshRight, TrendCharts } from '@element-plus/icons-vue';
   import { getTopNAggregationData } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
+  import TraceTree from '../TraceTree/TraceContent.vue';
 
   const pageSize = 10;
   const route = useRoute();
@@ -42,6 +43,8 @@
   const yamlCode = ref('');
   const loading = ref(false);
   const currentList = ref([]);
+  const showTracesDialog = ref(false);
+  const traceData = ref(null);
 
   function initTopNAggregationData() {
     if (!(data.type && data.group && data.name)) {
@@ -79,6 +82,7 @@ fieldValueSort: 1`;
       });
       return;
     }
+    traceData.value = result.traces || null;
     data.lists = (result.lists || [])
       .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
       .flat();
@@ -188,8 +192,28 @@ fieldValueSort: 1`;
         @prev-click="changePage"
         @next-click="changePage"
       />
+      <el-button
+        :icon="TrendCharts"
+        @click="showTracesDialog = true"
+        :disabled="!traceData"
+        plain
+        :style="{ marginTop: '20px' }"
+      >
+        <span>Debug Trace</span>
+      </el-button>
     </el-card>
   </div>
+  <el-dialog
+    v-model="showTracesDialog"
+    width="90%"
+    :destroy-on-close="true"
+    @closed="showTracesDialog = false"
+    class="trace-dialog"
+  >
+    <div style="max-height: 74vh; overflow-y: auto">
+      <TraceTree :trace="traceData" />
+    </div>
+  </el-dialog>
 </template>
 
 <style lang="scss" scoped>

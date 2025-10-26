@@ -21,13 +21,14 @@
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch, onMounted, getCurrentInstance } from 'vue';
-  import { RefreshRight, Search } from '@element-plus/icons-vue';
+  import { RefreshRight, Search, TrendCharts } from '@element-plus/icons-vue';
   import { fetchProperties, deleteProperty } from '@/api/index';
   import { yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import PropertyEditor from './PropertyEditor.vue';
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
+  import TraceTree from '../TraceTree/TraceContent.vue';
 
   const { proxy } = getCurrentInstance();
   // Loading
@@ -44,6 +45,8 @@
   });
   const yamlCode = ref(`name: ${data.name}
 limit: 10`);
+  const showTracesDialog = ref(false);
+  const traceData = ref(null);
   const getProperties = async (params) => {
     $loadingCreate();
     const res = await fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params });
@@ -55,6 +58,7 @@ limit: 10`);
       });
       return;
     }
+    traceData.value = res.trace;
     data.tableData = (res.properties || []).map((item) => {
       item.tags.forEach((tag) => {
         tag.value = JSON.stringify(tag.value);
@@ -141,10 +145,8 @@ limit: 10`;
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-        <div>
-          <el-button size="small" :icon="Search" @click="searchProperties" plain />
-          <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
-        </div>
+        <el-button size="small" :icon="Search" @click="searchProperties" plain />
+        <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
@@ -189,10 +191,30 @@ limit: 10`;
           </template>
         </el-table-column>
       </el-table>
+      <el-button
+        :icon="TrendCharts"
+        @click="showTracesDialog = true"
+        :disabled="!traceData"
+        plain
+        style="margin-top: 20px"
+      >
+        <span>Debug Trace</span>
+      </el-button>
     </el-card>
     <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
   </div>
+  <el-dialog
+    v-model="showTracesDialog"
+    width="90%"
+    :destroy-on-close="true"
+    @closed="showTracesDialog = false"
+    class="trace-dialog"
+  >
+    <div style="max-height: 74vh; overflow-y: auto">
+      <TraceTree :trace="traceData" />
+    </div>
+  </el-dialog>
 </template>
 <style lang="scss" scoped>
   :deep(.el-card) {
@@ -202,7 +224,7 @@ limit: 10`;
   .button-group-operator {
     display: flex;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: end;
     margin-bottom: 10px;
   }
 </style>
