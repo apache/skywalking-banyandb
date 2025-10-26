@@ -78,7 +78,7 @@ limitations under the License. -->
     minTimelineVisible.value = !minTimelineVisible.value;
   }
 
-  function convertTree(d, spans) {
+  function convertTree(d) {
     d.endTime = new Date(d.endTime).getTime();
     d.startTime = new Date(d.startTime).getTime();
     d.duration = Number(d.duration);
@@ -90,7 +90,7 @@ limitations under the License. -->
         i.startTime = new Date(i.startTime).getTime();
       }
       for (const i of d.children) {
-        convertTree(i, spans);
+        convertTree(i);
       }
     }
 
