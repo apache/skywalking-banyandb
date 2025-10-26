@@ -44,15 +44,13 @@ limitations under the License. -->
         {{ new Date(data.startTime).toLocaleString() }}
       </div>
       <div class="exec-ms">
-        {{ data.endTime - data.startTime}}ms
+        {{ data.duration }}
       </div>
       <div class="exec-percent">
-        <div class="outer-progress_bar" :style="{ width: outterPercent }">
-          <div class="inner-progress_bar" :style="{ width: innerPercent }"></div>
-        </div>
+        <div class="outer-progress_bar" :style="{ width: outterPercent }" />
       </div>
       <div class="self">
-        {{ data.duration }}
+        {{ data.endTime - data.startTime}}
       </div>
     </div>
     <div v-show="data.children && data.children.length > 0 && displayChildren" class="children-trace">
@@ -78,22 +76,12 @@ limitations under the License. -->
     selectedMinTimestamp: Number,
   });
   const displayChildren = ref(true);
-  const execTime = computed(() =>
-    props.data.endTime - props.data.startTime > 0 ? props.data.endTime - props.data.startTime : 0,
-  );
   const outterPercent = computed(() => {
     if (props.data.level === 1) {
       return "100%";
-    } else {
-      const { data } = props;
-      let result = (execTime.value / (data.totalExec || 0)) * 100;
-      result = result > 100 ? 100 : result;
-      const resultStr = result.toFixed(4) + "%";
-      return resultStr === "0.0000%" ? "0.9%" : resultStr;
     }
-  });
-  const innerPercent = computed(() => {
-    const result = (props.data.duration / execTime.value) * 100;
+    let result = (((props.data.endTime - props.data.startTime) || 0) / (props.data.duration || 0)) * 100;
+    result = result > 100 ? 100 : result;
     const resultStr = result.toFixed(4) + "%";
     return resultStr === "0.0000%" ? "0.9%" : resultStr;
   });

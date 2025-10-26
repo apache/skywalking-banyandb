@@ -85,39 +85,34 @@ limitations under the License. -->
     d.label = d.message;
     
     if (d.children && d.children.length > 0) {
-      let dur = d.endTime - d.startTime;
       for (const i of d.children) {
         i.endTime = new Date(i.endTime).getTime();
         i.startTime = new Date(i.startTime).getTime();
-        dur -= i.endTime - i.startTime;
       }
-      d.dur = dur < 0 ? 0 : dur;
       for (const i of d.children) {
         convertTree(i, spans);
       }
-    } else {
-      d.dur = d.endTime - d.startTime;
     }
     
     return d;
   }
   function getAllNodes(tree) {
-  const nodes = [];
-  const stack = [tree];
+    const nodes = [];
+    const stack = [tree];
 
-  while (stack.length > 0) {
-    const node = stack.pop();
-    nodes.push(node);
+    while (stack.length > 0) {
+      const node = stack.pop();
+      nodes.push(node);
 
-    if (node?.children && node.children.length > 0) {
-      for (let i = node.children.length - 1; i >= 0; i--) {
-        stack.push(node.children[i]);
+      if (node?.children && node.children.length > 0) {
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          stack.push(node.children[i]);
+        }
       }
     }
-  }
 
-  return nodes;
-}
+    return nodes;
+  }
 </script>
 
 <style lang="scss" scoped>

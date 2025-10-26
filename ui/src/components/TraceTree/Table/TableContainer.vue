@@ -17,7 +17,7 @@ limitations under the License. -->
   <div class="trace-table">
     <div class="trace-table-header">
       <div class="method" :style="`width: ${method}px`">
-        <span class="cp dragger" ref="dragger">
+        <span class="dragger" ref="dragger">
           <el-icon><ArrowLeft /></el-icon>
           <el-icon><MoreFilled /></el-icon>
           <el-icon><ArrowRight /></el-icon>
@@ -54,8 +54,6 @@ limitations under the License. -->
   const emits = defineEmits(["select"]);
 
   const method = ref(300);
-  const componentKey = ref(300);
-  const flag = ref(true);
   const dragger = ref(null);
 
   onMounted(() => {
@@ -80,50 +78,6 @@ limitations under the License. -->
   function selectItem(span) {
     emits("select", span);
   }
-  function sortStatistics(key) {
-    const element = props.tableData;
-    for (let i = 0; i < element.length; i++) {
-      for (let j = 0; j < element.length - i - 1; j++) {
-        let val1;
-        let val2;
-        if (key === "maxTime") {
-          val1 = element[j].maxTime;
-          val2 = element[j + 1].maxTime;
-        }
-        if (key === "minTime") {
-          val1 = element[j].minTime;
-          val2 = element[j + 1].minTime;
-        }
-        if (key === "avgTime") {
-          val1 = element[j].avgTime;
-          val2 = element[j + 1].avgTime;
-        }
-        if (key === "sumTime") {
-          val1 = element[j].sumTime;
-          val2 = element[j + 1].sumTime;
-        }
-        if (key === "count") {
-          val1 = element[j].count;
-          val2 = element[j + 1].count;
-        }
-        if (flag.value) {
-          if (val1 && val2 && val1 < val2) {
-            const tmp = element[j];
-            element[j] = element[j + 1];
-            element[j + 1] = tmp;
-          }
-        } else {
-          if (val1 && val2 && val1 > val2) {
-            const tmp = element[j];
-            element[j] = element[j + 1];
-            element[j + 1] = tmp;
-          }
-        }
-      }
-    }
-    componentKey.value += 1;
-    flag.value = !flag.value;
-  }
 </script>
 <style lang="scss" scoped>
   @import url("./table.scss");
@@ -137,6 +91,7 @@ limitations under the License. -->
 
   .dragger {
     float: right;
+    cursor: move;
   }
 
   .trace-table-header {

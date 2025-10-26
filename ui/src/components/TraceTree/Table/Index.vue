@@ -31,19 +31,18 @@ limitations under the License. -->
     data: Array,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
-    minTimestamp: Number,
-    maxTimestamp: Number,
   });
   const emits = defineEmits(["select"]);
   const segmentId = ref([]);
   onMounted(() => {
     segmentId.value = setLevel(props.data);
+    console.log(segmentId.value);
   });
 
   function setLevel(arr, level = 1, totalExec) {
     for (const item of arr) {
       item.level = level;
-      totalExec = totalExec || new Date(item.endTime).getTime() - new Date(item.startTime).getTime();
+      totalExec = totalExec || item.endTime - item.startTime;
       item.totalExec = totalExec;
       if (item.children && item.children.length > 0) {
         setLevel(item.children, level + 1, totalExec);
