@@ -192,29 +192,8 @@ limitations under the License. -->
   }
 
   .trace-item div.exec-percent {
-    width: 120px;
     height: 30px;
     padding: 0 8px;
-
-    .outer-progress_bar {
-      width: 100%;
-      height: 6px;
-      border-radius: 3px;
-      background: rgb(63 177 227);
-      position: relative;
-      margin-top: 11px;
-      border: none;
-    }
-
-    .inner-progress_bar {
-      position: absolute;
-      background: rgb(110 64 170);
-      height: 4px;
-      border-radius: 2px;
-      left: 0;
-      border: none;
-      top: 1px;
-    }
   }
 
   .link-span {
