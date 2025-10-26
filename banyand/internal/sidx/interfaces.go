@@ -74,6 +74,7 @@ type WriteRequest struct {
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
 	Filter        index.Filter
+	TagFilter     model.TagFilterMatcher
 	Order         *index.OrderBy
 	MinKey        *int64
 	MaxKey        *int64

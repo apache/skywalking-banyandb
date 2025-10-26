@@ -28,10 +28,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+)
+
+const (
+	testTagStatus = "status"
 )
 
 // Test helper functions.
@@ -198,7 +204,7 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 	tags := []Tag{
 		createTestTag("service", "user-service"),
 		createTestTag("endpoint", "/api/users"),
-		createTestTag("status", "200"),
+		createTestTag(testTagStatus, "200"),
 	}
 
 	reqs := []WriteRequest{
@@ -780,4 +786,305 @@ func TestQueryResponse_Reset(t *testing.T) {
 	assert.Equal(t, 0, len(result.Tags))
 	assert.Equal(t, 0, len(result.SIDs))
 	assert.Equal(t, ResponseMetadata{}, result.Metadata)
+}
+
+type mockTagFilterMatcher struct {
+	matchFunc func(tags []*modelv1.Tag) (bool, error)
+	decoder   model.TagValueDecoder
+}
+
+func (m *mockTagFilterMatcher) Match(tags []*modelv1.Tag) (bool, error) {
+	if m.matchFunc == nil {
+		return true, nil
+	}
+	return m.matchFunc(tags)
+}
+
+func (m *mockTagFilterMatcher) GetDecoder() model.TagValueDecoder {
+	return m.decoder
+}
+
+func testTagValueDecoder(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+	if value == nil {
+		return pbv1.NullTagValue
+	}
+	switch valueType {
+	case pbv1.ValueTypeStr:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{Value: string(value)},
+			},
+		}
+	case pbv1.ValueTypeInt64:
+		// For testing, we'll parse the string as int
+		var intVal int64
+		fmt.Sscanf(string(value), "%d", &intVal)
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{
+				Int: &modelv1.Int{Value: intVal},
+			},
+		}
+	default:
+		return pbv1.NullTagValue
+	}
+}
+
+func TestSIDX_TagFilter(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "trace1-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("user-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 101, "trace1-span2",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("user-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 102, "trace1-span3",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("order-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 103, "trace1-span4",
+			Tag{Name: testTagStatus, Value: []byte("500"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("payment-service"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 1, 1)
+
+	tests := []struct {
+		filterFunc    func(tags []*modelv1.Tag) (bool, error)
+		name          string
+		description   string
+		expectedCount int
+	}{
+		{
+			name: "filter_by_status_200",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 2, // span1 and span3 have status=200
+			description:   "Should return only spans with status=200",
+		},
+		{
+			name: "filter_by_service_user_service",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == "service" && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "user-service" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 2, // span1 and span2 have service=user-service
+			description:   "Should return only spans with service=user-service",
+		},
+		{
+			name: "filter_by_status_500",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "500" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 1, // only span4 has status=500
+			description:   "Should return only spans with status=500",
+		},
+		{
+			name: "filter_excludes_all",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "999" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 0, // no spans match
+			description:   "Should return no spans when filter matches nothing",
+		},
+		{
+			name: "no_filter",
+			filterFunc: func(_ []*modelv1.Tag) (bool, error) {
+				return true, nil
+			},
+			expectedCount: 4, // all spans match
+			description:   "Should return all spans when filter always returns true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create tag filter matcher
+			tagFilter := &mockTagFilterMatcher{
+				matchFunc: tt.filterFunc,
+				decoder:   testTagValueDecoder,
+			}
+
+			// Create query request with tag filter
+			queryReq := QueryRequest{
+				SeriesIDs: []common.SeriesID{1},
+				TagFilter: tagFilter,
+			}
+
+			// Execute query
+			resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+			var totalElements int
+			var allKeys []int64
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				totalElements += res.Len()
+				allKeys = append(allKeys, res.Keys...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
+
+			// Verify the filtered results
+			assert.Equal(t, tt.expectedCount, totalElements, tt.description)
+
+			// Verify keys are unique
+			keySet := make(map[int64]bool)
+			for _, key := range allKeys {
+				assert.False(t, keySet[key], "Duplicate key found: %d", key)
+				keySet[key] = true
+			}
+		})
+	}
+}
+
+func TestSIDX_TagFilterWithMultipleTags(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 200, "trace2-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("GET"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/users"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 201, "trace2-span2",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("POST"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/users"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 202, "trace2-span3",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("GET"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/orders"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 2, 2)
+
+	// Test: Filter by status=200 AND method=GET
+	tagFilter := &mockTagFilterMatcher{
+		matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			hasStatus200 := false
+			hasMethodGET := false
+			for _, tag := range tags {
+				if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+					hasStatus200 = true
+				}
+				if tag.Key == "method" && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "GET" {
+					hasMethodGET = true
+				}
+			}
+			return hasStatus200 && hasMethodGET, nil
+		},
+		decoder: testTagValueDecoder,
+	}
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagFilter: tagFilter,
+	}
+
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	var totalElements int
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		totalElements += res.Len()
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Only span1 should match (status=200 AND method=GET)
+	assert.Equal(t, 1, totalElements, "Should return only one span matching both conditions")
+	assert.Equal(t, []int64{200}, keys, "Should return key 200")
+}
+
+func TestSIDX_TagFilterWithEmptyTags(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 300, "trace3-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 301, "trace3-span2"), // No tags
+		createTestWriteRequest(1, 302, "trace3-span3",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 3, 3)
+
+	// Test: Filter by status=200
+	tagFilter := &mockTagFilterMatcher{
+		matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			for _, tag := range tags {
+				if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+		decoder: testTagValueDecoder,
+	}
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagFilter: tagFilter,
+	}
+
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	var totalElements int
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		totalElements += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Only span1 should match (span2 has no tags, span3 has status=404)
+	assert.Equal(t, 1, totalElements, "Should filter out spans with no matching tags")
 }

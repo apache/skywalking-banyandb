@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -223,28 +224,92 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		return false
 	}
 
-	// Copy data to block cursor
-	bc.userKeys = make([]int64, len(tmpBlock.userKeys))
-	copy(bc.userKeys, tmpBlock.userKeys)
-
-	bc.data = make([][]byte, len(tmpBlock.data))
-	for i, data := range tmpBlock.data {
-		bc.data[i] = make([]byte, len(data))
-		copy(bc.data[i], data)
+	totalElements := len(tmpBlock.userKeys)
+	if totalElements == 0 {
+		return false
 	}
 
-	// Copy tags
+	// Pre-allocate slices for filtered data (optimize for common case where most elements match)
+	bc.userKeys = make([]int64, 0, totalElements)
+	bc.data = make([][]byte, 0, totalElements)
+
+	// Pre-allocate tag slices
 	bc.tags = make(map[string][]Tag)
-	for tagName, tagData := range tmpBlock.tags {
-		tagSlice := make([]Tag, len(tagData.values))
-		for i, value := range tagData.values {
-			tagSlice[i] = Tag{
-				Name:      tagName,
-				Value:     value,
-				ValueType: tagData.valueType,
+	for tagName := range tmpBlock.tags {
+		bc.tags[tagName] = make([]Tag, 0, totalElements)
+	}
+
+	// Single loop: filter and copy data in one pass
+	if req.TagFilter != nil {
+		tags := make([]*modelv1.Tag, 0, len(tmpBlock.tags))
+		decoder := req.TagFilter.GetDecoder()
+
+		for i := 0; i < totalElements; i++ {
+			// Build tags slice for this element
+			tags = tags[:0]
+			for tagName, tagData := range tmpBlock.tags {
+				if i < len(tagData.values) && tagData.values[i] != nil {
+					// Decode []byte to *modelv1.TagValue using the provided decoder
+					tagValue := decoder(tagData.valueType, tagData.values[i])
+					if tagValue != nil {
+						tags = append(tags, &modelv1.Tag{
+							Key:   tagName,
+							Value: tagValue,
+						})
+					}
+				}
+			}
+
+			// Apply filter
+			matched, err := req.TagFilter.Match(tags)
+			if err != nil {
+				s.l.Error().Err(err).Msg("tag filter match error")
+				return false
+			}
+
+			if matched {
+				// Copy userKey
+				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+
+				// Copy data
+				dataCopy := make([]byte, len(tmpBlock.data[i]))
+				copy(dataCopy, tmpBlock.data[i])
+				bc.data = append(bc.data, dataCopy)
+
+				// Copy tags
+				for tagName, tagData := range tmpBlock.tags {
+					if i < len(tagData.values) {
+						bc.tags[tagName] = append(bc.tags[tagName], Tag{
+							Name:      tagName,
+							Value:     tagData.values[i],
+							ValueType: tagData.valueType,
+						})
+					}
+				}
 			}
 		}
-		bc.tags[tagName] = tagSlice
+	} else {
+		// No filter - copy all elements
+		bc.userKeys = make([]int64, totalElements)
+		copy(bc.userKeys, tmpBlock.userKeys)
+
+		bc.data = make([][]byte, totalElements)
+		for i, data := range tmpBlock.data {
+			bc.data[i] = make([]byte, len(data))
+			copy(bc.data[i], data)
+		}
+
+		for tagName, tagData := range tmpBlock.tags {
+			tagSlice := make([]Tag, len(tagData.values))
+			for i, value := range tagData.values {
+				tagSlice[i] = Tag{
+					Name:      tagName,
+					Value:     value,
+					ValueType: tagData.valueType,
+				}
+			}
+			bc.tags[tagName] = tagSlice
+		}
 	}
 
 	return len(bc.userKeys) > 0

@@ -136,6 +136,10 @@ func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
 	return nil
 }
 
+func (t *trace) GetTagValueDecoder() model.TagValueDecoder {
+	return mustDecodeTagValue
+}
+
 func (t *trace) ensureTSDB() (storage.TSDB[*tsTable, option], error) {
 	if db := t.tsdb.Load(); db != nil {
 		return db.(storage.TSDB[*tsTable, option]), nil
@@ -226,6 +230,7 @@ func (t *trace) prepareSIDXStreaming(
 
 	req := sidx.QueryRequest{
 		Filter:       tqo.SkippingFilter,
+		TagFilter:    tqo.TagFilter,
 		Order:        tqo.Order,
 		MaxBatchSize: tqo.MaxTraceSize,
 		MinKey:       &tqo.MinVal,
