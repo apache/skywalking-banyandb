@@ -403,7 +403,7 @@ orderBy:
         </el-col>
         <el-col :span="8">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="TrendCharts" @click="showTracesDialog = true" plain />
+            <el-button :icon="TrendCharts" :disabled="!traceData" @click="showTracesDialog = true" plain />
             <el-button :icon="RefreshRight" @click="getTableData" plain />
           </div>
         </el-col>
@@ -463,7 +463,7 @@ orderBy:
     @closed="showTracesDialog = false"
     class="trace-dialog"
   >
-    <div style="max-height: 74vh; overflow-y: auto;">
+    <div style="max-height: 74vh; overflow-y: auto">
       <TraceTree :trace="traceData" />
     </div>
   </el-dialog>
@@ -474,4 +474,3 @@ orderBy:
     margin: 15px;
   }
 </style>
-

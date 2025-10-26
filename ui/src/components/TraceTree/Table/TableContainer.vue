@@ -41,17 +41,17 @@ limitations under the License. -->
   </div>
 </template>
 <script setup>
-  import { ref, onMounted } from "vue";
-  import TableItem from "./TableItem.vue";
-  import { TraceConstant } from "./data.js";
-  import { ArrowLeft, MoreFilled, ArrowRight } from "@element-plus/icons-vue";
+  import { ref, onMounted } from 'vue';
+  import TableItem from './TableItem.vue';
+  import { TraceConstant } from './data.js';
+  import { ArrowLeft, MoreFilled, ArrowRight } from '@element-plus/icons-vue';
 
   const props = defineProps({
     tableData: Array,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
-  const emits = defineEmits(["select"]);
+  const emits = defineEmits(['select']);
 
   const method = ref(300);
   const dragger = ref(null);
@@ -76,11 +76,11 @@ limitations under the License. -->
     };
   });
   function selectItem(span) {
-    emits("select", span);
+    emits('select', span);
   }
 </script>
 <style lang="scss" scoped>
-  @import url("./table.scss");
+  @import url('./table.scss');
 
   .trace-table {
     font-size: 12px;

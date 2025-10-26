@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <div class="detail-section-timeline" style="display: flex; flex-direction: column;">
+  <div class="detail-section-timeline" style="display: flex; flex-direction: column">
     <MinTimeline
       v-show="minTimelineVisible"
       :spanList="spanList"
@@ -36,24 +36,24 @@ limitations under the License. -->
 </template>
 
 <script setup>
-  import { ref, computed } from "vue";
-  import { DCaret } from "@element-plus/icons-vue";
-  import MinTimeline from "./MinTimeline.vue";
-  import TableGraph from "./Table/Index.vue";
+  import { ref, computed } from 'vue';
+  import { DCaret } from '@element-plus/icons-vue';
+  import MinTimeline from './MinTimeline.vue';
+  import TableGraph from './Table/Index.vue';
 
   const props = defineProps({
     trace: Object,
   });
   const traceData = computed(() => {
-    return props.trace.spans.map(span => convertTree(span));
+    return props.trace.spans.map((span) => convertTree(span));
   });
   const spanList = computed(() => {
-    return getAllNodes({ label: "TRACE_ROOT", children: traceData.value });
+    return getAllNodes({ label: 'TRACE_ROOT', children: traceData.value });
   });
   // Time range like xScale domain [0, max]
   const minTimestamp = computed(() => {
     if (!traceData.value.length) return 0;
-    return Math.min(...spanList.value.filter(s => s.startTime > 0).map((s) => s.startTime));
+    return Math.min(...spanList.value.filter((s) => s.startTime > 0).map((s) => s.startTime));
   });
 
   const maxTimestamp = computed(() => {
@@ -83,7 +83,7 @@ limitations under the License. -->
     d.startTime = new Date(d.startTime).getTime();
     d.duration = Number(d.duration);
     d.label = d.message;
-    
+
     if (d.children && d.children.length > 0) {
       for (const i of d.children) {
         i.endTime = new Date(i.endTime).getTime();
@@ -93,7 +93,7 @@ limitations under the License. -->
         convertTree(i, spans);
       }
     }
-    
+
     return d;
   }
   function getAllNodes(tree) {

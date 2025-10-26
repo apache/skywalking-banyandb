@@ -16,7 +16,6 @@ limitations under the License. -->
       :tableData="segmentId"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
-
       @select="handleSelectSpan"
     >
       <div class="trace-tips" v-if="!segmentId.length">No data</div>
@@ -24,15 +23,15 @@ limitations under the License. -->
   </div>
 </template>
 <script setup>
-  import { ref, onMounted } from "vue";
-  import TableContainer from "../Table/TableContainer.vue";
+  import { ref, onMounted } from 'vue';
+  import TableContainer from '../Table/TableContainer.vue';
 
   const props = defineProps({
     data: Array,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
-  const emits = defineEmits(["select"]);
+  const emits = defineEmits(['select']);
   const segmentId = ref([]);
   onMounted(() => {
     segmentId.value = setLevel(props.data);
@@ -52,7 +51,7 @@ limitations under the License. -->
   }
 
   function handleSelectSpan(span) {
-    emits("select", span);
+    emits('select', span);
   }
 </script>
 <style lang="scss" scoped>

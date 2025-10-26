@@ -27,4 +27,3 @@ export function debounce(callback, dur) {
     }, dur);
   };
 }
-

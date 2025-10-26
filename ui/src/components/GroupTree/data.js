@@ -17,12 +17,7 @@
  * under the License.
  */
 
-import {
-  CatalogToGroupType,
-  GroupTypeToCatalog,
-  TypeMap,
-  SupportedIndexRuleTypes,
-} from '../common/data.js';
+import { CatalogToGroupType, GroupTypeToCatalog, TypeMap, SupportedIndexRuleTypes } from '../common/data.js';
 
 export const StageFields = [
   { label: 'Name', key: 'name' },

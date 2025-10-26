@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { ref, computed } from "vue";
+import { ref, computed } from 'vue';
 
 export const adjustPercentValue = (value) => {
   if (value <= 0) {
@@ -26,12 +26,7 @@ export const adjustPercentValue = (value) => {
   return value;
 };
 
-const calculateX = ({
-  parentRect,
-  x,
-  opositeX,
-  isSmallerThanOpositeX,
-}) => {
+const calculateX = ({ parentRect, x, opositeX, isSmallerThanOpositeX }) => {
   let value = ((x - parentRect.left) / (parentRect.right - parentRect.left)) * 100;
   if (isSmallerThanOpositeX) {
     if (value >= opositeX) {
@@ -90,8 +85,8 @@ export const useRangeTimestampHandler = ({
     mouseDownX.value = undefined;
     isDragging.value = false;
 
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
   };
 
   const onMouseDown = (e) => {
@@ -108,8 +103,8 @@ export const useRangeTimestampHandler = ({
     mouseDownX.value = x;
     isDragging.value = true;
 
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   };
 
   return { currentX, mouseDownX, onMouseDown, isDragging };

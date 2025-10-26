@@ -145,9 +145,9 @@ limit: 10`;
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-          <el-button size="small" :icon="Search" @click="searchProperties" plain />
-          <el-button size="small" :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
-          <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
+        <el-button size="small" :icon="Search" @click="searchProperties" plain />
+        <el-button size="small" :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
+        <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
@@ -203,7 +203,7 @@ limit: 10`;
     @closed="showTracesDialog = false"
     class="trace-dialog"
   >
-    <div style="max-height: 74vh; overflow-y: auto;">
+    <div style="max-height: 74vh; overflow-y: auto">
       <TraceTree :trace="traceData" />
     </div>
   </el-dialog>

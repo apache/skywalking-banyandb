@@ -19,10 +19,7 @@ limitations under the License. -->
         <MinTimelineMarker :minTimestamp="minTimestamp" :maxTimestamp="maxTimestamp" :lineHeight="20" />
       </svg>
     </div>
-    <div
-      class="timeline-content"
-      :style="{ paddingRight: (spanList.length + 1) * rowHeight < 200 ? '20px' : '14px' }"
-    >
+    <div class="timeline-content" :style="{ paddingRight: (spanList.length + 1) * rowHeight < 200 ? '20px' : '14px' }">
       <svg ref="svgEle" width="100%" :height="`${(spanList.length + 1) * rowHeight}px`">
         <MinTimelineOverlay
           :minTimestamp="minTimestamp"
@@ -38,11 +35,7 @@ limitations under the License. -->
           @setSelectedMinTimestamp="setSelectedMinTimestamp"
           @setSelectedMaxTimestamp="setSelectedMaxTimestamp"
         />
-        <g
-          v-for="(item, index) in spanList"
-          :key="index"
-          :transform="`translate(0, ${(index + 1) * rowHeight + 3})`"
-        >
+        <g v-for="(item, index) in spanList" :key="index" :transform="`translate(0, ${(index + 1) * rowHeight + 3})`">
           <SpanNode :span="item" :minTimestamp="minTimestamp" :maxTimestamp="maxTimestamp" :depth="index + 1" />
         </g>
       </svg>
@@ -50,11 +43,11 @@ limitations under the License. -->
   </div>
 </template>
 <script setup>
-  import { ref } from "vue";
-  import SpanNode from "./SpanNode.vue";
-  import MinTimelineMarker from "./MinTimelineMarker.vue";
-  import MinTimelineOverlay from "./MinTimelineOverlay.vue";
-  import MinTimelineSelector from "./MinTimelineSelector.vue";
+  import { ref } from 'vue';
+  import SpanNode from './SpanNode.vue';
+  import MinTimelineMarker from './MinTimelineMarker.vue';
+  import MinTimelineOverlay from './MinTimelineOverlay.vue';
+  import MinTimelineSelector from './MinTimelineSelector.vue';
 
   const props = defineProps({
     spanList: Array,
@@ -66,14 +59,14 @@ limitations under the License. -->
 
   const selectedMinTimestamp = ref(props.minTimestamp);
   const selectedMaxTimestamp = ref(props.maxTimestamp);
-  const emit = defineEmits(["updateSelectedMaxTimestamp", "updateSelectedMinTimestamp"]);
+  const emit = defineEmits(['updateSelectedMaxTimestamp', 'updateSelectedMinTimestamp']);
   const setSelectedMinTimestamp = (value) => {
     selectedMinTimestamp.value = value;
-    emit("updateSelectedMinTimestamp", value);
+    emit('updateSelectedMinTimestamp', value);
   };
   const setSelectedMaxTimestamp = (value) => {
     selectedMaxTimestamp.value = value;
-    emit("updateSelectedMaxTimestamp", value);
+    emit('updateSelectedMaxTimestamp', value);
   };
 </script>
 <style lang="scss" scoped>

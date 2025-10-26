@@ -13,11 +13,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
-  <rect :x="`${startPct}%`" :y="0" :width="`${widthPct}%`" :height="barHeight" fill="var(--el-color-primary)" rx="2" ry="2" />
+  <rect
+    :x="`${startPct}%`"
+    :y="0"
+    :width="`${widthPct}%`"
+    :height="barHeight"
+    fill="var(--el-color-primary)"
+    rx="2"
+    ry="2"
+  />
 </template>
 
 <script setup>
-  import { computed } from "vue";
+  import { computed } from 'vue';
 
   const props = defineProps({
     span: Object,

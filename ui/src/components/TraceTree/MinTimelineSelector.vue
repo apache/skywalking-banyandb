@@ -94,10 +94,10 @@ limitations under the License. -->
   </g>
 </template>
 <script setup>
-  import { computed, ref, onMounted } from "vue";
-  import { useRangeTimestampHandler, adjustPercentValue } from "./useHooks.js";
+  import { computed, ref, onMounted } from 'vue';
+  import { useRangeTimestampHandler, adjustPercentValue } from './useHooks.js';
 
-  const emit = defineEmits(["setSelectedMinTimestamp", "setSelectedMaxTimestamp"]);
+  const emit = defineEmits(['setSelectedMinTimestamp', 'setSelectedMaxTimestamp']);
   const props = defineProps({
     minTimestamp: Number,
     maxTimestamp: Number,
@@ -107,7 +107,7 @@ limitations under the License. -->
   const svgEle = ref(null);
 
   onMounted(() => {
-    const element = document.querySelector(".trace-min-timeline svg");
+    const element = document.querySelector('.trace-min-timeline svg');
     if (element) {
       svgEle.value = element;
     }
@@ -126,7 +126,7 @@ limitations under the License. -->
       maxTimestamp: props.maxTimestamp,
       selectedTimestamp: props.selectedMaxTimestamp,
       isSmallerThanOpositeX: true,
-      setTimestamp: (value) => emit("setSelectedMinTimestamp", value),
+      setTimestamp: (value) => emit('setSelectedMinTimestamp', value),
     });
   });
   const maxRangeHandler = computed(() =>
@@ -136,7 +136,7 @@ limitations under the License. -->
       maxTimestamp: props.maxTimestamp,
       selectedTimestamp: props.selectedMinTimestamp,
       isSmallerThanOpositeX: false,
-      setTimestamp: (value) => emit("setSelectedMaxTimestamp", value),
+      setTimestamp: (value) => emit('setSelectedMaxTimestamp', value),
     }),
   );
 

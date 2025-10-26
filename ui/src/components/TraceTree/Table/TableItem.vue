@@ -50,23 +50,18 @@ limitations under the License. -->
         <div class="outer-progress_bar" :style="{ width: outterPercent }" />
       </div>
       <div class="self">
-        {{ data.endTime - data.startTime}}
+        {{ data.endTime - data.startTime }}
       </div>
-      <div class="tags" @click.stop="showTagsDialog" :class="{ 'clickable': data.tags && data.tags.length > 0 }">
+      <div class="tags" @click.stop="showTagsDialog" :class="{ clickable: data.tags && data.tags.length > 0 }">
         <div class="tag" v-for="(tag, index) in visibleTags" :key="index">
           {{ tag.key }}: {{ tag.value && tag.value.length > 20 ? tag.value.slice(0, 20) + '...' : tag.value }}
         </div>
         <span v-if="hasMoreTags" class="more-tags">+{{ data.tags.length - MAX_VISIBLE_TAGS }}</span>
       </div>
     </div>
-    
-    <el-dialog 
-      v-model="tagsDialogVisible" 
-      title="Tag Details" 
-      width="600px"
-      :append-to-body="true"
-    >
-      <div class="tags-details" style="max-height: 70vh; overflow-y: auto;">
+
+    <el-dialog v-model="tagsDialogVisible" title="Tag Details" width="600px" :append-to-body="true">
+      <div class="tags-details" style="max-height: 70vh; overflow-y: auto">
         <el-table :data="data.tags" style="width: 100%">
           <el-table-column prop="key" label="Key" width="200" />
           <el-table-column prop="value" label="Value">
@@ -90,8 +85,8 @@ limitations under the License. -->
   </div>
 </template>
 <script setup>
-  import { ref, computed } from "vue";
-  import { ArrowDown } from "@element-plus/icons-vue";
+  import { ref, computed } from 'vue';
+  import { ArrowDown } from '@element-plus/icons-vue';
 
   const props = defineProps({
     data: Object,
@@ -102,15 +97,15 @@ limitations under the License. -->
   const displayChildren = ref(true);
   const tagsDialogVisible = ref(false);
   const MAX_VISIBLE_TAGS = 1;
-  
+
   const outterPercent = computed(() => {
     if (props.data.level === 1) {
-      return "100%";
+      return '100%';
     }
-    let result = (((props.data.endTime - props.data.startTime) || 0) / (props.data.duration || 0)) * 100;
+    let result = ((props.data.endTime - props.data.startTime || 0) / (props.data.duration || 0)) * 100;
     result = result > 100 ? 100 : result;
-    const resultStr = result.toFixed(4) + "%";
-    return resultStr === "0.0000%" ? "0.9%" : resultStr;
+    const resultStr = result.toFixed(4) + '%';
+    return resultStr === '0.0000%' ? '0.9%' : resultStr;
   });
   const inTimeRange = computed(() => {
     if (props.selectedMinTimestamp === undefined || props.selectedMaxTimestamp === undefined) {
@@ -119,30 +114,30 @@ limitations under the License. -->
 
     return props.data.startTime <= props.selectedMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
   });
-  
+
   const visibleTags = computed(() => {
     if (!props.data.tags || props.data.tags.length === 0) {
       return [];
     }
     return props.data.tags.slice(0, MAX_VISIBLE_TAGS);
   });
-  
+
   const hasMoreTags = computed(() => {
     return props.data.tags && props.data.tags.length > MAX_VISIBLE_TAGS;
   });
-  
+
   const remainingTagsTooltip = computed(() => {
     if (!props.data.tags || props.data.tags.length <= MAX_VISIBLE_TAGS) {
       return '';
     }
     const remainingTags = props.data.tags.slice(MAX_VISIBLE_TAGS);
-    return remainingTags.map(tag => `${tag.key}: ${tag.value}`).join('\n');
+    return remainingTags.map((tag) => `${tag.key}: ${tag.value}`).join('\n');
   });
-  
+
   function toggle() {
     displayChildren.value = !displayChildren.value;
   }
-  
+
   function showTagsDialog() {
     if (props.data.tags && props.data.tags.length > 0) {
       tagsDialogVisible.value = true;
@@ -150,7 +145,7 @@ limitations under the License. -->
   }
 </script>
 <style lang="scss" scoped>
-  @import url("./table.scss");
+  @import url('./table.scss');
 
   .trace-item.level0 {
     &:hover {
@@ -229,15 +224,15 @@ limitations under the License. -->
     display: flex;
     align-items: center;
     gap: 4px;
-    
+
     &.clickable {
       cursor: pointer;
-      
+
       &:hover {
         background-color: rgba(0, 0, 0, 0.05);
       }
     }
-    
+
     .tag {
       display: inline-block;
       padding: 2px 6px;
@@ -245,25 +240,25 @@ limitations under the License. -->
       border-radius: 3px;
       font-size: 12px;
     }
-    
+
     .more-tags {
       cursor: pointer;
       color: var(--el-color-primary);
       font-weight: bold;
       padding: 2px 6px;
       font-size: 11px;
-      
+
       &:hover {
         text-decoration: underline;
       }
     }
   }
-  
+
   .tags-details {
     :deep(.el-table) {
       font-size: 13px;
     }
-    
+
     .tag-value {
       word-break: break-all;
       white-space: pre-wrap;

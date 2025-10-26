@@ -49,13 +49,13 @@ limitations under the License. -->
   </g>
 </template>
 <script setup>
-  import { onBeforeUnmount, ref } from "vue";
+  import { onBeforeUnmount, ref } from 'vue';
 
   const props = defineProps({
     minTimestamp: Number,
     maxTimestamp: Number,
   });
-  const emit = defineEmits(["setSelectedMaxTimestamp", "setSelectedMinTimestamp"]);
+  const emit = defineEmits(['setSelectedMaxTimestamp', 'setSelectedMinTimestamp']);
   const rootEl = ref(null);
   const mouseDownX = ref(undefined);
   const currentX = ref(undefined);
@@ -83,16 +83,16 @@ limitations under the License. -->
     const newMinTimestmap = Math.min(t1, t2);
     const newMaxTimestamp = Math.max(t1, t2);
 
-    emit("setSelectedMinTimestamp", newMinTimestmap);
-    emit("setSelectedMaxTimestamp", newMaxTimestamp);
+    emit('setSelectedMinTimestamp', newMinTimestmap);
+    emit('setSelectedMaxTimestamp', newMaxTimestamp);
 
     currentX.value = undefined;
     mouseDownX.value = undefined;
     mouseDownXRef.value = undefined;
     isDragging.value = false;
 
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
   }
 
   const calculateX = (parentRect, x) => {
@@ -116,8 +116,8 @@ limitations under the License. -->
     mouseDownXRef.value = x;
     isDragging.value = true;
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   }
 
   function handleMouseHoverMove(e) {
@@ -133,8 +133,8 @@ limitations under the License. -->
   }
 
   onBeforeUnmount(() => {
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
     isDragging.value = false;
   });
 </script>

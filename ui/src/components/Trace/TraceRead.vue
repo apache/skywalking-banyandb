@@ -400,7 +400,7 @@ orderBy:
     @closed="showTracesDialog = false"
     class="trace-dialog"
   >
-    <div style="max-height: 74vh; overflow-y: auto;">
+    <div style="max-height: 74vh; overflow-y: auto">
       <TraceTree :trace="traceData" />
     </div>
   </el-dialog>

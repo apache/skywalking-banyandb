@@ -17,27 +17,27 @@
 
 export const TraceConstant = [
   {
-    label: "method",
-    value: "Method",
+    label: 'method',
+    value: 'Method',
   },
   {
-    label: "start-time",
-    value: "Start Time",
+    label: 'start-time',
+    value: 'Start Time',
   },
   {
-    label: "exec-ms",
-    value: "Duration(ms)",
+    label: 'exec-ms',
+    value: 'Duration(ms)',
   },
   {
-    label: "exec-percent",
-    value: "Exec(%)",
+    label: 'exec-percent',
+    value: 'Exec(%)',
   },
   {
-    label: "self",
-    value: "Self(ms)",
+    label: 'self',
+    value: 'Self(ms)',
   },
   {
-    label: "tags",
-    value: "Tags",
+    label: 'tags',
+    value: 'Tags',
   },
 ];
