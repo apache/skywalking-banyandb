@@ -462,8 +462,11 @@ orderBy:
     width="90%"
     :destroy-on-close="true"
     @closed="showTracesDialog = false"
+    class="trace-dialog"
   >
-    <TraceTree :trace="traceData" />
+    <div style="max-height: 74vh; overflow-y: auto;">
+      <TraceTree :trace="traceData" />
+    </div>
   </el-dialog>
 </template>
 
@@ -472,3 +475,4 @@ orderBy:
     margin: 15px;
   }
 </style>
+

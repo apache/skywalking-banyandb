@@ -12,33 +12,47 @@ See the License for the specific language governing permissions and
 limitations under the License. -->
 <template>
   <div class="trace-table-charts">
-    <Graph
-      :data="data"
-      :traceId="traceId"
-      :type="TraceGraphType.TABLE"
-      @select="getSelectedSpan"
+    <TableContainer
+      :tableData="segmentId"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
-      :minTimestamp="minTimestamp"
-      :maxTimestamp="maxTimestamp"
-    />
+
+      @select="handleSelectSpan"
+    >
+      <div class="trace-tips" v-if="!segmentId.length">No data</div>
+    </TableContainer>
   </div>
 </template>
 <script setup>
-  import Graph from "./D3Graph/Index.vue";
-  import { TraceGraphType } from "../VisGraph/constant";
+  import { ref, onMounted } from "vue";
+  import TableContainer from "../Table/TableContainer.vue";
 
-  defineProps({
+  const props = defineProps({
     data: Array,
-    traceId: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
     minTimestamp: Number,
     maxTimestamp: Number,
   });
   const emits = defineEmits(["select"]);
+  const segmentId = ref([]);
+  onMounted(() => {
+    segmentId.value = setLevel(props.data);
+  });
 
-  function getSelectedSpan(span) {
+  function setLevel(arr, level = 1, totalExec) {
+    for (const item of arr) {
+      item.level = level;
+      totalExec = totalExec || new Date(item.endTime).getTime() - new Date(item.startTime).getTime();
+      item.totalExec = totalExec;
+      if (item.children && item.children.length > 0) {
+        setLevel(item.children, level + 1, totalExec);
+      }
+    }
+    return arr;
+  }
+
+  function handleSelectSpan(span) {
     emits("select", span);
   }
 </script>

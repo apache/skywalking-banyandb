@@ -14,40 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License. -->
 
 <template>
-  <div v-if="type === TraceGraphType.STATISTICS">
-    <div class="trace-item">
-      <div :class="['method']">
-        <el-tooltip :content="data.groupRef?.endpointName" placement="top" :show-after="300">
-          <span>
-            {{ data.groupRef?.endpointName }}
-          </span>
-        </el-tooltip>
-      </div>
-      <div :class="['type']">
-        <el-tooltip :content="data.groupRef?.type" placement="top" :show-after="300">
-          <span>
-            {{ data.groupRef?.type }}
-          </span>
-        </el-tooltip>
-      </div>
-      <div class="max-time">
-        {{ data.maxTime }}
-      </div>
-      <div class="min-time">
-        {{ data.minTime }}
-      </div>
-      <div class="sum-time">
-        {{ data.sumTime }}
-      </div>
-      <div class="avg-time">
-        {{ parseInt(data.avgTime || "0") }}
-      </div>
-      <div class="count">
-        {{ data.count }}
-      </div>
-    </div>
-  </div>
-  <div v-else>
+  <div>
     <div
       :class="[
         'trace-item',
@@ -94,7 +61,6 @@ limitations under the License. -->
         :method="method"
         :key="index"
         :data="child"
-        :type="type"
         :selectedMaxTimestamp="selectedMaxTimestamp"
         :selectedMinTimestamp="selectedMinTimestamp"
       />
@@ -104,13 +70,10 @@ limitations under the License. -->
 <script setup>
   import { ref, computed } from "vue";
   import { ArrowDown } from "@element-plus/icons-vue";
-  import { TraceGraphType } from "../VisGraph/constant.js";
 
   const props = defineProps({
     data: Object,
     method: Number,
-    type: String,
-    traceId: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });

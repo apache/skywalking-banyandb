@@ -22,11 +22,11 @@ limitations under the License. -->
       @updateSelectedMaxTimestamp="handleSelectedMaxTimestamp"
       @updateSelectedMinTimestamp="handleSelectedMinTimestamp"
     />
-    <TimelineTool @toggleMinTimeline="toggleMinTimeline" @updateSpansGraphType="handleSpansGraphTypeUpdate" />
-    <component
-      :is="graphs[spansGraphType]"
+    <div class="timeline-tool">
+      <el-button :icon="DCaret" size="small" @click="toggleMinTimeline" />
+    </div>
+    <TableGraph
       :data="traceData"
-      :traceId="trace?.traceId"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
       :minTimestamp="minTimestamp"
@@ -37,11 +37,9 @@ limitations under the License. -->
 
 <script setup>
   import { ref, computed } from "vue";
+  import { DCaret } from "@element-plus/icons-vue";
   import MinTimeline from "./MinTimeline.vue";
-  import TimelineTool from "./TimelineTool.vue";
-  import graphs from "./VisGraph/index";
-  import { GraphTypeOptions } from "./VisGraph/constant";
-  import { getAllNodes } from "./VisGraph/D3Graph/utils/helper";
+  import TableGraph from "./Table/Index.vue";
 
   const props = defineProps({
     trace: Object,
@@ -67,7 +65,6 @@ limitations under the License. -->
   const selectedMaxTimestamp = ref(maxTimestamp.value);
   const selectedMinTimestamp = ref(minTimestamp.value);
   const minTimelineVisible = ref(true);
-  const spansGraphType = ref(GraphTypeOptions[2].value);
 
   function handleSelectedMaxTimestamp(value) {
     selectedMaxTimestamp.value = value;
@@ -79,10 +76,6 @@ limitations under the License. -->
 
   function toggleMinTimeline() {
     minTimelineVisible.value = !minTimelineVisible.value;
-  }
-
-  function handleSpansGraphTypeUpdate(value) {
-    spansGraphType.value = value;
   }
 
   function convertTree(d, spans) {
@@ -108,6 +101,23 @@ limitations under the License. -->
     
     return d;
   }
+  function getAllNodes(tree) {
+  const nodes = [];
+  const stack = [tree];
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    nodes.push(node);
+
+    if (node?.children && node.children.length > 0) {
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        stack.push(node.children[i]);
+      }
+    }
+  }
+
+  return nodes;
+}
 </script>
 
 <style lang="scss" scoped>
@@ -126,5 +136,13 @@ limitations under the License. -->
 
   .detail-section-timeline {
     width: 100%;
+  }
+
+  .timeline-tool {
+    justify-content: end;
+    padding: 10px 5px;
+    border-bottom: 1px solid var(--el-border-color-light);
+    display: flex;
+    flex-direction: row;
   }
 </style>

@@ -13,8 +13,6 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
     "codemirror": "^5.65.16",
-    "d3": "^7.9.0",
-    "d3-tip": "^0.9.1",
     "echarts": "^5.5.0",
     "element-plus": "^2.11.3",
     "js-yaml": "^4.1.0",

@@ -15,39 +15,24 @@ limitations under the License. -->
 
 <template>
   <div class="trace-table">
-    <div class="trace-table-header" v-if="type === TraceGraphType.STATISTICS">
-      <div :class="item.label" v-for="(item, index) in headerData" :key="index">
-        {{ item.value }}
-        <span
-          class="r cp"
-          @click="sortStatistics(item.key || '')"
-          :key="componentKey"
-          v-if="item.key !== 'endpointName' && item.key !== 'type'"
-        >
-          <el-icon><DCaret /></el-icon>
-        </span>
-      </div>
-    </div>
-    <div class="trace-table-header" v-else>
+    <div class="trace-table-header">
       <div class="method" :style="`width: ${method}px`">
         <span class="cp dragger" ref="dragger">
           <el-icon><ArrowLeft /></el-icon>
           <el-icon><MoreFilled /></el-icon>
           <el-icon><ArrowRight /></el-icon>
         </span>
-        {{ headerData[0].value }}
+        {{ TraceConstant[0].value }}
       </div>
-      <div :class="item.label" v-for="(item, index) in headerData.slice(1)" :key="index">
+      <div :class="item.label" v-for="(item, index) in TraceConstant.slice(1)" :key="index">
         {{ item.value }}
       </div>
     </div>
     <TableItem
       :method="method"
-      :traceId="traceId"
       v-for="(item, index) in tableData"
       :data="item"
       :key="`key${index}`"
-      :type="type"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
       @selectedSpan="selectItem"
@@ -58,14 +43,11 @@ limitations under the License. -->
 <script setup>
   import { ref, onMounted } from "vue";
   import TableItem from "./TableItem.vue";
-  import { TraceConstant, StatisticsConstant } from "./data.js";
-  import { TraceGraphType } from "../VisGraph/constant.js";
-  import { ArrowLeft, MoreFilled, DCaret, ArrowRight } from "@element-plus/icons-vue";
+  import { TraceConstant } from "./data.js";
+  import { ArrowLeft, MoreFilled, ArrowRight } from "@element-plus/icons-vue";
 
   const props = defineProps({
     tableData: Array,
-    type: String,
-    traceId: String,
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
@@ -75,13 +57,8 @@ limitations under the License. -->
   const componentKey = ref(300);
   const flag = ref(true);
   const dragger = ref(null);
-  let headerData = TraceConstant;
 
   onMounted(() => {
-    if (props.type === TraceGraphType.STATISTICS) {
-      headerData = StatisticsConstant;
-      return;
-    }
     const drag = dragger.value;
     if (!drag) {
       return;
