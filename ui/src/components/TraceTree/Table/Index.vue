@@ -16,7 +16,6 @@ limitations under the License. -->
       :tableData="segmentId"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
-      @select="handleSelectSpan"
     >
       <div class="trace-tips" v-if="!segmentId.length">No data</div>
     </TableContainer>
@@ -31,7 +30,6 @@ limitations under the License. -->
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
-  const emits = defineEmits(['select']);
   const segmentId = ref([]);
   onMounted(() => {
     segmentId.value = setLevel(props.data);
@@ -47,10 +45,6 @@ limitations under the License. -->
       }
     }
     return arr;
-  }
-
-  function handleSelectSpan(span) {
-    emits('select', span);
   }
 </script>
 <style lang="scss" scoped>

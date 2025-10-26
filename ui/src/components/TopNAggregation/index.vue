@@ -192,7 +192,13 @@ fieldValueSort: 1`;
         @prev-click="changePage"
         @next-click="changePage"
       />
-      <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain :style="{ marginTop: '20px' }">
+      <el-button
+        :icon="TrendCharts"
+        @click="showTracesDialog = true"
+        :disabled="!traceData"
+        plain
+        :style="{ marginTop: '20px' }"
+      >
         <span>Debug Trace</span>
       </el-button>
     </el-card>

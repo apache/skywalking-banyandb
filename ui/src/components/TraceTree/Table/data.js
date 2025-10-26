@@ -26,7 +26,7 @@ export const TraceConstant = [
   },
   {
     label: 'exec-ms',
-    value: 'Duration(ms)',
+    value: 'Exec(ms)',
   },
   {
     label: 'exec-percent',

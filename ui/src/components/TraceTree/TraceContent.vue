@@ -83,17 +83,16 @@ limitations under the License. -->
     d.startTime = new Date(d.startTime).getTime();
     d.duration = Number(d.duration);
     d.label = d.message;
-
+    let selfDuration = d.duration;
     if (d.children && d.children.length > 0) {
       for (const i of d.children) {
+        selfDuration -= i.duration;
         i.endTime = new Date(i.endTime).getTime();
         i.startTime = new Date(i.startTime).getTime();
-      }
-      for (const i of d.children) {
         convertTree(i);
       }
     }
-
+    d.selfDuration = selfDuration < 0 ? 0 : selfDuration;
     return d;
   }
   function getAllNodes(tree) {

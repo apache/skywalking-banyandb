@@ -387,7 +387,13 @@ orderBy:
               </template>
             </el-table-column>
           </el-table>
-          <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain :style="{ marginTop: '20px' }">
+          <el-button
+            :icon="TrendCharts"
+            @click="showTracesDialog = true"
+            :disabled="!traceData"
+            plain
+            :style="{ marginTop: '20px' }"
+          >
             <span>Debug Trace</span>
           </el-button>
         </div>

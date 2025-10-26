@@ -44,13 +44,15 @@ limitations under the License. -->
         {{ new Date(data.startTime).toLocaleString() }}
       </div>
       <div class="exec-ms">
-        {{ data.duration }}
+        {{ (data.duration / 1000 / 1000).toFixed(3) }}
       </div>
       <div class="exec-percent">
-        <div class="outer-progress_bar" :style="{ width: outterPercent }" />
+        <div class="outer-progress_bar" :style="{ width: outterPercent }">
+          <div class="inner-progress_bar" :style="{ width: innerPercent }"></div>
+        </div>
       </div>
       <div class="self">
-        {{ data.endTime - data.startTime }}
+        {{ (data.selfDuration / 1000 / 1000).toFixed(3) }}
       </div>
       <div class="tags" @click.stop="showTagsDialog" :class="{ clickable: data.tags && data.tags.length > 0 }">
         <div class="tag" v-for="(tag, index) in visibleTags" :key="index">
@@ -102,8 +104,14 @@ limitations under the License. -->
     if (props.data.level === 1) {
       return '100%';
     }
-    let result = ((props.data.endTime - props.data.startTime || 0) / (props.data.duration || 0)) * 100;
+    const exec = props.data.endTime - props.data.startTime ? props.data.endTime - props.data.startTime : 0;
+    let result = (exec / props.data.totalExec) * 100;
     result = result > 100 ? 100 : result;
+    const resultStr = result.toFixed(4) + '%';
+    return resultStr === '0.0000%' ? '0.9%' : resultStr;
+  });
+  const innerPercent = computed(() => {
+    const result = (props.data.selfDuration / props.data.duration) * 100;
     const resultStr = result.toFixed(4) + '%';
     return resultStr === '0.0000%' ? '0.9%' : resultStr;
   });
@@ -124,14 +132,6 @@ limitations under the License. -->
 
   const hasMoreTags = computed(() => {
     return props.data.tags && props.data.tags.length > MAX_VISIBLE_TAGS;
-  });
-
-  const remainingTagsTooltip = computed(() => {
-    if (!props.data.tags || props.data.tags.length <= MAX_VISIBLE_TAGS) {
-      return '';
-    }
-    const remainingTags = props.data.tags.slice(MAX_VISIBLE_TAGS);
-    return remainingTags.map((tag) => `${tag.key}: ${tag.value}`).join('\n');
   });
 
   function toggle() {

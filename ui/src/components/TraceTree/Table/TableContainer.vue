@@ -35,7 +35,6 @@ limitations under the License. -->
       :key="`key${index}`"
       :selectedMaxTimestamp="selectedMaxTimestamp"
       :selectedMinTimestamp="selectedMinTimestamp"
-      @selectedSpan="selectItem"
     />
     <slot></slot>
   </div>
@@ -51,7 +50,6 @@ limitations under the License. -->
     selectedMaxTimestamp: Number,
     selectedMinTimestamp: Number,
   });
-  const emits = defineEmits(['select']);
 
   const method = ref(300);
   const dragger = ref(null);
@@ -75,9 +73,6 @@ limitations under the License. -->
       };
     };
   });
-  function selectItem(span) {
-    emits('select', span);
-  }
 </script>
 <style lang="scss" scoped>
   @import url('./table.scss');
