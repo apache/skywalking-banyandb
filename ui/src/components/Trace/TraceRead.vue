@@ -68,7 +68,7 @@
       });
       return;
     }
-    traceData.value = response.traces;
+    traceData.value = response.traceQueryResult;
     data.spanTags = [];
     data.tableData = (response.traces || [])
       .map((trace) => {
