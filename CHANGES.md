@@ -51,6 +51,7 @@ Release Notes.
 - Implement Trace views.
 - Use Fetch request to instead of axios request and remove axios.
 - Implement Trace Tree for debug mode.
+- Implement bydbQL.
 
 ### Bug Fixes
 

@@ -295,10 +295,11 @@ BydbQL for streams is designed for querying and retrieving raw time-series eleme
 
 ```
 query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_stream_clause ::= "FROM STREAM" identifier "IN" ["("] group_list [")"]
+from_stream_clause ::= "FROM STREAM" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection      ::= "*" | column_list
 column_list     ::= identifier ("," identifier)*
 group_list      ::= identifier ("," identifier)+
+stage_list      ::= identifier ("," identifier)+
 criteria        ::= condition (("AND" | "OR") condition)*
 condition       ::= identifier binary_op (value | value_list)
 time_condition  ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
@@ -413,6 +414,13 @@ FROM STREAM sw IN group1, group2
 TIME BETWEEN '-2h' AND 'now'
 WHERE service_id = 'webapp'
 WITH QUERY_TRACE;
+
+-- Query with lifecycle stages
+SELECT trace_id, service_id
+FROM STREAM sw IN group1, group2 ON warn, cold STAGES
+TIME > '-30m'
+WHERE service_id = 'webapp'
+LIMIT 100;
 ```
 
 ## 5. BydbQL for Measures
@@ -423,10 +431,11 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 
 ```
 measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY column_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"]
+from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection        ::= "*" | (column_list | agg_function "(" identifier ")" | top_clause)
 top_clause        ::= "TOP" integer identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
+stage_list        ::= identifier ("," identifier)+
 agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
 group_list        ::= identifier ("," identifier)+
 criteria          ::= condition (("AND" | "OR") condition)*
@@ -583,6 +592,14 @@ TIME > '-30m'
 WHERE region = 'us-west'
 GROUP BY service
 WITH QUERY_TRACE;
+
+-- Query with lifecycle stages
+SELECT
+    region,
+    SUM(latency)
+FROM MEASURE service_cpm IN us-west ON (warn, cold) STAGES
+TIME > '-30m'
+GROUP BY region;
 ```
 
 ## 6. BydbQL for Top-N
@@ -593,9 +610,10 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 
 ```
 topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"]
+from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 topn_criteria      ::= condition (("AND" | "OR") condition)*
 condition          ::= identifier binary_op (value | value_list)
+stage_list         ::= identifier ("," identifier)+
 time_condition     ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op          ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN"
 agg_function       ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
@@ -699,6 +717,12 @@ TIME > '-1h'
 WHERE http_method = 'GET'
 ORDER BY value DESC
 WITH QUERY_TRACE;
+
+-- Top-N query with lifecycle stages
+SHOW TOP 10
+FROM MEASURE service_latency IN production ON warn, cold STAGES
+TIME > '-30m'
+ORDER BY value DESC;
 ```
 
 ## 7. BydbQL for Properties
@@ -775,10 +799,11 @@ BydbQL for traces is designed for querying and retrieving trace data with spans.
 
 ```
 trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_trace_clause     ::= "FROM TRACE" identifier "IN" ["("] group_list [")"]
+from_trace_clause     ::= "FROM TRACE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection            ::= "*" | column_list | "()"
 column_list           ::= identifier ("," identifier)*
 group_list            ::= identifier ("," identifier)+
+stage_list            ::= identifier ("," identifier)+
 criteria              ::= condition (("AND" | "OR") condition)*
 condition             ::= identifier binary_op (value | value_list)
 time_condition        ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
@@ -957,6 +982,13 @@ FROM TRACE sw_trace IN group1
 TIME > '-30m'
 WHERE status = 'error'
 WITH QUERY_TRACE
+LIMIT 100;
+
+-- Query with lifecycle stages
+SELECT trace_id, service_id
+FROM TRACE sw_trace IN group1 ON (warn, cold) STAGES
+TIME > '-30m'
+WHERE status = 'error'
 LIMIT 100;
 ```
 
