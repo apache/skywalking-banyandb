@@ -52,12 +52,31 @@ limitations under the License. -->
       <div class="self">
         {{ data.endTime - data.startTime}}
       </div>
-      <div class="tags">
+      <div class="tags" @click.stop="showTagsDialog" :class="{ 'clickable': data.tags && data.tags.length > 0 }">
         <div class="tag" v-for="(tag, index) in visibleTags" :key="index">
-          {{ tag.key }}: {{ tag.value.length > 0 ? tag.value.slice(0, 20) + '...' : tag.value }}
+          {{ tag.key }}: {{ tag.value && tag.value.length > 20 ? tag.value.slice(0, 20) + '...' : tag.value }}
         </div>
+        <span v-if="hasMoreTags" class="more-tags">+{{ data.tags.length - MAX_VISIBLE_TAGS }}</span>
       </div>
     </div>
+    
+    <el-dialog 
+      v-model="tagsDialogVisible" 
+      title="Tag Details" 
+      width="600px"
+      :append-to-body="true"
+    >
+      <div class="tags-details" style="max-height: 70vh; overflow-y: auto;">
+        <el-table :data="data.tags" style="width: 100%">
+          <el-table-column prop="key" label="Key" width="200" />
+          <el-table-column prop="value" label="Value">
+            <template #default="scope">
+              <div class="tag-value">{{ scope.row.value }}</div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
     <div v-show="data.children && data.children.length > 0 && displayChildren" class="children-trace">
       <table-item
         v-for="(child, index) in data.children"
@@ -81,6 +100,7 @@ limitations under the License. -->
     selectedMinTimestamp: Number,
   });
   const displayChildren = ref(true);
+  const tagsDialogVisible = ref(false);
   const MAX_VISIBLE_TAGS = 1;
   
   const outterPercent = computed(() => {
@@ -121,6 +141,12 @@ limitations under the License. -->
   
   function toggle() {
     displayChildren.value = !displayChildren.value;
+  }
+  
+  function showTagsDialog() {
+    if (props.data.tags && props.data.tags.length > 0) {
+      tagsDialogVisible.value = true;
+    }
   }
 </script>
 <style lang="scss" scoped>
@@ -204,6 +230,14 @@ limitations under the License. -->
     align-items: center;
     gap: 4px;
     
+    &.clickable {
+      cursor: pointer;
+      
+      &:hover {
+        background-color: rgba(0, 0, 0, 0.05);
+      }
+    }
+    
     .tag {
       display: inline-block;
       padding: 2px 6px;
@@ -213,13 +247,27 @@ limitations under the License. -->
     }
     
     .more-tags {
-      cursor: help;
-      color: #666;
+      cursor: pointer;
+      color: var(--el-color-primary);
       font-weight: bold;
       padding: 2px 6px;
+      font-size: 11px;
+      
       &:hover {
-        color: var(--el-color-primary);
+        text-decoration: underline;
       }
+    }
+  }
+  
+  .tags-details {
+    :deep(.el-table) {
+      font-size: 13px;
+    }
+    
+    .tag-value {
+      word-break: break-all;
+      white-space: pre-wrap;
+      padding: 4px 0;
     }
   }
 </style>

@@ -58,7 +58,7 @@ limit: 10`);
       });
       return;
     }
-    traceData.value = res.traces;
+    traceData.value = res.trace;
     data.tableData = (res.properties || []).map((item) => {
       item.tags.forEach((tag) => {
         tag.value = JSON.stringify(tag.value);
@@ -145,11 +145,9 @@ limit: 10`;
         <FormHeader :fields="data" />
       </template>
       <div class="button-group-operator">
-        <div>
           <el-button size="small" :icon="Search" @click="searchProperties" plain />
           <el-button size="small" :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain />
           <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
-        </div>
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
@@ -218,7 +216,7 @@ limit: 10`;
   .button-group-operator {
     display: flex;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: end;
     margin-bottom: 10px;
   }
 </style>
