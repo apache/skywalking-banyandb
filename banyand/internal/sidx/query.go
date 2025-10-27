@@ -81,14 +81,11 @@ type batchMetrics struct {
 func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsCh chan<- *QueryResponse) (err error) {
 	s.totalQueries.Add(1)
 
-	var (
-		stats           streamingStats
-		heapInitialized bool
-	)
+	var stats streamingStats
 
 	ctx, span := startStreamingSpan(ctx, req)
 	defer func() {
-		finalizeStreamingSpan(span, stats, heapInitialized, &err)
+		finalizeStreamingSpan(span, stats, &err)
 	}()
 
 	snap := s.currentSnapshot()
@@ -107,10 +104,8 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 	defer resources.cleanup()
 
 	if loopErr := s.processStreamingLoop(ctx, req, resources, resultsCh, &stats); loopErr != nil {
-		heapInitialized = resources.heap.initialized
 		return loopErr
 	}
-	heapInitialized = resources.heap.initialized
 
 	return nil
 }
@@ -149,11 +144,10 @@ func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context,
 	return spanCtx, span
 }
 
-func finalizeStreamingSpan(span *query.Span, stats streamingStats, heapInitialized bool, errPtr *error) {
+func finalizeStreamingSpan(span *query.Span, stats streamingStats, errPtr *error) {
 	if span == nil {
 		return
 	}
-	span.Tagf("heap_initialized", "%t", heapInitialized)
 	span.Tagf("responses_emitted", "%d", stats.batches)
 	span.Tagf("elements_emitted", "%d", stats.elements)
 	if errPtr != nil && *errPtr != nil {
@@ -269,35 +263,35 @@ func (s *sidx) processStreamingLoop(
 		loopSpan, ctx = tracer.StartSpan(ctx, "sidx.process-streaming-loop")
 		defer func() {
 			if loopSpan != nil {
-				loopSpan.Tagf("total_batches_processed", "%d", stats.batches)
+				loopSpan.Tagf("total_responses_emitted", "%d", stats.batches)
 				s.addBatchMetricsToSpan(loopSpan, metrics)
 				loopSpan.Stop()
 			}
 		}()
 	}
 
-	batchCount := 0
+	scannerBatchCount := 0
 	for {
 		select {
 		case <-ctx.Done():
 			if loopSpan != nil {
 				loopSpan.Tag("termination_reason", "context_canceled")
-				loopSpan.Tagf("batches_before_cancel", "%d", batchCount)
+				loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
 			}
 			return ctx.Err()
 		case batch, ok := <-resources.blockCh:
 			if !ok {
 				if loopSpan != nil {
 					loopSpan.Tag("termination_reason", "channel_closed")
-					loopSpan.Tagf("total_batches", "%d", batchCount)
+					loopSpan.Tagf("total_scanner_batches", "%d", scannerBatchCount)
 				}
 				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
 			}
-			batchCount++
+			scannerBatchCount++
 			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats, metrics); err != nil {
 				if loopSpan != nil {
 					loopSpan.Tag("termination_reason", "batch_error")
-					loopSpan.Tagf("batches_before_error", "%d", batchCount)
+					loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
 					loopSpan.Error(err)
 				}
 				return err

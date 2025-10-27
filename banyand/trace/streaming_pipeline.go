@@ -42,8 +42,9 @@ type traceBatch struct {
 }
 
 type scanBatch struct {
-	err      error
-	cursorCh <-chan scanCursorResult
+	err       error
+	cursorCh  <-chan scanCursorResult
+	snapshots []*snapshot
 	traceBatch
 }
 
@@ -653,7 +654,7 @@ func (r *sidxStreamRunner) cancel() {
 
 func (t *trace) startBlockScanStage(
 	ctx context.Context,
-	parts []*part,
+	tables []*tsTable,
 	qo queryOptions,
 	batches <-chan traceBatch,
 ) <-chan *scanBatch {
@@ -672,17 +673,55 @@ func (t *trace) startBlockScanStage(
 				continue
 			}
 
+			// Acquire snapshots from all tables
+			snapshots := make([]*snapshot, 0, len(tables))
+			for _, table := range tables {
+				s := table.currentSnapshot()
+				if s == nil {
+					continue
+				}
+				snapshots = append(snapshots, s)
+			}
+
+			// If no snapshots available, skip this batch
+			if len(snapshots) == 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &scanBatch{traceBatch: batch}:
+				}
+				continue
+			}
+
+			// Filter parts from snapshots based on batch.traceIDs using bloom filters
+			parts := make([]*part, 0)
+			for _, s := range snapshots {
+				for _, pw := range s.parts {
+					p := pw.p
+					// Check bloom filter for traceIDs
+					if !shouldScanPart(p, batch.traceIDs) {
+						continue
+					}
+					parts = append(parts, p)
+				}
+			}
+
 			// Create the cursor channel and scanBatch
 			cursorCh := make(chan scanCursorResult)
 			sb := &scanBatch{
 				traceBatch: batch,
 				cursorCh:   cursorCh,
+				snapshots:  snapshots,
 			}
 
 			// Send batch downstream first so consumer can start reading
 			select {
 			case <-ctx.Done():
 				close(cursorCh)
+				// Release snapshots on early exit
+				for _, s := range snapshots {
+					s.decRef()
+				}
 				return
 			case out <- sb:
 			}
@@ -727,27 +766,11 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 	// Track part selection performance
 	ctx, finishPartSelection := startPartSelectionSpan(ctx, len(parts), len(sortedIDs))
 
-	// Filter parts using bloom filters to skip parts that don't contain any of the traceIDs
-	filteredParts := make([]*part, 0, len(parts))
-	for _, p := range parts {
-		if shouldScanPart(p, sortedIDs) {
-			filteredParts = append(filteredParts, p)
-		}
-	}
-
-	bloomFilteredParts := len(filteredParts)
-
-	// If no parts contain any of the traceIDs, return early
-	if bloomFilteredParts == 0 {
-		finishPartSelection(&partSelectionMetrics{bloomFilteredParts: bloomFilteredParts}, 0)
-		return
-	}
-
 	// Group trace IDs by part using bloom filters
-	groupedIDs := make([][]string, len(filteredParts))
+	groupedIDs := make([][]string, len(parts))
 	totalGroupedIDs := 0
 	for _, traceID := range sortedIDs {
-		for i, p := range filteredParts {
+		for i, p := range parts {
 			if p.traceIDFilter.filter == nil || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
 				groupedIDs[i] = append(groupedIDs[i], traceID)
 				totalGroupedIDs++
@@ -755,32 +778,27 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 		}
 	}
 
-	// Compact filteredParts and groupedIDs in-place to remove parts with no matching trace IDs
-	partsBeforeCompact := len(filteredParts)
+	// Compact parts and groupedIDs in-place to remove parts with no matching trace IDs
+	partsBeforeCompact := len(parts)
 	writeIdx := 0
-	for i := range filteredParts {
+	for i := range parts {
 		if len(groupedIDs[i]) > 0 {
-			filteredParts[writeIdx] = filteredParts[i]
+			parts[writeIdx] = parts[i]
 			groupedIDs[writeIdx] = groupedIDs[i]
 			writeIdx++
 		}
 	}
-	filteredParts = filteredParts[:writeIdx]
+	parts = parts[:writeIdx]
 	groupedIDs = groupedIDs[:writeIdx]
 
-	if len(filteredParts) == 0 {
+	if len(parts) == 0 {
 		finishPartSelection(&partSelectionMetrics{
-			bloomFilteredParts: bloomFilteredParts,
 			partsBeforeCompact: partsBeforeCompact,
 		}, 0)
 		return
 	}
 
-	// Use compacted filteredParts for scanning
-	parts = filteredParts
-
 	finishPartSelection(&partSelectionMetrics{
-		bloomFilteredParts: bloomFilteredParts,
 		totalGroupedIDs:    totalGroupedIDs,
 		partsBeforeCompact: partsBeforeCompact,
 	}, len(parts))

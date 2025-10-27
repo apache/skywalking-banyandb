@@ -91,14 +91,11 @@ func TestQueryResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				}
+				queryOpts := queryOptions{}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, []string{tt.traceID})
+				pp, _ := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, []string{tt.traceID})
 				bma := generateBlockMetadataArray()
 				defer releaseBlockMetadataArray(bma)
 				ti := &tstIter{}
@@ -337,10 +334,7 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				}
+				queryOpts := queryOptions{}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
@@ -351,7 +345,7 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 					allTraceIDs = append(allTraceIDs, batchTraceIDs...)
 				}
 
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, allTraceIDs)
+				pp, _ := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, allTraceIDs)
 
 				// Create multiple batches, each simulating a batch from sidx
 				cursorBatch := make(chan *scanBatch, len(tt.traceIDs))
