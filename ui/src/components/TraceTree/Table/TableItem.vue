@@ -31,21 +31,20 @@ limitations under the License. -->
         }"
         @click.stop
       >
-        <div style="padding-top: 3px">
-          <el-icon
-            :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
-            @click.stop="toggle"
-            v-if="data.children && data.children.length"
-          >
-            <ArrowDown />
-          </el-icon>
-          <el-icon v-if="tagError" style="color: red; margin-left: 3px">
-            <WarningFilled />
-          </el-icon>
-        </div>
-        <div class="message-text">
+        <el-icon
+          :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
+          @click.stop="toggle"
+          v-if="data.children && data.children.length"
+          style="vertical-align: middle"
+        >
+          <ArrowDown />
+        </el-icon>
+        <el-icon v-if="!tagError" style="color: red; margin-left: 3px; vertical-align: middle">
+          <WarningFilled />
+        </el-icon>
+        <i style="padding-left: 3px; vertical-align: middle; font-style: normal">
           {{ data.message }}
-        </div>
+        </i>
       </div>
       <div class="start-time">
         {{ new Date(data.startTime).toLocaleString() }}
@@ -198,12 +197,11 @@ limitations under the License. -->
   }
 
   .trace-item > div {
-    padding: 0 5px;
+    padding: 5px;
     display: inline-block;
     border: 1px solid transparent;
     border-right: 1px dotted silver;
     overflow: hidden;
-    line-height: 30px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -211,11 +209,8 @@ limitations under the License. -->
   .trace-item > div.method {
     padding-left: 10px;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    .message-text {
-      text-indent: 3px;
-    }
+    // display: inline-flex;
+    // align-items: center;
   }
 
   .trace-item div.exec-percent {
