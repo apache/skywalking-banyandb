@@ -105,22 +105,25 @@ limitations under the License. -->
     if (props.data.level === 1) {
       return '100%';
     }
-    const exec = props.data.endTime - props.data.startTime ? props.data.endTime - props.data.startTime : 0;
-    if (exec <= 0 || props.data.totalExec <= 0) {
-      return '0';
+    const exec = props.data.endTime - props.data.startTime;
+    if (exec < 0) {
+      return '-';
     }
     const result = (exec / props.data.totalExec) * 100;
-    if (!result) {
+    if (isNaN(result)) {
+      return '-';
+    }
+    if (result <= 0) {
       return '0';
     }
     return `${result.toFixed(2)}%`;
   });
   const durationPercent = computed(() => {
-    if (props.data.duration <= 0 || props.data.selfDuration <= 0) {
-      return '0';
-    }
     const result = (props.data.selfDuration / props.data.duration) * 100;
-    if (!result) {
+    if (isNaN(result)) {
+      return '-';
+    }
+    if (result <= 0) {
       return '0';
     }
     return `${result.toFixed(2)}%`;
@@ -130,7 +133,7 @@ limitations under the License. -->
       return true;
     }
 
-    return props.data.startTime <= props.selectedMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
+    return props.data.startTime <= props.selecteMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
   });
 
   const visibleTags = computed(() => {
