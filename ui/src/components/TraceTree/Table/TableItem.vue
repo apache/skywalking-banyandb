@@ -38,6 +38,9 @@ limitations under the License. -->
         >
           <ArrowDown />
         </el-icon>
+        <el-icon v-if="tagError" style="color: red; margin-left: 3px">
+          <WarningFilled />
+        </el-icon>
         {{ data.message }}
       </div>
       <div class="start-time">
@@ -89,7 +92,7 @@ limitations under the License. -->
 </template>
 <script setup>
   import { ref, computed } from 'vue';
-  import { ArrowDown } from '@element-plus/icons-vue';
+  import { ArrowDown, WarningFilled } from '@element-plus/icons-vue';
 
   const props = defineProps({
     data: Object,
@@ -101,6 +104,9 @@ limitations under the License. -->
   const tagsDialogVisible = ref(false);
   const MAX_VISIBLE_TAGS = 1;
 
+  const tagError = computed(() => {
+    return props.data.tags.find((tag) => tag.key === 'error_msg');
+  });
   const execPercent = computed(() => {
     if (props.data.level === 1) {
       return '100%';
