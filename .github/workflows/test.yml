@@ -68,6 +68,10 @@ jobs:
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-test-tool-
+      - name: Build docker image
+        run: |
+          make docker.build || make docker.build
+          docker image ls
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
