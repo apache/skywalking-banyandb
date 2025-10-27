@@ -411,7 +411,6 @@ func ExecuteComposeCommand(args ...string) error {
 		check := exec.Command("docker", "compose", "version")
 		if out, err := check.CombinedOutput(); err == nil && strings.Contains(string(out), "Docker Compose") {
 			composeArgs := append([]string{"compose"}, args...)
-			composeArgs = append(composeArgs, "--wait")
 			cmd := exec.Command("docker", composeArgs...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
