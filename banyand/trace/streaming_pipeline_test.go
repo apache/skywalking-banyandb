@@ -151,7 +151,7 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{&fakeSIDX{responses: responses}}, req, 3)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{&fakeSIDX{responses: responses}}, req, 3)
 
 	var batches []traceBatch
 	for batch := range batchCh {
@@ -223,7 +223,7 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{&fakeSIDX{responses: responses}}, req, 3)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{&fakeSIDX{responses: responses}}, req, 3)
 
 	var batches []traceBatch
 	for batch := range batchCh {
@@ -293,7 +293,7 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
 
 	var (
 		dataSeen bool
@@ -411,7 +411,7 @@ func TestStreamSIDXTraceBatches_PropagatesBlockScannerError(t *testing.T) {
 			defer cancel()
 
 			var tr trace
-			batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
+			batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
 
 			var receivedError error
 
@@ -470,7 +470,7 @@ func TestStreamSIDXTraceBatches_DrainErrorEventsGuaranteed(t *testing.T) {
 	cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
 
 	var receivedError error
 
@@ -518,7 +518,7 @@ func TestStreamSIDXTraceBatches_ErrorEmissionResilience(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0)
 
 	var receivedError error
 	batchCount := 0
@@ -667,7 +667,7 @@ func TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled(t *testing
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no maxTraceSize limit */)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no maxTraceSize limit */)
 
 	const targetTraceIDs = 50
 	totalTraceIDs := 0
@@ -725,7 +725,7 @@ func TestStreamSIDXTraceBatches_InfiniteChannelCancellation(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no maxTraceSize limit */)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no maxTraceSize limit */)
 
 	// Read a few batches, then cancel
 	batchesRead := 0
@@ -774,7 +774,7 @@ func TestStreamSIDXTraceBatches_InfiniteChannelGoroutineCleanup(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no limit */)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{sidxInstance}, req, 0 /* no limit */)
 
 	totalTraceIDs := 0
 	batchesRead := 0
@@ -847,7 +847,7 @@ func TestStreamSIDXTraceBatches_MultipleInfiniteSIDX(t *testing.T) {
 	defer cancel()
 
 	var tr trace
-	batchCh := tr.streamSIDXTraceBatches(ctx, sidxInstances, req, 0 /* no limit */)
+	batchCh, _ := tr.streamSIDXTraceBatches(ctx, sidxInstances, req, 0 /* no limit */)
 
 	totalTraceIDs := 0
 	seenIDs := make(map[string]struct{})

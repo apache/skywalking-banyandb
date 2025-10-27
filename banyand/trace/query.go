@@ -110,7 +110,9 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	case len(qo.traceIDs) > 0:
 		traceBatchCh = staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
 	case useSIDXStreaming:
-		traceBatchCh = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+		var streamDone <-chan struct{}
+		traceBatchCh, streamDone = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+		result.streamDone = streamDone
 	default:
 		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
 	}
@@ -241,13 +243,14 @@ func (t *trace) prepareSIDXStreaming(
 type queryResult struct {
 	ctx                 context.Context
 	err                 error
-	cancel              context.CancelFunc
+	currentBatch        *scanBatch
 	tagProjection       *model.TagProjection
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
-	currentBatch        *scanBatch
-	currentTraceIDs     []string // flattened list of trace IDs from current batch
+	cancel              context.CancelFunc
 	currentCursorGroups map[string][]*blockCursor
+	streamDone          <-chan struct{}
+	currentTraceIDs     []string
 	segments            []storage.Segment[*tsTable, option]
 	currentIndex        int
 	hit                 int
@@ -461,6 +464,11 @@ func (qr *queryResult) releaseCurrentBatch() {
 func (qr *queryResult) Release() {
 	if qr.cancel != nil {
 		qr.cancel()
+	}
+
+	// Wait for streamSIDXTraceBatches goroutine to exit if it was used
+	if qr.streamDone != nil {
+		<-qr.streamDone
 	}
 
 	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes

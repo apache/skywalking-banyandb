@@ -245,12 +245,14 @@ func (t *trace) streamSIDXTraceBatches(
 	sidxInstances []sidx.SIDX,
 	req sidx.QueryRequest,
 	maxTraceSize int,
-) <-chan traceBatch {
+) (<-chan traceBatch, <-chan struct{}) {
 	out := make(chan traceBatch)
+	done := make(chan struct{})
 
 	if len(sidxInstances) == 0 {
 		close(out)
-		return out
+		close(done)
+		return out, done
 	}
 
 	tracer := query.GetTracer(ctx)
@@ -277,6 +279,7 @@ func (t *trace) streamSIDXTraceBatches(
 			}
 			cancel()
 			close(out)
+			close(done)
 		}()
 
 		if err := runner.prepare(sidxInstances); err != nil {
@@ -287,7 +290,7 @@ func (t *trace) streamSIDXTraceBatches(
 
 		runner.run(out)
 	}()
-	return out
+	return out, done
 }
 
 type sidxStreamRunner struct {
