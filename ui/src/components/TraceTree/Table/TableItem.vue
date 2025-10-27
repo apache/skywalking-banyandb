@@ -31,7 +31,7 @@ limitations under the License. -->
         }"
         @click.stop
       >
-        <div class="method-icons">
+        <div style="padding-top: 3px">
           <el-icon
             :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
             @click.stop="toggle"
@@ -215,10 +215,6 @@ limitations under the License. -->
     align-items: center;
     .message-text {
       text-indent: 3px;
-    }
-    .method-icons {
-      display: inline-flex;
-      align-items: center;
     }
   }
 
