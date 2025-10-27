@@ -76,7 +76,8 @@ limitations under the License. -->
       }
     }
     const dur = end - start;
-    return Math.max(0, widthScale.value(dur));
+
+    return Math.max((props.maxTimestamp - props.minTimestamp) / 50, widthScale.value(dur));
   });
 </script>
 

@@ -31,17 +31,21 @@ limitations under the License. -->
         }"
         @click.stop
       >
-        <el-icon
+        <div class="method-icons">
+          <el-icon
           :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
           @click.stop="toggle"
           v-if="data.children && data.children.length"
         >
           <ArrowDown />
         </el-icon>
-        <el-icon v-if="tagError" style="color: red; margin-left: 3px">
+        <el-icon v-if="!tagError" style="color: red; margin-left: 3px">
           <WarningFilled />
         </el-icon>
-        {{ data.message }}
+        </div>
+        <div class="message-text">
+          {{ data.message }}
+        </div>
       </div>
       <div class="start-time">
         {{ new Date(data.startTime).toLocaleString() }}
@@ -207,6 +211,15 @@ limitations under the License. -->
   .trace-item > div.method {
     padding-left: 10px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    .message-text{
+      text-indent: 3px;
+    }
+    .method-icons{
+      display: inline-flex;
+      align-items: center;
+    }
   }
 
   .trace-item div.exec-percent {
