@@ -110,9 +110,9 @@ limitations under the License. -->
       return '0';
     }
     const result = (exec / props.data.totalExec) * 100;
-   if (!result) {
-    return '0';
-   }
+    if (!result) {
+      return '0';
+    }
     return `${result.toFixed(2)}%`;
   });
   const durationPercent = computed(() => {
@@ -121,8 +121,8 @@ limitations under the License. -->
     }
     const result = (props.data.selfDuration / props.data.duration) * 100;
     if (!result) {
-    return '0';
-   }
+      return '0';
+    }
     return `${result.toFixed(2)}%`;
   });
   const inTimeRange = computed(() => {
