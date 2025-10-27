@@ -410,6 +410,11 @@ orderBy:
       <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false" />
     </el-card>
     <el-card shadow="always">
+      <div style="margin-bottom: 10px; display: flex; justify-content: flex-end">
+        <el-button :icon="TrendCharts" :disabled="!traceData" @click="showTracesDialog = true" plain>
+          <span>Debug Trace</span>
+        </el-button>
+      </div>
       <el-table
         v-loading="data.loading"
         element-loading-text="loading"
@@ -453,15 +458,6 @@ orderBy:
           </template>
         </el-table-column>
       </el-table>
-      <el-button
-        :icon="TrendCharts"
-        :disabled="!traceData"
-        @click="showTracesDialog = true"
-        plain
-        style="margin-top: 20px"
-      >
-        <span>Debug Trace</span>
-      </el-button>
     </el-card>
   </div>
   <el-dialog

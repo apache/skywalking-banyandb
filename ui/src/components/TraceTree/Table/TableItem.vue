@@ -35,10 +35,16 @@ limitations under the License. -->
           :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
           @click.stop="toggle"
           v-if="data.children && data.children.length"
+          style="vertical-align: middle"
         >
           <ArrowDown />
         </el-icon>
-        {{ data.message }}
+        <el-icon v-if="tagError" style="color: red; margin-left: 3px; vertical-align: middle">
+          <WarningFilled />
+        </el-icon>
+        <i style="padding-left: 3px; vertical-align: middle; font-style: normal">
+          {{ data.message }}
+        </i>
       </div>
       <div class="start-time">
         {{ new Date(data.startTime).toLocaleString() }}
@@ -47,10 +53,10 @@ limitations under the License. -->
         {{ (data.duration / 1000 / 1000).toFixed(3) }}
       </div>
       <div class="exec-percent">
-        {{ outterPercent }}
+        {{ execPercent }}
       </div>
       <div class="exec-percent">
-        {{ innerPercent }}
+        {{ durationPercent }}
       </div>
       <div class="self">
         {{ (data.selfDuration / 1000 / 1000).toFixed(3) }}
@@ -89,7 +95,7 @@ limitations under the License. -->
 </template>
 <script setup>
   import { ref, computed } from 'vue';
-  import { ArrowDown } from '@element-plus/icons-vue';
+  import { ArrowDown, WarningFilled } from '@element-plus/icons-vue';
 
   const props = defineProps({
     data: Object,
@@ -101,20 +107,35 @@ limitations under the License. -->
   const tagsDialogVisible = ref(false);
   const MAX_VISIBLE_TAGS = 1;
 
-  const outterPercent = computed(() => {
+  const tagError = computed(() => {
+    return props.data.tags.find((tag) => tag.key === 'error_msg');
+  });
+  const execPercent = computed(() => {
     if (props.data.level === 1) {
       return '100%';
     }
-    const exec = props.data.endTime - props.data.startTime ? props.data.endTime - props.data.startTime : 0;
-    let result = (exec / props.data.totalExec) * 100;
-    result = result > 100 ? 100 : result;
-    const resultStr = result.toFixed(2) + '%';
-    return resultStr === '0.00%' ? '0.9%' : resultStr;
+    const exec = props.data.endTime - props.data.startTime;
+    if (exec < 0) {
+      return '-';
+    }
+    const result = (exec / props.data.totalExec) * 100;
+    if (isNaN(result)) {
+      return '-';
+    }
+    if (result <= 0) {
+      return '0';
+    }
+    return `${result.toFixed(2)}%`;
   });
-  const innerPercent = computed(() => {
+  const durationPercent = computed(() => {
     const result = (props.data.selfDuration / props.data.duration) * 100;
-    const resultStr = result.toFixed(2) + '%';
-    return resultStr === '0.00%' ? '0.9%' : resultStr;
+    if (isNaN(result)) {
+      return '-';
+    }
+    if (result <= 0) {
+      return '0';
+    }
+    return `${result.toFixed(2)}%`;
   });
   const inTimeRange = computed(() => {
     if (props.selectedMinTimestamp === undefined || props.selectedMaxTimestamp === undefined) {
@@ -176,12 +197,11 @@ limitations under the License. -->
   }
 
   .trace-item > div {
-    padding: 0 5px;
+    padding: 5px;
     display: inline-block;
     border: 1px solid transparent;
     border-right: 1px dotted silver;
     overflow: hidden;
-    line-height: 30px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -189,6 +209,8 @@ limitations under the License. -->
   .trace-item > div.method {
     padding-left: 10px;
     cursor: pointer;
+    // display: inline-flex;
+    // align-items: center;
   }
 
   .trace-item div.exec-percent {
