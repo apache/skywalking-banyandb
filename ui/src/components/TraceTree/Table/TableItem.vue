@@ -39,7 +39,7 @@ limitations under the License. -->
         >
           <ArrowDown />
         </el-icon>
-        <el-icon v-if="!tagError" style="color: red; margin-left: 3px; vertical-align: middle">
+        <el-icon v-if="tagError" style="color: red; margin-left: 3px; vertical-align: middle">
           <WarningFilled />
         </el-icon>
         <i style="padding-left: 3px; vertical-align: middle; font-style: normal">
