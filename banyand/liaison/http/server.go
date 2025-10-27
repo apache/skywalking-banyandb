@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -361,6 +362,7 @@ func (p *server) initGRPCClient() error {
 		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		databasev1.RegisterTraceRegistryServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		tracev1.RegisterTraceServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
+		bydbqlv1.RegisterBydbQLServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to register endpoints")
