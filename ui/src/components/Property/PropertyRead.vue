@@ -149,7 +149,12 @@ limit: 10`;
         <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
-      <el-table :data="data.tableData" style="width: 100%; margin-top: 20px" border>
+      <div style="margin-top: 20px; margin-bottom: 10px; display: flex; justify-content: flex-end">
+        <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain>
+          <span>Debug Trace</span>
+        </el-button>
+      </div>
+      <el-table :data="data.tableData" style="width: 100%" border>
         <el-table-column label="Group" prop="metadata.group" width="100"></el-table-column>
         <el-table-column label="Name" prop="metadata.name" width="120"></el-table-column>
         <el-table-column label="ModRevision" prop="metadata.modRevision" width="120"></el-table-column>
@@ -191,15 +196,6 @@ limit: 10`;
           </template>
         </el-table-column>
       </el-table>
-      <el-button
-        :icon="TrendCharts"
-        @click="showTracesDialog = true"
-        :disabled="!traceData"
-        plain
-        style="margin-top: 20px"
-      >
-        <span>Debug Trace</span>
-      </el-button>
     </el-card>
     <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>

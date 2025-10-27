@@ -92,7 +92,7 @@ limitations under the License. -->
         convertTree(i);
       }
     }
-    d.selfDuration = selfDuration < 0 ? 0 : selfDuration;
+    d.selfDuration = selfDuration > 0 ? selfDuration : 0;
     return d;
   }
   function getAllNodes(tree) {
