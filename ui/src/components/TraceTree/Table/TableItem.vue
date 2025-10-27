@@ -133,7 +133,7 @@ limitations under the License. -->
       return true;
     }
 
-    return props.data.startTime <= props.selecteMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
+    return props.data.startTime <= props.selectedMaxTimestamp && props.data.endTime >= props.selectedMinTimestamp;
   });
 
   const visibleTags = computed(() => {
