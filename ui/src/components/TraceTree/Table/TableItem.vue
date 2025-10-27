@@ -33,15 +33,15 @@ limitations under the License. -->
       >
         <div class="method-icons">
           <el-icon
-          :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
-          @click.stop="toggle"
-          v-if="data.children && data.children.length"
-        >
-          <ArrowDown />
-        </el-icon>
-        <el-icon v-if="!tagError" style="color: red; margin-left: 3px">
-          <WarningFilled />
-        </el-icon>
+            :style="!displayChildren ? 'transform: rotate(-90deg);' : ''"
+            @click.stop="toggle"
+            v-if="data.children && data.children.length"
+          >
+            <ArrowDown />
+          </el-icon>
+          <el-icon v-if="!tagError" style="color: red; margin-left: 3px">
+            <WarningFilled />
+          </el-icon>
         </div>
         <div class="message-text">
           {{ data.message }}
@@ -213,10 +213,10 @@ limitations under the License. -->
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    .message-text{
+    .message-text {
       text-indent: 3px;
     }
-    .method-icons{
+    .method-icons {
       display: inline-flex;
       align-items: center;
     }

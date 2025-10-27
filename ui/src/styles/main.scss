@@ -235,3 +235,21 @@
 .margin-all-little {
   margin: 10px;
 }
+
+.scroll_bar_style::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+  background-color: #e3dede;
+}
+
+.scroll_bar_style::-webkit-scrollbar-track {
+  background-color: #e3dede;
+  border-radius: 3px;
+  box-shadow: inset 0 0 6px var(--color-placeholder-font);
+}
+
+.scroll_bar_style::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  box-shadow: inset 0 0 6px var(--color-placeholder-font);
+  background-color: #aaa5a5;
+}
