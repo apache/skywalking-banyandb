@@ -18,16 +18,13 @@
 -->
 
 <script setup>
-  import { reactive, watch, getCurrentInstance } from 'vue';
-  import { ElImage, ElMenu, ElMenuItem } from 'element-plus';
-  import { useRoute } from 'vue-router';
+  import { reactive, watch } from 'vue';
+  import { ElImage, ElMenu, ElMenuItem, ElSubMenu } from 'element-plus';
+  import { useRoute, useRouter } from 'vue-router';
   import userImg from '@/assets/banyandb_small.jpg';
-
-  // Eventbus
-  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
-
   // router
   const route = useRoute();
+  const router = useRouter();
 
   // data
   const data = reactive({
@@ -77,11 +74,15 @@
         mode="horizontal"
         :default-active="data.activeMenu"
       >
-        <el-menu-item index="/banyandb/dashboard">Dashboard</el-menu-item>
-        <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
-        <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
-        <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
-        <el-menu-item index="/banyandb/property">Property</el-menu-item>
+        <el-menu-item index="/banyandb/dashboard">Monitoring</el-menu-item>
+        <el-sub-menu index="management">
+          <template #title>Management</template>
+          <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
+          <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
+          <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
+          <el-menu-item index="/banyandb/property">Property</el-menu-item>
+        </el-sub-menu>
+        <el-menu-item index="/banyandb/query">Query</el-menu-item>
       </el-menu>
     </div>
     <div class="flex-block"> </div>
@@ -117,9 +118,34 @@
     font-weight: var(--weight-lt);
     font-size: var(--size-lt);
     font-family: var(--font-family-main);
+    height: 60px;
+    line-height: 60px;
+    display: flex;
+    align-items: center;
   }
 
   .el-menu-item:hover {
+    color: var(--el-menu-active-color) !important;
+  }
+
+  :deep(.el-sub-menu) {
+    height: 60px;
+    display: flex;
+    align-items: center;
+  }
+
+  :deep(.el-sub-menu__title) {
+    font-weight: var(--weight-lt);
+    font-size: var(--size-lt);
+    font-family: var(--font-family-main);
+    height: 60px;
+    line-height: 60px;
+    display: flex;
+    align-items: center;
+    border-bottom: none;
+  }
+
+  :deep(.el-sub-menu__title:hover) {
     color: var(--el-menu-active-color) !important;
   }
 
@@ -127,6 +153,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
+
+    :deep(.el-menu) {
+      display: flex;
+      align-items: center;
+      border-bottom: none;
+    }
+
+    :deep(.el-menu--horizontal) {
+      display: flex;
+      align-items: center;
+      height: 60px;
+    }
   }
 
   .flex-block {
