@@ -38,6 +38,7 @@ import (
 
 var (
 	composeFile           string
+	logDir                string
 	conn                  *grpc.ClientConn
 	groupClient           databasev1.GroupRegistryServiceClient
 	propertyClient        databasev1.PropertyRegistryServiceClient
@@ -52,6 +53,11 @@ func TestPropertyRepairHalfData(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	fmt.Println("Starting Property Repair Half Data Integration Test Suite...")
 
+	// Create log directory for this test run
+	var err error
+	logDir, err = propertyrepair.CreateLogDir("half_data")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	// Disable Ryuk reaper to avoid container creation issues
 	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
 
@@ -65,9 +71,16 @@ var _ = ginkgo.AfterSuite(func() {
 	if conn != nil {
 		_ = conn.Close()
 	}
+	if composeFile != "" && logDir != "" {
+		fmt.Println("Exporting docker compose logs...")
+		if exportErr := propertyrepair.ExportDockerComposeLogs(composeFile, logDir); exportErr != nil {
+			fmt.Printf("Warning: failed to export logs: %v\n", exportErr)
+		}
+		fmt.Printf("Logs are available at: %s\n", logDir)
+	}
 	if composeFile != "" {
 		fmt.Println("Stopping compose stack...")
-		_ = propertyrepair.ExecuteComposeCommand(composeFile, "down")
+		_ = propertyrepair.ExecuteComposeCommand("-f", composeFile, "down")
 	}
 })
 
