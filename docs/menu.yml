@@ -103,7 +103,7 @@ catalog:
         path: "/interacting/java-client"
       - name: "Data Lifecycle"
         path: "/interacting/data-lifecycle"
-      - name: "BydbQL(TBD)"
+      - name: "BydbQL"
         path: "/interacting/bydbql"
   - name: "Operation and Maintenance"
     catalog:
