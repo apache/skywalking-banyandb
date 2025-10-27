@@ -103,11 +103,7 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 	}
 	defer resources.cleanup()
 
-	if loopErr := s.processStreamingLoop(ctx, req, resources, resultsCh, &stats); loopErr != nil {
-		return loopErr
-	}
-
-	return nil
+	return s.processStreamingLoop(ctx, req, resources, resultsCh, &stats)
 }
 
 type streamingQueryResources struct {

@@ -22,6 +22,7 @@ import (
 	"context"
 	stdErrors "errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -35,10 +36,11 @@ import (
 )
 
 type traceBatch struct {
-	err      error
-	keys     map[string]int64
-	traceIDs []string
-	seq      int
+	err           error
+	keys          map[string]int64
+	traceIDs      map[uint64][]string
+	traceIDsOrder []string // ordered list of trace IDs as they were added
+	seq           int
 }
 
 type scanBatch struct {
@@ -51,7 +53,7 @@ type scanBatch struct {
 func newTraceBatch(seq int, capacity int) traceBatch {
 	tb := traceBatch{
 		seq:      seq,
-		traceIDs: make([]string, 0, capacity),
+		traceIDs: make(map[uint64][]string),
 	}
 	if capacity > 0 {
 		tb.keys = make(map[string]int64, capacity)
@@ -89,13 +91,19 @@ func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize
 				end = len(orderedIDs)
 			}
 
+			// Static sources don't have partID information, use sentinel value 0
+			batchIDs := append([]string(nil), orderedIDs[start:end]...)
+			traceIDMap := make(map[uint64][]string)
+			traceIDMap[0] = batchIDs
+
 			select {
 			case <-ctx.Done():
 				return
 			case out <- traceBatch{
-				seq:      seq,
-				traceIDs: append([]string(nil), orderedIDs[start:end]...),
-				keys:     keys,
+				seq:           seq,
+				traceIDs:      traceIDMap,
+				traceIDsOrder: batchIDs,
+				keys:          keys,
 			}:
 				seq++
 			}
@@ -465,9 +473,16 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			return
 		}
 
-		if added && len(r.batch.traceIDs) >= r.batchSize {
-			if !r.emitBatch(out) {
-				return
+		if added {
+			// Count total trace IDs across all partIDs
+			totalTraceIDs := 0
+			for _, ids := range r.batch.traceIDs {
+				totalTraceIDs += len(ids)
+			}
+			if totalTraceIDs >= r.batchSize {
+				if !r.emitBatch(out) {
+					return
+				}
 			}
 		}
 
@@ -477,7 +492,15 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 		}
 	}
 
-	if len(r.batch.traceIDs) > 0 {
+	// Emit remaining batch if it has any trace IDs
+	hasTraceIDs := false
+	for _, ids := range r.batch.traceIDs {
+		if len(ids) > 0 {
+			hasTraceIDs = true
+			break
+		}
+	}
+	if hasTraceIDs {
 		if !r.emitBatch(out) {
 			return
 		}
@@ -531,8 +554,12 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 		return false, nil
 	}
 
+	// Extract partID from SIDX response
+	partID := shard.response.PartIDs[shard.idx]
+
 	r.seenTraceIDs[traceID] = struct{}{}
-	r.batch.traceIDs = append(r.batch.traceIDs, traceID)
+	r.batch.traceIDs[partID] = append(r.batch.traceIDs[partID], traceID)
+	r.batch.traceIDsOrder = append(r.batch.traceIDsOrder, traceID)
 	if r.batch.keys == nil {
 		r.batch.keys = make(map[string]int64)
 	}
@@ -693,18 +720,56 @@ func (t *trace) startBlockScanStage(
 				continue
 			}
 
-			// Filter parts from snapshots based on batch.traceIDs using bloom filters
+			// Start part selection span
+			partSelectionCtx, finishPartSelection := startPartSelectionSpan(ctx, &batch, snapshots)
+
 			parts := make([]*part, 0)
+			groupedIDs := make([][]string, 0)
+
+			allTraceIDs := make([]string, 0)
+			for _, ids := range batch.traceIDs {
+				allTraceIDs = append(allTraceIDs, ids...)
+			}
+			sort.Strings(allTraceIDs)
+
+			bloomFilteredPartIDs := make([]uint64, 0)
+			totalGroupedIDs := 0
+
 			for _, s := range snapshots {
 				for _, pw := range s.parts {
 					p := pw.p
-					// Check bloom filter for traceIDs
-					if !shouldScanPart(p, batch.traceIDs) {
-						continue
+					partID := p.partMetadata.ID
+
+					var idsFromSIDX []string
+					if traceIDsFromSIDX, exists := batch.traceIDs[partID]; exists {
+						idsFromSIDX = append([]string(nil), traceIDsFromSIDX...)
+						sort.Strings(idsFromSIDX)
 					}
-					parts = append(parts, p)
+					var idsForPart []string
+					for _, traceID := range allTraceIDs {
+						if slices.Contains(idsFromSIDX, traceID) || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+							idsForPart = append(idsForPart, traceID)
+						}
+					}
+
+					if len(idsForPart) > 0 {
+						parts = append(parts, p)
+						groupedIDs = append(groupedIDs, idsForPart)
+						totalGroupedIDs += len(idsForPart)
+					} else {
+						bloomFilteredPartIDs = append(bloomFilteredPartIDs, partID)
+					}
 				}
 			}
+
+			// Finish part selection span with metrics
+			finishPartSelection(&partSelectionMetrics{
+				bloomFilteredPartIDs: bloomFilteredPartIDs,
+				totalGroupedIDs:      totalGroupedIDs,
+			}, len(parts))
+
+			// Use the part selection context for downstream operations
+			ctx = partSelectionCtx
 
 			// Create the cursor channel and scanBatch
 			cursorCh := make(chan scanCursorResult)
@@ -727,7 +792,7 @@ func (t *trace) startBlockScanStage(
 			}
 
 			// Now scan inline and populate the channel
-			t.scanTraceIDsInline(ctx, parts, qo, batch.traceIDs, cursorCh)
+			t.scanPartsInline(ctx, parts, groupedIDs, qo, cursorCh)
 			close(cursorCh)
 		}
 	}()
@@ -740,70 +805,12 @@ type scanCursorResult struct {
 	err    error
 }
 
-// shouldScanPart checks if a part should be scanned for the given traceIDs using bloom filter.
-// Returns true if bloom filter is nil OR any traceID might be in the part.
-// Returns false if bloom filter confirms no traceIDs exist in the part.
-func shouldScanPart(p *part, traceIDs []string) bool {
-	if p.traceIDFilter.filter == nil || len(traceIDs) == 0 {
-		return true
-	}
-	for _, traceID := range traceIDs {
-		if p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
-			return true
-		}
-	}
-	return false
-}
-
-func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string, out chan<- scanCursorResult) {
-	if len(parts) == 0 || len(traceIDs) == 0 {
-		return
-	}
-
-	sortedIDs := append([]string(nil), traceIDs...)
-	sort.Strings(sortedIDs)
-
-	// Track part selection performance
-	ctx, finishPartSelection := startPartSelectionSpan(ctx, len(parts), len(sortedIDs))
-
-	// Group trace IDs by part using bloom filters
-	groupedIDs := make([][]string, len(parts))
-	totalGroupedIDs := 0
-	for _, traceID := range sortedIDs {
-		for i, p := range parts {
-			if p.traceIDFilter.filter == nil || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
-				groupedIDs[i] = append(groupedIDs[i], traceID)
-				totalGroupedIDs++
-			}
-		}
-	}
-
-	// Compact parts and groupedIDs in-place to remove parts with no matching trace IDs
-	partsBeforeCompact := len(parts)
-	writeIdx := 0
-	for i := range parts {
-		if len(groupedIDs[i]) > 0 {
-			parts[writeIdx] = parts[i]
-			groupedIDs[writeIdx] = groupedIDs[i]
-			writeIdx++
-		}
-	}
-	parts = parts[:writeIdx]
-	groupedIDs = groupedIDs[:writeIdx]
-
+func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [][]string, qo queryOptions, out chan<- scanCursorResult) {
 	if len(parts) == 0 {
-		finishPartSelection(&partSelectionMetrics{
-			partsBeforeCompact: partsBeforeCompact,
-		}, 0)
 		return
 	}
 
-	finishPartSelection(&partSelectionMetrics{
-		totalGroupedIDs:    totalGroupedIDs,
-		partsBeforeCompact: partsBeforeCompact,
-	}, len(parts))
-
-	recordBlock, finishSpan := startAggregatedBlockScanSpan(ctx, sortedIDs, parts)
+	recordBlock, finishSpan := startAggregatedBlockScanSpan(ctx, groupedIDs, parts)
 
 	var (
 		spanErr        error

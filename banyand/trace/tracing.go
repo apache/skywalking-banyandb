@@ -250,33 +250,50 @@ func startBlockScanSpan(ctx context.Context, traceIDs []string, parts []*part) (
 
 // partSelectionMetrics holds the metrics for part selection span.
 type partSelectionMetrics struct {
-	bloomFilteredParts int
-	totalGroupedIDs    int
-	partsBeforeCompact int
+	bloomFilteredPartIDs []uint64
+	totalGroupedIDs      int
 }
 
 // startPartSelectionSpan creates a span for part selection.
 // It returns the updated context and a finish function to complete the span.
-func startPartSelectionSpan(ctx context.Context, initialParts int, traceIDCount int) (context.Context, func(*partSelectionMetrics, int)) {
+func startPartSelectionSpan(ctx context.Context, batch *traceBatch, snapshots []*snapshot) (context.Context, func(*partSelectionMetrics, int)) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return ctx, func(*partSelectionMetrics, int) {}
 	}
 
+	// Count total trace IDs
+	totalTraceIDCount := 0
+	for _, ids := range batch.traceIDs {
+		totalTraceIDCount += len(ids)
+	}
+
+	// Count initial parts
+	initialParts := 0
+	for _, s := range snapshots {
+		initialParts += len(s.parts)
+	}
+
 	span, spanCtx := tracer.StartSpan(ctx, "part-selection")
 	span.Tagf("initial_parts", "%d", initialParts)
-	span.Tagf("trace_ids", "%d", traceIDCount)
+	span.Tagf("trace_ids", "%d", totalTraceIDCount)
 
 	return spanCtx, func(metrics *partSelectionMetrics, finalParts int) {
 		if metrics != nil {
-			span.Tagf("bloom_filtered_parts", "%d", metrics.bloomFilteredParts)
+			if len(metrics.bloomFilteredPartIDs) > 0 {
+				partIDStrs := make([]string, len(metrics.bloomFilteredPartIDs))
+				for i, id := range metrics.bloomFilteredPartIDs {
+					partIDStrs[i] = strconv.FormatUint(id, 10)
+				}
+				span.Tag("bloom_filtered_part_ids", strings.Join(partIDStrs, ","))
+			}
 		}
 		span.Tagf("final_parts", "%d", finalParts)
 		if finalParts > 0 && metrics != nil {
 			span.Tagf("total_grouped_ids", "%d", metrics.totalGroupedIDs)
 			avgIDsPerPart := float64(metrics.totalGroupedIDs) / float64(finalParts)
 			span.Tagf("avg_ids_per_part", "%.2f", avgIDsPerPart)
-			partsSkipped := metrics.partsBeforeCompact - finalParts
+			partsSkipped := initialParts - finalParts
 			if partsSkipped > 0 {
 				span.Tagf("parts_skipped_empty", "%d", partsSkipped)
 			}
@@ -287,7 +304,7 @@ func startPartSelectionSpan(ctx context.Context, initialParts int, traceIDCount 
 
 // startAggregatedBlockScanSpan creates an aggregated span for block scanning with simplified sampling.
 // It returns a callback to record blocks and a finish function to complete the span.
-func startAggregatedBlockScanSpan(ctx context.Context, traceIDs []string, parts []*part) (func(*blockCursor, uint64), func(int, uint64, error)) {
+func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, parts []*part) (func(*blockCursor, uint64), func(int, uint64, error)) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return nil, func(int, uint64, error) {}
@@ -305,15 +322,28 @@ func startAggregatedBlockScanSpan(ctx context.Context, traceIDs []string, parts 
 			}
 		}, func(blockCount int, totalBytes uint64, err error) {
 			span, _ := tracer.StartSpan(ctx, "scan-blocks")
-			span.Tag("trace_id_count", strconv.Itoa(len(traceIDs)))
-			if len(traceIDs) > 0 {
-				limit := traceIDSampleLimit
-				if limit > len(traceIDs) {
-					limit = len(traceIDs)
+
+			// Count total trace IDs and collect samples from groupedIDs
+			totalTraceIDs := 0
+			var traceIDSamples []string
+			for _, ids := range groupedIDs {
+				totalTraceIDs += len(ids)
+				// Collect samples from each group for better representation
+				if len(traceIDSamples) < traceIDSampleLimit {
+					remainingSlots := traceIDSampleLimit - len(traceIDSamples)
+					if remainingSlots > len(ids) {
+						traceIDSamples = append(traceIDSamples, ids...)
+					} else {
+						traceIDSamples = append(traceIDSamples, ids[:remainingSlots]...)
+					}
 				}
-				span.Tag("trace_ids_sample", strings.Join(traceIDs[:limit], ","))
-				if len(traceIDs) > limit {
-					span.Tagf("trace_ids_omitted", "%d", len(traceIDs)-limit)
+			}
+
+			span.Tag("trace_id_count", strconv.Itoa(totalTraceIDs))
+			if len(traceIDSamples) > 0 {
+				span.Tag("trace_ids_sample", strings.Join(traceIDSamples, ","))
+				if totalTraceIDs > len(traceIDSamples) {
+					span.Tagf("trace_ids_omitted", "%d", totalTraceIDs-len(traceIDSamples))
 				}
 			}
 			span.Tag("part_header", partMetadataHeader)

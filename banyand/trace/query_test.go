@@ -130,10 +130,14 @@ func TestQueryResult(t *testing.T) {
 				close(cursorCh)
 
 				cursorBatch := make(chan *scanBatch, 1)
+				// Create trace batch with map structure
+				traceIDMap := make(map[uint64][]string)
+				traceIDMap[0] = []string{tt.traceID}
 				cursorBatch <- &scanBatch{
 					traceBatch: traceBatch{
-						traceIDs: []string{tt.traceID},
-						keys:     map[string]int64{tt.traceID: 0},
+						traceIDs:      traceIDMap,
+						traceIDsOrder: []string{tt.traceID},
+						keys:          map[string]int64{tt.traceID: 0},
 					},
 					cursorCh: cursorCh,
 				}
@@ -383,12 +387,17 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 						keys[traceID] = int64(batchIdx)
 					}
 
+					// Create trace ID map for this batch
+					traceIDMap := make(map[uint64][]string)
+					traceIDMap[uint64(batchIdx)] = batchTraceIDs
+
 					// Add batch to channel
 					cursorBatch <- &scanBatch{
 						traceBatch: traceBatch{
-							traceIDs: batchTraceIDs,
-							keys:     keys,
-							seq:      batchIdx,
+							traceIDs:      traceIDMap,
+							traceIDsOrder: batchTraceIDs,
+							keys:          keys,
+							seq:           batchIdx,
 						},
 						cursorCh: cursorCh,
 					}

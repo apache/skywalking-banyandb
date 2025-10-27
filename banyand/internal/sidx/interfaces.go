@@ -92,6 +92,7 @@ type QueryResponse struct {
 	Data     [][]byte
 	Tags     [][]Tag
 	SIDs     []common.SeriesID
+	PartIDs  []uint64
 	Metadata ResponseMetadata
 }
 
@@ -107,6 +108,7 @@ func (qr *QueryResponse) Reset() {
 	qr.Data = qr.Data[:0]
 	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
+	qr.PartIDs = qr.PartIDs[:0]
 	qr.Metadata = ResponseMetadata{}
 }
 
@@ -115,12 +117,16 @@ func (qr *QueryResponse) Validate() error {
 	keysLen := len(qr.Keys)
 	dataLen := len(qr.Data)
 	sidsLen := len(qr.SIDs)
+	partIDsLen := len(qr.PartIDs)
 
 	if keysLen != dataLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, data=%d", keysLen, dataLen)
 	}
 	if keysLen != sidsLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, sids=%d", keysLen, sidsLen)
+	}
+	if keysLen != partIDsLen {
+		return fmt.Errorf("inconsistent array lengths: keys=%d, partIDs=%d", keysLen, partIDsLen)
 	}
 
 	// Validate Tags structure if present
@@ -147,6 +153,7 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	// Copy parallel arrays
 	qr.Keys = append(qr.Keys[:0], other.Keys...)
 	qr.SIDs = append(qr.SIDs[:0], other.SIDs...)
+	qr.PartIDs = append(qr.PartIDs[:0], other.PartIDs...)
 
 	// Deep copy data
 	if cap(qr.Data) < len(other.Data) {

@@ -333,6 +333,7 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	result.Keys = append(result.Keys, key)
 	result.Data = append(result.Data, bc.data[bc.idx])
 	result.SIDs = append(result.SIDs, bc.seriesID)
+	result.PartIDs = append(result.PartIDs, bc.p.ID())
 
 	// Copy tags for this element
 	var elementTags []Tag
@@ -429,10 +430,11 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 	// Initialize first batch
 	batch := &QueryResponse{
-		Keys: make([]int64, 0),
-		Data: make([][]byte, 0),
-		Tags: make([][]Tag, 0),
-		SIDs: make([]common.SeriesID, 0),
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		Tags:    make([][]Tag, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
 	}
 
 	for bch.Len() > 0 {
@@ -475,10 +477,11 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 			// Create a new batch and continue
 			batch = &QueryResponse{
-				Keys: make([]int64, 0),
-				Data: make([][]byte, 0),
-				Tags: make([][]Tag, 0),
-				SIDs: make([]common.SeriesID, 0),
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				Tags:    make([][]Tag, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
 			}
 		}
 	}

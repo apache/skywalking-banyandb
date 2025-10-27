@@ -600,13 +600,14 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 			}
 
 			result := &QueryResponse{
-				Keys: make([]int64, 0),
-				Data: make([][]byte, 0),
-				Tags: make([][]Tag, 0),
-				SIDs: make([]common.SeriesID, 0),
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				Tags:    make([][]Tag, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
 			}
 
-			qr.convertBlockToResponse(block, 1, result)
+			qr.convertBlockToResponse(block, 1, 1, result)
 
 			assert.Equal(t, tt.expectedKeys, result.Keys)
 			assert.Equal(t, tt.expectedData, result.Data)
@@ -614,6 +615,7 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 			assert.Equal(t, len(result.Keys), len(result.Data), "Keys and Data arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.SIDs), "Keys and SIDs arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.Tags), "Keys and Tags arrays should have same length")
+			assert.Equal(t, len(result.Keys), len(result.PartIDs), "Keys and PartIDs arrays should have same length")
 		})
 	}
 }
@@ -627,10 +629,11 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 	}
 
 	result := &QueryResponse{
-		Keys: make([]int64, 0),
-		Data: make([][]byte, 0),
-		Tags: make([][]Tag, 0),
-		SIDs: make([]common.SeriesID, 0),
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		Tags:    make([][]Tag, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
 	}
 
 	// First call: add trace1 data
@@ -639,7 +642,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace1"), []byte("trace1")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block1, 1, result)
+	qr.convertBlockToResponse(block1, 1, 1, result)
 
 	// Verify first call results
 	assert.Equal(t, 2, result.Len(), "First call should add 2 elements")
@@ -650,7 +653,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace2"), []byte("trace2")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block2, 2, result)
+	qr.convertBlockToResponse(block2, 2, 2, result)
 
 	assert.Equal(t, 2, result.Len(), "Second call should not add elements beyond limit")
 
@@ -660,7 +663,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace3"), []byte("trace3")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block3, 3, result)
+	qr.convertBlockToResponse(block3, 3, 3, result)
 
 	assert.Equal(t, 2, result.Len(), "Result length should remain capped at the limit")
 	assert.Equal(t, [][]byte{[]byte("trace1"), []byte("trace1")}, result.Data)

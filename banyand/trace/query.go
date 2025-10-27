@@ -246,6 +246,7 @@ type queryResult struct {
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
 	currentBatch        *scanBatch
+	currentTraceIDs     []string // flattened list of trace IDs from current batch
 	currentCursorGroups map[string][]*blockCursor
 	segments            []storage.Segment[*tsTable, option]
 	currentIndex        int
@@ -271,12 +272,12 @@ func (qr *queryResult) Pull() *model.TraceResult {
 			return nil
 		}
 
-		if qr.currentBatch == nil || qr.currentIndex >= len(qr.currentBatch.traceIDs) {
+		if qr.currentBatch == nil || qr.currentIndex >= len(qr.currentTraceIDs) {
 			qr.releaseCurrentBatch()
 			continue
 		}
 
-		traceID := qr.currentBatch.traceIDs[qr.currentIndex]
+		traceID := qr.currentTraceIDs[qr.currentIndex]
 		cursors := qr.currentCursorGroups[traceID]
 
 		if len(cursors) == 0 {
@@ -313,7 +314,7 @@ func (qr *queryResult) Pull() *model.TraceResult {
 }
 
 func (qr *queryResult) ensureCurrentBatch() bool {
-	if qr.currentBatch != nil && qr.currentIndex < len(qr.currentBatch.traceIDs) {
+	if qr.currentBatch != nil && qr.currentIndex < len(qr.currentTraceIDs) {
 		return true
 	}
 
@@ -336,7 +337,11 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 
 			qr.currentBatch = batch
 			qr.currentIndex = 0
-			qr.currentCursorGroups = make(map[string][]*blockCursor, len(batch.traceIDs))
+
+			// Use the ordered list of trace IDs to maintain the sorted order from SIDX stream
+			qr.currentTraceIDs = batch.traceIDsOrder
+
+			qr.currentCursorGroups = make(map[string][]*blockCursor, len(qr.currentTraceIDs))
 
 			// Stream cursors from channel and group by traceID
 			if batch.cursorCh != nil {
@@ -449,6 +454,7 @@ func (qr *queryResult) releaseCurrentBatch() {
 		// so no need to drain it here
 		qr.currentBatch = nil
 	}
+	qr.currentTraceIDs = nil
 	qr.currentIndex = 0
 }
 

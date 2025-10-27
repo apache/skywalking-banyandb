@@ -135,6 +135,7 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 				encodeTraceIDForTest("a"),
 				encodeTraceIDForTest("b"),
 			},
+			PartIDs: []uint64{100, 101},
 		},
 		{
 			Keys: []int64{2, 3},
@@ -142,6 +143,7 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 				encodeTraceIDForTest("b"),
 				encodeTraceIDForTest("c"),
 			},
+			PartIDs: []uint64{101, 102},
 		},
 	}
 
@@ -163,18 +165,30 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 		t.Fatalf("expected 2 batches, got %d", len(batches))
 	}
 
-	if diff := cmp.Diff([]string{"a", "b"}, batches[0].traceIDs); diff != "" {
-		t.Fatalf("first batch mismatch (-got +want):\n%s", diff)
+	// First batch should have trace IDs grouped by partID
+	wantBatch0 := map[uint64][]string{
+		100: {"a"},
+		101: {"b"},
 	}
-	if diff := cmp.Diff([]string{"c"}, batches[1].traceIDs); diff != "" {
-		t.Fatalf("second batch mismatch (-got +want):\n%s", diff)
+	if diff := cmp.Diff(wantBatch0, batches[0].traceIDs); diff != "" {
+		t.Fatalf("first batch mismatch (-want +got):\n%s", diff)
+	}
+
+	// Second batch should have trace ID in partID 102
+	wantBatch1 := map[uint64][]string{
+		102: {"c"},
+	}
+	if diff := cmp.Diff(wantBatch1, batches[1].traceIDs); diff != "" {
+		t.Fatalf("second batch mismatch (-want +got):\n%s", diff)
 	}
 
 	wantKeys := map[string]int64{"a": 1, "b": 2, "c": 3}
 	for _, batch := range batches {
-		for _, tid := range batch.traceIDs {
-			if got := batch.keys[tid]; got != wantKeys[tid] {
-				t.Fatalf("unexpected key for %s: got %d, want %d", tid, got, wantKeys[tid])
+		for _, ids := range batch.traceIDs {
+			for _, tid := range ids {
+				if got := batch.keys[tid]; got != wantKeys[tid] {
+					t.Fatalf("unexpected key for %s: got %d, want %d", tid, got, wantKeys[tid])
+				}
 			}
 		}
 	}
@@ -193,6 +207,7 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 				encodeTraceIDForTest("e"),
 				encodeTraceIDForTest("d"),
 			},
+			PartIDs: []uint64{200, 201},
 		},
 		{
 			Keys: []int64{4, 3},
@@ -200,6 +215,7 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 				encodeTraceIDForTest("d"),
 				encodeTraceIDForTest("c"),
 			},
+			PartIDs: []uint64{201, 202},
 		},
 	}
 
@@ -221,18 +237,30 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 		t.Fatalf("expected 2 batches, got %d", len(batches))
 	}
 
-	if diff := cmp.Diff([]string{"e", "d"}, batches[0].traceIDs); diff != "" {
-		t.Fatalf("first batch mismatch (-got +want):\n%s", diff)
+	// First batch should have trace IDs grouped by partID
+	wantBatch0 := map[uint64][]string{
+		200: {"e"},
+		201: {"d"},
 	}
-	if diff := cmp.Diff([]string{"c"}, batches[1].traceIDs); diff != "" {
-		t.Fatalf("second batch mismatch (-got +want):\n%s", diff)
+	if diff := cmp.Diff(wantBatch0, batches[0].traceIDs); diff != "" {
+		t.Fatalf("first batch mismatch (-want +got):\n%s", diff)
+	}
+
+	// Second batch should have trace ID in partID 202
+	wantBatch1 := map[uint64][]string{
+		202: {"c"},
+	}
+	if diff := cmp.Diff(wantBatch1, batches[1].traceIDs); diff != "" {
+		t.Fatalf("second batch mismatch (-want +got):\n%s", diff)
 	}
 
 	wantKeys := map[string]int64{"e": 5, "d": 4, "c": 3}
 	for _, batch := range batches {
-		for _, tid := range batch.traceIDs {
-			if got := batch.keys[tid]; got != wantKeys[tid] {
-				t.Fatalf("unexpected key for %s: got %d, want %d", tid, got, wantKeys[tid])
+		for _, ids := range batch.traceIDs {
+			for _, tid := range ids {
+				if got := batch.keys[tid]; got != wantKeys[tid] {
+					t.Fatalf("unexpected key for %s: got %d, want %d", tid, got, wantKeys[tid])
+				}
 			}
 		}
 	}
@@ -254,6 +282,7 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 					Data: [][]byte{
 						encodeTraceIDForTest("trace-1"),
 					},
+					PartIDs: []uint64{300},
 				},
 			},
 		},
@@ -278,8 +307,12 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 			errSeen = true
 			continue
 		}
-		if len(batch.traceIDs) > 0 {
-			dataSeen = true
+		// Check if batch has any trace IDs in the map
+		for _, ids := range batch.traceIDs {
+			if len(ids) > 0 {
+				dataSeen = true
+				break
+			}
 		}
 	}
 
@@ -425,6 +458,7 @@ func TestStreamSIDXTraceBatches_DrainErrorEventsGuaranteed(t *testing.T) {
 					Data: [][]byte{
 						encodeTraceIDForTest("trace-1"),
 					},
+					PartIDs: []uint64{400},
 				},
 			},
 		},
@@ -473,6 +507,7 @@ func TestStreamSIDXTraceBatches_ErrorEmissionResilience(t *testing.T) {
 						encodeTraceIDForTest("trace-2"),
 						encodeTraceIDForTest("trace-3"),
 					},
+					PartIDs: []uint64{500, 501, 502},
 				},
 			},
 		},
@@ -554,6 +589,7 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 
 				keys := make([]int64, batchSize)
 				data := make([][]byte, batchSize)
+				partIDs := make([]uint64, batchSize)
 
 				for i := 0; i < batchSize; i++ {
 					keys[i] = key
@@ -563,13 +599,15 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 					}
 					traceID := prefix + "-" + strconv.Itoa(counter)
 					data[i] = encodeTraceIDForTest(traceID)
+					partIDs[i] = uint64(1000 + counter) // Generate unique partIDs
 					key++
 					counter++
 				}
 
 				resp := &sidx.QueryResponse{
-					Keys: keys,
-					Data: data,
+					Keys:    keys,
+					Data:    data,
+					PartIDs: partIDs,
 				}
 
 				select {
@@ -644,14 +682,15 @@ func TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled(t *testing
 			t.Fatalf("unexpected error batch: %v", batch.err)
 		}
 
-		for _, tid := range batch.traceIDs {
-			if _, exists := seenIDs[tid]; exists {
-				t.Fatalf("duplicate trace ID: %s", tid)
+		for _, ids := range batch.traceIDs {
+			for _, tid := range ids {
+				if _, exists := seenIDs[tid]; exists {
+					t.Fatalf("duplicate trace ID: %s", tid)
+				}
+				seenIDs[tid] = struct{}{}
+				totalTraceIDs++
 			}
-			seenIDs[tid] = struct{}{}
 		}
-
-		totalTraceIDs += len(batch.traceIDs)
 
 		// Cancel after we've received enough traces to prove it's streaming
 		if totalTraceIDs >= targetTraceIDs {
@@ -750,7 +789,9 @@ func TestStreamSIDXTraceBatches_InfiniteChannelGoroutineCleanup(t *testing.T) {
 			t.Fatalf("unexpected error: %v", batch.err)
 		}
 
-		totalTraceIDs += len(batch.traceIDs)
+		for _, ids := range batch.traceIDs {
+			totalTraceIDs += len(ids)
+		}
 		batchesRead++
 
 		// Cancel after reading a few batches
@@ -821,15 +862,15 @@ func TestStreamSIDXTraceBatches_MultipleInfiniteSIDX(t *testing.T) {
 			t.Fatalf("unexpected error batch: %v", batch.err)
 		}
 
-		for _, tid := range batch.traceIDs {
+		// Use traceIDsOrder to maintain the correct order from SIDX stream
+		for _, tid := range batch.traceIDsOrder {
 			if _, exists := seenIDs[tid]; exists {
 				t.Fatalf("duplicate trace ID: %s", tid)
 			}
 			seenIDs[tid] = struct{}{}
 			keys = append(keys, batch.keys[tid])
+			totalTraceIDs++
 		}
-
-		totalTraceIDs += len(batch.traceIDs)
 
 		// Cancel after we've received enough to verify the merge is working
 		if totalTraceIDs >= targetTraceIDs {
