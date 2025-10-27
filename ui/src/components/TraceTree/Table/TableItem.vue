@@ -47,10 +47,10 @@ limitations under the License. -->
         {{ (data.duration / 1000 / 1000).toFixed(3) }}
       </div>
       <div class="exec-percent">
-        {{ outterPercent }}
+        {{ execPercent }}
       </div>
       <div class="exec-percent">
-        {{ innerPercent }}
+        {{ durationPercent }}
       </div>
       <div class="self">
         {{ (data.selfDuration / 1000 / 1000).toFixed(3) }}
@@ -101,20 +101,29 @@ limitations under the License. -->
   const tagsDialogVisible = ref(false);
   const MAX_VISIBLE_TAGS = 1;
 
-  const outterPercent = computed(() => {
+  const execPercent = computed(() => {
     if (props.data.level === 1) {
       return '100%';
     }
     const exec = props.data.endTime - props.data.startTime ? props.data.endTime - props.data.startTime : 0;
-    let result = (exec / props.data.totalExec) * 100;
-    result = result > 100 ? 100 : result;
-    const resultStr = result.toFixed(2) + '%';
-    return resultStr === '0.00%' ? '0.9%' : resultStr;
+    if (exec <= 0 || props.data.totalExec <= 0) {
+      return '0';
+    }
+    const result = (exec / props.data.totalExec) * 100;
+   if (!result) {
+    return '0';
+   }
+    return `${result.toFixed(2)}%`;
   });
-  const innerPercent = computed(() => {
+  const durationPercent = computed(() => {
+    if (props.data.duration <= 0 || props.data.selfDuration <= 0) {
+      return '0';
+    }
     const result = (props.data.selfDuration / props.data.duration) * 100;
-    const resultStr = result.toFixed(2) + '%';
-    return resultStr === '0.00%' ? '0.9%' : resultStr;
+    if (!result) {
+    return '0';
+   }
+    return `${result.toFixed(2)}%`;
   });
   const inTimeRange = computed(() => {
     if (props.selectedMinTimestamp === undefined || props.selectedMaxTimestamp === undefined) {
