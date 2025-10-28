@@ -135,28 +135,31 @@ func (sw *writers) getWriters(tagName string) (*writer, *writer) {
 }
 
 type blockWriter struct {
-	writers                        writers
-	traceIDs                       []string
+	traceIDFilter                  *traceIDFilter
 	tagType                        tagType
+	writers                        writers
+	tidLast                        string
+	tidFirst                       string
 	metaData                       []byte
 	primaryBlockData               []byte
 	primaryBlockMetadata           primaryBlockMetadata
-	totalBlocksCount               uint64
-	maxTimestamp                   int64
 	totalUncompressedSpanSizeBytes uint64
 	totalCount                     uint64
 	minTimestamp                   int64
 	totalMinTimestamp              int64
 	totalMaxTimestamp              int64
 	minTimestampLast               int64
-	tidFirst                       string
-	tidLast                        string
+	maxTimestamp                   int64
+	totalBlocksCount               uint64
 	hasWrittenBlocks               bool
 }
 
 func (bw *blockWriter) reset() {
 	bw.writers.reset()
-	bw.traceIDs = bw.traceIDs[:0]
+	if bw.traceIDFilter != nil {
+		bw.traceIDFilter.reset()
+		bw.traceIDFilter = nil
+	}
 	if bw.tagType == nil {
 		bw.tagType = make(tagType)
 	} else {
@@ -178,15 +181,22 @@ func (bw *blockWriter) reset() {
 	bw.hasWrittenBlocks = false
 }
 
-func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
+func (bw *blockWriter) MustInitForMemPart(mp *memPart, traceSize int) {
 	bw.reset()
 	bw.writers.mustCreateTagWriters = mp.mustCreateMemTagWriters
 	bw.writers.metaWriter.init(&mp.meta)
 	bw.writers.primaryWriter.init(&mp.primary)
 	bw.writers.spanWriter.init(&mp.spans)
+	if traceSize > 0 {
+		bw.traceIDFilter = &traceIDFilter{
+			filter: generateTraceIDBloomFilter(),
+		}
+		bw.traceIDFilter.filter.SetN(traceSize)
+		bw.traceIDFilter.filter.ResizeBits((traceSize*filter.B + 63) / 64)
+	}
 }
 
-func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
+func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool, traceSize int) {
 	bw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
 	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer) {
@@ -199,6 +209,13 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
 	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
 	bw.writers.spanWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, spansFilename), storage.FilePerm, shouldCache))
+	if traceSize > 0 {
+		bw.traceIDFilter = &traceIDFilter{
+			filter: generateTraceIDBloomFilter(),
+		}
+		bw.traceIDFilter.filter.SetN(traceSize)
+		bw.traceIDFilter.filter.ResizeBits((traceSize*filter.B + 63) / 64)
+	}
 }
 
 func (bw *blockWriter) MustWriteTrace(tid string, spans [][]byte, tags [][]*tagValue, timestamps []int64, spanIDs []string) {
@@ -229,7 +246,9 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(tid, bm, &bw.writers)
-	bw.traceIDs = append(bw.traceIDs, tid)
+	if bw.traceIDFilter != nil && bw.traceIDFilter.filter != nil {
+		bw.traceIDFilter.filter.Add(convert.StringToBytes(tid))
+	}
 	bw.tagType.copyFrom(bm.tagType)
 	tm := &bm.timestamps
 	if bw.totalCount == 0 || tm.min < bw.totalMinTimestamp {
@@ -287,7 +306,9 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 	}
 	isSeenTid := bm.traceID == bw.tidLast
 	bw.tidLast = bm.traceID
-	bw.traceIDs = append(bw.traceIDs, bm.traceID)
+	if bw.traceIDFilter != nil && bw.traceIDFilter.filter != nil {
+		bw.traceIDFilter.filter.Add(convert.StringToBytes(bm.traceID))
+	}
 	bw.tagType.copyFrom(bm.tagType)
 
 	tm := &bm.timestamps
@@ -367,15 +388,9 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 
 	pm.CompressedSizeBytes = bw.writers.totalBytesWritten()
 
-	if len(bw.traceIDs) > 0 {
-		if tf.filter == nil {
-			tf.filter = generateTraceIDBloomFilter()
-		}
-		tf.filter.SetN(len(bw.traceIDs))
-		tf.filter.ResizeBits((len(bw.traceIDs)*filter.B + 63) / 64)
-		for _, traceID := range bw.traceIDs {
-			tf.filter.Add(convert.StringToBytes(traceID))
-		}
+	if bw.traceIDFilter != nil && bw.traceIDFilter.filter != nil {
+		tf.filter = bw.traceIDFilter.filter
+		bw.traceIDFilter.filter = nil
 	}
 	tt.copyFrom(bw.tagType)
 
@@ -386,7 +401,7 @@ func (bw *blockWriter) Flush(pm *partMetadata, tf *traceIDFilter, tt *tagType) {
 func generateBlockWriter() *blockWriter {
 	v := blockWriterPool.Get()
 	if v == nil {
-		return &blockWriter{
+		v = &blockWriter{
 			writers: writers{
 				tagMetadataWriters: make(map[string]*writer),
 				tagWriters:         make(map[string]*writer),

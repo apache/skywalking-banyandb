@@ -165,7 +165,6 @@ func TestMultiplePrimaryBlockFlushWithPartIter(t *testing.T) {
 	}
 }
 
-// generateLargeTraceSet creates enough trace data to trigger multiple primary block flushes
 func generateLargeTraceSet() *traces {
 	// maxUncompressedPrimaryBlockSize = 128KB
 	// Block metadata contains: traceID, timestamps, count, uncompressed size, and tag metadata

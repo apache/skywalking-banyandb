@@ -45,9 +45,9 @@ type blockInfo struct {
 }
 
 type partScanInfo struct {
-	partID uint64
 	minTID string
 	maxTID string
+	partID uint64
 }
 
 type blockQueue struct {

@@ -36,15 +36,15 @@ type partIter struct {
 	err                  error
 	p                    *part
 	curBlock             *blockMetadata
+	minTID               string
+	maxTID               string
+	lastScannedTID       string
 	tids                 []string
 	primaryBlockMetadata []primaryBlockMetadata
 	bms                  []blockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
 	tidIdx               int
-	minTID               string
-	maxTID               string
-	lastScannedTID       string
 }
 
 func (pi *partIter) reset() {

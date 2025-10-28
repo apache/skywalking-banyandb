@@ -276,18 +276,20 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 	dstPath := partPath(root, partID)
 	var totalSize int64
+	var traceSize uint64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
 		pmi.mustInitFromPart(parts[i].p)
 		pii = append(pii, pmi)
 		totalSize += int64(parts[i].p.partMetadata.CompressedSizeBytes)
+		traceSize += parts[i].p.partMetadata.BlocksCount
 	}
 	shouldCache := tst.pm.ShouldCache(totalSize)
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache, int(traceSize))
 
 	var minTimestamp, maxTimestamp int64
 	for i, pw := range parts {
