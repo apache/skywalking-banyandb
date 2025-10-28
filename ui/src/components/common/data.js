@@ -72,6 +72,7 @@ export const CatalogToGroupType = {
   CATALOG_STREAM: 'stream',
   CATALOG_PROPERTY: 'property',
   CATALOG_TRACE: 'trace',
+  CATALOG_TOPN: 'topn',
 };
 
 // group type to catalog
@@ -80,6 +81,7 @@ export const GroupTypeToCatalog = {
   stream: 'CATALOG_STREAM',
   property: 'CATALOG_PROPERTY',
   trace: 'CATALOG_TRACE',
+  topn: 'CATALOG_TOPN',
 };
 
 export const TypeMap = {

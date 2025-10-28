@@ -22,6 +22,11 @@
   import { ElMessage } from 'element-plus';
   import { executeBydbQLQuery } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
+  import TopNTable from '@/components/common/TopNTable.vue';
+  import MeasureAndStreamTable from '@/components/common/MeasureAndStreamTable.vue';
+  import PropertyTable from '@/components/common/PropertyTable.vue';
+  import TraceTable from '@/components/common/TraceTable.vue';
+  import { CatalogToGroupType } from '@/components/common/data';
 
   const queryText = ref('');
   const queryResult = ref(null);
@@ -31,29 +36,203 @@
 
   // Example queries for users
   const exampleQueries = [
-    'FROM STREAM sw | LIMIT 10',
-    'FROM MEASURE metrics | LIMIT 10',
-    'FROM TRACE traces | LIMIT 10',
+    `SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`,
+    `SELECT * FROM MEASURE service_cpm_minute in sw_metricsMinute TIME > '30m'`,
   ];
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
     if (!queryResult.value) return null;
-    if (queryResult.value.stream_result) return 'stream';
-    if (queryResult.value.measure_result) return 'measure';
-    if (queryResult.value.property_result) return 'property';
-    if (queryResult.value.trace_result) return 'trace';
-    if (queryResult.value.topn_result) return 'topn';
+    if (queryResult.value.streamResult) return CatalogToGroupType.CATALOG_STREAM;
+    if (queryResult.value.measureResult) return CatalogToGroupType.CATALOG_MEASURE;
+    if (queryResult.value.propertyResult) return CatalogToGroupType.CATALOG_PROPERTY;
+    if (queryResult.value.traceResult) return CatalogToGroupType.CATALOG_TRACE;
+    if (queryResult.value.topnResult) return CatalogToGroupType.CATALOG_TOPN;
     return 'unknown';
   });
+  // Transform query results into table format
+  const tableData = computed(() => {
+    if (!queryResult.value) return [];
 
-  const formattedResult = computed(() => {
-    if (!queryResult.value) return '';
     try {
-      return JSON.stringify(queryResult.value, null, 2);
+      // Handle TopN results differently
+      if (queryResult.value.topnResult?.lists) {
+        const topnLists = queryResult.value.topnResult.lists;
+        const rows = topnLists
+          .map((list) => 
+            (list.items || []).map((item) => ({
+              label: item.entity?.[0]?.value?.str?.value || 'N/A',
+              value: item.value?.int?.value ?? item.value?.float?.value ?? 'N/A',
+              timestamp: list.timestamp || item.timestamp,
+            }))
+          )
+          .flat();
+        return rows;
+      }
+
+      let elements = [];
+      if (queryResult.value.streamResult?.elements) {
+        elements = queryResult.value.streamResult.elements;
+      }
+       if (queryResult.value.measureResult?.dataPoints) {
+        elements = queryResult.value.measureResult.dataPoints;
+      }
+       if (queryResult.value.traceResult?.traces) {
+        elements = queryResult.value.traceResult.traces;
+      }
+      if (queryResult.value.propertyResult?.properties) {
+        elements = queryResult.value.propertyResult.properties;
+      }
+
+      if (!elements || elements.length === 0) return [];
+
+      // Transform elements to table rows
+      const rows = elements.map((item) => {
+        const row = {};
+
+        // Process tag families
+        if (item.tag_families || item.tagFamilies) {
+          const tagFamilies = item.tag_families || item.tagFamilies;
+          tagFamilies.forEach((family) => {
+            const tags = family.tags || [];
+            tags.forEach((tag) => {
+              const key = tag.key;
+              const value = tag.value;
+              if (value) {
+                const typeKeys = Object.keys(value);
+                for (const typeKey of typeKeys) {
+                  if (value[typeKey] !== undefined && value[typeKey] !== null) {
+                    if (typeof value[typeKey] === 'object' && value[typeKey].value !== undefined) {
+                      row[key] = value[typeKey].value;
+                    } else {
+                      row[key] = value[typeKey];
+                    }
+                    break;
+                  }
+                }
+              }
+
+              if (row[key] === undefined || row[key] === null) {
+                row[key] = 'Null';
+              }
+            });
+          });
+        }
+        // Process fields for measure results
+        if (item.fields) {
+          item.fields.forEach((field) => {
+            const name = field.name;
+            const value = field.value;
+
+            if (value) {
+              const typeKeys = Object.keys(value);
+              for (const typeKey of typeKeys) {
+                if (value[typeKey] !== undefined && value[typeKey] !== null) {
+                  if (typeof value[typeKey] === 'object' && value[typeKey].value !== undefined) {
+                    row[name] = value[typeKey].value;
+                  } else {
+                    row[name] = value[typeKey];
+                  }
+                  break;
+                }
+              }
+            }
+            if (row[name] === undefined || row[name] === null) {
+              row[name] = 'Null';
+            }
+          });
+        }
+        row.timestamp = item.timestamp;
+        return row;
+      });
+
+      return rows;
     } catch (e) {
-      return String(queryResult.value);
+      console.error('Error parsing table data:', e);
+      return [];
     }
+  });
+
+  // Generate table columns from the first row of data
+  const tableColumns = computed(() => {
+    if (!tableData.value || tableData.value.length === 0) return [];
+
+    const firstRow = tableData.value[0];
+    const columns = [];
+
+    Object.keys(firstRow).forEach((key) => {
+      if (key !== 'timestamp') {
+        columns.push({
+          name: key,
+          label: key,
+          prop: key,
+          type: Array.isArray(firstRow[key]) ? 'TAG_TYPE_STRING_ARRAY' : 'TAG_TYPE_STRING',
+        });
+      }
+    });
+
+    return columns;
+  });
+
+  // Determine if we should use pagination based on result type
+  const shouldTopNResult = computed(() => resultType.value === CatalogToGroupType.CATALOG_TOPN);
+  const shouldPropertyResult = computed(() => resultType.value === CatalogToGroupType.CATALOG_PROPERTY);
+  const shouldTraceResult = computed(() => resultType.value === CatalogToGroupType.CATALOG_TRACE);
+
+  // Transform property results into table format
+  const propertyData = computed(() => {
+    if (!queryResult.value || !queryResult.value.propertyResult) return [];
+    
+    const properties = queryResult.value.propertyResult.properties || [];
+    return properties.map((item) => {
+      // Clone and process tags to stringify values
+      const processedItem = { ...item };
+      if (processedItem.tags) {
+        processedItem.tags = processedItem.tags.map((tag) => ({
+          ...tag,
+          value: JSON.stringify(tag.value),
+        }));
+      }
+      return processedItem;
+    });
+  });
+
+  // Transform trace results into table format for TraceTable
+  const traceTableData = computed(() => {
+    if (!queryResult.value || !queryResult.value.traceResult?.traces) return [];
+    
+    const traces = queryResult.value.traceResult.traces;
+    return traces
+      .map((trace) => {
+        return (trace.spans || []).map((span) => {
+          const tagsMap = {};
+          for (const tag of span.tags || []) {
+            tagsMap[tag.key] = tag.value;
+          }
+          return {
+            traceId: trace.traceId,
+            ...span,
+            ...tagsMap,
+          };
+        });
+      })
+      .flat();
+  });
+
+  // Extract span tags for TraceTable columns
+  const spanTags = computed(() => {
+    if (!queryResult.value || !queryResult.value.traceResult?.traces) return [];
+    
+    const tags = new Set();
+    const traces = queryResult.value.traceResult.traces;
+    traces.forEach((trace) => {
+      (trace.spans || []).forEach((span) => {
+        (span.tags || []).forEach((tag) => {
+          tags.add(tag.key);
+        });
+      });
+    });
+    return Array.from(tags);
   });
 
   function setExampleQuery(query) {
@@ -70,25 +249,18 @@
     error.value = null;
     queryResult.value = null;
     const startTime = performance.now();
+    const response = await executeBydbQLQuery({ query: queryText.value });
+    const endTime = performance.now();
+    loading.value = false;
+    executionTime.value = Math.round(endTime - startTime);
 
-    try {
-      const response = await executeBydbQLQuery({ query: queryText.value });
-      const endTime = performance.now();
-      executionTime.value = Math.round(endTime - startTime);
-
-      if (response.error) {
-        error.value = response.error.message || 'Failed to execute query';
-        ElMessage.error(error.value);
-      } else {
-        queryResult.value = response;
-        ElMessage.success(`Query executed successfully in ${executionTime.value}ms`);
-      }
-    } catch (err) {
-      error.value = err.message || 'An unexpected error occurred';
+    if (response.error) {
+      error.value = response.error.message || 'Failed to execute query';
       ElMessage.error(error.value);
-    } finally {
-      loading.value = false;
+      return;
     }
+    queryResult.value = response;
+    ElMessage.success(`Query executed successfully in ${executionTime.value}ms`);
   }
 
   function clearQuery() {
@@ -97,7 +269,6 @@
     error.value = null;
     executionTime.value = 0;
   }
-
   // Setup keyboard shortcuts for CodeMirror
   onMounted(() => {
     nextTick(() => {
@@ -169,50 +340,66 @@
       </div>
     </el-card>
 
-    <el-card v-if="hasResult || error" shadow="always" class="result-card">
+    <el-card shadow="always" class="result-card">
       <template #header>
-        <div class="card-header">
-          <div class="result-header-left">
-            <span class="header-title">Query Results</span>
-            <el-tag v-if="resultType" size="small" class="result-type-tag">
-              {{ resultType.toUpperCase() }}
-            </el-tag>
-          </div>
-          <span v-if="executionTime > 0" class="execution-time"> Execution time: {{ executionTime }}ms </span>
+        <div>
+          <el-tag v-if="resultType" size="small" class="result-type-tag">
+            {{ resultType.toUpperCase() }}
+          </el-tag>
         </div>
       </template>
-
-      <div class="result-section">
-        <div v-if="error" class="error-message">
-          <el-alert title="Error" type="error" :description="error" show-icon :closable="false" />
-        </div>
-
-        <div v-else-if="hasResult" class="result-content">
-          <pre class="result-json">{{ formattedResult }}</pre>
-        </div>
+      <div v-if="error" class="error-message">
+        <el-alert title="Error" type="error" :description="error" show-icon :closable="false" />
       </div>
-    </el-card>
-
-    <el-card shadow="always" class="info-card">
-      <template #header>
-        <div class="card-header">
-          <span class="header-title">About BydbQL</span>
-        </div>
-      </template>
-      <div class="info-content">
-        <p>
-          BydbQL (BanyanDB Query Language) provides a unified query interface for different data types in BanyanDB.
-        </p>
-        <ul>
-          <li><strong>STREAM:</strong> Query stream data with time-series tags</li>
-          <li><strong>MEASURE:</strong> Query aggregated metrics and measurements</li>
-          <li><strong>PROPERTY:</strong> Query property data and metadata</li>
-          <li><strong>TRACE:</strong> Query distributed tracing data</li>
-          <li><strong>TopN:</strong> Query top N aggregation results</li>
-        </ul>
-        <p class="info-note">
-          Note: Queries must include a FROM clause specifying the resource type and name (e.g., "FROM STREAM sw").
-        </p>
+      <div v-if="!hasResult && !error">
+        <el-empty description="No result" />
+      </div>
+      <div class="result-table" v-if="hasResult || error">
+        <!-- Use PropertyTable for Property results -->
+        <PropertyTable
+          v-if="shouldPropertyResult"
+          :data="propertyData"
+          :border="true"
+          :show-operator="false"
+          @view-value="(data) => ElMessage.info(`Value: ${data.value}`)"
+        />
+        <!-- Use TopNTable for TopN results -->
+        <TopNTable
+          v-else-if="shouldTopNResult"
+          :data="tableData"
+          :columns="tableColumns"
+          :loading="false"
+          :page-size="20"
+          :show-selection="false"
+          :show-index="false"
+          :show-timestamp="false"
+          :show-pagination="true"
+          :stripe="true"
+          :border="true"
+          empty-text="No data yet"
+          min-height="300px"
+        />
+        <!-- Use TraceTable for Trace results -->
+        <TraceTable
+          v-else-if="shouldTraceResult"
+          :data="traceTableData"
+          :span-tags="spanTags"
+          :border="true"
+          :show-selection="false"
+          :enable-merge="true"
+          empty-text="No trace data found"
+        />
+        <!-- Use MeasureAndStreamTable for other result types -->
+        <MeasureAndStreamTable
+          v-else
+          :table-data="tableData"
+          :loading="false"
+          :table-header="tableColumns"
+          :show-selection="false"
+          :show-index="true"
+          :show-timestamp="true"
+          empty-text="No data yet"
+        />
       </div>
     </el-card>
   </div>
@@ -252,10 +439,10 @@
     gap: 10px;
   }
 
-  .result-header-left {
+  .header-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
   }
 
   .result-type-tag {
@@ -265,6 +452,12 @@
   .execution-time {
     font-size: 14px;
     color: #606266;
+  }
+
+  .result-table {
+    overflow: auto;
+    max-height: 40vh;
+    min-height: 100px;
   }
 
   .query-section {
@@ -296,7 +489,7 @@
     overflow: hidden;
     
     :deep(.in-coder-panel) {
-      height: 250px;
+      height: 150px;
     }
 
     :deep(.CodeMirror) {

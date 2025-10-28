@@ -29,6 +29,7 @@
   import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
   import TraceTree from '../TraceTree/TraceContent.vue';
+  import PropertyTable from '@/components/common/PropertyTable.vue';
 
   const { proxy } = getCurrentInstance();
   // Loading
@@ -70,9 +71,6 @@ limit: 10`);
     propertyValueViewerRef?.value.openDialog(data);
   };
 
-  const ellipsizeValueData = (data) => {
-    return data.value.slice(0, 20) + '...';
-  };
   const openEditField = (index) => {
     const item = data.tableData[index];
     const param = {
@@ -154,48 +152,14 @@ limit: 10`;
           <span>Debug Trace</span>
         </el-button>
       </div>
-      <el-table :data="data.tableData" style="width: 100%" border>
-        <el-table-column label="Group" prop="metadata.group" width="100"></el-table-column>
-        <el-table-column label="Name" prop="metadata.name" width="120"></el-table-column>
-        <el-table-column label="ModRevision" prop="metadata.modRevision" width="120"></el-table-column>
-        <el-table-column label="CreateRevision" prop="metadata.createRevision" width="140"></el-table-column>
-        <el-table-column label="ID" prop="id" width="150"></el-table-column>
-        <el-table-column label="Tags">
-          <template #default="scope">
-            <el-table :data="scope.row.tags">
-              <el-table-column label="Key" prop="key" width="150"></el-table-column>
-              <el-table-column label="Value" prop="value">
-                <template #default="scope">
-                  {{ ellipsizeValueData(scope.row) }}
-                  <el-button
-                    link
-                    type="primary"
-                    @click.prevent="openPropertyView(scope.row)"
-                    style="color: var(--color-main); font-weight: bold"
-                    >view</el-button
-                  >
-                </template>
-              </el-table-column>
-            </el-table>
-          </template>
-        </el-table-column>
-        <el-table-column label="Operator" width="150">
-          <template #default="scope">
-            <el-button
-              link
-              type="primary"
-              @click.prevent="openEditField(scope.$index)"
-              style="color: var(--color-main); font-weight: bold"
-              >Edit</el-button
-            >
-            <el-popconfirm @confirm="deleteTableData(scope.$index)" title="Are you sure to delete this?">
-              <template #reference>
-                <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
-              </template>
-            </el-popconfirm>
-          </template>
-        </el-table-column>
-      </el-table>
+      <PropertyTable
+        :data="data.tableData"
+        :border="true"
+        :show-operator="true"
+        @edit="openEditField"
+        @delete="deleteTableData"
+        @view-value="openPropertyView"
+      />
     </el-card>
     <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
     <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>

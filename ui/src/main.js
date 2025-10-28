@@ -88,7 +88,7 @@ app.config.globalProperties.$message.errorNet = () => {
 };
 app.config.globalProperties.$message.success = () => {
   ElMessage({
-    message: 'OK',
+    message: 'Successed',
     type: 'success',
   });
 };
