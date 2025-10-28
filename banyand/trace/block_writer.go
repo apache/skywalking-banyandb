@@ -149,6 +149,9 @@ type blockWriter struct {
 	totalMinTimestamp              int64
 	totalMaxTimestamp              int64
 	minTimestampLast               int64
+	tidFirst                       string
+	tidLast                        string
+	hasWrittenBlocks               bool
 }
 
 func (bw *blockWriter) reset() {
@@ -170,6 +173,9 @@ func (bw *blockWriter) reset() {
 	bw.primaryBlockData = bw.primaryBlockData[:0]
 	bw.metaData = bw.metaData[:0]
 	bw.primaryBlockMetadata.reset()
+	bw.tidFirst = ""
+	bw.tidLast = ""
+	bw.hasWrittenBlocks = false
 }
 
 func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
@@ -210,17 +216,16 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	if b.Len() == 0 {
 		return
 	}
-	hasWrittenBlocks := len(bw.traceIDs) > 0
-	var tidLast string
-	var isSeenTid bool
-
-	if hasWrittenBlocks {
-		tidLast = bw.traceIDs[len(bw.traceIDs)-1]
-		if tid < tidLast {
-			logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, tidLast)
-		}
-		isSeenTid = tid == tidLast
+	if tid < bw.tidLast {
+		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, bw.tidLast)
 	}
+	hasWrittenBlocks := bw.hasWrittenBlocks
+	if !hasWrittenBlocks {
+		bw.tidFirst = tid
+		bw.hasWrittenBlocks = true
+	}
+	isSeenTid := tid == bw.tidLast
+	bw.tidLast = tid
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(tid, bm, &bw.writers)
@@ -258,11 +263,13 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
-		bw.primaryBlockMetadata.mustWriteBlock(data, bw.traceIDs[0], &bw.writers)
+		bw.primaryBlockMetadata.mustWriteBlock(data, bw.tidFirst, &bw.writers)
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
+	bw.hasWrittenBlocks = false
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
+	bw.tidFirst = ""
 }
 
 func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
@@ -270,17 +277,16 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 	if bm.count == 0 {
 		return
 	}
-	hasWrittenBlocks := len(bw.traceIDs) > 0
-	var tidLast string
-	var isSeenTid bool
-
-	if hasWrittenBlocks {
-		tidLast = bw.traceIDs[len(bw.traceIDs)-1]
-		if bm.traceID < tidLast {
-			logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", bm.traceID, tidLast)
-		}
-		isSeenTid = bm.traceID == tidLast
+	if bm.traceID < bw.tidLast {
+		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", bm.traceID, bw.tidLast)
 	}
+	hasWrittenBlocks := bw.hasWrittenBlocks
+	if !hasWrittenBlocks {
+		bw.tidFirst = bm.traceID
+		bw.hasWrittenBlocks = true
+	}
+	isSeenTid := bm.traceID == bw.tidLast
+	bw.tidLast = bm.traceID
 	bw.traceIDs = append(bw.traceIDs, bm.traceID)
 	bw.tagType.copyFrom(bm.tagType)
 
