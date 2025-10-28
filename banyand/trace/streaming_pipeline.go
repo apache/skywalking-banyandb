@@ -746,7 +746,6 @@ func (t *trace) startBlockScanStage(
 					var idsFromSIDX []string
 					if traceIDsFromSIDX, exists := batch.traceIDs[partID]; exists {
 						idsFromSIDX = append([]string(nil), traceIDsFromSIDX...)
-						sort.Strings(idsFromSIDX)
 					}
 					var idsForPart []string
 					for _, traceID := range allTraceIDs {
@@ -818,15 +817,26 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 		cursorCount    int
 	)
 
-	defer func() {
-		finishSpan(cursorCount, spanBlockBytes, spanErr)
-	}()
-
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 
 	tstIter := generateTstIter()
 	defer releaseTstIter(tstIter)
+
+	defer func() {
+		// Collect min/max TID from each partIter instance
+		partScans := make([]partScanInfo, 0, len(tstIter.piPool))
+		for i, pi := range tstIter.piPool {
+			if pi.minTID != "" || pi.maxTID != "" {
+				partScans = append(partScans, partScanInfo{
+					partID: parts[i].partMetadata.ID,
+					minTID: pi.minTID,
+					maxTID: pi.maxTID,
+				})
+			}
+		}
+		finishSpan(cursorCount, spanBlockBytes, spanErr, partScans)
+	}()
 
 	tstIter.init(bma, parts, groupedIDs)
 	if initErr := tstIter.Error(); initErr != nil {

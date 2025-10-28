@@ -44,6 +44,12 @@ type blockInfo struct {
 	size        uint64
 }
 
+type partScanInfo struct {
+	partID uint64
+	minTID string
+	maxTID string
+}
+
 type blockQueue struct {
 	blocks   []blockInfo
 	capacity int
@@ -307,10 +313,10 @@ func startPartSelectionSpan(ctx context.Context, batch *traceBatch, snapshots []
 
 // startAggregatedBlockScanSpan creates an aggregated span for block scanning with simplified sampling.
 // It returns a callback to record blocks and a finish function to complete the span.
-func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, parts []*part) (func(*blockCursor, uint64), func(int, uint64, error)) {
+func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, parts []*part) (func(*blockCursor, uint64), func(int, uint64, error, []partScanInfo)) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
-		return nil, func(int, uint64, error) {}
+		return nil, func(int, uint64, error, []partScanInfo) {}
 	}
 
 	var scannedBlocks []blockInfo
@@ -323,7 +329,7 @@ func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, pa
 					size:        blockSize,
 				})
 			}
-		}, func(blockCount int, totalBytes uint64, err error) {
+		}, func(blockCount int, totalBytes uint64, err error, partScans []partScanInfo) {
 			span, _ := tracer.StartSpan(ctx, "scan-blocks")
 
 			// Count total trace IDs and collect samples from groupedIDs
@@ -358,6 +364,29 @@ func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, pa
 				span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path), parts[i].partMetadata.String())
 			}
 
+			// Add input min/max TID from groupedIDs for each part
+			for i := range parts {
+				if parts[i] == nil || i >= len(groupedIDs) || len(groupedIDs[i]) == 0 {
+					continue
+				}
+				partID := parts[i].partMetadata.ID
+				ids := groupedIDs[i]
+
+				// Find min and max from the input trace IDs
+				minInputTID := ids[0]
+				maxInputTID := ids[0]
+				for _, tid := range ids[1:] {
+					if tid < minInputTID {
+						minInputTID = tid
+					}
+					if tid > maxInputTID {
+						maxInputTID = tid
+					}
+				}
+				span.Tag(fmt.Sprintf("part_%d_input_min_tid", partID), minInputTID)
+				span.Tag(fmt.Sprintf("part_%d_input_max_tid", partID), maxInputTID)
+			}
+
 			// Add aggregated block metrics
 			span.Tag("block_header", blockHeader)
 			span.Tag("block_total_bytes", humanize.Bytes(totalBytes))
@@ -368,6 +397,18 @@ func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, pa
 				span.Tag("block_sample_count", strconv.Itoa(len(scannedBlocks)))
 				for i := range scannedBlocks {
 					span.Tag(fmt.Sprintf("block_%d", i), scannedBlocks[i].blockString)
+				}
+			}
+
+			// Add min/max TID from each part's scanned blocks
+			if len(partScans) > 0 {
+				for _, ps := range partScans {
+					if ps.minTID != "" {
+						span.Tag(fmt.Sprintf("part_%d_min_tid", ps.partID), ps.minTID)
+					}
+					if ps.maxTID != "" {
+						span.Tag(fmt.Sprintf("part_%d_max_tid", ps.partID), ps.maxTID)
+					}
 				}
 			}
 

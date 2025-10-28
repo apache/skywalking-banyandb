@@ -42,6 +42,9 @@ type partIter struct {
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
 	tidIdx               int
+	minTID               string
+	maxTID               string
+	lastScannedTID       string
 }
 
 func (pi *partIter) reset() {
@@ -54,6 +57,9 @@ func (pi *partIter) reset() {
 	pi.compressedPrimaryBuf = pi.compressedPrimaryBuf[:0]
 	pi.primaryBuf = pi.primaryBuf[:0]
 	pi.err = nil
+	pi.minTID = ""
+	pi.maxTID = ""
+	pi.lastScannedTID = ""
 }
 
 func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string) {
@@ -63,6 +69,7 @@ func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string) {
 
 	pi.bms = bma.arr
 	pi.tids = tids
+	sort.Strings(pi.tids)
 
 	pi.primaryBlockMetadata = p.primaryBlockMetadata
 
@@ -221,6 +228,21 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	return bms, nil
 }
 
+func (pi *partIter) updateMinMaxTID(tid string) {
+	// Check ascending order
+	if pi.lastScannedTID != "" && tid < pi.lastScannedTID {
+		logger.Panicf("invariant violation: block traceID must be in ascending order; got %s after %s", tid, pi.lastScannedTID)
+	}
+	pi.lastScannedTID = tid
+
+	if pi.minTID == "" || tid < pi.minTID {
+		pi.minTID = tid
+	}
+	if pi.maxTID == "" || tid > pi.maxTID {
+		pi.maxTID = tid
+	}
+}
+
 func (pi *partIter) findBlock() bool {
 	bhs := pi.bms
 	for len(bhs) > 0 {
@@ -230,12 +252,21 @@ func (pi *partIter) findBlock() bool {
 				return tid <= bhs[i].traceID
 			})
 			if n == len(bhs) {
+				// Track all blocks we scanned through
+				for i := range bhs {
+					pi.updateMinMaxTID(bhs[i].traceID)
+				}
 				pi.bms = nil
 				return false
+			}
+			// Track blocks we're skipping over
+			for i := 0; i < n; i++ {
+				pi.updateMinMaxTID(bhs[i].traceID)
 			}
 			bhs = bhs[n:]
 		}
 		bm := &bhs[0]
+		pi.updateMinMaxTID(bm.traceID)
 
 		if bm.traceID != tid {
 			if !pi.searchTargetTID(bm.traceID) {
