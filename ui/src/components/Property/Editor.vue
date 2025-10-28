@@ -135,9 +135,9 @@
         type: String(formData.type),
       },
     };
-    
+
     router.push(targetRoute);
-    
+
     $bus.emit('AddTabs', {
       label: formData.name,
       type: 'Read',
@@ -160,7 +160,7 @@
 
       if (isCreateMode.value) {
         response = await createProperty(payload);
-        
+
         if (response.error) {
           throw new Error(response.error.message);
         }
@@ -171,7 +171,7 @@
         });
       } else {
         response = await updateProperty(formData.group, formData.name, payload);
-        
+
         if (response.error) {
           throw new Error(response.error.message);
         }
@@ -186,7 +186,6 @@
       $bus.emit('refreshAside');
       $bus.emit('deleteResource', formData.name);
       openResources();
-
     } catch (error) {
       const action = isCreateMode.value ? 'create' : 'update';
       ElMessage.error({

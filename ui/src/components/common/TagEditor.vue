@@ -37,9 +37,7 @@
       { required: true, message: 'Please enter tag key', trigger: 'blur' },
       { min: 1, max: 100, message: 'Key length should be 1-100 characters', trigger: 'blur' },
     ],
-    value: [
-      { required: true, message: 'Please enter tag value', trigger: 'blur' },
-    ],
+    value: [{ required: true, message: 'Please enter tag value', trigger: 'blur' }],
   };
 
   // Factory function for initial form data

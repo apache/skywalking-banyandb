@@ -17,7 +17,7 @@
   ~ under the License.
 -->
 <script setup>
-  import { defineProps, defineEmits, ref, getCurrentInstance } from 'vue';
+  import { ref, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
   import PropertyEditor from '@/components/common/PropertyEditor.vue';
   import PropertyValueViewer from '@/components/common/PropertyValueViewer.vue';

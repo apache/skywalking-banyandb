@@ -305,37 +305,16 @@
           </div>
         </div>
       </template>
-      <div class="query-section">
-        <div class="query-input-header">
-          <span class="input-label">Query</span>
-          <span class="input-hint">Press Ctrl/Cmd + Enter to execute</span>
-        </div>
-        <div class="query-input-container">
-          <CodeMirror
-            v-model="queryText"
-            :mode="'sql'"
-            :lint="false"
-            :readonly="false"
-            theme="default"
-            :style-active-line="true"
-            :auto-refresh="true"
-            class="query-input"
-          />
-        </div>
-
-        <div class="examples-section">
-          <span class="examples-label">Examples:</span>
-          <el-button
-            v-for="(query, index) in exampleQueries"
-            :key="index"
-            size="small"
-            @click="setExampleQuery(query)"
-            text
-            class="example-button"
-          >
-            {{ query }}
-          </el-button>
-        </div>
+      <div class="query-input-container">
+        <CodeMirror
+          v-model="queryText"
+          :mode="'sql'"
+          :lint="false"
+          :readonly="false"
+          :style-active-line="true"
+          :auto-refresh="true"
+          class="query-input"
+        />
       </div>
     </el-card>
     <el-card shadow="always" class="result-card">
@@ -354,12 +333,7 @@
       </div>
       <div class="result-table" v-if="hasResult">
         <!-- Use PropertyTable for Property results -->
-        <PropertyTable
-          v-if="shouldPropertyResult"
-          :data="propertyData"
-          :border="true"
-          @refresh="executeQuery"
-        />
+        <PropertyTable v-if="shouldPropertyResult" :data="propertyData" :border="true" @refresh="executeQuery" />
         <!-- Use TopNTable for TopN results -->
         <TopNTable
           v-else-if="shouldTopNResult"
@@ -453,12 +427,6 @@
     overflow: auto;
     max-height: 40vh;
     min-height: 100px;
-  }
-
-  .query-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
   }
 
   .query-input-header {

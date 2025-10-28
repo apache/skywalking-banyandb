@@ -113,12 +113,7 @@ limit: 10`;
           <span>Debug Trace</span>
         </el-button>
       </div>
-      <PropertyTable
-        :data="data.tableData"
-        :border="true"
-        :show-operator="true"
-        @refresh="getProperties"
-      />
+      <PropertyTable :data="data.tableData" :border="true" :show-operator="true" @refresh="getProperties" />
     </el-card>
   </div>
   <el-dialog

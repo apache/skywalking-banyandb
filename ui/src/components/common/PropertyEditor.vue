@@ -139,12 +139,7 @@
       $loadingCreate();
 
       const payload = buildPropertyPayload();
-      const response = await applyProperty(
-        formData.group,
-        formData.name,
-        formData.id,
-        payload
-      );
+      const response = await applyProperty(formData.group, formData.name, formData.id, payload);
 
       if (response.error) {
         throw new Error(response.error.message);
@@ -176,7 +171,7 @@
 
 <template>
   <!-- Property Editor Dialog -->
-  <el-dialog v-model="showDialog" :title="editorTitle" width="80%" style="height: 75vh;">
+  <el-dialog v-model="showDialog" :title="editorTitle" width="80%" style="height: 75vh">
     <el-form ref="ruleForm" :rules="rules" :model="formData" label-position="left">
       <el-form-item v-for="item in formConfig" :key="item.prop" :label="item.label" :prop="item.prop" label-width="200">
         <el-select
@@ -202,7 +197,7 @@
       </el-form-item>
       <el-form-item label="Tags" prop="tags" label-width="200">
         <el-button size="small" type="primary" color="#6E38F7" @click="openAddTag">Add Tag</el-button>
-        <el-table style="margin-top: 10px; height: 40vh; overflow: auto;" :data="formData.tags" border >
+        <el-table style="margin-top: 10px; height: 40vh; overflow: auto" :data="formData.tags" border>
           <el-table-column label="Key" prop="key" width="200"></el-table-column>
           <el-table-column label="Value" prop="value"></el-table-column>
           <el-table-column label="Operator" width="150">
@@ -212,7 +207,8 @@
                 type="primary"
                 @click.prevent="openEditTag(scope.$index)"
                 style="color: var(--color-main); font-weight: bold"
-                >Edit</el-button>
+                >Edit</el-button
+              >
               <el-popconfirm @confirm="deleteTag(scope.$index)" title="Are you sure to delete this?">
                 <template #reference>
                   <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
@@ -242,4 +238,3 @@
     justify-content: center;
   }
 </style>
-

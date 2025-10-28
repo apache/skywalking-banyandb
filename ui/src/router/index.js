@@ -273,7 +273,7 @@ const router = createRouter({
         {
           path: '/banyandb/query',
           name: 'query',
-          component: () => import('@/views/Query/index.vue'),
+          component: () => import('@/views/Query/BydbQL.vue'),
         },
       ],
     },
