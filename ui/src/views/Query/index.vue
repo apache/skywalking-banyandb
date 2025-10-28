@@ -358,8 +358,7 @@
           v-if="shouldPropertyResult"
           :data="propertyData"
           :border="true"
-          :show-operator="false"
-          @view-value="(data) => ElMessage.info(`Value: ${data.value}`)"
+          @refresh="executeQuery"
         />
         <!-- Use TopNTable for TopN results -->
         <TopNTable

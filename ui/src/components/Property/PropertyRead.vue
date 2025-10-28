@@ -22,11 +22,9 @@
   import { ElMessage } from 'element-plus';
   import { reactive, ref, watch, onMounted, getCurrentInstance } from 'vue';
   import { RefreshRight, Search, TrendCharts } from '@element-plus/icons-vue';
-  import { fetchProperties, deleteProperty } from '@/api/index';
+  import { fetchProperties } from '@/api/index';
   import { yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
-  import PropertyEditor from './PropertyEditor.vue';
-  import PropertyValueReader from './PropertyValueReader.vue';
   import FormHeader from '../common/FormHeader.vue';
   import TraceTree from '../TraceTree/TraceContent.vue';
   import PropertyTable from '@/components/common/PropertyTable.vue';
@@ -36,8 +34,6 @@
   const route = useRoute();
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
-  const propertyEditorRef = ref();
-  const propertyValueViewerRef = ref();
   const yamlRef = ref(null);
   const data = reactive({
     group: route.params.group,
@@ -67,24 +63,6 @@ limit: 10`);
       return item;
     });
   };
-  const openPropertyView = (data) => {
-    propertyValueViewerRef?.value.openDialog(data);
-  };
-
-  const openEditField = (index) => {
-    const item = data.tableData[index];
-    const param = {
-      group: item.metadata.group,
-      name: item.metadata.name,
-      modRevision: item.metadata.modRevision,
-      createRevision: item.metadata.createRevision,
-      id: item.id,
-      tags: JSON.parse(JSON.stringify(item.tags)),
-    };
-    propertyEditorRef?.value.openDialog(true, param).then(() => {
-      getProperties();
-    });
-  };
 
   function searchProperties() {
     yamlRef.value
@@ -103,24 +81,7 @@ limit: 10`);
         });
       });
   }
-  const deleteTableData = async (index) => {
-    const item = data.tableData[index];
-    $loadingCreate();
-    const response = await deleteProperty(item.metadata.group, item.metadata.name, item.id);
-    $loadingClose();
-    if (response.error) {
-      ElMessage({
-        message: `Failed to delete property: ${response.error.message}`,
-        type: 'error',
-      });
-      return;
-    }
-    ElMessage({
-      message: 'successed',
-      type: 'success',
-    });
-    getProperties();
-  };
+
   onMounted(() => {
     getProperties();
   });
@@ -156,13 +117,9 @@ limit: 10`;
         :data="data.tableData"
         :border="true"
         :show-operator="true"
-        @edit="openEditField"
-        @delete="deleteTableData"
-        @view-value="openPropertyView"
+        @refresh="getProperties"
       />
     </el-card>
-    <PropertyEditor ref="propertyEditorRef"></PropertyEditor>
-    <PropertyValueReader ref="propertyValueViewerRef"></PropertyValueReader>
   </div>
   <el-dialog
     v-model="showTracesDialog"
