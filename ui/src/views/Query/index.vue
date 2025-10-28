@@ -59,12 +59,12 @@
       if (queryResult.value.topnResult?.lists) {
         const topnLists = queryResult.value.topnResult.lists;
         const rows = topnLists
-          .map((list) => 
+          .map((list) =>
             (list.items || []).map((item) => ({
               label: item.entity?.[0]?.value?.str?.value || 'N/A',
               value: item.value?.int?.value ?? item.value?.float?.value ?? 'N/A',
               timestamp: list.timestamp || item.timestamp,
-            }))
+            })),
           )
           .flat();
         return rows;
@@ -74,10 +74,10 @@
       if (queryResult.value.streamResult?.elements) {
         elements = queryResult.value.streamResult.elements;
       }
-       if (queryResult.value.measureResult?.dataPoints) {
+      if (queryResult.value.measureResult?.dataPoints) {
         elements = queryResult.value.measureResult.dataPoints;
       }
-       if (queryResult.value.traceResult?.traces) {
+      if (queryResult.value.traceResult?.traces) {
         elements = queryResult.value.traceResult.traces;
       }
       if (queryResult.value.propertyResult?.properties) {
@@ -182,7 +182,7 @@
   // Transform property results into table format
   const propertyData = computed(() => {
     if (!queryResult.value || !queryResult.value.propertyResult) return [];
-    
+
     const properties = queryResult.value.propertyResult.properties || [];
     return properties.map((item) => {
       // Clone and process tags to stringify values
@@ -200,7 +200,7 @@
   // Transform trace results into table format for TraceTable
   const traceTableData = computed(() => {
     if (!queryResult.value || !queryResult.value.traceResult?.traces) return [];
-    
+
     const traces = queryResult.value.traceResult.traces;
     return traces
       .map((trace) => {
@@ -222,7 +222,7 @@
   // Extract span tags for TraceTable columns
   const spanTags = computed(() => {
     if (!queryResult.value || !queryResult.value.traceResult?.traces) return [];
-    
+
     const tags = new Set();
     const traces = queryResult.value.traceResult.traces;
     traces.forEach((trace) => {
@@ -305,7 +305,6 @@
           </div>
         </div>
       </template>
-
       <div class="query-section">
         <div class="query-input-header">
           <span class="input-label">Query</span>
@@ -339,7 +338,6 @@
         </div>
       </div>
     </el-card>
-
     <el-card shadow="always" class="result-card">
       <template #header>
         <div>
@@ -354,7 +352,7 @@
       <div v-if="!hasResult && !error">
         <el-empty description="No result" />
       </div>
-      <div class="result-table" v-if="hasResult || error">
+      <div class="result-table" v-if="hasResult">
         <!-- Use PropertyTable for Property results -->
         <PropertyTable
           v-if="shouldPropertyResult"
@@ -411,8 +409,6 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-    max-width: 1400px;
-    margin: 0 auto;
   }
 
   .query-card,
@@ -487,7 +483,7 @@
     border: 1px solid #dcdfe6;
     border-radius: 4px;
     overflow: hidden;
-    
+
     :deep(.in-coder-panel) {
       height: 150px;
     }
@@ -606,4 +602,3 @@
     }
   }
 </style>
-

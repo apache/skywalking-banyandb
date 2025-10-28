@@ -82,7 +82,13 @@
     >
       <el-table-column v-if="showSelection" type="selection" width="55"> </el-table-column>
       <el-table-column v-if="showIndex" type="index" label="number" width="90"> </el-table-column>
-      <el-table-column v-if="showTimestamp" label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
+      <el-table-column
+        v-if="showTimestamp"
+        label="timestamp"
+        width="260"
+        key="timestamp"
+        prop="timestamp"
+      ></el-table-column>
       <el-table-column
         v-for="item in tableHeader"
         sortable
@@ -123,9 +129,8 @@
 </template>
 
 <style lang="scss" scoped>
-.measure-and-stream-table {
+  .measure-and-stream-table {
     width: 100%;
     overflow-x: auto;
   }
 </style>
-

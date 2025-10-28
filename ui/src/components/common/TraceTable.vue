@@ -120,7 +120,6 @@
       }
     }
   };
-
   // Handle selection change
   function handleSelectionChange(selection) {
     emit('selection-change', selection);
@@ -167,4 +166,3 @@
     overflow-x: auto;
   }
 </style>
-

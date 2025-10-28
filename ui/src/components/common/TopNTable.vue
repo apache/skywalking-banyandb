@@ -110,9 +110,12 @@
   }
 
   // Reset to first page when data changes
-  watch(() => props.data, () => {
-    currentPage.value = 1;
-  });
+  watch(
+    () => props.data,
+    () => {
+      currentPage.value = 1;
+    },
+  );
 </script>
 
 <template>
@@ -132,14 +135,8 @@
     >
       <el-table-column v-if="showSelection" type="selection" width="55" />
       <el-table-column v-if="showIndex" type="index" label="number" width="90" />
-      <el-table-column
-        v-if="showTimestamp"
-        label="timestamp"
-        width="260"
-        key="timestamp"
-        prop="timestamp"
-      />
-      
+      <el-table-column v-if="showTimestamp" label="timestamp" width="260" key="timestamp" prop="timestamp" />
+
       <!-- Dynamic columns -->
       <el-table-column
         v-for="column in effectiveColumns"
@@ -153,7 +150,9 @@
         <template #default="scope">
           <!-- Handle array types with popover -->
           <el-popover
-            v-if="(column.type || column.fieldType)?.includes('ARRAY') && scope.row[column.name || column.prop] !== 'Null'"
+            v-if="
+              (column.type || column.fieldType)?.includes('ARRAY') && scope.row[column.name || column.prop] !== 'Null'
+            "
             effect="dark"
             trigger="hover"
             placement="top"
@@ -197,4 +196,3 @@
     margin-top: 10px;
   }
 </style>
-
