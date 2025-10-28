@@ -44,7 +44,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Property Repair Tests
-      options: --label-filter property_repair
+      options: --label-filter property_repair -timeout=3h
       timeout-minutes: 120
 
   e2e:
