@@ -17,11 +17,11 @@
   ~ under the License.
 -->
 <script setup>
-  import { defineProps, defineEmits, reactive, ref, getCurrentInstance } from 'vue';
+  import { defineProps, defineEmits, ref, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
-  import TagEditor from '@/components/Property/TagEditor.vue';
-  import { applyProperty, deleteProperty } from '@/api/index';
-  import { rules, strategyGroup, formConfig } from '@/components/Property/data';
+  import PropertyEditor from '@/components/common/PropertyEditor.vue';
+  import PropertyValueViewer from '@/components/common/PropertyValueViewer.vue';
+  import { deleteProperty } from '@/api/index';
 
   const { proxy } = getCurrentInstance();
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
@@ -67,29 +67,9 @@
 
   const emit = defineEmits(['refresh']);
 
-  // Property Value Viewer state
-  const showValueDialog = ref(false);
-  const valueDialogTitle = ref('');
-  const valueData = reactive({
-    data: '',
-    formattedData: '',
-  });
-  const numSpaces = 2;
-
-  // Property Editor state
-  const showEditorDialog = ref(false);
-  const editorTitle = ref('');
-  const tagEditorRef = ref();
-  const ruleForm = ref();
-  const formData = reactive({
-    strategy: strategyGroup[0].value,
-    group: '',
-    name: '',
-    modRevision: 0,
-    createRevision: 0,
-    id: '',
-    tags: [],
-  });
+  // Component references
+  const propertyEditorRef = ref();
+  const propertyValueViewerRef = ref();
 
   const ellipsizeValueData = (data) => {
     if (!data.value || data.value.length <= props.maxValueLength) {
@@ -98,113 +78,19 @@
     return data.value.slice(0, props.maxValueLength) + '...';
   };
 
-  // Property Value Viewer functions
+  // Property Value Viewer function
   const handleViewValue = (tagData) => {
-    valueDialogTitle.value = 'Value of key ' + tagData.key;
-    showValueDialog.value = true;
-    valueData.data = tagData.value;
-    valueData.formattedData = JSON.stringify(JSON.parse(valueData.data), null, numSpaces);
-  };
-
-  const closeValueDialog = () => {
-    showValueDialog.value = false;
-  };
-
-  const downloadValue = () => {
-    const dataBlob = new Blob([valueData.formattedData], { type: 'text/JSON' });
-    var a = document.createElement('a');
-    a.download = 'value.txt';
-    a.href = URL.createObjectURL(dataBlob);
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    propertyValueViewerRef.value.openViewer(tagData);
   };
 
   // Property Editor functions
-  const initEditorData = () => {
-    formData.strategy = strategyGroup[0].value;
-    formData.group = '';
-    formData.name = '';
-    formData.modRevision = 0;
-    formData.createRevision = 0;
-    formData.id = '';
-    formData.tags = [];
-  };
-
-  const closeEditorDialog = () => {
-    showEditorDialog.value = false;
-    initEditorData();
-  };
-
-  const openEditTag = (index) => {
-    tagEditorRef.value.openDialog(formData.tags[index]).then((res) => {
-      formData.tags[index].key = res.key;
-      formData.tags[index].value = res.value;
-    });
-  };
-
-  const deleteTag = (index) => {
-    formData.tags.splice(index, 1);
-  };
-
-  const openAddTag = () => {
-    tagEditorRef.value.openDialog().then((res) => {
-      formData.tags.push(res);
-    });
-  };
-
-  const confirmApply = async () => {
-    if (!ruleForm.value) return;
-    await ruleForm.value.validate(async (valid) => {
-      if (valid) {
-        $loadingCreate();
-        const param = {
-          strategy: formData.strategy,
-          property: {
-            id: formData.id,
-            metadata: {
-              createRevision: formData.createRevision,
-              group: formData.group,
-              modRevision: formData.modRevision,
-              name: formData.name,
-            },
-            tags: formData.tags.map((item) => {
-              return {
-                key: item.key,
-                value: JSON.parse(item.value),
-              };
-            }),
-          },
-        };
-        const response = await applyProperty(formData.group, formData.name, formData.id, param);
-        $loadingClose();
-        if (response.error) {
-          ElMessage({
-            message: `Failed to apply property: ${response.error.message}`,
-            type: 'error',
-          });
-          return;
-        }
-        ElMessage({
-          message: 'successed',
-          type: 'success',
-        });
-        showEditorDialog.value = false;
-        emit('refresh');
-      }
-    });
-  };
-
   const handleEdit = (index) => {
     const item = props.data[index];
-    showEditorDialog.value = true;
-    editorTitle.value = 'Edit Property';
-    formData.group = item.metadata.group;
-    formData.name = item.metadata.name;
-    formData.modRevision = item.metadata.modRevision;
-    formData.createRevision = item.metadata.createRevision;
-    formData.id = item.id;
-    formData.tags = JSON.parse(JSON.stringify(item.tags));
+    propertyEditorRef.value.openEditor(item);
+  };
+
+  const handleEditorRefresh = () => {
+    emit('refresh');
   };
 
   const handleDelete = async (index) => {
@@ -281,88 +167,13 @@
     </el-table-column>
   </el-table>
 
-  <!-- Property Value Viewer Dialog -->
-  <el-dialog v-model="showValueDialog" :title="valueDialogTitle">
-    <div class="configuration">{{ valueData.formattedData }}</div>
-    <template #footer>
-      <span class="dialog-footer footer">
-        <el-button @click="closeValueDialog">Cancel</el-button>
-        <el-button type="primary" @click.prevent="downloadValue()"> Download </el-button>
-      </span>
-    </template>
-  </el-dialog>
+  <!-- Property Value Viewer Component -->
+  <PropertyValueViewer ref="propertyValueViewerRef"></PropertyValueViewer>
 
-  <!-- Property Editor Dialog -->
-  <el-dialog v-model="showEditorDialog" :title="editorTitle" width="50%">
-    <el-form ref="ruleForm" :rules="rules" :model="formData" label-position="left">
-      <el-form-item v-for="item in formConfig" :key="item.prop" :label="item.label" :prop="item.prop" label-width="200">
-        <el-select
-          v-if="item.type === 'select'"
-          v-model="formData[item.prop]"
-          placeholder="please select"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="option in item.selectGroup"
-            :key="option.value"
-            :label="option.label"
-            :value="option.value"
-          ></el-option>
-        </el-select>
-        <el-input
-          v-if="item.type === 'input'"
-          v-model="formData[item.prop]"
-          :disabled="item.disabled"
-          autocomplete="off"
-        ></el-input>
-        <el-input-number v-if="item.type === 'number'" v-model="formData[item.prop]" :min="0"></el-input-number>
-      </el-form-item>
-      <el-form-item label="Tags" prop="tags" label-width="200">
-        <el-button size="small" type="primary" color="#6E38F7" @click="openAddTag">Add Tag</el-button>
-        <el-table style="margin-top: 10px" :data="formData.tags" border>
-          <el-table-column label="Key" prop="key"></el-table-column>
-          <el-table-column label="Value" prop="value"></el-table-column>
-          <el-table-column label="Operator" width="150">
-            <template #default="scope">
-              <el-button
-                link
-                type="primary"
-                @click.prevent="openEditTag(scope.$index)"
-                style="color: var(--color-main); font-weight: bold"
-                >Edit</el-button
-              >
-              <el-popconfirm @confirm="deleteTag(scope.$index)" title="Are you sure to delete this?">
-                <template #reference>
-                  <el-button link type="danger" style="color: red; font-weight: bold">Delete</el-button>
-                </template>
-              </el-popconfirm>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <span class="dialog-footer footer">
-        <el-button @click="closeEditorDialog">Cancel</el-button>
-        <el-button type="primary" @click="confirmApply"> Confirm </el-button>
-      </span>
-    </template>
-  </el-dialog>
-
-  <!-- Tag Editor Dialog -->
-  <TagEditor ref="tagEditorRef"></TagEditor>
+  <!-- Property Editor Component -->
+  <PropertyEditor ref="propertyEditorRef" @refresh="handleEditorRefresh"></PropertyEditor>
 </template>
 
 <style lang="scss" scoped>
-  .footer {
-    width: 100%;
-    display: flex;
-    justify-content: center;
-  }
-  .configuration {
-    width: 100%;
-    overflow: auto;
-    max-height: 700px;
-    white-space: pre;
-  }
+  /* Styles are now handled by child components */
 </style>
