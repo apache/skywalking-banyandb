@@ -76,7 +76,7 @@ app.config.globalProperties.$loadingClose = () => {
 app.config.globalProperties.$message = ElMessage;
 app.config.globalProperties.$message.error = (status, text) => {
   ElMessage({
-    message: status,
+    message: `${status} ${text}`,
     type: 'error',
   });
 };
