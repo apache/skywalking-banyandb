@@ -48,7 +48,7 @@ import (
 const (
 	DataSize     = 2048 // 2KB per property
 	LiaisonAddr  = "localhost:17912"
-	Concurrency  = 6
+	Concurrency  = 2
 	GroupName    = "perf-test-group"
 	PropertyName = "perf-test-property"
 )
