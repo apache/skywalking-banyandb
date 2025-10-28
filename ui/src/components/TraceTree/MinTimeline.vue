@@ -19,7 +19,10 @@ limitations under the License. -->
         <MinTimelineMarker :minTimestamp="minTimestamp" :maxTimestamp="maxTimestamp" :lineHeight="20" />
       </svg>
     </div>
-    <div class="timeline-content" :style="{ paddingRight: (spanList.length + 1) * rowHeight < 200 ? '20px' : '14px' }">
+    <div
+      class="timeline-content scroll_bar_style"
+      :style="{ paddingRight: (spanList.length + 1) * rowHeight < 200 ? '20px' : '14px' }"
+    >
       <svg ref="svgEle" width="100%" :height="`${(spanList.length + 1) * rowHeight}px`">
         <MinTimelineOverlay
           :minTimestamp="minTimestamp"
