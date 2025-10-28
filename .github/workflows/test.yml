@@ -68,6 +68,14 @@ jobs:
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-test-tool-
+      - name: Generate codes
+        run: make generate
+      - name: Build Linux binaries
+        run: |
+          TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
+      - name: Build Windows binaries
+        run: |
+          TARGET_OS=windows PLATFORMS=windows/amd64 make release
       - name: Build docker image
         run: |
           make docker.build || make docker.build
