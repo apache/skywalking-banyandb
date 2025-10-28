@@ -406,7 +406,7 @@ func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
 }
 
 // ExecuteComposeCommand executes a docker-compose command, supporting both v1 and v2.
-func ExecuteComposeCommand(args ...string) error {
+func ExecuteComposeCommand(startCommand bool, args ...string) error {
 	// Detect compose invoker
 	invoker, detectErr := detectComposeInvoker()
 	if detectErr != nil {
@@ -421,6 +421,10 @@ func ExecuteComposeCommand(args ...string) error {
 	cmd.Stderr = os.Stderr
 	if runErr := cmd.Run(); runErr != nil {
 		return runErr
+	}
+
+	if !startCommand {
+		return nil
 	}
 
 	// wait all the container ready

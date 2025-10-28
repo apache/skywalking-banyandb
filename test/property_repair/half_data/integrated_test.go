@@ -80,7 +80,7 @@ var _ = ginkgo.AfterSuite(func() {
 	}
 	if composeFile != "" {
 		fmt.Println("Stopping compose stack...")
-		_ = propertyrepair.ExecuteComposeCommand("-f", composeFile, "down")
+		_ = propertyrepair.ExecuteComposeCommand(false, "-f", composeFile, "down")
 	}
 })
 
@@ -96,7 +96,7 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 
 			// Start the docker compose stack without waiting first
 			fmt.Println("Starting services...")
-			err = propertyrepair.ExecuteComposeCommand("-f", composeFile, "up", "-d")
+			err = propertyrepair.ExecuteComposeCommand(true, "-f", composeFile, "up", "-d")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Simple wait for services to be ready
