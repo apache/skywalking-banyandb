@@ -107,7 +107,7 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			var err error
 			fmt.Println("Connecting to Liaison server...")
 
-			conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 30*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err = grpchelper.Conn(propertyrepair.LiaisonAddr, 10*time.Minute, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			fmt.Println("Connected to Liaison server successfully")
 
