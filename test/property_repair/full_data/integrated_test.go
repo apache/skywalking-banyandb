@@ -131,7 +131,7 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			fmt.Println("Starting to write 100,000 properties...")
 			startTime := time.Now()
 
-			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 5000)
+			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 100000)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			duration := time.Since(startTime)
