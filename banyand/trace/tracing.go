@@ -277,6 +277,9 @@ func startPartSelectionSpan(ctx context.Context, batch *traceBatch, snapshots []
 	span, spanCtx := tracer.StartSpan(ctx, "part-selection")
 	span.Tagf("initial_parts", "%d", initialParts)
 	span.Tagf("trace_ids", "%d", totalTraceIDCount)
+	for p := range batch.traceIDs {
+		span.Tagf(fmt.Sprintf("part_%d_trace_ids", p), "%d", len(batch.traceIDs[p]))
+	}
 
 	return spanCtx, func(metrics *partSelectionMetrics, finalParts int) {
 		if metrics != nil {

@@ -771,9 +771,6 @@ func (t *trace) startBlockScanStage(
 				totalGroupedIDs:      totalGroupedIDs,
 			}, len(parts))
 
-			// Use the part selection context for downstream operations
-			ctx = partSelectionCtx
-
 			// Create the cursor channel and scanBatch
 			cursorCh := make(chan scanCursorResult)
 			sb := &scanBatch{
@@ -795,7 +792,7 @@ func (t *trace) startBlockScanStage(
 			}
 
 			// Now scan inline and populate the channel
-			t.scanPartsInline(ctx, parts, groupedIDs, qo, cursorCh)
+			t.scanPartsInline(partSelectionCtx, parts, groupedIDs, qo, cursorCh)
 			close(cursorCh)
 		}
 	}()
