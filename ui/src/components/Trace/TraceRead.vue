@@ -360,7 +360,12 @@ orderBy:
           <span
             ><strong>Total {{ data.tableData.length }} span(s)</strong></span
           >
-          <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
+          <div>
+            <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain>
+              <span>Debug Trace</span>
+            </el-button>
+            <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
+          </div>
         </div>
         <div class="table-container">
           <el-table
@@ -387,15 +392,6 @@ orderBy:
               </template>
             </el-table-column>
           </el-table>
-          <el-button
-            :icon="TrendCharts"
-            @click="showTracesDialog = true"
-            :disabled="!traceData"
-            plain
-            :style="{ marginTop: '20px' }"
-          >
-            <span>Debug Trace</span>
-          </el-button>
         </div>
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />

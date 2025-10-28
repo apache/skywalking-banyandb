@@ -172,6 +172,11 @@ fieldValueSort: 1`;
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
     </el-card>
     <el-card>
+      <div style="margin-bottom: 10px; display: flex; justify-content: flex-end">
+        <el-button :icon="TrendCharts" @click="showTracesDialog = true" :disabled="!traceData" plain>
+          <span>Debug Trace</span>
+        </el-button>
+      </div>
       <el-table
         :data="currentList"
         style="width: 100%; margin: 10px 0; min-height: 440px"
@@ -192,15 +197,6 @@ fieldValueSort: 1`;
         @prev-click="changePage"
         @next-click="changePage"
       />
-      <el-button
-        :icon="TrendCharts"
-        @click="showTracesDialog = true"
-        :disabled="!traceData"
-        plain
-        :style="{ marginTop: '20px' }"
-      >
-        <span>Debug Trace</span>
-      </el-button>
     </el-card>
   </div>
   <el-dialog
