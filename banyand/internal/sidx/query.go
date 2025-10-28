@@ -32,8 +32,8 @@ import (
 
 // StreamingQuery implements the streaming query API defined on SIDX.
 func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-	resultsCh := make(chan *QueryResponse, 1)
-	errCh := make(chan error, 1)
+	resultsCh := make(chan *QueryResponse)
+	errCh := make(chan error)
 
 	go func() {
 		defer close(resultsCh)
