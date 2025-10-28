@@ -423,7 +423,7 @@
 
   .result-table {
     overflow: auto;
-    max-height: 50vh;
+    max-height: 46vh;
     min-height: 100px;
   }
 
@@ -563,4 +563,3 @@
     }
   }
 </style>
-

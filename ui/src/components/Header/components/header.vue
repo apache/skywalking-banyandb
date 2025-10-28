@@ -74,7 +74,7 @@
         mode="horizontal"
         :default-active="data.activeMenu"
       >
-        <el-menu-item index="/banyandb/dashboard">Monitoring</el-menu-item>
+        <el-menu-item index="/banyandb/query">Query</el-menu-item>
         <el-sub-menu index="management">
           <template #title>Management</template>
           <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
@@ -82,7 +82,7 @@
           <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
           <el-menu-item index="/banyandb/property">Property</el-menu-item>
         </el-sub-menu>
-        <el-menu-item index="/banyandb/query">Query</el-menu-item>
+        <el-menu-item index="/banyandb/dashboard">Monitoring</el-menu-item>
       </el-menu>
     </div>
     <div class="flex-block"> </div>

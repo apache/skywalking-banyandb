@@ -18,18 +18,71 @@
 -->
 <script setup>
   import { ref } from 'vue';
+  import { Plus } from '@element-plus/icons-vue';
+  import { ElMessage } from 'element-plus';
   import BydbQLQuery from '@/components/BydbQL/Index.vue';
 
-  const activeTab = ref('bydbql');
+  let tabIndex = 2;
+  const activeTab = ref('tab-1');
+  const tabs = ref([
+    {
+      name: 'tab-1',
+      title: 'Query 1',
+      closable: false,
+    },
+  ]);
+
+  const addTab = () => {
+    const newTabName = `tab-${tabIndex++}`;
+    tabs.value.push({
+      name: newTabName,
+      title: `Query ${tabIndex - 1}`,
+      closable: true,
+    });
+    activeTab.value = newTabName;
+  };
+
+  const removeTab = (targetName) => {
+    if (tabs.value.length === 1) {
+      ElMessage.warning('At least one tab must remain');
+      return;
+    }
+
+    const targetIndex = tabs.value.findIndex((tab) => tab.name === targetName);
+    const targetTab = tabs.value[targetIndex];
+
+    if (!targetTab.closable) {
+      ElMessage.warning('This tab cannot be closed');
+      return;
+    }
+
+    tabs.value.splice(targetIndex, 1);
+
+    if (activeTab.value === targetName) {
+      const newActiveTab = tabs.value[targetIndex] || tabs.value[targetIndex - 1];
+      activeTab.value = newActiveTab.name;
+    }
+  };
 </script>
 
 <template>
   <div class="query-page">
-    <el-tabs v-model="activeTab" class="query-tabs">
-      <el-tab-pane label="BydbQL" name="bydbql">
-        <BydbQLQuery />
-      </el-tab-pane>
-    </el-tabs>
+    <div class="tabs-header">
+      <el-tabs v-model="activeTab" class="query-tabs" closable @tab-remove="removeTab">
+        <el-tab-pane v-for="tab in tabs" :key="tab.name" :label="tab.title" :name="tab.name" :closable="tab.closable">
+          <BydbQLQuery />
+        </el-tab-pane>
+      </el-tabs>
+      <el-button
+        :icon="Plus"
+        size="small"
+        type="primary"
+        circle
+        @click="addTab"
+        class="add-tab-button"
+        title="Add new query tab"
+      />
+    </div>
   </div>
 </template>
 
@@ -38,7 +91,31 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 20px;
+    padding: 10px 20px;
+  }
+
+  .tabs-header {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+
+    :deep(.el-tabs__header) {
+      margin-bottom: 0;
+    }
+
+    .add-tab-button {
+      position: absolute;
+      top: 5px;
+      right: 10px;
+      z-index: 10;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
   }
 
   .query-tabs {
@@ -53,7 +130,11 @@
 
     :deep(.el-tab-pane) {
       height: 100%;
+      padding-top: 10px;
+    }
+
+    :deep(.el-tabs__header) {
+      padding-right: 50px;
     }
   }
 </style>
-
