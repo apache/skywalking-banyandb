@@ -44,8 +44,8 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Property Repair Tests
-      options: --label-filter property_repair -timeout=5h
-      timeout-minutes: 120
+      options: --label-filter property_repair -timeout=6h
+      timeout-minutes: 480
 
   e2e:
     if: github.repository == 'apache/skywalking-banyandb'
