@@ -247,6 +247,7 @@ func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.Prope
 	duration := endTime.Sub(startTime)
 	fmt.Printf("Write completed: %d properties in %s (%s props/sec)\n",
 		endIdx, FormatDuration(duration), FormatThroughput(int64(endIdx), duration))
+	time.Sleep(10 * time.Second)
 	return nil
 }
 
