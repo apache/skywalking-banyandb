@@ -18,24 +18,25 @@
 -->
 
 <script setup>
-  import { reactive, ref, getCurrentInstance } from 'vue';
+  import { reactive, ref, computed, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
-  import TagEditor from '@/components/Property/TagEditor.vue';
+  import TagEditor from '@/components/common/TagEditor.vue';
   import { applyProperty } from '@/api/index';
   import { rules, strategyGroup, formConfig } from '@/components/Property/data';
 
+  const EDITOR_MODE = {
+    CREATE: 'create',
+    EDIT: 'edit',
+  };
+  const DIALOG_TITLES = {
+    [EDITOR_MODE.CREATE]: 'Create Property',
+    [EDITOR_MODE.EDIT]: 'Edit Property',
+  };
   const { proxy } = getCurrentInstance();
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
   const $loadingClose = proxy.$loadingClose;
-
   const emit = defineEmits(['refresh', 'close']);
-
-  // Editor state
-  const showDialog = ref(false);
-  const editorTitle = ref('');
-  const tagEditorRef = ref();
-  const ruleForm = ref();
-  const formData = reactive({
+  const createInitialFormData = () => ({
     strategy: strategyGroup[0].value,
     group: '',
     name: '',
@@ -45,104 +46,128 @@
     tags: [],
   });
 
-  // Initialize editor data
-  const initEditorData = () => {
-    formData.strategy = strategyGroup[0].value;
-    formData.group = '';
-    formData.name = '';
-    formData.modRevision = 0;
-    formData.createRevision = 0;
-    formData.id = '';
-    formData.tags = [];
+  const showDialog = ref(false);
+  const editorMode = ref(EDITOR_MODE.CREATE);
+  const tagEditorRef = ref();
+  const ruleForm = ref();
+  const formData = reactive(createInitialFormData());
+
+  const editorTitle = computed(() => DIALOG_TITLES[editorMode.value]);
+  const resetFormData = () => {
+    Object.assign(formData, createInitialFormData());
+  };
+  const deepClone = (obj) => {
+    try {
+      return structuredClone(obj);
+    } catch (e) {
+      // Fallback for older browsers
+      return JSON.parse(JSON.stringify(obj));
+    }
   };
 
-  // Open editor dialog with optional property data
   const openEditor = (propertyData = null) => {
     if (propertyData) {
-      editorTitle.value = 'Edit Property';
+      editorMode.value = EDITOR_MODE.EDIT;
       formData.group = propertyData.metadata.group;
       formData.name = propertyData.metadata.name;
       formData.modRevision = propertyData.metadata.modRevision;
       formData.createRevision = propertyData.metadata.createRevision;
       formData.id = propertyData.id;
-      formData.tags = JSON.parse(JSON.stringify(propertyData.tags));
+      formData.tags = deepClone(propertyData.tags);
     } else {
-      editorTitle.value = 'Create Property';
-      initEditorData();
+      editorMode.value = EDITOR_MODE.CREATE;
+      resetFormData();
     }
     showDialog.value = true;
   };
 
-  // Close editor dialog
   const closeEditor = () => {
     showDialog.value = false;
-    initEditorData();
+    ruleForm.value?.resetFields();
+    resetFormData();
     emit('close');
   };
 
-  // Tag management functions
-  const openEditTag = (index) => {
-    tagEditorRef.value.openDialog(formData.tags[index]).then((res) => {
-      formData.tags[index].key = res.key;
-      formData.tags[index].value = res.value;
-    });
+  // Tag management functions with error handling.
+  const openEditTag = async (index) => {
+    try {
+      const result = await tagEditorRef.value.openDialog(formData.tags[index]);
+      formData.tags[index] = { ...formData.tags[index], ...result };
+    } catch (error) {
+      // User cancelled the dialog, do nothing
+    }
   };
 
   const deleteTag = (index) => {
     formData.tags.splice(index, 1);
   };
 
-  const openAddTag = () => {
-    tagEditorRef.value.openDialog().then((res) => {
-      formData.tags.push(res);
-    });
+  const openAddTag = async () => {
+    try {
+      const result = await tagEditorRef.value.openDialog();
+      formData.tags.push(result);
+    } catch (error) {
+      // User cancelled the dialog, do nothing
+    }
   };
 
-  // Confirm and apply property
+  const buildPropertyPayload = () => ({
+    strategy: formData.strategy,
+    property: {
+      id: formData.id,
+      metadata: {
+        createRevision: formData.createRevision,
+        group: formData.group,
+        modRevision: formData.modRevision,
+        name: formData.name,
+      },
+      tags: formData.tags.map(({ key, value }) => ({
+        key,
+        value: JSON.parse(value),
+      })),
+    },
+  });
+
+  // Confirm and apply property with improved error handling.
   const confirmApply = async () => {
     if (!ruleForm.value) return;
-    await ruleForm.value.validate(async (valid) => {
-      if (valid) {
-        $loadingCreate();
-        const param = {
-          strategy: formData.strategy,
-          property: {
-            id: formData.id,
-            metadata: {
-              createRevision: formData.createRevision,
-              group: formData.group,
-              modRevision: formData.modRevision,
-              name: formData.name,
-            },
-            tags: formData.tags.map((item) => {
-              return {
-                key: item.key,
-                value: JSON.parse(item.value),
-              };
-            }),
-          },
-        };
-        const response = await applyProperty(formData.group, formData.name, formData.id, param);
-        $loadingClose();
-        if (response.error) {
-          ElMessage({
-            message: `Failed to apply property: ${response.error.message}`,
-            type: 'error',
-          });
-          return;
-        }
-        ElMessage({
-          message: 'Success',
-          type: 'success',
-        });
-        showDialog.value = false;
-        emit('refresh');
-        initEditorData();
+
+    try {
+      const isValid = await ruleForm.value.validate();
+      if (!isValid) return;
+
+      $loadingCreate();
+
+      const payload = buildPropertyPayload();
+      const response = await applyProperty(
+        formData.group,
+        formData.name,
+        formData.id,
+        payload
+      );
+
+      if (response.error) {
+        throw new Error(response.error.message);
       }
-    });
+
+      ElMessage({
+        message: 'Property applied successfully',
+        type: 'success',
+      });
+
+      showDialog.value = false;
+      emit('refresh');
+      resetFormData();
+    } catch (error) {
+      ElMessage({
+        message: `Failed to apply property: ${error.message || 'Unknown error'}`,
+        type: 'error',
+      });
+    } finally {
+      $loadingClose();
+    }
   };
 
-  // Expose methods to parent component
   defineExpose({
     openEditor,
     closeEditor,
