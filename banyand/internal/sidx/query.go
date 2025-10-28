@@ -19,6 +19,7 @@ package sidx
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 	"sync"
@@ -31,12 +32,7 @@ import (
 
 // StreamingQuery implements the streaming query API defined on SIDX.
 func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-	chanSize := req.MaxBatchSize
-	if chanSize < 0 {
-		chanSize = 0
-	}
-
-	resultsCh := make(chan *QueryResponse, chanSize)
+	resultsCh := make(chan *QueryResponse, 1)
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -286,9 +282,14 @@ func (s *sidx) processStreamingLoop(
 			scannerBatchCount++
 			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats, metrics); err != nil {
 				if loopSpan != nil {
-					loopSpan.Tag("termination_reason", "batch_error")
-					loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
-					loopSpan.Error(err)
+					if errors.Is(err, context.Canceled) {
+						loopSpan.Tag("termination_reason", "context_canceled")
+						loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
+					} else {
+						loopSpan.Tag("termination_reason", "batch_error")
+						loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
+						loopSpan.Error(err)
+					}
 				}
 				return err
 			}
