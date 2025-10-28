@@ -18,9 +18,10 @@
 -->
 
 <script setup>
-  import { ref, computed } from 'vue';
+  import { ref, computed, onMounted, nextTick } from 'vue';
   import { ElMessage } from 'element-plus';
   import { executeBydbQLQuery } from '@/api/index';
+  import CodeMirror from '@/components/CodeMirror/index.vue';
 
   const queryText = ref('');
   const queryResult = ref(null);
@@ -97,13 +98,20 @@
     executionTime.value = 0;
   }
 
-  function handleKeyDown(event) {
-    // Execute query on Ctrl/Cmd + Enter
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      executeQuery();
-    }
-  }
+  // Setup keyboard shortcuts for CodeMirror
+  onMounted(() => {
+    nextTick(() => {
+      // Find the CodeMirror instance and add keyboard shortcuts
+      const codeMirrorElement = document.querySelector('.query-input .CodeMirror');
+      if (codeMirrorElement && codeMirrorElement.CodeMirror) {
+        const cm = codeMirrorElement.CodeMirror;
+        cm.setOption('extraKeys', {
+          'Ctrl-Enter': executeQuery,
+          'Cmd-Enter': executeQuery,
+        });
+      }
+    });
+  });
 </script>
 
 <template>
@@ -132,15 +140,18 @@
           <span class="input-label">Query</span>
           <span class="input-hint">Press Ctrl/Cmd + Enter to execute</span>
         </div>
-        <el-input
-          v-model="queryText"
-          type="textarea"
-          :rows="8"
-          placeholder="Enter your BydbQL query here...
-Example: FROM STREAM sw | LIMIT 10"
-          class="query-input"
-          @keydown="handleKeyDown"
-        />
+        <div class="query-input-container">
+          <CodeMirror
+            v-model="queryText"
+            :mode="'sql'"
+            :lint="false"
+            :readonly="false"
+            theme="default"
+            :style-active-line="true"
+            :auto-refresh="true"
+            class="query-input"
+          />
+        </div>
 
         <div class="examples-section">
           <span class="examples-label">Examples:</span>
@@ -279,13 +290,25 @@ Example: FROM STREAM sw | LIMIT 10"
     color: #909399;
   }
 
-  .query-input {
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 14px;
+  .query-input-container {
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    overflow: hidden;
+    
+    :deep(.in-coder-panel) {
+      height: 250px;
+    }
 
-    :deep(textarea) {
-      font-family: inherit;
+    :deep(.CodeMirror) {
+      border: none;
+      height: 100%;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 14px;
       line-height: 1.6;
+    }
+
+    :deep(.CodeMirror-scroll) {
+      min-height: 250px;
     }
   }
 
