@@ -128,7 +128,7 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 			propertyrepair.CreatePropertySchema(ctx, propertyClient)
 
 			// Write 50,000 properties
-			fmt.Println("Starting to write 50,000 properties...")
+			fmt.Println("Starting to write 5,000 properties...")
 			startTime := time.Now()
 
 			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 5000)
@@ -153,7 +153,7 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 			fmt.Printf("=== Step 2 completed: updated replicas to 1 in %v ===\n", duration)
 		})
 
-		ginkgo.It("Should write additional 50k properties", func() {
+		ginkgo.It("Should write additional 5k properties", func() {
 			ctx := context.Background()
 
 			fmt.Println("=== Step 3: Writing additional properties ===")
@@ -200,10 +200,10 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 			}
 
 			fmt.Println("\n=== Triggering property repair by waiting for scheduled repair cycle ===")
-			fmt.Println("Waiting for property repair to trigger (@every 10 minutes)...")
+			fmt.Println("Waiting for property repair to trigger (@every 5 minutes)...")
 
 			gomega.Eventually(func() bool {
-				time.Sleep(time.Second * 30)
+				time.Sleep(time.Second * 10)
 				// Get metrics after repair
 				fmt.Println("Trying to reading prometheus metrics to check repair status...")
 				afterMetrics := propertyrepair.GetAllNodeMetrics()
