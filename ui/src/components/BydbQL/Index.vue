@@ -292,15 +292,7 @@
           <span class="header-title">BydbQL Query Console</span>
           <div class="header-actions">
             <el-button @click="clearQuery" size="small" :disabled="loading"> Clear </el-button>
-            <el-button
-              type="primary"
-              @click="executeQuery"
-              :loading="loading"
-              size="small"
-              :disabled="!queryText.trim()"
-            >
-              Execute Query
-            </el-button>
+            <el-button type="primary" @click="executeQuery" :loading="loading" size="small"> Execute Query </el-button>
           </div>
         </div>
       </template>

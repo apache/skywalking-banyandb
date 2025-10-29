@@ -18,162 +18,130 @@
 -->
 
 <script setup>
-  import { reactive, watch } from 'vue';
+  import { ref, watch } from 'vue';
   import { ElImage, ElMenu, ElMenuItem, ElSubMenu } from 'element-plus';
-  import { useRoute, useRouter } from 'vue-router';
+  import { useRoute } from 'vue-router';
   import userImg from '@/assets/banyandb_small.jpg';
-  // router
+  import { MENU_ACTIVE_COLOR, MENU_DEFAULT_PATH, MenuConfig } from './constants';
+
   const route = useRoute();
-  const router = useRouter();
+  // Compute active menu from route
+  const getActiveMenu = (path) => {
+    const parts = path.split('/').filter(Boolean);
+    return parts.length >= 2 ? `/${parts[0]}/${parts[1]}` : MENU_DEFAULT_PATH;
+  };
 
-  // data
-  const data = reactive({
-    activeMenu: '/banyandb/dashboard',
-  });
+  const activeMenu = ref(getActiveMenu(route.path));
 
-  // watch
+  // Watch route path changes
   watch(
-    () => route,
-    () => {
-      let arr = route.path.split('/');
-      data.activeMenu = `/${arr[1]}/${arr[2]}`;
+    () => route.path,
+    (newPath) => {
+      activeMenu.value = getActiveMenu(newPath);
     },
-    {
-      immediate: true,
-      deep: true,
-    },
+    { immediate: true },
   );
-
-  // function
-  function initData() {
-    let arr = route.path.split('/');
-    data.activeMenu = `/${arr[1]}/${arr[2]}`;
-  }
-
-  initData();
 </script>
 
 <template>
   <div class="size flex align-item-center justify-between bd-bottom">
-    <div class="image flex align-item-center justify-between">
+    <div class="image">
       <el-image :src="userImg" class="flex center" fit="fill">
         <div slot="error" class="image-slot">
           <i class="el-icon-picture-outline"></i>
         </div>
       </el-image>
-      <div class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</div>
-      <!-- stream/measure sources url -->
-      <div style="width: 380px" class="margin-left-small"></div>
+      <h1 class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</h1>
     </div>
-    <div class="navigation" style="margin-right: 20%">
+    <nav class="navigation">
       <el-menu
-        active-text-color="#6E38F7"
+        :active-text-color="MENU_ACTIVE_COLOR"
         router
         :ellipsis="false"
-        class="el-menu-demo"
         mode="horizontal"
-        :default-active="data.activeMenu"
+        :default-active="activeMenu"
       >
-        <el-menu-item index="/banyandb/query">Query</el-menu-item>
-        <el-sub-menu index="management">
-          <template #title>Management</template>
-          <el-menu-item index="/banyandb/stream">Stream</el-menu-item>
-          <el-menu-item index="/banyandb/measure">Measure</el-menu-item>
-          <el-menu-item index="/banyandb/trace">Trace</el-menu-item>
-          <el-menu-item index="/banyandb/property">Property</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/banyandb/dashboard">Monitoring</el-menu-item>
+        <template v-for="item in MenuConfig" :key="item.index">
+          <el-sub-menu v-if="item.children" :index="item.index">
+            <template #title>{{ item.label }}</template>
+            <el-menu-item v-for="child in item.children" :key="child.index" :index="child.index">
+              {{ child.label }}
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="item.index">{{ item.label }}</el-menu-item>
+        </template>
       </el-menu>
-    </div>
+    </nav>
     <div class="flex-block"> </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
+  $header-height: 60px;
+  $logo-size: 59px;
+
   .image {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    width: 665px;
+    gap: 10px;
     height: 100%;
 
     .el-image {
-      width: 59px;
-      height: 59px;
+      width: $logo-size;
+      height: $logo-size;
       flex-shrink: 0;
-      flex-grow: 0;
     }
 
     .title {
       height: 100%;
-      line-height: 59px;
-      flex-shrink: 0;
-      flex-grow: 0;
+      line-height: $logo-size;
       white-space: nowrap;
-      margin-left: 10px;
+      margin: 0;
+      font-size: inherit;
     }
-  }
-
-  .el-menu-item {
-    font-weight: var(--weight-lt);
-    font-size: var(--size-lt);
-    font-family: var(--font-family-main);
-    height: 60px;
-    line-height: 60px;
-    display: flex;
-    align-items: center;
-  }
-
-  .el-menu-item:hover {
-    color: var(--el-menu-active-color) !important;
-  }
-
-  :deep(.el-sub-menu) {
-    height: 60px;
-    display: flex;
-    align-items: center;
-  }
-
-  :deep(.el-sub-menu__title) {
-    font-weight: var(--weight-lt);
-    font-size: var(--size-lt);
-    font-family: var(--font-family-main);
-    height: 60px;
-    line-height: 60px;
-    display: flex;
-    align-items: center;
-    border-bottom: none;
-  }
-
-  :deep(.el-sub-menu__title:hover) {
-    color: var(--el-menu-active-color) !important;
   }
 
   .navigation {
     display: flex;
     align-items: center;
     justify-content: center;
+    margin-right: 20%;
 
     :deep(.el-menu) {
       display: flex;
       align-items: center;
       border-bottom: none;
+      height: $header-height;
     }
+  }
 
-    :deep(.el-menu--horizontal) {
-      display: flex;
-      align-items: center;
-      height: 60px;
+  .el-menu-item,
+  :deep(.el-sub-menu__title) {
+    font-weight: var(--weight-lt);
+    font-size: var(--size-lt);
+    font-family: var(--font-family-main);
+    height: $header-height;
+    line-height: $header-height;
+    display: flex;
+    align-items: center;
+
+    &:hover {
+      color: var(--el-menu-active-color) !important;
     }
+  }
+
+  :deep(.el-sub-menu) {
+    height: $header-height;
+    display: flex;
+    align-items: center;
+  }
+
+  :deep(.el-sub-menu__title) {
+    border-bottom: none;
   }
 
   .flex-block {
     width: 140px;
     margin-right: 30px;
-  }
-
-  .icon-size {
-    width: 25px;
-    height: 25px;
   }
 </style>

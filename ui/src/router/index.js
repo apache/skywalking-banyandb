@@ -31,7 +31,7 @@ const router = createRouter({
       path: '/banyandb',
       component: Header,
       name: 'banyandb',
-      redirect: '/banyandb/dashboard',
+      redirect: '/banyandb/query',
       meta: {
         keepAlive: false,
       },
