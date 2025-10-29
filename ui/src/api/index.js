@@ -222,3 +222,11 @@ export function queryTraces(json) {
     method: 'POST',
   });
 }
+
+export function executeBydbQLQuery(data) {
+  return httpQuery({
+    url: `/api/v1/bydbql/query`,
+    json: data,
+    method: 'POST',
+  });
+}

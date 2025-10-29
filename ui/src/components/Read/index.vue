@@ -16,22 +16,22 @@
   ~ specific language governing permissions and limitations
   ~ under the License.
 -->
-
 <script setup>
   import { reactive, ref, watch, getCurrentInstance, computed } from 'vue';
   import { useRoute } from 'vue-router';
   import { ElMessage } from 'element-plus';
-  import { Search, RefreshRight } from '@element-plus/icons-vue';
+  import { Search, RefreshRight, TrendCharts } from '@element-plus/icons-vue';
   import { getResourceOfAllType, getTableList } from '@/api/index';
   import { jsonToYaml, yamlToJson } from '@/utils/yaml';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
+  import { CatalogToGroupType } from '../GroupTree/data';
+  import TraceTree from '../TraceTree/TraceContent.vue';
+  import MeasureAndStreamTable from '../common/MeasureAndStreamTable.vue';
 
   const route = useRoute();
-
   const yamlRef = ref();
-
   // Loading
   const { proxy } = getCurrentInstance();
   const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
@@ -86,6 +86,8 @@
     codeStorage: [],
     byStages: false,
   });
+  const showTracesDialog = ref(false);
+  const traceData = ref(null);
   const tableHeader = computed(() => {
     return data.tableTags.concat(data.tableFields);
   });
@@ -190,12 +192,15 @@ orderBy:
     data.fields = response[data.type].fields ? response[data.type].fields : [];
     handleCodeData();
   }
+  async function handleTracesData(trace) {
+    traceData.value = trace;
+  }
   async function getTableData() {
     data.tableData = [];
     data.loading = true;
     setTableFilterConfig();
     let paramList = JSON.parse(JSON.stringify(filterConfig));
-    if (data.type === 'measure') {
+    if (data.type === CatalogToGroupType.CATALOG_MEASURE) {
       paramList.tagProjection = paramList.projection;
       if (data.handleFields.length > 0) {
         paramList.fieldProjection = {
@@ -215,7 +220,8 @@ orderBy:
       });
       return;
     }
-    if (data.type === 'stream') {
+    handleTracesData(res.trace);
+    if (data.type === CatalogToGroupType.CATALOG_STREAM) {
       setTableData(res.elements);
     } else {
       setTableData(res.dataPoints);
@@ -235,7 +241,7 @@ orderBy:
           dataItem[tag.key] = tag.value[tagType[type]]?.value || tag.value[tagType[type]];
         }
       }
-      if (data.type === 'measure' && tableFields.length > 0) {
+      if (data.type === CatalogToGroupType.CATALOG_MEASURE && tableFields.length > 0) {
         item.fields.forEach((field) => {
           const name = field.name;
           const fieldType =
@@ -361,11 +367,10 @@ orderBy:
               placeholder="Please select"
               style="width: 200px"
             >
-              <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value">
-              </el-option>
+              <el-option v-for="item in data.options" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
             <el-select
-              v-if="data.type === 'measure'"
+              v-if="data.type === CatalogToGroupType.CATALOG_MEASURE"
               v-model="data.handleFields"
               collapse-tags
               style="margin: 0 0 0 10px; flex: 0 0 300px"
@@ -374,8 +379,7 @@ orderBy:
               multiple
               placeholder="Please select Fields"
             >
-              <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name">
-              </el-option>
+              <el-option v-for="item in data.fields" :key="item.name" :label="item.name" :value="item.name" />
             </el-select>
             <el-date-picker
               @change="changeDatePicker"
@@ -387,8 +391,7 @@ orderBy:
               start-placeholder="begin"
               end-placeholder="end"
               :align="`right`"
-            >
-            </el-date-picker>
+            />
             <el-checkbox
               v-model="data.byStages"
               @change="setCode"
@@ -396,64 +399,45 @@ orderBy:
               size="large"
               style="margin-right: 10px"
             />
-            <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain></el-button>
+            <el-button :icon="Search" @click="searchTableData" style="flex: 0 0 auto" color="#6E38F7" plain />
           </div>
         </el-col>
         <el-col :span="8">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="RefreshRight" @click="getTableData" plain></el-button>
+            <el-button :icon="RefreshRight" @click="getTableData" plain />
           </div>
         </el-col>
       </el-row>
-      <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false">
-      </CodeMirror>
+      <CodeMirror ref="yamlRef" v-model="data.code" mode="yaml" style="height: 200px" :lint="true" :readonly="false" />
     </el-card>
     <el-card shadow="always">
-      <el-table
-        v-loading="data.loading"
-        element-loading-text="loading"
-        element-loading-spinner="el-icon-loading"
-        element-loading-background="rgba(0, 0, 0, 0.8)"
-        ref="multipleTable"
-        stripe
-        :border="true"
-        highlight-current-row
-        tooltip-effect="dark"
-        empty-text="No data yet"
-        :data="data.tableData"
-      >
-        <el-table-column type="selection" width="55"> </el-table-column>
-        <el-table-column type="index" label="number" width="90"> </el-table-column>
-        <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
-        <el-table-column
-          v-for="item in tableHeader"
-          sortable
-          :key="item.name"
-          :label="item.label"
-          :prop="item.name"
-          show-overflow-tooltip
-        >
-          <template #default="scope">
-            <el-popover
-              v-if="(item.type || item.fieldType)?.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
-              effect="dark"
-              trigger="hover"
-              placement="top"
-              width="auto"
-            >
-              <template #default>
-                <div>{{ scope.row[item.name].join('; ') }}</div>
-              </template>
-              <template #reference>
-                <el-tag>View</el-tag>
-              </template>
-            </el-popover>
-            <div v-else>{{ scope.row[item.name] }}</div>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div style="margin-bottom: 10px; display: flex; justify-content: flex-end">
+        <el-button :icon="TrendCharts" :disabled="!traceData" @click="showTracesDialog = true" plain>
+          <span>Debug Trace</span>
+        </el-button>
+      </div>
+      <MeasureAndStreamTable
+        :tableData="data.tableData"
+        :tableHeader="tableHeader"
+        :loading="data.loading"
+        :showSelection="true"
+        :showIndex="true"
+        :showTimestamp="true"
+        emptyText="No data yet"
+      />
     </el-card>
   </div>
+  <el-dialog
+    v-model="showTracesDialog"
+    width="90%"
+    :destroy-on-close="true"
+    @closed="showTracesDialog = false"
+    class="trace-dialog"
+  >
+    <div style="max-height: 74vh; overflow-y: auto">
+      <TraceTree :trace="traceData" />
+    </div>
+  </el-dialog>
 </template>
 
 <style lang="scss" scoped>

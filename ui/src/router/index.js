@@ -19,6 +19,7 @@
 
 import { createRouter, createWebHistory } from 'vue-router';
 import Header from '@/components/Header/index.vue';
+import { MENU_DEFAULT_PATH } from '@/components/Header/components/constants';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -31,7 +32,7 @@ const router = createRouter({
       path: '/banyandb',
       component: Header,
       name: 'banyandb',
-      redirect: '/banyandb/dashboard',
+      redirect: MENU_DEFAULT_PATH,
       meta: {
         keepAlive: false,
       },
@@ -269,6 +270,11 @@ const router = createRouter({
               component: () => import('@/components/IndexRuleBinding/Editor.vue'),
             },
           ],
+        },
+        {
+          path: '/banyandb/query',
+          name: 'query',
+          component: () => import('@/views/Query/BydbQL.vue'),
         },
       ],
     },

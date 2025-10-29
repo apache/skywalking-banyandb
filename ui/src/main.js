@@ -76,7 +76,7 @@ app.config.globalProperties.$loadingClose = () => {
 app.config.globalProperties.$message = ElMessage;
 app.config.globalProperties.$message.error = (status, text) => {
   ElMessage({
-    message: status + statusText,
+    message: `${status} ${text}`,
     type: 'error',
   });
 };
@@ -84,12 +84,6 @@ app.config.globalProperties.$message.errorNet = () => {
   ElMessage({
     message: 'Error: Please check the network connection!',
     type: 'error',
-  });
-};
-app.config.globalProperties.$message.success = () => {
-  ElMessage({
-    message: 'OK',
-    type: 'success',
   });
 };
 app.config.globalProperties.mittBus = new mitt();

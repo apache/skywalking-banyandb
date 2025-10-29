@@ -37,15 +37,6 @@ jobs:
       options: --label-filter slow
       timeout-minutes: 120
 
-  property-repair:
-    if: github.repository == 'apache/skywalking-banyandb'
-    needs: [prepare]
-    uses: ./.github/workflows/test.yml
-    with:
-      test-name: Property Repair Tests
-      options: --label-filter property_repair
-      timeout-minutes: 120
-
   e2e:
     if: github.repository == 'apache/skywalking-banyandb'
     needs: [prepare]

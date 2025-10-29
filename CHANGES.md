@@ -50,6 +50,9 @@ Release Notes.
 - Implement cluster mode for trace.
 - Implement Trace views.
 - Use Fetch request to instead of axios request and remove axios.
+- Implement Trace Tree for debug mode.
+- Implement bydbQL.
+- UI: Implement the Query Page for BydbQL.
 
 ### Bug Fixes
 

@@ -28,9 +28,10 @@
   import CodeMirror from 'codemirror';
   import 'codemirror/lib/codemirror.css';
   import 'codemirror/mode/yaml/yaml.js';
+  import 'codemirror/mode/sql/sql.js';
   import 'codemirror/mode/css/css.js';
   import 'codemirror/addon/lint/yaml-lint.js';
-  import 'codemirror/theme/rubyblue.css';
+  import 'codemirror/theme/dracula.css';
   import jsYaml from 'js-yaml';
   window.jsyaml = jsYaml;
   export default {
@@ -54,7 +55,7 @@
       },
       theme: {
         type: String,
-        default: 'rubyblue',
+        default: 'dracula',
       },
       styleActiveLine: {
         type: Boolean,
@@ -134,7 +135,7 @@
     width: 100%;
     height: 100%;
     :deep(.CodeMirror) {
-      border: 1px solid #eee;
+      border: 1px solid #44475a;
       height: 100%;
       width: 100%;
       .CodeMirror-code {
