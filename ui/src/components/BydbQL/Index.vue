@@ -31,8 +31,8 @@
   const queryText = ref(`-- Example queries:
 -- Query stream logs from the last 30 minutes
 -- SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'
--- Query measure metrics for service calls per minute
--- SELECT * FROM MEASURE service_cpm_minute in sw_metricsMinute TIME > '30m'
+-- Query traces from the last 30 minutes
+-- SELECT () FROM TRACE segment in sw_trace TIME > '-30m' order by latency desc
 
 SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const queryResult = ref(null);
