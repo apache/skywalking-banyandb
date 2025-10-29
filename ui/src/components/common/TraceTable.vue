@@ -69,7 +69,7 @@
     for (let i = 0; i < 2; i++) {
       if (typeof value !== 'object') {
         const strValue = value.toString();
-        return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
+        return strValue.length > 100 ? strValue.substring(0, 100) + '...' : strValue;
       }
       for (const key in value) {
         if (Object.hasOwn(value, key)) {
@@ -83,7 +83,7 @@
     }
 
     const strValue = value.toString();
-    return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
+    return strValue.length > 100 ? strValue.substring(0, 100) + '...' : strValue;
   };
 
   // Cell merging strategy for traceId
