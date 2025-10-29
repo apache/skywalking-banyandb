@@ -91,7 +91,7 @@ services:
            --stream-root-path=/tmp/banyandb-data
            --measure-root-path=/tmp/banyandb-data
            --property-root-path=/tmp/banyandb-data
-           --property-repair-trigger-cron="*/5 * * * *"
+           --property-repair-trigger-cron="*/3 * * * *"
 
   data-node-2:
     <<: *data_base
