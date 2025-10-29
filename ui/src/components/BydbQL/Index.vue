@@ -459,7 +459,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     }
 
     :deep(.CodeMirror-scroll) {
-      min-height: 250px;
+      min-height: 150px;
     }
   }
 
