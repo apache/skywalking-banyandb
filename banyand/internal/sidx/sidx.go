@@ -208,7 +208,9 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, req QueryRequest) {
 }
 
 // loadBlockCursor loads block data into the cursor, similar to loadBlockCursor in query_by_ts.go.
-func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanResult, tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory) bool {
+func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanResult,
+	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory, metrics *batchMetrics,
+) bool {
 	tmpBlock.reset()
 
 	// Create a temporary queryResult to reuse existing logic
@@ -222,6 +224,10 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 	// Load the block data
 	if !qr.loadBlockData(tmpBlock, bs.p, &bs.bm) {
 		return false
+	}
+
+	if metrics != nil {
+		metrics.totalLoadedElements.Add(int64(len(tmpBlock.userKeys)))
 	}
 
 	totalElements := len(tmpBlock.userKeys)
@@ -333,6 +339,10 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 				}
 			}
 		}
+	}
+
+	if metrics != nil {
+		metrics.totalEmittedElements.Add(int64(len(bc.userKeys)))
 	}
 
 	return len(bc.userKeys) > 0

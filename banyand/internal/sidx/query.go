@@ -23,6 +23,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -71,6 +72,8 @@ type batchMetrics struct {
 	totalCursorsBuilt      int
 	totalHeapSizeAfterPush int
 	batchesProcessed       int
+	totalLoadedElements    atomic.Int64
+	totalEmittedElements   atomic.Int64
 }
 
 // runStreamingQuery executes the streaming query workflow and pushes batches to resultsCh.
@@ -318,7 +321,7 @@ func (s *sidx) handleStreamingBatch(
 		metrics.totalBatchBlockCount += batchBlockCount
 	}
 
-	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc)
+	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc, metrics)
 	releaseBlockScanResultBatch(batch)
 	if cursorsErr != nil {
 		return cursorsErr
@@ -355,6 +358,8 @@ func (s *sidx) addBatchMetricsToSpan(span *query.Span, metrics *batchMetrics) {
 		span.Tagf("avg_cursors_built", "%.2f", float64(metrics.totalCursorsBuilt)/float64(metrics.batchesProcessed))
 		span.Tagf("avg_heap_size_after_push", "%.2f", float64(metrics.totalHeapSizeAfterPush)/float64(metrics.batchesProcessed))
 	}
+	span.Tagf("total_block_loaded_elements", "%d", metrics.totalLoadedElements.Load())
+	span.Tagf("total_emitted_elements", "%d", metrics.totalEmittedElements.Load())
 }
 
 func determineTagsToLoad(req QueryRequest) map[string]struct{} {
@@ -378,6 +383,7 @@ func (s *sidx) buildCursorsForBatch(
 	tagsToLoad map[string]struct{},
 	req QueryRequest,
 	asc bool,
+	metrics *batchMetrics,
 ) ([]*blockCursor, error) {
 	if len(batch.bss) == 0 {
 		return nil, nil
@@ -416,7 +422,7 @@ func (s *sidx) buildCursorsForBatch(
 					bc := generateBlockCursor()
 					bc.init(bsResult.p, &bsResult.bm, req)
 
-					if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm) {
+					if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm, metrics) {
 						if asc {
 							bc.idx = 0
 						} else {
