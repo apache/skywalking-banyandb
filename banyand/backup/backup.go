@@ -57,6 +57,7 @@ type backupOptions struct {
 	streamRoot   string
 	measureRoot  string
 	propertyRoot string
+	traceRoot    string
 	dest         string
 	enableTLS    bool
 	insecure     bool
@@ -122,6 +123,7 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&backupOpts.streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
 	cmd.Flags().StringVar(&backupOpts.measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&backupOpts.propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
+	cmd.Flags().StringVar(&backupOpts.traceRoot, "trace-root-path", "/tmp", "Root directory for trace catalog")
 	cmd.Flags().StringVar(&backupOpts.dest, "dest", "", "Destination URL (e.g., file:///backups)")
 	cmd.Flags().StringVar(&backupOpts.timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
 	cmd.Flags().StringVar(
@@ -164,7 +166,7 @@ func backupAction(options backupOptions) error {
 
 	for _, snp := range snapshots {
 		var snapshotDir string
-		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot)
+		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot, options.traceRoot)
 		if err != nil {
 			logger.Warningf("Failed to get snapshot directory for %s: %v", snp.Name, err)
 			continue

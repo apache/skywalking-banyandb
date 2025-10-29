@@ -11,7 +11,7 @@ This document explains how to use the backup and restore command line tools for 
   Reads the *timedir* files from local catalog directories and uses the timestamp within to determine which remote backup snapshot should be applied. Once restoration is successful, it removes all *timedir* files to avoid repeated restore operations, especially during unexpected scenarios.
 
 - **Timedir Utility:**  
-  Provides commands to create, list, read, and delete *time-dir* marker files for each catalog (e.g., _stream_, _measure_, and _property_).
+  Provides commands to create, list, read, and delete *time-dir* marker files for each catalog (e.g., _stream_, _measure_, _property_, and _trace_).
 
 ## Restore Workflow
 
@@ -29,6 +29,7 @@ backup run \
   --stream-root-path /data \
   --measure-root-path /data \
   --property-root-path /data \
+  --trace-root-path /data \
   --dest file:///backups \
   --time-style daily
 ```
@@ -36,7 +37,7 @@ backup run \
 **Notes:**
 
 - `--grpc-addr`: gRPC address for the data node.
-- `--stream-root-path`, `--measure-root-path`, `--property-root-path`: Local directories for the respective catalogs.
+- `--stream-root-path`, `--measure-root-path`, `--property-root-path`, `--trace-root-path`: Local directories for the respective catalogs.
 - `--dest`: Remote destination URL where backups will be stored (e.g., local filesystem path with the `file://` scheme).
 - `--time-style`: Defines the time directory style, such as `daily` or `hourly`.
 
@@ -72,10 +73,11 @@ Before undertaking a pod or service restart, an administrator may create timedir
 restore timedir create 2025-02-12 \
   --stream-root /data \
   --measure-root /data \
-  --property-root /data
+  --property-root /data \
+  --trace-root /data
 ```
 
-This command writes the specified timestamp (e.g., 2025-02-12) into files named `/data/stream/time-dir`, `/data/measure/time-dir`, and `/data/property/time-dir` in the designated root directories.
+This command writes the specified timestamp (e.g., 2025-02-12) into files named `/data/stream/time-dir`, `/data/measure/time-dir`, `/data/property/time-dir`, and `/data/trace/time-dir` in the designated root directories.
 
 #### Verifying Timedir Files
 
@@ -85,7 +87,8 @@ Ensure that the timedir files have been created with the correct content by read
 restore timedir read \
   --stream-root /data \
   --measure-root /data \
-  --property-root /data
+  --property-root /data \
+  --trace-root /data
 ```
 
 The output should display the timedir content for each catalog.
@@ -103,7 +106,8 @@ restore run \
   --source file:///backups \
   --stream-root-path /data \
   --measure-root-path /data \
-  --property-root-path /data
+  --property-root-path /data \
+  --trace-root-path /data
 ```
 
 **Key Points:**
@@ -124,7 +128,8 @@ restore run \
   --s3-profile "my-profile" \
   --stream-root-path /data \
   --measure-root-path /data \
-  --property-root-path /data
+  --property-root-path /data \
+  --trace-root-path /data
 
 # Google Cloud Storage
 restore run \
@@ -132,7 +137,8 @@ restore run \
   --gcp-service-account-file "/path/to/service-account.json" \
   --stream-root-path /data \
   --measure-root-path /data \
-  --property-root-path /data
+  --property-root-path /data \
+  --trace-root-path /data
 
 # Azure Blob Storage (using SAS token)
 restore run \
@@ -141,7 +147,8 @@ restore run \
   --azure-sas-token "mysastoken" \
   --stream-root-path /data \
   --measure-root-path /data \
-  --property-root-path /data
+  --property-root-path /data \
+  --trace-root-path /data
 ```
 
 ## Kubernetes Deployment

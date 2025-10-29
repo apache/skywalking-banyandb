@@ -67,6 +67,7 @@ func newRunCommand() *cobra.Command {
 		streamRoot   string
 		measureRoot  string
 		propertyRoot string
+		traceRoot    string
 		fsConfig     remoteconfig.FsConfig
 	)
 	// Initialize nested structs to avoid nil pointer during flag binding
@@ -78,8 +79,8 @@ func newRunCommand() *cobra.Command {
 		Use:   "run",
 		Short: "Restore BanyanDB data from remote storage",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if streamRoot == "" && measureRoot == "" && propertyRoot == "" {
-				return errors.New("at least one of stream-root-path, measure-root-path, or property-root-path is required")
+			if streamRoot == "" && measureRoot == "" && propertyRoot == "" && traceRoot == "" {
+				return errors.New("at least one of stream-root-path, measure-root-path, property-root-path or trace-root-path is required")
 			}
 			if source == "" {
 				return errors.New("source is required")
@@ -131,6 +132,19 @@ func newRunCommand() *cobra.Command {
 					return err
 				}
 			}
+			if traceRoot != "" {
+				timeDirPath := filepath.Join(traceRoot, "trace", "time-dir")
+				if data, err := os.ReadFile(timeDirPath); err == nil {
+					timeDir := strings.TrimSpace(string(data))
+					if err = restoreCatalog(fs, timeDir, traceRoot, commonv1.Catalog_CATALOG_TRACE); err != nil {
+						errs = multierr.Append(errs, fmt.Errorf("trace restore failed: %w", err))
+					} else {
+						_ = os.Remove(timeDirPath)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
 
 			return errs
 		},
@@ -139,6 +153,7 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
+	cmd.Flags().StringVar(&traceRoot, "trace-root-path", "/tmp", "Root directory for trace catalog")
 	cmd.Flags().StringVar(&fsConfig.S3.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
 	cmd.Flags().StringVar(&fsConfig.S3.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
 	cmd.Flags().StringVar(&fsConfig.S3.S3ProfileName, "s3-profile", "", "S3 profile name")

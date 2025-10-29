@@ -64,7 +64,7 @@ func Get(gRPCAddr string, enableTLS, insecure bool, cert string, groups ...*data
 }
 
 // Dir returns the directory path of the snapshot.
-func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot string) (string, error) {
+func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, traceRoot string) (string, error) {
 	var baseDir string
 	switch snapshot.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
@@ -73,6 +73,8 @@ func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot st
 		baseDir = LocalDir(measureRoot, snapshot.Catalog)
 	case commonv1.Catalog_CATALOG_PROPERTY:
 		baseDir = LocalDir(propertyRoot, snapshot.Catalog)
+	case commonv1.Catalog_CATALOG_TRACE:
+		baseDir = LocalDir(traceRoot, snapshot.Catalog)
 	default:
 		return "", errors.New("unknown catalog type")
 	}
@@ -93,6 +95,8 @@ func CatalogName(catalog commonv1.Catalog) string {
 		return "measure"
 	case commonv1.Catalog_CATALOG_PROPERTY:
 		return "property"
+	case commonv1.Catalog_CATALOG_TRACE:
+		return "trace"
 	default:
 		logger.Panicf("unknown catalog type: %v", catalog)
 		return ""
