@@ -19,7 +19,7 @@ name: Slow Test
 on:
   pull_request:
   schedule:
-    - cron: '0 20 * * *'
+    - cron: '*/1 * * * *'
 
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
