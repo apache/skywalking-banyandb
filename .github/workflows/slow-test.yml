@@ -17,7 +17,6 @@
 name: Slow Test
 
 on:
-  pull_request:
   schedule:
     - cron: '*/1 * * * *'
 
