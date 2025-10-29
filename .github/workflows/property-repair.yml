@@ -22,9 +22,14 @@ on:
     - cron: '0 * * * *'
 
 jobs:
+  prepare:
+    name: Prepare (Generate)
+    uses: ./.github/workflows/prepare.yml
+
   property-repair:
     name: Property Repair Tests
     runs-on: ubuntu-latest
+    needs: [prepare]
     timeout-minutes: 480
     steps:
       - name: Checkout code
