@@ -764,11 +764,12 @@ func (t *trace) startBlockScanStage(
 				}
 			}
 
-			// Finish part selection span with metrics
-			finishPartSelection(&partSelectionMetrics{
-				bloomFilteredPartIDs: bloomFilteredPartIDs,
-				totalGroupedIDs:      totalGroupedIDs,
-			}, len(parts))
+			if finishPartSelection != nil {
+				finishPartSelection(&partSelectionMetrics{
+					bloomFilteredPartIDs: bloomFilteredPartIDs,
+					totalGroupedIDs:      totalGroupedIDs,
+				}, len(parts))
+			}
 
 			// Create the cursor channel and scanBatch
 			cursorCh := make(chan scanCursorResult)
@@ -823,20 +824,11 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 	tstIter := generateTstIter()
 	defer releaseTstIter(tstIter)
 
-	defer func() {
-		// Collect min/max TID from each partIter instance
-		partScans := make([]partScanInfo, 0, len(tstIter.piPool))
-		for i, pi := range tstIter.piPool {
-			if pi.minTID != "" || pi.maxTID != "" {
-				partScans = append(partScans, partScanInfo{
-					partID: parts[i].partMetadata.ID,
-					minTID: pi.minTID,
-					maxTID: pi.maxTID,
-				})
-			}
-		}
-		finishSpan(cursorCount, spanBlockBytes, spanErr, partScans)
-	}()
+	if finishSpan != nil {
+		defer func() {
+			finishSpan(cursorCount, spanBlockBytes, spanErr)
+		}()
+	}
 
 	tstIter.init(bma, parts, groupedIDs)
 	if initErr := tstIter.Error(); initErr != nil {
