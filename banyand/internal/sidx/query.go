@@ -54,37 +54,34 @@ func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *Qu
 	return resultsCh, errCh
 }
 
-type streamingStats struct {
-	batches  int
-	elements int
+type batchMetrics struct {
+	totalBlocksScanned    int
+	totalCursorsCreated   int
+	cumulativeHeapSize    int
+	inputBatchesProcessed int
+	blockElementsLoaded   atomic.Int64
+	outputElementsEmitted atomic.Int64
+	elementsDeduplicated  atomic.Int64
+	blocksSkipped         atomic.Int64
+	outputBatchCount      int
+	outputElementCount    int
 }
 
-func (s *streamingStats) record(chunk *QueryResponse) {
+func (s *batchMetrics) record(chunk *QueryResponse) {
 	if s == nil || chunk == nil {
 		return
 	}
-	s.batches++
-	s.elements += chunk.Len()
-}
-
-type batchMetrics struct {
-	totalBatchBlockCount   int
-	totalCursorsBuilt      int
-	totalHeapSizeAfterPush int
-	batchesProcessed       int
-	totalLoadedElements    atomic.Int64
-	totalEmittedElements   atomic.Int64
+	s.outputBatchCount++
+	s.outputElementCount += chunk.Len()
 }
 
 // runStreamingQuery executes the streaming query workflow and pushes batches to resultsCh.
 func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsCh chan<- *QueryResponse) (err error) {
 	s.totalQueries.Add(1)
 
-	var stats streamingStats
-
 	ctx, span := startStreamingSpan(ctx, req)
 	defer func() {
-		finalizeStreamingSpan(span, stats, &err)
+		finalizeStreamingSpan(span, &err)
 	}()
 
 	snap := s.currentSnapshot()
@@ -102,7 +99,7 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 	}
 	defer resources.cleanup()
 
-	return s.processStreamingLoop(ctx, req, resources, resultsCh, &stats)
+	return s.processStreamingLoop(ctx, req, resources, resultsCh)
 }
 
 type streamingQueryResources struct {
@@ -139,12 +136,10 @@ func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context,
 	return spanCtx, span
 }
 
-func finalizeStreamingSpan(span *query.Span, stats streamingStats, errPtr *error) {
+func finalizeStreamingSpan(span *query.Span, errPtr *error) {
 	if span == nil {
 		return
 	}
-	span.Tagf("responses_emitted", "%d", stats.batches)
-	span.Tagf("elements_emitted", "%d", stats.elements)
 	if errPtr != nil && *errPtr != nil {
 		span.Error(*errPtr)
 	}
@@ -249,7 +244,6 @@ func (s *sidx) processStreamingLoop(
 	req QueryRequest,
 	resources *streamingQueryResources,
 	resultsCh chan<- *QueryResponse,
-	stats *streamingStats,
 ) error {
 	var loopSpan *query.Span
 	var metrics *batchMetrics
@@ -258,7 +252,6 @@ func (s *sidx) processStreamingLoop(
 		loopSpan, ctx = tracer.StartSpan(ctx, "sidx.process-streaming-loop")
 		defer func() {
 			if loopSpan != nil {
-				loopSpan.Tagf("total_responses_emitted", "%d", stats.batches)
 				s.addBatchMetricsToSpan(loopSpan, metrics)
 				loopSpan.Stop()
 			}
@@ -280,10 +273,10 @@ func (s *sidx) processStreamingLoop(
 					loopSpan.Tag("termination_reason", "channel_closed")
 					loopSpan.Tagf("total_scanner_batches", "%d", scannerBatchCount)
 				}
-				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
+				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 			}
 			scannerBatchCount++
-			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats, metrics); err != nil {
+			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, metrics); err != nil {
 				if loopSpan != nil {
 					if errors.Is(err, context.Canceled) {
 						loopSpan.Tag("termination_reason", "context_canceled")
@@ -306,7 +299,6 @@ func (s *sidx) handleStreamingBatch(
 	resources *streamingQueryResources,
 	req QueryRequest,
 	resultsCh chan<- *QueryResponse,
-	stats *streamingStats,
 	metrics *batchMetrics,
 ) error {
 	if batch.err != nil {
@@ -318,7 +310,7 @@ func (s *sidx) handleStreamingBatch(
 	// Collect batch block count metric
 	if metrics != nil {
 		batchBlockCount := len(batch.bss)
-		metrics.totalBatchBlockCount += batchBlockCount
+		metrics.totalBlocksScanned += batchBlockCount
 	}
 
 	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc, metrics)
@@ -330,7 +322,7 @@ func (s *sidx) handleStreamingBatch(
 	// Collect cursors built metric
 	if metrics != nil {
 		cursorsBuilt := len(cursors)
-		metrics.totalCursorsBuilt += cursorsBuilt
+		metrics.totalCursorsCreated += cursorsBuilt
 	}
 
 	resources.heap.pushCursors(cursors)
@@ -338,28 +330,32 @@ func (s *sidx) handleStreamingBatch(
 	// Collect heap size metric
 	if metrics != nil {
 		heapSize := resources.heap.Len()
-		metrics.totalHeapSizeAfterPush += heapSize
-		metrics.batchesProcessed++
+		metrics.cumulativeHeapSize += heapSize
+		metrics.inputBatchesProcessed++
 	}
 
-	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
+	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 }
 
 func (s *sidx) addBatchMetricsToSpan(span *query.Span, metrics *batchMetrics) {
 	if span == nil || metrics == nil {
 		return
 	}
-	span.Tagf("batches_processed", "%d", metrics.batchesProcessed)
-	span.Tagf("total_batch_block_count", "%d", metrics.totalBatchBlockCount)
-	span.Tagf("total_cursors_built", "%d", metrics.totalCursorsBuilt)
-	span.Tagf("total_heap_size_after_push", "%d", metrics.totalHeapSizeAfterPush)
-	if metrics.batchesProcessed > 0 {
-		span.Tagf("avg_batch_block_count", "%.2f", float64(metrics.totalBatchBlockCount)/float64(metrics.batchesProcessed))
-		span.Tagf("avg_cursors_built", "%.2f", float64(metrics.totalCursorsBuilt)/float64(metrics.batchesProcessed))
-		span.Tagf("avg_heap_size_after_push", "%.2f", float64(metrics.totalHeapSizeAfterPush)/float64(metrics.batchesProcessed))
+	span.Tagf("input_batches_processed", "%d", metrics.inputBatchesProcessed)
+	span.Tagf("total_blocks_scanned", "%d", metrics.totalBlocksScanned)
+	span.Tagf("total_cursors_created", "%d", metrics.totalCursorsCreated)
+	span.Tagf("cumulative_heap_size", "%d", metrics.cumulativeHeapSize)
+	if metrics.inputBatchesProcessed > 0 {
+		span.Tagf("avg_blocks_scanned_per_batch", "%.2f", float64(metrics.totalBlocksScanned)/float64(metrics.inputBatchesProcessed))
+		span.Tagf("avg_cursors_created_per_batch", "%.2f", float64(metrics.totalCursorsCreated)/float64(metrics.inputBatchesProcessed))
+		span.Tagf("avg_heap_size", "%.2f", float64(metrics.cumulativeHeapSize)/float64(metrics.inputBatchesProcessed))
 	}
-	span.Tagf("total_block_loaded_elements", "%d", metrics.totalLoadedElements.Load())
-	span.Tagf("total_emitted_elements", "%d", metrics.totalEmittedElements.Load())
+	span.Tagf("block_elements_loaded", "%d", metrics.blockElementsLoaded.Load())
+	span.Tagf("output_elements_emitted", "%d", metrics.outputElementsEmitted.Load())
+	span.Tagf("elements_deduplicated", "%d", metrics.elementsDeduplicated.Load())
+	span.Tagf("blocks_skipped", "%d", metrics.blocksSkipped.Load())
+	span.Tagf("output_element_count", "%d", metrics.outputElementCount)
+	span.Tagf("output_batch_count", "%d", metrics.outputBatchCount)
 }
 
 func determineTagsToLoad(req QueryRequest) map[string]struct{} {

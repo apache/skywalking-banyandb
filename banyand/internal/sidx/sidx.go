@@ -227,7 +227,7 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 	}
 
 	if metrics != nil {
-		metrics.totalLoadedElements.Add(int64(len(tmpBlock.userKeys)))
+		metrics.blockElementsLoaded.Add(int64(len(tmpBlock.userKeys)))
 	}
 
 	totalElements := len(tmpBlock.userKeys)
@@ -258,6 +258,9 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			dataKey := string(tmpBlock.data[i])
 			if _, exists := seenData[dataKey]; exists {
 				// Skip duplicate data
+				if metrics != nil {
+					metrics.elementsDeduplicated.Add(1)
+				}
 				continue
 			}
 
@@ -342,7 +345,10 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 	}
 
 	if metrics != nil {
-		metrics.totalEmittedElements.Add(int64(len(bc.userKeys)))
+		metrics.outputElementsEmitted.Add(int64(len(bc.userKeys)))
+		if len(bc.userKeys) == 0 {
+			metrics.blocksSkipped.Add(1)
+		}
 	}
 
 	return len(bc.userKeys) > 0
@@ -451,7 +457,7 @@ func (bch *blockCursorHeap) pushCursors(cursors []*blockCursor) {
 // merge performs heap-based merge similar to query_by_ts.go.
 // It returns a QueryResponse along with a flag indicating whether the merge
 // stopped because the MaxBatchSize limit has been reached.
-func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
+func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, metrics *batchMetrics) error {
 	if !bch.initialized || bch.Len() == 0 {
 		return nil
 	}
@@ -511,8 +517,8 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 		// Send the batch when it reaches batchSize
 		if batchSize > 0 && batch.Len() >= batchSize {
-			if stats != nil {
-				stats.record(batch)
+			if metrics != nil {
+				metrics.record(batch)
 			}
 
 			select {
@@ -535,8 +541,8 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 	// Send remaining elements in the last batch
 	if batch.Len() > 0 {
-		if stats != nil {
-			stats.record(batch)
+		if metrics != nil {
+			metrics.record(batch)
 		}
 
 		select {
