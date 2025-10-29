@@ -86,12 +86,6 @@ app.config.globalProperties.$message.errorNet = () => {
     type: 'error',
   });
 };
-app.config.globalProperties.$message.success = () => {
-  ElMessage({
-    message: 'Successed',
-    type: 'success',
-  });
-};
 app.config.globalProperties.mittBus = new mitt();
 app.use(createPinia());
 app.use(router);

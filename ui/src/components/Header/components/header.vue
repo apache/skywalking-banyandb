@@ -25,15 +25,12 @@
   import { MENU_ACTIVE_COLOR, MENU_DEFAULT_PATH, MenuConfig } from './constants';
 
   const route = useRoute();
-  // Compute active menu from route
   const getActiveMenu = (path) => {
     const parts = path.split('/').filter(Boolean);
     return parts.length >= 2 ? `/${parts[0]}/${parts[1]}` : MENU_DEFAULT_PATH;
   };
-
   const activeMenu = ref(getActiveMenu(route.path));
 
-  // Watch route path changes
   watch(
     () => route.path,
     (newPath) => {

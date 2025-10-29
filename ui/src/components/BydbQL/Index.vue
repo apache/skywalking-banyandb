@@ -27,17 +27,18 @@
   import TraceTable from '@/components/common/TraceTable.vue';
   import { CatalogToGroupType } from '@/components/common/data';
 
-  const queryText = ref('');
+  // Default query text with example queries as comments
+  const queryText = ref(`-- Example queries:
+-- Query stream logs from the last 30 minutes
+-- SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'
+-- Query measure metrics for service calls per minute
+-- SELECT * FROM MEASURE service_cpm_minute in sw_metricsMinute TIME > '30m'
+
+SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const queryResult = ref(null);
   const loading = ref(false);
   const error = ref(null);
   const executionTime = ref(0);
-
-  // Example queries for users
-  const exampleQueries = [
-    `SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`,
-    `SELECT * FROM MEASURE service_cpm_minute in sw_metricsMinute TIME > '30m'`,
-  ];
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -234,10 +235,6 @@
     return Array.from(tags);
   });
 
-  function setExampleQuery(query) {
-    queryText.value = query;
-  }
-
   async function executeQuery() {
     if (!queryText.value.trim()) {
       ElMessage.warning('Please enter a query');
@@ -248,7 +245,15 @@
     error.value = null;
     queryResult.value = null;
     const startTime = performance.now();
-    const response = await executeBydbQLQuery({ query: queryText.value });
+
+    // Remove comment lines (lines starting with --) before executing
+    const cleanQuery = queryText.value
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .trim();
+
+    const response = await executeBydbQLQuery({ query: cleanQuery });
     const endTime = performance.now();
     loading.value = false;
     executionTime.value = Math.round(endTime - startTime);
