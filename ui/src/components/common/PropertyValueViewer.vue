@@ -20,46 +20,65 @@
 <script setup>
   import { reactive, ref } from 'vue';
 
+  const emit = defineEmits(['close']);
+
+  // Viewer state
   const showDialog = ref(false);
-  const title = ref('');
+  const dialogTitle = ref('');
   const valueData = reactive({
     data: '',
     formattedData: '',
   });
-
   const numSpaces = 2;
-  const closeDialog = () => {
-    showDialog.value = false;
+
+  // Open viewer with tag data
+  const openViewer = (tagData) => {
+    dialogTitle.value = 'Value of key ' + tagData.key;
+    showDialog.value = true;
+    valueData.data = tagData.value;
+    try {
+      valueData.formattedData = JSON.stringify(JSON.parse(valueData.data), null, numSpaces);
+    } catch (error) {
+      // If value is not valid JSON, display as-is
+      valueData.formattedData = valueData.data;
+    }
   };
 
+  // Close viewer dialog
+  const closeViewer = () => {
+    showDialog.value = false;
+    valueData.data = '';
+    valueData.formattedData = '';
+    emit('close');
+  };
+
+  // Download value as text file
   const downloadValue = () => {
-    const dataBlob = new Blob([valueData.formattedData], { type: 'text/JSON' });
-    var a = document.createElement('a');
-    a.download = 'value.txt';
+    const dataBlob = new Blob([valueData.formattedData], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.download = 'property-value.txt';
     a.href = URL.createObjectURL(dataBlob);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   };
 
-  const openDialog = (data) => {
-    title.value = 'Value of key ' + data.key;
-    showDialog.value = true;
-    valueData.data = data.value;
-    valueData.formattedData = JSON.stringify(JSON.parse(valueData.data), null, numSpaces);
-  };
+  // Expose methods to parent component
   defineExpose({
-    openDialog,
+    openViewer,
+    closeViewer,
   });
 </script>
 
 <template>
-  <el-dialog v-model="showDialog" :title="title">
-    <div class="configuration">{{ valueData.formattedData }}</div>
+  <!-- Property Value Viewer Dialog -->
+  <el-dialog v-model="showDialog" :title="dialogTitle" width="50%">
+    <div class="value-content">{{ valueData.formattedData }}</div>
     <template #footer>
       <span class="dialog-footer footer">
-        <el-button @click="closeDialog">Cancel</el-button>
-        <el-button type="primary" @click.prevent="downloadValue()"> Download </el-button>
+        <el-button @click="closeViewer">Cancel</el-button>
+        <el-button type="primary" @click.prevent="downloadValue"> Download </el-button>
       </span>
     </template>
   </el-dialog>
@@ -71,10 +90,14 @@
     display: flex;
     justify-content: center;
   }
-  .configuration {
+  .value-content {
     width: 100%;
     overflow: auto;
     max-height: 700px;
     white-space: pre;
+    font-family: monospace;
+    background-color: #f5f5f5;
+    padding: 15px;
+    border-radius: 4px;
   }
 </style>

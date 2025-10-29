@@ -26,10 +26,10 @@
   import { getTopNAggregationData } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import FormHeader from '../common/FormHeader.vue';
+  import TopNTable from '../common/TopNTable.vue';
   import { Shortcuts, Last15Minutes } from '../common/data';
   import TraceTree from '../TraceTree/TraceContent.vue';
 
-  const pageSize = 10;
   const route = useRoute();
   const data = reactive({
     group: '',
@@ -42,9 +42,14 @@
   const timeRange = ref([]);
   const yamlCode = ref('');
   const loading = ref(false);
-  const currentList = ref([]);
   const showTracesDialog = ref(false);
   const traceData = ref(null);
+
+  // Table columns configuration
+  const columns = [
+    { label: 'Label', prop: 'label' },
+    { label: 'Value', prop: 'value', width: '220' },
+  ];
 
   function initTopNAggregationData() {
     if (!(data.type && data.group && data.name)) {
@@ -86,7 +91,6 @@ fieldValueSort: 1`;
     data.lists = (result.lists || [])
       .map((d) => d.items.map((item) => ({ label: item.entity[0].value.str.value, value: item.value.int.value })))
       .flat();
-    changePage(0);
   }
 
   function searchTopNAggregation() {
@@ -118,12 +122,6 @@ fieldValueSort: 1`;
     json.data.timeRange.begin = timeRange.value[0] ?? null;
     json.data.timeRange.end = timeRange.value[1] ?? null;
     yamlCode.value = jsonToYaml(json.data).data;
-  }
-
-  function changePage(pageIndex) {
-    currentList.value = data.lists.filter(
-      (d, index) => (pageIndex - 1 || 0) * pageSize <= index && pageSize * (pageIndex || 1) > index,
-    );
   }
 
   watch(
@@ -177,25 +175,15 @@ fieldValueSort: 1`;
           <span>Debug Trace</span>
         </el-button>
       </div>
-      <el-table
-        :data="currentList"
-        style="width: 100%; margin: 10px 0; min-height: 440px"
-        stripe
+      <TopNTable
+        :data="data.lists"
+        :columns="columns"
+        :loading="loading"
+        :page-size="10"
+        :stripe="true"
         :border="true"
-        highlight-current-row
-        tooltip-effect="dark"
-      >
-        <el-table-column prop="label" label="Label" />
-        <el-table-column prop="value" label="Value" width="220" />
-      </el-table>
-      <el-pagination
-        background
-        layout="prev, pager, next"
-        :page-size="pageSize"
-        :total="data.lists.length"
-        @current-change="changePage"
-        @prev-click="changePage"
-        @next-click="changePage"
+        :show-pagination="true"
+        empty-text="No data yet"
       />
     </el-card>
   </div>

@@ -17,21 +17,35 @@
   ~ under the License.
 -->
 <script setup>
-  import { reactive, ref, onMounted, getCurrentInstance } from 'vue';
+  import { reactive, ref, onMounted, computed, getCurrentInstance } from 'vue';
   import { ElMessage } from 'element-plus';
   import { useRoute, useRouter } from 'vue-router';
   import { updateProperty, createProperty, getResourceOfAllType } from '@/api/index';
-  import TagEditor from './TagEditor.vue';
+  import TagEditor from '@/components/common/TagEditor.vue';
   import { rules, strategyGroup, formConfig } from './data';
 
-  const $loadingCreate = getCurrentInstance().appContext.config.globalProperties.$loadingCreate;
-  const $loadingClose = getCurrentInstance().appContext.config.globalProperties.$loadingClose;
-  const $bus = getCurrentInstance().appContext.config.globalProperties.mittBus;
+  // Constants
+  const OPERATOR_MODE = {
+    CREATE: 'create',
+    EDIT: 'edit',
+  };
+
+  // Composables
+  const { appContext } = getCurrentInstance();
+  const $loadingCreate = appContext.config.globalProperties.$loadingCreate;
+  const $loadingClose = appContext.config.globalProperties.$loadingClose;
+  const $bus = appContext.config.globalProperties.mittBus;
   const route = useRoute();
   const router = useRouter();
+
+  // Refs
   const tagEditorRef = ref();
   const ruleForm = ref();
+
+  // Extract route params
   const { operator, name, group, type } = route.params;
+
+  // Reactive form data
   const formData = reactive({
     strategy: strategyGroup[0].value,
     group: group || '',
@@ -41,111 +55,149 @@
     tags: [],
   });
 
-  function initProperty() {
-    if (operator === 'edit') {
-      $loadingCreate();
-      getResourceOfAllType(type, group, name)
-        .then((res) => {
-          if (res.status === 200) {
-            const { property } = res.data;
+  // Computed properties
+  const isCreateMode = computed(() => operator === OPERATOR_MODE.CREATE);
+  const isEditMode = computed(() => operator === OPERATOR_MODE.EDIT);
 
-            formData.tags = property.tags.map((d) => ({
-              ...d,
-              key: d.name,
-              value: d.type,
-            }));
-          }
-        })
-        .finally(() => {
-          $loadingClose();
-        });
+  // Initialize property data for edit mode
+  async function initProperty() {
+    if (!isEditMode.value) return;
+
+    try {
+      $loadingCreate();
+      const res = await getResourceOfAllType(type, group, name);
+
+      if (res.status === 200 && res.data?.property) {
+        const { property } = res.data;
+        formData.tags = property.tags.map((tag) => ({
+          ...tag,
+          key: tag.name,
+          value: tag.type,
+        }));
+      }
+    } catch (error) {
+      ElMessage.error({
+        message: `Failed to load property: ${error.message || 'Unknown error'}`,
+        type: 'error',
+      });
+    } finally {
+      $loadingClose();
     }
   }
-  const openEditTag = (index) => {
-    tagEditorRef.value.openDialog(formData.tags[index]).then((res) => {
-      formData.tags[index] = res;
-    });
+
+  // Tag management functions with error handling
+  const openEditTag = async (index) => {
+    try {
+      const result = await tagEditorRef.value.openDialog(formData.tags[index]);
+      formData.tags[index] = result;
+    } catch (error) {
+      // User cancelled, do nothing
+    }
   };
+
   const deleteTag = (index) => {
     formData.tags.splice(index, 1);
   };
-  const openAddTag = () => {
-    tagEditorRef.value.openDialog().then((res) => {
-      formData.tags.push(res);
-    });
+
+  const openAddTag = async () => {
+    try {
+      const result = await tagEditorRef.value.openDialog();
+      formData.tags.push(result);
+    } catch (error) {
+      // User cancelled, do nothing
+    }
   };
-  const submit = async () => {
-    if (!ruleForm.value) return;
-    await ruleForm.value.validate(async (valid) => {
-      if (valid) {
-        $loadingCreate();
-        const param = {
-          strategy: formData.strategy,
-          property: {
-            id: formData.id,
-            metadata: {
-              group: formData.group,
-              name: formData.name,
-            },
-            tags: formData.tags.map((d) => ({ name: d.key, type: d.value })),
-          },
-        };
-        if (operator === 'create') {
-          const response = await createProperty(param);
-          $loadingClose();
-          if (response.error) {
-            ElMessage.error({
-              message: `Failed to create property: ${response.error.message}`,
-              type: 'error',
-            });
-            return;
-          }
-          ElMessage.success({
-            message: 'Create successed',
-            type: 'success',
-          });
-          $bus.emit('refreshAside');
-          $bus.emit('deleteResource', formData.name);
-          openResourses();
-          return;
-        }
-        const response = await updateProperty(formData.group, formData.name, param);
-        $loadingClose();
-        if (response.error) {
-          ElMessage.error({
-            message: `Failed to update property: ${response.error.message}`,
-            type: 'error',
-          });
-          return;
-        }
-        ElMessage.success({
-          message: 'Update successed',
-          type: 'success',
-        });
-        $bus.emit('refreshAside');
-        $bus.emit('deleteResource', formData.name);
-        openResourses();
-      }
-    });
-  };
-  function openResourses() {
-    const route = {
+
+  // Build property payload
+  const buildPropertyPayload = () => ({
+    strategy: formData.strategy,
+    property: {
+      id: formData.id,
+      metadata: {
+        group: formData.group,
+        name: formData.name,
+      },
+      tags: formData.tags.map(({ key, value }) => ({
+        name: key,
+        type: value,
+      })),
+    },
+  });
+
+  // Navigate to resource view
+  function openResources() {
+    const targetRoute = {
       name: formData.type,
       params: {
         group: formData.group,
         name: formData.name,
         operator: 'read',
-        type: formData.type + '',
+        type: String(formData.type),
       },
     };
-    router.push(route);
-    const add = {
+
+    router.push(targetRoute);
+
+    $bus.emit('AddTabs', {
       label: formData.name,
       type: 'Read',
-      route,
-    };
-    $bus.emit('AddTabs', add);
+      route: targetRoute,
+    });
   }
+
+  // Submit form with improved error handling
+  const submit = async () => {
+    if (!ruleForm.value) return;
+
+    try {
+      const isValid = await ruleForm.value.validate();
+      if (!isValid) return;
+
+      $loadingCreate();
+
+      const payload = buildPropertyPayload();
+      let response;
+
+      if (isCreateMode.value) {
+        response = await createProperty(payload);
+
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+
+        ElMessage.success({
+          message: 'Property created successfully',
+          type: 'success',
+        });
+      } else {
+        response = await updateProperty(formData.group, formData.name, payload);
+
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+
+        ElMessage.success({
+          message: 'Property updated successfully',
+          type: 'success',
+        });
+      }
+
+      // Emit events and navigate
+      $bus.emit('refreshAside');
+      $bus.emit('deleteResource', formData.name);
+      openResources();
+    } catch (error) {
+      const action = isCreateMode.value ? 'create' : 'update';
+      ElMessage.error({
+        message: `Failed to ${action} property: ${error.message || 'Unknown error'}`,
+        type: 'error',
+      });
+    } finally {
+      $loadingClose();
+    }
+  };
+
+  // Initialize on mount
   onMounted(() => {
     initProperty();
   });
