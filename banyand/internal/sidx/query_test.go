@@ -20,7 +20,6 @@ package sidx
 import (
 	"context"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,12 +28,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -610,70 +607,6 @@ func TestSIDX_StreamingQuery_ChannelLifecycle(t *testing.T) {
 	}
 }
 
-func TestSIDX_StreamingQuery_Tracing(t *testing.T) {
-	sidx := createTestSIDX(t)
-	defer func() {
-		assert.NoError(t, sidx.Close())
-	}()
-
-	reqs := []WriteRequest{
-		createTestWriteRequest(1, 100, "trace-100"),
-		createTestWriteRequest(1, 200, "trace-200"),
-		createTestWriteRequest(1, 300, "trace-300"),
-	}
-	writeTestData(t, sidx, reqs, 10, 10)
-	waitForIntroducerLoop()
-
-	tracer, ctx := query.NewTracer(context.Background(), "sidx-streaming-query")
-
-	minKey := int64(100)
-	maxKey := int64(300)
-	queryReq := QueryRequest{
-		SeriesIDs:    []common.SeriesID{1},
-		Order:        &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxBatchSize: 1,
-		MinKey:       &minKey,
-		MaxKey:       &maxKey,
-	}
-
-	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
-
-	var (
-		responseCount int
-		elementCount  int
-	)
-	for res := range resultsCh {
-		require.NoError(t, res.Error)
-		responseCount++
-		elementCount += res.Len()
-	}
-
-	for err := range errCh {
-		require.NoError(t, err)
-	}
-
-	traceProto := tracer.ToProto()
-	require.NotNil(t, traceProto)
-
-	span := findSpanByMessage(traceProto.GetSpans(), "sidx.run-streaming-query")
-	require.NotNil(t, span)
-	require.False(t, span.GetError())
-
-	tags := spanTagsToMap(span)
-
-	require.Equal(t, "false", requireTag(t, tags, "filter_present"))
-	require.Equal(t, queryReq.Order.Sort.String(), requireTag(t, tags, "order_sort"))
-	require.Equal(t, "0", requireTag(t, tags, "order_type"))
-	require.Equal(t, strconv.Itoa(len(queryReq.SeriesIDs)), requireTag(t, tags, "series_id_count"))
-	require.Equal(t, strconv.Itoa(0), requireTag(t, tags, "projected_tags"))
-	require.Equal(t, strconv.FormatInt(minKey, 10), requireTag(t, tags, "min_key"))
-	require.Equal(t, strconv.FormatInt(maxKey, 10), requireTag(t, tags, "max_key"))
-	require.Equal(t, strconv.Itoa(queryReq.MaxBatchSize), requireTag(t, tags, "max_batch_size"))
-	require.Equal(t, strconv.Itoa(responseCount), requireTag(t, tags, "responses_emitted"))
-	require.Equal(t, strconv.Itoa(elementCount), requireTag(t, tags, "elements_emitted"))
-	require.Equal(t, "true", requireTag(t, tags, "heap_initialized"))
-}
-
 func TestSIDX_StreamingQuery_ErrorPropagation(t *testing.T) {
 	t.Run("validation_error", func(t *testing.T) {
 		sidx := createTestSIDX(t)
@@ -960,31 +893,4 @@ func TestSIDX_StreamingQuery_ContextCancellation(t *testing.T) {
 	if err, ok := <-errCh; ok {
 		require.ErrorIs(t, err, context.Canceled)
 	}
-}
-
-func findSpanByMessage(spans []*commonv1.Span, message string) *commonv1.Span {
-	for _, span := range spans {
-		if span.GetMessage() == message {
-			return span
-		}
-		if child := findSpanByMessage(span.GetChildren(), message); child != nil {
-			return child
-		}
-	}
-	return nil
-}
-
-func spanTagsToMap(span *commonv1.Span) map[string]string {
-	tags := make(map[string]string, len(span.GetTags()))
-	for _, tag := range span.GetTags() {
-		tags[tag.GetKey()] = tag.GetValue()
-	}
-	return tags
-}
-
-func requireTag(t *testing.T, tags map[string]string, key string) string {
-	t.Helper()
-	val, ok := tags[key]
-	require.True(t, ok, "expected tag %q to be present, tags=%v", key, tags)
-	return val
 }

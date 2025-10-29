@@ -239,12 +239,22 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		bc.tags[tagName] = make([]Tag, 0, totalElements)
 	}
 
+	// Track seen data for deduplication
+	seenData := make(map[string]struct{})
+
 	// Single loop: filter and copy data in one pass
 	if req.TagFilter != nil {
 		tags := make([]*modelv1.Tag, 0, len(tmpBlock.tags))
 		decoder := req.TagFilter.GetDecoder()
 
 		for i := 0; i < totalElements; i++ {
+			// Check for duplicate data before processing
+			dataKey := string(tmpBlock.data[i])
+			if _, exists := seenData[dataKey]; exists {
+				// Skip duplicate data
+				continue
+			}
+
 			// Build tags slice for this element
 			tags = tags[:0]
 			for tagName, tagData := range tmpBlock.tags {
@@ -268,6 +278,9 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			}
 
 			if matched {
+				// Mark data as seen
+				seenData[dataKey] = struct{}{}
+
 				// Copy userKey
 				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
 
@@ -289,26 +302,36 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			}
 		}
 	} else {
-		// No filter - copy all elements
-		bc.userKeys = make([]int64, totalElements)
-		copy(bc.userKeys, tmpBlock.userKeys)
+		// No filter - copy all elements but skip duplicates
+		for i := 0; i < totalElements; i++ {
+			// Check for duplicate data
+			dataKey := string(tmpBlock.data[i])
+			if _, exists := seenData[dataKey]; exists {
+				// Skip duplicate data
+				continue
+			}
 
-		bc.data = make([][]byte, totalElements)
-		for i, data := range tmpBlock.data {
-			bc.data[i] = make([]byte, len(data))
-			copy(bc.data[i], data)
-		}
+			// Mark data as seen
+			seenData[dataKey] = struct{}{}
 
-		for tagName, tagData := range tmpBlock.tags {
-			tagSlice := make([]Tag, len(tagData.values))
-			for i, value := range tagData.values {
-				tagSlice[i] = Tag{
-					Name:      tagName,
-					Value:     value,
-					ValueType: tagData.valueType,
+			// Copy userKey
+			bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+
+			// Copy data
+			dataCopy := make([]byte, len(tmpBlock.data[i]))
+			copy(dataCopy, tmpBlock.data[i])
+			bc.data = append(bc.data, dataCopy)
+
+			// Copy tags
+			for tagName, tagData := range tmpBlock.tags {
+				if i < len(tagData.values) {
+					bc.tags[tagName] = append(bc.tags[tagName], Tag{
+						Name:      tagName,
+						Value:     tagData.values[i],
+						ValueType: tagData.valueType,
+					})
 				}
 			}
-			bc.tags[tagName] = tagSlice
 		}
 	}
 
@@ -437,6 +460,9 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 		PartIDs: make([]uint64, 0),
 	}
 
+	// Track seen data for deduplication across all batches
+	seenData := make(map[string]struct{})
+
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
 		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
@@ -444,8 +470,18 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			continue
 		}
 
-		// Copy the element (may be filtered out by key range)
-		topBC.copyTo(batch)
+		// Check for duplicate data before copying
+		currentData := topBC.data[topBC.idx]
+		dataKey := string(currentData)
+
+		// Only copy if this data hasn't been seen across all batches
+		if _, exists := seenData[dataKey]; !exists {
+			// Copy the element (may be filtered out by key range)
+			if topBC.copyTo(batch) {
+				// Mark this data as seen
+				seenData[dataKey] = struct{}{}
+			}
+		}
 
 		topBC.idx += step
 
@@ -475,7 +511,7 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			case resultsCh <- batch:
 			}
 
-			// Create a new batch and continue
+			// Create a new batch but keep the deduplication map for global deduplication
 			batch = &QueryResponse{
 				Keys:    make([]int64, 0),
 				Data:    make([][]byte, 0),
@@ -483,6 +519,7 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 				SIDs:    make([]common.SeriesID, 0),
 				PartIDs: make([]uint64, 0),
 			}
+			// Do NOT reset seenData here - maintain it across batches for global deduplication
 		}
 	}
 
