@@ -18,6 +18,9 @@
 package lifecycle
 
 import (
+	"errors"
+	"os"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -160,6 +163,12 @@ func migrateMeasureWithFileBasedAndProgress(
 func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, intervalRule storage.IntervalRule) (int, error) {
 	// Create a simple visitor to count parts
 	partCounter := &measurePartCountVisitor{}
+
+	// skip the counting if the tsdb root path does not exist
+	// may no data found in the snapshot
+	if _, err := os.Stat(tsdbRootPath); err != nil && errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
 
 	// Use the existing VisitMeasuresInTimeRange function to count parts
 	err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, intervalRule)
