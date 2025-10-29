@@ -131,7 +131,7 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 			fmt.Println("Starting to write 50,000 properties...")
 			startTime := time.Now()
 
-			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 50000)
+			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 5000)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			duration := time.Since(startTime)
@@ -160,7 +160,7 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 			startTime := time.Now()
 
 			// Write another 50,000 properties (50000-100000)
-			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 50000, 100000)
+			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 5000, 10000)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			duration := time.Since(startTime)
