@@ -48,7 +48,7 @@
           <i class="el-icon-picture-outline"></i>
         </div>
       </el-image>
-      <h1 class="title text-main-color text-title text-family text-weight-lt">BanyanDB Manager</h1>
+      <span class="title text-main-color text-title text-family text-weight-lt" role="img" aria-label="BanyanDB Manager">BanyanDB Manager</span>
     </div>
     <nav class="navigation">
       <el-menu
