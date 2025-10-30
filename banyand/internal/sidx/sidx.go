@@ -18,6 +18,7 @@
 package sidx
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -245,8 +247,8 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		bc.tags[tagName] = make([]Tag, 0, totalElements)
 	}
 
-	// Track seen data for deduplication
-	seenData := make(map[string]struct{})
+	// Track seen data for deduplication using hash buckets with collision checks
+	seenData := make(map[uint64][][]byte)
 
 	// Single loop: filter and copy data in one pass
 	if req.TagFilter != nil {
@@ -254,10 +256,18 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		decoder := req.TagFilter.GetDecoder()
 
 		for i := 0; i < totalElements; i++ {
-			// Check for duplicate data before processing
-			dataKey := string(tmpBlock.data[i])
-			if _, exists := seenData[dataKey]; exists {
-				// Skip duplicate data
+			// Check for duplicate data before processing via hash + bytes.Equal on collisions
+			dataBytes := tmpBlock.data[i]
+			h := convert.Hash(dataBytes)
+			bucket := seenData[h]
+			duplicate := false
+			for _, b := range bucket {
+				if bytes.Equal(b, dataBytes) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
 				if metrics != nil {
 					metrics.elementsDeduplicated.Add(1)
 				}
@@ -288,7 +298,7 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 
 			if matched {
 				// Mark data as seen
-				seenData[dataKey] = struct{}{}
+				seenData[h] = append(bucket, dataBytes)
 
 				// Copy userKey
 				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
@@ -313,15 +323,23 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 	} else {
 		// No filter - copy all elements but skip duplicates
 		for i := 0; i < totalElements; i++ {
-			// Check for duplicate data
-			dataKey := string(tmpBlock.data[i])
-			if _, exists := seenData[dataKey]; exists {
-				// Skip duplicate data
+			// Check for duplicate data via hash + bytes.Equal on collisions
+			dataBytes := tmpBlock.data[i]
+			h := convert.Hash(dataBytes)
+			bucket := seenData[h]
+			duplicate := false
+			for _, b := range bucket {
+				if bytes.Equal(b, dataBytes) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
 				continue
 			}
 
 			// Mark data as seen
-			seenData[dataKey] = struct{}{}
+			seenData[h] = append(bucket, dataBytes)
 
 			// Copy userKey
 			bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
@@ -476,8 +494,8 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 		PartIDs: make([]uint64, 0),
 	}
 
-	// Track seen data for deduplication across all batches
-	seenData := make(map[string]struct{})
+	// Track seen data for deduplication across all batches using hash buckets with collision checks
+	seenData := make(map[uint64][][]byte)
 
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
@@ -486,16 +504,24 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			continue
 		}
 
-		// Check for duplicate data before copying
+		// Check for duplicate data before copying via hash + bytes.Equal on collisions
 		currentData := topBC.data[topBC.idx]
-		dataKey := string(currentData)
+		h := convert.Hash(currentData)
+		bucket := seenData[h]
+		duplicate := false
+		for _, b := range bucket {
+			if bytes.Equal(b, currentData) {
+				duplicate = true
+				break
+			}
+		}
 
 		// Only copy if this data hasn't been seen across all batches
-		if _, exists := seenData[dataKey]; !exists {
+		if !duplicate {
 			// Copy the element (may be filtered out by key range)
 			if topBC.copyTo(batch) {
 				// Mark this data as seen
-				seenData[dataKey] = struct{}{}
+				seenData[h] = append(bucket, currentData)
 			}
 		}
 

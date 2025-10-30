@@ -349,8 +349,9 @@ func TestSIDX_Query_Validation(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			resultsCh, errCh := sidx.StreamingQuery(ctx, tt.req)
-			// revive:disable-next-line:empty-block
+			// Drain resultsCh to wait for query to close
 			for range resultsCh {
+				_ = 0
 			}
 			err, ok := <-errCh
 			if tt.expectErr {
@@ -625,6 +626,10 @@ func TestSIDX_StreamingQuery_ErrorPropagation(t *testing.T) {
 			t.Fatal("expected validation error but errCh did not emit")
 		}
 
+		// Drain resultsCh to wait for query to close
+		for range resultsCh {
+			_ = 0
+		}
 		_, ok := <-resultsCh
 		require.False(t, ok)
 	})
@@ -652,6 +657,7 @@ func TestSIDX_StreamingQuery_ErrorPropagation(t *testing.T) {
 			MaxBatchSize: 0,
 		})
 
+		// Drain resultsCh to wait for query to close
 		for range resultsCh {
 			t.Fatal("expected no results for quota exceeded")
 		}
@@ -687,6 +693,7 @@ func TestSIDX_StreamingQuery_EdgeCases(t *testing.T) {
 			MaxBatchSize: 2,
 		})
 
+		// Drain resultsCh to wait for query to close
 		for range resultsCh {
 			t.Fatal("expected no results for missing series")
 		}
@@ -873,8 +880,9 @@ func TestSIDX_StreamingQuery_ContextCancellation(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		//revive:disable-next-line:empty-block
-		for range resultsCh { // Drain the channel
+		// Drain resultsCh to wait for query to close
+		for range resultsCh {
+			_ = 0
 		}
 		close(done)
 	}()

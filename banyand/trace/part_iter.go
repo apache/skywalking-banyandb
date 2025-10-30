@@ -63,7 +63,6 @@ func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string) {
 
 	pi.bms = bma.arr
 	pi.tids = tids
-	sort.Strings(pi.tids)
 
 	pi.primaryBlockMetadata = p.primaryBlockMetadata
 
