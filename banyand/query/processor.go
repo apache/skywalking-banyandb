@@ -123,14 +123,15 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			data := resp.Data()
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
+				span.Stop()
 				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
+				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
-			span.Stop()
 		}()
 	}
 	se := plan.(executor.StreamExecutable)
@@ -272,13 +273,14 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 			switch d := data.(type) {
 			case *measurev1.QueryResponse:
 				d.Trace = tracer.ToProto()
+				span.Stop()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
+				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
-			span.Stop()
 		}()
 	}
 
@@ -549,14 +551,15 @@ func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
 	data := resp.Data()
 	switch d := data.(type) {
 	case *tracev1.InternalQueryResponse:
+		tm.span.Stop()
 		d.TraceQueryResult = tm.tracer.ToProto()
 	case *common.Error:
 		tm.span.Error(errors.New(d.Error()))
+		tm.span.Stop()
 		*resp = bus.NewMessage(bus.MessageID(messageID), &tracev1.QueryResponse{TraceQueryResult: tm.tracer.ToProto()})
 	default:
 		panic("unexpected data type")
 	}
-	tm.span.Stop()
 }
 
 func (p *traceQueryProcessor) processTraceResults(resultIterator iter.Iterator[model.TraceResult],

@@ -30,6 +30,7 @@
   import { Last15Minutes, Shortcuts } from '../common/data';
   import JSZip from 'jszip';
   import TraceTree from '../TraceTree/TraceContent.vue';
+  import TraceTable from '../common/TraceTable.vue';
 
   const { proxy } = getCurrentInstance();
   const route = useRoute();
@@ -253,62 +254,6 @@ orderBy:
     }
   }
 
-  const getTagValue = (data) => {
-    let value = data.value;
-
-    const isNullish = (val) => val === null || val === undefined || val === 'null';
-    if (isNullish(value)) {
-      return 'N/A';
-    }
-    for (let i = 0; i < 2; i++) {
-      if (typeof value !== 'object') {
-        const strValue = value.toString();
-        return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
-      }
-      for (const key in value) {
-        if (Object.hasOwn(value, key)) {
-          value = value[key];
-          break;
-        }
-      }
-      if (isNullish(value)) {
-        return 'N/A';
-      }
-    }
-
-    const strValue = value.toString();
-    return strValue.length > 100 ? strValue.substring(0, 150) + '...' : strValue;
-  };
-
-  const objectSpanMethod = ({ row, column, rowIndex, columnIndex }) => {
-    // Only merge the traceId column (first column after selection)
-    if (columnIndex === 1) {
-      const currentTraceId = row.traceId;
-      // Check if this is the first row with this traceId
-      if (rowIndex === 0 || data.tableData[rowIndex - 1].traceId !== currentTraceId) {
-        // Count how many rows have the same traceId
-        let rowspan = 1;
-        for (let i = rowIndex + 1; i < data.tableData.length; i++) {
-          if (data.tableData[i].traceId === currentTraceId) {
-            rowspan++;
-          } else {
-            break;
-          }
-        }
-        return {
-          rowspan: rowspan,
-          colspan: 1,
-        };
-      } else {
-        // This row's traceId is merged with a previous row
-        return {
-          rowspan: 0,
-          colspan: 0,
-        };
-      }
-    }
-  };
-
   watch(
     () => route,
     () => {
@@ -367,32 +312,14 @@ orderBy:
             <el-button :icon="Download" @click="downloadMultipleSpans"> Download Selected </el-button>
           </div>
         </div>
-        <div class="table-container">
-          <el-table
-            :data="data.tableData"
-            :border="true"
-            style="width: 100%"
-            @selection-change="handleSelectionChange"
-            :span-method="objectSpanMethod"
-          >
-            <el-table-column type="selection" width="55" fixed />
-            <el-table-column label="traceId" prop="traceId" width="200" fixed>
-              <template #default="scope">
-                {{ getTagValue({ value: scope.row.traceId }) }}
-              </template>
-            </el-table-column>
-            <el-table-column label="spanId" prop="spanId" width="300" fixed>
-              <template #default="scope">
-                {{ getTagValue({ value: scope.row.spanId }) }}
-              </template>
-            </el-table-column>
-            <el-table-column v-for="tag in data.spanTags" :key="tag" :label="tag" :prop="tag" min-width="200">
-              <template #default="scope">
-                {{ getTagValue({ value: scope.row[tag] }) }}
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
+        <TraceTable
+          :data="data.tableData"
+          :span-tags="data.spanTags"
+          :border="true"
+          :show-selection="true"
+          :enable-merge="true"
+          @selection-change="handleSelectionChange"
+        />
       </div>
       <el-empty v-else description="No trace data found" style="margin-top: 20px" />
     </el-card>
@@ -425,10 +352,5 @@ orderBy:
     font-family: 'Courier New', Courier, monospace;
     word-break: break-all;
     font-size: 12px;
-  }
-
-  .table-container {
-    overflow-x: auto;
-    width: 100%;
   }
 </style>

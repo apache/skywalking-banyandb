@@ -36,6 +36,7 @@ const (
 	traceIDSampleLimit = 5
 	blockHeadLimit     = 10
 	blockTailLimit     = 10
+	blockSampleLimit   = 20
 )
 
 type blockInfo struct {
@@ -240,6 +241,113 @@ func startBlockScanSpan(ctx context.Context, traceIDs []string, parts []*part) (
 			for i := range limitedBlocks {
 				span.Tag(fmt.Sprintf("block_%d", i), limitedBlocks[i])
 			}
+			if err != nil {
+				span.Error(err)
+			}
+			span.Stop()
+		}
+}
+
+// partSelectionMetrics holds the metrics for part selection span.
+type partSelectionMetrics struct {
+	bloomFilteredPartIDs []uint64
+	totalGroupedIDs      int
+}
+
+// startPartSelectionSpan creates a span for part selection.
+// It returns the updated context and a finish function to complete the span.
+func startPartSelectionSpan(ctx context.Context, batch *traceBatch, snapshots []*snapshot) (context.Context, func(*partSelectionMetrics, int)) {
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return ctx, nil
+	}
+
+	// Count total trace IDs
+	totalTraceIDCount := 0
+	for _, ids := range batch.traceIDs {
+		totalTraceIDCount += len(ids)
+	}
+
+	// Count initial parts
+	initialParts := 0
+	for _, s := range snapshots {
+		initialParts += len(s.parts)
+	}
+
+	span, spanCtx := tracer.StartSpan(ctx, "part-selection")
+	span.Tagf("initial_parts", "%d", initialParts)
+	span.Tagf("trace_ids", "%d", totalTraceIDCount)
+	for p := range batch.traceIDs {
+		span.Tagf(fmt.Sprintf("part_%d_trace_ids", p), "%d", len(batch.traceIDs[p]))
+	}
+
+	return spanCtx, func(metrics *partSelectionMetrics, finalParts int) {
+		if metrics != nil {
+			if len(metrics.bloomFilteredPartIDs) > 0 {
+				partIDStrs := make([]string, len(metrics.bloomFilteredPartIDs))
+				for i, id := range metrics.bloomFilteredPartIDs {
+					partIDStrs[i] = strconv.FormatUint(id, 10)
+				}
+				span.Tag("bloom_filtered_part_ids", strings.Join(partIDStrs, ","))
+			}
+		}
+		span.Tagf("final_parts", "%d", finalParts)
+		if finalParts > 0 && metrics != nil {
+			span.Tagf("total_grouped_ids", "%d", metrics.totalGroupedIDs)
+			avgIDsPerPart := float64(metrics.totalGroupedIDs) / float64(finalParts)
+			span.Tagf("avg_ids_per_part", "%.2f", avgIDsPerPart)
+			partsSkipped := initialParts - finalParts
+			if partsSkipped > 0 {
+				span.Tagf("parts_skipped_empty", "%d", partsSkipped)
+			}
+		}
+		span.Stop()
+	}
+}
+
+// startAggregatedBlockScanSpan creates an aggregated span for block scanning with simplified sampling.
+// It returns a callback to record blocks and a finish function to complete the span.
+func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, parts []*part) (func(*blockCursor, uint64), func(int, uint64, error)) {
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return nil, nil
+	}
+
+	var scannedBlocks []blockInfo
+
+	return func(bc *blockCursor, blockSize uint64) {
+			// Sample first N blocks to prevent OOM
+			if len(scannedBlocks) < blockSampleLimit {
+				scannedBlocks = append(scannedBlocks, blockInfo{
+					blockString: bc.String(),
+					size:        blockSize,
+				})
+			}
+		}, func(blockCount int, totalBytes uint64, err error) {
+			span, _ := tracer.StartSpan(ctx, "scan-blocks")
+			span.Tag("part_header", partMetadataHeader)
+			span.Tag("part_count", strconv.Itoa(len(parts)))
+			for i := range parts {
+				if parts[i] == nil {
+					continue
+				}
+				span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path), parts[i].partMetadata.String())
+				span.Tag(fmt.Sprintf("part_%d_trace_ids", parts[i].partMetadata.ID), strings.Join(groupedIDs[i], ","))
+			}
+
+			// Add aggregated block metrics
+			span.Tag("block_header", blockHeader)
+			span.Tag("block_total_bytes", humanize.Bytes(totalBytes))
+			span.Tag("block_count", strconv.Itoa(blockCount))
+
+			// Add sampled blocks (first N encountered)
+			if len(scannedBlocks) > 0 {
+				span.Tag("block_sample_count", strconv.Itoa(len(scannedBlocks)))
+				for i := range scannedBlocks {
+					span.Tag(fmt.Sprintf("block_%d", i), scannedBlocks[i].blockString)
+				}
+			}
+
 			if err != nil {
 				span.Error(err)
 			}

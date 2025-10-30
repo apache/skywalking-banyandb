@@ -97,8 +97,19 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	}
 
 	// Add tag names from filter conditions to projection
+	var conditionSchema logical.Schema
 	if len(conditionTagNames) > 0 {
 		ctx.projectionTags.Names = append(ctx.projectionTags.Names, conditionTagNames...)
+		tags := make([]*logical.Tag, len(conditionTagNames))
+		for i, tagName := range conditionTagNames {
+			tags[i] = logical.NewTag("", tagName)
+		}
+		var conditionTagRefs [][]*logical.TagRef
+		conditionTagRefs, err = s.CreateTagRef(tags)
+		if err != nil {
+			return nil, err
+		}
+		conditionSchema = s.ProjTags(conditionTagRefs...)
 	}
 
 	// Deduplicate tag names
@@ -116,14 +127,31 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 			return nil, errProject
 		}
 	}
-	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal)
+	// Build tag filter and create matcher for SIDX
+	var tagFilterMatcher model.TagFilterMatcher
+	var tagFilter logical.TagFilter
+	if uis.criteria != nil {
+		var orderByTags []string
+		if ok, indexRule := s.IndexRuleDefined(uis.orderByTag); ok {
+			orderByTags = indexRule.Tags
+		}
+		skippedTagNames := make([]string, 0, len(orderByTags)+2)
+		skippedTagNames = append(skippedTagNames, uis.traceIDTagName, uis.spanIDTagName)
+		skippedTagNames = append(skippedTagNames, orderByTags...)
+		tagFilter, err = logical.BuildTagFilter(uis.criteria, entityDict, s, s, len(traceIDs) > 0, skippedTagNames...)
+		if err != nil {
+			return nil, err
+		}
+		// Get the decoder from the execution context (trace module)
+		decoder := uis.ec.(model.TagValueDecoderProvider).GetTagValueDecoder()
+		// Create tag filter matcher for SIDX
+		tagFilterMatcher = logical.NewTagFilterMatcher(tagFilter, conditionSchema, decoder)
+	}
+
+	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal, tagFilterMatcher)
 	if uis.criteria != nil {
 		spanIDFilter := buildSpanIDFilter(uis.criteria, uis.spanIDTagName)
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, s, len(traceIDs) > 0, uis.traceIDTagName, uis.spanIDTagName)
-		if errFilter != nil {
-			return nil, errFilter
-		}
-		if tagFilter != logical.DummyFilter || spanIDFilter != nil {
+		if len(traceIDs) > 0 || tagFilter != logical.DummyFilter || spanIDFilter != nil {
 			// create filter with a projected view
 			plan = newTraceTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter, spanIDFilter)
 		}
@@ -132,7 +160,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 }
 
 func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext,
-	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64,
+	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64, tagFilterMatcher model.TagFilterMatcher,
 ) logical.Plan {
 	return &localScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
@@ -141,6 +169,7 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
 		skippingFilter:    ctx.skippingFilter,
+		tagFilterMatcher:  tagFilterMatcher,
 		entities:          ctx.entities,
 		l:                 logger.GetLogger("query", "trace", "local-scan"),
 		ec:                ec,

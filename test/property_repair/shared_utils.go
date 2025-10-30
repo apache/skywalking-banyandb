@@ -19,6 +19,7 @@
 package propertyrepair
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -47,7 +48,7 @@ import (
 const (
 	DataSize     = 2048 // 2KB per property
 	LiaisonAddr  = "localhost:17912"
-	Concurrency  = 6
+	Concurrency  = 2
 	GroupName    = "perf-test-group"
 	PropertyName = "perf-test-property"
 )
@@ -246,6 +247,7 @@ func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.Prope
 	duration := endTime.Sub(startTime)
 	fmt.Printf("Write completed: %d properties in %s (%s props/sec)\n",
 		endIdx, FormatDuration(duration), FormatThroughput(int64(endIdx), duration))
+	time.Sleep(20 * time.Second)
 	return nil
 }
 
@@ -404,32 +406,25 @@ func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
 }
 
 // ExecuteComposeCommand executes a docker-compose command, supporting both v1 and v2.
-func ExecuteComposeCommand(args ...string) error {
-	// v2
-	var executed bool
-	if _, err := exec.LookPath("docker"); err == nil {
-		check := exec.Command("docker", "compose", "version")
-		if out, err := check.CombinedOutput(); err == nil && strings.Contains(string(out), "Docker Compose") {
-			composeArgs := append([]string{"compose"}, args...)
-			composeArgs = append(composeArgs, "--wait")
-			cmd := exec.Command("docker", composeArgs...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if dockerErr := cmd.Run(); dockerErr != nil {
-				return dockerErr
-			}
-			executed = true
-		}
+func ExecuteComposeCommand(startCommand bool, args ...string) error {
+	// Detect compose invoker
+	invoker, detectErr := detectComposeInvoker()
+	if detectErr != nil {
+		return fmt.Errorf("failed to detect compose invoker: %w", detectErr)
 	}
 
-	// v1
-	if _, err := exec.LookPath("docker-compose"); err == nil && !executed {
-		cmd := exec.Command("docker-compose", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if dockerErr := cmd.Run(); dockerErr != nil {
-			return dockerErr
-		}
+	// Build and execute command
+	cmdArgs := append([]string{}, invoker...)
+	cmdArgs = append(cmdArgs, args...)
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...) // #nosec G204 -- invoker is from trusted detectComposeInvoker function
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if runErr := cmd.Run(); runErr != nil {
+		return runErr
+	}
+
+	if !startCommand {
+		return nil
 	}
 
 	// wait all the container ready
@@ -494,6 +489,21 @@ func ExecuteComposeCommand(args ...string) error {
 	}
 }
 
+func detectComposeInvoker() ([]string, error) {
+	// Try v2: docker compose
+	if _, err := exec.LookPath("docker"); err == nil {
+		check := exec.Command("docker", "compose", "version")
+		if out, checkErr := check.CombinedOutput(); checkErr == nil && strings.Contains(string(out), "Docker Compose") {
+			return []string{"docker", "compose"}, nil
+		}
+	}
+	// Try v1: docker-compose
+	if _, err := exec.LookPath("docker-compose"); err == nil {
+		return []string{"docker-compose"}, nil
+	}
+	return nil, errors.New("no docker compose found (neither 'docker compose' nor 'docker-compose')")
+}
+
 func listComposeContainerIDs() ([]string, error) {
 	out, err := exec.Command("docker", "ps", "-q").CombinedOutput()
 	if err != nil {
@@ -525,4 +535,88 @@ func inspectHealth(containerID string) (name, health, state string, err error) {
 	health = parts[1]
 	state = parts[2]
 	return
+}
+
+// CreateLogDir creates a timestamped log directory for a test scenario.
+func CreateLogDir(testScenario string) (string, error) {
+	timestamp := time.Now().Format("20060102-150405")
+	logDir := fmt.Sprintf("/tmp/banyandb-test-%s-%s", testScenario, timestamp)
+	if createErr := os.MkdirAll(logDir, 0o755); createErr != nil {
+		return "", fmt.Errorf("failed to create log directory: %w", createErr)
+	}
+	fmt.Printf("Created log directory: %s\n", logDir)
+	return logDir, nil
+}
+
+// ExportDockerComposeLogs exports logs from all services in the docker compose stack.
+func ExportDockerComposeLogs(composeFile, logDir string) error {
+	fmt.Printf("Exporting docker compose logs to %s...\n", logDir)
+
+	// Detect compose invoker
+	invoker, detectErr := detectComposeInvoker()
+	if detectErr != nil {
+		return fmt.Errorf("failed to detect compose invoker: %w", detectErr)
+	}
+
+	// Get list of services dynamically from compose file
+	fmt.Println("  Discovering services from compose file...")
+	configArgs := append([]string{}, invoker...)
+	configArgs = append(configArgs, "-f", composeFile, "config", "--services")
+	configCmd := exec.Command(configArgs[0], configArgs[1:]...) // #nosec G204 -- invoker is from trusted detectComposeInvoker function
+
+	// Separate stdout and stderr to filter out warnings
+	var stdout, stderr bytes.Buffer
+	configCmd.Stdout = &stdout
+	configCmd.Stderr = &stderr
+
+	if configErr := configCmd.Run(); configErr != nil {
+		return fmt.Errorf("failed to get services list: %w (stderr: %s)", configErr, stderr.String())
+	}
+
+	servicesOutput := stdout.Bytes()
+
+	// Parse services list and filter out warning lines
+	serviceLines := strings.Split(strings.TrimSpace(string(servicesOutput)), "\n")
+	var services []string
+	for _, line := range serviceLines {
+		serviceName := strings.TrimSpace(line)
+		// Skip empty lines and WARN lines
+		if serviceName != "" && !strings.HasPrefix(serviceName, "WARN[") {
+			services = append(services, serviceName)
+		}
+	}
+
+	if len(services) == 0 {
+		return errors.New("no services found in compose file")
+	}
+
+	fmt.Printf("  Found %d services: %v\n", len(services), services)
+
+	// Export logs for each service
+	for _, service := range services {
+		logFile := fmt.Sprintf("%s/%s.log", logDir, service)
+		fmt.Printf("  Exporting logs for service %s to %s...\n", service, logFile)
+
+		// Build command: docker compose -f <file> logs --no-color <service>
+		logsArgs := append([]string{}, invoker...)
+		logsArgs = append(logsArgs, "-f", composeFile, "logs", "--no-color", service)
+		logsCmd := exec.Command(logsArgs[0], logsArgs[1:]...) // #nosec G204 -- invoker is from trusted detectComposeInvoker function
+
+		// Capture output
+		output, cmdErr := logsCmd.CombinedOutput()
+		if cmdErr != nil {
+			// Service might not exist or have no logs, continue with warning
+			fmt.Printf("  Warning: failed to get logs for %s: %v\n", service, cmdErr)
+			continue
+		}
+
+		// Write to file
+		if writeErr := os.WriteFile(logFile, output, 0o600); writeErr != nil {
+			return fmt.Errorf("failed to write log file for %s: %w", service, writeErr)
+		}
+		fmt.Printf("  Successfully exported %d bytes of logs for %s\n", len(output), service)
+	}
+
+	fmt.Printf("All logs exported to %s\n", logDir)
+	return nil
 }
