@@ -28,10 +28,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+)
+
+const (
+	testTagStatus = "status"
 )
 
 // Test helper functions.
@@ -198,7 +204,7 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 	tags := []Tag{
 		createTestTag("service", "user-service"),
 		createTestTag("endpoint", "/api/users"),
-		createTestTag("status", "200"),
+		createTestTag(testTagStatus, "200"),
 	}
 
 	reqs := []WriteRequest{
@@ -594,13 +600,14 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 			}
 
 			result := &QueryResponse{
-				Keys: make([]int64, 0),
-				Data: make([][]byte, 0),
-				Tags: make([][]Tag, 0),
-				SIDs: make([]common.SeriesID, 0),
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				Tags:    make([][]Tag, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
 			}
 
-			qr.convertBlockToResponse(block, 1, result)
+			qr.convertBlockToResponse(block, 1, 1, result)
 
 			assert.Equal(t, tt.expectedKeys, result.Keys)
 			assert.Equal(t, tt.expectedData, result.Data)
@@ -608,6 +615,7 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 			assert.Equal(t, len(result.Keys), len(result.Data), "Keys and Data arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.SIDs), "Keys and SIDs arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.Tags), "Keys and Tags arrays should have same length")
+			assert.Equal(t, len(result.Keys), len(result.PartIDs), "Keys and PartIDs arrays should have same length")
 		})
 	}
 }
@@ -621,10 +629,11 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 	}
 
 	result := &QueryResponse{
-		Keys: make([]int64, 0),
-		Data: make([][]byte, 0),
-		Tags: make([][]Tag, 0),
-		SIDs: make([]common.SeriesID, 0),
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		Tags:    make([][]Tag, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
 	}
 
 	// First call: add trace1 data
@@ -633,7 +642,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace1"), []byte("trace1")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block1, 1, result)
+	qr.convertBlockToResponse(block1, 1, 1, result)
 
 	// Verify first call results
 	assert.Equal(t, 2, result.Len(), "First call should add 2 elements")
@@ -644,7 +653,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace2"), []byte("trace2")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block2, 2, result)
+	qr.convertBlockToResponse(block2, 2, 2, result)
 
 	assert.Equal(t, 2, result.Len(), "Second call should not add elements beyond limit")
 
@@ -654,7 +663,7 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 		data:     [][]byte{[]byte("trace3"), []byte("trace3")},
 		tags:     make(map[string]*tagData),
 	}
-	qr.convertBlockToResponse(block3, 3, result)
+	qr.convertBlockToResponse(block3, 3, 3, result)
 
 	assert.Equal(t, 2, result.Len(), "Result length should remain capped at the limit")
 	assert.Equal(t, [][]byte{[]byte("trace1"), []byte("trace1")}, result.Data)
@@ -780,4 +789,745 @@ func TestQueryResponse_Reset(t *testing.T) {
 	assert.Equal(t, 0, len(result.Tags))
 	assert.Equal(t, 0, len(result.SIDs))
 	assert.Equal(t, ResponseMetadata{}, result.Metadata)
+}
+
+type mockTagFilterMatcher struct {
+	matchFunc func(tags []*modelv1.Tag) (bool, error)
+	decoder   model.TagValueDecoder
+}
+
+func (m *mockTagFilterMatcher) Match(tags []*modelv1.Tag) (bool, error) {
+	if m.matchFunc == nil {
+		return true, nil
+	}
+	return m.matchFunc(tags)
+}
+
+func (m *mockTagFilterMatcher) GetDecoder() model.TagValueDecoder {
+	return m.decoder
+}
+
+func testTagValueDecoder(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+	if value == nil {
+		return pbv1.NullTagValue
+	}
+	switch valueType {
+	case pbv1.ValueTypeStr:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{Value: string(value)},
+			},
+		}
+	case pbv1.ValueTypeInt64:
+		// For testing, we'll parse the string as int
+		var intVal int64
+		fmt.Sscanf(string(value), "%d", &intVal)
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{
+				Int: &modelv1.Int{Value: intVal},
+			},
+		}
+	default:
+		return pbv1.NullTagValue
+	}
+}
+
+func TestSIDX_TagFilter(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "trace1-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("user-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 101, "trace1-span2",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("user-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 102, "trace1-span3",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("order-service"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 103, "trace1-span4",
+			Tag{Name: testTagStatus, Value: []byte("500"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "service", Value: []byte("payment-service"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 1, 1)
+
+	tests := []struct {
+		filterFunc    func(tags []*modelv1.Tag) (bool, error)
+		name          string
+		description   string
+		expectedCount int
+	}{
+		{
+			name: "filter_by_status_200",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 2, // span1 and span3 have status=200
+			description:   "Should return only spans with status=200",
+		},
+		{
+			name: "filter_by_service_user_service",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == "service" && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "user-service" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 2, // span1 and span2 have service=user-service
+			description:   "Should return only spans with service=user-service",
+		},
+		{
+			name: "filter_by_status_500",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "500" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 1, // only span4 has status=500
+			description:   "Should return only spans with status=500",
+		},
+		{
+			name: "filter_excludes_all",
+			filterFunc: func(tags []*modelv1.Tag) (bool, error) {
+				for _, tag := range tags {
+					if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "999" {
+						return true, nil
+					}
+				}
+				return false, nil
+			},
+			expectedCount: 0, // no spans match
+			description:   "Should return no spans when filter matches nothing",
+		},
+		{
+			name: "no_filter",
+			filterFunc: func(_ []*modelv1.Tag) (bool, error) {
+				return true, nil
+			},
+			expectedCount: 4, // all spans match
+			description:   "Should return all spans when filter always returns true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create tag filter matcher
+			tagFilter := &mockTagFilterMatcher{
+				matchFunc: tt.filterFunc,
+				decoder:   testTagValueDecoder,
+			}
+
+			// Create query request with tag filter
+			queryReq := QueryRequest{
+				SeriesIDs: []common.SeriesID{1},
+				TagFilter: tagFilter,
+			}
+
+			// Execute query
+			resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+			var totalElements int
+			var allKeys []int64
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				totalElements += res.Len()
+				allKeys = append(allKeys, res.Keys...)
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
+
+			// Verify the filtered results
+			assert.Equal(t, tt.expectedCount, totalElements, tt.description)
+
+			// Verify keys are unique
+			keySet := make(map[int64]bool)
+			for _, key := range allKeys {
+				assert.False(t, keySet[key], "Duplicate key found: %d", key)
+				keySet[key] = true
+			}
+		})
+	}
+}
+
+func TestSIDX_TagFilterWithMultipleTags(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 200, "trace2-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("GET"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/users"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 201, "trace2-span2",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("POST"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/users"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 202, "trace2-span3",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "method", Value: []byte("GET"), ValueType: pbv1.ValueTypeStr},
+			Tag{Name: "endpoint", Value: []byte("/api/orders"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 2, 2)
+
+	// Test: Filter by status=200 AND method=GET
+	tagFilter := &mockTagFilterMatcher{
+		matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			hasStatus200 := false
+			hasMethodGET := false
+			for _, tag := range tags {
+				if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+					hasStatus200 = true
+				}
+				if tag.Key == "method" && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "GET" {
+					hasMethodGET = true
+				}
+			}
+			return hasStatus200 && hasMethodGET, nil
+		},
+		decoder: testTagValueDecoder,
+	}
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagFilter: tagFilter,
+	}
+
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	var totalElements int
+	var keys []int64
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		totalElements += res.Len()
+		keys = append(keys, res.Keys...)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Only span1 should match (status=200 AND method=GET)
+	assert.Equal(t, 1, totalElements, "Should return only one span matching both conditions")
+	assert.Equal(t, []int64{200}, keys, "Should return key 200")
+}
+
+func TestSIDX_TagFilterWithEmptyTags(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 300, "trace3-span1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 301, "trace3-span2"), // No tags
+		createTestWriteRequest(1, 302, "trace3-span3",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 3, 3)
+
+	// Test: Filter by status=200
+	tagFilter := &mockTagFilterMatcher{
+		matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			for _, tag := range tags {
+				if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+		decoder: testTagValueDecoder,
+	}
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagFilter: tagFilter,
+	}
+
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	var totalElements int
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		totalElements += res.Len()
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Only span1 should match (span2 has no tags, span3 has status=404)
+	assert.Equal(t, 1, totalElements, "Should filter out spans with no matching tags")
+}
+
+func TestBlockCursorHeap_Deduplication(t *testing.T) {
+	// Helper to create a test part
+	createTestPart := func(id uint64) *part {
+		return &part{
+			partMetadata: &partMetadata{
+				ID: id,
+			},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		cursors       []*blockCursor
+		expectedData  []string
+		expectedKeys  []int64
+		batchSize     int
+		expectedCount int
+		asc           bool
+	}{
+		{
+			name: "duplicate data with different keys - ascending",
+			cursors: []*blockCursor{
+				{
+					userKeys: []int64{100, 101, 102},
+					data:     [][]byte{[]byte("data1"), []byte("data2"), []byte("data1")},
+					seriesID: 1,
+					idx:      0,
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+				{
+					userKeys: []int64{103, 104},
+					data:     [][]byte{[]byte("data2"), []byte("data3")},
+					seriesID: 1,
+					idx:      0,
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+			},
+			batchSize:     10,
+			asc:           true,
+			expectedData:  []string{"data1", "data2", "data3"},
+			expectedKeys:  []int64{100, 101, 104},
+			expectedCount: 3,
+		},
+		{
+			name: "duplicate data with different keys - descending",
+			cursors: []*blockCursor{
+				{
+					userKeys: []int64{100, 101, 102},
+					data:     [][]byte{[]byte("data1"), []byte("data2"), []byte("data1")},
+					seriesID: 1,
+					idx:      2, // Start from end for descending
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+				{
+					userKeys: []int64{103, 104},
+					data:     [][]byte{[]byte("data2"), []byte("data3")},
+					seriesID: 1,
+					idx:      1, // Start from end for descending
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+			},
+			batchSize:     10,
+			asc:           false,
+			expectedData:  []string{"data3", "data2", "data1"},
+			expectedKeys:  []int64{104, 103, 102},
+			expectedCount: 3,
+		},
+		{
+			name: "all duplicate data",
+			cursors: []*blockCursor{
+				{
+					userKeys: []int64{100, 101, 102},
+					data:     [][]byte{[]byte("data1"), []byte("data1"), []byte("data1")},
+					seriesID: 1,
+					idx:      0,
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+			},
+			batchSize:     10,
+			asc:           true,
+			expectedData:  []string{"data1"},
+			expectedKeys:  []int64{100},
+			expectedCount: 1,
+		},
+		{
+			name: "no duplicates",
+			cursors: []*blockCursor{
+				{
+					userKeys: []int64{100, 101, 102},
+					data:     [][]byte{[]byte("data1"), []byte("data2"), []byte("data3")},
+					seriesID: 1,
+					idx:      0,
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+			},
+			batchSize:     10,
+			asc:           true,
+			expectedData:  []string{"data1", "data2", "data3"},
+			expectedKeys:  []int64{100, 101, 102},
+			expectedCount: 3,
+		},
+		{
+			name: "duplicate data across batch boundaries",
+			cursors: []*blockCursor{
+				{
+					userKeys: []int64{100, 101, 102, 103},
+					data:     [][]byte{[]byte("data1"), []byte("data2"), []byte("data1"), []byte("data3")},
+					seriesID: 1,
+					idx:      0,
+					p:        createTestPart(1),
+					request:  QueryRequest{},
+				},
+			},
+			batchSize:     2, // Small batch to test cross-batch behavior
+			asc:           true,
+			expectedData:  []string{"data1", "data2", "data3"},
+			expectedKeys:  []int64{100, 101, 103},
+			expectedCount: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			resultsCh := make(chan *QueryResponse, 10)
+
+			// Create heap
+			bch := generateBlockCursorHeap(tt.asc)
+			defer releaseBlockCursorHeap(bch)
+
+			// Push cursors
+			bch.pushCursors(tt.cursors)
+
+			// Run merge in a goroutine
+			go func() {
+				err := bch.merge(ctx, tt.batchSize, resultsCh, nil)
+				require.NoError(t, err)
+				close(resultsCh)
+			}()
+
+			// Collect results
+			var allData []string
+			var allKeys []int64
+			for batch := range resultsCh {
+				for i, data := range batch.Data {
+					allData = append(allData, string(data))
+					if i < len(batch.Keys) {
+						allKeys = append(allKeys, batch.Keys[i])
+					}
+				}
+			}
+
+			// Verify results
+			assert.Equal(t, tt.expectedCount, len(allData), "Expected count mismatch")
+			assert.Equal(t, tt.expectedData, allData, "Expected data mismatch")
+			assert.Equal(t, tt.expectedKeys, allKeys, "Expected keys mismatch")
+		})
+	}
+}
+
+func TestBlockCursorHeap_DeduplicationIntegration(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	// Write test data with duplicates (same data, different keys)
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "duplicate_data"),
+		createTestWriteRequest(1, 101, "unique_data_1"),
+		createTestWriteRequest(1, 102, "duplicate_data"), // Same data as key 100
+		createTestWriteRequest(1, 103, "unique_data_2"),
+		createTestWriteRequest(1, 104, "duplicate_data"), // Same data as key 100 and 102
+	}
+	writeTestData(t, sidx, reqs, 1, 1)
+
+	waitForIntroducerLoop()
+
+	queryReq := createTestQueryRequest(1)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	// Collect all data
+	dataSet := make(map[string]int)
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		for _, data := range res.Data {
+			dataSet[string(data)]++
+		}
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Verify deduplication: each unique data should appear only once
+	assert.Equal(t, 1, dataSet["duplicate_data"], "duplicate_data should appear only once")
+	assert.Equal(t, 1, dataSet["unique_data_1"], "unique_data_1 should appear only once")
+	assert.Equal(t, 1, dataSet["unique_data_2"], "unique_data_2 should appear only once")
+	assert.Equal(t, 3, len(dataSet), "Should have exactly 3 unique data entries")
+
+	// Verify that we have 3 unique results (not 5)
+	totalCount := 0
+	for _, count := range dataSet {
+		totalCount += count
+	}
+	assert.Equal(t, 3, totalCount, "Should have 3 total results after deduplication")
+}
+
+func TestLoadBlockCursor_DeduplicationWithoutFilter(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	// Write test data with duplicates
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "data1",
+			Tag{Name: "tag1", Value: []byte("value1"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 101, "data2",
+			Tag{Name: "tag1", Value: []byte("value2"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 102, "data1", // Duplicate data
+			Tag{Name: "tag1", Value: []byte("value3"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 103, "data3",
+			Tag{Name: "tag1", Value: []byte("value4"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 104, "data2", // Duplicate data
+			Tag{Name: "tag1", Value: []byte("value5"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 5, 5)
+
+	// Query without filter
+	queryReq := createTestQueryRequest(1)
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	// Collect all data
+	dataSet := make(map[string]int)
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		for _, data := range res.Data {
+			dataSet[string(data)]++
+		}
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Verify deduplication: each unique data should appear only once
+	assert.Equal(t, 1, dataSet["data1"], "data1 should appear only once despite being written twice")
+	assert.Equal(t, 1, dataSet["data2"], "data2 should appear only once despite being written twice")
+	assert.Equal(t, 1, dataSet["data3"], "data3 should appear only once")
+	assert.Equal(t, 3, len(dataSet), "Should have exactly 3 unique data entries")
+}
+
+func TestLoadBlockCursor_DeduplicationWithFilter(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+
+	// Write test data with duplicates and different tag values
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "data1",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 101, "data2",
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 102, "data1", // Duplicate data with status=200
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 103, "data3",
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 104, "data1", // Duplicate data with status=404
+			Tag{Name: testTagStatus, Value: []byte("404"), ValueType: pbv1.ValueTypeStr},
+		),
+		createTestWriteRequest(1, 105, "data3", // Duplicate data3 with status=200
+			Tag{Name: testTagStatus, Value: []byte("200"), ValueType: pbv1.ValueTypeStr},
+		),
+	}
+
+	writeTestData(t, sidx, reqs, 6, 6)
+
+	// Query with filter for status=200
+	tagFilter := &mockTagFilterMatcher{
+		matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			for _, tag := range tags {
+				if tag.Key == testTagStatus && tag.Value.GetStr() != nil && tag.Value.GetStr().Value == "200" {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+		decoder: testTagValueDecoder,
+	}
+
+	queryReq := QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TagFilter: tagFilter,
+	}
+
+	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+	// Collect all data
+	dataSet := make(map[string]int)
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		for _, data := range res.Data {
+			dataSet[string(data)]++
+		}
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+
+	// Verify deduplication with filter:
+	// - data1 (keys 100, 102) with status=200 → only first occurrence should be kept
+	// - data3 (keys 103, 105) with status=200 → only first occurrence should be kept
+	// - data2 (key 101) with status=404 → filtered out
+	// - data1 (key 104) with status=404 → filtered out
+	assert.Equal(t, 1, dataSet["data1"], "data1 should appear only once even with multiple status=200 entries")
+	assert.Equal(t, 1, dataSet["data3"], "data3 should appear only once even with multiple status=200 entries")
+	assert.Equal(t, 0, dataSet["data2"], "data2 should not appear (filtered out by status)")
+	assert.Equal(t, 2, len(dataSet), "Should have exactly 2 unique data entries matching the filter")
+}
+
+func TestLoadBlockCursor_DeduplicationEdgeCases(t *testing.T) {
+	tests := []struct {
+		expectedData  map[string]int
+		name          string
+		description   string
+		requests      []WriteRequest
+		expectedCount int
+	}{
+		{
+			name: "all_duplicates",
+			requests: []WriteRequest{
+				createTestWriteRequest(1, 100, "same_data"),
+				createTestWriteRequest(1, 101, "same_data"),
+				createTestWriteRequest(1, 102, "same_data"),
+				createTestWriteRequest(1, 103, "same_data"),
+			},
+			expectedData: map[string]int{
+				"same_data": 1,
+			},
+			expectedCount: 1,
+			description:   "All duplicate data should result in single entry",
+		},
+		{
+			name: "no_duplicates",
+			requests: []WriteRequest{
+				createTestWriteRequest(1, 100, "data1"),
+				createTestWriteRequest(1, 101, "data2"),
+				createTestWriteRequest(1, 102, "data3"),
+			},
+			expectedData: map[string]int{
+				"data1": 1,
+				"data2": 1,
+				"data3": 1,
+			},
+			expectedCount: 3,
+			description:   "No duplicates should result in all entries",
+		},
+		{
+			name: "alternating_duplicates",
+			requests: []WriteRequest{
+				createTestWriteRequest(1, 100, "dataA"),
+				createTestWriteRequest(1, 101, "dataB"),
+				createTestWriteRequest(1, 102, "dataA"),
+				createTestWriteRequest(1, 103, "dataB"),
+				createTestWriteRequest(1, 104, "dataA"),
+			},
+			expectedData: map[string]int{
+				"dataA": 1,
+				"dataB": 1,
+			},
+			expectedCount: 2,
+			description:   "Alternating duplicates should result in unique entries only",
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a fresh sidx instance for each subtest
+			sidx := createTestSIDX(t)
+			defer func() {
+				assert.NoError(t, sidx.Close())
+			}()
+
+			ctx := context.Background()
+
+			// Use different segment and part IDs for each test
+			segmentID := int64(100 + i)
+			partID := uint64(100 + i)
+
+			writeTestData(t, sidx, tt.requests, segmentID, partID)
+
+			queryReq := createTestQueryRequest(1)
+			resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+
+			dataSet := make(map[string]int)
+			totalCount := 0
+			for res := range resultsCh {
+				require.NoError(t, res.Error)
+				for _, data := range res.Data {
+					dataSet[string(data)]++
+					totalCount++
+				}
+			}
+			if err, ok := <-errCh; ok {
+				require.NoError(t, err)
+			}
+
+			// Verify the expected data set
+			for expectedKey, expectedValue := range tt.expectedData {
+				assert.Equal(t, expectedValue, dataSet[expectedKey],
+					"%s: %s count mismatch", tt.description, expectedKey)
+			}
+			assert.Equal(t, tt.expectedCount, len(dataSet),
+				"%s: unique data count mismatch", tt.description)
+		})
+	}
 }

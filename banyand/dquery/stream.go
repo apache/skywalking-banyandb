@@ -113,14 +113,15 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			data := resp.Data()
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
+				span.Stop()
 				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
+				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
-			span.Stop()
 		}()
 	}
 	se := plan.(executor.StreamExecutable)

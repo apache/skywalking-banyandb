@@ -135,7 +135,8 @@ func (s *tumblingTimeWindows) flushWindow(w timeWindow) {
 		flushed := s.flushSnapshot(w, snapshot.(flow.AggregationOp))
 		if s.l != nil {
 			if e := s.l.Debug(); e.Enabled() {
-				e.Stringer("window", w).Bool("flushed", flushed).Msg("flush window")
+				windowsStr := w.String()
+				e.Str("window", windowsStr).Bool("flushed", flushed).Msg("flush window")
 			}
 		}
 	}

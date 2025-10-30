@@ -19,9 +19,11 @@ package sidx
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -31,12 +33,7 @@ import (
 
 // StreamingQuery implements the streaming query API defined on SIDX.
 func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-	chanSize := req.MaxBatchSize
-	if chanSize < 0 {
-		chanSize = 0
-	}
-
-	resultsCh := make(chan *QueryResponse, chanSize)
+	resultsCh := make(chan *QueryResponse)
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -57,38 +54,34 @@ func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *Qu
 	return resultsCh, errCh
 }
 
-type streamingStats struct {
-	batches  int
-	elements int
+type batchMetrics struct {
+	totalBlocksScanned    int
+	totalCursorsCreated   int
+	cumulativeHeapSize    int
+	inputBatchesProcessed int
+	blockElementsLoaded   atomic.Int64
+	outputElementsEmitted atomic.Int64
+	elementsDeduplicated  atomic.Int64
+	blocksSkipped         atomic.Int64
+	outputBatchCount      int
+	outputElementCount    int
 }
 
-func (s *streamingStats) record(chunk *QueryResponse) {
+func (s *batchMetrics) record(chunk *QueryResponse) {
 	if s == nil || chunk == nil {
 		return
 	}
-	s.batches++
-	s.elements += chunk.Len()
-}
-
-type batchMetrics struct {
-	totalBatchBlockCount   int
-	totalCursorsBuilt      int
-	totalHeapSizeAfterPush int
-	batchesProcessed       int
+	s.outputBatchCount++
+	s.outputElementCount += chunk.Len()
 }
 
 // runStreamingQuery executes the streaming query workflow and pushes batches to resultsCh.
 func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsCh chan<- *QueryResponse) (err error) {
 	s.totalQueries.Add(1)
 
-	var (
-		stats           streamingStats
-		heapInitialized bool
-	)
-
 	ctx, span := startStreamingSpan(ctx, req)
 	defer func() {
-		finalizeStreamingSpan(span, stats, heapInitialized, &err)
+		finalizeStreamingSpan(span, &err)
 	}()
 
 	snap := s.currentSnapshot()
@@ -106,13 +99,7 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 	}
 	defer resources.cleanup()
 
-	if loopErr := s.processStreamingLoop(ctx, req, resources, resultsCh, &stats); loopErr != nil {
-		heapInitialized = resources.heap.initialized
-		return loopErr
-	}
-	heapInitialized = resources.heap.initialized
-
-	return nil
+	return s.processStreamingLoop(ctx, req, resources, resultsCh)
 }
 
 type streamingQueryResources struct {
@@ -149,13 +136,10 @@ func startStreamingSpan(ctx context.Context, req QueryRequest) (context.Context,
 	return spanCtx, span
 }
 
-func finalizeStreamingSpan(span *query.Span, stats streamingStats, heapInitialized bool, errPtr *error) {
+func finalizeStreamingSpan(span *query.Span, errPtr *error) {
 	if span == nil {
 		return
 	}
-	span.Tagf("heap_initialized", "%t", heapInitialized)
-	span.Tagf("responses_emitted", "%d", stats.batches)
-	span.Tagf("elements_emitted", "%d", stats.elements)
 	if errPtr != nil && *errPtr != nil {
 		span.Error(*errPtr)
 	}
@@ -189,6 +173,14 @@ func (s *sidx) prepareStreamingResources(
 		prepareSpan.Tagf("max_key", "%d", maxKey)
 		prepareSpan.Tagf("ascending", "%t", asc)
 		prepareSpan.Tagf("part_count", "%d", len(parts))
+		// Sample the first few part paths
+		sampleSize := 5
+		if len(parts) < sampleSize {
+			sampleSize = len(parts)
+		}
+		for i := 0; i < sampleSize; i++ {
+			prepareSpan.Tag("part_path_"+string(rune('0'+i)), parts[i].path)
+		}
 	}
 	if len(parts) == 0 {
 		return nil, false
@@ -252,7 +244,6 @@ func (s *sidx) processStreamingLoop(
 	req QueryRequest,
 	resources *streamingQueryResources,
 	resultsCh chan<- *QueryResponse,
-	stats *streamingStats,
 ) error {
 	var loopSpan *query.Span
 	var metrics *batchMetrics
@@ -261,36 +252,40 @@ func (s *sidx) processStreamingLoop(
 		loopSpan, ctx = tracer.StartSpan(ctx, "sidx.process-streaming-loop")
 		defer func() {
 			if loopSpan != nil {
-				loopSpan.Tagf("total_batches_processed", "%d", stats.batches)
 				s.addBatchMetricsToSpan(loopSpan, metrics)
 				loopSpan.Stop()
 			}
 		}()
 	}
 
-	batchCount := 0
+	scannerBatchCount := 0
 	for {
 		select {
 		case <-ctx.Done():
 			if loopSpan != nil {
 				loopSpan.Tag("termination_reason", "context_canceled")
-				loopSpan.Tagf("batches_before_cancel", "%d", batchCount)
+				loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
 			}
 			return ctx.Err()
 		case batch, ok := <-resources.blockCh:
 			if !ok {
 				if loopSpan != nil {
 					loopSpan.Tag("termination_reason", "channel_closed")
-					loopSpan.Tagf("total_batches", "%d", batchCount)
+					loopSpan.Tagf("total_scanner_batches", "%d", scannerBatchCount)
 				}
-				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
+				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 			}
-			batchCount++
-			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, stats, metrics); err != nil {
+			scannerBatchCount++
+			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, metrics); err != nil {
 				if loopSpan != nil {
-					loopSpan.Tag("termination_reason", "batch_error")
-					loopSpan.Tagf("batches_before_error", "%d", batchCount)
-					loopSpan.Error(err)
+					if errors.Is(err, context.Canceled) {
+						loopSpan.Tag("termination_reason", "context_canceled")
+						loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
+					} else {
+						loopSpan.Tag("termination_reason", "batch_error")
+						loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
+						loopSpan.Error(err)
+					}
 				}
 				return err
 			}
@@ -304,7 +299,6 @@ func (s *sidx) handleStreamingBatch(
 	resources *streamingQueryResources,
 	req QueryRequest,
 	resultsCh chan<- *QueryResponse,
-	stats *streamingStats,
 	metrics *batchMetrics,
 ) error {
 	if batch.err != nil {
@@ -316,10 +310,10 @@ func (s *sidx) handleStreamingBatch(
 	// Collect batch block count metric
 	if metrics != nil {
 		batchBlockCount := len(batch.bss)
-		metrics.totalBatchBlockCount += batchBlockCount
+		metrics.totalBlocksScanned += batchBlockCount
 	}
 
-	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc)
+	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc, metrics)
 	releaseBlockScanResultBatch(batch)
 	if cursorsErr != nil {
 		return cursorsErr
@@ -328,7 +322,7 @@ func (s *sidx) handleStreamingBatch(
 	// Collect cursors built metric
 	if metrics != nil {
 		cursorsBuilt := len(cursors)
-		metrics.totalCursorsBuilt += cursorsBuilt
+		metrics.totalCursorsCreated += cursorsBuilt
 	}
 
 	resources.heap.pushCursors(cursors)
@@ -336,26 +330,32 @@ func (s *sidx) handleStreamingBatch(
 	// Collect heap size metric
 	if metrics != nil {
 		heapSize := resources.heap.Len()
-		metrics.totalHeapSizeAfterPush += heapSize
-		metrics.batchesProcessed++
+		metrics.cumulativeHeapSize += heapSize
+		metrics.inputBatchesProcessed++
 	}
 
-	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, stats)
+	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 }
 
 func (s *sidx) addBatchMetricsToSpan(span *query.Span, metrics *batchMetrics) {
 	if span == nil || metrics == nil {
 		return
 	}
-	span.Tagf("batches_processed", "%d", metrics.batchesProcessed)
-	span.Tagf("total_batch_block_count", "%d", metrics.totalBatchBlockCount)
-	span.Tagf("total_cursors_built", "%d", metrics.totalCursorsBuilt)
-	span.Tagf("total_heap_size_after_push", "%d", metrics.totalHeapSizeAfterPush)
-	if metrics.batchesProcessed > 0 {
-		span.Tagf("avg_batch_block_count", "%.2f", float64(metrics.totalBatchBlockCount)/float64(metrics.batchesProcessed))
-		span.Tagf("avg_cursors_built", "%.2f", float64(metrics.totalCursorsBuilt)/float64(metrics.batchesProcessed))
-		span.Tagf("avg_heap_size_after_push", "%.2f", float64(metrics.totalHeapSizeAfterPush)/float64(metrics.batchesProcessed))
+	span.Tagf("input_batches_processed", "%d", metrics.inputBatchesProcessed)
+	span.Tagf("total_blocks_scanned", "%d", metrics.totalBlocksScanned)
+	span.Tagf("total_cursors_created", "%d", metrics.totalCursorsCreated)
+	span.Tagf("cumulative_heap_size", "%d", metrics.cumulativeHeapSize)
+	if metrics.inputBatchesProcessed > 0 {
+		span.Tagf("avg_blocks_scanned_per_batch", "%.2f", float64(metrics.totalBlocksScanned)/float64(metrics.inputBatchesProcessed))
+		span.Tagf("avg_cursors_created_per_batch", "%.2f", float64(metrics.totalCursorsCreated)/float64(metrics.inputBatchesProcessed))
+		span.Tagf("avg_heap_size", "%.2f", float64(metrics.cumulativeHeapSize)/float64(metrics.inputBatchesProcessed))
 	}
+	span.Tagf("block_elements_loaded", "%d", metrics.blockElementsLoaded.Load())
+	span.Tagf("output_elements_emitted", "%d", metrics.outputElementsEmitted.Load())
+	span.Tagf("elements_deduplicated", "%d", metrics.elementsDeduplicated.Load())
+	span.Tagf("blocks_skipped", "%d", metrics.blocksSkipped.Load())
+	span.Tagf("output_element_count", "%d", metrics.outputElementCount)
+	span.Tagf("output_batch_count", "%d", metrics.outputBatchCount)
 }
 
 func determineTagsToLoad(req QueryRequest) map[string]struct{} {
@@ -379,21 +379,9 @@ func (s *sidx) buildCursorsForBatch(
 	tagsToLoad map[string]struct{},
 	req QueryRequest,
 	asc bool,
+	metrics *batchMetrics,
 ) ([]*blockCursor, error) {
-	var buildSpan *query.Span
-	if tracer := query.GetTracer(ctx); tracer != nil {
-		buildSpan, ctx = tracer.StartSpan(ctx, "sidx.build-cursors-for-batch")
-		defer func() {
-			if buildSpan != nil {
-				buildSpan.Stop()
-			}
-		}()
-	}
-
 	if len(batch.bss) == 0 {
-		if buildSpan != nil {
-			buildSpan.Tag("empty_batch", "true")
-		}
 		return nil, nil
 	}
 
@@ -403,12 +391,6 @@ func (s *sidx) buildCursorsForBatch(
 	}
 	if workerCount > len(batch.bss) {
 		workerCount = len(batch.bss)
-	}
-
-	if buildSpan != nil {
-		buildSpan.Tagf("block_scan_results", "%d", len(batch.bss))
-		buildSpan.Tagf("worker_count", "%d", workerCount)
-		buildSpan.Tagf("tags_to_load", "%d", len(tagsToLoad))
 	}
 
 	jobCh := make(chan blockScanResult, workerCount)
@@ -436,7 +418,7 @@ func (s *sidx) buildCursorsForBatch(
 					bc := generateBlockCursor()
 					bc.init(bsResult.p, &bsResult.bm, req)
 
-					if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm) {
+					if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm, metrics) {
 						if asc {
 							bc.idx = 0
 						} else {
@@ -466,9 +448,6 @@ func (s *sidx) buildCursorsForBatch(
 			for bc := range resultCh {
 				releaseBlockCursor(bc)
 			}
-			if buildSpan != nil {
-				buildSpan.Tag("canceled", "job_distribution")
-			}
 			return nil, ctx.Err()
 		case jobCh <- batch.bss[i]:
 		}
@@ -483,17 +462,9 @@ func (s *sidx) buildCursorsForBatch(
 		cursors = append(cursors, bc)
 	}
 
-	if buildSpan != nil {
-		buildSpan.Tagf("cursors_created", "%d", len(cursors))
-	}
-
 	if err := ctx.Err(); err != nil {
 		for i := range cursors {
 			releaseBlockCursor(cursors[i])
-		}
-		if buildSpan != nil {
-			buildSpan.Tag("canceled", "after_workers")
-			buildSpan.Error(err)
 		}
 		return nil, err
 	}

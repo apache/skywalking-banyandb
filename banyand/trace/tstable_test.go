@@ -140,7 +140,12 @@ func Test_tstIter(t *testing.T) {
 		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, []string{tt.tid})
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(bma, pp, []string{tt.tid})
+		// Convert trace IDs to grouped format (each part gets all trace IDs for testing)
+		groupedTids := make([][]string, len(pp))
+		for i := range groupedTids {
+			groupedTids[i] = []string{tt.tid}
+		}
+		ti.init(bma, pp, groupedTids)
 		var got []blockMetadata
 		for ti.nextBlock() {
 			if ti.piPool[ti.idx].curBlock.traceID == "" {
@@ -400,7 +405,11 @@ func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
 
 		// Initialize and release tstIter
 		ti := generateTstIter()
-		ti.init(bma, parts, []string{"trace1"})
+		groupedTids := make([][]string, len(parts))
+		for i := range groupedTids {
+			groupedTids[i] = []string{"trace1"}
+		}
+		ti.init(bma, parts, groupedTids)
 		releaseTstIter(ti)
 
 		// Verify parts array is intact
@@ -441,7 +450,11 @@ func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
 
 			// Simulate scanTraceIDsInline: get tstIter, use it, release it
 			ti := generateTstIter()
-			ti.init(bma, parts, traceIDs)
+			groupedTids := make([][]string, len(parts))
+			for i := range groupedTids {
+				groupedTids[i] = traceIDs
+			}
+			ti.init(bma, parts, groupedTids)
 
 			// Verify tstIter was initialized correctly
 			require.Equal(t, 3, len(ti.parts), "Cycle %d: tstIter should have 3 parts", cycle)
@@ -471,7 +484,11 @@ func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
 		originalCap := cap(parts)
 
 		ti := generateTstIter()
-		ti.init(bma, parts, []string{"trace1"})
+		groupedTids := make([][]string, len(parts))
+		for i := range groupedTids {
+			groupedTids[i] = []string{"trace1"}
+		}
+		ti.init(bma, parts, groupedTids)
 		releaseTstIter(ti)
 
 		// Verify length and capacity are preserved
@@ -497,7 +514,11 @@ func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
 
 		// First use: with parts1
 		ti := generateTstIter()
-		ti.init(bma, parts1, []string{"a", "b"})
+		groupedTids1 := make([][]string, len(parts1))
+		for i := range groupedTids1 {
+			groupedTids1[i] = []string{"a", "b"}
+		}
+		ti.init(bma, parts1, groupedTids1)
 		require.Equal(t, 2, len(ti.parts), "First init: tstIter should have 2 parts")
 		releaseTstIter(ti)
 
@@ -507,7 +528,11 @@ func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
 
 		// Second use: reuse tstIter with parts2 (different size)
 		ti = generateTstIter()
-		ti.init(bma, parts2, []string{"c", "d", "e"})
+		groupedTids2 := make([][]string, len(parts2))
+		for i := range groupedTids2 {
+			groupedTids2[i] = []string{"c", "d", "e"}
+		}
+		ti.init(bma, parts2, groupedTids2)
 		require.Equal(t, 3, len(ti.parts), "Second init: tstIter should have 3 parts")
 		releaseTstIter(ti)
 
@@ -551,7 +576,11 @@ func Test_tstIter_reset_clears_but_preserves_input(t *testing.T) {
 
 	// Initialize tstIter
 	ti := generateTstIter()
-	ti.init(bma, parts, []string{"trace1"})
+	groupedTids := make([][]string, len(parts))
+	for i := range groupedTids {
+		groupedTids[i] = []string{"trace1"}
+	}
+	ti.init(bma, parts, groupedTids)
 
 	require.Equal(t, 3, len(ti.parts), "After init: tstIter should have 3 parts")
 	require.NotNil(t, ti.parts[0], "After init: ti.parts[0] should not be nil")

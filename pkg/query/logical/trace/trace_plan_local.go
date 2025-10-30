@@ -42,6 +42,7 @@ var (
 type localScan struct {
 	schema            logical.Schema
 	skippingFilter    index.Filter
+	tagFilterMatcher  model.TagFilterMatcher
 	result            model.TraceQueryResult
 	ec                executor.TraceExecutionContext
 	order             *logical.OrderBy
@@ -93,6 +94,7 @@ func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResul
 			Name:           i.metadata.GetName(),
 			TimeRange:      &i.timeRange,
 			SkippingFilter: i.skippingFilter,
+			TagFilter:      i.tagFilterMatcher,
 			Order:          orderBy,
 			TagProjection:  i.projectionTags,
 			Entities:       i.entities,

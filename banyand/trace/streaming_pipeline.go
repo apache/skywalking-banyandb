@@ -22,6 +22,7 @@ import (
 	"context"
 	stdErrors "errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -30,26 +31,29 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 type traceBatch struct {
-	err      error
-	keys     map[string]int64
-	traceIDs []string
-	seq      int
+	err           error
+	keys          map[string]int64
+	traceIDs      map[uint64][]string
+	traceIDsOrder []string // ordered list of trace IDs as they were added
+	seq           int
 }
 
 type scanBatch struct {
-	err      error
-	cursorCh <-chan scanCursorResult
+	err       error
+	cursorCh  <-chan scanCursorResult
+	snapshots []*snapshot
 	traceBatch
 }
 
 func newTraceBatch(seq int, capacity int) traceBatch {
 	tb := traceBatch{
 		seq:      seq,
-		traceIDs: make([]string, 0, capacity),
+		traceIDs: make(map[uint64][]string),
 	}
 	if capacity > 0 {
 		tb.keys = make(map[string]int64, capacity)
@@ -87,13 +91,19 @@ func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize
 				end = len(orderedIDs)
 			}
 
+			// Static sources don't have partID information, use sentinel value 0
+			batchIDs := append([]string(nil), orderedIDs[start:end]...)
+			traceIDMap := make(map[uint64][]string)
+			traceIDMap[0] = batchIDs
+
 			select {
 			case <-ctx.Done():
 				return
 			case out <- traceBatch{
-				seq:      seq,
-				traceIDs: append([]string(nil), orderedIDs[start:end]...),
-				keys:     keys,
+				seq:           seq,
+				traceIDs:      traceIDMap,
+				traceIDsOrder: batchIDs,
+				keys:          keys,
 			}:
 				seq++
 			}
@@ -235,12 +245,14 @@ func (t *trace) streamSIDXTraceBatches(
 	sidxInstances []sidx.SIDX,
 	req sidx.QueryRequest,
 	maxTraceSize int,
-) <-chan traceBatch {
+) (<-chan traceBatch, <-chan struct{}) {
 	out := make(chan traceBatch)
+	done := make(chan struct{})
 
 	if len(sidxInstances) == 0 {
 		close(out)
-		return out
+		close(done)
+		return out, done
 	}
 
 	tracer := query.GetTracer(ctx)
@@ -267,6 +279,7 @@ func (t *trace) streamSIDXTraceBatches(
 			}
 			cancel()
 			close(out)
+			close(done)
 		}()
 
 		if err := runner.prepare(sidxInstances); err != nil {
@@ -277,7 +290,7 @@ func (t *trace) streamSIDXTraceBatches(
 
 		runner.run(out)
 	}()
-	return out
+	return out, done
 }
 
 type sidxStreamRunner struct {
@@ -463,9 +476,16 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 			return
 		}
 
-		if added && len(r.batch.traceIDs) >= r.batchSize {
-			if !r.emitBatch(out) {
-				return
+		if added {
+			// Count total trace IDs across all partIDs
+			totalTraceIDs := 0
+			for _, ids := range r.batch.traceIDs {
+				totalTraceIDs += len(ids)
+			}
+			if totalTraceIDs >= r.batchSize {
+				if !r.emitBatch(out) {
+					return
+				}
 			}
 		}
 
@@ -475,7 +495,15 @@ func (r *sidxStreamRunner) run(out chan<- traceBatch) {
 		}
 	}
 
-	if len(r.batch.traceIDs) > 0 {
+	// Emit remaining batch if it has any trace IDs
+	hasTraceIDs := false
+	for _, ids := range r.batch.traceIDs {
+		if len(ids) > 0 {
+			hasTraceIDs = true
+			break
+		}
+	}
+	if hasTraceIDs {
 		if !r.emitBatch(out) {
 			return
 		}
@@ -529,8 +557,12 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 		return false, nil
 	}
 
+	// Extract partID from SIDX response
+	partID := shard.response.PartIDs[shard.idx]
+
 	r.seenTraceIDs[traceID] = struct{}{}
-	r.batch.traceIDs = append(r.batch.traceIDs, traceID)
+	r.batch.traceIDs[partID] = append(r.batch.traceIDs[partID], traceID)
+	r.batch.traceIDsOrder = append(r.batch.traceIDsOrder, traceID)
 	if r.batch.keys == nil {
 		r.batch.keys = make(map[string]int64)
 	}
@@ -652,7 +684,7 @@ func (r *sidxStreamRunner) cancel() {
 
 func (t *trace) startBlockScanStage(
 	ctx context.Context,
-	parts []*part,
+	tables []*tsTable,
 	qo queryOptions,
 	batches <-chan traceBatch,
 ) <-chan *scanBatch {
@@ -671,23 +703,96 @@ func (t *trace) startBlockScanStage(
 				continue
 			}
 
+			// Acquire snapshots from all tables
+			snapshots := make([]*snapshot, 0, len(tables))
+			for _, table := range tables {
+				s := table.currentSnapshot()
+				if s == nil {
+					continue
+				}
+				snapshots = append(snapshots, s)
+			}
+
+			// If no snapshots available, skip this batch
+			if len(snapshots) == 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &scanBatch{traceBatch: batch}:
+				}
+				continue
+			}
+
+			// Start part selection span
+			partSelectionCtx, finishPartSelection := startPartSelectionSpan(ctx, &batch, snapshots)
+
+			parts := make([]*part, 0)
+			groupedIDs := make([][]string, 0)
+
+			allTraceIDs := make([]string, 0)
+			for _, ids := range batch.traceIDs {
+				allTraceIDs = append(allTraceIDs, ids...)
+			}
+			sort.Strings(allTraceIDs)
+
+			bloomFilteredPartIDs := make([]uint64, 0)
+			totalGroupedIDs := 0
+
+			for _, s := range snapshots {
+				for _, pw := range s.parts {
+					p := pw.p
+					partID := p.partMetadata.ID
+
+					var idsFromSIDX []string
+					if traceIDsFromSIDX, exists := batch.traceIDs[partID]; exists {
+						idsFromSIDX = append([]string(nil), traceIDsFromSIDX...)
+					}
+					var idsForPart []string
+					for _, traceID := range allTraceIDs {
+						if slices.Contains(idsFromSIDX, traceID) || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+							idsForPart = append(idsForPart, traceID)
+						}
+					}
+
+					if len(idsForPart) > 0 {
+						parts = append(parts, p)
+						groupedIDs = append(groupedIDs, idsForPart)
+						totalGroupedIDs += len(idsForPart)
+					} else {
+						bloomFilteredPartIDs = append(bloomFilteredPartIDs, partID)
+					}
+				}
+			}
+
+			if finishPartSelection != nil {
+				finishPartSelection(&partSelectionMetrics{
+					bloomFilteredPartIDs: bloomFilteredPartIDs,
+					totalGroupedIDs:      totalGroupedIDs,
+				}, len(parts))
+			}
+
 			// Create the cursor channel and scanBatch
 			cursorCh := make(chan scanCursorResult)
 			sb := &scanBatch{
 				traceBatch: batch,
 				cursorCh:   cursorCh,
+				snapshots:  snapshots,
 			}
 
 			// Send batch downstream first so consumer can start reading
 			select {
 			case <-ctx.Done():
 				close(cursorCh)
+				// Release snapshots on early exit
+				for _, s := range snapshots {
+					s.decRef()
+				}
 				return
 			case out <- sb:
 			}
 
 			// Now scan inline and populate the channel
-			t.scanTraceIDsInline(ctx, parts, qo, batch.traceIDs, cursorCh)
+			t.scanPartsInline(partSelectionCtx, parts, groupedIDs, qo, cursorCh)
 			close(cursorCh)
 		}
 	}()
@@ -700,18 +805,12 @@ type scanCursorResult struct {
 	err    error
 }
 
-func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryOptions, traceIDs []string, out chan<- scanCursorResult) {
-	if len(parts) == 0 || len(traceIDs) == 0 {
+func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [][]string, qo queryOptions, out chan<- scanCursorResult) {
+	if len(parts) == 0 {
 		return
 	}
 
-	sortedIDs := append([]string(nil), traceIDs...)
-	sort.Strings(sortedIDs)
-
-	recordBlock, finish := startBlockScanSpan(ctx, sortedIDs, parts)
-	if finish == nil {
-		finish = func(error) {}
-	}
+	recordBlock, finishSpan := startAggregatedBlockScanSpan(ctx, groupedIDs, parts)
 
 	var (
 		spanErr        error
@@ -719,17 +818,19 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 		cursorCount    int
 	)
 
-	defer func() {
-		finish(spanErr)
-	}()
-
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
 
 	tstIter := generateTstIter()
 	defer releaseTstIter(tstIter)
 
-	tstIter.init(bma, parts, sortedIDs)
+	if finishSpan != nil {
+		defer func() {
+			finishSpan(cursorCount, spanBlockBytes, spanErr)
+		}()
+	}
+
+	tstIter.init(bma, parts, groupedIDs)
 	if initErr := tstIter.Error(); initErr != nil {
 		spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
 		select {
@@ -778,7 +879,7 @@ func (t *trace) scanTraceIDsInline(ctx context.Context, parts []*part, qo queryO
 
 		// Quota OK, send cursor
 		if recordBlock != nil {
-			recordBlock(bc)
+			recordBlock(bc, blockSize)
 		}
 		spanBlockBytes += blockSize
 		cursorCount++

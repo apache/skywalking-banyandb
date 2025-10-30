@@ -286,11 +286,12 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 		defer func() {
 			if err != nil {
 				span.Error(err)
+				span.Stop()
 			} else {
 				span.AddSubTrace(resp.Trace)
+				span.Stop()
 				resp.Trace = tracer.ToProto()
 			}
-			span.Stop()
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
