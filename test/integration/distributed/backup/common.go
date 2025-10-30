@@ -49,6 +49,7 @@ import (
 	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesbackup "github.com/apache/skywalking-banyandb/test/cases/backup"
@@ -104,6 +105,8 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	err = test_stream.PreloadSchema(ctx, schemaRegistry)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = test_measure.PreloadSchema(ctx, schemaRegistry)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	err = test_trace.PreloadSchema(ctx, schemaRegistry)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = test_property.PreloadSchema(ctx, schemaRegistry)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

@@ -55,7 +55,7 @@ var _ = ginkgo.Describe("Backup", func() {
 		resp, err := client.Snapshot(context.Background(), &databasev1.SnapshotRequest{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(resp).NotTo(gomega.BeNil())
-		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(3))
+		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(4))
 		catalogNumMap := make(map[commonv1.Catalog]int)
 		for _, snp := range resp.Snapshots {
 			var snpDir string
@@ -65,6 +65,8 @@ var _ = ginkgo.Describe("Backup", func() {
 				snpDir = filepath.Join(SharedContext.RootDir, "stream", "snapshots")
 			} else if snp.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
 				snpDir = filepath.Join(SharedContext.RootDir, "property", "snapshots")
+			} else if snp.Catalog == commonv1.Catalog_CATALOG_TRACE {
+				snpDir = filepath.Join(SharedContext.RootDir, "trace", "snapshots")
 			} else {
 				ginkgo.Fail("unexpected snapshot catalog")
 			}
@@ -74,7 +76,7 @@ var _ = ginkgo.Describe("Backup", func() {
 		resp, err = client.Snapshot(context.Background(), &databasev1.SnapshotRequest{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(resp).NotTo(gomega.BeNil())
-		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(3))
+		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(4))
 		for _, snp := range resp.Snapshots {
 			if snp.Catalog == commonv1.Catalog_CATALOG_MEASURE {
 				measureSnapshotDir := filepath.Join(SharedContext.RootDir, "measure", "snapshots")
@@ -87,6 +89,10 @@ var _ = ginkgo.Describe("Backup", func() {
 			} else if snp.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
 				propertySnapshotDir := filepath.Join(SharedContext.RootDir, "property", "snapshots")
 				entries := lfs.ReadDir(propertySnapshotDir)
+				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
+			} else if snp.Catalog == commonv1.Catalog_CATALOG_TRACE {
+				traceSnapshotDir := filepath.Join(SharedContext.RootDir, "trace", "snapshots")
+				entries := lfs.ReadDir(traceSnapshotDir)
 				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
 			} else {
 				ginkgo.Fail("unexpected snapshot catalog")
@@ -106,6 +112,7 @@ var _ = ginkgo.Describe("Backup", func() {
 			"--stream-root-path", SharedContext.RootDir,
 			"--measure-root-path", SharedContext.RootDir,
 			"--property-root-path", SharedContext.RootDir,
+			"--trace-root-path", SharedContext.RootDir,
 			"--dest", destURL,
 			"--time-style", "daily",
 		})
@@ -114,9 +121,9 @@ var _ = ginkgo.Describe("Backup", func() {
 
 		timeDir := time.Now().Format("2006-01-02")
 		entries := lfs.ReadDir(filepath.Join(destDir, timeDir))
-		gomega.Expect(entries).To(gomega.HaveLen(3))
+		gomega.Expect(entries).To(gomega.HaveLen(4))
 		for _, entry := range entries {
-			gomega.Expect(entry.Name()).To(gomega.BeElementOf([]string{"stream", "measure", "property"}))
+			gomega.Expect(entry.Name()).To(gomega.BeElementOf([]string{"stream", "measure", "property", "trace"}))
 		}
 	})
 })

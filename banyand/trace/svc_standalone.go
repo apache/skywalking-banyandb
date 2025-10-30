@@ -19,12 +19,15 @@ package trace
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -35,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -143,7 +147,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 
 	// Initialize snapshot directory
-	s.snapshotDir = filepath.Join(s.dataPath, "snapshot")
+	s.snapshotDir = filepath.Join(path, "snapshots")
 
 	// Initialize disk monitor for forced retention
 	s.diskMonitor = storage.NewDiskMonitor(s, s.retentionConfig, s.omr)
@@ -152,6 +156,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	// Set up write callback handler. For now, keep the original write throttling behavior based on high watermark
 	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	err := s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicSnapshot, &standaloneSnapshotListener{s: s})
 	if err != nil {
 		return err
 	}
@@ -271,6 +279,81 @@ func (s *standalone) CleanupOldSnapshots(maxAge time.Duration) error {
 
 func (s *standalone) GetServiceName() string {
 	return s.Name()
+}
+
+func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
+	group, ok := s.schemaRepo.LoadGroup(groupName)
+	if !ok {
+		return errors.Errorf("group %s not found", groupName)
+	}
+	db := group.SupplyTSDB()
+	if db == nil {
+		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+	}
+	tsdb := db.(storage.TSDB[*tsTable, option])
+	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
+		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	}
+	return nil
+}
+
+type standaloneSnapshotListener struct {
+	*bus.UnImplementedHealthyListener
+	s           *standalone
+	snapshotSeq uint64
+	snapshotMux sync.Mutex
+}
+
+func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	groups := message.Data().([]*databasev1.SnapshotRequest_Group)
+	var gg []resourceSchema.Group
+	if len(groups) == 0 {
+		gg = d.s.schemaRepo.LoadAllGroups()
+	} else {
+		for _, g := range groups {
+			if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
+				continue
+			}
+			group, ok := d.s.schemaRepo.LoadGroup(g.Group)
+			if !ok {
+				continue
+			}
+			gg = append(gg, group)
+		}
+	}
+	if len(gg) == 0 {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	d.snapshotMux.Lock()
+	defer d.snapshotMux.Unlock()
+	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.lfs)
+	sn := d.snapshotName()
+	var err error
+	for _, g := range gg {
+		select {
+		case <-ctx.Done():
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+		default:
+		}
+		if errGroup := d.s.takeGroupSnapshot(filepath.Join(d.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
+			d.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+			err = multierr.Append(err, errGroup)
+			continue
+		}
+	}
+	snp := &databasev1.Snapshot{
+		Name:    sn,
+		Catalog: commonv1.Catalog_CATALOG_TRACE,
+	}
+	if err != nil {
+		snp.Error = err.Error()
+	}
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
+}
+
+func (d *standaloneSnapshotListener) snapshotName() string {
+	d.snapshotSeq++
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
 }
 
 // NewService returns a new service.
