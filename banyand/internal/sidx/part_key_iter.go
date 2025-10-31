@@ -171,22 +171,70 @@ type partKeyIter struct {
 	sidSet               map[common.SeriesID]struct{}
 	p                    *part
 	primaryCache         map[int]*blockMetadataArray
-	sids                 []common.SeriesID
-	curBlocks            []*blockMetadata
+	compressedPrimaryBuf []byte
 	cursorPool           []seriesCursor
 	cursorHeap           seriesCursorHeap
-	compressedPrimaryBuf []byte
+	sids                 []common.SeriesID
 	primaryBuf           []byte
+	curGroup             blockGroup
 	minKey               int64
 	maxKey               int64
 }
 
-func (pki *partKeyIter) releaseCurBlocks() {
-	for i := range pki.curBlocks {
-		releaseBlockMetadata(pki.curBlocks[i])
-		pki.curBlocks[i] = nil
+type blockGroup struct {
+	part   *part
+	blocks []*blockMetadata
+	minKey int64
+	maxKey int64
+}
+
+func (bg *blockGroup) reset() {
+	for i := range bg.blocks {
+		releaseBlockMetadata(bg.blocks[i])
+		bg.blocks[i] = nil
 	}
-	pki.curBlocks = pki.curBlocks[:0]
+	bg.blocks = bg.blocks[:0]
+	bg.minKey = 0
+	bg.maxKey = 0
+	bg.part = nil
+}
+
+func (bg *blockGroup) append(bm *blockMetadata) {
+	if bm == nil {
+		return
+	}
+	bg.blocks = append(bg.blocks, bm)
+	if len(bg.blocks) == 1 {
+		bg.minKey = bm.minKey
+		bg.maxKey = bm.maxKey
+		return
+	}
+	if bm.minKey < bg.minKey {
+		bg.minKey = bm.minKey
+	}
+	if bm.maxKey > bg.maxKey {
+		bg.maxKey = bm.maxKey
+	}
+}
+
+func (bg *blockGroup) less(other *blockGroup) bool {
+	if bg == nil || other == nil {
+		return false
+	}
+	if bg.minKey != other.minKey {
+		return bg.minKey < other.minKey
+	}
+	if bg.maxKey != other.maxKey {
+		return bg.maxKey < other.maxKey
+	}
+	if len(bg.blocks) == 0 || len(other.blocks) == 0 {
+		return len(bg.blocks) < len(other.blocks)
+	}
+	return bg.blocks[0].lessByKey(other.blocks[0])
+}
+
+func (pki *partKeyIter) releaseCurBlocks() {
+	pki.curGroup.reset()
 }
 
 func (pki *partKeyIter) reset() {
@@ -391,7 +439,7 @@ func (pki *partKeyIter) nextBlock() bool {
 
 		bmCopy := generateBlockMetadata()
 		bmCopy.copyFrom(current)
-		pki.curBlocks = append(pki.curBlocks, bmCopy)
+		pki.curGroup.append(bmCopy)
 
 		if !boundarySet || current.maxKey > boundary {
 			boundary = current.maxKey
@@ -420,6 +468,8 @@ func (pki *partKeyIter) nextBlock() bool {
 			return false
 		}
 
+		pki.curGroup.part = pki.p
+
 		if len(pki.cursorHeap) == 0 {
 			break
 		}
@@ -440,7 +490,7 @@ func (pki *partKeyIter) nextBlock() bool {
 		heap.Push(&pki.cursorHeap, cursor)
 	}
 
-	if len(pki.curBlocks) == 0 {
+	if len(pki.curGroup.blocks) == 0 {
 		pki.err = io.EOF
 		return false
 	}
@@ -491,8 +541,8 @@ func (pki *partKeyIter) shouldSkipBlock(bm *blockMetadata) (bool, error) {
 	return pki.blockFilter.ShouldSkip(tfo)
 }
 
-func (pki *partKeyIter) currentBlocks() []*blockMetadata {
-	return pki.curBlocks
+func (pki *partKeyIter) currentGroup() *blockGroup {
+	return &pki.curGroup
 }
 
 func generatePartKeyIter() *partKeyIter {

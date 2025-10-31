@@ -254,13 +254,10 @@ func TestIterEdgeCases(t *testing.T) {
 	tempDir := t.TempDir()
 
 	t.Run("empty_parts_list", func(t *testing.T) {
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
-		it.init(bma, nil, []common.SeriesID{1, 2, 3}, 100, 200, nil)
+		it.init(nil, []common.SeriesID{1, 2, 3}, 100, 200, nil)
 		assert.False(t, it.nextBlock())
 		assert.Nil(t, it.Error())
 	})
@@ -281,13 +278,10 @@ func TestIterEdgeCases(t *testing.T) {
 		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
-		it.init(bma, []*part{testPart}, []common.SeriesID{}, 0, 1000, nil)
+		it.init([]*part{testPart}, []common.SeriesID{}, 0, 1000, nil)
 		assert.False(t, it.nextBlock())
 		assert.Nil(t, it.Error())
 	})
@@ -322,14 +316,11 @@ func TestIterEdgeCases(t *testing.T) {
 		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
 		// Query range that doesn't overlap with any blocks
-		it.init(bma, []*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil)
+		it.init([]*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil)
 		assert.False(t, it.nextBlock())
 		assert.Nil(t, it.Error())
 	})
@@ -349,13 +340,10 @@ func TestIterEdgeCases(t *testing.T) {
 		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
-		it.init(bma, []*part{testPart}, []common.SeriesID{1}, 50, 150, nil)
+		it.init([]*part{testPart}, []common.SeriesID{1}, 50, 150, nil)
 
 		assert.True(t, it.nextBlock())
 		assert.False(t, it.nextBlock()) // Should be only one block
@@ -375,16 +363,13 @@ func TestIterEdgeCases(t *testing.T) {
 		testPart := openMemPart(mp)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
 		expectedErr := fmt.Errorf("test filter error")
 		mockFilter := &mockBlockFilter{err: expectedErr}
 
-		it.init(bma, []*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter)
+		it.init([]*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter)
 
 		assert.False(t, it.nextBlock())
 		assert.Error(t, it.Error())
@@ -432,20 +417,19 @@ func TestIterOrdering(t *testing.T) {
 		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
 		it := generateIter()
 		defer releaseIter(it)
 
-		it.init(bma, []*part{testPart1, testPart2}, []common.SeriesID{1, 2, 3, 4, 5, 6}, 0, 1000, nil)
+		it.init([]*part{testPart1, testPart2}, []common.SeriesID{1, 2, 3, 4, 5, 6}, 0, 1000, nil)
 
 		// Blocks should come in series ID order: 1, 2, 3, 4, 5, 6
 		var foundSeries []common.SeriesID
 		for it.nextBlock() {
-			// Access the current block from the heap - need to be careful about heap structure
-			if len(it.piHeap) > 0 {
-				foundSeries = append(foundSeries, it.piHeap[0].curBlock.seriesID)
+			if len(it.heap) > 0 {
+				group := it.heap[0].currentGroup()
+				require.NotNil(t, group)
+				require.NotEmpty(t, group.blocks)
+				foundSeries = append(foundSeries, group.blocks[0].seriesID)
 			}
 		}
 
@@ -497,8 +481,8 @@ func TestIterPoolOperations(t *testing.T) {
 		it.reset()
 		assert.Nil(t, it.err)
 		assert.Equal(t, 0, len(it.parts))
-		assert.Equal(t, 0, len(it.piPool))
-		assert.Equal(t, 0, len(it.piHeap))
+		assert.Equal(t, 0, len(it.partIters))
+		assert.Equal(t, 0, len(it.heap))
 		assert.False(t, it.nextBlockNoop)
 	})
 }
@@ -547,23 +531,22 @@ func runIteratorTest(t *testing.T, tc struct {
 	expectBlocks int
 }, parts []*part,
 ) {
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
-
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(bma, parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter)
+	it.init(parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter)
 
 	var foundBlocks []blockExpectation
 	blockCount := 0
 
 	for it.nextBlock() {
 		blockCount++
-		// Get the minimum block from heap (the one currently being processed)
-		require.True(t, len(it.piHeap) > 0, "heap should not be empty when nextBlock returns true")
+		require.True(t, len(it.heap) > 0, "heap should not be empty when nextBlock returns true")
 
-		curBlock := it.piHeap[0].curBlock
+		group := it.heap[0].currentGroup()
+		require.NotNil(t, group)
+		require.NotEmpty(t, group.blocks)
+		curBlock := group.blocks[0]
 		t.Logf("Found block for seriesID %d, key range [%d, %d]", curBlock.seriesID, curBlock.minKey, curBlock.maxKey)
 
 		// Verify the block overlaps with query range

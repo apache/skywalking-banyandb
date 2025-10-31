@@ -65,7 +65,9 @@ func TestPartKeyIterOrdersBlocksByMinKey(t *testing.T) {
 		minKeys   []int64
 	)
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		for _, block := range blocks {
 			seriesIDs = append(seriesIDs, block.seriesID)
@@ -96,7 +98,9 @@ func TestPartKeyIterFiltersSeriesIDs(t *testing.T) {
 
 	var seriesIDs []common.SeriesID
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		for _, block := range blocks {
 			seriesIDs = append(seriesIDs, block.seriesID)
@@ -122,7 +126,9 @@ func TestPartKeyIterAppliesKeyRange(t *testing.T) {
 
 	var seriesIDs []common.SeriesID
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		for _, block := range blocks {
 			seriesIDs = append(seriesIDs, block.seriesID)
@@ -211,7 +217,9 @@ func TestPartKeyIterBreaksTiesBySeriesID(t *testing.T) {
 
 	var groups [][]common.SeriesID
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		var ids []common.SeriesID
 		for _, block := range blocks {
@@ -242,7 +250,9 @@ func TestPartKeyIterGroupsOverlappingRanges(t *testing.T) {
 
 	var groups [][]common.SeriesID
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		var ids []common.SeriesID
 		for _, block := range blocks {
@@ -320,7 +330,9 @@ func TestPartKeyIterSelectiveFilterAllowsLaterBlocks(t *testing.T) {
 		groups       [][]common.SeriesID
 	)
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 		var ids []common.SeriesID
 		for _, block := range blocks {
@@ -354,7 +366,9 @@ func TestPartKeyIterExhaustion(t *testing.T) {
 	iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil)
 
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		blocks := group.blocks
 		require.NotEmpty(t, blocks)
 	}
 	require.NoError(t, iter.error())
@@ -393,9 +407,10 @@ func TestPartKeyIterSkipsPrimaryBeyondMaxSID(t *testing.T) {
 
 	var seriesIDs []common.SeriesID
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
-		require.NotEmpty(t, blocks)
-		for _, block := range blocks {
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		require.NotEmpty(t, group.blocks)
+		for _, block := range group.blocks {
 			seriesIDs = append(seriesIDs, block.seriesID)
 		}
 	}
@@ -436,7 +451,9 @@ func TestPartKeyIterRequeuesOnGapBetweenBlocks(t *testing.T) {
 		max int64
 	}
 	for iter.nextBlock() {
-		blocks := iter.currentBlocks()
+		bg := iter.currentGroup()
+		require.NotNil(t, bg)
+		blocks := bg.blocks
 		require.NotEmpty(t, blocks)
 		group := struct {
 			min int64
