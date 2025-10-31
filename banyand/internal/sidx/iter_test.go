@@ -425,11 +425,12 @@ func TestIterOrdering(t *testing.T) {
 		// Blocks should come in series ID order: 1, 2, 3, 4, 5, 6
 		var foundSeries []common.SeriesID
 		for it.nextBlock() {
-			if len(it.heap) > 0 {
-				group := it.heap[0].currentGroup()
+			require.NotEmpty(t, it.currentGroups)
+			for _, group := range it.currentGroups {
 				require.NotNil(t, group)
-				require.NotEmpty(t, group.blocks)
-				foundSeries = append(foundSeries, group.blocks[0].seriesID)
+				for _, block := range group.blocks {
+					foundSeries = append(foundSeries, block.seriesID)
+				}
 			}
 		}
 
@@ -509,6 +510,59 @@ func TestBlockMetadataLess(t *testing.T) {
 	})
 }
 
+func TestIterOverlappingBlockGroups(t *testing.T) {
+	elementsPart1 := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("p1-a")},
+		{seriesID: 1, userKey: 200, data: []byte("p1-b")},
+	})
+	defer releaseElements(elementsPart1)
+
+	mp1 := GenerateMemPart()
+	defer ReleaseMemPart(mp1)
+	mp1.mustInitFromElements(elementsPart1)
+	part1 := openMemPart(mp1)
+	defer part1.close()
+
+	elementsPart2 := createTestElements([]testElement{
+		{seriesID: 2, userKey: 150, data: []byte("p2-a")},
+		{seriesID: 2, userKey: 180, data: []byte("p2-b")},
+	})
+	defer releaseElements(elementsPart2)
+
+	mp2 := GenerateMemPart()
+	defer ReleaseMemPart(mp2)
+	mp2.mustInitFromElements(elementsPart2)
+	part2 := openMemPart(mp2)
+	defer part2.close()
+
+	it := generateIter()
+	defer releaseIter(it)
+
+	it.init([]*part{part1, part2}, []common.SeriesID{1, 2}, 0, 500, nil)
+
+	require.True(t, it.nextBlock(), "expected overlapping groups on first iteration")
+	require.Len(t, it.currentGroups, 2, "both parts should produce overlapping groups")
+
+	partsSeen := make(map[*part]struct{})
+	totalBlocks := 0
+	for _, group := range it.currentGroups {
+		require.NotNil(t, group)
+		require.NotNil(t, group.part)
+		require.NotEmpty(t, group.blocks)
+		partsSeen[group.part] = struct{}{}
+		totalBlocks += len(group.blocks)
+	}
+
+	require.Len(t, partsSeen, 2, "expected contributions from both parts")
+	require.Equal(t, 2, totalBlocks, "should surface one block per part in overlapping aggregation")
+	for _, group := range it.currentGroups {
+		require.Len(t, group.blocks, 1, "each group should expose a single block metadata entry")
+	}
+
+	assert.False(t, it.nextBlock(), "no additional groups expected after initial overlap")
+	assert.NoError(t, it.Error())
+}
+
 // Helper types and functions.
 
 type blockExpectation struct {
@@ -540,26 +594,26 @@ func runIteratorTest(t *testing.T, tc struct {
 	blockCount := 0
 
 	for it.nextBlock() {
-		blockCount++
-		require.True(t, len(it.heap) > 0, "heap should not be empty when nextBlock returns true")
+		require.NotEmpty(t, it.currentGroups, "currentGroups should not be empty when nextBlock returns true")
+		for _, group := range it.currentGroups {
+			require.NotNil(t, group)
+			require.NotEmpty(t, group.blocks)
+			for _, curBlock := range group.blocks {
+				blockCount++
+				t.Logf("Found block for seriesID %d, key range [%d, %d]", curBlock.seriesID, curBlock.minKey, curBlock.maxKey)
 
-		group := it.heap[0].currentGroup()
-		require.NotNil(t, group)
-		require.NotEmpty(t, group.blocks)
-		curBlock := group.blocks[0]
-		t.Logf("Found block for seriesID %d, key range [%d, %d]", curBlock.seriesID, curBlock.minKey, curBlock.maxKey)
+				overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
+				assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
+					tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
+				assert.Contains(t, tc.querySids, curBlock.seriesID, "block seriesID should be in query sids")
 
-		// Verify the block overlaps with query range
-		overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
-		assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
-			tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
-		assert.Contains(t, tc.querySids, curBlock.seriesID, "block seriesID should be in query sids")
-
-		foundBlocks = append(foundBlocks, blockExpectation{
-			seriesID: curBlock.seriesID,
-			minKey:   curBlock.minKey,
-			maxKey:   curBlock.maxKey,
-		})
+				foundBlocks = append(foundBlocks, blockExpectation{
+					seriesID: curBlock.seriesID,
+					minKey:   curBlock.minKey,
+					maxKey:   curBlock.maxKey,
+				})
+			}
+		}
 	}
 
 	// Check for errors

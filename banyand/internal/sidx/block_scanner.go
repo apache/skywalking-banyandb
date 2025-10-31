@@ -124,21 +124,9 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		default:
 		}
 
-		p := it.heap[0]
-		group := p.currentGroup()
-		if group == nil || len(group.blocks) == 0 {
-			it.err = fmt.Errorf("sidx iterator returned empty block group")
-			batch.err = it.err
-			select {
-			case blockCh <- batch:
-			case <-ctx.Done():
-				releaseBlockScanResultBatch(batch)
-			}
-			return
-		}
-
-		if group.part == nil {
-			it.err = fmt.Errorf("block group missing part reference")
+		groups := it.currentGroups
+		if len(groups) == 0 {
+			it.err = fmt.Errorf("sidx iterator returned empty block group list")
 			batch.err = it.err
 			select {
 			case blockCh <- batch:
@@ -149,8 +137,32 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 
 		var groupSize uint64
-		for _, block := range group.blocks {
-			groupSize += block.uncompressedSize
+		totalBlocks := 0
+		for _, group := range groups {
+			if group == nil || len(group.blocks) == 0 {
+				it.err = fmt.Errorf("sidx iterator returned empty block group")
+				batch.err = it.err
+				select {
+				case blockCh <- batch:
+				case <-ctx.Done():
+					releaseBlockScanResultBatch(batch)
+				}
+				return
+			}
+			if group.part == nil {
+				it.err = fmt.Errorf("block group missing part reference")
+				batch.err = it.err
+				select {
+				case blockCh <- batch:
+				case <-ctx.Done():
+					releaseBlockScanResultBatch(batch)
+				}
+				return
+			}
+			for _, block := range group.blocks {
+				groupSize += block.uncompressedSize
+			}
+			totalBlocks += len(group.blocks)
 		}
 
 		// Check if adding this block would exceed quota
@@ -178,22 +190,26 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 
 		// Quota OK, add blocks to batch
-		needed := len(batch.bss) + len(group.blocks)
-
+		needed := len(batch.bss) + totalBlocks
 		if cap(batch.bss) < needed {
-			newCap := cap(batch.bss) * 2
-			if newCap < needed {
-				newCap = needed
+			newCap := cap(batch.bss)
+			if newCap == 0 {
+				newCap = blockScannerBatchSize
+			}
+			for newCap < needed {
+				newCap *= 2
 			}
 			newSlice := make([]blockScanResult, len(batch.bss), newCap)
 			copy(newSlice, batch.bss)
 			batch.bss = newSlice
 		}
 
-		for _, block := range group.blocks {
-			batch.bss = append(batch.bss, blockScanResult{p: group.part})
-			bs := &batch.bss[len(batch.bss)-1]
-			bs.bm.copyFrom(block)
+		for _, group := range groups {
+			for _, block := range group.blocks {
+				batch.bss = append(batch.bss, blockScanResult{p: group.part})
+				bs := &batch.bss[len(batch.bss)-1]
+				bs.bm.copyFrom(block)
+			}
 		}
 		totalBlockBytes += groupSize
 
