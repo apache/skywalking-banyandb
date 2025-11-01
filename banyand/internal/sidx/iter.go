@@ -35,6 +35,7 @@ type iter struct {
 	heap          partKeyIterHeap
 	currentGroups []*blockGroup
 	activeIters   []*partKeyIter
+	asc           bool
 	nextBlockNoop bool
 }
 
@@ -62,11 +63,13 @@ func (it *iter) reset() {
 
 	it.err = nil
 	it.nextBlockNoop = false
+	it.asc = false
 }
 
-func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter) {
+func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) {
 	it.reset()
 	it.parts = append(it.parts[:0], parts...)
+	it.asc = asc
 
 	if cap(it.partIters) < len(parts) {
 		it.partIters = make([]*partKeyIter, len(parts))
@@ -86,7 +89,7 @@ func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64
 		pki := generatePartKeyIter()
 		it.partIters[i] = pki
 
-		pki.init(p, sids, minKey, maxKey, blockFilter)
+		pki.init(p, sids, minKey, maxKey, blockFilter, asc)
 		if err := pki.error(); err != nil {
 			if !errors.Is(err, io.EOF) {
 				releasePartKeyIter(pki)
@@ -207,24 +210,38 @@ func (it *iter) aggregateGroups() error {
 		}
 
 		if firstGroup {
-			boundary = group.maxKey
+			if it.asc {
+				boundary = group.maxKey
+			} else {
+				boundary = group.minKey
+			}
 			firstGroup = false
-			it.currentGroups = append(it.currentGroups, group)
-			it.activeIters = append(it.activeIters, top)
-			continue
-		}
-
-		if group.minKey > boundary {
-			heap.Push(&it.heap, top)
-			break
-		}
-
-		if group.maxKey > boundary {
-			boundary = group.maxKey
+		} else {
+			if it.asc {
+				if group.minKey > boundary {
+					heap.Push(&it.heap, top)
+					break
+				}
+			} else {
+				if group.maxKey < boundary {
+					heap.Push(&it.heap, top)
+					break
+				}
+			}
 		}
 
 		it.currentGroups = append(it.currentGroups, group)
 		it.activeIters = append(it.activeIters, top)
+
+		if it.asc {
+			if group.maxKey > boundary {
+				boundary = group.maxKey
+			}
+		} else {
+			if group.minKey < boundary {
+				boundary = group.minKey
+			}
+		}
 	}
 
 	if len(it.currentGroups) == 0 {
@@ -300,7 +317,13 @@ func (pih *partKeyIterHeap) Less(i, j int) bool {
 	if gj == nil {
 		return true
 	}
-	return gi.less(gj)
+	asc := true
+	if x[i] != nil {
+		asc = x[i].asc
+	} else if x[j] != nil {
+		asc = x[j].asc
+	}
+	return gi.less(gj, asc)
 }
 
 func (pih *partKeyIterHeap) Swap(i, j int) {

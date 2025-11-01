@@ -75,6 +75,11 @@ func (sc *seriesCursor) init(iter *partKeyIter, sid common.SeriesID, refs []bloc
 		sc.refs = sc.refs[:len(refs)]
 		copy(sc.refs, refs)
 	}
+	if iter != nil && !iter.asc && len(sc.refs) > 1 {
+		for i, j := 0, len(sc.refs)-1; i < j; i, j = i+1, j-1 {
+			sc.refs[i], sc.refs[j] = sc.refs[j], sc.refs[i]
+		}
+	}
 }
 
 func (sc *seriesCursor) reset() {
@@ -146,7 +151,16 @@ func (sch *seriesCursorHeap) Less(i, j int) bool {
 	if cj == nil {
 		return true
 	}
-	return ci.lessByKey(cj)
+	asc := true
+	if x[i] != nil && x[i].iter != nil {
+		asc = x[i].iter.asc
+	} else if x[j] != nil && x[j].iter != nil {
+		asc = x[j].iter.asc
+	}
+	if asc {
+		return ci.lessByKey(cj)
+	}
+	return cj.lessByKey(ci)
 }
 
 func (sch *seriesCursorHeap) Swap(i, j int) {
@@ -179,6 +193,7 @@ type partKeyIter struct {
 	curGroup             blockGroup
 	minKey               int64
 	maxKey               int64
+	asc                  bool
 }
 
 type blockGroup struct {
@@ -217,20 +232,32 @@ func (bg *blockGroup) append(bm *blockMetadata) {
 	}
 }
 
-func (bg *blockGroup) less(other *blockGroup) bool {
+func (bg *blockGroup) less(other *blockGroup, asc bool) bool {
 	if bg == nil || other == nil {
 		return false
 	}
-	if bg.minKey != other.minKey {
-		return bg.minKey < other.minKey
+	if asc {
+		if bg.minKey != other.minKey {
+			return bg.minKey < other.minKey
+		}
+		if bg.maxKey != other.maxKey {
+			return bg.maxKey < other.maxKey
+		}
+		if len(bg.blocks) == 0 || len(other.blocks) == 0 {
+			return len(bg.blocks) < len(other.blocks)
+		}
+		return bg.blocks[0].lessByKey(other.blocks[0])
 	}
 	if bg.maxKey != other.maxKey {
-		return bg.maxKey < other.maxKey
+		return bg.maxKey > other.maxKey
+	}
+	if bg.minKey != other.minKey {
+		return bg.minKey > other.minKey
 	}
 	if len(bg.blocks) == 0 || len(other.blocks) == 0 {
-		return len(bg.blocks) < len(other.blocks)
+		return len(bg.blocks) > len(other.blocks)
 	}
-	return bg.blocks[0].lessByKey(other.blocks[0])
+	return other.blocks[0].lessByKey(bg.blocks[0])
 }
 
 func (pki *partKeyIter) releaseCurBlocks() {
@@ -275,12 +302,13 @@ func (pki *partKeyIter) reset() {
 	pki.primaryBuf = pki.primaryBuf[:0]
 }
 
-func (pki *partKeyIter) init(p *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter) {
+func (pki *partKeyIter) init(p *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) {
 	pki.reset()
 	pki.p = p
 	pki.minKey = minKey
 	pki.maxKey = maxKey
 	pki.blockFilter = blockFilter
+	pki.asc = asc
 
 	if len(sids) == 0 {
 		pki.err = io.EOF
@@ -431,32 +459,64 @@ func (pki *partKeyIter) nextBlock() bool {
 	)
 
 	processCursor := func(cursor *seriesCursor) error {
-		current := cursor.current()
-		if current == nil {
-			cursor.reset()
-			return fmt.Errorf("series cursor %d has no current block", cursor.seriesID)
-		}
+		for {
+			current := cursor.current()
+			if current == nil {
+				cursor.reset()
+				return fmt.Errorf("series cursor %d has no current block", cursor.seriesID)
+			}
 
-		bmCopy := generateBlockMetadata()
-		bmCopy.copyFrom(current)
-		pki.curGroup.append(bmCopy)
+			bmCopy := generateBlockMetadata()
+			bmCopy.copyFrom(current)
+			pki.curGroup.append(bmCopy)
 
-		if !boundarySet || current.maxKey > boundary {
-			boundary = current.maxKey
-			boundarySet = true
-		}
+			if !boundarySet {
+				if pki.asc {
+					boundary = current.maxKey
+				} else {
+					boundary = current.minKey
+				}
+				boundarySet = true
+			} else {
+				if pki.asc {
+					if current.maxKey > boundary {
+						boundary = current.maxKey
+					}
+				} else {
+					if current.minKey < boundary {
+						boundary = current.minKey
+					}
+				}
+			}
 
-		ok, err := cursor.advance()
-		if err != nil {
-			cursor.reset()
-			return err
+			ok, err := cursor.advance()
+			if err != nil {
+				cursor.reset()
+				return err
+			}
+			if !ok {
+				cursor.reset()
+				return nil
+			}
+
+			next := cursor.current()
+			if next == nil {
+				cursor.reset()
+				return fmt.Errorf("series cursor %d advanced to nil block", cursor.seriesID)
+			}
+
+			if pki.asc {
+				if next.minKey > boundary {
+					requeue = append(requeue, cursor)
+					return nil
+				}
+			} else {
+				if next.maxKey < boundary {
+					requeue = append(requeue, cursor)
+					return nil
+				}
+			}
 		}
-		if ok {
-			requeue = append(requeue, cursor)
-		} else {
-			cursor.reset()
-		}
-		return nil
 	}
 
 	for {
@@ -481,8 +541,16 @@ func (pki *partKeyIter) nextBlock() bool {
 			return false
 		}
 
-		if boundarySet && next.minKey > boundary {
-			break
+		if boundarySet {
+			if pki.asc {
+				if next.minKey > boundary {
+					break
+				}
+			} else {
+				if next.maxKey < boundary {
+					break
+				}
+			}
 		}
 	}
 

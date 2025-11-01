@@ -101,7 +101,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter)
+	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc)
 
 	batch := generateBlockScanResultBatch()
 	if it.Error() != nil {

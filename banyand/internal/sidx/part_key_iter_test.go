@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -47,6 +48,67 @@ func setupPartForKeyIter(t *testing.T, elems []testElement) (*part, func()) {
 	return part, cleanup
 }
 
+type blockExpectation struct {
+	seriesID common.SeriesID
+	minKey   int64
+	maxKey   int64
+}
+
+func runPartKeyIterPass(t *testing.T, part *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) ([]blockExpectation, error) {
+	iter := generatePartKeyIter()
+	defer releasePartKeyIter(iter)
+
+	iter.init(part, sids, minKey, maxKey, blockFilter, asc)
+
+	var results []blockExpectation
+	for iter.nextBlock() {
+		group := iter.currentGroup()
+		require.NotNil(t, group)
+		for _, block := range group.blocks {
+			results = append(results, blockExpectation{
+				seriesID: block.seriesID,
+				minKey:   block.minKey,
+				maxKey:   block.maxKey,
+			})
+		}
+	}
+
+	return results, iter.error()
+}
+
+func runPartKeyIterDoublePass(t *testing.T, part *part, sids []common.SeriesID, minKey, maxKey int64,
+	blockFilter index.Filter,
+) (ascBlocks, descBlocks []blockExpectation, ascErr, descErr error) {
+	ascBlocks, ascErr = runPartKeyIterPass(t, part, sids, minKey, maxKey, blockFilter, true)
+	descBlocks, descErr = runPartKeyIterPass(t, part, sids, minKey, maxKey, blockFilter, false)
+	return
+}
+
+func orderName(asc bool) string {
+	if asc {
+		return "asc"
+	}
+	return "desc"
+}
+
+func verifyDescendingOrder(t *testing.T, blocks []blockExpectation) {
+	require.True(t, sort.SliceIsSorted(blocks, func(i, j int) bool {
+		if blocks[i].minKey == blocks[j].minKey {
+			return blocks[i].seriesID > blocks[j].seriesID
+		}
+		return blocks[i].minKey >= blocks[j].minKey
+	}), "blocks should be in non-increasing order by minKey")
+}
+
+func verifyAscendingOrder(t *testing.T, blocks []blockExpectation) {
+	require.True(t, sort.SliceIsSorted(blocks, func(i, j int) bool {
+		if blocks[i].minKey == blocks[j].minKey {
+			return blocks[i].seriesID < blocks[j].seriesID
+		}
+		return blocks[i].minKey <= blocks[j].minKey
+	}), "blocks should be in non-decreasing order by minKey")
+}
+
 func TestPartKeyIterOrdersBlocksByMinKey(t *testing.T) {
 	part, cleanup := setupPartForKeyIter(t, []testElement{
 		{seriesID: 1, userKey: 100, data: []byte("s1")},
@@ -55,32 +117,17 @@ func TestPartKeyIterOrdersBlocksByMinKey(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2, 3}, 0, 200, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
 
-	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 200, nil)
+	require.Len(t, asc, 3, "expected three blocks in ascending order")
+	verifyAscendingOrder(t, asc)
+	assert.Equal(t, []common.SeriesID{2, 1, 3}, []common.SeriesID{asc[0].seriesID, asc[1].seriesID, asc[2].seriesID})
 
-	var (
-		seriesIDs []common.SeriesID
-		minKeys   []int64
-	)
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
-		for _, block := range blocks {
-			seriesIDs = append(seriesIDs, block.seriesID)
-			minKeys = append(minKeys, block.minKey)
-		}
-	}
-
-	require.NoError(t, iter.error())
-	require.Len(t, seriesIDs, 3, "expected one block per series")
-	assert.Equal(t, []common.SeriesID{2, 1, 3}, seriesIDs, "blocks should be emitted in ascending minKey order")
-	require.True(t, sort.SliceIsSorted(minKeys, func(i, j int) bool {
-		return minKeys[i] <= minKeys[j]
-	}), "minKeys should be non-decreasing")
+	require.Len(t, desc, 3, "expected three blocks in descending order")
+	verifyDescendingOrder(t, desc)
+	assert.Equal(t, []common.SeriesID{3, 1, 2}, []common.SeriesID{desc[0].seriesID, desc[1].seriesID, desc[2].seriesID})
 }
 
 func TestPartKeyIterFiltersSeriesIDs(t *testing.T) {
@@ -91,24 +138,13 @@ func TestPartKeyIterFiltersSeriesIDs(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 3}, 0, 200, nil)
-
-	var seriesIDs []common.SeriesID
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
-		for _, block := range blocks {
-			seriesIDs = append(seriesIDs, block.seriesID)
-		}
-	}
-
-	require.NoError(t, iter.error())
-	assert.Equal(t, []common.SeriesID{1, 3}, seriesIDs)
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 3}, 0, 200, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Len(t, asc, 2)
+	require.Len(t, desc, 2)
+	require.Equal(t, []common.SeriesID{1, 3}, []common.SeriesID{asc[0].seriesID, asc[1].seriesID})
+	require.Equal(t, []common.SeriesID{3, 1}, []common.SeriesID{desc[0].seriesID, desc[1].seriesID})
 }
 
 func TestPartKeyIterAppliesKeyRange(t *testing.T) {
@@ -119,24 +155,13 @@ func TestPartKeyIterAppliesKeyRange(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 2, 3}, 120, 200, nil)
-
-	var seriesIDs []common.SeriesID
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
-		for _, block := range blocks {
-			seriesIDs = append(seriesIDs, block.seriesID)
-		}
-	}
-
-	require.NoError(t, iter.error())
-	assert.Equal(t, []common.SeriesID{3}, seriesIDs, "only series with blocks overlapping the key range should be returned")
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2, 3}, 120, 200, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Len(t, asc, 1)
+	require.Len(t, desc, 1)
+	assert.Equal(t, common.SeriesID(3), asc[0].seriesID)
+	assert.Equal(t, common.SeriesID(3), desc[0].seriesID)
 }
 
 func TestPartKeyIterNoBlocksInRange(t *testing.T) {
@@ -146,13 +171,11 @@ func TestPartKeyIterNoBlocksInRange(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 2}, 1000, 2000, nil)
-
-	assert.False(t, iter.nextBlock(), "no blocks should fall within the specified range")
-	assert.NoError(t, iter.error())
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2}, 1000, 2000, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Empty(t, asc)
+	require.Empty(t, desc)
 }
 
 func TestPartKeyIterHandlesEmptySeries(t *testing.T) {
@@ -161,13 +184,11 @@ func TestPartKeyIterHandlesEmptySeries(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{}, 0, 200, nil)
-
-	assert.False(t, iter.nextBlock(), "no iteration should occur without query series")
-	assert.NoError(t, iter.error())
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{}, 0, 200, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Len(t, asc, 0)
+	require.Len(t, desc, 0)
 }
 
 func TestPartKeyIterHonorsBlockFilter(t *testing.T) {
@@ -177,13 +198,11 @@ func TestPartKeyIterHonorsBlockFilter(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 2}, 0, 200, &mockBlockFilter{shouldSkip: true})
-
-	assert.False(t, iter.nextBlock(), "filter skipping all blocks should prevent iteration")
-	assert.NoError(t, iter.error())
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2}, 0, 200, &mockBlockFilter{shouldSkip: true})
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Empty(t, asc)
+	require.Empty(t, desc)
 }
 
 func TestPartKeyIterPropagatesFilterError(t *testing.T) {
@@ -192,15 +211,12 @@ func TestPartKeyIterPropagatesFilterError(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
 	expectedErr := errors.New("filter failure")
-	iter.init(part, []common.SeriesID{1}, 0, 200, &mockBlockFilter{err: expectedErr})
-
-	assert.False(t, iter.nextBlock(), "initialisation error should block iteration")
-	require.Error(t, iter.error())
-	assert.ErrorIs(t, iter.error(), expectedErr)
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1}, 0, 200, &mockBlockFilter{err: expectedErr})
+	require.ErrorIs(t, ascErr, expectedErr)
+	require.ErrorIs(t, descErr, expectedErr)
+	require.Empty(t, asc)
+	require.Empty(t, desc)
 }
 
 func TestPartKeyIterBreaksTiesBySeriesID(t *testing.T) {
@@ -210,27 +226,13 @@ func TestPartKeyIterBreaksTiesBySeriesID(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil)
-
-	var groups [][]common.SeriesID
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
-		var ids []common.SeriesID
-		for _, block := range blocks {
-			ids = append(ids, block.seriesID)
-		}
-		groups = append(groups, ids)
-	}
-
-	require.NoError(t, iter.error())
-	require.Len(t, groups, 1, "equal minKey blocks should be grouped together")
-	assert.Equal(t, []common.SeriesID{1, 2}, groups[0], "tie on minKey should fall back to seriesID ordering within the group")
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2}, 0, 200, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Len(t, asc, 2)
+	require.Len(t, desc, 2)
+	assert.Equal(t, []common.SeriesID{1, 2}, []common.SeriesID{asc[0].seriesID, asc[1].seriesID})
+	assert.Equal(t, []common.SeriesID{2, 1}, []common.SeriesID{desc[0].seriesID, desc[1].seriesID})
 }
 
 func TestPartKeyIterGroupsOverlappingRanges(t *testing.T) {
@@ -243,24 +245,36 @@ func TestPartKeyIterGroupsOverlappingRanges(t *testing.T) {
 	})
 	defer cleanup()
 
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2, 3}, 0, 500, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.Len(t, asc, 3)
+	require.Len(t, desc, 3)
+
+	expectedAsc := []blockExpectation{
+		{seriesID: 1, minKey: 100, maxKey: 180},
+		{seriesID: 2, minKey: 120, maxKey: 220},
+		{seriesID: 3, minKey: 400, maxKey: 400},
+	}
+	assert.Equal(t, expectedAsc, asc)
+	for i := range desc {
+		assert.Equal(t, expectedAsc[len(expectedAsc)-1-i], desc[i])
+	}
+
 	iter := generatePartKeyIter()
 	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 500, nil)
-
+	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 500, nil, true)
 	var groups [][]common.SeriesID
 	for iter.nextBlock() {
 		group := iter.currentGroup()
 		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
+		require.NotEmpty(t, group.blocks)
 		var ids []common.SeriesID
-		for _, block := range blocks {
+		for _, block := range group.blocks {
 			ids = append(ids, block.seriesID)
 		}
 		groups = append(groups, ids)
 	}
-
 	require.NoError(t, iter.error())
 	require.GreaterOrEqual(t, len(groups), 2, "expected at least two block groups")
 	assert.Equal(t, []common.SeriesID{1, 2}, groups[0], "overlapping ranges should be grouped together")
@@ -315,42 +329,40 @@ func TestPartKeyIterSelectiveFilterAllowsLaterBlocks(t *testing.T) {
 	part, cleanup := setupPartForKeyIter(t, elems)
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
 	filter := &selectiveMockBlockFilter{
 		tagName:   "status",
 		skipValue: "pending",
 	}
 
-	iter.init(part, []common.SeriesID{1, 2}, 0, 50000, filter)
-
-	var (
-		foundSuccess bool
-		groups       [][]common.SeriesID
-	)
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
-		var ids []common.SeriesID
-		for _, block := range blocks {
-			ids = append(ids, block.seriesID)
-			if block.seriesID == 1 {
-				require.GreaterOrEqual(t, block.minKey, int64(20000), "pending block should be skipped")
-				if block.minKey >= 20000 {
-					foundSuccess = true
-				}
-			}
-		}
-		groups = append(groups, ids)
-	}
-
-	require.NoError(t, iter.error())
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1, 2}, 0, 50000, filter)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
 	assert.Greater(t, filter.skipCallCount, 0, "filter should have been invoked")
-	assert.True(t, foundSuccess, "iterator should continue after skipped blocks and return later blocks")
-	assert.NotEmpty(t, groups, "expected at least one result group")
+
+	require.NotEmpty(t, asc)
+	require.NotEmpty(t, desc)
+
+	seriesTwoCountAsc := 0
+	for _, block := range asc {
+		if block.seriesID == 1 {
+			require.GreaterOrEqual(t, block.minKey, int64(20000), "pending block should be skipped in ascending order")
+		}
+		if block.seriesID == 2 {
+			seriesTwoCountAsc++
+		}
+	}
+	require.Equal(t, 1, seriesTwoCountAsc, "series 2 block should appear once in ascending results")
+
+	seriesTwoCountDesc := 0
+	for _, block := range desc {
+		if block.seriesID == 1 {
+			require.GreaterOrEqual(t, block.minKey, int64(20000), "pending block should be skipped in descending order")
+		}
+		if block.seriesID == 2 {
+			seriesTwoCountDesc++
+		}
+	}
+	require.Equal(t, 1, seriesTwoCountDesc, "series 2 block should appear once in descending results")
 }
 
 func TestPartKeyIterExhaustion(t *testing.T) {
@@ -360,21 +372,27 @@ func TestPartKeyIterExhaustion(t *testing.T) {
 	})
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
+	for _, asc := range []bool{true, false} {
+		t.Run(orderName(asc), func(t *testing.T) {
+			iter := generatePartKeyIter()
+			defer releasePartKeyIter(iter)
 
-	iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil)
+			iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil, asc)
 
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		blocks := group.blocks
-		require.NotEmpty(t, blocks)
+			groupCount := 0
+			for iter.nextBlock() {
+				group := iter.currentGroup()
+				require.NotNil(t, group)
+				require.NotEmpty(t, group.blocks)
+				groupCount++
+			}
+			require.NoError(t, iter.error())
+			require.Greater(t, groupCount, 0, "iterator should yield at least one group")
+
+			assert.False(t, iter.nextBlock(), "iterator should report exhaustion")
+			assert.NoError(t, iter.error())
+		})
 	}
-	require.NoError(t, iter.error())
-
-	assert.False(t, iter.nextBlock(), "iterator should report exhaustion")
-	assert.NoError(t, iter.error())
 }
 
 func TestPartKeyIterSkipsPrimaryBeyondMaxSID(t *testing.T) {
@@ -398,25 +416,17 @@ func TestPartKeyIterSkipsPrimaryBeyondMaxSID(t *testing.T) {
 		},
 	})
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
-
-	iter.init(part, []common.SeriesID{1}, 0, 500, nil)
-
-	require.NoError(t, iter.error(), "initialisation should succeed despite poisoned secondary primary block")
-
-	var seriesIDs []common.SeriesID
-	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		require.NotEmpty(t, group.blocks)
-		for _, block := range group.blocks {
-			seriesIDs = append(seriesIDs, block.seriesID)
-		}
+	asc, desc, ascErr, descErr := runPartKeyIterDoublePass(t, part, []common.SeriesID{1}, 0, 500, nil)
+	require.NoError(t, ascErr)
+	require.NoError(t, descErr)
+	require.NotEmpty(t, asc)
+	require.NotEmpty(t, desc)
+	for _, block := range asc {
+		assert.Equal(t, common.SeriesID(1), block.seriesID)
 	}
-	require.NoError(t, iter.error())
-	assert.Equal(t, []common.SeriesID{1}, seriesIDs, "only requested series should appear")
-	assert.Equal(t, 1, len(iter.primaryCache), "only one primary block should be cached")
+	for _, block := range desc {
+		assert.Equal(t, common.SeriesID(1), block.seriesID)
+	}
 }
 
 func TestPartKeyIterRequeuesOnGapBetweenBlocks(t *testing.T) {
@@ -441,39 +451,50 @@ func TestPartKeyIterRequeuesOnGapBetweenBlocks(t *testing.T) {
 	part, cleanup := setupPartForKeyIter(t, elems)
 	defer cleanup()
 
-	iter := generatePartKeyIter()
-	defer releasePartKeyIter(iter)
+	for _, asc := range []bool{true, false} {
+		t.Run(orderName(asc), func(t *testing.T) {
+			iter := generatePartKeyIter()
+			defer releasePartKeyIter(iter)
 
-	iter.init(part, []common.SeriesID{1}, 0, 100000, nil)
+			iter.init(part, []common.SeriesID{1}, 0, 100000, nil, asc)
 
-	var groups []struct {
-		min int64
-		max int64
-	}
-	for iter.nextBlock() {
-		bg := iter.currentGroup()
-		require.NotNil(t, bg)
-		blocks := bg.blocks
-		require.NotEmpty(t, blocks)
-		group := struct {
-			min int64
-			max int64
-		}{min: blocks[0].minKey, max: blocks[0].maxKey}
-		for _, block := range blocks[1:] {
-			if block.minKey < group.min {
-				group.min = block.minKey
+			var groups []struct {
+				min int64
+				max int64
 			}
-			if block.maxKey > group.max {
-				group.max = block.maxKey
+			for iter.nextBlock() {
+				bg := iter.currentGroup()
+				require.NotNil(t, bg)
+				require.NotEmpty(t, bg.blocks)
+
+				minVal := bg.blocks[0].minKey
+				maxVal := bg.blocks[0].maxKey
+				for _, block := range bg.blocks[1:] {
+					if block.minKey < minVal {
+						minVal = block.minKey
+					}
+					if block.maxKey > maxVal {
+						maxVal = block.maxKey
+					}
+				}
+				groups = append(groups, struct {
+					min int64
+					max int64
+				}{min: minVal, max: maxVal})
 			}
-		}
-		groups = append(groups, group)
+
+			require.NoError(t, iter.error())
+			require.GreaterOrEqual(t, len(groups), 2, "expected at least two block groups for the same series")
+
+			for i := 1; i < len(groups); i++ {
+				prev := groups[i-1]
+				curr := groups[i]
+				if asc {
+					assert.Greater(t, curr.min, prev.max, "ascending iteration should requeue once a gap is detected")
+				} else {
+					assert.Less(t, curr.max, prev.min, "descending iteration should requeue once a gap is detected")
+				}
+			}
+		})
 	}
-
-	require.NoError(t, iter.error())
-	require.GreaterOrEqual(t, len(groups), 2, "expected at least two block groups for the same series")
-
-	first := groups[0]
-	second := groups[1]
-	assert.Greater(t, second.min, first.max, "subsequent block group should start after the previous group's boundary, indicating requeue")
 }
