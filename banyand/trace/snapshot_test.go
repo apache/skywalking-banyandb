@@ -40,25 +40,26 @@ import (
 
 func TestSnapshotGetParts(t *testing.T) {
 	tests := []struct {
-		snapshot *snapshot
-		name     string
-		dst      []*part
-		expected []*part
-		opts     queryOptions
-		count    int
+		snapshot     *snapshot
+		name         string
+		dst          []*part
+		expected     []*part
+		opts         queryOptions
+		minTimestamp int64
+		maxTimestamp int64
+		count        int
 	}{
 		{
 			name: "Test with empty snapshot",
 			snapshot: &snapshot{
 				parts: []*partWrapper{},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 0,
-				maxTimestamp: 10,
-			},
-			expected: []*part{},
-			count:    0,
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 0,
+			maxTimestamp: 10,
+			expected:     []*part{},
+			count:        0,
 		},
 		{
 			name: "Test with non-empty snapshot and no matching parts",
@@ -78,13 +79,12 @@ func TestSnapshotGetParts(t *testing.T) {
 					},
 				},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 11,
-				maxTimestamp: 15,
-			},
-			expected: []*part{},
-			count:    0,
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 11,
+			maxTimestamp: 15,
+			expected:     []*part{},
+			count:        0,
 		},
 		{
 			name: "Test with non-empty snapshot and some matching parts",
@@ -104,11 +104,10 @@ func TestSnapshotGetParts(t *testing.T) {
 					},
 				},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 5,
-				maxTimestamp: 10,
-			},
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 5,
+			maxTimestamp: 10,
 			expected: []*part{
 				{partMetadata: partMetadata{
 					MinTimestamp: 0,
@@ -164,10 +163,10 @@ func TestSnapshotGetParts(t *testing.T) {
 			}(),
 			dst: []*part{},
 			opts: queryOptions{
-				minTimestamp: 0,
-				maxTimestamp: 10,
-				traceIDs:     []string{"trace1"},
+				traceIDs: []string{"trace1"},
 			},
+			minTimestamp: 0,
+			maxTimestamp: 10,
 			expected: []*part{
 				{
 					partMetadata: partMetadata{
@@ -205,18 +204,18 @@ func TestSnapshotGetParts(t *testing.T) {
 			}(),
 			dst: []*part{},
 			opts: queryOptions{
-				minTimestamp: 0,
-				maxTimestamp: 10,
-				traceIDs:     []string{"trace0"},
+				traceIDs: []string{"trace0"},
 			},
-			expected: []*part{},
-			count:    0,
+			minTimestamp: 0,
+			maxTimestamp: 10,
+			expected:     []*part{},
+			count:        0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp, tt.opts.traceIDs)
+			result, count := tt.snapshot.getParts(tt.dst, tt.minTimestamp, tt.maxTimestamp, tt.opts.traceIDs)
 			assert.Equal(t, tt.count, count)
 			require.Equal(t, len(tt.expected), len(result))
 			for i := range tt.expected {

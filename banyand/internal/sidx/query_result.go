@@ -207,7 +207,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 }
 
 // convertBlockToResponse converts SIDX block data to QueryResponse format.
-func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, result *QueryResponse) {
+func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, partID uint64, result *QueryResponse) {
 	elemCount := len(block.userKeys)
 
 	for i := 0; i < elemCount; i++ {
@@ -229,6 +229,7 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 		result.Keys = append(result.Keys, key)
 		result.Data = append(result.Data, block.data[i])
 		result.SIDs = append(result.SIDs, seriesID)
+		result.PartIDs = append(result.PartIDs, partID)
 
 		// Convert tag map to tag slice for this element
 		elementTags := qr.extractElementTags(block, i)
@@ -288,10 +289,11 @@ func mergeQueryResponseShards(shards []*QueryResponse, maxElements int) *QueryRe
 
 	if len(qrh.cursors) == 0 {
 		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
+			Keys:    make([]int64, 0),
+			Data:    make([][]byte, 0),
+			Tags:    make([][]Tag, 0),
+			SIDs:    make([]common.SeriesID, 0),
+			PartIDs: make([]uint64, 0),
 		}
 	}
 
@@ -324,10 +326,11 @@ func mergeQueryResponseShardsDesc(shards []*QueryResponse, maxElements int) *Que
 
 	if len(qrh.cursors) == 0 {
 		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
+			Keys:    make([]int64, 0),
+			Data:    make([][]byte, 0),
+			Tags:    make([][]Tag, 0),
+			SIDs:    make([]common.SeriesID, 0),
+			PartIDs: make([]uint64, 0),
 		}
 	}
 
@@ -393,10 +396,11 @@ func (qrh *QueryResponseHeap) reset() {
 // mergeWithHeap performs heap-based merge of QueryResponse shards.
 func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 	result := &QueryResponse{
-		Keys: make([]int64, 0, limit),
-		Data: make([][]byte, 0, limit),
-		Tags: make([][]Tag, 0, limit),
-		SIDs: make([]common.SeriesID, 0, limit),
+		Keys:    make([]int64, 0, limit),
+		Data:    make([][]byte, 0, limit),
+		Tags:    make([][]Tag, 0, limit),
+		SIDs:    make([]common.SeriesID, 0, limit),
+		PartIDs: make([]uint64, 0, limit),
 	}
 
 	step := -1
@@ -419,9 +423,10 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		}
 
 		var (
-			data []byte
-			tags []Tag
-			sid  common.SeriesID
+			data   []byte
+			tags   []Tag
+			sid    common.SeriesID
+			partID uint64
 		)
 		if idx < len(resp.Data) {
 			data = resp.Data[idx]
@@ -432,12 +437,16 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		if idx < len(resp.SIDs) {
 			sid = resp.SIDs[idx]
 		}
+		if idx < len(resp.PartIDs) {
+			partID = resp.PartIDs[idx]
+		}
 
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
 		result.Data = append(result.Data, data)
 		result.Tags = append(result.Tags, tags)
 		result.SIDs = append(result.SIDs, sid)
+		result.PartIDs = append(result.PartIDs, partID)
 
 		// Advance cursor
 		topCursor.idx += step

@@ -18,6 +18,7 @@
 package sidx
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"os"
@@ -26,7 +27,9 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -258,7 +261,9 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, req QueryRequest) {
 }
 
 // loadBlockCursor loads block data into the cursor, similar to loadBlockCursor in query_by_ts.go.
-func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanResult, tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory) bool {
+func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanResult,
+	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory, metrics *batchMetrics,
+) bool {
 	tmpBlock.reset()
 
 	// Create a temporary queryResult to reuse existing logic
@@ -274,28 +279,145 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		return false
 	}
 
-	// Copy data to block cursor
-	bc.userKeys = make([]int64, len(tmpBlock.userKeys))
-	copy(bc.userKeys, tmpBlock.userKeys)
-
-	bc.data = make([][]byte, len(tmpBlock.data))
-	for i, data := range tmpBlock.data {
-		bc.data[i] = make([]byte, len(data))
-		copy(bc.data[i], data)
+	if metrics != nil {
+		metrics.blockElementsLoaded.Add(int64(len(tmpBlock.userKeys)))
 	}
 
-	// Copy tags
+	totalElements := len(tmpBlock.userKeys)
+	if totalElements == 0 {
+		return false
+	}
+
+	// Pre-allocate slices for filtered data (optimize for common case where most elements match)
+	bc.userKeys = make([]int64, 0, totalElements)
+	bc.data = make([][]byte, 0, totalElements)
+
+	// Pre-allocate tag slices
 	bc.tags = make(map[string][]Tag)
-	for tagName, tagData := range tmpBlock.tags {
-		tagSlice := make([]Tag, len(tagData.values))
-		for i, value := range tagData.values {
-			tagSlice[i] = Tag{
-				Name:      tagName,
-				Value:     value,
-				ValueType: tagData.valueType,
+	for tagName := range tmpBlock.tags {
+		bc.tags[tagName] = make([]Tag, 0, totalElements)
+	}
+
+	// Track seen data for deduplication using hash buckets with collision checks
+	seenData := make(map[uint64][][]byte)
+
+	// Single loop: filter and copy data in one pass
+	if req.TagFilter != nil {
+		tags := make([]*modelv1.Tag, 0, len(tmpBlock.tags))
+		decoder := req.TagFilter.GetDecoder()
+
+		for i := 0; i < totalElements; i++ {
+			// Check for duplicate data before processing via hash + bytes.Equal on collisions
+			dataBytes := tmpBlock.data[i]
+			h := convert.Hash(dataBytes)
+			bucket := seenData[h]
+			duplicate := false
+			for _, b := range bucket {
+				if bytes.Equal(b, dataBytes) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				if metrics != nil {
+					metrics.elementsDeduplicated.Add(1)
+				}
+				continue
+			}
+
+			// Build tags slice for this element
+			tags = tags[:0]
+			for tagName, tagData := range tmpBlock.tags {
+				if i < len(tagData.values) && tagData.values[i] != nil {
+					// Decode []byte to *modelv1.TagValue using the provided decoder
+					tagValue := decoder(tagData.valueType, tagData.values[i])
+					if tagValue != nil {
+						tags = append(tags, &modelv1.Tag{
+							Key:   tagName,
+							Value: tagValue,
+						})
+					}
+				}
+			}
+
+			// Apply filter
+			matched, err := req.TagFilter.Match(tags)
+			if err != nil {
+				s.l.Error().Err(err).Msg("tag filter match error")
+				return false
+			}
+
+			if matched {
+				// Mark data as seen
+				seenData[h] = append(bucket, dataBytes)
+
+				// Copy userKey
+				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+
+				// Copy data
+				dataCopy := make([]byte, len(tmpBlock.data[i]))
+				copy(dataCopy, tmpBlock.data[i])
+				bc.data = append(bc.data, dataCopy)
+
+				// Copy tags
+				for tagName, tagData := range tmpBlock.tags {
+					if i < len(tagData.values) {
+						bc.tags[tagName] = append(bc.tags[tagName], Tag{
+							Name:      tagName,
+							Value:     tagData.values[i],
+							ValueType: tagData.valueType,
+						})
+					}
+				}
 			}
 		}
-		bc.tags[tagName] = tagSlice
+	} else {
+		// No filter - copy all elements but skip duplicates
+		for i := 0; i < totalElements; i++ {
+			// Check for duplicate data via hash + bytes.Equal on collisions
+			dataBytes := tmpBlock.data[i]
+			h := convert.Hash(dataBytes)
+			bucket := seenData[h]
+			duplicate := false
+			for _, b := range bucket {
+				if bytes.Equal(b, dataBytes) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
+
+			// Mark data as seen
+			seenData[h] = append(bucket, dataBytes)
+
+			// Copy userKey
+			bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+
+			// Copy data
+			dataCopy := make([]byte, len(tmpBlock.data[i]))
+			copy(dataCopy, tmpBlock.data[i])
+			bc.data = append(bc.data, dataCopy)
+
+			// Copy tags
+			for tagName, tagData := range tmpBlock.tags {
+				if i < len(tagData.values) {
+					bc.tags[tagName] = append(bc.tags[tagName], Tag{
+						Name:      tagName,
+						Value:     tagData.values[i],
+						ValueType: tagData.valueType,
+					})
+				}
+			}
+		}
+	}
+
+	if metrics != nil {
+		metrics.outputElementsEmitted.Add(int64(len(bc.userKeys)))
+		if len(bc.userKeys) == 0 {
+			metrics.blocksSkipped.Add(1)
+		}
 	}
 
 	return len(bc.userKeys) > 0
@@ -319,6 +441,7 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	result.Keys = append(result.Keys, key)
 	result.Data = append(result.Data, bc.data[bc.idx])
 	result.SIDs = append(result.SIDs, bc.seriesID)
+	result.PartIDs = append(result.PartIDs, bc.p.ID())
 
 	// Copy tags for this element
 	var elementTags []Tag
@@ -403,7 +526,7 @@ func (bch *blockCursorHeap) pushCursors(cursors []*blockCursor) {
 // merge performs heap-based merge similar to query_by_ts.go.
 // It returns a QueryResponse along with a flag indicating whether the merge
 // stopped because the MaxBatchSize limit has been reached.
-func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, stats *streamingStats) error {
+func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, metrics *batchMetrics) error {
 	if !bch.initialized || bch.Len() == 0 {
 		return nil
 	}
@@ -415,11 +538,15 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 	// Initialize first batch
 	batch := &QueryResponse{
-		Keys: make([]int64, 0),
-		Data: make([][]byte, 0),
-		Tags: make([][]Tag, 0),
-		SIDs: make([]common.SeriesID, 0),
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		Tags:    make([][]Tag, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
 	}
+
+	// Track seen data for deduplication across all batches using hash buckets with collision checks
+	seenData := make(map[uint64][][]byte)
 
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
@@ -428,8 +555,26 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			continue
 		}
 
-		// Copy the element (may be filtered out by key range)
-		topBC.copyTo(batch)
+		// Check for duplicate data before copying via hash + bytes.Equal on collisions
+		currentData := topBC.data[topBC.idx]
+		h := convert.Hash(currentData)
+		bucket := seenData[h]
+		duplicate := false
+		for _, b := range bucket {
+			if bytes.Equal(b, currentData) {
+				duplicate = true
+				break
+			}
+		}
+
+		// Only copy if this data hasn't been seen across all batches
+		if !duplicate {
+			// Copy the element (may be filtered out by key range)
+			if topBC.copyTo(batch) {
+				// Mark this data as seen
+				seenData[h] = append(bucket, currentData)
+			}
+		}
 
 		topBC.idx += step
 
@@ -449,8 +594,8 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 
 		// Send the batch when it reaches batchSize
 		if batchSize > 0 && batch.Len() >= batchSize {
-			if stats != nil {
-				stats.record(batch)
+			if metrics != nil {
+				metrics.record(batch)
 			}
 
 			select {
@@ -459,20 +604,22 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			case resultsCh <- batch:
 			}
 
-			// Create a new batch and continue
+			// Create a new batch but keep the deduplication map for global deduplication
 			batch = &QueryResponse{
-				Keys: make([]int64, 0),
-				Data: make([][]byte, 0),
-				Tags: make([][]Tag, 0),
-				SIDs: make([]common.SeriesID, 0),
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				Tags:    make([][]Tag, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
 			}
+			// Do NOT reset seenData here - maintain it across batches for global deduplication
 		}
 	}
 
 	// Send remaining elements in the last batch
 	if batch.Len() > 0 {
-		if stats != nil {
-			stats.record(batch)
+		if metrics != nil {
+			metrics.record(batch)
 		}
 
 		select {

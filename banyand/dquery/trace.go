@@ -117,14 +117,15 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 			data := resp.Data()
 			switch d := data.(type) {
 			case *tracev1.InternalQueryResponse:
+				span.Stop()
 				d.TraceQueryResult = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
+				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{TraceQueryResult: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
-			span.Stop()
 		}()
 	}
 	te := plan.(executor.TraceExecutable)

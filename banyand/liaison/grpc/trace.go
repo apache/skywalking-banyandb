@@ -349,11 +349,12 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		defer func() {
 			if err != nil {
 				span.Error(err)
+				span.Stop()
 			} else if resp != nil && resp != emptyTraceQueryResponse {
 				span.AddSubTrace(resp.TraceQueryResult)
+				span.Stop()
 				resp.TraceQueryResult = tracer.ToProto()
 			}
-			span.Stop()
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)

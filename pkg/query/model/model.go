@@ -318,6 +318,7 @@ type StreamQueryResult interface {
 // TraceQueryOptions is the options of a trace query.
 type TraceQueryOptions struct {
 	SkippingFilter index.Filter
+	TagFilter      TagFilterMatcher
 	TimeRange      *timestamp.TimeRange
 	Order          *index.OrderBy
 	TagProjection  *TagProjection
@@ -334,6 +335,7 @@ func (t *TraceQueryOptions) Reset() {
 	t.Name = ""
 	t.TimeRange = nil
 	t.SkippingFilter = nil
+	t.TagFilter = nil
 	t.Order = nil
 	t.TagProjection = nil
 	t.Entities = nil
@@ -346,6 +348,7 @@ func (t *TraceQueryOptions) CopyFrom(other *TraceQueryOptions) {
 	t.Name = other.Name
 	t.TimeRange = other.TimeRange
 	t.SkippingFilter = other.SkippingFilter
+	t.TagFilter = other.TagFilter
 	t.Order = other.Order
 	t.TagProjection = other.TagProjection
 	t.Entities = other.Entities

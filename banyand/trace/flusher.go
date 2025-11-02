@@ -255,6 +255,9 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	select {
 	case flushCh <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		for _, pw := range ind.flushed {
+			pw.decRef()
+		}
 		return
 	}
 	select {
