@@ -91,11 +91,8 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		return
 	}
 
-	// Check for context cancellation before starting expensive operations
-	select {
-	case <-ctx.Done():
+	if !bsn.checkContext(ctx) {
 		return
-	default:
 	}
 
 	it := generateIter()
@@ -106,84 +103,42 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	batch := generateBlockScanResultBatch()
 	if it.Error() != nil {
 		batch.err = fmt.Errorf("cannot init iter: %w", it.Error())
-		select {
-		case blockCh <- batch:
-		case <-ctx.Done():
-			releaseBlockScanResultBatch(batch)
-		}
+		bsn.sendBatch(ctx, blockCh, batch)
 		return
 	}
 
 	var totalBlockBytes uint64
 	for it.nextBlock() {
-		// Check for context cancellation during iteration
-		select {
-		case <-ctx.Done():
+		if !bsn.checkContext(ctx) {
 			releaseBlockScanResultBatch(batch)
 			return
-		default:
 		}
 
 		bm, p := it.current()
-		if bm == nil {
-			it.err = fmt.Errorf("sidx iterator returned nil block")
-			batch.err = it.err
-			select {
-			case blockCh <- batch:
-			case <-ctx.Done():
-				releaseBlockScanResultBatch(batch)
-			}
-			return
-		}
-		if p == nil {
-			it.err = fmt.Errorf("block missing part reference")
-			batch.err = it.err
-			select {
-			case blockCh <- batch:
-			case <-ctx.Done():
-				releaseBlockScanResultBatch(batch)
-			}
+		if err := bsn.validateBlockMetadata(bm, p, it); err != nil {
+			batch.err = err
+			bsn.sendBatch(ctx, blockCh, batch)
 			return
 		}
 
 		blockSize := bm.uncompressedSize
 
 		// Check if adding this block would exceed quota
-		quota := bsn.pm.AvailableBytes()
-		if quota >= 0 && totalBlockBytes+blockSize > uint64(quota) {
-			if len(batch.bss) > 0 {
-				// Send current batch without error
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-				}
-				return
+		if exceeded, err := bsn.checkQuotaExceeded(totalBlockBytes, blockSize, batch); exceeded {
+			if err != nil {
+				batch.err = err
 			}
-			// Batch is empty, send error
-			err := fmt.Errorf("sidx block scan quota exceeded: block size %s, quota is %s", humanize.Bytes(blockSize), humanize.Bytes(uint64(quota)))
-			batch.err = err
-			select {
-			case blockCh <- batch:
-			case <-ctx.Done():
-				releaseBlockScanResultBatch(batch)
-				return
-			}
+			bsn.sendBatch(ctx, blockCh, batch)
 			return
 		}
 
 		// Quota OK, add block to batch
-		batch.bss = append(batch.bss, blockScanResult{p: p})
-		bs := &batch.bss[len(batch.bss)-1]
-		bs.bm.copyFrom(bm)
+		bsn.addBlockToBatch(batch, bm, p)
 		totalBlockBytes += blockSize
 
 		// Check if batch is full
 		if len(batch.bss) >= cap(batch.bss) {
-			select {
-			case blockCh <- batch:
-			case <-ctx.Done():
-				releaseBlockScanResultBatch(batch)
+			if !bsn.sendBatch(ctx, blockCh, batch) {
 				if dl := bsn.l.Debug(); dl.Enabled() {
 					dl.Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")
 				}
@@ -195,24 +150,77 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 
 	if it.Error() != nil {
 		batch.err = fmt.Errorf("cannot iterate iter: %w", it.Error())
-		select {
-		case blockCh <- batch:
-		case <-ctx.Done():
-			releaseBlockScanResultBatch(batch)
-		}
+		bsn.sendBatch(ctx, blockCh, batch)
 		return
 	}
 
 	if len(batch.bss) > 0 {
-		select {
-		case blockCh <- batch:
-		case <-ctx.Done():
-			releaseBlockScanResultBatch(batch)
-		}
+		bsn.sendBatch(ctx, blockCh, batch)
 		return
 	}
 
 	releaseBlockScanResultBatch(batch)
+}
+
+// checkContext returns false if context is canceled.
+func (bsn *blockScanner) checkContext(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+// sendBatch sends a batch to the channel, handling context cancellation.
+// Returns false if context was canceled, true otherwise.
+func (bsn *blockScanner) sendBatch(ctx context.Context, blockCh chan *blockScanResultBatch, batch *blockScanResultBatch) bool {
+	select {
+	case blockCh <- batch:
+		return true
+	case <-ctx.Done():
+		releaseBlockScanResultBatch(batch)
+		return false
+	}
+}
+
+// validateBlockMetadata checks if block metadata and part are valid.
+func (bsn *blockScanner) validateBlockMetadata(bm *blockMetadata, p *part, it *iter) error {
+	if bm == nil {
+		it.err = fmt.Errorf("sidx iterator returned nil block")
+		return it.err
+	}
+	if p == nil {
+		it.err = fmt.Errorf("block missing part reference")
+		return it.err
+	}
+	return nil
+}
+
+// checkQuotaExceeded checks if adding a block would exceed the memory quota.
+// Returns (exceeded, error) where exceeded is true if quota would be exceeded.
+func (bsn *blockScanner) checkQuotaExceeded(totalBlockBytes, blockSize uint64, batch *blockScanResultBatch) (bool, error) {
+	quota := bsn.pm.AvailableBytes()
+	if quota < 0 || totalBlockBytes+blockSize <= uint64(quota) {
+		return false, nil
+	}
+
+	// Quota would be exceeded
+	if len(batch.bss) > 0 {
+		// Send current batch without error
+		return true, nil
+	}
+
+	// Batch is empty, return error
+	return true, fmt.Errorf("sidx block scan quota exceeded: block size %s, quota is %s",
+		humanize.Bytes(blockSize), humanize.Bytes(uint64(quota)))
+}
+
+// addBlockToBatch adds a block to the batch.
+func (bsn *blockScanner) addBlockToBatch(batch *blockScanResultBatch, bm *blockMetadata, p *part) {
+	batch.bss = append(batch.bss, blockScanResult{p: p})
+	bs := &batch.bss[len(batch.bss)-1]
+	bs.bm.copyFrom(bm)
 }
 
 func (bsn *blockScanner) close() {

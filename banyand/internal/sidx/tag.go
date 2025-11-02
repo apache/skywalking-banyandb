@@ -134,8 +134,7 @@ func generateBloomFilter(expectedElements int) *filter.BloomFilter {
 	}
 	// Reset and resize for new expected elements
 	v.SetN(expectedElements)
-	m := expectedElements * filter.B
-	v.ResizeBits((m + 63) / 64)
+	v.ResizeBits(filter.OptimalBitsSize(expectedElements))
 	return v
 }
 
@@ -167,10 +166,11 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	n := pkgencoding.BytesToInt64(src)
 	bf := generateBloomFilter(int(n))
 
-	m := n * filter.B
-	bits := make([]uint64, 0, (m+63)/64)
+	// With B=16, use optimized bit shift calculation
+	bitsSize := filter.OptimalBitsSize(int(n))
+	bits := make([]uint64, 0, bitsSize)
 	var err error
-	bits, _, err = pkgencoding.DecodeUint64Block(bits, src[8:], uint64((m+63)/64))
+	bits, _, err = pkgencoding.DecodeUint64Block(bits, src[8:], uint64(bitsSize))
 	if err != nil {
 		releaseBloomFilter(bf)
 		return nil, fmt.Errorf("failed to decode bloom filter bits: %w", err)

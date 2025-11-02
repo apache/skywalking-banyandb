@@ -30,11 +30,11 @@ import (
 
 type iter struct {
 	err       error
+	curBlock  *blockMetadata
+	curPart   *part
 	parts     []*part
 	partIters []*partKeyIter
 	heap      partKeyIterHeap
-	curBlock  *blockMetadata
-	curPart   *part
 	asc       bool
 }
 

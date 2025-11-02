@@ -189,12 +189,12 @@ type partKeyIter struct {
 	sidSet               map[common.SeriesID]struct{}
 	p                    *part
 	primaryCache         map[int]*blockMetadataArray
-	compressedPrimaryBuf []byte
+	curBlock             *blockMetadata
 	cursorPool           []seriesCursor
 	cursorHeap           seriesCursorHeap
 	sids                 []common.SeriesID
 	primaryBuf           []byte
-	curBlock             *blockMetadata
+	compressedPrimaryBuf []byte
 	minKey               int64
 	maxKey               int64
 	asc                  bool

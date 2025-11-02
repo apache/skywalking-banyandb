@@ -564,7 +564,7 @@ func TestIterOverlappingBlockGroups(t *testing.T) {
 		partsSeen := make(map[*part]struct{})
 		seriesSeen := make(map[common.SeriesID]struct{})
 		totalBlocks := 0
-		
+
 		for it.nextBlock() {
 			bm, p := it.current()
 			require.NotNil(t, bm, "current block should not be nil")
@@ -610,7 +610,7 @@ func runIteratorPass(t *testing.T, tc iterTestCase, parts []*part, asc bool) []b
 	for it.nextBlock() {
 		curBlock, _ := it.current()
 		require.NotNil(t, curBlock, "current block should not be nil when nextBlock returns true (order=%s)", orderName(asc))
-		
+
 		overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
 		assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
 			tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
