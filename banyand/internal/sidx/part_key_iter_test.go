@@ -62,15 +62,13 @@ func runPartKeyIterPass(t *testing.T, part *part, sids []common.SeriesID, minKey
 
 	var results []blockExpectation
 	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		for _, block := range group.blocks {
-			results = append(results, blockExpectation{
-				seriesID: block.seriesID,
-				minKey:   block.minKey,
-				maxKey:   block.maxKey,
-			})
-		}
+		block, _ := iter.current()
+		require.NotNil(t, block)
+		results = append(results, blockExpectation{
+			seriesID: block.seriesID,
+			minKey:   block.minKey,
+			maxKey:   block.maxKey,
+		})
 	}
 
 	return results, iter.error()
@@ -264,21 +262,18 @@ func TestPartKeyIterGroupsOverlappingRanges(t *testing.T) {
 	iter := generatePartKeyIter()
 	defer releasePartKeyIter(iter)
 	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 500, nil, true)
-	var groups [][]common.SeriesID
+	var ids []common.SeriesID
 	for iter.nextBlock() {
-		group := iter.currentGroup()
-		require.NotNil(t, group)
-		require.NotEmpty(t, group.blocks)
-		var ids []common.SeriesID
-		for _, block := range group.blocks {
-			ids = append(ids, block.seriesID)
-		}
-		groups = append(groups, ids)
+		block, _ := iter.current()
+		require.NotNil(t, block)
+		ids = append(ids, block.seriesID)
 	}
 	require.NoError(t, iter.error())
-	require.GreaterOrEqual(t, len(groups), 2, "expected at least two block groups")
-	assert.Equal(t, []common.SeriesID{1, 2}, groups[0], "overlapping ranges should be grouped together")
-	assert.Contains(t, groups[1:], []common.SeriesID{3}, "non-overlapping series should appear in subsequent groups")
+	require.GreaterOrEqual(t, len(ids), 3, "expected at least three blocks")
+	// Verify we get blocks from all three series
+	require.Contains(t, ids, common.SeriesID(1))
+	require.Contains(t, ids, common.SeriesID(2))
+	require.Contains(t, ids, common.SeriesID(3))
 }
 
 func TestPartKeyIterSelectiveFilterAllowsLaterBlocks(t *testing.T) {
@@ -379,15 +374,14 @@ func TestPartKeyIterExhaustion(t *testing.T) {
 
 			iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil, asc)
 
-			groupCount := 0
+			blockCount := 0
 			for iter.nextBlock() {
-				group := iter.currentGroup()
-				require.NotNil(t, group)
-				require.NotEmpty(t, group.blocks)
-				groupCount++
+				block, _ := iter.current()
+				require.NotNil(t, block)
+				blockCount++
 			}
 			require.NoError(t, iter.error())
-			require.Greater(t, groupCount, 0, "iterator should yield at least one group")
+			require.Greater(t, blockCount, 0, "iterator should yield at least one block")
 
 			assert.False(t, iter.nextBlock(), "iterator should report exhaustion")
 			assert.NoError(t, iter.error())
@@ -458,41 +452,30 @@ func TestPartKeyIterRequeuesOnGapBetweenBlocks(t *testing.T) {
 
 			iter.init(part, []common.SeriesID{1}, 0, 100000, nil, asc)
 
-			var groups []struct {
+			var blocks []struct {
 				min int64
 				max int64
 			}
 			for iter.nextBlock() {
-				bg := iter.currentGroup()
-				require.NotNil(t, bg)
-				require.NotEmpty(t, bg.blocks)
-
-				minVal := bg.blocks[0].minKey
-				maxVal := bg.blocks[0].maxKey
-				for _, block := range bg.blocks[1:] {
-					if block.minKey < minVal {
-						minVal = block.minKey
-					}
-					if block.maxKey > maxVal {
-						maxVal = block.maxKey
-					}
-				}
-				groups = append(groups, struct {
+				block, _ := iter.current()
+				require.NotNil(t, block)
+				blocks = append(blocks, struct {
 					min int64
 					max int64
-				}{min: minVal, max: maxVal})
+				}{min: block.minKey, max: block.maxKey})
 			}
 
 			require.NoError(t, iter.error())
-			require.GreaterOrEqual(t, len(groups), 2, "expected at least two block groups for the same series")
+			require.GreaterOrEqual(t, len(blocks), 2, "expected at least two blocks for the same series")
 
-			for i := 1; i < len(groups); i++ {
-				prev := groups[i-1]
-				curr := groups[i]
+			// Verify blocks are in proper order
+			for i := 1; i < len(blocks); i++ {
+				prev := blocks[i-1]
+				curr := blocks[i]
 				if asc {
-					assert.Greater(t, curr.min, prev.max, "ascending iteration should requeue once a gap is detected")
+					assert.LessOrEqual(t, prev.min, curr.min, "ascending iteration should maintain order")
 				} else {
-					assert.Less(t, curr.max, prev.min, "descending iteration should requeue once a gap is detected")
+					assert.GreaterOrEqual(t, prev.max, curr.max, "descending iteration should maintain order")
 				}
 			}
 		})

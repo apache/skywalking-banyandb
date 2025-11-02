@@ -29,14 +29,21 @@ import (
 )
 
 type iter struct {
-	err           error
-	parts         []*part
-	partIters     []*partKeyIter
-	heap          partKeyIterHeap
-	currentGroups []*blockGroup
-	activeIters   []*partKeyIter
-	asc           bool
-	nextBlockNoop bool
+	err       error
+	parts     []*part
+	partIters []*partKeyIter
+	heap      partKeyIterHeap
+	curBlock  *blockMetadata
+	curPart   *part
+	asc       bool
+}
+
+func (it *iter) releaseCurBlock() {
+	if it.curBlock != nil {
+		releaseBlockMetadata(it.curBlock)
+		it.curBlock = nil
+	}
+	it.curPart = nil
 }
 
 func (it *iter) reset() {
@@ -58,11 +65,9 @@ func (it *iter) reset() {
 	}
 	it.heap = it.heap[:0]
 
-	it.currentGroups = it.currentGroups[:0]
-	it.activeIters = it.activeIters[:0]
+	it.releaseCurBlock()
 
 	it.err = nil
-	it.nextBlockNoop = false
 	it.asc = false
 }
 
@@ -114,15 +119,11 @@ func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64
 			continue
 		}
 
-		group := pki.currentGroup()
-		if group == nil || len(group.blocks) == 0 {
+		bm, _ := pki.current()
+		if bm == nil {
 			releasePartKeyIter(pki)
 			it.partIters[i] = nil
 			continue
-		}
-
-		if group.part == nil {
-			group.part = p
 		}
 
 		it.heap = append(it.heap, pki)
@@ -134,7 +135,6 @@ func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64
 	}
 
 	heap.Init(&it.heap)
-	it.nextBlockNoop = true
 }
 
 func (it *iter) nextBlock() bool {
@@ -142,141 +142,42 @@ func (it *iter) nextBlock() bool {
 		return false
 	}
 
-	if it.nextBlockNoop {
-		it.nextBlockNoop = false
-		if err := it.aggregateGroups(); err != nil {
+	it.releaseCurBlock()
+
+	if len(it.heap) == 0 {
+		it.err = io.EOF
+		return false
+	}
+
+	pki := heap.Pop(&it.heap).(*partKeyIter)
+	bm, p := pki.current()
+	if bm == nil {
+		it.releasePartIter(pki)
+		it.err = fmt.Errorf("partKeyIter has no current block")
+		return false
+	}
+
+	it.curBlock = generateBlockMetadata()
+	it.curBlock.copyFrom(bm)
+	it.curPart = p
+
+	if !pki.nextBlock() {
+		err := pki.error()
+		it.releasePartIter(pki)
+		if err != nil && !errors.Is(err, io.EOF) {
+			it.releaseCurBlock()
 			it.err = err
-			if errors.Is(err, io.EOF) {
-				return false
-			}
 			return false
 		}
-		return true
-	}
-
-	if err := it.advanceActive(); err != nil {
-		it.err = err
-		if errors.Is(err, io.EOF) {
-			return false
-		}
-		return false
-	}
-
-	if err := it.aggregateGroups(); err != nil {
-		it.err = err
-		if errors.Is(err, io.EOF) {
-			return false
-		}
-		return false
+	} else {
+		heap.Push(&it.heap, pki)
 	}
 
 	return true
 }
 
-func (it *iter) aggregateGroups() error {
-	it.currentGroups = it.currentGroups[:0]
-	it.activeIters = it.activeIters[:0]
-
-	for len(it.heap) > 0 {
-		top := it.heap[0]
-		group := top.currentGroup()
-		if group == nil || len(group.blocks) == 0 {
-			heap.Pop(&it.heap)
-			it.releasePartIter(top)
-			continue
-		}
-		if group.part == nil {
-			group.part = top.p
-		}
-		break
-	}
-
-	if len(it.heap) == 0 {
-		return io.EOF
-	}
-
-	boundary := int64(0)
-	firstGroup := true
-
-	for len(it.heap) > 0 {
-		top := heap.Pop(&it.heap).(*partKeyIter)
-		group := top.currentGroup()
-		if group == nil || len(group.blocks) == 0 {
-			it.releasePartIter(top)
-			continue
-		}
-		if group.part == nil {
-			group.part = top.p
-		}
-
-		if firstGroup {
-			if it.asc {
-				boundary = group.maxKey
-			} else {
-				boundary = group.minKey
-			}
-			firstGroup = false
-		} else {
-			if it.asc {
-				if group.minKey > boundary {
-					heap.Push(&it.heap, top)
-					break
-				}
-			} else {
-				if group.maxKey < boundary {
-					heap.Push(&it.heap, top)
-					break
-				}
-			}
-		}
-
-		it.currentGroups = append(it.currentGroups, group)
-		it.activeIters = append(it.activeIters, top)
-
-		if it.asc {
-			if group.maxKey > boundary {
-				boundary = group.maxKey
-			}
-		} else {
-			if group.minKey < boundary {
-				boundary = group.minKey
-			}
-		}
-	}
-
-	if len(it.currentGroups) == 0 {
-		return io.EOF
-	}
-
-	return nil
-}
-
-func (it *iter) advanceActive() error {
-	for _, pki := range it.activeIters {
-		for {
-			if !pki.nextBlock() {
-				err := pki.error()
-				it.releasePartIter(pki)
-				if err != nil && !errors.Is(err, io.EOF) {
-					return err
-				}
-				break
-			}
-
-			group := pki.currentGroup()
-			if group == nil || len(group.blocks) == 0 {
-				continue
-			}
-			if group.part == nil {
-				group.part = pki.p
-			}
-			heap.Push(&it.heap, pki)
-			break
-		}
-	}
-
-	it.activeIters = it.activeIters[:0]
-	return nil
+func (it *iter) current() (*blockMetadata, *part) {
+	return it.curBlock, it.curPart
 }
 
 func (it *iter) Error() error {
@@ -309,12 +210,12 @@ func (pih *partKeyIterHeap) Len() int {
 
 func (pih *partKeyIterHeap) Less(i, j int) bool {
 	x := *pih
-	gi := x[i].currentGroup()
-	gj := x[j].currentGroup()
-	if gi == nil {
+	bmi, _ := x[i].current()
+	bmj, _ := x[j].current()
+	if bmi == nil {
 		return false
 	}
-	if gj == nil {
+	if bmj == nil {
 		return true
 	}
 	asc := true
@@ -323,7 +224,10 @@ func (pih *partKeyIterHeap) Less(i, j int) bool {
 	} else if x[j] != nil {
 		asc = x[j].asc
 	}
-	return gi.less(gj, asc)
+	if asc {
+		return bmi.lessByKey(bmj)
+	}
+	return bmj.lessByKey(bmi)
 }
 
 func (pih *partKeyIterHeap) Swap(i, j int) {

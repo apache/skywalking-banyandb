@@ -499,7 +499,6 @@ func TestIterPoolOperations(t *testing.T) {
 
 		// Set some state
 		it.err = fmt.Errorf("test error")
-		it.nextBlockNoop = true
 
 		// Reset should clear everything
 		it.reset()
@@ -507,7 +506,6 @@ func TestIterPoolOperations(t *testing.T) {
 		assert.Equal(t, 0, len(it.parts))
 		assert.Equal(t, 0, len(it.partIters))
 		assert.Equal(t, 0, len(it.heap))
-		assert.False(t, it.nextBlockNoop)
 	})
 }
 
@@ -562,26 +560,23 @@ func TestIterOverlappingBlockGroups(t *testing.T) {
 		it := generateIter()
 		it.init([]*part{part1, part2}, []common.SeriesID{1, 2}, 0, 500, nil, asc)
 
-		require.True(t, it.nextBlock(), "expected overlapping groups on first iteration")
-		require.Len(t, it.currentGroups, 2, "both parts should produce overlapping groups")
-
+		// Now we iterate individual blocks from both parts
 		partsSeen := make(map[*part]struct{})
+		seriesSeen := make(map[common.SeriesID]struct{})
 		totalBlocks := 0
-		for _, group := range it.currentGroups {
-			require.NotNil(t, group)
-			require.NotNil(t, group.part)
-			require.NotEmpty(t, group.blocks)
-			partsSeen[group.part] = struct{}{}
-			totalBlocks += len(group.blocks)
+		
+		for it.nextBlock() {
+			bm, p := it.current()
+			require.NotNil(t, bm, "current block should not be nil")
+			require.NotNil(t, p, "current part should not be nil")
+			partsSeen[p] = struct{}{}
+			seriesSeen[bm.seriesID] = struct{}{}
+			totalBlocks++
 		}
 
 		require.Len(t, partsSeen, 2, "expected contributions from both parts")
-		require.Equal(t, 2, totalBlocks, "should surface one block per part in overlapping aggregation")
-		for _, group := range it.currentGroups {
-			require.Len(t, group.blocks, 1, "each group should expose a single block metadata entry")
-		}
-
-		assert.False(t, it.nextBlock(), "no additional groups expected after initial overlap")
+		require.Len(t, seriesSeen, 2, "expected blocks from both series")
+		require.GreaterOrEqual(t, totalBlocks, 2, "should iterate at least 2 blocks (one per part)")
 		assert.NoError(t, it.Error())
 		releaseIter(it)
 	}
@@ -613,23 +608,19 @@ func runIteratorPass(t *testing.T, tc iterTestCase, parts []*part, asc bool) []b
 	var foundBlocks []blockExpectation
 
 	for it.nextBlock() {
-		require.NotEmpty(t, it.currentGroups, "currentGroups should not be empty when nextBlock returns true (order=%s)", orderName(asc))
-		for _, group := range it.currentGroups {
-			require.NotNil(t, group)
-			require.NotEmpty(t, group.blocks)
-			for _, curBlock := range group.blocks {
-				overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
-				assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
-					tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
-				assert.Contains(t, tc.querySids, curBlock.seriesID, "block seriesID should be in query sids")
+		curBlock, _ := it.current()
+		require.NotNil(t, curBlock, "current block should not be nil when nextBlock returns true (order=%s)", orderName(asc))
+		
+		overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
+		assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
+			tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
+		assert.Contains(t, tc.querySids, curBlock.seriesID, "block seriesID should be in query sids")
 
-				foundBlocks = append(foundBlocks, blockExpectation{
-					seriesID: curBlock.seriesID,
-					minKey:   curBlock.minKey,
-					maxKey:   curBlock.maxKey,
-				})
-			}
-		}
+		foundBlocks = append(foundBlocks, blockExpectation{
+			seriesID: curBlock.seriesID,
+			minKey:   curBlock.minKey,
+			maxKey:   curBlock.maxKey,
+		})
 	}
 
 	// Check for errors

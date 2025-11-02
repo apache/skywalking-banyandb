@@ -124,9 +124,19 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		default:
 		}
 
-		groups := it.currentGroups
-		if len(groups) == 0 {
-			it.err = fmt.Errorf("sidx iterator returned empty block group list")
+		bm, p := it.current()
+		if bm == nil {
+			it.err = fmt.Errorf("sidx iterator returned nil block")
+			batch.err = it.err
+			select {
+			case blockCh <- batch:
+			case <-ctx.Done():
+				releaseBlockScanResultBatch(batch)
+			}
+			return
+		}
+		if p == nil {
+			it.err = fmt.Errorf("block missing part reference")
 			batch.err = it.err
 			select {
 			case blockCh <- batch:
@@ -136,38 +146,11 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 			return
 		}
 
-		var groupSize uint64
-		totalBlocks := 0
-		for _, group := range groups {
-			if group == nil || len(group.blocks) == 0 {
-				it.err = fmt.Errorf("sidx iterator returned empty block group")
-				batch.err = it.err
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-				}
-				return
-			}
-			if group.part == nil {
-				it.err = fmt.Errorf("block group missing part reference")
-				batch.err = it.err
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-				}
-				return
-			}
-			for _, block := range group.blocks {
-				groupSize += block.uncompressedSize
-			}
-			totalBlocks += len(group.blocks)
-		}
+		blockSize := bm.uncompressedSize
 
 		// Check if adding this block would exceed quota
 		quota := bsn.pm.AvailableBytes()
-		if quota >= 0 && totalBlockBytes+groupSize > uint64(quota) {
+		if quota >= 0 && totalBlockBytes+blockSize > uint64(quota) {
 			if len(batch.bss) > 0 {
 				// Send current batch without error
 				select {
@@ -178,7 +161,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 				return
 			}
 			// Batch is empty, send error
-			err := fmt.Errorf("sidx block scan quota exceeded: block size %s, quota is %s", humanize.Bytes(groupSize), humanize.Bytes(uint64(quota)))
+			err := fmt.Errorf("sidx block scan quota exceeded: block size %s, quota is %s", humanize.Bytes(blockSize), humanize.Bytes(uint64(quota)))
 			batch.err = err
 			select {
 			case blockCh <- batch:
@@ -189,29 +172,11 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 			return
 		}
 
-		// Quota OK, add blocks to batch
-		needed := len(batch.bss) + totalBlocks
-		if cap(batch.bss) < needed {
-			newCap := cap(batch.bss)
-			if newCap == 0 {
-				newCap = blockScannerBatchSize
-			}
-			for newCap < needed {
-				newCap *= 2
-			}
-			newSlice := make([]blockScanResult, len(batch.bss), newCap)
-			copy(newSlice, batch.bss)
-			batch.bss = newSlice
-		}
-
-		for _, group := range groups {
-			for _, block := range group.blocks {
-				batch.bss = append(batch.bss, blockScanResult{p: group.part})
-				bs := &batch.bss[len(batch.bss)-1]
-				bs.bm.copyFrom(block)
-			}
-		}
-		totalBlockBytes += groupSize
+		// Quota OK, add block to batch
+		batch.bss = append(batch.bss, blockScanResult{p: p})
+		bs := &batch.bss[len(batch.bss)-1]
+		bs.bm.copyFrom(bm)
+		totalBlockBytes += blockSize
 
 		// Check if batch is full
 		if len(batch.bss) >= cap(batch.bss) {
