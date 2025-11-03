@@ -53,6 +53,7 @@ Release Notes.
 - Implement Trace Tree for debug mode.
 - Implement bydbQL.
 - UI: Implement the Query Page for BydbQL.
+- Implement the handoff queue for Trace.
 
 ### Bug Fixes
 
