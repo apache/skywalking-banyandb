@@ -22,9 +22,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -52,8 +54,9 @@ import (
 )
 
 const (
-	nodeHost = "127.0.0.1"
-	grpcHost = "127.0.0.1"
+	nodeHost        = "127.0.0.1"
+	grpcHost        = "127.0.0.1"
+	traceShardCount = 2
 )
 
 type dataNodeHandle struct {
@@ -362,31 +365,51 @@ var _ = Describe("trace handoff", func() {
 	It("replays data to recovered nodes and empties the queue", func() {
 		Expect(connection).NotTo(BeNil())
 
-		By("ensuring the handoff queue starts empty")
-		Expect(countPendingParts(dnHandles[0].addr)).To(Equal(0))
+		nodeAddrs := []string{dnHandles[0].addr, dnHandles[1].addr}
+		var (
+			targetIndex = -1
+			traceID     string
+			writeTime   time.Time
+			targetShard uint32
+		)
 
-		traceID := fmt.Sprintf("handoff-trace-%d", time.Now().UnixNano())
+		for idx := range dnHandles {
+			candidateShard := shardIDForNode(dnHandles[idx].addr, nodeAddrs)
+			candidateTraceID := generateTraceIDForShard(candidateShard, traceShardCount)
 
-		By("stopping the first data node")
-		dnHandles[0].stop(etcdEndpoint)
+			By(fmt.Sprintf("ensuring the handoff queue for %s starts empty", dnHandles[idx].addr))
+			Expect(countPendingParts(dnHandles[idx].addr)).To(Equal(0))
 
-		By("waiting for the liaison to observe the offline node")
-		time.Sleep(7 * time.Second)
+			By(fmt.Sprintf("stopping %s for shard %d", dnHandles[idx].addr, candidateShard))
+			dnHandles[idx].stop(etcdEndpoint)
+			time.Sleep(7 * time.Second)
 
-		By("writing a trace while the node is offline")
-		writeTime := writeTrace(connection, traceID)
+			candidateWriteTime := writeTrace(connection, candidateTraceID)
+			found := waitForPendingParts(dnHandles[idx].addr, flags.EventuallyTimeout)
+			if found {
+				targetIndex = idx
+				traceID = candidateTraceID
+				writeTime = candidateWriteTime
+				targetShard = candidateShard
+				break
+			}
 
-		By("waiting for pending parts to appear in the queue")
-		Eventually(func() int {
-			return countPendingParts(dnHandles[0].addr)
-		}, flags.EventuallyTimeout).Should(BeNumerically(">", 0))
+			By(fmt.Sprintf("no handoff data detected for %s, bringing node back online", dnHandles[idx].addr))
+			dnHandles[idx].start(etcdEndpoint)
+			Eventually(func() int {
+				return countPendingParts(dnHandles[idx].addr)
+			}, flags.EventuallyTimeout).Should(Equal(0))
+		}
 
-		By("restarting the first node")
-		dnHandles[0].start(etcdEndpoint)
+		Expect(targetIndex).NotTo(Equal(-1), "expected to identify a shard owner for handoff")
+		targetAddr := dnHandles[targetIndex].addr
+
+		By("restarting the offline node after queueing data")
+		dnHandles[targetIndex].start(etcdEndpoint)
 
 		By("waiting for the queue to drain")
 		Eventually(func() int {
-			return countPendingParts(dnHandles[0].addr)
+			return countPendingParts(targetAddr)
 		}, flags.EventuallyTimeout).Should(Equal(0))
 
 		By("verifying the replayed trace can be queried")
@@ -394,13 +417,23 @@ var _ = Describe("trace handoff", func() {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 
-		By("stopping the second node to ensure the trace resides on the recovered node")
-		dnHandles[1].stop(etcdEndpoint)
-		defer dnHandles[1].start(etcdEndpoint)
+		var otherIndex int
+		for idx := range dnHandles {
+			if idx != targetIndex {
+				otherIndex = idx
+				break
+			}
+		}
+
+		By("stopping the other node to ensure the trace resides on the recovered node")
+		dnHandles[otherIndex].stop(etcdEndpoint)
+		defer dnHandles[otherIndex].start(etcdEndpoint)
 
 		Eventually(func() error {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
+
+		By(fmt.Sprintf("verified handoff for shard %d via node %s", targetShard, targetAddr))
 	})
 })
 
@@ -421,6 +454,7 @@ func writeTrace(conn *grpc.ClientConn, traceID string) time.Time {
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "handoff_instance"}}},
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "/handoff"}}},
 		{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 321}}},
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "span-" + traceID}}},
 		{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(baseTime)}},
 	}
 
@@ -501,4 +535,50 @@ func countPendingParts(nodeAddr string) int {
 func sanitizeNodeAddr(addr string) string {
 	replacer := strings.NewReplacer(":", "_", "/", "_", "\\", "_")
 	return replacer.Replace(addr)
+}
+
+func computeShardForTraceID(traceID string, shardCount uint32) uint32 {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(traceID))
+	return hasher.Sum32() % shardCount
+}
+
+func generateTraceIDForShard(shardID uint32, shardCount uint32) string {
+	for i := 0; i < 10000; i++ {
+		candidate := fmt.Sprintf("handoff-trace-%d-%d", shardID, i)
+		if computeShardForTraceID(candidate, shardCount) == shardID {
+			return candidate
+		}
+	}
+	Fail(fmt.Sprintf("failed to generate trace ID for shard %d", shardID))
+	return ""
+}
+
+func shardIDForNode(nodeAddr string, nodeAddrs []string) uint32 {
+	if len(nodeAddrs) == 0 {
+		Fail("no data nodes available to determine shard assignment")
+		return 0
+	}
+	sorted := append([]string(nil), nodeAddrs...)
+	sort.Strings(sorted)
+	for idx, addr := range sorted {
+		if addr == nodeAddr {
+			return uint32(idx % len(sorted))
+		}
+	}
+	Fail(fmt.Sprintf("node %s not found in data node list %v", nodeAddr, nodeAddrs))
+	return 0
+}
+
+func waitForPendingParts(nodeAddr string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if countPendingParts(nodeAddr) > 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

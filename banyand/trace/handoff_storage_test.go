@@ -19,6 +19,7 @@ package trace
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,11 +28,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+type fakeQueueClient struct {
+	healthy []string
+}
+
+func (f *fakeQueueClient) HealthyNodes() []string {
+	return append([]string(nil), f.healthy...)
+}
+
+func (f *fakeQueueClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClient, error) {
+	return nil, errors.New("not implemented")
+}
 
 func setupHandoffTest(t *testing.T) (string, fs.FileSystem, *logger.Logger) {
 	tempDir, deferFn := test.Space(require.New(t))
@@ -271,7 +286,7 @@ func TestHandoffController_EnqueueForNodes(t *testing.T) {
 
 	// Create handoff controller
 	offlineNodes := []string{"node1.example.com:17912", "node2.example.com:17912"}
-	controller, err := newHandoffController(fileSystem, tempDir, nil, offlineNodes, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, nil, offlineNodes, 0, l, nil)
 	require.NoError(t, err)
 
 	// Enqueue for multiple nodes
@@ -299,7 +314,7 @@ func TestHandoffController_GetPartPath(t *testing.T) {
 
 	// Create handoff controller
 	nodeAddr := "node1.example.com:17912"
-	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 
 	// Enqueue for node
@@ -331,7 +346,7 @@ func TestHandoffController_LoadExistingQueues(t *testing.T) {
 	nodeAddr := "node1.example.com:17912"
 
 	// Create first controller and enqueue part
-	controller1, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l)
+	controller1, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 
 	err = controller1.enqueueForNode(nodeAddr, partID, PartTypeCore, sourcePath, "default", 0)
@@ -342,7 +357,7 @@ func TestHandoffController_LoadExistingQueues(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create second controller (should load existing queues)
-	controller2, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l)
+	controller2, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 
 	// Verify part is still pending
@@ -429,7 +444,7 @@ func TestHandoffController_SizeEnforcement(t *testing.T) {
 	lfs := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 	dataNodes := []string{"node1:17912", "node2:17912"}
-	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 10, l) // 10MB limit
+	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 10, l, nil) // 10MB limit
 	tester.NoError(err)
 	defer hc.close()
 
@@ -488,7 +503,7 @@ func TestHandoffController_SizeTracking(t *testing.T) {
 	lfs := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 	dataNodes := []string{"node1:17912"}
-	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l) // 100MB limit
+	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil) // 100MB limit
 	tester.NoError(err)
 	defer hc.close()
 
@@ -514,6 +529,50 @@ func TestHandoffController_SizeTracking(t *testing.T) {
 	err = hc.completeSend("node1:17912", partID+1, PartTypeCore)
 	tester.NoError(err)
 	tester.Equal(uint64(0), hc.getTotalSize())
+}
+
+func TestHandoffController_FiltersNonOwningOfflineNodes(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	dataNodes := []string{"node1:17912", "node2:17912"}
+	const groupName = "group1"
+	const shardID uint32 = 0
+
+	resolver := func(group string, shard uint32) ([]string, error) {
+		tester.Equal(groupName, group)
+		tester.Equal(shardID, shard)
+		return []string{"node2:17912"}, nil
+	}
+
+	queueClient := &fakeQueueClient{healthy: dataNodes}
+	hc, err := newHandoffController(lfs, tempDir, queueClient, dataNodes, 0, l, resolver)
+	tester.NoError(err)
+	defer hc.close()
+
+	offline := hc.calculateOfflineNodes([]string{"node2:17912"}, groupName, common.ShardID(shardID))
+	tester.Len(offline, 0, "expected no offline nodes when shard owner is online")
+
+	partDir := filepath.Join(tempDir, "part-core")
+	tester.NoError(os.MkdirAll(partDir, 0o755))
+
+	coreParts := []partInfo{{
+		partID:  uint64(1),
+		path:    partDir,
+		group:   groupName,
+		shardID: common.ShardID(shardID),
+	}}
+
+	err = hc.enqueueForOfflineNodes([]string{"node1:17912"}, coreParts, nil)
+	tester.NoError(err)
+
+	nodeDir := filepath.Join(hc.root, sanitizeNodeAddr("node1:17912"))
+	_, statErr := os.Stat(nodeDir)
+	tester.Error(statErr)
+	tester.True(os.IsNotExist(statErr), "expected no queue directory to be created for non-owning node")
 }
 
 // TestHandoffController_SizeRecovery verifies that total size is correctly calculated on restart.
@@ -546,7 +605,7 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	dataNodes := []string{"node1:17912", "node2:17912"}
 
 	// First controller: enqueue some parts
-	hc1, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l)
+	hc1, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil)
 	tester.NoError(err)
 
 	err = hc1.enqueueForNode("node1:17912", partID, PartTypeCore, partPath, "group1", 1)
@@ -563,7 +622,7 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	tester.NoError(err)
 
 	// Second controller: should recover the same size
-	hc2, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l)
+	hc2, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil)
 	tester.NoError(err)
 	defer hc2.close()
 

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -158,8 +159,40 @@ func (l *liaison) PreRun(ctx context.Context) error {
 			maxSizeMB = int(maxSizeBytes / 1024 / 1024)
 		}
 
+		resolveAssignments := func(group string, shardID uint32) ([]string, error) {
+			if l.metadata == nil {
+				return nil, fmt.Errorf("metadata repo is not initialized")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			groupSchema, err := l.metadata.GroupRegistry().GetGroup(ctx, group)
+			if err != nil {
+				return nil, err
+			}
+			if groupSchema == nil || groupSchema.ResourceOpts == nil {
+				return nil, fmt.Errorf("group %s missing resource options", group)
+			}
+			copies := groupSchema.ResourceOpts.Replicas + 1
+			if len(l.dataNodeList) == 0 {
+				return nil, fmt.Errorf("no data nodes configured for handoff")
+			}
+			sortedNodes := append([]string(nil), l.dataNodeList...)
+			sort.Strings(sortedNodes)
+			nodes := make([]string, 0, copies)
+			seen := make(map[string]struct{}, copies)
+			for replica := uint32(0); replica < copies; replica++ {
+				nodeID := sortedNodes[(int(shardID)+int(replica))%len(sortedNodes)]
+				if _, ok := seen[nodeID]; ok {
+					continue
+				}
+				nodes = append(nodes, nodeID)
+				seen[nodeID] = struct{}{}
+			}
+			return nodes, nil
+		}
+
 		var err error
-		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSizeMB, l.l)
+		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSizeMB, l.l, resolveAssignments)
 		if err != nil {
 			return err
 		}

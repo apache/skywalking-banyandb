@@ -38,28 +38,29 @@ import (
 
 // handoffController manages handoff queues for multiple data nodes.
 type handoffController struct {
-	tire2Client        queueClient
-	fileSystem         fs.FileSystem
-	inFlightSends      map[string]map[uint64]struct{}
-	l                  *logger.Logger
-	replayTriggerChan  chan string
-	nodeQueues         map[string]*handoffNodeQueue
-	replayStopChan     chan struct{}
-	healthyNodes       map[string]struct{}
-	statusChangeChan   chan nodeStatusChange
-	stopMonitor        chan struct{}
-	root               string
-	allDataNodes       []string
-	monitorWg          sync.WaitGroup
-	replayWg           sync.WaitGroup
-	checkInterval      time.Duration
-	replayBatchSize    int
-	replayPollInterval time.Duration
-	maxTotalSizeBytes  uint64
-	currentTotalSize   uint64
-	mu                 sync.RWMutex
-	inFlightMu         sync.RWMutex
-	sizeMu             sync.RWMutex
+	fileSystem              fs.FileSystem
+	tire2Client             queueClient
+	resolveShardAssignments func(group string, shardID uint32) ([]string, error)
+	inFlightSends           map[string]map[uint64]struct{}
+	l                       *logger.Logger
+	replayTriggerChan       chan string
+	nodeQueues              map[string]*handoffNodeQueue
+	replayStopChan          chan struct{}
+	healthyNodes            map[string]struct{}
+	statusChangeChan        chan nodeStatusChange
+	stopMonitor             chan struct{}
+	root                    string
+	allDataNodes            []string
+	monitorWg               sync.WaitGroup
+	replayWg                sync.WaitGroup
+	checkInterval           time.Duration
+	replayBatchSize         int
+	replayPollInterval      time.Duration
+	maxTotalSizeBytes       uint64
+	currentTotalSize        uint64
+	mu                      sync.RWMutex
+	inFlightMu              sync.RWMutex
+	sizeMu                  sync.RWMutex
 }
 
 // nodeStatusChange represents a node status transition.
@@ -77,27 +78,29 @@ type queueClient interface {
 // newHandoffController creates a new handoff controller.
 func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client queueClient,
 	dataNodeList []string, maxSizeMB int, l *logger.Logger,
+	resolveShardAssignments func(group string, shardID uint32) ([]string, error),
 ) (*handoffController, error) {
 	handoffRoot := filepath.Join(root, "handoff", "nodes")
 
 	hc := &handoffController{
-		l:                  l,
-		fileSystem:         fileSystem,
-		nodeQueues:         make(map[string]*handoffNodeQueue),
-		root:               handoffRoot,
-		tire2Client:        tire2Client,
-		allDataNodes:       dataNodeList,
-		healthyNodes:       make(map[string]struct{}),
-		statusChangeChan:   make(chan nodeStatusChange, 100),
-		stopMonitor:        make(chan struct{}),
-		checkInterval:      5 * time.Second,
-		replayStopChan:     make(chan struct{}),
-		replayTriggerChan:  make(chan string, 100),
-		inFlightSends:      make(map[string]map[uint64]struct{}),
-		replayBatchSize:    10,
-		replayPollInterval: 1 * time.Second,
-		maxTotalSizeBytes:  uint64(maxSizeMB) * 1024 * 1024, // Convert MB to bytes
-		currentTotalSize:   0,
+		l:                       l,
+		fileSystem:              fileSystem,
+		nodeQueues:              make(map[string]*handoffNodeQueue),
+		root:                    handoffRoot,
+		tire2Client:             tire2Client,
+		allDataNodes:            dataNodeList,
+		healthyNodes:            make(map[string]struct{}),
+		statusChangeChan:        make(chan nodeStatusChange, 100),
+		stopMonitor:             make(chan struct{}),
+		checkInterval:           5 * time.Second,
+		replayStopChan:          make(chan struct{}),
+		replayTriggerChan:       make(chan string, 100),
+		inFlightSends:           make(map[string]map[uint64]struct{}),
+		replayBatchSize:         10,
+		replayPollInterval:      1 * time.Second,
+		maxTotalSizeBytes:       uint64(maxSizeMB) * 1024 * 1024, // Convert MB to bytes
+		currentTotalSize:        0,
+		resolveShardAssignments: resolveShardAssignments,
 	}
 
 	// Create handoff root directory if it doesn't exist
@@ -410,22 +413,36 @@ type partInfo struct {
 	shardID common.ShardID
 }
 
-// calculateOfflineNodes returns the list of offline nodes by comparing online nodes with all configured nodes.
-func (hc *handoffController) calculateOfflineNodes(onlineNodes []string) []string {
-	if hc == nil || len(hc.allDataNodes) == 0 {
+// calculateOfflineNodes returns the list of offline nodes responsible for the shard.
+func (hc *handoffController) calculateOfflineNodes(onlineNodes []string, group string, shardID common.ShardID) []string {
+	if hc == nil {
 		return nil
 	}
 
-	// Convert onlineNodes to a set for O(1) lookup
 	onlineSet := make(map[string]struct{}, len(onlineNodes))
 	for _, node := range onlineNodes {
 		onlineSet[node] = struct{}{}
 	}
 
-	// Calculate offline nodes: allDataNodes - onlineNodes
+	candidates := hc.nodesForShard(group, uint32(shardID))
+	seen := make(map[string]struct{}, len(candidates))
 	var offlineNodes []string
-	for _, node := range hc.allDataNodes {
-		if _, isOnline := onlineSet[node]; !isOnline {
+	for _, node := range candidates {
+		if _, dup := seen[node]; dup {
+			continue
+		}
+		seen[node] = struct{}{}
+		if !hc.isNodeHealthy(node) {
+			offlineNodes = append(offlineNodes, node)
+			continue
+		}
+		if len(onlineSet) > 0 {
+			if _, isOnline := onlineSet[node]; !isOnline {
+				offlineNodes = append(offlineNodes, node)
+			}
+			continue
+		}
+		if hc.tire2Client == nil {
 			offlineNodes = append(offlineNodes, node)
 		}
 	}
@@ -444,6 +461,19 @@ func (hc *handoffController) enqueueForOfflineNodes(
 ) error {
 	if hc == nil || len(offlineNodes) == 0 {
 		return nil
+	}
+
+	group, shardID, hasShardInfo := extractShardDetails(coreParts, sidxParts)
+	if hasShardInfo {
+		filtered := hc.filterNodesForShard(offlineNodes, group, shardID)
+		if len(filtered) == 0 {
+			hc.l.Debug().
+				Str("group", group).
+				Uint32("shardID", shardID).
+				Msg("no offline shard owners to enqueue")
+			return nil
+		}
+		offlineNodes = filtered
 	}
 
 	// Track enqueue statistics
@@ -488,11 +518,73 @@ func (hc *handoffController) enqueueForOfflineNodes(
 	// Log summary
 	hc.l.Info().
 		Int("offlineNodes", len(offlineNodes)).
+		Str("group", group).
+		Uint32("shardID", shardID).
 		Int("corePartsEnqueued", totalCoreEnqueued).
 		Int("sidxPartsEnqueued", totalSidxEnqueued).
 		Msg("enqueued parts for offline nodes")
 
 	return lastErr
+}
+
+func extractShardDetails(coreParts []partInfo, sidxParts map[string][]partInfo) (string, uint32, bool) {
+	if len(coreParts) > 0 {
+		return coreParts[0].group, uint32(coreParts[0].shardID), true
+	}
+	for _, parts := range sidxParts {
+		if len(parts) == 0 {
+			continue
+		}
+		return parts[0].group, uint32(parts[0].shardID), true
+	}
+	return "", 0, false
+}
+
+func (hc *handoffController) nodesForShard(group string, shardID uint32) []string {
+	if hc == nil {
+		return nil
+	}
+	if hc.resolveShardAssignments == nil {
+		return hc.allDataNodes
+	}
+	nodes, err := hc.resolveShardAssignments(group, shardID)
+	if err != nil {
+		if hc.l != nil {
+			hc.l.Warn().
+				Err(err).
+				Str("group", group).
+				Uint32("shardID", shardID).
+				Msg("failed to resolve shard assignments, using configured node list")
+		}
+		return hc.allDataNodes
+	}
+	if len(nodes) == 0 {
+		return hc.allDataNodes
+	}
+	return nodes
+}
+
+func (hc *handoffController) filterNodesForShard(nodes []string, group string, shardID uint32) []string {
+	candidates := hc.nodesForShard(group, shardID)
+	if len(candidates) == 0 {
+		return nil
+	}
+	candidateSet := make(map[string]struct{}, len(candidates))
+	for _, node := range candidates {
+		candidateSet[node] = struct{}{}
+	}
+	filtered := make([]string, 0, len(nodes))
+	seen := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		if _, already := seen[node]; already {
+			continue
+		}
+		seen[node] = struct{}{}
+		if _, ok := candidateSet[node]; ok {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
 }
 
 // close closes the handoff controller.

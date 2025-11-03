@@ -345,8 +345,13 @@ func (tst *tsTable) enqueueForOfflineNodes(onlineNodes []string, partsToSync []*
 	}
 
 	// Check if there are any offline nodes before doing expensive preparation work
-	offlineNodes := tst.handoffCtrl.calculateOfflineNodes(onlineNodes)
-	tst.l.Debug().Strs("onlineNodes", onlineNodes).Strs("offlineNodes", offlineNodes).Msg("handoff enqueue evaluation")
+	offlineNodes := tst.handoffCtrl.calculateOfflineNodes(onlineNodes, tst.group, tst.shardID)
+	tst.l.Debug().
+		Str("group", tst.group).
+		Uint32("shardID", uint32(tst.shardID)).
+		Strs("onlineNodes", onlineNodes).
+		Strs("offlineNodes", offlineNodes).
+		Msg("handoff enqueue evaluation")
 	if len(offlineNodes) == 0 {
 		return
 	}

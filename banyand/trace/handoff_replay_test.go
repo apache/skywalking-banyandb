@@ -108,7 +108,7 @@ func TestHandoffController_InFlightTracking(t *testing.T) {
 	l := logger.GetLogger("test")
 
 	nodeAddr := "node1.example.com:17912"
-	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 	partID := uint64(0x10)
@@ -153,7 +153,7 @@ func TestHandoffController_GetNodesWithPendingParts(t *testing.T) {
 
 	nodeAddr1 := "node1.example.com:17912"
 	nodeAddr2 := "node2.example.com:17912"
-	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr1, nodeAddr2}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr1, nodeAddr2}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
@@ -204,7 +204,7 @@ func TestHandoffController_ReadPartFromHandoff(t *testing.T) {
 	sourcePath := createTestPart(t, fileSystem, sourceRoot, partID)
 
 	nodeAddr := "node1.example.com:17912"
-	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
@@ -241,7 +241,7 @@ func TestHandoffController_ReplayBatchForNode(t *testing.T) {
 	sourceRoot := filepath.Join(tempDir, "source")
 	fileSystem.MkdirIfNotExist(sourceRoot, storage.DirPerm)
 
-	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
@@ -287,7 +287,7 @@ func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 	sourceRoot := filepath.Join(tempDir, "source")
 	fileSystem.MkdirIfNotExist(sourceRoot, storage.DirPerm)
 
-	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
@@ -339,7 +339,7 @@ func TestHandoffController_ReplayBatchForNode_SkipsInFlight(t *testing.T) {
 	sourceRoot := filepath.Join(tempDir, "source")
 	fileSystem.MkdirIfNotExist(sourceRoot, storage.DirPerm)
 
-	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
@@ -381,7 +381,7 @@ func TestHandoffController_SendPartToNode(t *testing.T) {
 	// Create mock client
 	mockClient := newSimpleMockClient([]string{nodeAddr})
 
-	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l)
+	controller, err := newHandoffController(fileSystem, tempDir, mockClient, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
 
