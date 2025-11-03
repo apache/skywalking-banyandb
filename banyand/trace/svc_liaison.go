@@ -155,7 +155,8 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		if l.handoffMaxSizePercent > 0 {
 			l.lfs.MkdirIfNotExist(l.dataPath, storage.DirPerm)
 			totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
-			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) * uint64(l.handoffMaxSizePercent) / 10000
+			// Divide after each multiplication to avoid overflow with large disk capacities
+			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100 * uint64(l.handoffMaxSizePercent) / 100
 			maxSize = int(maxSizeBytes / 1024 / 1024)
 		}
 

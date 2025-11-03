@@ -36,6 +36,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
+const megabyte = 1024 * 1024
+
 type fakeQueueClient struct {
 	healthy []string
 }
@@ -444,7 +446,7 @@ func TestHandoffController_SizeEnforcement(t *testing.T) {
 	lfs := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 	dataNodes := []string{"node1:17912", "node2:17912"}
-	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 10, l, nil) // 10MB limit
+	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 10*megabyte, l, nil) // 10MB limit
 	tester.NoError(err)
 	defer hc.close()
 
@@ -503,7 +505,7 @@ func TestHandoffController_SizeTracking(t *testing.T) {
 	lfs := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 	dataNodes := []string{"node1:17912"}
-	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil) // 100MB limit
+	hc, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100*megabyte, l, nil) // 100MB limit
 	tester.NoError(err)
 	defer hc.close()
 
@@ -558,7 +560,7 @@ func TestHandoffController_NodeQueueHelpers(t *testing.T) {
 	lfs := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	hc, err := newHandoffController(lfs, tempDir, nil, []string{node}, 10, l, nil)
+	hc, err := newHandoffController(lfs, tempDir, nil, []string{node}, 10*megabyte, l, nil)
 	tester.NoError(err)
 	defer hc.close()
 
@@ -654,7 +656,7 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	dataNodes := []string{"node1:17912", "node2:17912"}
 
 	// First controller: enqueue some parts
-	hc1, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil)
+	hc1, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100*megabyte, l, nil)
 	tester.NoError(err)
 
 	err = hc1.enqueueForNode("node1:17912", partID, PartTypeCore, partPath, "group1", 1)
@@ -671,7 +673,7 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	tester.NoError(err)
 
 	// Second controller: should recover the same size
-	hc2, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100, l, nil)
+	hc2, err := newHandoffController(lfs, tempDir, nil, dataNodes, 100*megabyte, l, nil)
 	tester.NoError(err)
 	defer hc2.close()
 
