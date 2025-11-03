@@ -60,11 +60,11 @@ const (
 )
 
 type dataNodeHandle struct {
+	closeFn    func()
 	dataDir    string
+	addr       string
 	grpcPort   int
 	gossipPort int
-	addr       string
-	closeFn    func()
 }
 
 func newDataNodeHandle(dataDir string, grpcPort, gossipPort int) *dataNodeHandle {
@@ -124,13 +124,13 @@ func (h *dataNodeHandle) etcdKey() string {
 }
 
 type liaisonHandle struct {
+	closeFn    func()
 	rootPath   string
+	addr       string
+	httpAddr   string
 	grpcPort   int
 	httpPort   int
 	serverPort int
-	addr       string
-	httpAddr   string
-	closeFn    func()
 }
 
 func newLiaisonHandle(rootPath string, grpcPort, httpPort, serverPort int) *liaisonHandle {

@@ -45,7 +45,7 @@ type handoffMetadata struct {
 }
 
 // handoffNodeQueue manages the handoff queue for a single data node.
-// It uses a per-node directory with hardlinked part directories.
+// It uses a per-node directory with hard-linked part directories.
 type handoffNodeQueue struct {
 	fileSystem fs.FileSystem
 	l          *logger.Logger
@@ -56,6 +56,19 @@ type handoffNodeQueue struct {
 
 // newHandoffNodeQueue creates a new handoff queue for a specific node.
 func newHandoffNodeQueue(nodeAddr, root string, fileSystem fs.FileSystem, l *logger.Logger) (*handoffNodeQueue, error) {
+	if fileSystem == nil {
+		return nil, fmt.Errorf("fileSystem is nil")
+	}
+	if l == nil {
+		return nil, fmt.Errorf("logger is nil")
+	}
+	if nodeAddr == "" {
+		return nil, fmt.Errorf("node address is empty")
+	}
+	if root == "" {
+		return nil, fmt.Errorf("queue root path is empty")
+	}
+
 	hnq := &handoffNodeQueue{
 		nodeAddr:   nodeAddr,
 		root:       root,
@@ -102,8 +115,8 @@ func readNodeInfo(fileSystem fs.FileSystem, root string) (string, error) {
 	return string(data), nil
 }
 
-// enqueue adds a part to the handoff queue by creating hardlinks and writing metadata.
-// Uses nested structure: <nodeRoot>/<partId>/<partType>/
+// enqueue adds a part to the handoff queue by creating hard links and writing metadata.
+// Uses nested structure: <nodeRoot>/<partId>/<partType>/.
 func (hnq *handoffNodeQueue) enqueue(partID uint64, partType string, sourcePath string, meta *handoffMetadata) error {
 	hnq.mu.Lock()
 	defer hnq.mu.Unlock()

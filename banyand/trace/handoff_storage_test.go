@@ -433,11 +433,11 @@ func TestHandoffController_SizeEnforcement(t *testing.T) {
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	tester.NoError(err)
-	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600)
 	tester.NoError(err)
 
 	// Create a dummy file
-	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o600)
 	tester.NoError(err)
 
 	// Create handoff controller with 10MB limit
@@ -492,11 +492,11 @@ func TestHandoffController_SizeTracking(t *testing.T) {
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	tester.NoError(err)
-	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600)
 	tester.NoError(err)
 
 	// Create a dummy file
-	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o600)
 	tester.NoError(err)
 
 	// Create handoff controller with 100MB limit
@@ -529,6 +529,55 @@ func TestHandoffController_SizeTracking(t *testing.T) {
 	err = hc.completeSend("node1:17912", partID+1, PartTypeCore)
 	tester.NoError(err)
 	tester.Equal(uint64(0), hc.getTotalSize())
+}
+
+func TestHandoffController_NodeQueueHelpers(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	const (
+		partID = uint64(400)
+		node   = "node1:17912"
+	)
+
+	partPath := filepath.Join(tempDir, "source", partName(partID))
+	err := os.MkdirAll(partPath, 0o755)
+	tester.NoError(err)
+
+	metadata := map[string]interface{}{
+		"compressedSizeBytes": 1024,
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	tester.NoError(err)
+	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600)
+	tester.NoError(err)
+	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("helper test"), 0o600)
+	tester.NoError(err)
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+
+	hc, err := newHandoffController(lfs, tempDir, nil, []string{node}, 10, l, nil)
+	tester.NoError(err)
+	defer hc.close()
+
+	err = hc.enqueueForNode(node, partID, PartTypeCore, partPath, "group1", 1)
+	tester.NoError(err)
+
+	nodes := hc.getAllNodeQueues()
+	tester.Contains(nodes, node)
+
+	queueSize, err := hc.getNodeQueueSize(node)
+	tester.NoError(err)
+	tester.Greater(queueSize, uint64(0))
+
+	err = hc.completeSendAll(node, partID)
+	tester.NoError(err)
+
+	queueSize, err = hc.getNodeQueueSize(node)
+	tester.NoError(err)
+	tester.Equal(uint64(0), queueSize)
 }
 
 func TestHandoffController_FiltersNonOwningOfflineNodes(t *testing.T) {
@@ -593,11 +642,11 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	tester.NoError(err)
-	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600)
 	tester.NoError(err)
 
 	// Create a dummy file
-	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o644)
+	err = os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o600)
 	tester.NoError(err)
 
 	lfs := fs.NewLocalFileSystem()

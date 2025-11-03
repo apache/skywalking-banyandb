@@ -33,7 +33,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// simpleMockClient is a minimal mock for testing replay functionality
+const (
+	testNodeAddrPrimary   = "node1.example.com:17912"
+	testNodeAddrSecondary = "node2.example.com:17912"
+)
+
+// simpleMockClient is a minimal mock for testing replay functionality.
 type simpleMockClient struct {
 	sendError    error
 	healthyNodes []string
@@ -53,7 +58,7 @@ func (m *simpleMockClient) HealthyNodes() []string {
 	return m.healthyNodes
 }
 
-func (m *simpleMockClient) NewChunkedSyncClient(node string, chunkSize uint32) (queue.ChunkedSyncClient, error) {
+func (m *simpleMockClient) NewChunkedSyncClient(node string, _ uint32) (queue.ChunkedSyncClient, error) {
 	return &simpleMockChunkedClient{
 		mockClient: m,
 		node:       node,
@@ -72,13 +77,13 @@ func (m *simpleMockClient) resetSendCount() {
 	m.sendCalled = 0
 }
 
-// simpleMockChunkedClient is a minimal mock for ChunkedSyncClient
+// simpleMockChunkedClient is a minimal mock for ChunkedSyncClient.
 type simpleMockChunkedClient struct {
 	mockClient *simpleMockClient
 	node       string
 }
 
-func (m *simpleMockChunkedClient) SyncStreamingParts(ctx context.Context, parts []queue.StreamingPartData) (*queue.SyncResult, error) {
+func (m *simpleMockChunkedClient) SyncStreamingParts(_ context.Context, parts []queue.StreamingPartData) (*queue.SyncResult, error) {
 	m.mockClient.mu.Lock()
 	m.mockClient.sendCalled++
 	sendError := m.mockClient.sendError
@@ -99,7 +104,7 @@ func (m *simpleMockChunkedClient) Close() error {
 	return nil
 }
 
-// TestHandoffController_InFlightTracking tests the in-flight tracking mechanism
+// TestHandoffController_InFlightTracking tests the in-flight tracking mechanism.
 func TestHandoffController_InFlightTracking(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -107,7 +112,7 @@ func TestHandoffController_InFlightTracking(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
@@ -137,7 +142,7 @@ func TestHandoffController_InFlightTracking(t *testing.T) {
 	assert.True(t, controller.isInFlight(nodeAddr, partID2))
 }
 
-// TestHandoffController_GetNodesWithPendingParts tests the node enumeration
+// TestHandoffController_GetNodesWithPendingParts tests the node enumeration.
 func TestHandoffController_GetNodesWithPendingParts(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -151,8 +156,8 @@ func TestHandoffController_GetNodesWithPendingParts(t *testing.T) {
 	partID := uint64(0x12)
 	sourcePath := createTestPart(t, fileSystem, sourceRoot, partID)
 
-	nodeAddr1 := "node1.example.com:17912"
-	nodeAddr2 := "node2.example.com:17912"
+	nodeAddr1 := testNodeAddrPrimary
+	nodeAddr2 := testNodeAddrSecondary
 	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr1, nodeAddr2}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
@@ -189,7 +194,7 @@ func TestHandoffController_GetNodesWithPendingParts(t *testing.T) {
 	assert.Contains(t, nodes, nodeAddr2)
 }
 
-// TestHandoffController_ReadPartFromHandoff tests reading parts from handoff storage
+// TestHandoffController_ReadPartFromHandoff tests reading parts from handoff storage.
 func TestHandoffController_ReadPartFromHandoff(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -203,7 +208,7 @@ func TestHandoffController_ReadPartFromHandoff(t *testing.T) {
 	partID := uint64(0x14)
 	sourcePath := createTestPart(t, fileSystem, sourceRoot, partID)
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
 	require.NoError(t, err)
 	defer controller.close()
@@ -225,7 +230,7 @@ func TestHandoffController_ReadPartFromHandoff(t *testing.T) {
 	assert.NotEmpty(t, streamingPart.Files)
 }
 
-// TestHandoffController_ReplayBatchForNode tests the batch replay logic
+// TestHandoffController_ReplayBatchForNode tests the batch replay logic.
 func TestHandoffController_ReplayBatchForNode(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -233,7 +238,7 @@ func TestHandoffController_ReplayBatchForNode(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	// Create mock client
 	mockClient := newSimpleMockClient([]string{nodeAddr})
 
@@ -271,7 +276,7 @@ func TestHandoffController_ReplayBatchForNode(t *testing.T) {
 	assert.Empty(t, pending)
 }
 
-// TestHandoffController_ReplayBatchForNode_WithBatchLimit tests batch size limiting
+// TestHandoffController_ReplayBatchForNode_WithBatchLimit tests batch size limiting.
 func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -279,7 +284,7 @@ func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	// Create mock client
 	mockClient := newSimpleMockClient([]string{nodeAddr})
 
@@ -323,7 +328,7 @@ func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 	assert.Len(t, pending, 1)
 }
 
-// TestHandoffController_ReplayBatchForNode_SkipsInFlight tests that in-flight parts are skipped
+// TestHandoffController_ReplayBatchForNode_SkipsInFlight tests that in-flight parts are skipped.
 func TestHandoffController_ReplayBatchForNode_SkipsInFlight(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -331,7 +336,7 @@ func TestHandoffController_ReplayBatchForNode_SkipsInFlight(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	// Create mock client
 	mockClient := newSimpleMockClient([]string{nodeAddr})
 
@@ -369,7 +374,7 @@ func TestHandoffController_ReplayBatchForNode_SkipsInFlight(t *testing.T) {
 	assert.Equal(t, partID1, pending[0].PartID)
 }
 
-// TestHandoffController_SendPartToNode tests sending a part to a node
+// TestHandoffController_SendPartToNode tests sending a part to a node.
 func TestHandoffController_SendPartToNode(t *testing.T) {
 	tempDir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -377,7 +382,7 @@ func TestHandoffController_SendPartToNode(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	nodeAddr := "node1.example.com:17912"
+	nodeAddr := testNodeAddrPrimary
 	// Create mock client
 	mockClient := newSimpleMockClient([]string{nodeAddr})
 
@@ -395,7 +400,7 @@ func TestHandoffController_SendPartToNode(t *testing.T) {
 	}
 
 	// Send the part
-	err = controller.sendPartToNode(context.Background(), "node1.example.com:17912", streamingPart)
+	err = controller.sendPartToNode(context.Background(), testNodeAddrPrimary, streamingPart)
 	require.NoError(t, err)
 	assert.Equal(t, 1, mockClient.getSendCount())
 }

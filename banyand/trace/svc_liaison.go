@@ -151,14 +151,15 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		// Calculate max handoff size based on percentage of disk space
 		// Formula: totalDisk * maxDiskUsagePercent * handoffMaxSizePercent / 10000
 		// Example: 100GB disk, 95% max usage, 10% handoff = 100 * 95 * 10 / 10000 = 9.5GB
-		maxSizeMB := 0
+		maxSize := 0
 		if l.handoffMaxSizePercent > 0 {
 			l.lfs.MkdirIfNotExist(l.dataPath, storage.DirPerm)
 			totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
 			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) * uint64(l.handoffMaxSizePercent) / 10000
-			maxSizeMB = int(maxSizeBytes / 1024 / 1024)
+			maxSize = int(maxSizeBytes / 1024 / 1024)
 		}
 
+		// nolint:contextcheck
 		resolveAssignments := func(group string, shardID uint32) ([]string, error) {
 			if l.metadata == nil {
 				return nil, fmt.Errorf("metadata repo is not initialized")
@@ -192,13 +193,14 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		}
 
 		var err error
-		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSizeMB, l.l, resolveAssignments)
+		// nolint:contextcheck
+		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSize, l.l, resolveAssignments)
 		if err != nil {
 			return err
 		}
 		l.l.Info().
 			Int("dataNodes", len(l.dataNodeList)).
-			Int("maxSizeMB", maxSizeMB).
+			Int("maxSize", maxSize).
 			Int("maxSizePercent", l.handoffMaxSizePercent).
 			Int("diskUsagePercent", l.maxDiskUsagePercent).
 			Msg("handoff controller initialized")

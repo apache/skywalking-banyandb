@@ -20,6 +20,7 @@ package trace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ type nodeStatusChange struct {
 	isOnline bool
 }
 
-// queueClient interface combines health checking and sync client creation
+// queueClient interface combines health checking and sync client creation.
 type queueClient interface {
 	HealthyNodes() []string
 	NewChunkedSyncClient(node string, chunkSize uint32) (queue.ChunkedSyncClient, error)
@@ -77,9 +78,19 @@ type queueClient interface {
 
 // newHandoffController creates a new handoff controller.
 func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client queueClient,
-	dataNodeList []string, maxSizeMB int, l *logger.Logger,
+	dataNodeList []string, maxSize int, l *logger.Logger,
 	resolveShardAssignments func(group string, shardID uint32) ([]string, error),
 ) (*handoffController, error) {
+	if fileSystem == nil {
+		return nil, fmt.Errorf("fileSystem is nil")
+	}
+	if l == nil {
+		return nil, fmt.Errorf("logger is nil")
+	}
+	if root == "" {
+		return nil, fmt.Errorf("root path is empty")
+	}
+
 	handoffRoot := filepath.Join(root, "handoff", "nodes")
 
 	hc := &handoffController{
@@ -98,7 +109,7 @@ func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client que
 		inFlightSends:           make(map[string]map[uint64]struct{}),
 		replayBatchSize:         10,
 		replayPollInterval:      1 * time.Second,
-		maxTotalSizeBytes:       uint64(maxSizeMB) * 1024 * 1024, // Convert MB to bytes
+		maxTotalSizeBytes:       uint64(maxSize),
 		currentTotalSize:        0,
 		resolveShardAssignments: resolveShardAssignments,
 	}
@@ -122,8 +133,13 @@ func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client que
 
 // loadExistingQueues scans the handoff directory and loads existing node queues.
 func (hc *handoffController) loadExistingQueues() error {
+	if hc == nil || hc.fileSystem == nil {
+		return fmt.Errorf("handoff controller is not initialized")
+	}
+
 	entries := hc.fileSystem.ReadDir(hc.root)
 	var totalRecoveredSize uint64
+	var errs []error
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -136,23 +152,40 @@ func (hc *handoffController) loadExistingQueues() error {
 		nodeAddr, err := readNodeInfo(hc.fileSystem, nodeRoot)
 		if err != nil {
 			hc.l.Warn().Err(err).Str("dir", entry.Name()).Msg("failed to read node info, skipping")
+			errs = append(errs, fmt.Errorf("read node info for %s: %w", entry.Name(), err))
 			continue
 		}
 
 		nodeQueue, err := newHandoffNodeQueue(nodeAddr, nodeRoot, hc.fileSystem, hc.l)
 		if err != nil {
 			hc.l.Warn().Err(err).Str("node", nodeAddr).Msg("failed to load node queue")
+			errs = append(errs, fmt.Errorf("load node queue for %s: %w", nodeAddr, err))
 			continue
 		}
 
 		hc.nodeQueues[nodeAddr] = nodeQueue
 
 		// Calculate queue size from metadata (not from actual file sizes)
-		pending, _ := nodeQueue.listPending()
+		pending, err := nodeQueue.listPending()
+		if err != nil {
+			hc.l.Warn().Err(err).Str("node", nodeAddr).Msg("failed to list pending parts")
+			errs = append(errs, fmt.Errorf("list pending for %s: %w", nodeAddr, err))
+			continue
+		}
 		var queueSize uint64
 		for _, ptp := range pending {
 			meta, err := nodeQueue.getMetadata(ptp.PartID, ptp.PartType)
-			if err == nil && meta.PartSizeBytes > 0 {
+			if err != nil {
+				hc.l.Warn().Err(err).
+					Str("node", nodeAddr).
+					Uint64("partID", ptp.PartID).
+					Str("partType", ptp.PartType).
+					Msg("failed to read part metadata")
+				errs = append(errs, fmt.Errorf("metadata for node %s part %x (%s): %w",
+					nodeAddr, ptp.PartID, ptp.PartType, err))
+				continue
+			}
+			if meta.PartSizeBytes > 0 {
 				queueSize += meta.PartSizeBytes
 			}
 		}
@@ -175,6 +208,9 @@ func (hc *handoffController) loadExistingQueues() error {
 			Uint64("totalSizeMB", totalRecoveredSize/1024/1024).
 			Int("nodeCount", len(hc.nodeQueues)).
 			Msg("recovered handoff queue state")
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 
 	return nil
@@ -237,7 +273,7 @@ func (hc *handoffController) enqueueForNodes(offlineNodes []string, partID uint6
 	var firstErr error
 	successCount := 0
 
-	// For each offline node, create hardlinked copy
+	// For each offline node, create hard-linked copy
 	for _, nodeAddr := range offlineNodes {
 		nodeQueue, err := hc.getOrCreateNodeQueue(nodeAddr)
 		if err != nil {
@@ -450,10 +486,7 @@ func (hc *handoffController) calculateOfflineNodes(onlineNodes []string, group s
 	return offlineNodes
 }
 
-// enqueueForOfflineNodes enqueues parts for the given offline nodes.
-// offlineNodes: list of offline nodes to enqueue parts for
-// coreParts: slice of core part information
-// sidxParts: map of sidxName -> part information
+// enqueueForOfflineNodes enqueues the provided core and sidx parts for each offline node.
 func (hc *handoffController) enqueueForOfflineNodes(
 	offlineNodes []string,
 	coreParts []partInfo,
@@ -1053,7 +1086,7 @@ func (hc *handoffController) getNodesWithPendingParts() []string {
 
 // readPartFromHandoff reads a part from the handoff queue and prepares it for sending.
 func (hc *handoffController) readPartFromHandoff(nodeAddr string, partID uint64, partType string) (*queue.StreamingPartData, func(), error) {
-	// Get the path to the hardlinked part
+	// Get the path to the hard-linked part
 	partPath := hc.getPartPath(nodeAddr, partID, partType)
 	if partPath == "" {
 		return nil, func() {}, fmt.Errorf("part not found in handoff queue")
