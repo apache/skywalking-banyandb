@@ -58,6 +58,9 @@ type SIDX interface {
 	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error)
 	// StreamingParts returns the streaming parts.
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
+	// PartPaths returns filesystem paths for the requested partIDs keyed by partID.
+	// Missing partIDs are omitted from the returned map.
+	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
 	// IntroduceSynced introduces a synced map to the SIDX instance.
 	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
 }

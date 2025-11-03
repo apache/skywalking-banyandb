@@ -50,6 +50,7 @@ type Client interface {
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
+	HealthyNodes() []string
 }
 
 // Server is the interface for receiving data from the queue.
