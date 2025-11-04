@@ -53,6 +53,7 @@ Release Notes.
 - Implement Trace Tree for debug mode.
 - Implement bydbQL.
 - UI: Implement the Query Page for BydbQL.
+- Refactor router for better usability.
 
 ### Bug Fixes
 
