@@ -22,9 +22,9 @@ export const BASE_PATH = '/banyandb';
 
 /** Route parameter patterns for CRUD operations */
 export const ROUTE_PARAMS = {
-  OPERATOR_READ: 'operator-read/:type/:operator/:group/:name',
-  OPERATOR_CREATE: 'operator-create/:type/:operator/:group',
-  OPERATOR_EDIT: 'operator-edit/:type/:operator/:group/:name',
+  OPERATOR_READ: ':type/:operator/:group/:name',
+  OPERATOR_CREATE: ':type/:operator/:group',
+  OPERATOR_EDIT: ':type/:operator/:group/:name',
 };
 
 /** Schema type identifiers */
