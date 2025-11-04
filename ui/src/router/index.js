@@ -32,7 +32,7 @@ import queryRoute from './modules/query';
 
 /**
  * Router configuration for BanyanDB UI
- * 
+ *
  * Route structure:
  * - / : Redirects to /banyandb
  * - /banyandb : Main application layout with header
@@ -61,14 +61,7 @@ const router = createRouter({
       name: 'banyandb',
       redirect: MENU_DEFAULT_PATH,
       meta: { keepAlive: false },
-      children: [
-        dashboardRoute,
-        streamRoutes,
-        measureRoutes,
-        propertyRoutes,
-        traceRoutes,
-        queryRoute,
-      ],
+      children: [dashboardRoute, streamRoutes, measureRoutes, propertyRoutes, traceRoutes, queryRoute],
     },
     // 404 Not Found
     {

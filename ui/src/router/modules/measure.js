@@ -56,4 +56,3 @@ export default {
     ...createTopNAggRoutes(SCHEMA_TYPES.MEASURE),
   ],
 };
-

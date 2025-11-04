@@ -45,4 +45,3 @@ export const COMPONENTS = {
   TOPN_AGG: '@/components/TopNAggregation/index.vue',
   TOPN_AGG_EDITOR: '@/components/TopNAggregation/Editor.vue',
 };
-

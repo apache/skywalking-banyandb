@@ -18,11 +18,7 @@
  */
 
 import { BASE_PATH, SCHEMA_TYPES, ROUTE_PARAMS } from '../constants';
-import {
-  createStartRoute,
-  createIndexRuleRoutes,
-  createIndexRuleBindingRoutes,
-} from '../routeFactory';
+import { createStartRoute, createIndexRuleRoutes, createIndexRuleBindingRoutes } from '../routeFactory';
 
 /**
  * Trace schema routes
@@ -54,4 +50,3 @@ export default {
     ...createIndexRuleBindingRoutes(SCHEMA_TYPES.TRACE),
   ],
 };
-

@@ -21,7 +21,7 @@ import { ROUTE_PARAMS } from './constants';
 
 /**
  * Route Factory Functions
- * 
+ *
  * Generate route configurations with consistent patterns.
  * All routes use relative paths (nested under parent routes in modules).
  * CRUD routes are defined inline in modules for Vite static import compatibility.
@@ -111,4 +111,3 @@ export function createTopNAggRoutes(schemaType) {
     },
   ];
 }
-

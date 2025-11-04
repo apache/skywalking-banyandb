@@ -25,4 +25,3 @@ export default {
   name: 'BydbQL',
   component: () => import('@/views/Query/BydbQL.vue'),
 };
-
