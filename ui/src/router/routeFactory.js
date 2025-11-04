@@ -47,17 +47,17 @@ export function createStartRoute(schemaType) {
 export function createIndexRuleRoutes(schemaType) {
   return [
     {
-      path: `index-rule/${ROUTE_PARAMS.OPERATOR_READ}`,
+      path: `${ROUTE_PARAMS.OPERATOR_READ}`,
       name: `${schemaType}-index-rule`,
       component: () => import('@/components/IndexRule/index.vue'),
     },
     {
-      path: `index-rule/${ROUTE_PARAMS.OPERATOR_CREATE}`,
+      path: `${ROUTE_PARAMS.OPERATOR_CREATE}`,
       name: `${schemaType}-create-index-rule`,
       component: () => import('@/components/IndexRule/Editor.vue'),
     },
     {
-      path: `index-rule/${ROUTE_PARAMS.OPERATOR_EDIT}`,
+      path: `${ROUTE_PARAMS.OPERATOR_EDIT}`,
       name: `${schemaType}-edit-index-rule`,
       component: () => import('@/components/IndexRule/Editor.vue'),
     },
@@ -71,17 +71,17 @@ export function createIndexRuleRoutes(schemaType) {
 export function createIndexRuleBindingRoutes(schemaType) {
   return [
     {
-      path: `index-rule-binding/${ROUTE_PARAMS.OPERATOR_READ}`,
+      path: `${ROUTE_PARAMS.OPERATOR_READ}`,
       name: `${schemaType}-index-rule-binding`,
       component: () => import('@/components/IndexRuleBinding/index.vue'),
     },
     {
-      path: `index-rule-binding/${ROUTE_PARAMS.OPERATOR_CREATE}`,
+      path: `${ROUTE_PARAMS.OPERATOR_CREATE}`,
       name: `${schemaType}-create-index-rule-binding`,
       component: () => import('@/components/IndexRuleBinding/Editor.vue'),
     },
     {
-      path: `index-rule-binding/${ROUTE_PARAMS.OPERATOR_EDIT}`,
+      path: `${ROUTE_PARAMS.OPERATOR_EDIT}`,
       name: `${schemaType}-edit-index-rule-binding`,
       component: () => import('@/components/IndexRuleBinding/Editor.vue'),
     },
@@ -95,17 +95,17 @@ export function createIndexRuleBindingRoutes(schemaType) {
 export function createTopNAggRoutes(schemaType) {
   return [
     {
-      path: `topn-agg/${ROUTE_PARAMS.OPERATOR_READ}`,
+      path: `${ROUTE_PARAMS.OPERATOR_READ}`,
       name: `${schemaType}-topn-agg`,
       component: () => import('@/components/TopNAggregation/index.vue'),
     },
     {
-      path: `topn-agg/${ROUTE_PARAMS.OPERATOR_CREATE}`,
+      path: `${ROUTE_PARAMS.OPERATOR_CREATE}`,
       name: `${schemaType}-create-topn-agg`,
       component: () => import('@/components/TopNAggregation/Editor.vue'),
     },
     {
-      path: `topn-agg/${ROUTE_PARAMS.OPERATOR_EDIT}`,
+      path: `${ROUTE_PARAMS.OPERATOR_EDIT}`,
       name: `${schemaType}-edit-topn-agg`,
       component: () => import('@/components/TopNAggregation/Editor.vue'),
     },
