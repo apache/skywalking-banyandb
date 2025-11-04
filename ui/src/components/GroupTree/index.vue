@@ -361,7 +361,6 @@
         operator: 'create',
         group: currentNode.value.group,
         type,
-        schema: props.type,
       },
     };
     router.push(route);
@@ -382,7 +381,6 @@
         group: currentNode.value.group,
         name: currentNode.value.name,
         type,
-        schema: props.type,
       },
     };
     router.push(route);

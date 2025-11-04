@@ -17,11 +17,6 @@
  * under the License.
  */
 
-/**
- * Router Constants
- * Shared constants for router configuration
- */
-
 /** Base path for all BanyanDB routes */
 export const BASE_PATH = '/banyandb';
 

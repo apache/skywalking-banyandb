@@ -22,7 +22,7 @@ import { createStartRoute } from '../routeFactory';
 
 /**
  * Property routes
- * Includes: CRUD only (no index rules)
+ * Includes: CRUD only
  */
 export default {
   path: `${BASE_PATH}/property`,
