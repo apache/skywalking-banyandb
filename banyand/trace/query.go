@@ -47,8 +47,6 @@ type queryOptions struct {
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
 	traceIDs       []string
 	model.TraceQueryOptions
-	minTimestamp int64
-	maxTimestamp int64
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
@@ -86,8 +84,6 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
 		traceIDs:          tqo.TraceIDs,
-		minTimestamp:      tqo.TimeRange.Start.UnixNano(),
-		maxTimestamp:      tqo.TimeRange.End.UnixNano(),
 	}
 
 	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
@@ -100,8 +96,6 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
 		return nilResult, nil
 	}
-
-	parts := t.attachSnapshots(&result, tables, qo.minTimestamp, qo.maxTimestamp, qo.traceIDs)
 
 	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
@@ -116,12 +110,14 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	case len(qo.traceIDs) > 0:
 		traceBatchCh = staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
 	case useSIDXStreaming:
-		traceBatchCh = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+		var streamDone <-chan struct{}
+		traceBatchCh, streamDone = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+		result.streamDone = streamDone
 	default:
 		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
 	}
 
-	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, parts, qo, traceBatchCh)
+	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 
 	return &result, nil
 }
@@ -134,6 +130,10 @@ func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
 		return errors.New("invalid query options: either traceIDs or order must be specified")
 	}
 	return nil
+}
+
+func (t *trace) GetTagValueDecoder() model.TagValueDecoder {
+	return mustDecodeTagValue
 }
 
 func (t *trace) ensureTSDB() (storage.TSDB[*tsTable, option], error) {
@@ -226,6 +226,7 @@ func (t *trace) prepareSIDXStreaming(
 
 	req := sidx.QueryRequest{
 		Filter:       tqo.SkippingFilter,
+		TagFilter:    tqo.TagFilter,
 		Order:        tqo.Order,
 		MaxBatchSize: tqo.MaxTraceSize,
 		MinKey:       &tqo.MinVal,
@@ -239,42 +240,17 @@ func (t *trace) prepareSIDXStreaming(
 	return sidxInstances, req, true
 }
 
-func (t *trace) attachSnapshots(
-	qr *queryResult,
-	tables []*tsTable,
-	minTimestamp int64,
-	maxTimestamp int64,
-	traceIDs []string,
-) []*part {
-	parts := make([]*part, 0)
-	for i := range tables {
-		s := tables[i].currentSnapshot()
-		if s == nil {
-			continue
-		}
-
-		var count int
-		parts, count = s.getParts(parts, minTimestamp, maxTimestamp, traceIDs)
-		if count < 1 {
-			s.decRef()
-			continue
-		}
-
-		qr.snapshots = append(qr.snapshots, s)
-	}
-	return parts
-}
-
 type queryResult struct {
 	ctx                 context.Context
 	err                 error
-	cancel              context.CancelFunc
+	currentBatch        *scanBatch
 	tagProjection       *model.TagProjection
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
-	currentBatch        *scanBatch
+	cancel              context.CancelFunc
 	currentCursorGroups map[string][]*blockCursor
-	snapshots           []*snapshot
+	streamDone          <-chan struct{}
+	currentTraceIDs     []string
 	segments            []storage.Segment[*tsTable, option]
 	currentIndex        int
 	hit                 int
@@ -299,12 +275,12 @@ func (qr *queryResult) Pull() *model.TraceResult {
 			return nil
 		}
 
-		if qr.currentBatch == nil || qr.currentIndex >= len(qr.currentBatch.traceIDs) {
+		if qr.currentBatch == nil || qr.currentIndex >= len(qr.currentTraceIDs) {
 			qr.releaseCurrentBatch()
 			continue
 		}
 
-		traceID := qr.currentBatch.traceIDs[qr.currentIndex]
+		traceID := qr.currentTraceIDs[qr.currentIndex]
 		cursors := qr.currentCursorGroups[traceID]
 
 		if len(cursors) == 0 {
@@ -341,7 +317,7 @@ func (qr *queryResult) Pull() *model.TraceResult {
 }
 
 func (qr *queryResult) ensureCurrentBatch() bool {
-	if qr.currentBatch != nil && qr.currentIndex < len(qr.currentBatch.traceIDs) {
+	if qr.currentBatch != nil && qr.currentIndex < len(qr.currentTraceIDs) {
 		return true
 	}
 
@@ -364,7 +340,11 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 
 			qr.currentBatch = batch
 			qr.currentIndex = 0
-			qr.currentCursorGroups = make(map[string][]*blockCursor, len(batch.traceIDs))
+
+			// Use the ordered list of trace IDs to maintain the sorted order from SIDX stream
+			qr.currentTraceIDs = batch.traceIDsOrder
+
+			qr.currentCursorGroups = make(map[string][]*blockCursor, len(qr.currentTraceIDs))
 
 			// Stream cursors from channel and group by traceID
 			if batch.cursorCh != nil {
@@ -378,6 +358,11 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 							}
 						}
 						qr.currentCursorGroups = nil
+						// Release snapshots from this batch on error
+						for _, s := range batch.snapshots {
+							s.decRef()
+						}
+						qr.currentBatch = nil
 						return true
 					}
 					if result.cursor != nil {
@@ -464,10 +449,15 @@ func (qr *queryResult) releaseCurrentBatch() {
 		qr.currentCursorGroups = nil
 	}
 	if qr.currentBatch != nil {
+		// Release snapshots from this batch
+		for _, s := range qr.currentBatch.snapshots {
+			s.decRef()
+		}
 		// Note: cursorCh should be fully consumed by ensureCurrentBatch
 		// so no need to drain it here
 		qr.currentBatch = nil
 	}
+	qr.currentTraceIDs = nil
 	qr.currentIndex = 0
 }
 
@@ -476,14 +466,25 @@ func (qr *queryResult) Release() {
 		qr.cancel()
 	}
 
+	// Wait for streamSIDXTraceBatches goroutine to exit if it was used
+	if qr.streamDone != nil {
+		<-qr.streamDone
+	}
+
 	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
 	for batch := range qr.cursorBatchCh {
-		if batch != nil && batch.cursorCh != nil {
-			// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
-			for result := range batch.cursorCh {
-				if result.cursor != nil {
-					releaseBlockCursor(result.cursor)
+		if batch != nil {
+			if batch.cursorCh != nil {
+				// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
+				for result := range batch.cursorCh {
+					if result.cursor != nil {
+						releaseBlockCursor(result.cursor)
+					}
 				}
+			}
+			// Release snapshots from drained batches
+			for _, s := range batch.snapshots {
+				s.decRef()
 			}
 		}
 	}
@@ -491,11 +492,7 @@ func (qr *queryResult) Release() {
 
 	qr.releaseCurrentBatch()
 
-	// Now safe to release snapshots - all workers have finished
-	for i := range qr.snapshots {
-		qr.snapshots[i].decRef()
-	}
-	qr.snapshots = qr.snapshots[:0]
+	// Release segments
 	for i := range qr.segments {
 		qr.segments[i].DecRef()
 	}

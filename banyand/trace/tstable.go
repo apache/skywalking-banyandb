@@ -56,6 +56,7 @@ type tsTable struct {
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
+	handoffCtrl   *handoffController
 	option        option
 	introductions chan *introduction
 	p             common.Position
@@ -337,6 +338,62 @@ func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	return result
 }
 
+// enqueueForOfflineNodes enqueues parts for offline nodes via the handoff controller.
+func (tst *tsTable) enqueueForOfflineNodes(onlineNodes []string, partsToSync []*part, partIDsToSync map[uint64]struct{}) {
+	if tst.handoffCtrl == nil {
+		return
+	}
+
+	// Check if there are any offline nodes before doing expensive preparation work
+	offlineNodes := tst.handoffCtrl.calculateOfflineNodes(onlineNodes, tst.group, tst.shardID)
+	tst.l.Debug().
+		Str("group", tst.group).
+		Uint32("shardID", uint32(tst.shardID)).
+		Strs("onlineNodes", onlineNodes).
+		Strs("offlineNodes", offlineNodes).
+		Msg("handoff enqueue evaluation")
+	if len(offlineNodes) == 0 {
+		return
+	}
+
+	// Prepare core parts info
+	coreParts := make([]partInfo, 0, len(partsToSync))
+	for _, part := range partsToSync {
+		coreParts = append(coreParts, partInfo{
+			partID:  part.partMetadata.ID,
+			path:    part.path,
+			group:   tst.group,
+			shardID: tst.shardID,
+		})
+	}
+
+	// Get sidx part paths from each sidx instance
+	sidxMap := tst.getAllSidx()
+	sidxParts := make(map[string][]partInfo)
+	for sidxName, sidxInstance := range sidxMap {
+		partPaths := sidxInstance.PartPaths(partIDsToSync)
+		if len(partPaths) == 0 {
+			continue
+		}
+
+		parts := make([]partInfo, 0, len(partPaths))
+		for partID, path := range partPaths {
+			parts = append(parts, partInfo{
+				partID:  partID,
+				path:    path,
+				group:   tst.group,
+				shardID: tst.shardID,
+			})
+		}
+		sidxParts[sidxName] = parts
+	}
+
+	// Call handoff controller with offline nodes
+	if err := tst.handoffCtrl.enqueueForOfflineNodes(offlineNodes, coreParts, sidxParts); err != nil {
+		tst.l.Warn().Err(err).Msg("handoff enqueue completed with errors")
+	}
+}
+
 func (tst *tsTable) loadSidxMap(availablePartIDs []uint64) {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)
@@ -460,7 +517,7 @@ func (ti *tstIter) reset() {
 	ti.idx = 0
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, groupedTids [][]string) {
 	ti.reset()
 	ti.parts = parts
 
@@ -470,7 +527,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
 		ti.piPool[i] = &partIter{}
-		ti.piPool[i].init(bma, p, tids)
+		ti.piPool[i].init(bma, p, groupedTids[i])
 	}
 
 	if len(ti.piPool) == 0 {

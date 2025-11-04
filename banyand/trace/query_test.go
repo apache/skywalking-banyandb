@@ -91,18 +91,19 @@ func TestQueryResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				}
+				queryOpts := queryOptions{}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, []string{tt.traceID})
+				pp, _ := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, []string{tt.traceID})
 				bma := generateBlockMetadataArray()
 				defer releaseBlockMetadataArray(bma)
 				ti := &tstIter{}
-				ti.init(bma, pp, []string{tt.traceID})
+				groupedTids := make([][]string, len(pp))
+				for i := range groupedTids {
+					groupedTids[i] = []string{tt.traceID}
+				}
+				ti.init(bma, pp, groupedTids)
 
 				var (
 					result  queryResult
@@ -129,10 +130,14 @@ func TestQueryResult(t *testing.T) {
 				close(cursorCh)
 
 				cursorBatch := make(chan *scanBatch, 1)
+				// Create trace batch with map structure
+				traceIDMap := make(map[uint64][]string)
+				traceIDMap[0] = []string{tt.traceID}
 				cursorBatch <- &scanBatch{
 					traceBatch: traceBatch{
-						traceIDs: []string{tt.traceID},
-						keys:     map[string]int64{tt.traceID: 0},
+						traceIDs:      traceIDMap,
+						traceIDsOrder: []string{tt.traceID},
+						keys:          map[string]int64{tt.traceID: 0},
 					},
 					cursorCh: cursorCh,
 				}
@@ -333,10 +338,7 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
-				}
+				queryOpts := queryOptions{}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
@@ -347,7 +349,7 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 					allTraceIDs = append(allTraceIDs, batchTraceIDs...)
 				}
 
-				pp, _ := s.getParts(nil, queryOpts.minTimestamp, queryOpts.maxTimestamp, allTraceIDs)
+				pp, _ := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, allTraceIDs)
 
 				// Create multiple batches, each simulating a batch from sidx
 				cursorBatch := make(chan *scanBatch, len(tt.traceIDs))
@@ -355,7 +357,11 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 				for batchIdx, batchTraceIDs := range tt.traceIDs {
 					bma := generateBlockMetadataArray()
 					ti := &tstIter{}
-					ti.init(bma, pp, batchTraceIDs)
+					groupedTids := make([][]string, len(pp))
+					for i := range groupedTids {
+						groupedTids[i] = batchTraceIDs
+					}
+					ti.init(bma, pp, groupedTids)
 
 					var cursors []*blockCursor
 					for ti.nextBlock() {
@@ -381,12 +387,17 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 						keys[traceID] = int64(batchIdx)
 					}
 
+					// Create trace ID map for this batch
+					traceIDMap := make(map[uint64][]string)
+					traceIDMap[uint64(batchIdx)] = batchTraceIDs
+
 					// Add batch to channel
 					cursorBatch <- &scanBatch{
 						traceBatch: traceBatch{
-							traceIDs: batchTraceIDs,
-							keys:     keys,
-							seq:      batchIdx,
+							traceIDs:      traceIDMap,
+							traceIDsOrder: batchTraceIDs,
+							keys:          keys,
+							seq:           batchIdx,
 						},
 						cursorCh: cursorCh,
 					}

@@ -103,17 +103,19 @@ func Benchmark_mergeBlocks_FastRawMerge(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				// Create new iterators for each benchmark iteration
 				var pmi []*partMergeIter
+				var traceSize uint64
 				for _, p := range parts {
 					iter := generatePartMergeIter()
 					iter.mustInitFromPart(p)
 					pmi = append(pmi, iter)
+					traceSize += p.partMetadata.TotalCount
 				}
 
 				br := generateBlockReader()
 				br.init(pmi)
 				bw := generateBlockWriter()
 				dstPath := partPath(tmpPath, uint64(10000+i))
-				bw.mustInitForFilePart(fileSystem, dstPath, false)
+				bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 				closeCh := make(chan struct{})
 
@@ -208,17 +210,19 @@ func Benchmark_mergeBlocks_OriginalMerge(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				// Create new iterators for each benchmark iteration
 				var pmi []*partMergeIter
+				var traceSize uint64
 				for _, p := range parts {
 					iter := generatePartMergeIter()
 					iter.mustInitFromPart(p)
 					pmi = append(pmi, iter)
+					traceSize += p.partMetadata.TotalCount
 				}
 
 				br := generateBlockReader()
 				br.init(pmi)
 				bw := generateBlockWriter()
 				dstPath := partPath(tmpPath, uint64(20000+i))
-				bw.mustInitForFilePart(fileSystem, dstPath, false)
+				bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 				closeCh := make(chan struct{})
 
@@ -311,17 +315,19 @@ func Benchmark_mergeBlocks_Comparison(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			// Create new iterators for each benchmark iteration
 			var pmi []*partMergeIter
+			var traceSize uint64
 			for _, p := range parts {
 				iter := generatePartMergeIter()
 				iter.mustInitFromPart(p)
 				pmi = append(pmi, iter)
+				traceSize += p.partMetadata.TotalCount
 			}
 
 			br := generateBlockReader()
 			br.init(pmi)
 			bw := generateBlockWriter()
 			dstPath := partPath(tmpPathFast, uint64(30000+i))
-			bw.mustInitForFilePart(fileSystem, dstPath, false)
+			bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 			closeCh := make(chan struct{})
 
@@ -355,17 +361,19 @@ func Benchmark_mergeBlocks_Comparison(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			// Create new iterators for each benchmark iteration
 			var pmi []*partMergeIter
+			var traceSize uint64
 			for _, p := range parts {
 				iter := generatePartMergeIter()
 				iter.mustInitFromPart(p)
 				pmi = append(pmi, iter)
+				traceSize += p.partMetadata.TotalCount
 			}
 
 			br := generateBlockReader()
 			br.init(pmi)
 			bw := generateBlockWriter()
 			dstPath := partPath(tmpPathSlow, uint64(40000+i))
-			bw.mustInitForFilePart(fileSystem, dstPath, false)
+			bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 			closeCh := make(chan struct{})
 

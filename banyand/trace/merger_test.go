@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -240,6 +241,7 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 
 			// Create parts
 			var pmi []*partMergeIter
+			var traceSize uint64
 			for i, traces := range tt.parts {
 				mp := generateMemPart()
 				mp.mustInitFromTraces(traces)
@@ -248,6 +250,7 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 				iter := generatePartMergeIter()
 				iter.mustInitFromPart(p)
 				pmi = append(pmi, iter)
+				traceSize += p.partMetadata.TotalCount
 				releaseMemPart(mp)
 			}
 
@@ -256,7 +259,7 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 			br.init(pmi)
 			bw := generateBlockWriter()
 			dstPath := partPath(tmpPath, 9999)
-			bw.mustInitForFilePart(fileSystem, dstPath, false)
+			bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 			closeCh := make(chan struct{})
 			defer close(closeCh)
@@ -266,6 +269,27 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 			require.NotNil(t, pm)
 			require.NotNil(t, tf)
 			require.NotNil(t, tagTypes)
+
+			// Verify bloom filter before flushing
+			require.NotNil(t, tf.filter, "Trace ID bloom filter should not be nil")
+
+			// Collect all unique trace IDs from the test data
+			uniqueTraceIDs := make(map[string]bool)
+			for _, traces := range tt.parts {
+				for _, tid := range traces.traceIDs {
+					uniqueTraceIDs[tid] = true
+				}
+			}
+
+			// Verify expected trace IDs are in the bloom filter
+			for traceID := range uniqueTraceIDs {
+				require.True(t, tf.filter.MightContain(convert.StringToBytes(traceID)),
+					"Expected trace ID %s to be in bloom filter", traceID)
+			}
+
+			// Verify bloom filter N is at least the unique trace count (it may be higher due to over-estimation)
+			require.GreaterOrEqual(t, tf.filter.N(), len(uniqueTraceIDs),
+				"Bloom filter N should be at least the number of unique trace IDs")
 
 			releaseBlockWriter(bw)
 			releaseBlockReader(br)
@@ -281,6 +305,16 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 
 			// Verify merged results by reading back
 			mergedPart := mustOpenFilePart(9999, tmpPath, fileSystem)
+
+			// Verify bloom filter persists after reload
+			require.NotNil(t, mergedPart.traceIDFilter.filter, "Trace ID bloom filter should persist after reload")
+			for traceID := range uniqueTraceIDs {
+				require.True(t, mergedPart.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)),
+					"Expected trace ID %s to be in bloom filter after reload", traceID)
+			}
+			require.GreaterOrEqual(t, mergedPart.traceIDFilter.filter.N(), len(uniqueTraceIDs),
+				"Bloom filter N should be at least the unique trace count after reload")
+
 			mergedIter := generatePartMergeIter()
 			mergedIter.mustInitFromPart(mergedPart)
 
@@ -336,6 +370,16 @@ func verifyPartContainsTraces(t *testing.T, partID uint64, tmpPath string, fileS
 		fs.MustClose(p.primary)
 		fs.MustClose(p.spans)
 	}()
+
+	// Verify bloom filter contains all expected trace IDs
+	require.NotNil(t, p.traceIDFilter.filter, "Part %d should have a bloom filter", partID)
+	for traceID := range expectedTraces {
+		require.True(t, p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)),
+			"Part %d: Expected trace ID %s to be in bloom filter", partID, traceID)
+	}
+	// Verify bloom filter N is at least the unique trace count (may be higher due to over-estimation)
+	require.GreaterOrEqual(t, p.traceIDFilter.filter.N(), len(expectedTraces),
+		"Part %d: Bloom filter N should be at least the number of unique trace IDs", partID)
 
 	// Create iterator to read blocks
 	pmi := generatePartMergeIter()
@@ -1197,6 +1241,30 @@ func Test_mergeParts(t *testing.T) {
 					return
 				}
 				defer p.decRef()
+
+				// Verify bloom filter
+				if len(tt.tsList) > 0 {
+					require.NotNil(t, p.p.traceIDFilter.filter, "Merged part should have a bloom filter")
+
+					// Collect all unique trace IDs from test data
+					uniqueTraceIDs := make(map[string]bool)
+					for _, traces := range tt.tsList {
+						for _, tid := range traces.traceIDs {
+							uniqueTraceIDs[tid] = true
+						}
+					}
+
+					// Verify all expected trace IDs are in the bloom filter
+					for traceID := range uniqueTraceIDs {
+						require.True(t, p.p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)),
+							"Expected trace ID %s to be in bloom filter", traceID)
+					}
+
+					// Verify bloom filter N is at least the unique trace count (may be higher due to over-estimation)
+					require.GreaterOrEqual(t, p.p.traceIDFilter.filter.N(), len(uniqueTraceIDs),
+						"Bloom filter N should be at least the number of unique trace IDs")
+				}
+
 				pmi := &partMergeIter{}
 				pmi.mustInitFromPart(p.p)
 				reader := &blockReader{}

@@ -54,6 +54,7 @@ Release Notes.
 - Implement bydbQL.
 - UI: Implement the Query Page for BydbQL.
 - Refactor router for better usability.
+- Implement the handoff queue for Trace.
 
 ### Bug Fixes
 
