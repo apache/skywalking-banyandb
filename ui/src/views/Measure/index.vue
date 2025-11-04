@@ -22,9 +22,10 @@
   import TopNav from '@/components/TopNav/index.vue';
   import { reactive } from 'vue';
   import { CatalogToGroupType } from '@/components/common/data';
+  import { ASIDE_WIDTH } from '../constants';
 
   const data = reactive({
-    width: '200px',
+    width: `${ASIDE_WIDTH}px`,
   });
 
   function setWidth(width) {
