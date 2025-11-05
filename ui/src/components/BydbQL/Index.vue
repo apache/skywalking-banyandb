@@ -17,15 +17,16 @@
   ~ under the License.
 -->
 <script setup>
-  import { ref, computed, onMounted, nextTick } from 'vue';
+  import { ref, computed, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { executeBydbQLQuery } from '@/api/index';
+  import { executeBydbQLQuery, getGroupList, getAllTypesOfResourceList, getTopNAggregationList } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import TopNTable from '@/components/common/TopNTable.vue';
   import MeasureAndStreamTable from '@/components/common/MeasureAndStreamTable.vue';
   import PropertyTable from '@/components/common/PropertyTable.vue';
   import TraceTable from '@/components/common/TraceTable.vue';
   import { CatalogToGroupType } from '@/components/common/data';
+  import { updateSchemaData } from '@/components/CodeMirror/bydbql-hint.js';
 
   // Default query text with example queries as comments
   const queryText = ref(`-- Example queries:
@@ -39,6 +40,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const loading = ref(false);
   const error = ref(null);
   const executionTime = ref(0);
+  const codeMirrorInstance = ref(null);
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -273,19 +275,83 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     error.value = null;
     executionTime.value = 0;
   }
-  // Setup keyboard shortcuts for CodeMirror
-  onMounted(() => {
-    nextTick(() => {
-      // Find the CodeMirror instance and add keyboard shortcuts
-      const codeMirrorElement = document.querySelector('.query-input .CodeMirror');
-      if (codeMirrorElement && codeMirrorElement.CodeMirror) {
-        const cm = codeMirrorElement.CodeMirror;
-        cm.setOption('extraKeys', {
-          'Ctrl-Enter': executeQuery,
-          'Cmd-Enter': executeQuery,
-        });
-      }
+
+  // Handle CodeMirror ready event
+  function onCodeMirrorReady(cm) {
+    codeMirrorInstance.value = cm;
+    // Add keyboard shortcuts
+    cm.setOption('extraKeys', {
+      'Ctrl-Enter': executeQuery,
+      'Cmd-Enter': executeQuery,
+      'Ctrl-Space': 'autocomplete',
     });
+  }
+
+  // Fetch groups and schemas for autocomplete
+  async function fetchSchemaData() {
+    try {
+      const groupResponse = await getGroupList();
+      if (groupResponse.error) {
+        console.error('Failed to fetch groups:', groupResponse.error);
+        return;
+      }
+
+      // Only include groups with valid catalog types (property, stream, trace, measure, topn)
+      const groups = (groupResponse.group || [])
+        .filter((g) => CatalogToGroupType[g.catalog])
+        .map((g) => g.metadata.name);
+      const schemas = {
+        stream: [],
+        measure: [],
+        trace: [],
+        property: [],
+        topn: [],
+      };
+
+      // Fetch schemas for each type
+      for (const group of groupResponse.group || []) {
+        const groupName = group.metadata.name;
+        const catalog = group.catalog;
+        const type = CatalogToGroupType[catalog];
+
+        if (type) {
+          try {
+            const schemaResponse = await getAllTypesOfResourceList(type, groupName);
+            if (!schemaResponse.error) {
+              const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
+              const schemaNames = schemaList.map((s) => s.metadata?.name).filter(Boolean);
+              schemas[type] = [...new Set([...schemas[type], ...schemaNames])];
+            }
+          } catch (e) {
+            console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
+          }
+
+          // TopN resources are in CATALOG_MEASURE groups
+          if (catalog === 'CATALOG_MEASURE') {
+            try {
+              const topnResponse = await getTopNAggregationList(groupName);
+              if (!topnResponse.error) {
+                const topnList = topnResponse.topNAggregation|| [];
+                const topnNames = topnList.map((s) => s.metadata?.name).filter(Boolean);
+                schemas.topn = [...new Set([...schemas.topn, ...topnNames])];
+              }
+            } catch (e) {
+              console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
+            }
+          }
+        }
+      }
+      console.log(schemas);
+      // Update autocomplete data
+      updateSchemaData(groups, schemas);
+    } catch (e) {
+      console.error('Failed to fetch schema data:', e);
+    }
+  }
+
+  // Setup on mount
+  onMounted(() => {
+    fetchSchemaData();
   });
 </script>
 
@@ -304,12 +370,14 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       <div class="query-input-container">
         <CodeMirror
           v-model="queryText"
-          :mode="'sql'"
-          :lint="false"
+          :mode="'bydbql'"
+          :lint="true"
           :readonly="false"
           :style-active-line="true"
           :auto-refresh="true"
+          :enable-hint="true"
           class="query-input"
+          @ready="onCodeMirrorReady"
         />
       </div>
     </el-card>
