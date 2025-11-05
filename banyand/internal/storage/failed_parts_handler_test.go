@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -68,8 +69,8 @@ func TestRetryFailedParts_EmptyList(t *testing.T) {
 
 	ctx := context.Background()
 	failedParts := []queue.FailedPart{}
-	partsInfo := make(map[uint64]*PartInfo)
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	partsInfo := make(map[uint64][]*PartInfo)
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		t.Fatal("syncFunc should not be called for empty list")
 		return nil, nil
 	}
@@ -98,13 +99,13 @@ func TestRetryFailedParts_SuccessOnFirstRetry(t *testing.T) {
 	fileSystem.MkdirIfNotExist(part123Path, DirPerm)
 	fileSystem.MkdirIfNotExist(part456Path, DirPerm)
 
-	partsInfo := map[uint64]*PartInfo{
-		123: {PartID: 123, SourcePath: part123Path, PartType: "core"},
-		456: {PartID: 456, SourcePath: part456Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		123: {{PartID: 123, SourcePath: part123Path, PartType: "core"}},
+		456: {{PartID: 456, SourcePath: part456Path, PartType: "core"}},
 	}
 
 	callCount := 0
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		callCount++
 		// All parts succeed on first retry
 		return []queue.FailedPart{}, nil
@@ -138,8 +139,8 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	_, err := fileSystem.Write([]byte("test data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		789: {PartID: 789, SourcePath: part789Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		789: {{PartID: 789, SourcePath: part789Path, PartType: "core"}},
 	}
 
 	// Sanity check: ensure local filesystem CreateHardLink works in test environment
@@ -150,7 +151,7 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	fileSystem.MustRMAll(directCopyDest)
 
 	attemptCount := 0
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		attemptCount++
 		// Always fail
 		return []queue.FailedPart{
@@ -166,7 +167,8 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	assert.Equal(t, DefaultMaxRetries, attemptCount, "should retry max times")
 
 	// Directly test CopyToFailedPartsDir to verify it works
-	err = handler.CopyToFailedPartsDir(789, part789Path)
+	destSubDir := "0000000000000789_core"
+	err = handler.CopyToFailedPartsDir(789, part789Path, destSubDir)
 	require.NoError(t, err, "CopyToFailedPartsDir should succeed")
 
 	// Check that part was copied to failed-parts directory
@@ -176,7 +178,7 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	entries := fileSystem.ReadDir(failedPartsDir)
 	found := false
 	for _, entry := range entries {
-		if entry.Name() == "0000000000000789" && entry.IsDir() {
+		if entry.Name() == destSubDir && entry.IsDir() {
 			found = true
 			break
 		}
@@ -186,10 +188,11 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	}
 
 	// Also verify the file exists in the copied directory
-	copiedFile := filepath.Join(failedPartsDir, "0000000000000789", "test.dat")
+	copiedFile := filepath.Join(failedPartsDir, destSubDir, "test.dat")
 	copiedData, err := fileSystem.Read(copiedFile)
 	if err != nil {
-		if fsErr, ok := err.(*fs.FileSystemError); ok && fsErr.Code == fs.IsNotExistError {
+		var fsErr *fs.FileSystemError
+		if errors.As(err, &fsErr) && fsErr.Code == fs.IsNotExistError {
 			t.Skipf("hard link copy not supported on this platform: %v", fsErr)
 		}
 	}
@@ -216,12 +219,12 @@ func TestRetryFailedParts_SuccessOnSecondRetry(t *testing.T) {
 	_, err := fileSystem.Write([]byte("data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		999: {PartID: 999, SourcePath: part999Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		999: {{PartID: 999, SourcePath: part999Path, PartType: "core"}},
 	}
 
 	attemptCount := 0
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		attemptCount++
 		if attemptCount == 1 {
 			// First retry fails
@@ -259,11 +262,11 @@ func TestRetryFailedParts_SyncFuncError(t *testing.T) {
 	_, err := fileSystem.Write([]byte("data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		111: {PartID: 111, SourcePath: part111Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		111: {{PartID: 111, SourcePath: part111Path, PartType: "core"}},
 	}
 
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		return nil, fmt.Errorf("sync function error")
 	}
 
@@ -295,11 +298,11 @@ func TestRetryFailedParts_ContextCancellation(t *testing.T) {
 	_, err := fileSystem.Write([]byte("data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		222: {PartID: 222, SourcePath: part222Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		222: {{PartID: 222, SourcePath: part222Path, PartType: "core"}},
 	}
 
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		return []queue.FailedPart{{PartID: "222", Error: "still failing"}}, nil
 	}
 
@@ -335,8 +338,8 @@ func TestRetryFailedParts_InvalidPartID(t *testing.T) {
 	_, err := fileSystem.Write([]byte("data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		456: {PartID: 456, SourcePath: part456Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		456: {{PartID: 456, SourcePath: part456Path, PartType: "core"}},
 	}
 
 	callCount := 0
@@ -369,12 +372,13 @@ func TestCopyToFailedPartsDir_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	partID := uint64(12345)
+	destSubDir := "0000000000012345_core"
 
-	err = handler.CopyToFailedPartsDir(partID, sourcePath)
+	err = handler.CopyToFailedPartsDir(partID, sourcePath, destSubDir)
 	assert.NoError(t, err)
 
 	// Verify hard link was created
-	destPath := filepath.Join(handler.failedPartsDir, fmt.Sprintf("%016x", partID))
+	destPath := filepath.Join(handler.failedPartsDir, destSubDir)
 	entries := fileSystem.ReadDir(destPath)
 	assert.NotEmpty(t, entries, "destination should have files")
 
@@ -399,13 +403,14 @@ func TestCopyToFailedPartsDir_AlreadyExists(t *testing.T) {
 	require.NoError(t, err)
 
 	partID := uint64(67890)
+	destSubDir := "0000000000067890_core"
 
 	// First copy
-	err = handler.CopyToFailedPartsDir(partID, sourcePath)
+	err = handler.CopyToFailedPartsDir(partID, sourcePath, destSubDir)
 	assert.NoError(t, err)
 
 	// Second copy should succeed (idempotent)
-	err = handler.CopyToFailedPartsDir(partID, sourcePath)
+	err = handler.CopyToFailedPartsDir(partID, sourcePath, destSubDir)
 	assert.NoError(t, err)
 }
 
@@ -417,8 +422,9 @@ func TestCopyToFailedPartsDir_SourceNotExist(t *testing.T) {
 
 	sourcePath := filepath.Join(tempDir, "nonexistent")
 	partID := uint64(99999)
+	destSubDir := "0000000000099999_core"
 
-	err := handler.CopyToFailedPartsDir(partID, sourcePath)
+	err := handler.CopyToFailedPartsDir(partID, sourcePath, destSubDir)
 	assert.Error(t, err)
 }
 
@@ -446,10 +452,10 @@ func TestRetryFailedParts_MixedResults(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	partsInfo := map[uint64]*PartInfo{
-		100: {PartID: 100, SourcePath: filepath.Join(tempDir, "0000000000000100"), PartType: "core"},
-		200: {PartID: 200, SourcePath: filepath.Join(tempDir, "0000000000000200"), PartType: "core"},
-		300: {PartID: 300, SourcePath: filepath.Join(tempDir, "0000000000000300"), PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		100: {{PartID: 100, SourcePath: filepath.Join(tempDir, "0000000000000100"), PartType: "core"}},
+		200: {{PartID: 200, SourcePath: filepath.Join(tempDir, "0000000000000200"), PartType: "core"}},
+		300: {{PartID: 300, SourcePath: filepath.Join(tempDir, "0000000000000300"), PartType: "core"}},
 	}
 
 	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
@@ -493,12 +499,12 @@ func TestRetryFailedParts_ExponentialBackoff(t *testing.T) {
 	_, err := fileSystem.Write([]byte("data"), testFile, FilePerm)
 	require.NoError(t, err)
 
-	partsInfo := map[uint64]*PartInfo{
-		500: {PartID: 500, SourcePath: part500Path, PartType: "core"},
+	partsInfo := map[uint64][]*PartInfo{
+		500: {{PartID: 500, SourcePath: part500Path, PartType: "core"}},
 	}
 
 	var timestamps []time.Time
-	syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
 		timestamps = append(timestamps, time.Now())
 		return []queue.FailedPart{{PartID: "500", Error: "still failing"}}, nil
 	}

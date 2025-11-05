@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	g "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -40,7 +40,7 @@ import (
 )
 
 func TestDistributedSyncRetry(t *testing.T) {
-	RegisterFailHandler(g.Fail)
+	gomega.RegisterFailHandler(g.Fail)
 	g.RunSpecs(t, "Distributed Sync Retry Suite")
 }
 
@@ -59,12 +59,12 @@ var (
 
 var _ = g.SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
-	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
+	gomega.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gomega.Succeed())
 
 	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	dir, releaseSpace, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	clientEP := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
 	serverEP := fmt.Sprintf("http://127.0.0.1:%d", ports[1])
@@ -76,7 +76,7 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		embeddedetcd.AutoCompactionRetention("1h"),
 		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	<-server.ReadyNotify()
 
 	cleanupFuncs = append([]func(){
@@ -91,7 +91,7 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		schema.Namespace(metadata.DefaultNamespace),
 		schema.ConfigureServerEndpoints([]string{clientEP}),
 	)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer schemaRegistry.Close()
 
 	ctx := context.Background()
@@ -118,11 +118,11 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		DataPaths:   paths,
 	}
 	payload, err := json.Marshal(cfg)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return payload
 }, func(data []byte) {
 	var cfg suiteConfig
-	Expect(json.Unmarshal(data, &cfg)).To(Succeed())
+	gomega.Expect(json.Unmarshal(data, &cfg)).To(gomega.Succeed())
 	liaisonAddr = cfg.LiaisonAddr
 	dataPaths = cfg.DataPaths
 })
@@ -132,5 +132,5 @@ var _ = g.SynchronizedAfterSuite(func() {
 	for i := len(cleanupFuncs) - 1; i >= 0; i-- {
 		cleanupFuncs[i]()
 	}
-	Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 }, func() {})

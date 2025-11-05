@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package integration_sync_retry_test provides test utilities for sync retry integration tests.
 package integration_sync_retry_test
 
 import (

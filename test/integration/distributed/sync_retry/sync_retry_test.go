@@ -26,7 +26,7 @@ import (
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -46,7 +46,7 @@ const (
 
 var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 	g.BeforeEach(func() {
-		Expect(clearFailedPartsDirs()).To(Succeed())
+		gomega.Expect(clearFailedPartsDirs()).To(gomega.Succeed())
 	})
 
 	g.AfterEach(func() {
@@ -68,16 +68,16 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		casesstreamdata.Write(conn, "sw", baseTime, 500*time.Millisecond)
 
 		g.By("waiting for injected stream sync failures")
-		Eventually(func() int {
+		gomega.Eventually(func() int {
 			return injector.attemptsFor(data.TopicStreamPartSync.String())
-		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically(">=", 2*(DefaultMaxRetries+1)))
+		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.BeNumerically(">=", 2*(DefaultMaxRetries+1)))
 
 		g.By("waiting for stream failed-parts directory to be populated")
-		Eventually(func() string {
+		gomega.Eventually(func() string {
 			return locateFailedPartsDir("stream")
-		}, flags.EventuallyTimeout, time.Second).ShouldNot(BeEmpty())
+		}, flags.EventuallyTimeout, time.Second).ShouldNot(gomega.BeEmpty())
 		dir := locateFailedPartsDir("stream")
-		Expect(dir).NotTo(BeEmpty())
+		gomega.Expect(dir).NotTo(gomega.BeEmpty())
 		g.By(fmt.Sprintf("stream failed parts recorded at %s", dir))
 	})
 
@@ -96,16 +96,16 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", baseTime, time.Minute)
 
 		g.By("waiting for injected measure sync failures")
-		Eventually(func() int {
+		gomega.Eventually(func() int {
 			return injector.attemptsFor(data.TopicMeasurePartSync.String())
-		}, flags.EventuallyTimeout, time.Second).Should(BeNumerically(">=", 2*2*(DefaultMaxRetries+1)))
+		}, flags.EventuallyTimeout, time.Second).Should(gomega.BeNumerically(">=", 2*2*(DefaultMaxRetries+1)))
 
 		g.By("waiting for measure failed-parts directory to be populated")
-		Eventually(func() string {
+		gomega.Eventually(func() string {
 			return locateFailedPartsDir("measure")
-		}, flags.EventuallyTimeout, 2*time.Second).ShouldNot(BeEmpty())
+		}, flags.EventuallyTimeout, 2*time.Second).ShouldNot(gomega.BeEmpty())
 		dir := locateFailedPartsDir("measure")
-		Expect(dir).NotTo(BeEmpty())
+		gomega.Expect(dir).NotTo(gomega.BeEmpty())
 		g.By(fmt.Sprintf("measure failed parts recorded at %s", dir))
 	})
 
@@ -124,16 +124,16 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		casestracedata.WriteToGroup(conn, "sw", "test-trace-group", "sw", baseTime, 500*time.Millisecond)
 
 		g.By("waiting for injected trace sync failures")
-		Eventually(func() int {
+		gomega.Eventually(func() int {
 			return injector.attemptsFor(data.TopicTracePartSync.String())
-		}, flags.EventuallyTimeout, time.Second).Should(BeNumerically(">=", 2*(DefaultMaxRetries+1)))
+		}, flags.EventuallyTimeout, time.Second).Should(gomega.BeNumerically(">=", 2*(DefaultMaxRetries+1)))
 
 		g.By("waiting for trace failed-parts directory to be populated")
-		Eventually(func() string {
+		gomega.Eventually(func() string {
 			return locateFailedPartsDir("trace")
-		}, flags.EventuallyTimeout, 2*time.Second).ShouldNot(BeEmpty())
+		}, flags.EventuallyTimeout, 2*time.Second).ShouldNot(gomega.BeEmpty())
 		dir := locateFailedPartsDir("trace")
-		Expect(dir).NotTo(BeEmpty())
+		gomega.Expect(dir).NotTo(gomega.BeEmpty())
 		g.By(fmt.Sprintf("trace failed parts recorded at %s", dir))
 	})
 })
@@ -142,10 +142,10 @@ func dialLiaison() *grpc.ClientConn {
 	var conn *grpc.ClientConn
 	var err error
 	// Retry connection with Eventually to handle liaison startup timing
-	Eventually(func() error {
+	gomega.Eventually(func() error {
 		conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		return err
-	}, 30*time.Second, time.Second).Should(Succeed())
+	}, 30*time.Second, time.Second).Should(gomega.Succeed())
 	return conn
 }
 

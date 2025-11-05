@@ -79,7 +79,7 @@ func NewFailedPartsHandler(fileSystem fs.FileSystem, root string, l *logger.Logg
 func (h *FailedPartsHandler) RetryFailedParts(
 	ctx context.Context,
 	failedParts []queue.FailedPart,
-	partsInfo map[uint64]*PartInfo,
+	partsInfo map[uint64][]*PartInfo,
 	syncFunc func(partIDs []uint64) ([]queue.FailedPart, error),
 ) ([]uint64, error) {
 	if len(failedParts) == 0 {
@@ -116,24 +116,35 @@ func (h *FailedPartsHandler) RetryFailedParts(
 	// Copy permanently failed parts to failed-parts directory
 	var permanentlyFailed []uint64
 	for _, partID := range stillFailing {
-		partInfo, exists := partsInfo[partID]
-		if !exists {
+		partInfoList, exists := partsInfo[partID]
+		if !exists || len(partInfoList) == 0 {
 			h.l.Warn().Uint64("partID", partID).Msg("no part info found for failed part")
 			permanentlyFailed = append(permanentlyFailed, partID)
 			continue
 		}
 
-		if err := h.CopyToFailedPartsDir(partID, partInfo.SourcePath); err != nil {
-			h.l.Error().
-				Err(err).
-				Uint64("partID", partID).
-				Str("sourcePath", partInfo.SourcePath).
-				Msg("failed to copy part to failed-parts directory")
-		} else {
-			h.l.Info().
-				Uint64("partID", partID).
-				Str("destination", filepath.Join(h.failedPartsDir, fmt.Sprintf("%016x", partID))).
-				Msg("successfully copied failed part to failed-parts directory")
+		// Copy all parts with this ID (core + all SIDX parts)
+		allCopied := true
+		for _, partInfo := range partInfoList {
+			destSubDir := fmt.Sprintf("%016x_%s", partID, partInfo.PartType)
+			if err := h.CopyToFailedPartsDir(partID, partInfo.SourcePath, destSubDir); err != nil {
+				h.l.Error().
+					Err(err).
+					Uint64("partID", partID).
+					Str("partType", partInfo.PartType).
+					Str("sourcePath", partInfo.SourcePath).
+					Msg("failed to copy part to failed-parts directory")
+				allCopied = false
+			} else {
+				h.l.Info().
+					Uint64("partID", partID).
+					Str("partType", partInfo.PartType).
+					Str("destination", filepath.Join(h.failedPartsDir, destSubDir)).
+					Msg("successfully copied failed part to failed-parts directory")
+			}
+		}
+		if !allCopied {
+			h.l.Warn().Uint64("partID", partID).Msg("some parts failed to copy")
 		}
 		permanentlyFailed = append(permanentlyFailed, partID)
 	}
@@ -154,7 +165,7 @@ func (h *FailedPartsHandler) retryPartWithBackoff(
 		// Wait before retry
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			return fmt.Errorf("context canceled during retry: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 
@@ -208,15 +219,16 @@ func (h *FailedPartsHandler) retryPartWithBackoff(
 }
 
 // CopyToFailedPartsDir copies a part to the failed-parts directory using hard links.
-func (h *FailedPartsHandler) CopyToFailedPartsDir(partID uint64, sourcePath string) error {
-	destPath := filepath.Join(h.failedPartsDir, fmt.Sprintf("%016x", partID))
+func (h *FailedPartsHandler) CopyToFailedPartsDir(partID uint64, sourcePath string, destSubDir string) error {
+	destPath := filepath.Join(h.failedPartsDir, destSubDir)
 
 	// Check if already exists
 	entries := h.fileSystem.ReadDir(h.failedPartsDir)
 	for _, entry := range entries {
-		if entry.Name() == fmt.Sprintf("%016x", partID) {
+		if entry.Name() == destSubDir {
 			h.l.Info().
 				Uint64("partID", partID).
+				Str("destSubDir", destSubDir).
 				Msg("part already exists in failed-parts directory")
 			return nil
 		}
