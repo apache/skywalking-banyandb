@@ -55,6 +55,7 @@ Release Notes.
 - UI: Implement the Query Page for BydbQL.
 - Refactor router for better usability.
 - Implement the handoff queue for Trace.
+- Add dump command-line tool to parse and display trace part data with support for CSV export and human-readable timestamp formatting.
 
 ### Bug Fixes
 
