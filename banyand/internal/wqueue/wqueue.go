@@ -42,8 +42,6 @@ const (
 	lockFilename    = "lock"
 )
 
-var timeEventSnapDuration = (10 * time.Minute).Nanoseconds()
-
 // ErrUnknownShard indicates that the shard is not found.
 var ErrUnknownShard = errors.New("unknown shard")
 
@@ -71,21 +69,18 @@ type Opts[S SubQueue, O any] struct {
 	Group           string
 	Location        string
 	SegmentInterval storage.IntervalRule
-	TTL             storage.IntervalRule
 	ShardNum        uint32
 }
 
 // Queue represents a write queue that manages multiple shards.
 type Queue[S SubQueue, O any] struct {
-	lfs            fs.FileSystem
-	lock           fs.File
-	logger         *logger.Logger
-	validTimeRange atomic.Pointer[timestamp.TimeRange]
-	p              common.Position
-	location       string
-	sLst           []*Shard[S]
-	opts           Opts[S, O]
-	latestTickTime atomic.Int64
+	lfs      fs.FileSystem
+	lock     fs.File
+	logger   *logger.Logger
+	p        common.Position
+	location string
+	sLst     []*Shard[S]
+	opts     Opts[S, O]
 	sync.RWMutex
 	closed atomic.Bool
 }
@@ -103,7 +98,6 @@ func (q *Queue[S, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 		return
 	}
 	q.opts.SegmentInterval = si
-	q.opts.TTL = storage.MustToIntervalRule(resourceOpts.Ttl)
 	q.opts.ShardNum = resourceOpts.ShardNum
 }
 
@@ -225,70 +219,4 @@ func (q *Queue[S, O]) GetTimeRange(ts time.Time) timestamp.TimeRange {
 // GetNodes returns the nodes for the given shard ID.
 func (q *Queue[S, O]) GetNodes(shardID common.ShardID) []string {
 	return q.opts.GetNodes(shardID)
-}
-
-// updateValidTimeRange calculates and updates the valid time range based on TTL and SegmentInterval.
-func (q *Queue[S, O]) updateValidTimeRange(ts int64) {
-	opts := q.getOpts()
-	t := time.Unix(0, ts)
-
-	// Calculate oldest segment start: beginning of oldest valid segment
-	oldestTime := t.Add(-estimatedDuration(opts.TTL))
-	oldestStart := opts.SegmentInterval.Unit.Standard(oldestTime)
-
-	// Calculate latest segment end: end of current segment
-	currentSegmentStart := opts.SegmentInterval.Unit.Standard(t)
-	latestEnd := opts.SegmentInterval.NextTime(currentSegmentStart)
-
-	// Create and store the time range
-	tr := timestamp.TimeRange{
-		Start:        oldestStart,
-		End:          latestEnd,
-		IncludeStart: true,
-		IncludeEnd:   false,
-	}
-	q.validTimeRange.Store(&tr)
-}
-
-// estimatedDuration calculates the estimated duration for an IntervalRule.
-func estimatedDuration(ir storage.IntervalRule) time.Duration {
-	switch ir.Unit {
-	case storage.HOUR:
-		return time.Hour * time.Duration(ir.Num)
-	case storage.DAY:
-		return 24 * time.Hour * time.Duration(ir.Num)
-	}
-	panic("invalid interval unit")
-}
-
-// IsValidTime checks if a given timestamp is within the valid time range.
-// On the first call, it initializes the time range based on the provided timestamp.
-// If the timestamp exceeds the current time range's end, it updates the time range
-// to accommodate the new timestamp, respecting time snapping to avoid excessive updates.
-// The time range is automatically maintained based on TTL and SegmentInterval.
-func (q *Queue[S, O]) IsValidTime(t time.Time) bool {
-	ts := t.UnixNano()
-	vtr := q.validTimeRange.Load()
-
-	// Initialize time range on first call
-	if vtr == nil {
-		q.latestTickTime.Store(ts)
-		q.updateValidTimeRange(ts)
-		return true
-	}
-
-	// If timestamp is beyond the current range's end, update the time range
-	// but only if enough time has passed since the last update (time snapping)
-	if ts >= vtr.End.UnixNano() {
-		// Check if we should update based on time snapping
-		if (ts - timeEventSnapDuration) >= q.latestTickTime.Load() {
-			q.latestTickTime.Store(ts)
-			q.updateValidTimeRange(ts)
-		}
-		// Even if we didn't update due to snapping, the timestamp is still valid
-		// because it's in the future and will be included in the next segment
-		return true
-	}
-
-	return vtr.Contains(ts)
 }

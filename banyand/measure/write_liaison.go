@@ -167,10 +167,6 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEven
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
 	}
-	// Validate timestamp against TTL-based time range
-	if !queue.IsValidTime(t) {
-		return nil, fmt.Errorf("timestamp %v is outside valid time range (TTL expired or too far in future)", t)
-	}
 	dpg, ok := dst[gn]
 	if !ok {
 		dpg = &dataPointsInQueue{

@@ -75,7 +75,7 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eq, err := w.prepareElementsInQueue(dst, writeEvent, t)
+	eq, err := w.prepareElementsInQueue(dst, writeEvent)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +90,11 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 	return dst, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest, t time.Time) (*elementsInQueue, error) {
+func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (*elementsInQueue, error) {
 	gn := writeEvent.Request.Metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
-	}
-	// Validate timestamp against TTL-based time range
-	if !queue.IsValidTime(t) {
-		return nil, fmt.Errorf("timestamp %v is outside valid time range (TTL expired or too far in future)", t)
 	}
 
 	eq, ok := dst[gn]

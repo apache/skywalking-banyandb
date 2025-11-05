@@ -43,9 +43,9 @@ const (
 // FailedPartsHandler handles retry logic and filesystem fallback for failed parts.
 type FailedPartsHandler struct {
 	fileSystem        fs.FileSystem
+	l                 *logger.Logger
 	root              string
 	failedPartsDir    string
-	l                 *logger.Logger
 	initialRetryDelay time.Duration
 	maxRetries        int
 	backoffMultiplier int
@@ -53,9 +53,9 @@ type FailedPartsHandler struct {
 
 // PartInfo contains information needed to retry or copy a failed part.
 type PartInfo struct {
-	PartID     uint64
 	SourcePath string
 	PartType   string
+	PartID     uint64
 }
 
 // NewFailedPartsHandler creates a new handler for failed parts.
