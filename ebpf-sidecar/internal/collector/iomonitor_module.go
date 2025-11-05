@@ -269,6 +269,14 @@ func (m *IOMonitorModule) collectAndClearCacheStats(ms *metrics.MetricSet) {
 
 	// Calculate rates
 	if totalReadAttempts > 0 {
+		// Ensure cacheMisses doesn't exceed totalReadAttempts (can happen due to race conditions)
+		if cacheMisses > totalReadAttempts {
+			m.logger.Warn("Cache misses exceed read attempts, capping to 100%",
+				zap.Uint64("cache_misses", cacheMisses),
+				zap.Uint64("total_read_attempts", totalReadAttempts))
+			cacheMisses = totalReadAttempts
+		}
+
 		missRate := float64(cacheMisses) / float64(totalReadAttempts) * 100
 		hitRate := 100 - missRate
 
@@ -432,7 +440,18 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 	ms.AddCounter("ebpf_cache_misses_total", float64(cacheMisses), nil)
 
 	if totalReadAttempts > 0 {
+		// Ensure cacheMisses doesn't exceed totalReadAttempts (can happen due to race conditions)
+		if cacheMisses > totalReadAttempts {
+			m.logger.Warn("Cache misses exceed read attempts, capping to 100%",
+				zap.Uint64("cache_misses", cacheMisses),
+				zap.Uint64("total_read_attempts", totalReadAttempts))
+			cacheMisses = totalReadAttempts
+		}
+
 		missRate := float64(cacheMisses) / float64(totalReadAttempts) * 100
+		hitRate := 100 - missRate
+
+		ms.AddGauge("ebpf_cache_hit_rate_percent", hitRate, nil)
 		ms.AddGauge("ebpf_cache_miss_rate_percent", missRate, nil)
 	}
 

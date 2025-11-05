@@ -29,18 +29,38 @@ services:
       service: banyandb
     environment:
       BYDB_OBSERVABILITY_MODES: "prometheus,native"
+      EXPORT_MODE: "prometheus"
+      EXPORT_INTERVAL: "10s"
+      OUTPUT_DIR: "/ebpf-output"
+      HTTP_PORT: "18080"
+      GRPC_PORT: "19090"
+      LOG_LEVEL: "debug"
     build:
-      dockerfile: ./test/docker/Dockerfile
+      dockerfile: ./test/stress/classic/Dockerfile
       context: ../../..
     volumes:
     - /tmp/banyandb-stress-agent:/tmp:rw,delgated
+    - /sys:/sys:ro
+    - /proc:/proc:ro
+    - /sys/kernel/debug:/sys/kernel/debug:ro
+    - /tmp/ebpf-sidecar-classic:/ebpf-output:rw
+    - ../../ebpf-sidecar/build/bin/ebpf-sidecar:/usr/local/bin/ebpf-sidecar:ro
     ports:
     - 17913:17913
     - 6060:6060
     - 2121:2121
+    - 18080:18080  # eBPF sidecar HTTP port
+    - 19090:19090  # eBPF sidecar gRPC port
     networks:
       - test
       - monitoring
+    cap_add:
+      - SYS_ADMIN     # Required for eBPF
+      - SYS_RESOURCE  # Required for increasing memlock
+      - NET_ADMIN     # For network eBPF programs
+      - PERFMON       # For performance monitoring
+      - BPF           # For eBPF operations
+    privileged: true  # Required for eBPF
     depends_on:
       change-vol-ownership:
         condition: service_completed_successfully
