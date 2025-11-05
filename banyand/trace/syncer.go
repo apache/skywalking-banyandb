@@ -22,13 +22,15 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -197,13 +199,17 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		return nil
 	}
 
-	// Execute sync operation
-	if err := tst.executeSyncOperation(partsToSync, partIDsToSync); err != nil {
+	// Initialize failed parts handler
+	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l)
+
+	// Execute sync operation and get permanently failed parts
+	permanentlyFailed, err := tst.executeSyncOperation(partsToSync, partIDsToSync, failedPartsHandler)
+	if err != nil {
 		return err
 	}
 
-	// Handle sync introductions
-	return tst.handleSyncIntroductions(partsToSync, syncCh)
+	// Handle sync introductions (includes both successful and permanently failed parts)
+	return tst.handleSyncIntroductions(partsToSync, permanentlyFailed, syncCh)
 }
 
 // collectPartsToSync collects both core and sidx parts that need to be synchronized.
@@ -226,49 +232,30 @@ func (tst *tsTable) needToSync(partsToSync []*part) bool {
 	return len(partsToSync) > 0 && len(nodes) > 0
 }
 
-// executeSyncOperation performs the actual synchronization of parts to nodes.
-func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[uint64]struct{}) error {
-	sort.Slice(partsToSync, func(i, j int) bool {
-		return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
-	})
+// syncPartsToNodesHelper syncs given parts to all nodes and returns failed parts.
+// This helper is used for both initial sync and retry attempts.
+func (tst *tsTable) syncPartsToNodesHelper(ctx context.Context, parts []*part, partIDsMap map[uint64]struct{}, nodes []string, sidxMap map[string]sidx.SIDX, releaseFuncs *[]func()) ([]queue.FailedPart, error) {
+	var allFailedParts []queue.FailedPart
 
-	ctx := context.Background()
-	releaseFuncs := make([]func(), 0, len(partsToSync))
-	defer func() {
-		for _, release := range releaseFuncs {
-			release()
-		}
-	}()
-
-	nodes := tst.getNodes()
-	if tst.loopCloser != nil && tst.loopCloser.Closed() {
-		return errClosed
-	}
-	sidxMap := tst.getAllSidx()
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
-			return errClosed
+			return allFailedParts, errClosed
 		}
-		// Prepare all streaming parts data
+
+		// Prepare streaming parts data
 		streamingParts := make([]queue.StreamingPartData, 0)
+
 		// Add sidx streaming parts
 		for name, sidx := range sidxMap {
-			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(partIDsToSync, tst.group, uint32(tst.shardID), name)
-			if len(sidxStreamingParts) != len(partIDsToSync) {
-				logger.Panicf("sidx streaming parts count mismatch: %d != %d", len(sidxStreamingParts), len(partIDsToSync))
-				return nil
-			}
+			sidxStreamingParts, sidxReleaseFuncs := sidx.StreamingParts(partIDsMap, tst.group, uint32(tst.shardID), name)
 			streamingParts = append(streamingParts, sidxStreamingParts...)
-			releaseFuncs = append(releaseFuncs, sidxReleaseFuncs...)
+			*releaseFuncs = append(*releaseFuncs, sidxReleaseFuncs...)
 		}
-		if len(streamingParts) != len(partIDsToSync)*len(sidxMap) {
-			logger.Panicf("streaming parts count mismatch: %d != %d", len(streamingParts), len(partIDsToSync)*len(sidxMap))
-			return nil
-		}
-		// Create streaming parts from core trace parts.
-		for _, part := range partsToSync {
+
+		// Create streaming parts from core trace parts
+		for _, part := range parts {
 			files, release := createPartFileReaders(part)
-			releaseFuncs = append(releaseFuncs, release)
+			*releaseFuncs = append(*releaseFuncs, release)
 			streamingParts = append(streamingParts, queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,
 				Group:                 tst.group,
@@ -284,32 +271,173 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 				PartType:              PartTypeCore,
 			})
 		}
+
 		sort.Slice(streamingParts, func(i, j int) bool {
 			if streamingParts[i].ID == streamingParts[j].ID {
 				return streamingParts[i].PartType < streamingParts[j].PartType
 			}
 			return streamingParts[i].ID < streamingParts[j].ID
 		})
-		if err := tst.syncStreamingPartsToNode(ctx, node, streamingParts); err != nil {
-			return err
+
+		failedParts, err := tst.syncStreamingPartsToNode(ctx, node, streamingParts)
+		if err != nil {
+			return allFailedParts, err
+		}
+		allFailedParts = append(allFailedParts, failedParts...)
+	}
+
+	return allFailedParts, nil
+}
+
+// executeSyncOperation performs the actual synchronization of parts to nodes.
+// Returns the list of permanently failed part IDs after retries.
+func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[uint64]struct{}, failedPartsHandler *storage.FailedPartsHandler) ([]uint64, error) {
+	sort.Slice(partsToSync, func(i, j int) bool {
+		return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
+	})
+
+	ctx := context.Background()
+	releaseFuncs := make([]func(), 0, len(partsToSync))
+	defer func() {
+		for _, release := range releaseFuncs {
+			release()
+		}
+	}()
+
+	nodes := tst.getNodes()
+	if tst.loopCloser != nil && tst.loopCloser.Closed() {
+		return nil, errClosed
+	}
+
+	// Build part info map for failed parts handler
+	partsInfo := make(map[uint64]*storage.PartInfo)
+	for _, part := range partsToSync {
+		partsInfo[part.partMetadata.ID] = &storage.PartInfo{
+			PartID:     part.partMetadata.ID,
+			SourcePath: part.path,
+			PartType:   PartTypeCore,
+		}
+	}
+
+	sidxMap := tst.getAllSidx()
+
+	// Initial sync attempt - track failures per node
+	perNodeFailures := make(map[string][]queue.FailedPart) // node -> failed parts
+	for _, node := range nodes {
+		if tst.loopCloser != nil && tst.loopCloser.Closed() {
+			return nil, errClosed
+		}
+		failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToSync, partIDsToSync, []string{node}, sidxMap, &releaseFuncs)
+		if err != nil {
+			return nil, err
+		}
+		if len(failedParts) > 0 {
+			perNodeFailures[node] = failedParts
 		}
 	}
 
 	// After sync attempts, enqueue parts for offline nodes
 	tst.enqueueForOfflineNodes(nodes, partsToSync, partIDsToSync)
 
-	return nil
+	// If there are failed parts, use the retry handler
+	var permanentlyFailed []uint64
+	if len(perNodeFailures) > 0 {
+		// Collect all unique failed parts for retry handler
+		allFailedParts := make([]queue.FailedPart, 0)
+		for _, failedParts := range perNodeFailures {
+			allFailedParts = append(allFailedParts, failedParts...)
+		}
+
+		// Create a sync function for retries - only retry on nodes where parts failed
+		syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+			// Build map of partIDs to retry
+			partIDsSet := make(map[uint64]struct{})
+			for _, partID := range partIDs {
+				partIDsSet[partID] = struct{}{}
+			}
+
+			// Filter parts to retry
+			partsToRetry := make([]*part, 0)
+			partIDsMap := make(map[uint64]struct{})
+			for _, partID := range partIDs {
+				partIDsMap[partID] = struct{}{}
+				for _, part := range partsToSync {
+					if part.partMetadata.ID == partID {
+						partsToRetry = append(partsToRetry, part)
+						break
+					}
+				}
+			}
+
+			if len(partsToRetry) == 0 {
+				return nil, nil
+			}
+
+			retryReleaseFuncs := make([]func(), 0)
+			defer func() {
+				for _, release := range retryReleaseFuncs {
+					release()
+				}
+			}()
+
+			// Only retry on nodes where these specific parts failed
+			var retryFailedParts []queue.FailedPart
+			for node, nodeFailedParts := range perNodeFailures {
+				// Check if any of the parts to retry failed on this node
+				shouldRetryOnNode := false
+				for _, failedPart := range nodeFailedParts {
+					failedPartID, _ := strconv.ParseUint(failedPart.PartID, 10, 64)
+					if _, exists := partIDsSet[failedPartID]; exists {
+						shouldRetryOnNode = true
+						break
+					}
+				}
+
+				if !shouldRetryOnNode {
+					continue
+				}
+
+				// Retry only on this specific node
+				failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToRetry, partIDsMap, []string{node}, sidxMap, &retryReleaseFuncs)
+				if err != nil {
+					// On error, mark all parts as failed for this node
+					for _, partID := range partIDs {
+						retryFailedParts = append(retryFailedParts, queue.FailedPart{
+							PartID: strconv.FormatUint(partID, 10),
+							Error:  fmt.Sprintf("node %s: %v", node, err),
+						})
+					}
+					continue
+				}
+				retryFailedParts = append(retryFailedParts, failedParts...)
+			}
+
+			return retryFailedParts, nil
+		}
+
+		var err error
+		permanentlyFailed, err = failedPartsHandler.RetryFailedParts(ctx, allFailedParts, partsInfo, syncFunc)
+		if err != nil {
+			tst.l.Warn().Err(err).Msg("error during retry process")
+		}
+	}
+
+	return permanentlyFailed, nil
 }
 
 // handleSyncIntroductions creates and processes sync introductions for both core and sidx parts.
-func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *syncIntroduction) error {
+// Includes both successful and permanently failed parts to ensure snapshot cleanup.
+func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, permanentlyFailed []uint64, syncCh chan *syncIntroduction) error {
 	// Create core sync introduction
 	si := generateSyncIntroduction()
 	defer releaseSyncIntroduction(si)
 	si.applied = make(chan struct{})
+
+	// Add all parts (both successful and permanently failed)
 	for _, part := range partsToSync {
 		si.synced[part.partMetadata.ID] = struct{}{}
 	}
+	// Permanently failed parts are already included since they're in partsToSync
 
 	select {
 	case syncCh <- si:
@@ -326,23 +454,21 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *sy
 }
 
 // syncStreamingPartsToNode synchronizes streaming parts to a node.
-func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) error {
+// Returns the list of failed parts.
+func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) ([]queue.FailedPart, error) {
 	// Get chunked sync client for this node
 	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
 	if err != nil {
-		return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
+		return nil, fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
 	}
 	defer chunkedClient.Close()
 
 	// Sync parts using chunked transfer with streaming
 	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
 	if err != nil {
-		return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
+		return nil, fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
 	}
 
-	if !result.Success {
-		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
-	}
 	tst.incTotalSyncLoopBytes(result.TotalBytes)
 	if dl := tst.l.Debug(); dl.Enabled() {
 		dl.
@@ -352,7 +478,9 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 			Int64("duration_ms", result.DurationMs).
 			Uint32("chunks", result.ChunksCount).
 			Uint32("parts", result.PartsCount).
-			Msg("chunked sync completed successfully")
+			Int("failed_parts", len(result.FailedParts)).
+			Msg("chunked sync completed")
 	}
-	return nil
+
+	return result.FailedParts, nil
 }

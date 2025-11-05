@@ -69,6 +69,21 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		}
 	}()
 
+	if injector := queue.GetChunkedSyncFailureInjector(); injector != nil {
+		shouldFail, failedParts, err := injector.BeforeSync(parts)
+		if err != nil {
+			return nil, err
+		}
+		if shouldFail {
+			return &queue.SyncResult{
+				Success:     false,
+				SessionID:   "",
+				PartsCount:  uint32(len(parts)),
+				FailedParts: failedParts,
+			}, nil
+		}
+	}
+
 	sessionID := generateSessionID()
 
 	chunkedClient := clusterv1.NewChunkedSyncServiceClient(c.conn)
@@ -95,11 +110,11 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 
 	var totalBytesSent uint64
 
-	totalChunks, err := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
+	totalChunks, failedParts, err := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream parts: %w", err)
 	}
-	if totalChunks == 0 {
+	if totalChunks == 0 && len(failedParts) == 0 {
 		return &queue.SyncResult{
 			Success:    true,
 			SessionID:  sessionID,
@@ -129,6 +144,9 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		result := finalResp.GetSyncResult()
 		success = result.Success
 	}
+	if !success && len(failedParts) < len(parts) {
+		success = true
+	}
 
 	return &queue.SyncResult{
 		Success:     success,
@@ -137,6 +155,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		DurationMs:  duration.Milliseconds(),
 		ChunksCount: totalChunks,
 		PartsCount:  uint32(len(parts)),
+		FailedParts: failedParts,
 	}, nil
 }
 
@@ -151,10 +170,12 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 	metadata *clusterv1.SyncMetadata,
 	parts []queue.StreamingPartData,
 	totalBytesSent *uint64,
-) (uint32, error) {
+) (uint32, []queue.FailedPart, error) {
 	var totalChunks uint32
 	var chunkIndex uint32
 	isFirstChunk := true
+	var failedParts []queue.FailedPart
+	failedPartIDs := make(map[uint64]struct{})
 
 	buffer := make([]byte, 0, c.chunkSize)
 
@@ -194,6 +215,12 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 
 		for len(buffer) < cap(buffer) && currentFileIdx < len(fileStates) {
 			fileState := fileStates[currentFileIdx]
+			part := parts[fileState.partIndex]
+			if _, failed := failedPartIDs[part.ID]; failed {
+				fileState.finished = true
+				currentFileIdx++
+				continue
+			}
 			if fileState.finished {
 				currentFileIdx++
 				continue
@@ -215,7 +242,15 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 				fileState.finished = true
 				currentFileIdx++
 			} else if err != nil {
-				return totalChunks, fmt.Errorf("failed to read from file %s: %w", fileState.info.Name, err)
+				errMsg := fmt.Sprintf("failed to read from file %s: %v", fileState.info.Name, err)
+				c.log.Error().Err(err).Str("part-id", fmt.Sprint(part.ID)).Msg(errMsg)
+				if _, failed := failedPartIDs[part.ID]; !failed {
+					failedParts = append(failedParts, queue.FailedPart{PartID: fmt.Sprint(part.ID), Error: errMsg})
+					failedPartIDs[part.ID] = struct{}{}
+				}
+				fileState.finished = true
+				currentFileIdx++
+				continue
 			}
 
 			if n > 0 {
@@ -270,7 +305,16 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 			}
 
 			if err := c.sendChunk(stream, sessionID, buffer, chunkPartsInfo, &chunkIndex, &totalChunks, totalBytesSent, isFirstChunk, metadata); err != nil {
-				return totalChunks, err
+				errMsg := fmt.Sprintf("failed to send chunk: %v", err)
+				c.log.Error().Err(err).Msg(errMsg)
+				for _, p := range chunkPartsInfo {
+					if _, ok := failedPartIDs[p.Id]; !ok {
+						failedPartIDs[p.Id] = struct{}{}
+						failedParts = append(failedParts, queue.FailedPart{PartID: fmt.Sprint(p.Id), Error: errMsg})
+					}
+				}
+				buffer = buffer[:0]
+				continue
 			}
 			isFirstChunk = false
 			buffer = buffer[:0]
@@ -300,12 +344,12 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 		}
 
 		if err := stream.Send(completionReq); err != nil {
-			return totalChunks, fmt.Errorf("failed to send completion: %w", err)
+			return totalChunks, failedParts, fmt.Errorf("failed to send completion: %w", err)
 		}
 		totalChunks++
 	}
 
-	return totalChunks, nil
+	return totalChunks, failedParts, nil
 }
 
 func (c *chunkedSyncClient) sendChunk(

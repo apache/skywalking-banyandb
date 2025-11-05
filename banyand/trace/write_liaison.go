@@ -88,6 +88,10 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 	if err != nil {
 		return nil, err
 	}
+	// Validate timestamp against TTL-based time range
+	if !eq.queue.IsValidTime(t) {
+		return nil, fmt.Errorf("timestamp %v is outside valid time range (TTL expired or too far in future)", t)
+	}
 	et, err := w.prepareElementsInTable(eq, writeEvent, ts)
 	if err != nil {
 		return nil, err

@@ -20,9 +20,11 @@ package measure
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -180,6 +182,64 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	}
 }
 
+// syncPartsToNodesHelper syncs given parts to all nodes and returns failed parts.
+// This helper is used for both initial sync and retry attempts.
+func (tst *tsTable) syncPartsToNodesHelper(ctx context.Context, parts []*part, nodes []string, chunkSize uint32, releaseFuncs *[]func()) ([]queue.FailedPart, error) {
+	var allFailedParts []queue.FailedPart
+
+	for _, node := range nodes {
+		// Get chunked sync client for this node
+		chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, chunkSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
+		}
+		defer chunkedClient.Close()
+
+		// Prepare streaming parts data
+		var streamingParts []queue.StreamingPartData
+		for _, part := range parts {
+			files, release := createPartFileReaders(part)
+			*releaseFuncs = append(*releaseFuncs, release)
+			streamingParts = append(streamingParts, queue.StreamingPartData{
+				ID:                    part.partMetadata.ID,
+				Group:                 tst.group,
+				ShardID:               uint32(tst.shardID),
+				Topic:                 data.TopicMeasurePartSync.String(),
+				Files:                 files,
+				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
+				UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
+				TotalCount:            part.partMetadata.TotalCount,
+				BlocksCount:           part.partMetadata.BlocksCount,
+				MinTimestamp:          part.partMetadata.MinTimestamp,
+				MaxTimestamp:          part.partMetadata.MaxTimestamp,
+				PartType:              PartTypeCore,
+			})
+		}
+
+		result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
+		}
+
+		tst.incTotalSyncLoopBytes(result.TotalBytes)
+		if dl := tst.l.Debug(); dl.Enabled() {
+			dl.
+				Str("node", node).
+				Str("session", result.SessionID).
+				Uint64("bytes", result.TotalBytes).
+				Int64("duration_ms", result.DurationMs).
+				Uint32("chunks", result.ChunksCount).
+				Uint32("parts", result.PartsCount).
+				Int("failed_parts", len(result.FailedParts)).
+				Msg("chunked sync completed")
+		}
+
+		allFailedParts = append(allFailedParts, result.FailedParts...)
+	}
+
+	return allFailedParts, nil
+}
+
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {
 	startTime := time.Now()
 	defer func() {
@@ -211,6 +271,19 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		return fmt.Errorf("no nodes to sync parts")
 	}
 
+	// Initialize failed parts handler
+	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l)
+
+	// Build part info map for failed parts handler
+	partsInfo := make(map[uint64]*storage.PartInfo)
+	for _, part := range partsToSync {
+		partsInfo[part.partMetadata.ID] = &storage.PartInfo{
+			PartID:     part.partMetadata.ID,
+			SourcePath: part.path,
+			PartType:   PartTypeCore,
+		}
+	}
+
 	// Use chunked sync with streaming for better memory efficiency.
 	ctx := context.Background()
 	releaseFuncs := make([]func(), 0, len(partsToSync))
@@ -220,56 +293,94 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 		}
 	}()
 
+	// Initial sync attempt - track failures per node
+	perNodeFailures := make(map[string][]queue.FailedPart) // node -> failed parts
 	for _, node := range nodes {
-		// Get chunked sync client for this node.
-		chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 512*1024)
+		failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToSync, []string{node}, 512*1024, &releaseFuncs)
 		if err != nil {
-			return fmt.Errorf("failed to create chunked sync client for node %s: %w", node, err)
+			return err
 		}
-		defer chunkedClient.Close()
+		if len(failedParts) > 0 {
+			perNodeFailures[node] = failedParts
+		}
+	}
 
-		// Prepare streaming parts data for chunked sync.
-		var streamingParts []queue.StreamingPartData
-		for _, part := range partsToSync {
-			// Create streaming reader for the part.
-			files, release := createPartFileReaders(part)
-			releaseFuncs = append(releaseFuncs, release)
-			// Create streaming part sync data.
-			streamingParts = append(streamingParts, queue.StreamingPartData{
-				ID:                    part.partMetadata.ID,
-				Group:                 tst.group,
-				ShardID:               uint32(tst.shardID),
-				Topic:                 data.TopicMeasurePartSync.String(),
-				Files:                 files,
-				CompressedSizeBytes:   part.partMetadata.CompressedSizeBytes,
-				UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
-				TotalCount:            part.partMetadata.TotalCount,
-				BlocksCount:           part.partMetadata.BlocksCount,
-				MinTimestamp:          part.partMetadata.MinTimestamp,
-				MaxTimestamp:          part.partMetadata.MaxTimestamp,
-				PartType:              PartTypeCore,
-			})
+	// If there are failed parts, use the retry handler
+	if len(perNodeFailures) > 0 {
+		// Collect all unique failed parts for retry handler
+		allFailedParts := make([]queue.FailedPart, 0)
+		for _, failedParts := range perNodeFailures {
+			allFailedParts = append(allFailedParts, failedParts...)
 		}
 
-		// Sync parts using chunked transfer with streaming.
-		result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+		// Create a sync function for retries - only retry on nodes where parts failed
+		syncFunc := func(partIDs []uint64) ([]queue.FailedPart, error) {
+			// Build map of partIDs to retry
+			partIDsSet := make(map[uint64]struct{})
+			for _, partID := range partIDs {
+				partIDsSet[partID] = struct{}{}
+			}
+
+			// Filter parts to retry
+			partsToRetry := make([]*part, 0)
+			for _, partID := range partIDs {
+				for _, part := range partsToSync {
+					if part.partMetadata.ID == partID {
+						partsToRetry = append(partsToRetry, part)
+						break
+					}
+				}
+			}
+
+			if len(partsToRetry) == 0 {
+				return nil, nil
+			}
+
+			retryReleaseFuncs := make([]func(), 0)
+			defer func() {
+				for _, release := range retryReleaseFuncs {
+					release()
+				}
+			}()
+
+			// Only retry on nodes where these specific parts failed
+			var retryFailedParts []queue.FailedPart
+			for node, nodeFailedParts := range perNodeFailures {
+				// Check if any of the parts to retry failed on this node
+				shouldRetryOnNode := false
+				for _, failedPart := range nodeFailedParts {
+					failedPartID, _ := strconv.ParseUint(failedPart.PartID, 10, 64)
+					if _, exists := partIDsSet[failedPartID]; exists {
+						shouldRetryOnNode = true
+						break
+					}
+				}
+
+				if !shouldRetryOnNode {
+					continue
+				}
+
+				// Retry only on this specific node
+				failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToRetry, []string{node}, 512*1024, &retryReleaseFuncs)
+				if err != nil {
+					// On error, mark all parts as failed for this node
+					for _, partID := range partIDs {
+						retryFailedParts = append(retryFailedParts, queue.FailedPart{
+							PartID: strconv.FormatUint(partID, 10),
+							Error:  fmt.Sprintf("node %s: %v", node, err),
+						})
+					}
+					continue
+				}
+				retryFailedParts = append(retryFailedParts, failedParts...)
+			}
+
+			return retryFailedParts, nil
+		}
+
+		_, err := failedPartsHandler.RetryFailedParts(ctx, allFailedParts, partsInfo, syncFunc)
 		if err != nil {
-			return fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
-		}
-
-		if !result.Success {
-			return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
-		}
-		tst.incTotalSyncLoopBytes(result.TotalBytes)
-		if dl := tst.l.Debug(); dl.Enabled() {
-			dl.
-				Str("node", node).
-				Str("session", result.SessionID).
-				Uint64("bytes", result.TotalBytes).
-				Int64("duration_ms", result.DurationMs).
-				Uint32("chunks", result.ChunksCount).
-				Uint32("parts", result.PartsCount).
-				Msg("chunked sync completed successfully")
+			tst.l.Warn().Err(err).Msg("error during retry process")
 		}
 	}
 
@@ -277,9 +388,11 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	defer releaseSyncIntroduction(si)
 	si.applied = make(chan struct{})
 
+	// Add all parts (both successful and permanently failed)
 	for _, part := range partsToSync {
 		si.synced[part.partMetadata.ID] = struct{}{}
 	}
+	// Permanently failed parts are already included since they're in partsToSync
 
 	select {
 	case syncCh <- si:

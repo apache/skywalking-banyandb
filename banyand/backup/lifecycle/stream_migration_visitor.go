@@ -464,7 +464,7 @@ func (mv *streamMigrationVisitor) streamPartToNode(nodeID string, targetShardID 
 	}
 
 	if !result.Success {
-		return fmt.Errorf("chunked sync partially failed: %v", result.ErrorMessage)
+		return fmt.Errorf("chunked sync partially failed: %v", result.FailedParts)
 	}
 
 	// Log success metrics (same pattern as syncer.go:210-217)
