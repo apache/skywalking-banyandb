@@ -69,6 +69,7 @@ Release Notes.
 - Fix memory leaks and OOM issues in streaming processing by implementing deduplication logic in priority queues and improving sliding window memory management.
 - Fix etcd prefix matching any key that starts with this prefix.
 - Fix the sorting timestamps issue of the measure model when there are more than one segment.
+- Fix comparison issues in TopN test cases
 
 ### Document
 
