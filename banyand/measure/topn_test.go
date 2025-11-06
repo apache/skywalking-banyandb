@@ -103,8 +103,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			require.Equal(t, originalValueName, tt.topNVal.valueName)
 			require.Equal(t, originalEntityTagNames, tt.topNVal.entityTagNames)
 			require.Equal(t, originalValues, tt.topNVal.values)
-			require.Empty(t, cmp.Diff(originalEntities, tt.topNVal.entities, protocmp.Transform()))
-
+			require.True(t, cmp.Equal(originalEntities, tt.topNVal.entities, protocmp.Transform()), "entities differ: %s", cmp.Diff(originalEntities, tt.topNVal.entities, protocmp.Transform()))
 		})
 	}
 }
