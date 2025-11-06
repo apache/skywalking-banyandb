@@ -47,13 +47,14 @@ const (
 )
 
 type option struct {
-	mergePolicy              *mergePolicy
-	protector                protector.Memory
-	tire2Client              queue.Client
-	seriesCacheMaxSize       run.Bytes
-	flushTimeout             time.Duration
-	elementIndexFlushTimeout time.Duration
-	syncInterval             time.Duration
+	mergePolicy                  *mergePolicy
+	protector                    protector.Memory
+	tire2Client                  queue.Client
+	seriesCacheMaxSize           run.Bytes
+	flushTimeout                 time.Duration
+	elementIndexFlushTimeout     time.Duration
+	syncInterval                 time.Duration
+	failedPartsMaxTotalSizeBytes uint64
 }
 
 // Query allow to retrieve elements in a series of streams.

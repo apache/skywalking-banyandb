@@ -48,21 +48,21 @@ const (
 )
 
 type tsTable struct {
-	l             *logger.Logger
-	fileSystem    fs.FileSystem
-	sidxMap       map[string]sidx.SIDX
 	pm            protector.Memory
+	fileSystem    fs.FileSystem
+	handoffCtrl   *handoffController
 	metrics       *metrics
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
-	handoffCtrl   *handoffController
-	option        option
+	l             *logger.Logger
+	sidxMap       map[string]sidx.SIDX
 	introductions chan *introduction
 	p             common.Position
 	root          string
 	group         string
 	gc            garbageCleaner
+	option        option
 	curPartID     uint64
 	sync.RWMutex
 	shardID common.ShardID
@@ -217,6 +217,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	for i := range ee {
 		if ee[i].IsDir() {
 			if ee[i].Name() == sidxDirName {
+				continue
+			}
+			if ee[i].Name() == storage.FailedPartsDirName {
 				continue
 			}
 			p, err := parseEpoch(ee[i].Name())
