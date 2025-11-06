@@ -18,9 +18,11 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -39,7 +41,7 @@ func TestNewFailedPartsHandler(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
 
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 1024)
 
 	assert.NotNil(t, handler)
 	assert.Equal(t, fileSystem, handler.fileSystem)
@@ -48,6 +50,7 @@ func TestNewFailedPartsHandler(t *testing.T) {
 	assert.Equal(t, DefaultInitialRetryDelay, handler.initialRetryDelay)
 	assert.Equal(t, DefaultMaxRetries, handler.maxRetries)
 	assert.Equal(t, DefaultBackoffMultiplier, handler.backoffMultiplier)
+	assert.Equal(t, uint64(1024), handler.maxTotalSizeBytes)
 
 	// Check that failed-parts directory was created
 	entries := fileSystem.ReadDir(tempDir)
@@ -65,7 +68,7 @@ func TestRetryFailedParts_EmptyList(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	ctx := context.Background()
 	failedParts := []queue.FailedPart{}
@@ -85,7 +88,7 @@ func TestRetryFailedParts_SuccessOnFirstRetry(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	ctx := context.Background()
 	failedParts := []queue.FailedPart{
@@ -123,7 +126,7 @@ func TestRetryFailedParts_AllRetriesFail(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 10 * time.Millisecond // Speed up test
 
 	ctx := context.Background()
@@ -204,7 +207,7 @@ func TestRetryFailedParts_SuccessOnSecondRetry(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 10 * time.Millisecond // Speed up test
 
 	ctx := context.Background()
@@ -247,7 +250,7 @@ func TestRetryFailedParts_SyncFuncError(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 10 * time.Millisecond
 
 	ctx := context.Background()
@@ -281,7 +284,7 @@ func TestRetryFailedParts_ContextCancellation(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 100 * time.Millisecond // Longer delay
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -323,7 +326,7 @@ func TestRetryFailedParts_InvalidPartID(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	ctx := context.Background()
 	failedParts := []queue.FailedPart{
@@ -361,7 +364,7 @@ func TestCopyToFailedPartsDir_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	// Create source part directory with files
 	sourcePath := filepath.Join(tempDir, "source_part")
@@ -393,7 +396,7 @@ func TestCopyToFailedPartsDir_AlreadyExists(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	sourcePath := filepath.Join(tempDir, "source_part")
 	fileSystem.MkdirIfNotExist(sourcePath, DirPerm)
@@ -418,7 +421,7 @@ func TestCopyToFailedPartsDir_SourceNotExist(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 
 	sourcePath := filepath.Join(tempDir, "nonexistent")
 	partID := uint64(99999)
@@ -428,11 +431,57 @@ func TestCopyToFailedPartsDir_SourceNotExist(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestCopyToFailedPartsDir_RemovesOldestOnLimit(t *testing.T) {
+	tempDir := t.TempDir()
+	fileSystem := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 1024)
+
+	createSource := func(name string, size int) string {
+		sourcePath := filepath.Join(tempDir, name)
+		fileSystem.MkdirIfNotExist(sourcePath, DirPerm)
+		_, err := fileSystem.Write(bytes.Repeat([]byte("a"), size), filepath.Join(sourcePath, "data.bin"), FilePerm)
+		require.NoError(t, err)
+		return sourcePath
+	}
+
+	dest1 := "0000000000000001_core"
+	source1 := createSource("source_part_1", 512)
+	require.NoError(t, handler.CopyToFailedPartsDir(1, source1, dest1))
+
+	time.Sleep(10 * time.Millisecond)
+
+	dest2 := "0000000000000002_core"
+	source2 := createSource("source_part_2", 256)
+	require.NoError(t, handler.CopyToFailedPartsDir(2, source2, dest2))
+
+	time.Sleep(10 * time.Millisecond)
+
+	dest3 := "0000000000000003_core"
+	source3 := createSource("source_part_3", 512)
+	require.NoError(t, handler.CopyToFailedPartsDir(3, source3, dest3))
+
+	// Verify the oldest directory has been removed while others remain
+	_, err := os.Stat(filepath.Join(handler.failedPartsDir, dest1))
+	assert.True(t, os.IsNotExist(err), "oldest failed part directory should be removed")
+
+	_, err = os.Stat(filepath.Join(handler.failedPartsDir, dest2))
+	assert.NoError(t, err, "newer failed part directory should remain")
+
+	_, err = os.Stat(filepath.Join(handler.failedPartsDir, dest3))
+	assert.NoError(t, err, "new failed part directory should exist")
+
+	totalSize, err := calculatePathSize(handler.failedPartsDir)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, int(totalSize), 1024)
+}
+
 func TestRetryFailedParts_MixedResults(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 10 * time.Millisecond
 
 	ctx := context.Background()
@@ -484,7 +533,7 @@ func TestRetryFailedParts_ExponentialBackoff(t *testing.T) {
 	tempDir := t.TempDir()
 	fileSystem := fs.NewLocalFileSystem()
 	l := logger.GetLogger("test")
-	handler := NewFailedPartsHandler(fileSystem, tempDir, l)
+	handler := NewFailedPartsHandler(fileSystem, tempDir, l, 0)
 	handler.initialRetryDelay = 50 * time.Millisecond
 
 	ctx := context.Background()

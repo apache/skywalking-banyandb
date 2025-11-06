@@ -19,9 +19,14 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	iofs "io/fs"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -49,6 +54,8 @@ type FailedPartsHandler struct {
 	initialRetryDelay time.Duration
 	maxRetries        int
 	backoffMultiplier int
+	maxTotalSizeBytes uint64
+	sizeMu            sync.Mutex
 }
 
 // PartInfo contains information needed to retry or copy a failed part.
@@ -59,7 +66,7 @@ type PartInfo struct {
 }
 
 // NewFailedPartsHandler creates a new handler for failed parts.
-func NewFailedPartsHandler(fileSystem fs.FileSystem, root string, l *logger.Logger) *FailedPartsHandler {
+func NewFailedPartsHandler(fileSystem fs.FileSystem, root string, l *logger.Logger, maxTotalSizeBytes uint64) *FailedPartsHandler {
 	failedPartsDir := filepath.Join(root, FailedPartsDirName)
 	fileSystem.MkdirIfNotExist(failedPartsDir, DirPerm)
 
@@ -71,6 +78,7 @@ func NewFailedPartsHandler(fileSystem fs.FileSystem, root string, l *logger.Logg
 		initialRetryDelay: DefaultInitialRetryDelay,
 		maxRetries:        DefaultMaxRetries,
 		backoffMultiplier: DefaultBackoffMultiplier,
+		maxTotalSizeBytes: maxTotalSizeBytes,
 	}
 }
 
@@ -222,6 +230,11 @@ func (h *FailedPartsHandler) retryPartWithBackoff(
 func (h *FailedPartsHandler) CopyToFailedPartsDir(partID uint64, sourcePath string, destSubDir string) error {
 	destPath := filepath.Join(h.failedPartsDir, destSubDir)
 
+	if h.maxTotalSizeBytes > 0 {
+		h.sizeMu.Lock()
+		defer h.sizeMu.Unlock()
+	}
+
 	// Check if already exists
 	entries := h.fileSystem.ReadDir(h.failedPartsDir)
 	for _, entry := range entries {
@@ -231,6 +244,100 @@ func (h *FailedPartsHandler) CopyToFailedPartsDir(partID uint64, sourcePath stri
 				Str("destSubDir", destSubDir).
 				Msg("part already exists in failed-parts directory")
 			return nil
+		}
+	}
+
+	if _, err := os.Stat(sourcePath); err != nil {
+		h.l.Error().
+			Err(err).
+			Uint64("partID", partID).
+			Str("sourcePath", sourcePath).
+			Msg("failed to stat source path before copying to failed-parts directory")
+		return fmt.Errorf("failed to stat source path %s: %w", sourcePath, err)
+	}
+
+	if h.maxTotalSizeBytes > 0 {
+		currentSize, err := calculatePathSize(h.failedPartsDir)
+		if err != nil {
+			return fmt.Errorf("failed to calculate current failed-parts size: %w", err)
+		}
+		sourceSize, err := calculatePathSize(sourcePath)
+		if err != nil {
+			return fmt.Errorf("failed to calculate size of source path %s: %w", sourcePath, err)
+		}
+
+		if currentSize+sourceSize > h.maxTotalSizeBytes {
+			type partDir struct {
+				modTime time.Time
+				name    string
+				path    string
+				size    uint64
+			}
+
+			partDirs := make([]partDir, 0, len(entries))
+			for _, entry := range entries {
+				if !entry.IsDir() || entry.Name() == destSubDir {
+					continue
+				}
+
+				dirPath := filepath.Join(h.failedPartsDir, entry.Name())
+				info, err := os.Stat(dirPath)
+				if err != nil {
+					h.l.Warn().
+						Err(err).
+						Str("path", dirPath).
+						Msg("failed to stat existing failed part directory during eviction")
+					continue
+				}
+
+				dirSize, err := calculatePathSize(dirPath)
+				if err != nil {
+					h.l.Warn().
+						Err(err).
+						Str("path", dirPath).
+						Msg("failed to calculate size for existing failed part directory during eviction")
+					continue
+				}
+
+				partDirs = append(partDirs, partDir{
+					name:    entry.Name(),
+					path:    dirPath,
+					modTime: info.ModTime(),
+					size:    dirSize,
+				})
+			}
+
+			sort.Slice(partDirs, func(i, j int) bool {
+				if partDirs[i].modTime.Equal(partDirs[j].modTime) {
+					return partDirs[i].name < partDirs[j].name
+				}
+				return partDirs[i].modTime.Before(partDirs[j].modTime)
+			})
+
+			for _, dir := range partDirs {
+				if currentSize+sourceSize <= h.maxTotalSizeBytes {
+					break
+				}
+
+				if err := os.RemoveAll(dir.path); err != nil {
+					return fmt.Errorf("failed to remove oldest failed part %s: %w", dir.name, err)
+				}
+
+				h.l.Info().
+					Str("removedFailedPartDir", dir.name).
+					Uint64("freedBytes", dir.size).
+					Msg("removed oldest failed part to honor size limit")
+
+				if currentSize >= dir.size {
+					currentSize -= dir.size
+				} else {
+					currentSize = 0
+				}
+			}
+
+			if currentSize+sourceSize > h.maxTotalSizeBytes {
+				return fmt.Errorf("failed to free space in failed-parts directory for part %d", partID)
+			}
 		}
 	}
 
@@ -259,4 +366,44 @@ func (h *FailedPartsHandler) CopyToFailedPartsDir(partID uint64, sourcePath stri
 		Msg("successfully created hard links to failed-parts directory")
 
 	return nil
+}
+
+func calculatePathSize(path string) (uint64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	if !info.IsDir() {
+		return uint64(info.Size()), nil
+	}
+
+	var size uint64
+	walkErr := filepath.WalkDir(path, func(_ string, d iofs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		size += uint64(info.Size())
+		return nil
+	})
+	if walkErr != nil {
+		return 0, walkErr
+	}
+	return size, nil
 }

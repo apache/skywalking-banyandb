@@ -200,7 +200,7 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	}
 
 	// Initialize failed parts handler
-	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l)
+	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l, tst.option.failedPartsMaxTotalSizeBytes)
 
 	// Execute sync operation
 	if err := tst.executeSyncOperation(partsToSync, partIDsToSync, failedPartsHandler); err != nil {

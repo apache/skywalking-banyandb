@@ -259,7 +259,7 @@ func (tst *tsTable) sortPartsByID(partsToSync []*part) {
 }
 
 func (tst *tsTable) executeSyncWithRetry(partsToSync []*part, nodes []string) error {
-	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l)
+	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l, tst.option.failedPartsMaxTotalSizeBytes)
 	partsInfo := tst.buildPartsInfoMap(partsToSync)
 
 	ctx := context.Background()

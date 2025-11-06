@@ -147,18 +147,18 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	l             *logger.Logger
-	snapshot      *snapshot
-	introductions chan *introduction
+	pm            protector.Memory
 	loopCloser    *run.Closer
+	introductions chan *introduction
+	snapshot      *snapshot
 	*metrics
-	p         common.Position
-	option    option
-	pm        protector.Memory
-	root      string
 	getNodes  func() []string
+	l         *logger.Logger
+	p         common.Position
+	root      string
 	group     string
 	gc        garbageCleaner
+	option    option
 	curPartID uint64
 	sync.RWMutex
 	shardID common.ShardID
