@@ -96,3 +96,64 @@ func withChunkedSyncFailureInjector(config map[string]int) (*chunkedSyncTestInje
 	}
 	return injector, cleanup
 }
+
+// chunkedSyncErrorInjector injects connection-level errors (not just failed parts)
+// to test the scenario where syncPartsToNodesHelper returns an error.
+type chunkedSyncErrorInjector struct {
+	rules map[string]*topicFailureRule
+	mu    sync.Mutex
+}
+
+func newChunkedSyncErrorInjector(config map[string]int) *chunkedSyncErrorInjector {
+	rules := make(map[string]*topicFailureRule, len(config))
+	for topic, remaining := range config {
+		rules[topic] = &topicFailureRule{remaining: remaining}
+	}
+	return &chunkedSyncErrorInjector{rules: rules}
+}
+
+func (c *chunkedSyncErrorInjector) BeforeSync(parts []queue.StreamingPartData) (bool, []queue.FailedPart, error) {
+	if len(parts) == 0 {
+		return false, nil, nil
+	}
+
+	topic := parts[0].Topic
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	rule, ok := c.rules[topic]
+	if !ok {
+		return false, nil, nil
+	}
+
+	rule.attempts++
+	if rule.remaining == 0 {
+		return false, nil, nil
+	}
+
+	if rule.remaining > 0 {
+		rule.remaining--
+	}
+
+	// Return an error to simulate connection/client failures
+	return true, nil, fmt.Errorf("injected connection error (topic=%s attempt=%d)", topic, rule.attempts)
+}
+
+func (c *chunkedSyncErrorInjector) attemptsFor(topic string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if rule, ok := c.rules[topic]; ok {
+		return rule.attempts
+	}
+	return 0
+}
+
+func withChunkedSyncErrorInjector(config map[string]int) (*chunkedSyncErrorInjector, func()) {
+	injector := newChunkedSyncErrorInjector(config)
+	queue.RegisterChunkedSyncFailureInjector(injector)
+	cleanup := func() {
+		queue.ClearChunkedSyncFailureInjector()
+	}
+	return injector, cleanup
+}

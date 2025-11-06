@@ -300,6 +300,15 @@ func (tst *tsTable) performInitialSync(
 		failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToSync, []string{node}, 1024*1024, releaseFuncs)
 		if err != nil {
 			tst.l.Error().Err(err).Str("node", node).Msg("sync error")
+			// Mark all parts as failed for this node
+			var allPartsFailed []queue.FailedPart
+			for _, part := range partsToSync {
+				allPartsFailed = append(allPartsFailed, queue.FailedPart{
+					PartID: strconv.FormatUint(part.partMetadata.ID, 10),
+					Error:  fmt.Sprintf("node %s: %v", node, err),
+				})
+			}
+			perNodeFailures[node] = allPartsFailed
 			continue
 		}
 		if len(failedParts) > 0 {
