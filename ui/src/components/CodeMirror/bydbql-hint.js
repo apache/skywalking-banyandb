@@ -48,20 +48,16 @@ const BYDBQL_KEYWORDS = [
 
 // BydbQL entity types
 const ENTITY_TYPES = ['STREAM', 'MEASURE', 'TRACE', 'PROPERTY', 'TOPN'];
-
-// Store for schema data
-let schemaData = {
+let schemasAndGroups = {
   groups: [],
   schemas: {},
 };
 
-// Function to update schema data
-export function updateSchemaData(groups, schemas) {
-  schemaData.groups = groups || [];
-  schemaData.schemas = schemas || {};
+export function updateSchemasAndGroups(groups, schemas) {
+  schemasAndGroups.groups = groups || [];
+  schemasAndGroups.schemas = schemas || {};
 }
 
-// Function to get word at cursor
 function getWordAt(cm, pos) {
   const line = cm.getLine(pos.line);
   const start = pos.ch;
@@ -87,31 +83,29 @@ function getWordAt(cm, pos) {
 
 // Analyze the query context to determine what to suggest
 function getQueryContext(cm, cursor) {
-  const currentLine = cm.getLine(cursor.line);
   const textBeforeCursor = cm.getRange({ line: 0, ch: 0 }, cursor);
-  const upperText = textBeforeCursor.toUpperCase();
 
-  // Check if we're after FROM
-  if (/\bFROM\s+$/i.test(textBeforeCursor)) {
-    return { type: 'entity_type' };
+  // Check if we're typing after 'in' (group name context)
+  const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+in\s+\w*$/i);
+  if (inMatch) {
+    return { type: 'group', entityType: inMatch[1].toLowerCase() };
   }
 
-  // Check if we're after entity type (STREAM, MEASURE, etc.)
-  const entityMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+$/i);
-  if (entityMatch) {
-    return { type: 'schema', entityType: entityMatch[1].toLowerCase() };
-  }
-
-  // Check if we're after schema name expecting 'in'
-  const schemaMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+\w+\s+$/i);
+  // Check if we're typing after schema name (expecting 'in')
+  const schemaMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+\w*$/i);
   if (schemaMatch) {
     return { type: 'in_keyword' };
   }
 
-  // Check if we're after 'in' expecting group name
-  const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+\w+\s+in\s+$/i);
-  if (inMatch) {
-    return { type: 'group', entityType: inMatch[1].toLowerCase() };
+  // Check if we're typing after entity type (schema name context)
+  const entityMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+\w*$/i);
+  if (entityMatch) {
+    return { type: 'schema', entityType: entityMatch[1].toLowerCase() };
+  }
+
+  // Check if we're typing after FROM (entity type context)
+  if (/\bFROM\s+\w*$/i.test(textBeforeCursor)) {
+    return { type: 'entity_type' };
   }
 
   // Default: suggest keywords
@@ -121,39 +115,39 @@ function getQueryContext(cm, cursor) {
 // Generate hint list based on context
 function generateHints(context, word) {
   const hints = [];
-  const lowerWord = word.toLowerCase();
+  const lowerWord = word ? word.toLowerCase() : '';
 
   switch (context.type) {
     case 'entity_type':
       // Suggest entity types (STREAM, MEASURE, etc.)
-      ENTITY_TYPES.forEach((type) => {
-        if (type.toLowerCase().startsWith(lowerWord)) {
+      for (const type of ENTITY_TYPES) {
+        if (!lowerWord || type.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: type,
             displayText: type,
             className: 'bydbql-hint-entity-type',
           });
         }
-      });
+      }
       break;
 
     case 'schema':
       // Suggest schema names for the given entity type
-      const schemas = schemaData.schemas[context.entityType] || [];
-      schemas.forEach((schema) => {
-        if (schema.toLowerCase().startsWith(lowerWord)) {
+      const schemas = schemasAndGroups.schemas[context.entityType] || [];
+      for (const schema of schemas) {
+        if (!lowerWord || schema.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: schema,
             displayText: schema,
             className: 'bydbql-hint-schema',
           });
         }
-      });
+      }
       break;
 
     case 'in_keyword':
       // Suggest 'in' keyword
-      if ('in'.startsWith(lowerWord)) {
+      if (!lowerWord || 'in'.startsWith(lowerWord)) {
         hints.push({
           text: 'in',
           displayText: 'in',
@@ -164,40 +158,38 @@ function generateHints(context, word) {
 
     case 'group':
       // Suggest group names
-      schemaData.groups.forEach((group) => {
-        if (group.toLowerCase().startsWith(lowerWord)) {
+      for (const group of schemasAndGroups.groups) {
+        if (!lowerWord || group.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: group,
             displayText: group,
             className: 'bydbql-hint-group',
           });
         }
-      });
+      }
       break;
 
     case 'keyword':
     default:
-      // Suggest keywords
-      BYDBQL_KEYWORDS.forEach((keyword) => {
-        if (keyword.toLowerCase().startsWith(lowerWord)) {
+      for (const keyword of BYDBQL_KEYWORDS) {
+        if (!lowerWord || keyword.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: keyword,
             displayText: keyword,
             className: 'bydbql-hint-keyword',
           });
         }
-      });
+      }
 
-      // Also suggest entity types
-      ENTITY_TYPES.forEach((type) => {
-        if (type.toLowerCase().startsWith(lowerWord)) {
+      for (const type of ENTITY_TYPES) {
+        if (!lowerWord || type.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: type,
             displayText: type,
             className: 'bydbql-hint-entity-type',
           });
         }
-      });
+      }
       break;
   }
 

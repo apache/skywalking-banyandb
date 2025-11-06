@@ -26,7 +26,7 @@
   import PropertyTable from '@/components/common/PropertyTable.vue';
   import TraceTable from '@/components/common/TraceTable.vue';
   import { CatalogToGroupType } from '@/components/common/data';
-  import { updateSchemaData } from '@/components/CodeMirror/bydbql-hint.js';
+  import { updateSchemasAndGroups } from '@/components/CodeMirror/bydbql-hint.js';
 
   // Default query text with example queries as comments
   const queryText = ref(`-- Example queries:
@@ -57,7 +57,6 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     if (!queryResult.value) return [];
 
     try {
-      // Handle TopN results differently
       if (queryResult.value.topnResult?.lists) {
         const topnLists = queryResult.value.topnResult.lists;
         const rows = topnLists
@@ -276,10 +275,8 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     executionTime.value = 0;
   }
 
-  // Handle CodeMirror ready event
   function onCodeMirrorReady(cm) {
     codeMirrorInstance.value = cm;
-    // Add keyboard shortcuts
     cm.setOption('extraKeys', {
       'Ctrl-Enter': executeQuery,
       'Cmd-Enter': executeQuery,
@@ -341,9 +338,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           }
         }
       }
-      console.log(schemas);
-      // Update autocomplete data
-      updateSchemaData(groups, schemas);
+      updateSchemasAndGroups(groups, schemas);
     } catch (e) {
       console.error('Failed to fetch schema data:', e);
     }
