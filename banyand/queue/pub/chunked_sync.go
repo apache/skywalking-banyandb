@@ -209,6 +209,7 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 	}
 
 	currentFileIdx := 0
+	partsInCurrentChunk := make(map[int]struct{})
 
 	for currentFileIdx < len(fileStates) {
 		var chunkFileInfos []*chunkFileInfo
@@ -250,11 +251,26 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 				}
 				fileState.finished = true
 				currentFileIdx++
+
+				// If this part has already contributed data to the current chunk buffer,
+				// we must discard the entire buffer to prevent sending corrupted partial data.
+				if _, inChunk := partsInCurrentChunk[fileState.partIndex]; inChunk {
+					c.log.Warn().
+						Str("part-id", fmt.Sprint(part.ID)).
+						Int("buffer-size", len(buffer)).
+						Msg("discarding chunk buffer due to part failure")
+					buffer = buffer[:0]
+					chunkFileInfos = nil
+					partsInCurrentChunk = make(map[int]struct{})
+				}
 				continue
 			}
 
 			if n > 0 {
 				fileState.bytesRead += uint64(n)
+
+				// Track that this part has contributed data to the current chunk
+				partsInCurrentChunk[fileState.partIndex] = struct{}{}
 
 				chunkFileInfos = append(chunkFileInfos, &chunkFileInfo{
 					fileInfo: &clusterv1.FileInfo{
@@ -305,19 +321,15 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 			}
 
 			if err := c.sendChunk(stream, sessionID, buffer, chunkPartsInfo, &chunkIndex, &totalChunks, totalBytesSent, isFirstChunk, metadata); err != nil {
-				errMsg := fmt.Sprintf("failed to send chunk: %v", err)
-				c.log.Error().Err(err).Msg(errMsg)
-				for _, p := range chunkPartsInfo {
-					if _, ok := failedPartIDs[p.Id]; !ok {
-						failedPartIDs[p.Id] = struct{}{}
-						failedParts = append(failedParts, queue.FailedPart{PartID: fmt.Sprint(p.Id), Error: errMsg})
-					}
-				}
-				buffer = buffer[:0]
-				continue
+				// Any sendChunk failure breaks the sync session's state machine.
+				// The receiver expects sequential chunks and cannot recover from gaps.
+				// Abort the entire session immediately.
+				c.log.Error().Err(err).Msg("chunk send failed, aborting sync session")
+				return totalChunks, failedParts, fmt.Errorf("failed to send chunk %d: %w", chunkIndex, err)
 			}
 			isFirstChunk = false
 			buffer = buffer[:0]
+			partsInCurrentChunk = make(map[int]struct{})
 		}
 
 		if len(buffer) == 0 && currentFileIdx >= len(fileStates) {
