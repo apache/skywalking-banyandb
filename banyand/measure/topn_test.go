@@ -20,7 +20,10 @@ package measure
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
@@ -72,6 +75,21 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// clone the original value
+			originalValueName := tt.topNVal.valueName
+			originalEntityTagNames := make([]string, len(tt.topNVal.entityTagNames))
+			copy(originalEntityTagNames, tt.topNVal.entityTagNames)
+			originalValues := make([]int64, len(tt.topNVal.values))
+			copy(originalValues, tt.topNVal.values)
+
+			originalEntities := make([][]*modelv1.TagValue, len(tt.topNVal.entities))
+			for i, entityGroup := range tt.topNVal.entities {
+				originalEntities[i] = make([]*modelv1.TagValue, len(entityGroup))
+				for j, tagValue := range entityGroup {
+					originalEntities[i][j] = proto.Clone(tagValue).(*modelv1.TagValue)
+				}
+			}
+
 			// Marshal the topNValue
 			dst, err := tt.topNVal.marshal(nil)
 			require.NoError(t, err)
@@ -82,10 +100,11 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			require.NoError(t, err)
 
 			// Compare the original and decoded topNValue
-			require.Equal(t, tt.topNVal.valueName, tt.topNVal.valueName)
-			require.Equal(t, tt.topNVal.entityTagNames, tt.topNVal.entityTagNames)
-			require.Equal(t, tt.topNVal.values, tt.topNVal.values)
-			require.Equal(t, tt.topNVal.entities, tt.topNVal.entities)
+			require.Equal(t, originalValueName, tt.topNVal.valueName)
+			require.Equal(t, originalEntityTagNames, tt.topNVal.entityTagNames)
+			require.Equal(t, originalValues, tt.topNVal.values)
+			require.Empty(t, cmp.Diff(originalEntities, tt.topNVal.entities, protocmp.Transform()))
+
 		})
 	}
 }
