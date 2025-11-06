@@ -214,6 +214,49 @@ func TestSIDX_Write_WithTags(t *testing.T) {
 	writeTestData(t, sidx, reqs, 3, 3) // Test with segmentID=3, partID=3
 }
 
+func TestSIDX_PartPaths(t *testing.T) {
+	sidxIface := createTestSIDX(t)
+	raw := sidxIface.(*sidx)
+	defer func() {
+		assert.NoError(t, raw.Close())
+	}()
+
+	const (
+		flushedID = uint64(101)
+		memOnlyID = uint64(202)
+		missingID = uint64(303)
+	)
+
+	req := []WriteRequest{
+		createTestWriteRequest(1, 100, "flushed-data"),
+	}
+
+	// Introduce a part that will be flushed to disk and another that stays in memory.
+	writeTestData(t, raw, req, 1, flushedID)
+	writeTestData(t, raw, req, 2, memOnlyID)
+
+	flushIntro, err := raw.Flush(map[uint64]struct{}{flushedID: {}})
+	require.NoError(t, err)
+	require.NotNil(t, flushIntro)
+	raw.IntroduceFlushed(flushIntro)
+	flushIntro.Release()
+
+	// Empty request should return an empty map.
+	require.Empty(t, raw.PartPaths(map[uint64]struct{}{}))
+
+	paths := raw.PartPaths(map[uint64]struct{}{
+		flushedID: {},
+		memOnlyID: {},
+		missingID: {},
+	})
+
+	require.Len(t, paths, 1)
+	expectedPath := partPath(raw.root, flushedID)
+	assert.Equal(t, expectedPath, paths[flushedID])
+	assert.NotContains(t, paths, memOnlyID)
+	assert.NotContains(t, paths, missingID)
+}
+
 // End-to-End Integration Tests.
 
 func TestSIDX_WriteQueryIntegration(t *testing.T) {

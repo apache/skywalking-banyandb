@@ -48,20 +48,21 @@ const (
 )
 
 type tsTable struct {
-	l             *logger.Logger
-	fileSystem    fs.FileSystem
-	sidxMap       map[string]sidx.SIDX
 	pm            protector.Memory
+	fileSystem    fs.FileSystem
+	handoffCtrl   *handoffController
 	metrics       *metrics
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
-	option        option
+	l             *logger.Logger
+	sidxMap       map[string]sidx.SIDX
 	introductions chan *introduction
 	p             common.Position
 	root          string
 	group         string
 	gc            garbageCleaner
+	option        option
 	curPartID     uint64
 	sync.RWMutex
 	shardID common.ShardID
@@ -218,6 +219,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			if ee[i].Name() == sidxDirName {
 				continue
 			}
+			if ee[i].Name() == storage.FailedPartsDirName {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
@@ -335,6 +339,62 @@ func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 		result[name] = sidxInstance
 	}
 	return result
+}
+
+// enqueueForOfflineNodes enqueues parts for offline nodes via the handoff controller.
+func (tst *tsTable) enqueueForOfflineNodes(onlineNodes []string, partsToSync []*part, partIDsToSync map[uint64]struct{}) {
+	if tst.handoffCtrl == nil {
+		return
+	}
+
+	// Check if there are any offline nodes before doing expensive preparation work
+	offlineNodes := tst.handoffCtrl.calculateOfflineNodes(onlineNodes, tst.group, tst.shardID)
+	tst.l.Debug().
+		Str("group", tst.group).
+		Uint32("shardID", uint32(tst.shardID)).
+		Strs("onlineNodes", onlineNodes).
+		Strs("offlineNodes", offlineNodes).
+		Msg("handoff enqueue evaluation")
+	if len(offlineNodes) == 0 {
+		return
+	}
+
+	// Prepare core parts info
+	coreParts := make([]partInfo, 0, len(partsToSync))
+	for _, part := range partsToSync {
+		coreParts = append(coreParts, partInfo{
+			partID:  part.partMetadata.ID,
+			path:    part.path,
+			group:   tst.group,
+			shardID: tst.shardID,
+		})
+	}
+
+	// Get sidx part paths from each sidx instance
+	sidxMap := tst.getAllSidx()
+	sidxParts := make(map[string][]partInfo)
+	for sidxName, sidxInstance := range sidxMap {
+		partPaths := sidxInstance.PartPaths(partIDsToSync)
+		if len(partPaths) == 0 {
+			continue
+		}
+
+		parts := make([]partInfo, 0, len(partPaths))
+		for partID, path := range partPaths {
+			parts = append(parts, partInfo{
+				partID:  partID,
+				path:    path,
+				group:   tst.group,
+				shardID: tst.shardID,
+			})
+		}
+		sidxParts[sidxName] = parts
+	}
+
+	// Call handoff controller with offline nodes
+	if err := tst.handoffCtrl.enqueueForOfflineNodes(offlineNodes, coreParts, sidxParts); err != nil {
+		tst.l.Warn().Err(err).Msg("handoff enqueue completed with errors")
+	}
 }
 
 func (tst *tsTable) loadSidxMap(availablePartIDs []uint64) {
