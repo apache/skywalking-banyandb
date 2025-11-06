@@ -19,9 +19,9 @@
 
 server:
   grpc:
-    port: 9090
+    port: 19090
   http:
-    port: 8080
+    port: 18080
     metrics_path: /metrics
 
 collector:
