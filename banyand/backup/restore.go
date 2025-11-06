@@ -100,10 +100,13 @@ func newRunCommand() *cobra.Command {
 					if err = restoreCatalog(fs, timeDir, streamRoot, commonv1.Catalog_CATALOG_STREAM); err != nil {
 						errs = multierr.Append(errs, fmt.Errorf("stream restore failed: %w", err))
 					} else {
+						logger.Infof("delete stream time-dir file")
 						_ = os.Remove(timeDirPath)
 					}
 				} else if !errors.Is(err, os.ErrNotExist) {
 					return err
+				} else {
+					logger.Infof("no stream time-dir file found, skip it: %s", timeDirPath)
 				}
 			}
 			if measureRoot != "" {
@@ -113,10 +116,13 @@ func newRunCommand() *cobra.Command {
 					if err = restoreCatalog(fs, timeDir, measureRoot, commonv1.Catalog_CATALOG_MEASURE); err != nil {
 						errs = multierr.Append(errs, fmt.Errorf("measure restore failed: %w", err))
 					} else {
+						logger.Infof("delete measure time-dir file")
 						_ = os.Remove(timeDirPath)
 					}
 				} else if !errors.Is(err, os.ErrNotExist) {
 					return err
+				} else {
+					logger.Infof("no measure time-dir file found, skip it: %s", timeDirPath)
 				}
 			}
 			if propertyRoot != "" {
@@ -126,10 +132,13 @@ func newRunCommand() *cobra.Command {
 					if err = restoreCatalog(fs, timeDir, propertyRoot, commonv1.Catalog_CATALOG_PROPERTY); err != nil {
 						errs = multierr.Append(errs, fmt.Errorf("property restore failed: %w", err))
 					} else {
+						logger.Infof("delete property time-dir file")
 						_ = os.Remove(timeDirPath)
 					}
 				} else if !errors.Is(err, os.ErrNotExist) {
 					return err
+				} else {
+					logger.Infof("no property time-dir file found, skip it: %s", timeDirPath)
 				}
 			}
 			if traceRoot != "" {
@@ -139,10 +148,13 @@ func newRunCommand() *cobra.Command {
 					if err = restoreCatalog(fs, timeDir, traceRoot, commonv1.Catalog_CATALOG_TRACE); err != nil {
 						errs = multierr.Append(errs, fmt.Errorf("trace restore failed: %w", err))
 					} else {
+						logger.Infof("delete trace time-dir file")
 						_ = os.Remove(timeDirPath)
 					}
 				} else if !errors.Is(err, os.ErrNotExist) {
 					return err
+				} else {
+					logger.Infof("no trace time-dir file found, skip it: %s", timeDirPath)
 				}
 			}
 
@@ -182,7 +194,7 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 		return fmt.Errorf("failed to create local directory %s: %w", localDir, err)
 	}
 
-	logger.Infof("Restoring %s to %s from %s", catalogName, localDir, remotePrefix)
+	logger.Infof("Restoring %s to %s from %s, remote total %d files", catalogName, localDir, remotePrefix, len(remoteFiles))
 
 	remoteRelSet := make(map[string]bool)
 	var relPath string
@@ -200,8 +212,10 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 	}
 
 	for _, localRelPath := range localFiles {
-		if !remoteRelSet[localRelPath] {
+		localRelPathWithCatalog := filepath.Join(catalogName, localRelPath)
+		if !remoteRelSet[localRelPathWithCatalog] {
 			localPath := filepath.Join(localDir, localRelPath)
+			logger.Infof("found local file: %s not exist in the remote storage, so delete it", localRelPathWithCatalog)
 			if err := os.Remove(localPath); err != nil {
 				return fmt.Errorf("failed to remove local file %s: %w", localPath, err)
 			}
@@ -226,6 +240,8 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 				return fmt.Errorf("failed to download %s: %w", remoteFile, err)
 			}
 			logger.Infof("Downloaded %s to %s", remoteFile, localPath)
+		} else {
+			logger.Infof("Skipping %s because it already exists", remoteFile)
 		}
 	}
 
