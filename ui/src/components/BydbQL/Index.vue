@@ -283,7 +283,6 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       ...currentExtraKeys,
       'Ctrl-Enter': executeQuery,
       'Cmd-Enter': executeQuery,
-      'Ctrl-Space': 'autocomplete',
     };
     cm.setOption('extraKeys', mergedExtraKeys);
   }
