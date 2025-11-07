@@ -70,11 +70,13 @@ const ENTITY_TYPES = ['STREAM', 'MEASURE', 'TRACE', 'PROPERTY', 'TOPN'];
 let schemasAndGroups = {
   groups: [],
   schemas: {},
+  schemaToGroups: {},
 };
 
-export function updateSchemasAndGroups(groups, schemas) {
+export function updateSchemasAndGroups(groups, schemas, schemaToGroups) {
   schemasAndGroups.groups = groups || [];
   schemasAndGroups.schemas = schemas || {};
+  schemasAndGroups.schemaToGroups = schemaToGroups || {};
 }
 
 function getWordAt(cm, pos) {
@@ -104,7 +106,7 @@ function getQueryContext(cm, cursor) {
   // Check if we're typing after 'in' (group name context)
   const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+in\s+(\w*)$/i);
   if (inMatch) {
-    return { type: 'group', entityType: inMatch[1].toLowerCase() };
+    return { type: 'group', entityType: inMatch[1].toLowerCase(), schemaName: inMatch[2] };
   }
 
   // Check if we're typing after schema name (expecting 'in')
@@ -172,9 +174,13 @@ function generateHints(context, word) {
       }
       break;
 
-    case 'group':
-      // Suggest group names
-      for (const group of schemasAndGroups.groups) {
+    case 'group': {
+      const schemaKey = context.schemaName ? context.schemaName.toLowerCase() : '';
+      const schemaGroupsMap = schemasAndGroups.schemaToGroups[context.entityType] || {};
+      const relatedGroups = schemaKey ? schemaGroupsMap[schemaKey] || [] : [];
+      const targetGroups = relatedGroups.length > 0 ? relatedGroups : schemasAndGroups.groups;
+
+      for (const group of targetGroups) {
         if (!lowerWord || group.toLowerCase().startsWith(lowerWord)) {
           hints.push({
             text: group,
@@ -184,6 +190,7 @@ function generateHints(context, word) {
         }
       }
       break;
+    }
 
     case 'keyword':
     default:

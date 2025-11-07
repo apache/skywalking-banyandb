@@ -279,7 +279,6 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     codeMirrorInstance.value = cm;
     const currentExtraKeys = cm.getOption('extraKeys') || {};
     const mergedExtraKeys = {
-      ...props.extraKeys,
       ...currentExtraKeys,
       'Ctrl-Enter': executeQuery,
       'Cmd-Enter': executeQuery,
@@ -307,6 +306,13 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         property: new Set(),
         topn: new Set(),
       };
+      const schemaGroupMap = {
+        stream: {},
+        measure: {},
+        trace: {},
+        property: {},
+        topn: {},
+      };
 
       await Promise.all(
         (groupResponse.group || []).map(async (group) => {
@@ -325,7 +331,14 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
               schemaList
                 .map((s) => s.metadata?.name)
                 .filter(Boolean)
-                .forEach((name) => schemaSets[type].add(name));
+                .forEach((name) => {
+                  const lowerName = name.toLowerCase();
+                  schemaSets[type].add(name);
+                  if (!schemaGroupMap[type][lowerName]) {
+                    schemaGroupMap[type][lowerName] = new Set();
+                  }
+                  schemaGroupMap[type][lowerName].add(groupName);
+                });
             }
           } catch (e) {
             console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
@@ -338,7 +351,14 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
                 (topnResponse.topNAggregation || [])
                   .map((s) => s.metadata?.name)
                   .filter(Boolean)
-                  .forEach((name) => schemaSets.topn.add(name));
+                  .forEach((name) => {
+                    const lowerName = name.toLowerCase();
+                    schemaSets.topn.add(name);
+                    if (!schemaGroupMap.topn[lowerName]) {
+                      schemaGroupMap.topn[lowerName] = new Set();
+                    }
+                    schemaGroupMap.topn[lowerName].add(groupName);
+                  });
               }
             } catch (e) {
               console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
@@ -348,8 +368,16 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       );
 
       const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
+      const schemaToGroups = Object.fromEntries(
+        Object.entries(schemaGroupMap).map(([type, map]) => [
+          type,
+          Object.fromEntries(
+            Object.entries(map).map(([schema, groupSet]) => [schema, [...groupSet].sort((a, b) => a.localeCompare(b))]),
+          ),
+        ]),
+      );
 
-      updateSchemasAndGroups(groups, schemas);
+      updateSchemasAndGroups(groups, schemas, schemaToGroups);
     } catch (e) {
       console.error('Failed to fetch schema data:', e);
     }
