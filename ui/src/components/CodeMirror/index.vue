@@ -147,7 +147,7 @@
           emit('update:modelValue', newValue);
         });
 
-        // Enable autocomplete on Ctrl+Space or when typing
+        // Enable automatic autocomplete when typing (on keyup events)
         if (props.enableHint) {
           coder.on('keyup', (cm, event) => {
             // Don't show hints for special keys
