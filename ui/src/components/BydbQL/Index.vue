@@ -328,7 +328,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
             try {
               const topnResponse = await getTopNAggregationList(groupName);
               if (!topnResponse.error) {
-                const topnList = topnResponse.topNAggregation|| [];
+                const topnList = topnResponse.topNAggregation || [];
                 const topnNames = topnList.map((s) => s.metadata?.name).filter(Boolean);
                 schemas.topn = [...new Set([...schemas.topn, ...topnNames])];
               }

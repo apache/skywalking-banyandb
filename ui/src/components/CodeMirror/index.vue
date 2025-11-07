@@ -90,7 +90,7 @@
           }
         },
       );
-      
+
       // Get mode based on prop
       const getModeString = () => {
         if (props.mode === 'bydbql') {
@@ -119,7 +119,7 @@
         height: '500px',
         extraKeys: props.extraKeys,
       };
-      
+
       const initialize = async () => {
         try {
           if (props.lint) {
@@ -139,14 +139,14 @@
         } catch (e) {
           console.error('Error loading CodeMirror addons:', e);
         }
-        
+
         coder = CodeMirror.fromTextArea(textarea.value, options);
-        
+
         coder.on('blur', (coder) => {
           const newValue = coder.getValue();
           emit('update:modelValue', newValue);
         });
-        
+
         // Enable autocomplete on Ctrl+Space or when typing
         if (props.enableHint) {
           coder.on('keyup', (cm, event) => {
@@ -155,30 +155,39 @@
               8, // Backspace
               9, // Tab
               13, // Enter
-              16, 17, 18, // Shift, Ctrl, Alt
+              16,
+              17,
+              18, // Shift, Ctrl, Alt
               20, // Caps Lock
               27, // Escape
-              33, 34, 35, 36, 37, 38, 39, 40, // Page/Arrow keys
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40, // Page/Arrow keys
             ];
-            
+
             if (!cm.state.completionActive && !excludedKeys.includes(event.keyCode)) {
               CodeMirror.commands.autocomplete(cm, null, { completeSingle: false });
             }
           });
         }
-        
+
         // Emit ready event with coder instance
         emit('ready', coder);
       };
-      
+
       onMounted(() => {
         initialize();
       });
-      
+
       const checkYaml = async (val) => {
         jsYaml.load(val);
       };
-      
+
       return {
         code,
         options,

@@ -135,4 +135,3 @@ CodeMirror.defineMode('bydbql', function (config) {
 
 // Set MIME type for BydbQL
 CodeMirror.defineMIME('text/x-bydbql', 'bydbql');
-
