@@ -277,7 +277,9 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
 
   function onCodeMirrorReady(cm) {
     codeMirrorInstance.value = cm;
+    const currentExtraKeys = cm.getOption('extraKeys') || {};
     cm.setOption('extraKeys', {
+      ...currentExtraKeys,
       'Ctrl-Enter': executeQuery,
       'Cmd-Enter': executeQuery,
       'Ctrl-Space': 'autocomplete',
@@ -297,47 +299,55 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       const groups = (groupResponse.group || [])
         .filter((g) => CatalogToGroupType[g.catalog])
         .map((g) => g.metadata.name);
-      const schemas = {
-        stream: [],
-        measure: [],
-        trace: [],
-        property: [],
-        topn: [],
+      const schemaSets = {
+        stream: new Set(),
+        measure: new Set(),
+        trace: new Set(),
+        property: new Set(),
+        topn: new Set(),
       };
 
-      // Fetch schemas for each type
-      for (const group of groupResponse.group || []) {
-        const groupName = group.metadata.name;
-        const catalog = group.catalog;
-        const type = CatalogToGroupType[catalog];
+      await Promise.all(
+        (groupResponse.group || []).map(async (group) => {
+          const groupName = group.metadata.name;
+          const catalog = group.catalog;
+          const type = CatalogToGroupType[catalog];
 
-        if (type) {
+          if (!type) {
+            return;
+          }
+
           try {
             const schemaResponse = await getAllTypesOfResourceList(type, groupName);
             if (!schemaResponse.error) {
               const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
-              const schemaNames = schemaList.map((s) => s.metadata?.name).filter(Boolean);
-              schemas[type] = [...new Set([...schemas[type], ...schemaNames])];
+              schemaList
+                .map((s) => s.metadata?.name)
+                .filter(Boolean)
+                .forEach((name) => schemaSets[type].add(name));
             }
           } catch (e) {
             console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
           }
 
-          // TopN resources are in CATALOG_MEASURE groups
           if (catalog === 'CATALOG_MEASURE') {
             try {
               const topnResponse = await getTopNAggregationList(groupName);
               if (!topnResponse.error) {
-                const topnList = topnResponse.topNAggregation || [];
-                const topnNames = topnList.map((s) => s.metadata?.name).filter(Boolean);
-                schemas.topn = [...new Set([...schemas.topn, ...topnNames])];
+                (topnResponse.topNAggregation || [])
+                  .map((s) => s.metadata?.name)
+                  .filter(Boolean)
+                  .forEach((name) => schemaSets.topn.add(name));
               }
             } catch (e) {
               console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
             }
           }
-        }
-      }
+        }),
+      );
+
+      const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
+
       updateSchemasAndGroups(groups, schemas);
     } catch (e) {
       console.error('Failed to fetch schema data:', e);

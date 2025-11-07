@@ -51,12 +51,8 @@ const BYDBQL_KEYWORDS = [
   'EXCEPT',
   'AGGREGATE BY',
   'WITH QUERY_TRACE',
-  'LIMIT',
-  'OFFSET',
-  'ORDER BY',
   'ON',
   'STAGES',
-  'WHERE',
   'GROUP',
   'BY',
   'MATCH',
@@ -83,8 +79,6 @@ export function updateSchemasAndGroups(groups, schemas) {
 
 function getWordAt(cm, pos) {
   const line = cm.getLine(pos.line);
-
-
 
   let wordStart = pos.ch;
   let wordEnd = pos.ch;

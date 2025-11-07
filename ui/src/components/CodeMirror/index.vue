@@ -171,7 +171,7 @@
             ];
 
             if (!cm.state.completionActive && !excludedKeys.includes(event.keyCode)) {
-              CodeMirror.commands.autocomplete(cm, null, { completeSingle: false });
+              CodeMirror.commands.autocomplete(cm, CodeMirror.hint.bydbql, { completeSingle: false });
             }
           });
         }
