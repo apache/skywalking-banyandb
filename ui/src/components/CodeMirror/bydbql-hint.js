@@ -213,4 +213,3 @@ CodeMirror.registerHelper('hint', 'bydbql', function (cm) {
     to: CodeMirror.Pos(cursor.line, end),
   };
 });
-

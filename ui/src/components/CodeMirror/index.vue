@@ -95,11 +95,11 @@
       const getModeString = () => {
         if (props.mode === 'bydbql') {
           return 'text/x-bydbql';
-        } else if (props.mode === 'sql') {
-          return 'text/x-sql';
-        } else if (props.mode === 'yaml') {
+        }
+        if (props.mode === 'yaml') {
           return 'text/x-yaml';
-        } else if (props.mode === 'css') {
+        }
+        if (props.mode === 'css') {
           return 'text/css';
         }
         return 'text/x-yaml';
@@ -198,68 +198,11 @@
       height: 100%;
       width: 100%;
       .CodeMirror-code {
-        line-height: 19px;
+        line-height: 20px;
       }
     }
-  }
-</style>
-<style>
-  .CodeMirror-lint-tooltip {
-    z-index: 10000 !important;
-  }
-
-  /* Autocomplete hint styles */
-  .CodeMirror-hints {
-    z-index: 10000 !important;
-    background: white;
-    border: 1px solid #dcdfe6;
-    border-radius: 4px;
-    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 13px;
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  .CodeMirror-hint {
-    padding: 4px 12px;
-    color: #303133;
-    cursor: pointer;
-    line-height: 1.6;
-  }
-
-  .CodeMirror-hint:hover {
-    background-color: #f5f7fa;
-  }
-
-  .CodeMirror-hint.CodeMirror-hint-active {
-    background-color: #409eff;
-    color: white;
-  }
-
-  /* Different styles for different hint types */
-  .bydbql-hint-keyword {
-    color: #409eff;
-    font-weight: 600;
-  }
-
-  .bydbql-hint-entity-type {
-    color: #67c23a;
-    font-weight: 600;
-  }
-
-  .bydbql-hint-schema {
-    color: #e6a23c;
-  }
-
-  .bydbql-hint-group {
-    color: #f56c6c;
-  }
-
-  .CodeMirror-hint-active.bydbql-hint-keyword,
-  .CodeMirror-hint-active.bydbql-hint-entity-type,
-  .CodeMirror-hint-active.bydbql-hint-schema,
-  .CodeMirror-hint-active.bydbql-hint-group {
-    color: white;
+    :deep(.cm-entity-type) {
+      color: #bd93f9;
+    }
   }
 </style>

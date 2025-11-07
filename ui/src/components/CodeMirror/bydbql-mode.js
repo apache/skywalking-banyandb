@@ -20,8 +20,16 @@
 import CodeMirror from 'codemirror';
 
 // Define BydbQL mode extending SQL
-CodeMirror.defineMode('bydbql', function (config, parserConfig) {
+CodeMirror.defineMode('bydbql', function (config) {
   const sqlMode = CodeMirror.getMode(config, 'text/x-sql');
+
+  const entityTypes = {
+    STREAM: true,
+    MEASURE: true,
+    TRACE: true,
+    PROPERTY: true,
+    TOPN: true,
+  };
 
   // BydbQL-specific keywords
   const bydbqlKeywords = {
@@ -61,12 +69,6 @@ CodeMirror.defineMode('bydbql', function (config, parserConfig) {
     GROUP: true,
     HAVING: true,
     TIME: true,
-    // BydbQL-specific entity types
-    STREAM: true,
-    MEASURE: true,
-    TRACE: true,
-    PROPERTY: true,
-    TOPN: true,
   };
 
   return {
@@ -82,7 +84,6 @@ CodeMirror.defineMode('bydbql', function (config, parserConfig) {
       if (stream.match(/^--.*$/)) {
         return 'comment';
       }
-
       // Handle multi-line comments (/* ... */)
       if (stream.match(/^\/\*/)) {
         state.inComment = true;
@@ -96,11 +97,13 @@ CodeMirror.defineMode('bydbql', function (config, parserConfig) {
         }
         return 'comment';
       }
-
       // Check for BydbQL-specific keywords
       const word = stream.match(/^[A-Za-z_]\w*/);
       if (word) {
         const upperWord = word[0].toUpperCase();
+        if (entityTypes[upperWord]) {
+          return 'entity-type';
+        }
         if (bydbqlKeywords[upperWord]) {
           return 'keyword';
         }
