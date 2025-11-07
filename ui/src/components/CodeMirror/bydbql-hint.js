@@ -86,12 +86,11 @@ export function updateSchemasAndGroups(groups, schemas) {
 
 function getWordAt(cm, pos) {
   const line = cm.getLine(pos.line);
-  const start = pos.ch;
-  const end = pos.ch;
 
-  let wordStart = start;
-  let wordEnd = end;
 
+
+  let wordStart = pos.ch;
+  let wordEnd = pos.ch;
   // Find word boundaries
   while (wordStart > 0 && /\w/.test(line.charAt(wordStart - 1))) {
     wordStart--;
