@@ -18,6 +18,7 @@
  */
 
 import CodeMirror from 'codemirror';
+import { SupportedIndexRuleTypes } from '../common/data';
 
 // BydbQL keywords
 const BYDBQL_KEYWORDS = [
@@ -71,12 +72,54 @@ let schemasAndGroups = {
   groups: [],
   schemas: {},
   schemaToGroups: {},
+  indexRulesByType: {},
+  indexRulesByGroup: {},
 };
 
-export function updateSchemasAndGroups(groups, schemas, schemaToGroups) {
+export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRuleData = {}) {
   schemasAndGroups.groups = groups || [];
   schemasAndGroups.schemas = schemas || {};
   schemasAndGroups.schemaToGroups = schemaToGroups || {};
+
+  const { indexRuleSchemas = {}, indexRuleGroups = {}, indexRuleNameLookup = {} } = indexRuleData;
+
+  const indexRulesByType = {};
+  for (const [type, rules] of Object.entries(indexRuleSchemas)) {
+    const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
+    const uniqueRules = Array.from(new Set((rules || []).filter((rule) => typeof rule === 'string')));
+    indexRulesByType[normalizedType] = uniqueRules.sort((a, b) => a.localeCompare(b));
+  }
+
+  const indexRulesByGroup = {};
+  for (const [type, ruleMap] of Object.entries(indexRuleGroups)) {
+    const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
+    const typeNameLookup = indexRuleNameLookup?.[type] || indexRuleNameLookup?.[normalizedType] || {};
+    const groupRuleSets = {};
+
+    for (const [ruleKey, groupList] of Object.entries(ruleMap || {})) {
+      const displayName = typeNameLookup[ruleKey] || ruleKey;
+      (groupList || []).forEach((group) => {
+        const normalizedGroup = typeof group === 'string' ? group.toLowerCase() : group;
+        if (!normalizedGroup) {
+          return;
+        }
+        if (!groupRuleSets[normalizedGroup]) {
+          groupRuleSets[normalizedGroup] = new Set();
+        }
+        groupRuleSets[normalizedGroup].add(displayName);
+      });
+    }
+
+    indexRulesByGroup[normalizedType] = Object.fromEntries(
+      Object.entries(groupRuleSets).map(([groupKey, ruleSet]) => [
+        groupKey,
+        [...ruleSet].sort((a, b) => a.localeCompare(b)),
+      ]),
+    );
+  }
+
+  schemasAndGroups.indexRulesByType = indexRulesByType;
+  schemasAndGroups.indexRulesByGroup = indexRulesByGroup;
 }
 
 function getWordAt(cm, pos) {
@@ -99,9 +142,50 @@ function getWordAt(cm, pos) {
   };
 }
 
-// Analyze the query context to determine what to suggest
+function extractFromClauseContext(text) {
+  const fromClauseRegex =
+    /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)(?:\s+IN\s+([\s\S]*?)(?=\bWHERE\b|\bORDER\b|\bGROUP\b|\bTIME\b|\bLIMIT\b|\bOFFSET\b|\bWITH\b|\bHAVING\b|\bON\b|$))?/gi;
+  let match;
+  let lastContext = null;
+
+  while ((match = fromClauseRegex.exec(text)) !== null) {
+    const entityType = match[1]?.toLowerCase();
+    const schemaName = match[2];
+    const rawGroups = match[3] || '';
+
+    const groups = rawGroups
+      .replace(/[()]/g, ' ')
+      .split(',')
+      .map((group) => group.trim())
+      .filter(Boolean);
+
+    lastContext = {
+      entityType,
+      schemaName,
+      groups,
+    };
+  }
+
+  return lastContext;
+}
+
 function getQueryContext(cm, cursor) {
   const textBeforeCursor = cm.getRange({ line: 0, ch: 0 }, cursor);
+
+  const orderByRegex = /\bORDER\s+BY\b[\s\w.,-]*$/i;
+  const orderByMatch = orderByRegex.exec(textBeforeCursor);
+  if (orderByMatch) {
+    const textBeforeOrderBy = textBeforeCursor.slice(0, orderByMatch.index);
+    const fromContext = extractFromClauseContext(textBeforeOrderBy);
+    if (fromContext && SupportedIndexRuleTypes.includes(fromContext.entityType)) {
+      return {
+        type: 'entity_order_by',
+        entityType: fromContext.entityType,
+        groupNames: fromContext.groups || [],
+      };
+    }
+    return { type: 'order_by' };
+  }
 
   // Check if we're typing after 'in' (group name context)
   const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+in\s+(\w*)$/i);
@@ -186,6 +270,65 @@ function generateHints(context, word) {
             text: group,
             displayText: group,
             className: 'bydbql-hint-group',
+          });
+        }
+      }
+      break;
+    }
+
+    case 'entity_order_by': {
+      const entityType = context.entityType || '';
+      const normalizedGroups = (context.groupNames || []).map((group) => group.toLowerCase());
+      const indexRulesByGroup = schemasAndGroups.indexRulesByGroup?.[entityType] || {};
+      const aggregatedRuleSet = new Set();
+
+      for (const group of normalizedGroups) {
+        const rules = indexRulesByGroup[group] || [];
+        for (const rule of rules) {
+          aggregatedRuleSet.add(rule);
+        }
+      }
+
+      const fallbackRules = schemasAndGroups.indexRulesByType?.[entityType] || [];
+      const candidates = aggregatedRuleSet.size > 0
+        ? [...aggregatedRuleSet].sort((a, b) => a.localeCompare(b))
+        : fallbackRules.slice();
+
+      for (const rule of candidates) {
+        if (!lowerWord || rule.toLowerCase().startsWith(lowerWord)) {
+          hints.push({
+            text: rule,
+            displayText: rule,
+            className: 'bydbql-hint-index-rule',
+          });
+        }
+      }
+
+      if (!lowerWord || 'ASC'.toLowerCase().startsWith(lowerWord)) {
+        hints.push({
+          text: 'ASC',
+          displayText: 'ASC',
+          className: 'bydbql-hint-keyword',
+        });
+      }
+      if (!lowerWord || 'DESC'.toLowerCase().startsWith(lowerWord)) {
+        hints.push({
+          text: 'DESC',
+          displayText: 'DESC',
+          className: 'bydbql-hint-keyword',
+        });
+      }
+      break;
+    }
+
+    case 'order_by': {
+      const orderKeywords = ['ASC', 'DESC'];
+      for (const keyword of orderKeywords) {
+        if (!lowerWord || keyword.toLowerCase().startsWith(lowerWord)) {
+          hints.push({
+            text: keyword,
+            displayText: keyword,
+            className: 'bydbql-hint-keyword',
           });
         }
       }

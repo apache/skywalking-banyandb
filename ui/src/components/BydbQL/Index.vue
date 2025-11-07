@@ -19,13 +19,13 @@
 <script setup>
   import { ref, computed, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { executeBydbQLQuery, getGroupList, getAllTypesOfResourceList, getTopNAggregationList } from '@/api/index';
+  import { executeBydbQLQuery, getGroupList, getAllTypesOfResourceList, getTopNAggregationList, getindexRuleList } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import TopNTable from '@/components/common/TopNTable.vue';
   import MeasureAndStreamTable from '@/components/common/MeasureAndStreamTable.vue';
   import PropertyTable from '@/components/common/PropertyTable.vue';
   import TraceTable from '@/components/common/TraceTable.vue';
-  import { CatalogToGroupType } from '@/components/common/data';
+  import { CatalogToGroupType, GroupTypeToCatalog, SupportedIndexRuleTypes } from '@/components/common/data';
   import { updateSchemasAndGroups } from '@/components/CodeMirror/bydbql-hint.js';
 
   // Default query text with example queries as comments
@@ -313,6 +313,9 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         property: {},
         topn: {},
       };
+      const indexRuleSets = {};
+      const indexRuleGroupMap = {};
+      const indexRuleNameLookup = {};
 
       await Promise.all(
         (groupResponse.group || []).map(async (group) => {
@@ -343,8 +346,40 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           } catch (e) {
             console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
           }
+          const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
+          if (SupportedIndexRuleTypes.includes(normalizedType)) {
+            if (!indexRuleSets[normalizedType]) {
+              indexRuleSets[normalizedType] = new Set();
+            }
+            if (!indexRuleGroupMap[normalizedType]) {
+              indexRuleGroupMap[normalizedType] = {};
+            }
+            if (!indexRuleNameLookup[normalizedType]) {
+              indexRuleNameLookup[normalizedType] = {};
+            }
 
-          if (catalog === 'CATALOG_MEASURE') {
+            try {
+              const indexRuleResponse = await getindexRuleList(groupName);
+              if (!indexRuleResponse.error) {
+                (indexRuleResponse.indexRule || [])
+                  .map((s) => s.metadata?.name)
+                  .filter((s) => Boolean(s) && !s.noSort)
+                  .forEach((name) => {
+                    const lowerName = name.toLowerCase();
+                    indexRuleSets[normalizedType].add(name);
+                    indexRuleNameLookup[normalizedType][lowerName] = name;
+                    if (!indexRuleGroupMap[normalizedType][lowerName]) {
+                      indexRuleGroupMap[normalizedType][lowerName] = new Set();
+                    }
+                    indexRuleGroupMap[normalizedType][lowerName].add(groupName);
+                  });
+              }
+            } catch (e) {
+              console.error(`Failed to fetch index rule schemas for group ${groupName}:`, e);
+            }
+          }
+
+          if (catalog === GroupTypeToCatalog.measure) {
             try {
               const topnResponse = await getTopNAggregationList(groupName);
               if (!topnResponse.error) {
@@ -377,7 +412,26 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         ]),
       );
 
-      updateSchemasAndGroups(groups, schemas, schemaToGroups);
+      const indexRuleSchemas = Object.fromEntries(
+        Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
+      );
+      const indexRuleGroups = Object.fromEntries(
+        Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
+          type,
+          Object.fromEntries(
+            Object.entries(ruleMap).map(([rule, groupSet]) => [
+              rule,
+              [...groupSet].sort((a, b) => a.localeCompare(b)),
+            ]),
+          ),
+        ]),
+      );
+
+      updateSchemasAndGroups(groups, schemas, schemaToGroups, {
+        indexRuleSchemas,
+        indexRuleGroups,
+        indexRuleNameLookup,
+      });
     } catch (e) {
       console.error('Failed to fetch schema data:', e);
     }
