@@ -120,6 +120,7 @@ type server struct {
 	enableQueryAccessLog     bool
 	accessLogSampled         bool
 	healthAuthEnabled        bool
+	grpcBufferMemoryRatio    float64
 }
 
 // NewServer returns a new gRPC server.
@@ -309,6 +310,9 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
+	s.grpcBufferMemoryRatio = 0.1
+	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
+		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")
 	return fs
 }
 
@@ -319,6 +323,9 @@ func (s *server) Validate() error {
 	}
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
 		return errAccessLogRootPath
+	}
+	if s.grpcBufferMemoryRatio <= 0.0 || s.grpcBufferMemoryRatio > 1.0 {
+		return errors.Errorf("grpc-buffer-memory-ratio must be in range (0.0, 1.0], got %f", s.grpcBufferMemoryRatio)
 	}
 	if !s.tls {
 		return nil
