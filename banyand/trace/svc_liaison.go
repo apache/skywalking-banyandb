@@ -46,22 +46,23 @@ import (
 )
 
 type liaison struct {
-	metadata              metadata.Repo
-	pipeline              queue.Server
-	omr                   observability.MetricsRegistry
-	lfs                   fs.FileSystem
-	writeListener         bus.MessageListener
-	dataNodeSelector      node.Selector
-	pm                    protector.Memory
-	handoffCtrl           *handoffController
-	l                     *logger.Logger
-	schemaRepo            schemaRepo
-	dataPath              string
-	root                  string
-	dataNodeList          []string
-	option                option
-	maxDiskUsagePercent   int
-	handoffMaxSizePercent int
+	metadata                  metadata.Repo
+	pipeline                  queue.Server
+	omr                       observability.MetricsRegistry
+	lfs                       fs.FileSystem
+	writeListener             bus.MessageListener
+	dataNodeSelector          node.Selector
+	pm                        protector.Memory
+	handoffCtrl               *handoffController
+	l                         *logger.Logger
+	schemaRepo                schemaRepo
+	dataPath                  string
+	root                      string
+	dataNodeList              []string
+	option                    option
+	maxDiskUsagePercent       int
+	handoffMaxSizePercent     int
+	failedPartsMaxSizePercent int
 }
 
 var _ Service = (*liaison)(nil)
@@ -100,6 +101,10 @@ func (l *liaison) FlagSet() *run.FlagSet {
 			"Calculated as: totalDisk * trace-max-disk-usage-percent * handoff-max-size-percent / 10000. "+
 			"Example: 100GB disk with 95% max usage and 10% handoff = 9.5GB; 50% handoff = 47.5GB. "+
 			"Valid range: 0-100")
+	fs.IntVar(&l.failedPartsMaxSizePercent, "failed-parts-max-size-percent", 10,
+		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
+			"Calculated as: totalDisk * trace-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
+			"Set to 0 to disable copying failed parts. Valid range: 0-100")
 	return fs
 }
 
@@ -116,6 +121,10 @@ func (l *liaison) Validate() error {
 			"This represents what percentage of BanyanDB's allowed disk usage is allocated to handoff storage. "+
 			"Example: 100GB disk with 95%% max usage and 50%% handoff = 100 * 95%% * 50%% = 47.5GB for handoff",
 			l.handoffMaxSizePercent)
+	}
+
+	if l.failedPartsMaxSizePercent < 0 || l.failedPartsMaxSizePercent > 100 {
+		return fmt.Errorf("invalid failed-parts-max-size-percent: %d%%. Must be between 0 and 100", l.failedPartsMaxSizePercent)
 	}
 
 	return nil
@@ -142,8 +151,23 @@ func (l *liaison) PreRun(ctx context.Context) error {
 	if l.dataPath == "" {
 		l.dataPath = filepath.Join(path, storage.DataDir)
 	}
+	l.lfs.MkdirIfNotExist(l.dataPath, storage.DirPerm)
 
 	traceDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicTracePartSync, l.option.tire2Client, l.dataNodeSelector)
+	l.option.failedPartsMaxTotalSizeBytes = 0
+	if l.failedPartsMaxSizePercent > 0 {
+		totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
+		maxTotalSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100
+		maxTotalSizeBytes = maxTotalSizeBytes * uint64(l.failedPartsMaxSizePercent) / 100
+		l.option.failedPartsMaxTotalSizeBytes = maxTotalSizeBytes
+		l.l.Info().
+			Uint64("maxFailedPartsBytes", maxTotalSizeBytes).
+			Int("failedPartsMaxSizePercent", l.failedPartsMaxSizePercent).
+			Int("maxDiskUsagePercent", l.maxDiskUsagePercent).
+			Msg("configured failed parts storage limit")
+	} else {
+		l.l.Info().Msg("failed parts storage limit disabled (percent set to 0)")
+	}
 	// Initialize handoff controller if data nodes are configured
 	l.l.Info().Strs("dataNodeList", l.dataNodeList).Int("maxSizePercent", l.handoffMaxSizePercent).
 		Msg("handoff configuration")
@@ -153,7 +177,6 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		// Example: 100GB disk, 95% max usage, 10% handoff = 100 * 95 * 10 / 10000 = 9.5GB
 		maxSize := 0
 		if l.handoffMaxSizePercent > 0 {
-			l.lfs.MkdirIfNotExist(l.dataPath, storage.DirPerm)
 			totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
 			// Divide after each multiplication to avoid overflow with large disk capacities
 			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100 * uint64(l.handoffMaxSizePercent) / 100

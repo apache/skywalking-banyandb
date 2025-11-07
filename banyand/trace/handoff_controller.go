@@ -1246,7 +1246,7 @@ func (hc *handoffController) sendPartToNode(ctx context.Context, nodeAddr string
 	}
 
 	if !result.Success {
-		return fmt.Errorf("sync failed: %s", result.ErrorMessage)
+		return fmt.Errorf("sync failed: %s", result.FailedParts)
 	}
 
 	hc.l.Debug().

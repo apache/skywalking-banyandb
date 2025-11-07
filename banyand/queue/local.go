@@ -170,6 +170,22 @@ func (l *localChunkedSyncClient) Close() error {
 }
 
 func (l *localChunkedSyncClient) SyncStreamingParts(_ context.Context, parts []StreamingPartData) (*SyncResult, error) {
+	// Check for test failure injector
+	if injector := GetChunkedSyncFailureInjector(); injector != nil {
+		shouldFail, failedParts, err := injector.BeforeSync(parts)
+		if err != nil {
+			return nil, err
+		}
+		if shouldFail {
+			return &SyncResult{
+				Success:     false,
+				SessionID:   "local-session",
+				PartsCount:  uint32(len(parts)),
+				FailedParts: failedParts,
+			}, nil
+		}
+	}
+
 	return &SyncResult{
 		Success:     true,
 		SessionID:   "local-session",
