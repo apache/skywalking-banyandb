@@ -24,7 +24,7 @@
 </template>
 
 <script>
-  import { onMounted, ref, watch } from 'vue';
+  import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
   import CodeMirror from 'codemirror';
   import 'codemirror/lib/codemirror.css';
   import 'codemirror/mode/yaml/yaml.js';
@@ -81,6 +81,10 @@
       const textarea = ref(null);
       const code = ref(props.modelValue);
       let coder;
+      let autocompleteTimeout;
+      let hintAddonLoaded = false;
+      const AUTOCOMPLETE_DELAY = 200;
+
       watch(
         () => props.modelValue,
         (val) => {
@@ -135,6 +139,7 @@
           if (props.enableHint) {
             await import('codemirror/addon/hint/show-hint.js');
             await import('codemirror/addon/hint/show-hint.css');
+            hintAddonLoaded = true;
           }
         } catch (e) {
           console.error('Error loading CodeMirror addons:', e);
@@ -148,7 +153,7 @@
         });
 
         // Enable automatic autocomplete when typing (on keyup events)
-        if (props.enableHint) {
+        if (props.enableHint && hintAddonLoaded) {
           coder.on('keyup', (cm, event) => {
             // Don't show hints for special keys
             const excludedKeys = [
@@ -170,10 +175,22 @@
               40, // Page/Arrow keys
             ];
 
-            if (!cm.state.completionActive && !excludedKeys.includes(event.keyCode)) {
-              CodeMirror.commands.autocomplete(cm, CodeMirror.hint.bydbql, { completeSingle: false });
+            if (excludedKeys.includes(event.keyCode)) {
+              return;
             }
+
+            if (autocompleteTimeout) {
+              clearTimeout(autocompleteTimeout);
+            }
+
+            autocompleteTimeout = setTimeout(() => {
+              if (!cm.state.completionActive) {
+                CodeMirror.commands.autocomplete(cm, CodeMirror.hint.bydbql, { completeSingle: false });
+              }
+            }, AUTOCOMPLETE_DELAY);
           });
+        } else if (props.enableHint && !hintAddonLoaded) {
+          console.warn('CodeMirror hint addon failed to load; autocomplete is disabled.');
         }
 
         // Emit ready event with coder instance
@@ -182,6 +199,12 @@
 
       onMounted(() => {
         initialize();
+      });
+
+      onBeforeUnmount(() => {
+        if (autocompleteTimeout) {
+          clearTimeout(autocompleteTimeout);
+        }
       });
 
       const checkYaml = async (val) => {

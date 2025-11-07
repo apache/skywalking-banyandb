@@ -278,12 +278,14 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   function onCodeMirrorReady(cm) {
     codeMirrorInstance.value = cm;
     const currentExtraKeys = cm.getOption('extraKeys') || {};
-    cm.setOption('extraKeys', {
+    const mergedExtraKeys = {
+      ...props.extraKeys,
       ...currentExtraKeys,
       'Ctrl-Enter': executeQuery,
       'Cmd-Enter': executeQuery,
       'Ctrl-Space': 'autocomplete',
-    });
+    };
+    cm.setOption('extraKeys', mergedExtraKeys);
   }
 
   // Fetch groups and schemas for autocomplete
