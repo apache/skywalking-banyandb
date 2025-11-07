@@ -69,50 +69,57 @@ CodeMirror.defineMode('bydbql', function (config) {
     GROUP: true,
     HAVING: true,
     TIME: true,
+    SHOW: true,
+    TOP: true,
+    AGGREGATE: true,
+    BY: true,
+    IN: true,
+    NOT: true,
+    MATCH: true,
+    SUM: true,
+    MEAN: true,
+    AVG: true,
+    COUNT: true,
+    MAX: true,
+    MIN: true,
+    TAG: true,
   };
+
+  const isWord = (value) => /^[A-Za-z_]\w*$/.test(value);
 
   return {
     startState: function () {
       return {
         sqlState: CodeMirror.startState(sqlMode),
-        inComment: false,
+      };
+    },
+
+    copyState: function (state) {
+      return {
+        sqlState: CodeMirror.copyState(sqlMode, state.sqlState),
       };
     },
 
     token: function (stream, state) {
-      // Handle SQL-style comments (--)
-      if (stream.match(/^--.*$/)) {
-        return 'comment';
-      }
-      // Handle multi-line comments (/* ... */)
-      if (stream.match(/^\/\*/)) {
-        state.inComment = true;
-        return 'comment';
-      }
-      if (state.inComment) {
-        if (stream.match(/\*\//)) {
-          state.inComment = false;
-        } else {
-          stream.next();
-        }
-        return 'comment';
-      }
-      // Check for BydbQL-specific keywords
-      const word = stream.match(/^[A-Za-z_]\w*/);
-      if (word) {
-        const upperWord = word[0].toUpperCase();
-        if (entityTypes[upperWord]) {
-          return 'entity-type';
-        }
-        if (bydbqlKeywords[upperWord]) {
-          return 'keyword';
-        }
-        // Return the word as identifier for potential schema names
-        return 'variable-2';
+      const style = sqlMode.token(stream, state.sqlState);
+      if (style === 'comment' || style === 'string') {
+        return style;
       }
 
-      // Fall back to SQL mode for other tokens
-      return sqlMode.token(stream, state.sqlState);
+      const current = stream.current();
+      if (!isWord(current)) {
+        return style;
+      }
+
+      const upperWord = current.toUpperCase();
+      if (entityTypes[upperWord]) {
+        return 'entity-type';
+      }
+      if (bydbqlKeywords[upperWord]) {
+        return 'keyword';
+      }
+
+      return 'variable-2';
     },
 
     indent: function (state, textAfter) {
