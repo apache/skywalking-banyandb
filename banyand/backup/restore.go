@@ -253,10 +253,11 @@ func cleanEmptyDirs(dir, stopDir string) {
 		if dir == stopDir || dir == "." {
 			break
 		}
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) > 0 {
+		files, err := getAllFiles(dir)
+		if err != nil || len(files) > 0 {
 			break
 		}
+		logger.Infof("Detected empty file directory: %s, removing it", dir)
 		_ = os.Remove(dir)
 		dir = filepath.Dir(dir)
 	}
