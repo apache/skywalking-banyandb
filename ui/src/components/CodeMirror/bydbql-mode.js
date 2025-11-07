@@ -22,6 +22,11 @@ import CodeMirror from 'codemirror';
 // Define BydbQL mode extending SQL
 CodeMirror.defineMode('bydbql', function (config) {
   const sqlMode = CodeMirror.getMode(config, 'text/x-sql');
+  if (!sqlMode || typeof sqlMode.token !== 'function') {
+    throw new Error(
+      "CodeMirror SQL mode ('text/x-sql') must be loaded before defining the BydbQL mode. Please ensure the SQL mode is imported first."
+    );
+  }
 
   const entityTypes = {
     STREAM: true,
