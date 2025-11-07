@@ -112,25 +112,25 @@ function getQueryContext(cm, cursor) {
   const textBeforeCursor = cm.getRange({ line: 0, ch: 0 }, cursor);
 
   // Check if we're typing after 'in' (group name context)
-  const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+in\s+\w*$/i);
+  const inMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+in\s+(\w*)$/i);
   if (inMatch) {
     return { type: 'group', entityType: inMatch[1].toLowerCase() };
   }
 
   // Check if we're typing after schema name (expecting 'in')
-  const schemaMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+\w*$/i);
+  const schemaMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)\s+(\w*)$/i);
   if (schemaMatch) {
     return { type: 'in_keyword' };
   }
 
   // Check if we're typing after entity type (schema name context)
-  const entityMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+\w*$/i);
+  const entityMatch = textBeforeCursor.match(/\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w*)$/i);
   if (entityMatch) {
     return { type: 'schema', entityType: entityMatch[1].toLowerCase() };
   }
 
   // Check if we're typing after FROM (entity type context)
-  if (/\bFROM\s+\w*$/i.test(textBeforeCursor)) {
+  if (/\bFROM\s+(\w*)$/i.test(textBeforeCursor)) {
     return { type: 'entity_type' };
   }
 
