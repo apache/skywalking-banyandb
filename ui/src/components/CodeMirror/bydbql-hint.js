@@ -290,9 +290,8 @@ function generateHints(context, word) {
       }
 
       const fallbackRules = schemasAndGroups.indexRulesByType?.[entityType] || [];
-      const candidates = aggregatedRuleSet.size > 0
-        ? [...aggregatedRuleSet].sort((a, b) => a.localeCompare(b))
-        : fallbackRules.slice();
+      const candidates =
+        aggregatedRuleSet.size > 0 ? [...aggregatedRuleSet].sort((a, b) => a.localeCompare(b)) : fallbackRules.slice();
 
       for (const rule of candidates) {
         if (!lowerWord || rule.toLowerCase().startsWith(lowerWord)) {

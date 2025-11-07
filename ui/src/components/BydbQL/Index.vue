@@ -19,7 +19,13 @@
 <script setup>
   import { ref, computed, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { executeBydbQLQuery, getGroupList, getAllTypesOfResourceList, getTopNAggregationList, getindexRuleList } from '@/api/index';
+  import {
+    executeBydbQLQuery,
+    getGroupList,
+    getAllTypesOfResourceList,
+    getTopNAggregationList,
+    getindexRuleList,
+  } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import TopNTable from '@/components/common/TopNTable.vue';
   import MeasureAndStreamTable from '@/components/common/MeasureAndStreamTable.vue';
@@ -419,10 +425,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
           type,
           Object.fromEntries(
-            Object.entries(ruleMap).map(([rule, groupSet]) => [
-              rule,
-              [...groupSet].sort((a, b) => a.localeCompare(b)),
-            ]),
+            Object.entries(ruleMap).map(([rule, groupSet]) => [rule, [...groupSet].sort((a, b) => a.localeCompare(b))]),
           ),
         ]),
       );
