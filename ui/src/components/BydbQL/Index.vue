@@ -376,7 +376,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         <CodeMirror
           v-model="queryText"
           :mode="'bydbql'"
-          :lint="true"
+          :lint="false"
           :readonly="false"
           :style-active-line="true"
           :auto-refresh="true"
