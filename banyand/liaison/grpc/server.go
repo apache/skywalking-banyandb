@@ -56,7 +56,10 @@ import (
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
-const defaultRecvSize = 16 << 20
+const (
+	defaultRecvSize         = 16 << 20
+	maxReasonableBufferSize = 1 << 30 // 1GB
+)
 
 var (
 	errServerCert        = errors.New("invalid server cert file")
@@ -387,6 +390,17 @@ func (s *server) Serve() run.StopNotify {
 		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
 	}
 
+	// Calculate dynamic buffer sizes based on available memory
+	connWindowSize, streamWindowSize := s.calculateGrpcBufferSizes()
+	if connWindowSize > 0 && streamWindowSize > 0 {
+		opts = append(opts,
+			grpclib.InitialConnWindowSize(connWindowSize),
+			grpclib.InitialWindowSize(streamWindowSize),
+		)
+	} else if s.log != nil {
+		s.log.Warn().Msg("using gRPC default buffer sizes")
+	}
+
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
 		grpclib.ChainStreamInterceptor(streamChain...),
@@ -463,6 +477,51 @@ func (s *server) protectorLoadSheddingInterceptor(srv interface{}, ss grpclib.Se
 	}
 
 	return handler(srv, ss)
+}
+
+// calculateGrpcBufferSizes calculates the gRPC buffer sizes based on available system memory.
+// Returns (connWindowSize, streamWindowSize) in bytes.
+// Returns (0, 0) if protector is unavailable, which will cause gRPC to use defaults.
+func (s *server) calculateGrpcBufferSizes() (int32, int32) {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		if s.log != nil {
+			s.log.Warn().Msg("protector unavailable, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Get memory limit from protector
+	memoryLimit := s.protector.GetLimit()
+	if memoryLimit == 0 {
+		if s.log != nil {
+			s.log.Warn().Msg("memory limit not set, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Calculate total buffer size: min(availableMemory * ratio, maxReasonableBufferSize)
+	// Note: We use the memory limit (not available bytes) as the basis for calculation
+	// to ensure consistent buffer sizing regardless of current usage
+	totalBufferSize := uint64(float64(memoryLimit) * s.grpcBufferMemoryRatio)
+	if totalBufferSize > maxReasonableBufferSize {
+		totalBufferSize = maxReasonableBufferSize
+	}
+
+	// Split buffer size: 2/3 for connection-level, 1/3 for stream-level
+	connWindowSize := int32(totalBufferSize * 2 / 3)
+	streamWindowSize := int32(totalBufferSize * 1 / 3)
+
+	if s.log != nil {
+		s.log.Info().
+			Uint64("memory_limit", memoryLimit).
+			Float64("ratio", s.grpcBufferMemoryRatio).
+			Int32("conn_window_size", connWindowSize).
+			Int32("stream_window_size", streamWindowSize).
+			Msg("calculated gRPC buffer sizes")
+	}
+
+	return connWindowSize, streamWindowSize
 }
 
 func (s *server) GracefulStop() {

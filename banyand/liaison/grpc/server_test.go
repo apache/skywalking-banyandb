@@ -153,3 +153,103 @@ func TestProtectorLoadSheddingInterceptorNilProtector(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, called)
 }
+
+// mockProtectorWithLimit extends mock protector for buffer calculations.
+type mockProtectorWithLimit struct {
+	*test.MockMemoryProtector
+	limit uint64
+}
+
+func (m *mockProtectorWithLimit) GetLimit() uint64 {
+	return m.limit
+}
+
+func (m *mockProtectorWithLimit) State() protector.State {
+	return protector.StateLow
+}
+
+func newMockProtectorWithLimit(limit uint64) *mockProtectorWithLimit {
+	return &mockProtectorWithLimit{
+		MockMemoryProtector: &test.MockMemoryProtector{},
+		limit:               limit,
+	}
+}
+
+// TestCalculateGrpcBufferSizes verifies buffer size calculations.
+func TestCalculateGrpcBufferSizes(t *testing.T) {
+	tests := []struct {
+		name           string
+		memoryLimit    uint64
+		ratio          float64
+		expectedConn   int32
+		expectedStream int32
+	}{
+		{
+			name:           "normal_case",
+			memoryLimit:    100 * 1024 * 1024, // 100MB
+			ratio:          0.1,
+			expectedConn:   6990506, // (100MB * 0.1) * 2/3 ≈ 6.99MB
+			expectedStream: 3495253, // (100MB * 0.1) * 1/3 ≈ 3.50MB
+		},
+		{
+			name:           "max_reasonable",
+			memoryLimit:    10 * 1024 * 1024 * 1024, // 10GB
+			ratio:          0.5,
+			expectedConn:   715827882, // (1GB capped) * 2/3 ≈ 715MB
+			expectedStream: 357913941, // (1GB capped) * 1/3 ≈ 358MB
+		},
+		{
+			name:           "small_memory",
+			memoryLimit:    10 * 1024 * 1024, // 10MB
+			ratio:          0.1,
+			expectedConn:   699050, // (10MB * 0.1) * 2/3 ≈ 699KB
+			expectedStream: 349525, // (10MB * 0.1) * 1/3 ≈ 350KB
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			protector := newMockProtectorWithLimit(tt.memoryLimit)
+			server := &server{
+				protector:             protector,
+				grpcBufferMemoryRatio: tt.ratio,
+			}
+
+			connSize, streamSize := server.calculateGrpcBufferSizes()
+
+			// Allow some tolerance for integer division (within 1% or 1000 bytes, whichever is larger)
+			tolerance := tt.expectedConn / 100
+			if tolerance < 1000 {
+				tolerance = 1000
+			}
+			assert.InDelta(t, tt.expectedConn, connSize, float64(tolerance), "conn window size mismatch")
+			assert.InDelta(t, tt.expectedStream, streamSize, float64(tolerance), "stream window size mismatch")
+		})
+	}
+}
+
+// TestCalculateGrpcBufferSizesFallback verifies fallback when protector unavailable.
+func TestCalculateGrpcBufferSizesFallback(t *testing.T) {
+	server := &server{protector: nil, grpcBufferMemoryRatio: 0.1}
+
+	connSize, streamSize := server.calculateGrpcBufferSizes()
+
+	// Should return default values (0) when protector is nil
+	assert.Equal(t, int32(0), connSize)
+	assert.Equal(t, int32(0), streamSize)
+}
+
+// TestCalculateGrpcBufferSizesNoLimit verifies fallback when memory limit is not set.
+func TestCalculateGrpcBufferSizesNoLimit(t *testing.T) {
+	protector := newMockProtectorWithLimit(0)
+	server := &server{
+		protector:             protector,
+		grpcBufferMemoryRatio: 0.1,
+	}
+
+	connSize, streamSize := server.calculateGrpcBufferSizes()
+
+	// Should return default values (0) when limit is 0
+	assert.Equal(t, int32(0), connSize)
+	assert.Equal(t, int32(0), streamSize)
+}
