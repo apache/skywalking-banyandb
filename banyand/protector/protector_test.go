@@ -24,11 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestServiceInterfaceCompliance verifies that memory implements Service interface.
-func TestServiceInterfaceCompliance(_ *testing.T) {
-	var _ Service = (*memory)(nil)
-}
-
 // TestStateConstants verifies state constants are properly defined.
 func TestStateConstants(t *testing.T) {
 	assert.Equal(t, State(0), StateLow)

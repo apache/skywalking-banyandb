@@ -23,6 +23,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -46,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -85,9 +87,9 @@ type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
-	*indexRuleBindingRegistryServer
-	groupRepo *groupRepo
-	stopCh    chan struct{}
+	protector  protector.Memory
+	traceSVC   *traceService
+	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	streamSVC *streamService
@@ -102,30 +104,32 @@ type server struct {
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	*traceRegistryServer
-	traceSVC                 *traceService
-	authReloader             *auth.Reloader
+	authReloader *auth.Reloader
+	groupRepo    *groupRepo
+	*indexRuleBindingRegistryServer
 	metrics                  *metrics
 	keyFile                  string
 	authConfigFile           string
-	host                     string
 	addr                     string
 	accessLogRootPath        string
 	certFile                 string
+	host                     string
 	accessLogRecorders       []accessLogRecorder
 	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
+	grpcBufferMemoryRatio    float64
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
 	enableQueryAccessLog     bool
 	accessLogSampled         bool
 	healthAuthEnabled        bool
-	grpcBufferMemoryRatio    float64
 }
 
 // NewServer returns a new gRPC server.
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
+	protectorService protector.Memory,
 ) Server {
 	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
@@ -193,6 +197,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		},
 		schemaRepo:   schemaRegistry,
 		authReloader: auth.InitAuthReloader(),
+		protector:    protectorService,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -378,6 +383,9 @@ func (s *server) Serve() run.StopNotify {
 		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
 		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
 	}
+	if s.protector != nil {
+		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
+	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
@@ -420,6 +428,41 @@ func (s *server) Serve() run.StopNotify {
 		close(s.stopCh)
 	}()
 	return s.stopCh
+}
+
+// protectorLoadSheddingInterceptor rejects streams when memory pressure is high.
+func (s *server) protectorLoadSheddingInterceptor(srv interface{}, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		return handler(srv, ss)
+	}
+
+	// Check memory state
+	if s.protector.State() == protector.StateHigh {
+		// Extract service name from FullMethod (e.g., "/banyandb.stream.v1.StreamService/Write")
+		serviceName := "unknown"
+		if info != nil && info.FullMethod != "" {
+			// Extract service name from FullMethod
+			parts := strings.Split(info.FullMethod, "/")
+			if len(parts) >= 2 {
+				serviceName = parts[1]
+			}
+		}
+
+		// Log rejection with metrics
+		if s.log != nil {
+			s.log.Warn().
+				Str("service", info.FullMethod).
+				Msg("rejecting new stream due to high memory pressure")
+		}
+		if s.metrics != nil {
+			s.metrics.memoryLoadSheddingRejections.Inc(1, serviceName)
+		}
+
+		return status.Errorf(codes.ResourceExhausted, "server is under memory pressure, please retry later")
+	}
+
+	return handler(srv, ss)
 }
 
 func (s *server) GracefulStop() {

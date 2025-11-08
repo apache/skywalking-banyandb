@@ -18,9 +18,16 @@
 package grpc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/apache/skywalking-banyandb/banyand/internal/test"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 )
 
 // TestGrpcBufferMemoryRatioFlagDefault verifies default value.
@@ -67,4 +74,82 @@ func TestGrpcBufferMemoryRatioValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mockProtector implements Service interface for testing.
+type mockProtector struct {
+	*test.MockMemoryProtector
+	state protector.State
+}
+
+func (m *mockProtector) State() protector.State {
+	return m.state
+}
+
+// TestNewServerWithProtector verifies protector injection.
+func TestNewServerWithProtector(t *testing.T) {
+	// Create a mock protector
+	protectorService := &mockProtector{state: protector.StateLow}
+
+	// Create server with protector - should not panic
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, protectorService)
+	assert.NotNil(t, server)
+}
+
+// TestNewServerWithoutProtector verifies nil protector handling.
+func TestNewServerWithoutProtector(t *testing.T) {
+	// Server creation should not fail with nil protector (fail open)
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, nil)
+	assert.NotNil(t, server)
+}
+
+// TestProtectorLoadSheddingInterceptorLowState verifies normal operation in low state.
+func TestProtectorLoadSheddingInterceptorLowState(t *testing.T) {
+	protectorService := &mockProtector{state: protector.StateLow}
+	server := &server{protector: protectorService}
+
+	called := false
+	handler := func(_ interface{}, _ grpc.ServerStream) error {
+		called = true
+		return nil
+	}
+
+	err := server.protectorLoadSheddingInterceptor(nil, nil, &grpc.StreamServerInfo{}, grpc.StreamHandler(handler))
+
+	assert.NoError(t, err)
+	assert.True(t, called)
+}
+
+// TestProtectorLoadSheddingInterceptorHighState verifies rejection in high state.
+func TestProtectorLoadSheddingInterceptorHighState(t *testing.T) {
+	protectorService := &mockProtector{state: protector.StateHigh}
+	server := &server{protector: protectorService}
+
+	handler := func(_ interface{}, _ grpc.ServerStream) error {
+		t.Fatal("handler should not be called")
+		return nil
+	}
+
+	err := server.protectorLoadSheddingInterceptor(nil, nil, &grpc.StreamServerInfo{FullMethod: "test"}, grpc.StreamHandler(handler))
+
+	assert.Error(t, err)
+	st, ok := status.FromError(err)
+	assert.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}
+
+// TestProtectorLoadSheddingInterceptorNilProtector verifies fail-open behavior.
+func TestProtectorLoadSheddingInterceptorNilProtector(t *testing.T) {
+	server := &server{protector: nil}
+
+	called := false
+	handler := func(_ interface{}, _ grpc.ServerStream) error {
+		called = true
+		return nil
+	}
+
+	err := server.protectorLoadSheddingInterceptor(nil, nil, &grpc.StreamServerInfo{}, grpc.StreamHandler(handler))
+
+	assert.NoError(t, err)
+	assert.True(t, called)
 }

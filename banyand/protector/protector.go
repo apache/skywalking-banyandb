@@ -61,10 +61,6 @@ type Memory interface {
 	run.PreRunner
 	run.Config
 	run.Service
-}
-
-// Service provides memory state information for load shedding decisions.
-type Service interface {
 	// State returns the current memory pressure state.
 	State() State
 }
