@@ -319,6 +319,13 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         property: {},
         topn: {},
       };
+      const schemaDetailSets = {
+        stream: {},
+        measure: {},
+        trace: {},
+        property: {},
+        topn: {},
+      };
       const indexRuleSets = {};
       const indexRuleGroupMap = {};
       const indexRuleNameLookup = {};
@@ -337,17 +344,42 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
             const schemaResponse = await getAllTypesOfResourceList(type, groupName);
             if (!schemaResponse.error) {
               const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
-              schemaList
-                .map((s) => s.metadata?.name)
-                .filter(Boolean)
-                .forEach((name) => {
-                  const lowerName = name.toLowerCase();
-                  schemaSets[type].add(name);
-                  if (!schemaGroupMap[type][lowerName]) {
-                    schemaGroupMap[type][lowerName] = new Set();
-                  }
-                  schemaGroupMap[type][lowerName].add(groupName);
+              schemaList.forEach((schema) => {
+                const name = schema?.metadata?.name;
+                if (!name) {
+                  return;
+                }
+                const lowerName = name.toLowerCase();
+                schemaSets[type].add(name);
+                if (!schemaGroupMap[type][lowerName]) {
+                  schemaGroupMap[type][lowerName] = new Set();
+                }
+                schemaGroupMap[type][lowerName].add(groupName);
+
+                if (!schemaDetailSets[type][lowerName]) {
+                  schemaDetailSets[type][lowerName] = {
+                    tags: new Set(),
+                    fields: new Set(),
+                  };
+                }
+
+                const detailEntry = schemaDetailSets[type][lowerName];
+                (schema.tagFamilies || []).forEach((family) => {
+                  (family.tags || []).forEach((tag) => {
+                    const tagName = tag?.name || tag?.key || tag?.metadata?.name;
+                    if (tagName) {
+                      detailEntry.tags.add(tagName);
+                    }
+                  });
                 });
+
+                (schema.fields || []).forEach((field) => {
+                  const fieldName = field?.name || field?.tag?.name || field?.metadata?.name;
+                  if (fieldName) {
+                    detailEntry.fields.add(fieldName);
+                  }
+                });
+              });
             }
           } catch (e) {
             console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
@@ -417,6 +449,20 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           ),
         ]),
       );
+      const schemaDetails = Object.fromEntries(
+        Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
+          type,
+          Object.fromEntries(
+            Object.entries(schemaMap).map(([schemaName, detailSets]) => [
+              schemaName,
+              {
+                tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
+                fields: [...detailSets.fields].sort((a, b) => a.localeCompare(b)),
+              },
+            ]),
+          ),
+        ]),
+      );
 
       const indexRuleSchemas = Object.fromEntries(
         Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
@@ -434,6 +480,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         indexRuleSchemas,
         indexRuleGroups,
         indexRuleNameLookup,
+        schemaDetails,
       });
     } catch (e) {
       console.error('Failed to fetch schema data:', e);

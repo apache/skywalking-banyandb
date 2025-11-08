@@ -74,6 +74,9 @@ let schemasAndGroups = {
   schemaToGroups: {},
   indexRulesByType: {},
   indexRulesByGroup: {},
+  schemaDetails: {},
+  typeProjections: {},
+  globalProjections: { tags: [], fields: [] },
 };
 
 export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRuleData = {}) {
@@ -81,7 +84,12 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
   schemasAndGroups.schemas = schemas || {};
   schemasAndGroups.schemaToGroups = schemaToGroups || {};
 
-  const { indexRuleSchemas = {}, indexRuleGroups = {}, indexRuleNameLookup = {} } = indexRuleData;
+  const {
+    indexRuleSchemas = {},
+    indexRuleGroups = {},
+    indexRuleNameLookup = {},
+    schemaDetails = {},
+  } = indexRuleData;
 
   const indexRulesByType = {};
   for (const [type, rules] of Object.entries(indexRuleSchemas)) {
@@ -120,6 +128,59 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
 
   schemasAndGroups.indexRulesByType = indexRulesByType;
   schemasAndGroups.indexRulesByGroup = indexRulesByGroup;
+
+  const normalizedSchemaDetails = {};
+  const typeProjections = {};
+  const globalTagSet = new Set();
+  const globalFieldSet = new Set();
+
+  for (const [typeKey, schemaMap] of Object.entries(schemaDetails || {})) {
+    const normalizedType = typeof typeKey === 'string' ? typeKey.toLowerCase() : typeKey;
+    const normalizedSchemaMap = {};
+    const typeTagSet = new Set();
+    const typeFieldSet = new Set();
+
+    for (const [schemaName, detail] of Object.entries(schemaMap || {})) {
+      const normalizedSchemaName = typeof schemaName === 'string' ? schemaName.toLowerCase() : schemaName;
+      const tagList = Array.from(
+        new Set(
+          (detail?.tags || []).filter((tag) => typeof tag === 'string' && tag.trim().length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b));
+      const fieldList = Array.from(
+        new Set(
+          (detail?.fields || []).filter((field) => typeof field === 'string' && field.trim().length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b));
+
+      normalizedSchemaMap[normalizedSchemaName] = {
+        tags: tagList,
+        fields: fieldList,
+      };
+
+      tagList.forEach((tag) => {
+        typeTagSet.add(tag);
+        globalTagSet.add(tag);
+      });
+      fieldList.forEach((field) => {
+        typeFieldSet.add(field);
+        globalFieldSet.add(field);
+      });
+    }
+
+    normalizedSchemaDetails[normalizedType] = normalizedSchemaMap;
+    typeProjections[normalizedType] = {
+      tags: Array.from(typeTagSet).sort((a, b) => a.localeCompare(b)),
+      fields: Array.from(typeFieldSet).sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  schemasAndGroups.schemaDetails = normalizedSchemaDetails;
+  schemasAndGroups.typeProjections = typeProjections;
+  schemasAndGroups.globalProjections = {
+    tags: Array.from(globalTagSet).sort((a, b) => a.localeCompare(b)),
+    fields: Array.from(globalFieldSet).sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 function getWordAt(cm, pos) {
@@ -169,8 +230,76 @@ function extractFromClauseContext(text) {
   return lastContext;
 }
 
+function findLastKeywordMatch(text, keyword) {
+  if (!text) {
+    return null;
+  }
+  const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+  let match;
+  let lastMatch = null;
+  while ((match = regex.exec(text)) !== null) {
+    lastMatch = match;
+  }
+  return lastMatch;
+}
+
+function detectSelectClauseContext(cm, textBeforeCursor) {
+  const selectMatch = findLastKeywordMatch(textBeforeCursor, 'SELECT');
+  if (!selectMatch) {
+    return null;
+  }
+
+  const betweenSelectAndCursor = textBeforeCursor.slice(selectMatch.index + selectMatch[0].length);
+  if (/\bFROM\b/i.test(betweenSelectAndCursor)) {
+    return null;
+  }
+
+  const fullText = cm.getValue();
+  const textFromSelect = fullText.slice(selectMatch.index);
+  const fromClauseRegex =
+    /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+(\w+)(?:\s+IN\s+([\s\S]*?)(?=\bWHERE\b|\bORDER\b|\bGROUP\b|\bTIME\b|\bLIMIT\b|\bOFFSET\b|\bWITH\b|\bHAVING\b|\bON\b|$))?/i;
+  const fromMatch = fromClauseRegex.exec(textFromSelect);
+
+  if (!fromMatch) {
+    return { type: 'select_projection' };
+  }
+
+  const entityType = fromMatch[1]?.toLowerCase() || null;
+  const schemaName = fromMatch[2] || null;
+  const rawGroups = fromMatch[3] || '';
+  const groups = rawGroups
+    .replace(/[()]/g, ' ')
+    .split(',')
+    .map((group) => group.trim())
+    .filter(Boolean);
+
+  return {
+    type: 'select_projection',
+    entityType,
+    schemaName,
+    groups,
+  };
+}
+
 function getQueryContext(cm, cursor) {
   const textBeforeCursor = cm.getRange({ line: 0, ch: 0 }, cursor);
+
+  const selectClauseContext = detectSelectClauseContext(cm, textBeforeCursor);
+  if (selectClauseContext) {
+    return selectClauseContext;
+  }
+
+  if (!textBeforeCursor.trim()) {
+    return { type: 'empty_line' };
+  }
+
+  const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
+  if (lastNewlineIndex !== -1) {
+    const lastLine = textBeforeCursor.slice(lastNewlineIndex + 1);
+    if (!lastLine.trim()) {
+      return { type: 'empty_line' };
+    }
+  }
 
   const orderByRegex = /\bORDER\s+BY\b[\s\w.,-]*$/i;
   const orderByMatch = orderByRegex.exec(textBeforeCursor);
@@ -220,6 +349,77 @@ function generateHints(context, word) {
   const lowerWord = word ? word.toLowerCase() : '';
 
   switch (context.type) {
+    case 'empty_line':
+      for (const keyword of BYDBQL_KEYWORDS) {
+        if (!lowerWord || keyword.toLowerCase().startsWith(lowerWord)) {
+          hints.push({
+            text: keyword,
+            displayText: keyword,
+            className: 'bydbql-hint-keyword',
+          });
+        }
+      }
+      break;
+
+    case 'select_projection': {
+      const seen = new Set();
+      let projectionMatches = 0;
+      const pushHint = (text, displayText, className, track = false) => {
+        if (!text) {
+          return;
+        }
+        const normalized = text.toLowerCase();
+        if (lowerWord && !normalized.startsWith(lowerWord)) {
+          return;
+        }
+        if (seen.has(normalized)) {
+          return;
+        }
+        seen.add(normalized);
+        hints.push({
+          text,
+          displayText: displayText || text,
+          className,
+        });
+        if (track) {
+          projectionMatches += 1;
+        }
+      };
+
+      pushHint('*', '*', 'bydbql-hint-keyword');
+
+      const normalizedType = context.entityType ? context.entityType.toLowerCase() : null;
+      const normalizedSchema = context.schemaName ? context.schemaName.toLowerCase() : null;
+      const schemaMeta =
+        normalizedType && normalizedSchema
+          ? schemasAndGroups.schemaDetails?.[normalizedType]?.[normalizedSchema]
+          : null;
+      const typeMeta = normalizedType ? schemasAndGroups.typeProjections?.[normalizedType] : null;
+      const globalMeta = schemasAndGroups.globalProjections || { tags: [], fields: [] };
+
+      const tagCandidates =
+        schemaMeta?.tags?.length ? schemaMeta.tags : typeMeta?.tags?.length ? typeMeta.tags : globalMeta.tags;
+      const fieldCandidates =
+        schemaMeta?.fields?.length ? schemaMeta.fields : typeMeta?.fields?.length ? typeMeta.fields : globalMeta.fields;
+
+      tagCandidates.forEach((tag) => pushHint(tag, `${tag} (tag)`, 'bydbql-hint-tag', true));
+      fieldCandidates.forEach((field) => pushHint(field, `${field} (field)`, 'bydbql-hint-field', true));
+
+      if (projectionMatches === 0 && hints.length === 0) {
+        for (const keyword of BYDBQL_KEYWORDS) {
+          if (!lowerWord || keyword.toLowerCase().startsWith(lowerWord)) {
+            hints.push({
+              text: keyword,
+              displayText: keyword,
+              className: 'bydbql-hint-keyword',
+            });
+          }
+        }
+      }
+
+      break;
+    }
+
     case 'entity_type':
       // Suggest entity types (STREAM, MEASURE, etc.)
       for (const type of ENTITY_TYPES) {
