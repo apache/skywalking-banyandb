@@ -72,6 +72,7 @@ services:
     privileged: true  # Required for eBPF
     pid: host         # Access host processes
     ports:
+      # need to modify
       - "8081:8080"  # HTTP metrics endpoint
       - "9091:9090"  # gRPC API
     volumes:

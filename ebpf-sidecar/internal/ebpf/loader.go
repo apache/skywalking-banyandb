@@ -62,6 +62,15 @@ func (l *Loader) LoadPrograms() error {
 		return fmt.Errorf("failed to load eBPF spec: %w", err)
 	}
 
+	// Check if BTF is available
+	hasBTF := checkBTFSupport()
+	
+	// If BTF is not available, remove fentry/fexit programs from spec
+	if !hasBTF {
+		fmt.Fprintf(os.Stderr, "BTF not available, removing fentry/fexit programs\n")
+		removeFentryPrograms(l.spec)
+	}
+
 	// Load eBPF objects
 	l.objects = &generated.IomonitorObjects{}
 	if err := l.spec.LoadAndAssign(l.objects, nil); err != nil {
@@ -69,6 +78,21 @@ func (l *Loader) LoadPrograms() error {
 	}
 
 	return nil
+}
+
+// removeFentryPrograms removes fentry/fexit programs from the spec.
+func removeFentryPrograms(spec *ebpf.CollectionSpec) {
+	// Remove fentry/fexit programs that require BTF
+	programsToRemove := []string{
+		"fentry_ksys_fadvise64_64",
+		"fexit_ksys_fadvise64_64",
+		"fentry_filemap_get_read_batch",
+		"fentry_add_to_page_cache_lru",
+	}
+	
+	for _, progName := range programsToRemove {
+		delete(spec.Programs, progName)
+	}
 }
 
 // AttachTracepoints attaches the eBPF programs to tracepoints and kprobes.

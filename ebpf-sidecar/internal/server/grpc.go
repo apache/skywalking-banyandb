@@ -241,10 +241,6 @@ func (s *grpcServer) GetIOStats(ctx context.Context, req *ebpfv1.GetIOStatsReque
 			stats.Cache.Hits = uint64(metric.Value)
 		case "ebpf_cache_misses_total":
 			stats.Cache.Misses = uint64(metric.Value)
-		case "ebpf_cache_hit_rate_percent":
-			stats.Cache.HitRatePercent = metric.Value
-		case "ebpf_cache_miss_rate_percent":
-			stats.Cache.MissRatePercent = metric.Value
 		case "ebpf_page_cache_adds_total":
 			stats.Cache.PagesAdded = uint64(metric.Value)
 		case "ebpf_memory_lru_pages_scanned":

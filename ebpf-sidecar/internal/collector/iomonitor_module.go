@@ -55,6 +55,8 @@ type IOMonitorModule struct {
 	cleanupStrategy CleanupStrategy
 	cleanupInterval time.Duration
 	staleThreshold  time.Duration
+	// Simple cumulative counter for debugging (not in struct)
+	debugCumulativeCacheMisses uint64
 }
 
 // NewIOMonitorModule creates a new I/O monitoring module with cleanup.
@@ -209,7 +211,7 @@ func (m *IOMonitorModule) collectAndClearFadviseStats(ms *metrics.MetricSet) {
 		return
 	}
 
-	// Add metrics
+	// Add metrics (window-based counters - aggregation done in Prometheus)
 	ms.AddCounter("ebpf_fadvise_calls_total", float64(totalCalls), nil)
 	ms.AddCounter("ebpf_fadvise_success_total", float64(successCalls), nil)
 
@@ -262,26 +264,20 @@ func (m *IOMonitorModule) collectAndClearCacheStats(ms *metrics.MetricSet) {
 		return
 	}
 
-	// Add metrics
+	// Add metrics (window-based counters - aggregation done in Prometheus)
 	ms.AddCounter("ebpf_cache_read_attempts_total", float64(totalReadAttempts), nil)
 	ms.AddCounter("ebpf_cache_misses_total", float64(cacheMisses), nil)
 	ms.AddCounter("ebpf_page_cache_adds_total", float64(pageCacheAdds), nil)
 
-	// Calculate rates
-	if totalReadAttempts > 0 {
-		// Ensure cacheMisses doesn't exceed totalReadAttempts (can happen due to race conditions)
-		if cacheMisses > totalReadAttempts {
-			m.logger.Warn("Cache misses exceed read attempts, capping to 100%",
-				zap.Uint64("cache_misses", cacheMisses),
-				zap.Uint64("total_read_attempts", totalReadAttempts))
-			cacheMisses = totalReadAttempts
-		}
+	// Debug: simple cumulative counter to verify Prometheus is working
+	m.debugCumulativeCacheMisses += cacheMisses
+	ms.AddGauge("ebpf_cache_misses_cumulative_debug", float64(m.debugCumulativeCacheMisses), nil)
 
-		missRate := float64(cacheMisses) / float64(totalReadAttempts) * 100
-		hitRate := 100 - missRate
-
-		ms.AddGauge("ebpf_cache_hit_rate_percent", hitRate, nil)
-		ms.AddGauge("ebpf_cache_miss_rate_percent", missRate, nil)
+	// Sanity check for logging purposes
+	if cacheMisses > totalReadAttempts {
+		m.logger.Warn("Cache misses exceed read attempts (possible race condition)",
+			zap.Uint64("cache_misses", cacheMisses),
+			zap.Uint64("total_read_attempts", totalReadAttempts))
 	}
 
 	// Clear entries
@@ -305,8 +301,8 @@ func (m *IOMonitorModule) collectAndClearMemoryStats(ms *metrics.MetricSet) {
 	var shrinkInfo generated.IomonitorLruShrinkInfoT
 
 	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkInfo); err == nil {
-		ms.AddGauge("ebpf_memory_lru_pages_scanned", float64(shrinkInfo.NrScanned), nil)
-		ms.AddGauge("ebpf_memory_lru_pages_reclaimed", float64(shrinkInfo.NrReclaimed), nil)
+		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(shrinkInfo.NrScanned), nil)
+		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(shrinkInfo.NrReclaimed), nil)
 
 		if shrinkInfo.NrScanned > 0 {
 			efficiency := float64(shrinkInfo.NrReclaimed) / float64(shrinkInfo.NrScanned) * 100
@@ -439,20 +435,11 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 	ms.AddCounter("ebpf_cache_read_attempts_total", float64(totalReadAttempts), nil)
 	ms.AddCounter("ebpf_cache_misses_total", float64(cacheMisses), nil)
 
-	if totalReadAttempts > 0 {
-		// Ensure cacheMisses doesn't exceed totalReadAttempts (can happen due to race conditions)
-		if cacheMisses > totalReadAttempts {
-			m.logger.Warn("Cache misses exceed read attempts, capping to 100%",
-				zap.Uint64("cache_misses", cacheMisses),
-				zap.Uint64("total_read_attempts", totalReadAttempts))
-			cacheMisses = totalReadAttempts
-		}
-
-		missRate := float64(cacheMisses) / float64(totalReadAttempts) * 100
-		hitRate := 100 - missRate
-
-		ms.AddGauge("ebpf_cache_hit_rate_percent", hitRate, nil)
-		ms.AddGauge("ebpf_cache_miss_rate_percent", missRate, nil)
+	// Sanity check for logging purposes
+	if cacheMisses > totalReadAttempts {
+		m.logger.Warn("Cache misses exceed read attempts (possible race condition)",
+			zap.Uint64("cache_misses", cacheMisses),
+			zap.Uint64("total_read_attempts", totalReadAttempts))
 	}
 
 	return iter.Err()

@@ -15,14 +15,41 @@ The eBPF Sidecar Agent is a standalone observability service that provides kerne
 
 ### Metrics Provided
 
+#### Counters (Window-based increments)
 | Metric | Description | Type |
 |--------|-------------|------|
-| `ebpf_fadvise_calls_total` | Total number of fadvise() system calls | Counter |
-| `ebpf_fadvise_success_rate_percent` | Success rate of fadvise operations | Gauge |
-| `ebpf_cache_hit_rate_percent` | Page cache hit rate | Gauge |
-| `ebpf_cache_miss_rate_percent` | Page cache miss rate (critical for performance) | Gauge |
+| `ebpf_fadvise_calls_total` | fadvise() system calls in current window | Counter |
+| `ebpf_fadvise_success_total` | Successful fadvise operations in current window | Counter |
+| `ebpf_fadvise_advice_total` | Breakdown by advice type (labeled) | Counter |
+| `ebpf_cache_read_attempts_total` | Page cache read attempts in current window | Counter |
+| `ebpf_cache_misses_total` | Page cache misses in current window | Counter |
+| `ebpf_page_cache_adds_total` | Pages added to cache in current window | Counter |
+| `ebpf_memory_lru_pages_scanned_total` | Pages scanned by LRU in current window | Counter |
+| `ebpf_memory_lru_pages_reclaimed_total` | Pages reclaimed in current window | Counter |
+
+#### Gauges (Snapshot values)
+| Metric | Description | Type |
+|--------|-------------|------|
 | `ebpf_memory_reclaim_efficiency_percent` | Memory reclaim operation efficiency | Gauge |
 | `ebpf_memory_direct_reclaim_processes` | Number of processes in direct memory reclaim | Gauge |
+| `ebpf_fadvise_success_rate_percent` | Success rate in current window | Gauge |
+| `ebpf_cache_misses_cumulative_debug` | Cumulative cache misses (for debugging) | Gauge |
+
+**Note**: 
+- All `*_total` metrics report **increments per collection window** (default 10s)
+- Prometheus automatically handles aggregation and rate calculation
+- Use `rate()` or `increase()` functions for time-series analysis:
+
+```promql
+# Cache miss rate over 5 minutes
+rate(ebpf_cache_misses_total[5m]) / rate(ebpf_cache_read_attempts_total[5m])
+
+# Total cache misses in last hour
+increase(ebpf_cache_misses_total[1h])
+
+# Debug: verify cumulative counter is monotonic
+ebpf_cache_misses_cumulative_debug
+```
 
 ## Architecture
 
@@ -100,9 +127,9 @@ The sidecar supports configuration via YAML files or environment variables.
 # configs/config.yaml
 server:
   grpc:
-    port: 9090
+    port: 19090
   http:
-    port: 8080
+    port: 18080
     metrics_path: /metrics
 
 collector:
