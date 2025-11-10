@@ -83,13 +83,9 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
   schemasAndGroups.groups = groups || [];
   schemasAndGroups.schemas = schemas || {};
   schemasAndGroups.schemaToGroups = schemaToGroups || {};
+  console.log(schemasAndGroups);
 
-  const {
-    indexRuleSchemas = {},
-    indexRuleGroups = {},
-    indexRuleNameLookup = {},
-    schemaDetails = {},
-  } = indexRuleData;
+  const { indexRuleSchemas = {}, indexRuleGroups = {}, indexRuleNameLookup = {}, schemaDetails = {} } = indexRuleData;
 
   const indexRulesByType = {};
   for (const [type, rules] of Object.entries(indexRuleSchemas)) {
@@ -143,14 +139,10 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
     for (const [schemaName, detail] of Object.entries(schemaMap || {})) {
       const normalizedSchemaName = typeof schemaName === 'string' ? schemaName.toLowerCase() : schemaName;
       const tagList = Array.from(
-        new Set(
-          (detail?.tags || []).filter((tag) => typeof tag === 'string' && tag.trim().length > 0),
-        ),
+        new Set((detail?.tags || []).filter((tag) => typeof tag === 'string' && tag.trim().length > 0)),
       ).sort((a, b) => a.localeCompare(b));
       const fieldList = Array.from(
-        new Set(
-          (detail?.fields || []).filter((field) => typeof field === 'string' && field.trim().length > 0),
-        ),
+        new Set((detail?.fields || []).filter((field) => typeof field === 'string' && field.trim().length > 0)),
       ).sort((a, b) => a.localeCompare(b));
 
       normalizedSchemaMap[normalizedSchemaName] = {
@@ -397,10 +389,16 @@ function generateHints(context, word) {
       const typeMeta = normalizedType ? schemasAndGroups.typeProjections?.[normalizedType] : null;
       const globalMeta = schemasAndGroups.globalProjections || { tags: [], fields: [] };
 
-      const tagCandidates =
-        schemaMeta?.tags?.length ? schemaMeta.tags : typeMeta?.tags?.length ? typeMeta.tags : globalMeta.tags;
-      const fieldCandidates =
-        schemaMeta?.fields?.length ? schemaMeta.fields : typeMeta?.fields?.length ? typeMeta.fields : globalMeta.fields;
+      const tagCandidates = schemaMeta?.tags?.length
+        ? schemaMeta.tags
+        : typeMeta?.tags?.length
+          ? typeMeta.tags
+          : globalMeta.tags;
+      const fieldCandidates = schemaMeta?.fields?.length
+        ? schemaMeta.fields
+        : typeMeta?.fields?.length
+          ? typeMeta.fields
+          : globalMeta.fields;
 
       tagCandidates.forEach((tag) => pushHint(tag, `${tag} (tag)`, 'bydbql-hint-tag', true));
       fieldCandidates.forEach((field) => pushHint(field, `${field} (field)`, 'bydbql-hint-field', true));

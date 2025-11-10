@@ -330,157 +330,170 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       const indexRuleGroupMap = {};
       const indexRuleNameLookup = {};
 
-      await Promise.all(
-        (groupResponse.group || []).map(async (group) => {
-          const groupName = group.metadata.name;
-          const catalog = group.catalog;
-          const type = CatalogToGroupType[catalog];
+      const groupsData = groupResponse.group || [];
 
-          if (!type) {
-            return;
-          }
+      const emitUpdate = () => {
+        const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
+        const schemaToGroups = Object.fromEntries(
+          Object.entries(schemaGroupMap).map(([type, map]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(map).map(([schema, groupSet]) => [schema, [...groupSet].sort((a, b) => a.localeCompare(b))]),
+            ),
+          ]),
+        );
+        const schemaDetails = Object.fromEntries(
+          Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(schemaMap).map(([schemaName, detailSets]) => [
+                schemaName,
+                {
+                  tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
+                  fields: [...detailSets.fields].sort((a, b) => a.localeCompare(b)),
+                },
+              ]),
+            ),
+          ]),
+        );
 
-          try {
-            const schemaResponse = await getAllTypesOfResourceList(type, groupName);
-            if (!schemaResponse.error) {
-              const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
-              schemaList.forEach((schema) => {
-                const name = schema?.metadata?.name;
-                if (!name) {
-                  return;
-                }
-                const lowerName = name.toLowerCase();
-                schemaSets[type].add(name);
-                if (!schemaGroupMap[type][lowerName]) {
-                  schemaGroupMap[type][lowerName] = new Set();
-                }
-                schemaGroupMap[type][lowerName].add(groupName);
+        const indexRuleSchemas = Object.fromEntries(
+          Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
+        );
+        const indexRuleGroups = Object.fromEntries(
+          Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(ruleMap).map(([rule, groupSet]) => [rule, [...groupSet].sort((a, b) => a.localeCompare(b))]),
+            ),
+          ]),
+        );
 
-                if (!schemaDetailSets[type][lowerName]) {
-                  schemaDetailSets[type][lowerName] = {
-                    tags: new Set(),
-                    fields: new Set(),
-                  };
-                }
+        updateSchemasAndGroups(groups, schemas, schemaToGroups, {
+          indexRuleSchemas,
+          indexRuleGroups,
+          indexRuleNameLookup,
+          schemaDetails,
+        });
+      };
 
-                const detailEntry = schemaDetailSets[type][lowerName];
-                (schema.tagFamilies || []).forEach((family) => {
-                  (family.tags || []).forEach((tag) => {
-                    const tagName = tag?.name || tag?.key || tag?.metadata?.name;
-                    if (tagName) {
-                      detailEntry.tags.add(tagName);
-                    }
-                  });
-                });
+      const processGroup = async (group) => {
+        const groupName = group.metadata.name;
+        const catalog = group.catalog;
+        const type = CatalogToGroupType[catalog];
 
-                (schema.fields || []).forEach((field) => {
-                  const fieldName = field?.name || field?.tag?.name || field?.metadata?.name;
-                  if (fieldName) {
-                    detailEntry.fields.add(fieldName);
+        if (!type) {
+          return;
+        }
+
+        try {
+          const schemaResponse = await getAllTypesOfResourceList(type, groupName);
+          if (!schemaResponse.error) {
+            const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
+            schemaList.forEach((schema) => {
+              const name = schema?.metadata?.name;
+              if (!name) {
+                return;
+              }
+              const lowerName = name.toLowerCase();
+              schemaSets[type].add(name);
+              if (!schemaGroupMap[type][lowerName]) {
+                schemaGroupMap[type][lowerName] = new Set();
+              }
+              schemaGroupMap[type][lowerName].add(groupName);
+
+              if (!schemaDetailSets[type][lowerName]) {
+                schemaDetailSets[type][lowerName] = {
+                  tags: new Set(),
+                  fields: new Set(),
+                };
+              }
+
+              const detailEntry = schemaDetailSets[type][lowerName];
+              (schema.tagFamilies || []).forEach((family) => {
+                (family.tags || []).forEach((tag) => {
+                  const tagName = tag?.name || tag?.key || tag?.metadata?.name;
+                  if (tagName) {
+                    detailEntry.tags.add(tagName);
                   }
                 });
               });
+
+              (schema.fields || []).forEach((field) => {
+                const fieldName = field?.name || field?.tag?.name || field?.metadata?.name;
+                if (fieldName) {
+                  detailEntry.fields.add(fieldName);
+                }
+              });
+            });
+          }
+        } catch (e) {
+          console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
+        }
+        const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
+        if (SupportedIndexRuleTypes.includes(normalizedType)) {
+          if (!indexRuleSets[normalizedType]) {
+            indexRuleSets[normalizedType] = new Set();
+          }
+          if (!indexRuleGroupMap[normalizedType]) {
+            indexRuleGroupMap[normalizedType] = {};
+          }
+          if (!indexRuleNameLookup[normalizedType]) {
+            indexRuleNameLookup[normalizedType] = {};
+          }
+
+          try {
+            const indexRuleResponse = await getindexRuleList(groupName);
+            if (!indexRuleResponse.error) {
+              (indexRuleResponse.indexRule || [])
+                .map((s) => s.metadata?.name)
+                .filter((s) => Boolean(s) && !s.noSort)
+                .forEach((name) => {
+                  const lowerName = name.toLowerCase();
+                  indexRuleSets[normalizedType].add(name);
+                  indexRuleNameLookup[normalizedType][lowerName] = name;
+                  if (!indexRuleGroupMap[normalizedType][lowerName]) {
+                    indexRuleGroupMap[normalizedType][lowerName] = new Set();
+                  }
+                  indexRuleGroupMap[normalizedType][lowerName].add(groupName);
+                });
             }
           } catch (e) {
-            console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
+            console.error(`Failed to fetch index rule schemas for group ${groupName}:`, e);
           }
-          const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
-          if (SupportedIndexRuleTypes.includes(normalizedType)) {
-            if (!indexRuleSets[normalizedType]) {
-              indexRuleSets[normalizedType] = new Set();
-            }
-            if (!indexRuleGroupMap[normalizedType]) {
-              indexRuleGroupMap[normalizedType] = {};
-            }
-            if (!indexRuleNameLookup[normalizedType]) {
-              indexRuleNameLookup[normalizedType] = {};
-            }
+        }
 
-            try {
-              const indexRuleResponse = await getindexRuleList(groupName);
-              if (!indexRuleResponse.error) {
-                (indexRuleResponse.indexRule || [])
-                  .map((s) => s.metadata?.name)
-                  .filter((s) => Boolean(s) && !s.noSort)
-                  .forEach((name) => {
-                    const lowerName = name.toLowerCase();
-                    indexRuleSets[normalizedType].add(name);
-                    indexRuleNameLookup[normalizedType][lowerName] = name;
-                    if (!indexRuleGroupMap[normalizedType][lowerName]) {
-                      indexRuleGroupMap[normalizedType][lowerName] = new Set();
-                    }
-                    indexRuleGroupMap[normalizedType][lowerName].add(groupName);
-                  });
-              }
-            } catch (e) {
-              console.error(`Failed to fetch index rule schemas for group ${groupName}:`, e);
+        if (catalog === GroupTypeToCatalog.measure) {
+          try {
+            const topnResponse = await getTopNAggregationList(groupName);
+            if (!topnResponse.error) {
+              (topnResponse.topNAggregation || [])
+                .map((s) => s.metadata?.name)
+                .filter(Boolean)
+                .forEach((name) => {
+                  const lowerName = name.toLowerCase();
+                  schemaSets.topn.add(name);
+                  if (!schemaGroupMap.topn[lowerName]) {
+                    schemaGroupMap.topn[lowerName] = new Set();
+                  }
+                  schemaGroupMap.topn[lowerName].add(groupName);
+                });
             }
+          } catch (e) {
+            console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
           }
+        }
 
-          if (catalog === GroupTypeToCatalog.measure) {
-            try {
-              const topnResponse = await getTopNAggregationList(groupName);
-              if (!topnResponse.error) {
-                (topnResponse.topNAggregation || [])
-                  .map((s) => s.metadata?.name)
-                  .filter(Boolean)
-                  .forEach((name) => {
-                    const lowerName = name.toLowerCase();
-                    schemaSets.topn.add(name);
-                    if (!schemaGroupMap.topn[lowerName]) {
-                      schemaGroupMap.topn[lowerName] = new Set();
-                    }
-                    schemaGroupMap.topn[lowerName].add(groupName);
-                  });
-              }
-            } catch (e) {
-              console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
-            }
-          }
-        }),
-      );
+        emitUpdate();
+      };
 
-      const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
-      const schemaToGroups = Object.fromEntries(
-        Object.entries(schemaGroupMap).map(([type, map]) => [
-          type,
-          Object.fromEntries(
-            Object.entries(map).map(([schema, groupSet]) => [schema, [...groupSet].sort((a, b) => a.localeCompare(b))]),
-          ),
-        ]),
-      );
-      const schemaDetails = Object.fromEntries(
-        Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
-          type,
-          Object.fromEntries(
-            Object.entries(schemaMap).map(([schemaName, detailSets]) => [
-              schemaName,
-              {
-                tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
-                fields: [...detailSets.fields].sort((a, b) => a.localeCompare(b)),
-              },
-            ]),
-          ),
-        ]),
-      );
+      emitUpdate();
 
-      const indexRuleSchemas = Object.fromEntries(
-        Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
-      );
-      const indexRuleGroups = Object.fromEntries(
-        Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
-          type,
-          Object.fromEntries(
-            Object.entries(ruleMap).map(([rule, groupSet]) => [rule, [...groupSet].sort((a, b) => a.localeCompare(b))]),
-          ),
-        ]),
-      );
-
-      updateSchemasAndGroups(groups, schemas, schemaToGroups, {
-        indexRuleSchemas,
-        indexRuleGroups,
-        indexRuleNameLookup,
-        schemaDetails,
+      groupsData.forEach((group) => {
+        processGroup(group).catch((e) => {
+          const groupName = group?.metadata?.name || 'unknown';
+          console.error(`Failed to process group ${groupName}:`, e);
+        });
       });
     } catch (e) {
       console.error('Failed to fetch schema data:', e);
