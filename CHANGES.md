@@ -52,6 +52,11 @@ Release Notes.
 - Use Fetch request to instead of axios request and remove axios.
 - Implement Trace Tree for debug mode.
 - Implement bydbQL.
+- UI: Implement the Query Page for BydbQL.
+- Refactor router for better usability.
+- Implement the handoff queue for Trace.
+- Add dump command-line tool to parse and display trace part data with support for CSV export and human-readable timestamp formatting.
+- Implement backoff retry mechanism for sending queue failures.
 
 ### Bug Fixes
 
@@ -64,6 +69,7 @@ Release Notes.
 - Fix memory leaks and OOM issues in streaming processing by implementing deduplication logic in priority queues and improving sliding window memory management.
 - Fix etcd prefix matching any key that starts with this prefix.
 - Fix the sorting timestamps issue of the measure model when there are more than one segment.
+- Fix comparison issues in TopN test cases
 
 ### Document
 

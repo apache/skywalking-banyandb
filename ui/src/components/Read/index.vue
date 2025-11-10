@@ -28,6 +28,7 @@
   import { Shortcuts, Last15Minutes } from '../common/data';
   import { CatalogToGroupType } from '../GroupTree/data';
   import TraceTree from '../TraceTree/TraceContent.vue';
+  import MeasureAndStreamTable from '../common/MeasureAndStreamTable.vue';
 
   const route = useRoute();
   const yamlRef = ref();
@@ -415,49 +416,15 @@ orderBy:
           <span>Debug Trace</span>
         </el-button>
       </div>
-      <el-table
-        v-loading="data.loading"
-        element-loading-text="loading"
-        element-loading-spinner="el-icon-loading"
-        element-loading-background="rgba(0, 0, 0, 0.8)"
-        ref="multipleTable"
-        stripe
-        :border="true"
-        highlight-current-row
-        tooltip-effect="dark"
-        empty-text="No data yet"
-        :data="data.tableData"
-      >
-        <el-table-column type="selection" width="55"> </el-table-column>
-        <el-table-column type="index" label="number" width="90"> </el-table-column>
-        <el-table-column label="timestamp" width="260" key="timestamp" prop="timestamp"></el-table-column>
-        <el-table-column
-          v-for="item in tableHeader"
-          sortable
-          :key="item.name"
-          :label="item.label"
-          :prop="item.name"
-          show-overflow-tooltip
-        >
-          <template #default="scope">
-            <el-popover
-              v-if="(item.type || item.fieldType)?.includes(`ARRAY`) && scope.row[item.name] !== `Null`"
-              effect="dark"
-              trigger="hover"
-              placement="top"
-              width="auto"
-            >
-              <template #default>
-                <div>{{ scope.row[item.name].join('; ') }}</div>
-              </template>
-              <template #reference>
-                <el-tag>View</el-tag>
-              </template>
-            </el-popover>
-            <div v-else>{{ scope.row[item.name] }}</div>
-          </template>
-        </el-table-column>
-      </el-table>
+      <MeasureAndStreamTable
+        :tableData="data.tableData"
+        :tableHeader="tableHeader"
+        :loading="data.loading"
+        :showSelection="true"
+        :showIndex="true"
+        :showTimestamp="true"
+        emptyText="No data yet"
+      />
     </el-card>
   </div>
   <el-dialog

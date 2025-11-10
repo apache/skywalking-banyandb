@@ -235,8 +235,18 @@ func (mp *memPart) mustInitFromTraces(ts *traces) {
 
 	sort.Sort(ts)
 
+	// Count unique trace IDs
+	traceSize := 0
+	var tidPrevCount string
+	for _, tid := range ts.traceIDs {
+		if tid != tidPrevCount {
+			traceSize++
+			tidPrevCount = tid
+		}
+	}
+
 	bsw := generateBlockWriter()
-	bsw.MustInitForMemPart(mp)
+	bsw.MustInitForMemPart(mp, traceSize)
 
 	var tidPrev string
 	uncompressedSpansSizeBytes := uint64(0)

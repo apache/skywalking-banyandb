@@ -245,9 +245,7 @@ func (pi *partIter) findBlock() bool {
 				return false
 			}
 			if shouldSkip {
-				if !pi.nextSeriesID() {
-					return false
-				}
+				bhs = bhs[1:]
 				continue
 			}
 		}

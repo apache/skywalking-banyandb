@@ -31,9 +31,12 @@ import (
 
 func TestMustInitFromTraces(t *testing.T) {
 	tests := []struct {
-		ts   *traces
-		name string
-		want partMetadata
+		ts                     *traces
+		name                   string
+		expectedTraceIDs       []string
+		notExpectedTraceIDs    []string
+		want                   partMetadata
+		expectEmptyBloomFilter bool
 	}{
 		{
 			name: "Test with empty traces",
@@ -44,7 +47,10 @@ func TestMustInitFromTraces(t *testing.T) {
 				spans:      [][]byte{},
 				spanIDs:    []string{},
 			},
-			want: partMetadata{},
+			want:                   partMetadata{},
+			expectedTraceIDs:       []string{},
+			notExpectedTraceIDs:    []string{"trace1", "trace2"},
+			expectEmptyBloomFilter: true,
 		},
 		{
 			name: "Test with one item in traces",
@@ -66,6 +72,9 @@ func TestMustInitFromTraces(t *testing.T) {
 				MaxTimestamp: 1,
 				TotalCount:   1,
 			},
+			expectedTraceIDs:       []string{"trace1"},
+			notExpectedTraceIDs:    []string{"trace2", "trace3", "trace0"},
+			expectEmptyBloomFilter: false,
 		},
 		{
 			name: "Test with multiple items in traces",
@@ -76,6 +85,9 @@ func TestMustInitFromTraces(t *testing.T) {
 				MaxTimestamp: 220,
 				TotalCount:   6,
 			},
+			expectedTraceIDs:       []string{"trace1", "trace2", "trace3"},
+			notExpectedTraceIDs:    []string{"trace0", "trace4", "trace5", "nonexistent"},
+			expectEmptyBloomFilter: false,
 		},
 	}
 	for _, tt := range tests {
@@ -87,6 +99,27 @@ func TestMustInitFromTraces(t *testing.T) {
 			assert.Equal(t, tt.want.MaxTimestamp, mp.partMetadata.MaxTimestamp)
 			assert.Equal(t, tt.want.TotalCount, mp.partMetadata.TotalCount)
 			assert.Equal(t, len(mp.tags), len(mp.tagMetadata))
+
+			// Verify bloom filter in memPart
+			if tt.expectEmptyBloomFilter {
+				assert.Nil(t, mp.traceIDFilter.filter, "Expected nil bloom filter for empty traces")
+			} else {
+				require.NotNil(t, mp.traceIDFilter.filter, "Expected non-nil bloom filter")
+				// Verify expected trace IDs are in the filter
+				for _, traceID := range tt.expectedTraceIDs {
+					assert.True(t, mp.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)),
+						"Expected trace ID %s to be in bloom filter", traceID)
+				}
+				// Verify not expected trace IDs are not in the filter (or might be due to false positives)
+				for _, traceID := range tt.notExpectedTraceIDs {
+					// Note: We can't assert false here due to potential false positives in bloom filters
+					// But we log it for debugging purposes
+					if mp.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+						t.Logf("Bloom filter returned potential false positive for trace ID: %s", traceID)
+					}
+				}
+			}
+
 			tmpPath, defFn := test.Space(require.New(t))
 			defer defFn()
 			epoch := uint64(1)
@@ -100,6 +133,22 @@ func TestMustInitFromTraces(t *testing.T) {
 			assert.Equal(t, tt.want.MinTimestamp, p.partMetadata.MinTimestamp)
 			assert.Equal(t, tt.want.MaxTimestamp, p.partMetadata.MaxTimestamp)
 			assert.Equal(t, tt.want.TotalCount, p.partMetadata.TotalCount)
+
+			// Verify bloom filter in filePart after flush/load
+			if tt.expectEmptyBloomFilter {
+				assert.Nil(t, p.traceIDFilter.filter, "Expected nil bloom filter for empty traces after flush")
+			} else {
+				require.NotNil(t, p.traceIDFilter.filter, "Expected non-nil bloom filter after flush")
+				// Verify expected trace IDs are in the filter
+				for _, traceID := range tt.expectedTraceIDs {
+					assert.True(t, p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)),
+						"Expected trace ID %s to be in bloom filter after flush", traceID)
+				}
+				// Verify bloom filter properties
+				assert.Equal(t, len(tt.expectedTraceIDs), p.traceIDFilter.filter.N(),
+					"Bloom filter N should match number of unique trace IDs")
+			}
+
 			if len(mp.tags) > 0 {
 				for k := range mp.tags {
 					_, ok := mp.tagMetadata[k]

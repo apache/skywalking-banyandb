@@ -47,12 +47,13 @@ const (
 )
 
 type option struct {
-	protector          protector.Memory
-	tire2Client        queue.Client
-	mergePolicy        *mergePolicy
-	seriesCacheMaxSize run.Bytes
-	flushTimeout       time.Duration
-	syncInterval       time.Duration
+	protector                    protector.Memory
+	tire2Client                  queue.Client
+	mergePolicy                  *mergePolicy
+	seriesCacheMaxSize           run.Bytes
+	flushTimeout                 time.Duration
+	syncInterval                 time.Duration
+	failedPartsMaxTotalSizeBytes uint64
 }
 
 type indexSchema struct {

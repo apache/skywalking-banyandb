@@ -40,9 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// ErrExpiredData is returned when the data is expired.
-var ErrExpiredData = errors.New("expired data")
-
 // ErrSegmentClosed is returned when trying to access a closed segment.
 var ErrSegmentClosed = errors.New("segment closed")
 
@@ -311,7 +308,6 @@ type segmentController[T TSTable, O any] struct {
 	stage       string
 	location    string
 	lst         []*segment[T, O]
-	deadline    atomic.Int64
 	idleTimeout time.Duration
 	optsMutex   sync.RWMutex
 	sync.RWMutex
@@ -379,10 +375,6 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
-	// Before the first remove old segment run, any segment should be created.
-	if sc.deadline.Load() > ts.UnixNano() {
-		return nil, ErrExpiredData
-	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -619,11 +611,6 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
-			if len(sc.lst) < 1 {
-				sc.deadline.Store(0)
-			} else {
-				sc.deadline.Store(sc.lst[0].Start.UnixNano())
-			}
 			break
 		}
 	}

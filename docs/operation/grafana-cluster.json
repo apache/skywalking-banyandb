@@ -969,7 +969,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\", kind=\"used\"}) / sum(banyandb_system_memory_state{job=~\"$job\", pod=~\"$pod\", kind=\"total\"})) by (job)",
+          "expr": "max(sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\", kind=\"used\"}) / sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\", kind=\"total\"})) by (job)",
           "instant": false,
           "interval": "",
           "legendFormat": "__auto",
@@ -1218,6 +1218,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": " + sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) by (group)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Write Rate",
@@ -1439,6 +1452,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_tst_total_file_elements{job=~\"$job\",pod=~\"$pod\"})by(group)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Total Data",
@@ -1556,6 +1582,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group) * 60",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Merge File Rate",
@@ -1673,6 +1712,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_latency{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Merge File Latency",
@@ -1785,6 +1837,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_tst_total_merged_parts{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Merge File Partitions",
@@ -1898,6 +1963,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_storage_inverted_index_total_updates{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Series Write Rate",

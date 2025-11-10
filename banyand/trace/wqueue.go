@@ -34,11 +34,13 @@ type NodeSelector interface {
 // newWriteQueue is like newTSTable but does not start the merge loop (or any background loops).
 func newWriteQueue(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, group string, shardID common.ShardID, getNodes func() []string,
+	handoffCtrl *handoffController,
 ) (*tsTable, error) {
 	t, epoch := initTSTable(fileSystem, rootPath, p, l, option, m)
 	t.getNodes = getNodes
 	t.group = group
 	t.shardID = shardID
+	t.handoffCtrl = handoffCtrl
 	t.startLoopWithConditionalMerge(epoch)
 	return t, nil
 }
