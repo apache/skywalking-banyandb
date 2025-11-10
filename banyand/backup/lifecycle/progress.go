@@ -60,7 +60,7 @@ type Progress struct {
 	mu                     sync.Mutex                                                 `json:"-"`
 }
 
-// AllGroupsNotFullyCompleted find is there have any group not fully completed
+// AllGroupsNotFullyCompleted find is there have any group not fully completed.
 func (p *Progress) AllGroupsNotFullyCompleted(groups []*commonv1.Group) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
