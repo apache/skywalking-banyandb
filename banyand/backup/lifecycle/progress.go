@@ -60,17 +60,18 @@ type Progress struct {
 	mu                     sync.Mutex                                                 `json:"-"`
 }
 
-// AllGroupsFullyCompleted checks if all groups are fully completed.
-func (p *Progress) AllGroupsFullyCompleted(groups []*commonv1.Group) bool {
+// AllGroupsNotFullyCompleted find is there have any group not fully completed.
+func (p *Progress) AllGroupsNotFullyCompleted(groups []*commonv1.Group) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	result := make([]string, 0)
 	for _, group := range groups {
 		if !p.CompletedGroups[group.Metadata.Name] {
-			return false
+			result = append(result, group.Metadata.Name)
 		}
 	}
-	return true
+	return result
 }
 
 // NewProgress creates a new Progress tracker.
