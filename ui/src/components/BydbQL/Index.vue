@@ -25,6 +25,7 @@
     getAllTypesOfResourceList,
     getTopNAggregationList,
     getindexRuleList,
+    getResourceOfAllType,
   } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import TopNTable from '@/components/common/TopNTable.vue';
@@ -332,29 +333,72 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
 
       const groupsData = groupResponse.group || [];
 
+      const collectTagNames = (schemaLike) => {
+        const tags = new Set();
+        if (!schemaLike) {
+          return tags;
+        }
+        const addTagName = (tagName) => {
+          if (typeof tagName === 'string' && tagName.trim().length > 0) {
+            tags.add(tagName);
+          }
+        };
+
+        const tagFamilies = schemaLike.tagFamilies || schemaLike.tag_families || [];
+        tagFamilies.forEach((family) => {
+          (family?.tags || []).forEach((tag) => {
+            addTagName(tag?.name || tag?.key || tag?.metadata?.name);
+          });
+        });
+
+        const explicitTags = schemaLike.tags || schemaLike.tagNames || [];
+        explicitTags.forEach((tag) => {
+          if (typeof tag === 'string') {
+            addTagName(tag);
+          } else {
+            addTagName(tag?.name || tag?.key || tag?.metadata?.name);
+          }
+        });
+
+        const entityTagNames = schemaLike.entity?.tagNames || schemaLike.entity?.tag_names || [];
+        entityTagNames.forEach(addTagName);
+
+        const shardingKeyTagNames = schemaLike.shardingKey?.tagNames || schemaLike.shardingKey?.tag_names || [];
+        shardingKeyTagNames.forEach(addTagName);
+
+        addTagName(schemaLike.traceIdTagName || schemaLike.trace_id_tag_name);
+        addTagName(schemaLike.spanIdTagName || schemaLike.span_id_tag_name);
+        addTagName(schemaLike.timestampTagName || schemaLike.timestamp_tag_name);
+
+        return tags;
+      };
+
       const emitUpdate = () => {
         const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
         const schemaToGroups = Object.fromEntries(
           Object.entries(schemaGroupMap).map(([type, map]) => [
             type,
             Object.fromEntries(
-              Object.entries(map).map(([schema, groupSet]) => [schema, [...groupSet].sort((a, b) => a.localeCompare(b))]),
+              Object.entries(map).map(([schema, groupSet]) => [
+                schema,
+                [...groupSet].sort((a, b) => a.localeCompare(b)),
+              ]),
             ),
           ]),
         );
-      const schemaDetails = Object.fromEntries(
-        Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
-          type,
-          Object.fromEntries(
-            Object.entries(schemaMap).map(([schemaName, detailSets]) => [
-              schemaName,
-              {
-                tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
-              },
-            ]),
-          ),
-        ]),
-      );
+        const schemaDetails = Object.fromEntries(
+          Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(schemaMap).map(([schemaName, detailSets]) => [
+                schemaName,
+                {
+                  tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
+                },
+              ]),
+            ),
+          ]),
+        );
 
         const indexRuleSchemas = Object.fromEntries(
           Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
@@ -363,7 +407,10 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
             type,
             Object.fromEntries(
-              Object.entries(ruleMap).map(([rule, groupSet]) => [rule, [...groupSet].sort((a, b) => a.localeCompare(b))]),
+              Object.entries(ruleMap).map(([rule, groupSet]) => [
+                rule,
+                [...groupSet].sort((a, b) => a.localeCompare(b)),
+              ]),
             ),
           ]),
         );
@@ -389,10 +436,10 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           const schemaResponse = await getAllTypesOfResourceList(type, groupName);
           if (!schemaResponse.error) {
             const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
-            schemaList.forEach((schema) => {
+            for (const schema of schemaList) {
               const name = schema?.metadata?.name;
               if (!name) {
-                return;
+                continue;
               }
               const lowerName = name.toLowerCase();
               schemaSets[type].add(name);
@@ -408,38 +455,19 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
               }
 
               const detailEntry = schemaDetailSets[type][lowerName];
-              const addTagName = (tagName) => {
-                if (typeof tagName === 'string' && tagName.trim().length > 0) {
-                  detailEntry.tags.add(tagName);
+              collectTagNames(schema).forEach((tag) => detailEntry.tags.add(tag));
+
+              if ((type === 'property' || type === 'trace') && detailEntry.tags.size === 0) {
+                try {
+                  const detailResponse = await getResourceOfAllType(type, groupName, name);
+                  const detailSchema =
+                    (detailResponse && typeof detailResponse === 'object' ? detailResponse?.[type] : null) || null;
+                  collectTagNames(detailSchema).forEach((tag) => detailEntry.tags.add(tag));
+                } catch (err) {
+                  console.error(`Failed to fetch ${type} schema detail for ${name} in group ${groupName}:`, err);
                 }
-              };
-
-              const tagFamilies = schema.tagFamilies || schema.tag_families || [];
-              tagFamilies.forEach((family) => {
-                (family.tags || []).forEach((tag) => {
-                  addTagName(tag?.name || tag?.key || tag?.metadata?.name);
-                });
-              });
-
-              const schemaTags = schema.tags || schema.tagNames || [];
-              schemaTags.forEach((tag) => {
-                if (typeof tag === 'string') {
-                  addTagName(tag);
-                } else {
-                  addTagName(tag?.name || tag?.key || tag?.metadata?.name);
-                }
-              });
-
-              const entityTagNames = schema.entity?.tagNames || schema.entity?.tag_names || [];
-              entityTagNames.forEach(addTagName);
-
-              const shardingTagNames = schema.shardingKey?.tagNames || schema.shardingKey?.tag_names || [];
-              shardingTagNames.forEach(addTagName);
-
-              addTagName(schema.traceIdTagName || schema.trace_id_tag_name);
-              addTagName(schema.spanIdTagName || schema.span_id_tag_name);
-              addTagName(schema.timestampTagName || schema.timestamp_tag_name);
-            });
+              }
+            }
           }
         } catch (e) {
           console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);

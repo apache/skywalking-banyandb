@@ -83,7 +83,6 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
   schemasAndGroups.groups = groups || [];
   schemasAndGroups.schemas = schemas || {};
   schemasAndGroups.schemaToGroups = schemaToGroups || {};
-  console.log(schemasAndGroups);
 
   const { indexRuleSchemas = {}, indexRuleGroups = {}, indexRuleNameLookup = {}, schemaDetails = {} } = indexRuleData;
 
@@ -374,7 +373,7 @@ function generateHints(context, word) {
           ? schemasAndGroups.schemaDetails?.[normalizedType]?.[normalizedSchema]
           : null;
       const typeMeta = normalizedType ? schemasAndGroups.typeProjections?.[normalizedType] : null;
-      const globalMeta = schemasAndGroups.globalProjections || { tags: [], fields: [] };
+      const globalMeta = schemasAndGroups.globalProjections || { tags: [] };
 
       const tagCandidates = schemaMeta?.tags?.length
         ? schemaMeta.tags
