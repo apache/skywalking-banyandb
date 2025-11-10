@@ -24,7 +24,7 @@
 </template>
 
 <script>
-  import { onMounted, ref, watch } from 'vue';
+  import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
   import CodeMirror from 'codemirror';
   import 'codemirror/lib/codemirror.css';
   import 'codemirror/mode/yaml/yaml.js';
@@ -32,6 +32,8 @@
   import 'codemirror/mode/css/css.js';
   import 'codemirror/addon/lint/yaml-lint.js';
   import 'codemirror/theme/dracula.css';
+  import './bydbql-mode.js';
+  import './bydbql-hint.js';
   import jsYaml from 'js-yaml';
   window.jsyaml = jsYaml;
   export default {
@@ -65,61 +67,150 @@
         type: Boolean,
         default: true,
       },
+      enableHint: {
+        type: Boolean,
+        default: false,
+      },
+      extraKeys: {
+        type: Object,
+        default: () => ({}),
+      },
     },
-    emits: ['update:modelValue'],
+    emits: ['update:modelValue', 'ready'],
     setup(props, { emit }) {
       const textarea = ref(null);
       const code = ref(props.modelValue);
       let coder;
+      let autocompleteTimeout;
+      let hintAddonLoaded = false;
+      const AUTOCOMPLETE_DELAY = 200;
+
       watch(
         () => props.modelValue,
         (val) => {
-          coder?.setValue(val);
+          const currentValue = coder?.getValue();
+          if (val !== currentValue) {
+            coder?.setValue(val);
+          }
         },
       );
+
+      // Get mode based on prop
+      const getModeString = () => {
+        if (props.mode === 'bydbql') {
+          return 'text/x-bydbql';
+        }
+        if (props.mode === 'yaml') {
+          return 'text/x-yaml';
+        }
+        if (props.mode === 'css') {
+          return 'text/css';
+        }
+        return 'text/x-yaml';
+      };
+
       const options = {
-        mode: 'text/x-yaml',
+        mode: getModeString(),
         tabSize: 2,
         theme: props.theme,
         lineNumbers: true,
         line: true,
         readOnly: props.readonly,
         lint: props.lint,
-        gutters: ['CodeMirror-lint-markers'],
+        gutters: props.lint ? ['CodeMirror-lint-markers'] : [],
         styleActiveLine: props.styleActiveLine,
         autoRefresh: props.autoRefresh,
         height: '500px',
+        extraKeys: props.extraKeys,
       };
+
       const initialize = async () => {
         try {
-          /*  let theme = `codemirror/theme/${props.theme}.css`
-        await import(theme) */
           if (props.lint) {
             await import('codemirror/addon/lint/lint.js');
             await import('codemirror/addon/lint/lint.css');
           }
-          /* if (props.mode) {
-          await import(`codemirror/mode/${props.mode}/${props.mode}.js`)
-        } */
           if (props.autoRefresh) {
             await import('codemirror/addon/display/autorefresh');
           }
           if (props.styleActiveLine) {
             await import('codemirror/addon/selection/active-line');
           }
-        } catch (e) {}
+          if (props.enableHint) {
+            await import('codemirror/addon/hint/show-hint.js');
+            await import('codemirror/addon/hint/show-hint.css');
+            hintAddonLoaded = true;
+          }
+        } catch (e) {
+          console.error('Error loading CodeMirror addons:', e);
+        }
+
         coder = CodeMirror.fromTextArea(textarea.value, options);
+
         coder.on('blur', (coder) => {
           const newValue = coder.getValue();
           emit('update:modelValue', newValue);
         });
+
+        // Enable automatic autocomplete when typing (on keyup events)
+        if (props.enableHint && hintAddonLoaded) {
+          coder.on('keyup', (cm, event) => {
+            // Don't show hints for special keys
+            const excludedKeys = [
+              8, // Backspace
+              9, // Tab
+              13, // Enter
+              16,
+              17,
+              18, // Shift, Ctrl, Alt
+              20, // Caps Lock
+              27, // Escape
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40, // Page/Arrow keys
+            ];
+
+            if (excludedKeys.includes(event.keyCode)) {
+              return;
+            }
+
+            if (autocompleteTimeout) {
+              clearTimeout(autocompleteTimeout);
+            }
+
+            autocompleteTimeout = setTimeout(() => {
+              if (!cm.state.completionActive) {
+                CodeMirror.commands.autocomplete(cm, CodeMirror.hint.bydbql, { completeSingle: false });
+              }
+            }, AUTOCOMPLETE_DELAY);
+          });
+        } else if (props.enableHint && !hintAddonLoaded) {
+          console.warn('CodeMirror hint addon failed to load; autocomplete is disabled.');
+        }
+
+        // Emit ready event with coder instance
+        emit('ready', coder);
       };
+
       onMounted(() => {
         initialize();
       });
+
+      onBeforeUnmount(() => {
+        if (autocompleteTimeout) {
+          clearTimeout(autocompleteTimeout);
+        }
+      });
+
       const checkYaml = async (val) => {
         jsYaml.load(val);
       };
+
       return {
         code,
         options,
@@ -139,13 +230,11 @@
       height: 100%;
       width: 100%;
       .CodeMirror-code {
-        line-height: 19px;
+        line-height: 20px;
       }
     }
-  }
-</style>
-<style>
-  .CodeMirror-lint-tooltip {
-    z-index: 10000 !important;
+    :deep(.cm-entity-type) {
+      color: #bd93f9;
+    }
   }
 </style>

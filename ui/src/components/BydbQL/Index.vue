@@ -17,15 +17,23 @@
   ~ under the License.
 -->
 <script setup>
-  import { ref, computed, onMounted, nextTick } from 'vue';
+  import { ref, computed, onMounted } from 'vue';
   import { ElMessage } from 'element-plus';
-  import { executeBydbQLQuery } from '@/api/index';
+  import {
+    executeBydbQLQuery,
+    getGroupList,
+    getAllTypesOfResourceList,
+    getTopNAggregationList,
+    getindexRuleList,
+    getResourceOfAllType,
+  } from '@/api/index';
   import CodeMirror from '@/components/CodeMirror/index.vue';
   import TopNTable from '@/components/common/TopNTable.vue';
   import MeasureAndStreamTable from '@/components/common/MeasureAndStreamTable.vue';
   import PropertyTable from '@/components/common/PropertyTable.vue';
   import TraceTable from '@/components/common/TraceTable.vue';
-  import { CatalogToGroupType } from '@/components/common/data';
+  import { CatalogToGroupType, GroupTypeToCatalog, SupportedIndexRuleTypes } from '@/components/common/data';
+  import { updateSchemasAndGroups } from '@/components/CodeMirror/bydbql-hint.js';
 
   // Default query text with example queries as comments
   const queryText = ref(`-- Example queries:
@@ -39,6 +47,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const loading = ref(false);
   const error = ref(null);
   const executionTime = ref(0);
+  const codeMirrorInstance = ref(null);
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -55,7 +64,6 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     if (!queryResult.value) return [];
 
     try {
-      // Handle TopN results differently
       if (queryResult.value.topnResult?.lists) {
         const topnLists = queryResult.value.topnResult.lists;
         const rows = topnLists
@@ -273,19 +281,273 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     error.value = null;
     executionTime.value = 0;
   }
-  // Setup keyboard shortcuts for CodeMirror
-  onMounted(() => {
-    nextTick(() => {
-      // Find the CodeMirror instance and add keyboard shortcuts
-      const codeMirrorElement = document.querySelector('.query-input .CodeMirror');
-      if (codeMirrorElement && codeMirrorElement.CodeMirror) {
-        const cm = codeMirrorElement.CodeMirror;
-        cm.setOption('extraKeys', {
-          'Ctrl-Enter': executeQuery,
-          'Cmd-Enter': executeQuery,
-        });
+
+  function onCodeMirrorReady(cm) {
+    codeMirrorInstance.value = cm;
+    const currentExtraKeys = cm.getOption('extraKeys') || {};
+    const mergedExtraKeys = {
+      ...currentExtraKeys,
+      'Ctrl-Enter': executeQuery,
+      'Cmd-Enter': executeQuery,
+    };
+    cm.setOption('extraKeys', mergedExtraKeys);
+  }
+
+  // Fetch groups and schemas for autocomplete
+  async function fetchSchemaData() {
+    try {
+      const groupResponse = await getGroupList();
+      if (groupResponse.error) {
+        console.error('Failed to fetch groups:', groupResponse.error);
+        return;
       }
-    });
+
+      // Only include groups with valid catalog types (property, stream, trace, measure, topn)
+      const groups = (groupResponse.group || [])
+        .filter((g) => CatalogToGroupType[g.catalog])
+        .map((g) => g.metadata.name);
+      const schemaSets = {
+        stream: new Set(),
+        measure: new Set(),
+        trace: new Set(),
+        property: new Set(),
+        topn: new Set(),
+      };
+      const schemaGroupMap = {
+        stream: {},
+        measure: {},
+        trace: {},
+        property: {},
+        topn: {},
+      };
+      const schemaDetailSets = {
+        stream: {},
+        measure: {},
+        trace: {},
+        property: {},
+        topn: {},
+      };
+      const indexRuleSets = {};
+      const indexRuleGroupMap = {};
+      const indexRuleNameLookup = {};
+
+      const groupsData = groupResponse.group || [];
+
+      const collectTagNames = (schemaLike) => {
+        const tags = new Set();
+        if (!schemaLike) {
+          return tags;
+        }
+        const addTagName = (tagName) => {
+          if (typeof tagName === 'string' && tagName.trim().length > 0) {
+            tags.add(tagName);
+          }
+        };
+
+        const tagFamilies = schemaLike.tagFamilies || schemaLike.tag_families || [];
+        tagFamilies.forEach((family) => {
+          (family?.tags || []).forEach((tag) => {
+            addTagName(tag?.name || tag?.key || tag?.metadata?.name);
+          });
+        });
+
+        const explicitTags = schemaLike.tags || schemaLike.tagNames || [];
+        explicitTags.forEach((tag) => {
+          if (typeof tag === 'string') {
+            addTagName(tag);
+          } else {
+            addTagName(tag?.name || tag?.key || tag?.metadata?.name);
+          }
+        });
+
+        const entityTagNames = schemaLike.entity?.tagNames || schemaLike.entity?.tag_names || [];
+        entityTagNames.forEach(addTagName);
+
+        const shardingKeyTagNames = schemaLike.shardingKey?.tagNames || schemaLike.shardingKey?.tag_names || [];
+        shardingKeyTagNames.forEach(addTagName);
+
+        addTagName(schemaLike.traceIdTagName || schemaLike.trace_id_tag_name);
+        addTagName(schemaLike.spanIdTagName || schemaLike.span_id_tag_name);
+        addTagName(schemaLike.timestampTagName || schemaLike.timestamp_tag_name);
+
+        return tags;
+      };
+
+      const emitUpdate = () => {
+        const schemas = Object.fromEntries(Object.entries(schemaSets).map(([key, value]) => [key, [...value]]));
+        const schemaToGroups = Object.fromEntries(
+          Object.entries(schemaGroupMap).map(([type, map]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(map).map(([schema, groupSet]) => [
+                schema,
+                [...groupSet].sort((a, b) => a.localeCompare(b)),
+              ]),
+            ),
+          ]),
+        );
+        const schemaDetails = Object.fromEntries(
+          Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(schemaMap).map(([schemaName, detailSets]) => [
+                schemaName,
+                {
+                  tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
+                },
+              ]),
+            ),
+          ]),
+        );
+
+        const indexRuleSchemas = Object.fromEntries(
+          Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
+        );
+        const indexRuleGroups = Object.fromEntries(
+          Object.entries(indexRuleGroupMap).map(([type, ruleMap]) => [
+            type,
+            Object.fromEntries(
+              Object.entries(ruleMap).map(([rule, groupSet]) => [
+                rule,
+                [...groupSet].sort((a, b) => a.localeCompare(b)),
+              ]),
+            ),
+          ]),
+        );
+
+        updateSchemasAndGroups(groups, schemas, schemaToGroups, {
+          indexRuleSchemas,
+          indexRuleGroups,
+          indexRuleNameLookup,
+          schemaDetails,
+        });
+      };
+
+      const processGroup = async (group) => {
+        const groupName = group.metadata.name;
+        const catalog = group.catalog;
+        const type = CatalogToGroupType[catalog];
+
+        if (!type) {
+          return;
+        }
+
+        try {
+          const schemaResponse = await getAllTypesOfResourceList(type, groupName);
+          if (!schemaResponse.error) {
+            const schemaList = schemaResponse[type === CatalogToGroupType.CATALOG_PROPERTY ? 'properties' : type] || [];
+            for (const schema of schemaList) {
+              const name = schema?.metadata?.name;
+              if (!name) {
+                continue;
+              }
+              const lowerName = name.toLowerCase();
+              schemaSets[type].add(name);
+              if (!schemaGroupMap[type][lowerName]) {
+                schemaGroupMap[type][lowerName] = new Set();
+              }
+              schemaGroupMap[type][lowerName].add(groupName);
+
+              if (!schemaDetailSets[type][lowerName]) {
+                schemaDetailSets[type][lowerName] = {
+                  tags: new Set(),
+                };
+              }
+
+              const detailEntry = schemaDetailSets[type][lowerName];
+              collectTagNames(schema).forEach((tag) => detailEntry.tags.add(tag));
+
+              if (
+                (type === CatalogToGroupType.CATALOG_PROPERTY || type === CatalogToGroupType.CATALOG_TRACE) &&
+                detailEntry.tags.size === 0
+              ) {
+                try {
+                  const detailResponse = await getResourceOfAllType(type, groupName, name);
+                  const detailSchema =
+                    (detailResponse && typeof detailResponse === 'object' ? detailResponse?.[type] : null) || null;
+                  collectTagNames(detailSchema).forEach((tag) => detailEntry.tags.add(tag));
+                } catch (err) {
+                  console.error(`Failed to fetch ${type} schema detail for ${name} in group ${groupName}:`, err);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Failed to fetch ${type} schemas for group ${groupName}:`, e);
+        }
+        const normalizedType = typeof type === 'string' ? type.toLowerCase() : type;
+        if (SupportedIndexRuleTypes.includes(normalizedType)) {
+          if (!indexRuleSets[normalizedType]) {
+            indexRuleSets[normalizedType] = new Set();
+          }
+          if (!indexRuleGroupMap[normalizedType]) {
+            indexRuleGroupMap[normalizedType] = {};
+          }
+          if (!indexRuleNameLookup[normalizedType]) {
+            indexRuleNameLookup[normalizedType] = {};
+          }
+
+          try {
+            const indexRuleResponse = await getindexRuleList(groupName);
+            if (!indexRuleResponse.error) {
+              (indexRuleResponse.indexRule || [])
+                .map((s) => s.metadata?.name)
+                .filter((s) => Boolean(s) && !s.noSort)
+                .forEach((name) => {
+                  const lowerName = name.toLowerCase();
+                  indexRuleSets[normalizedType].add(name);
+                  indexRuleNameLookup[normalizedType][lowerName] = name;
+                  if (!indexRuleGroupMap[normalizedType][lowerName]) {
+                    indexRuleGroupMap[normalizedType][lowerName] = new Set();
+                  }
+                  indexRuleGroupMap[normalizedType][lowerName].add(groupName);
+                });
+            }
+          } catch (e) {
+            console.error(`Failed to fetch index rule schemas for group ${groupName}:`, e);
+          }
+        }
+
+        if (catalog === GroupTypeToCatalog.measure) {
+          try {
+            const topnResponse = await getTopNAggregationList(groupName);
+            if (!topnResponse.error) {
+              (topnResponse.topNAggregation || [])
+                .map((s) => s.metadata?.name)
+                .filter(Boolean)
+                .forEach((name) => {
+                  const lowerName = name.toLowerCase();
+                  schemaSets.topn.add(name);
+                  if (!schemaGroupMap.topn[lowerName]) {
+                    schemaGroupMap.topn[lowerName] = new Set();
+                  }
+                  schemaGroupMap.topn[lowerName].add(groupName);
+                });
+            }
+          } catch (e) {
+            console.error(`Failed to fetch topn schemas for group ${groupName}:`, e);
+          }
+        }
+
+        emitUpdate();
+      };
+
+      emitUpdate();
+
+      groupsData.forEach((group) => {
+        processGroup(group).catch((e) => {
+          const groupName = group?.metadata?.name || 'unknown';
+          console.error(`Failed to process group ${groupName}:`, e);
+        });
+      });
+    } catch (e) {
+      console.error('Failed to fetch schema data:', e);
+    }
+  }
+
+  // Setup on mount
+  onMounted(() => {
+    fetchSchemaData();
   });
 </script>
 
@@ -304,12 +566,14 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       <div class="query-input-container">
         <CodeMirror
           v-model="queryText"
-          :mode="'sql'"
+          :mode="'bydbql'"
           :lint="false"
           :readonly="false"
           :style-active-line="true"
           :auto-refresh="true"
+          :enable-hint="true"
           class="query-input"
+          @ready="onCodeMirrorReady"
         />
       </div>
     </el-card>
