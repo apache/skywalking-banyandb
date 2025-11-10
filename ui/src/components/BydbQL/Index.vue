@@ -342,20 +342,19 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
             ),
           ]),
         );
-        const schemaDetails = Object.fromEntries(
-          Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
-            type,
-            Object.fromEntries(
-              Object.entries(schemaMap).map(([schemaName, detailSets]) => [
-                schemaName,
-                {
-                  tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
-                  fields: [...detailSets.fields].sort((a, b) => a.localeCompare(b)),
-                },
-              ]),
-            ),
-          ]),
-        );
+      const schemaDetails = Object.fromEntries(
+        Object.entries(schemaDetailSets).map(([type, schemaMap]) => [
+          type,
+          Object.fromEntries(
+            Object.entries(schemaMap).map(([schemaName, detailSets]) => [
+              schemaName,
+              {
+                tags: [...detailSets.tags].sort((a, b) => a.localeCompare(b)),
+              },
+            ]),
+          ),
+        ]),
+      );
 
         const indexRuleSchemas = Object.fromEntries(
           Object.entries(indexRuleSets).map(([type, set]) => [type, [...set].sort((a, b) => a.localeCompare(b))]),
@@ -405,26 +404,41 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
               if (!schemaDetailSets[type][lowerName]) {
                 schemaDetailSets[type][lowerName] = {
                   tags: new Set(),
-                  fields: new Set(),
                 };
               }
 
               const detailEntry = schemaDetailSets[type][lowerName];
-              (schema.tagFamilies || []).forEach((family) => {
+              const addTagName = (tagName) => {
+                if (typeof tagName === 'string' && tagName.trim().length > 0) {
+                  detailEntry.tags.add(tagName);
+                }
+              };
+
+              const tagFamilies = schema.tagFamilies || schema.tag_families || [];
+              tagFamilies.forEach((family) => {
                 (family.tags || []).forEach((tag) => {
-                  const tagName = tag?.name || tag?.key || tag?.metadata?.name;
-                  if (tagName) {
-                    detailEntry.tags.add(tagName);
-                  }
+                  addTagName(tag?.name || tag?.key || tag?.metadata?.name);
                 });
               });
 
-              (schema.fields || []).forEach((field) => {
-                const fieldName = field?.name || field?.tag?.name || field?.metadata?.name;
-                if (fieldName) {
-                  detailEntry.fields.add(fieldName);
+              const schemaTags = schema.tags || schema.tagNames || [];
+              schemaTags.forEach((tag) => {
+                if (typeof tag === 'string') {
+                  addTagName(tag);
+                } else {
+                  addTagName(tag?.name || tag?.key || tag?.metadata?.name);
                 }
               });
+
+              const entityTagNames = schema.entity?.tagNames || schema.entity?.tag_names || [];
+              entityTagNames.forEach(addTagName);
+
+              const shardingTagNames = schema.shardingKey?.tagNames || schema.shardingKey?.tag_names || [];
+              shardingTagNames.forEach(addTagName);
+
+              addTagName(schema.traceIdTagName || schema.trace_id_tag_name);
+              addTagName(schema.spanIdTagName || schema.span_id_tag_name);
+              addTagName(schema.timestampTagName || schema.timestamp_tag_name);
             });
           }
         } catch (e) {

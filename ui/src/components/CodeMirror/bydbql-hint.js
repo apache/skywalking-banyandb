@@ -76,7 +76,7 @@ let schemasAndGroups = {
   indexRulesByGroup: {},
   schemaDetails: {},
   typeProjections: {},
-  globalProjections: { tags: [], fields: [] },
+  globalProjections: { tags: [] },
 };
 
 export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRuleData = {}) {
@@ -128,42 +128,30 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
   const normalizedSchemaDetails = {};
   const typeProjections = {};
   const globalTagSet = new Set();
-  const globalFieldSet = new Set();
 
   for (const [typeKey, schemaMap] of Object.entries(schemaDetails || {})) {
     const normalizedType = typeof typeKey === 'string' ? typeKey.toLowerCase() : typeKey;
     const normalizedSchemaMap = {};
     const typeTagSet = new Set();
-    const typeFieldSet = new Set();
 
     for (const [schemaName, detail] of Object.entries(schemaMap || {})) {
       const normalizedSchemaName = typeof schemaName === 'string' ? schemaName.toLowerCase() : schemaName;
       const tagList = Array.from(
         new Set((detail?.tags || []).filter((tag) => typeof tag === 'string' && tag.trim().length > 0)),
       ).sort((a, b) => a.localeCompare(b));
-      const fieldList = Array.from(
-        new Set((detail?.fields || []).filter((field) => typeof field === 'string' && field.trim().length > 0)),
-      ).sort((a, b) => a.localeCompare(b));
-
       normalizedSchemaMap[normalizedSchemaName] = {
         tags: tagList,
-        fields: fieldList,
       };
 
       tagList.forEach((tag) => {
         typeTagSet.add(tag);
         globalTagSet.add(tag);
       });
-      fieldList.forEach((field) => {
-        typeFieldSet.add(field);
-        globalFieldSet.add(field);
-      });
     }
 
     normalizedSchemaDetails[normalizedType] = normalizedSchemaMap;
     typeProjections[normalizedType] = {
       tags: Array.from(typeTagSet).sort((a, b) => a.localeCompare(b)),
-      fields: Array.from(typeFieldSet).sort((a, b) => a.localeCompare(b)),
     };
   }
 
@@ -171,7 +159,6 @@ export function updateSchemasAndGroups(groups, schemas, schemaToGroups, indexRul
   schemasAndGroups.typeProjections = typeProjections;
   schemasAndGroups.globalProjections = {
     tags: Array.from(globalTagSet).sort((a, b) => a.localeCompare(b)),
-    fields: Array.from(globalFieldSet).sort((a, b) => a.localeCompare(b)),
   };
 }
 
@@ -394,14 +381,7 @@ function generateHints(context, word) {
         : typeMeta?.tags?.length
           ? typeMeta.tags
           : globalMeta.tags;
-      const fieldCandidates = schemaMeta?.fields?.length
-        ? schemaMeta.fields
-        : typeMeta?.fields?.length
-          ? typeMeta.fields
-          : globalMeta.fields;
-
       tagCandidates.forEach((tag) => pushHint(tag, `${tag} (tag)`, 'bydbql-hint-tag', true));
-      fieldCandidates.forEach((field) => pushHint(field, `${field} (field)`, 'bydbql-hint-field', true));
 
       if (projectionMatches === 0 && hints.length === 0) {
         for (const keyword of BYDBQL_KEYWORDS) {
