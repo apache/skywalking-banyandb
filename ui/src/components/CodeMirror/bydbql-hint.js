@@ -380,7 +380,7 @@ function generateHints(context, word) {
         : typeMeta?.tags?.length
           ? typeMeta.tags
           : globalMeta.tags;
-      tagCandidates.forEach((tag) => pushHint(tag, `${tag} (tag)`, 'bydbql-hint-tag', true));
+      tagCandidates.forEach((tag) => pushHint(tag, `${tag}`, 'bydbql-hint-tag', true));
 
       if (projectionMatches === 0 && hints.length === 0) {
         for (const keyword of BYDBQL_KEYWORDS) {

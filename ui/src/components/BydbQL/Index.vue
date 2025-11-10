@@ -435,7 +435,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         try {
           const schemaResponse = await getAllTypesOfResourceList(type, groupName);
           if (!schemaResponse.error) {
-            const schemaList = schemaResponse[type === 'property' ? 'properties' : type] || [];
+            const schemaList = schemaResponse[type === CatalogToGroupType.CATALOG_PROPERTY ? 'properties' : type] || [];
             for (const schema of schemaList) {
               const name = schema?.metadata?.name;
               if (!name) {
@@ -457,7 +457,10 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
               const detailEntry = schemaDetailSets[type][lowerName];
               collectTagNames(schema).forEach((tag) => detailEntry.tags.add(tag));
 
-              if ((type === 'property' || type === 'trace') && detailEntry.tags.size === 0) {
+              if (
+                (type === CatalogToGroupType.CATALOG_PROPERTY || type === CatalogToGroupType.CATALOG_TRACE) &&
+                detailEntry.tags.size === 0
+              ) {
                 try {
                   const detailResponse = await getResourceOfAllType(type, groupName, name);
                   const detailSchema =
