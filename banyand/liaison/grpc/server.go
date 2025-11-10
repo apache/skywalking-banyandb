@@ -451,8 +451,17 @@ func (s *server) protectorLoadSheddingInterceptor(srv interface{}, ss grpclib.Se
 		return handler(srv, ss)
 	}
 
-	// Check memory state
-	if s.protector.State() == protector.StateHigh {
+	// Get current memory state and update metric
+	state := s.protector.State()
+	if s.metrics != nil {
+		stateValue := 0 // StateLow
+		if state == protector.StateHigh {
+			stateValue = 1 // StateHigh
+		}
+		s.metrics.updateMemoryState(stateValue)
+	}
+
+	if state == protector.StateHigh {
 		// Extract service name from FullMethod (e.g., "/banyandb.stream.v1.StreamService/Write")
 		serviceName := "unknown"
 		if info != nil && info.FullMethod != "" {
@@ -519,6 +528,11 @@ func (s *server) calculateGrpcBufferSizes() (int32, int32) {
 			Int32("conn_window_size", connWindowSize).
 			Int32("stream_window_size", streamWindowSize).
 			Msg("calculated gRPC buffer sizes")
+	}
+
+	// Update metrics
+	if s.metrics != nil {
+		s.metrics.updateBufferSizeMetrics(connWindowSize, streamWindowSize)
 	}
 
 	return connWindowSize, streamWindowSize
