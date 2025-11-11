@@ -43,6 +43,7 @@ import 'element-plus/dist/index.css';
 import './styles/custom.scss';
 import './styles/main.scss';
 import * as ElIcon from '@element-plus/icons-vue';
+import { installVueQuery } from './plugins/vue-query';
 
 const app = createApp(App);
 
@@ -90,5 +91,6 @@ app.config.globalProperties.mittBus = new mitt();
 app.use(createPinia());
 app.use(router);
 app.use(ElementPlus);
+installVueQuery(app);
 
 app.mount('#app');

@@ -226,7 +226,6 @@
     width: 100%;
     height: 100%;
     :deep(.CodeMirror) {
-      border: 1px solid #44475a;
       height: 100%;
       width: 100%;
       .CodeMirror-code {

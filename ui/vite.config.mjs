@@ -40,7 +40,11 @@ export default ({ mode }) => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
+        'vue-demi': 'vue-demi/lib/index.mjs',
       },
+    },
+    optimizeDeps: {
+      include: ['@tanstack/vue-query', 'vue-demi'],
     },
     css: {
       preprocessorOptions: {
