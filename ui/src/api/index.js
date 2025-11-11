@@ -268,10 +268,7 @@ export function updateProperty(group, name, data) {
       method: 'PUT',
       json: data,
     },
-    [
-      ['properties'],
-      ['groupResources'],
-    ],
+    [['properties'], ['groupResources']],
   );
 }
 
@@ -322,10 +319,7 @@ export function updateTrace(group, name, json) {
       json,
       method: 'PUT',
     },
-    [
-      ['trace', group, name],
-      ['groupResources'],
-    ],
+    [['trace', group, name], ['groupResources']],
   );
 }
 
