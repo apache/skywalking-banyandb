@@ -52,9 +52,9 @@ func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange
 		endTime := intervalRule.NextTime(startTime)
 		segTR := timestamp.NewSectionTimeRange(startTime, endTime)
 
-		// Check if segment overlaps with the requested time range
-		if !segTR.Overlapping(timeRange) {
-			return nil // Skip segments outside the time range
+		// Check if segment is completely included in the requested time range
+		if !timeRange.Include(segTR) {
+			return nil // Skip segments not fully contained in the time range
 		}
 
 		segmentPath := filepath.Join(tsdbRootPath, fmt.Sprintf(segTemplate, suffix))
