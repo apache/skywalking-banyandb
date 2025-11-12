@@ -567,11 +567,12 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       </template>
       <div class="query-input-container">
         <transition name="fade">
-          <div v-if="editorLoading" class="query-loading-state">
+          <div v-show="editorLoading" class="query-loading-state">
             <el-skeleton :rows="6" animated />
           </div>
         </transition>
         <CodeMirror
+          v-show="!editorLoading"
           v-model="queryText"
           :mode="'bydbql'"
           :lint="false"
@@ -579,7 +580,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           :style-active-line="true"
           :auto-refresh="true"
           :enable-hint="true"
-          :class="['query-input', { 'is-hidden': editorLoading }]"
+          class="query-input"
           @ready="onCodeMirrorReady"
         />
       </div>
@@ -732,10 +733,6 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
 
     .query-input {
       transition: opacity 0.2s ease;
-      &.is-hidden {
-        opacity: 0;
-        visibility: hidden;
-      }
     }
 
     :deep(.in-coder-panel) {

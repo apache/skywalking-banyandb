@@ -20,6 +20,22 @@
 import { queryClient } from '@/plugins/vue-query';
 import { httpQuery } from './base';
 
+/**
+ * Fetches data using TanStack Query with automatic caching.
+ *
+ * Results are cached by queryKey. Subsequent calls with the same queryKey return
+ * cached data if available and not stale.
+ *
+ * @param {Array<string|number|boolean>} queryKey - Unique cache key array.
+ *   Example: `['groups']` or `['tableData', type, JSON.stringify(data)]`
+ * @param {Object} request - HTTP request config.
+ * @param {string} request.url - API endpoint URL.
+ * @param {string} request.method - HTTP method ('GET', 'POST', etc.).
+ * @param {Object} [request.json] - Optional JSON payload for request body.
+ * @param {Object} [request.headers={}] - Optional additional headers.
+ * @param {Object} [options={}] - TanStack Query options (e.g., `staleTime`, `retry`).
+ * @returns {Promise<any>} Promise resolving to API response or error object.
+ */
 function fetchWithQuery(queryKey, request, options = {}) {
   return queryClient.fetchQuery({
     queryKey,
@@ -85,7 +101,7 @@ export function getTableList(data, type) {
       json: data,
       method: 'POST',
     },
-    { staleTime: 0 },
+    { staleTime: 1000 },
   );
 }
 
