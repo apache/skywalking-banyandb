@@ -2,8 +2,6 @@ module github.com/apache/skywalking-banyandb
 
 go 1.25
 
-toolchain go1.25.1
-
 require (
 	cloud.google.com/go/storage v1.56.2
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1
