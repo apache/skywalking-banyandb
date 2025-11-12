@@ -27,7 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // queryResult is used internally for processing logic only.
@@ -187,20 +186,6 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	td.name = tagName
 	td.valueType = tm.valueType
-
-	// Set min/max for int64 tags
-	if tm.valueType == pbv1.ValueTypeInt64 {
-		td.min = tm.min
-		td.max = tm.max
-	}
-
-	// Create bloom filter for indexed tags
-	td.filter = generateBloomFilter(count)
-	for _, value := range td.values {
-		if value != nil {
-			td.filter.Add(value)
-		}
-	}
 
 	tmpBlock.tags[tagName] = td
 	return true

@@ -128,23 +128,24 @@ func (tm *tagMetadata) reset() {
 
 // generateBloomFilter gets a bloom filter from pool or creates new.
 func generateBloomFilter(expectedElements int) *filter.BloomFilter {
-	v := bloomFilterPool.Get()
-	if v == nil {
-		return filter.NewBloomFilter(expectedElements)
-	}
-	// Reset and resize for new expected elements
-	v.SetN(expectedElements)
-	v.ResizeBits(filter.OptimalBitsSize(expectedElements))
-	return v
+	// v := bloomFilterPool.Get()
+	// if v == nil {
+	// 	return filter.NewBloomFilter(expectedElements)
+	// }
+	// // Reset and resize for new expected elements
+	// v.SetN(expectedElements)
+	// v.ResizeBits(filter.OptimalBitsSize(expectedElements))
+	// return v
+	return filter.NewBloomFilter(expectedElements)
 }
 
 // releaseBloomFilter returns bloom filter to pool after reset.
 func releaseBloomFilter(bf *filter.BloomFilter) {
-	if bf == nil {
-		return
-	}
-	bf.Reset()
-	bloomFilterPool.Put(bf)
+	// if bf == nil {
+	// 	return
+	// }
+	// bf.Reset()
+	// bloomFilterPool.Put(bf)
 }
 
 // encodeBloomFilter encodes a bloom filter to bytes.
