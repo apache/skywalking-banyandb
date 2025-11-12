@@ -48,6 +48,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const error = ref(null);
   const executionTime = ref(0);
   const codeMirrorInstance = ref(null);
+  const editorLoading = ref(true);
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -291,6 +292,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       'Cmd-Enter': executeQuery,
     };
     cm.setOption('extraKeys', mergedExtraKeys);
+    editorLoading.value = false;
   }
 
   // Fetch groups and schemas for autocomplete
@@ -564,7 +566,13 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         </div>
       </template>
       <div class="query-input-container">
+        <transition name="fade">
+          <div v-show="editorLoading" class="query-loading-state">
+            <el-skeleton :rows="6" animated />
+          </div>
+        </transition>
         <CodeMirror
+          v-show="!editorLoading"
           v-model="queryText"
           :mode="'bydbql'"
           :lint="false"
@@ -706,9 +714,26 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   }
 
   .query-input-container {
+    position: relative;
     border: 1px solid #dcdfe6;
     border-radius: 4px;
     overflow: hidden;
+    min-height: 150px;
+
+    .query-loading-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background-color: #f5f7fa;
+      z-index: 1;
+    }
+
+    .query-input {
+      transition: opacity 0.2s ease;
+    }
 
     :deep(.in-coder-panel) {
       height: 150px;
@@ -805,6 +830,16 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       font-size: 13px;
       color: #303133;
     }
+  }
+
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 0.2s ease;
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    opacity: 0;
   }
 
   @media (max-width: 768px) {
