@@ -67,7 +67,7 @@ export default ({ mode }) => {
       drop: isProduction ? ['console', 'debugger'] : [],
     },
     define: {
-      __VUE_OPTIONS_API__: false,
+      __VUE_OPTIONS_API__: true,
       __VUE_PROD_DEVTOOLS__: false,
     },
     build: {
