@@ -26,12 +26,12 @@ import (
 )
 
 const (
-	k = 6
+	k = 10
 	// B specifies the number of bits allocated for each item.
-	// Using B=16 (power of 2) for better memory alignment and computation efficiency.
-	// With 8k items per block: memory = 8192 * 16 / 8 = 16KB per block
-	// FPR with k=6, B=16: ~0.094%.
-	B = 16
+	// Using B=32 (power of 2) maintains memory alignment and enables shift-based math.
+	// With 8k items per block: memory = 8192 * 32 / 8 = 32KB per block.
+	// FPR with k=10, B=32: ~0.00018%.
+	B = 32
 )
 
 // BloomFilter is a probabilistic data structure designed to test whether an element is a member of a set.
@@ -42,10 +42,10 @@ type BloomFilter struct {
 
 // NewBloomFilter creates a new Bloom filter with the number of items n and false positive rate p.
 func NewBloomFilter(n int) *BloomFilter {
-	// With B=16, we can optimize: m = n * 16 = n << 4
-	// Number of uint64s needed: (n * 16) / 64 = n / 4 = n >> 2
+	// With B=32, we can optimize: m = n * 32 = n << 5
+	// Number of uint64s needed: (n * 32) / 64 = n / 2 = n >> 1
 	// Ensure at least 1 uint64 to avoid empty slice
-	numBits := n >> 2
+	numBits := n >> 1
 	if numBits == 0 {
 		numBits = 1
 	}
@@ -143,7 +143,7 @@ func (bf *BloomFilter) ResizeBits(n int) {
 // OptimalBitsSize returns the optimal number of uint64s needed for n items.
 // With B=16, this is simply n/4 (n >> 2), with a minimum of 1.
 func OptimalBitsSize(n int) int {
-	size := n >> 2
+	size := n >> 1
 	if size == 0 {
 		return 1
 	}

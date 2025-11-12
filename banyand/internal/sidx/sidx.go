@@ -288,6 +288,19 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		return false
 	}
 
+	var (
+		minKey int64
+		maxKey int64
+		hasMin = req.MinKey != nil
+		hasMax = req.MaxKey != nil
+	)
+	if hasMin {
+		minKey = *req.MinKey
+	}
+	if hasMax {
+		maxKey = *req.MaxKey
+	}
+
 	// Pre-allocate slices for filtered data (optimize for common case where most elements match)
 	bc.userKeys = make([]int64, 0, totalElements)
 	bc.data = make([][]byte, 0, totalElements)
@@ -348,15 +361,23 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			}
 
 			if matched {
+				key := tmpBlock.userKeys[i]
+				if hasMin && key < minKey {
+					continue
+				}
+				if hasMax && key > maxKey {
+					continue
+				}
+
 				// Mark data as seen
 				seenData[h] = append(bucket, dataBytes)
 
 				// Copy userKey
-				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+				bc.userKeys = append(bc.userKeys, key)
 
 				// Copy data
-				dataCopy := make([]byte, len(tmpBlock.data[i]))
-				copy(dataCopy, tmpBlock.data[i])
+				dataCopy := make([]byte, len(dataBytes))
+				copy(dataCopy, dataBytes)
 				bc.data = append(bc.data, dataCopy)
 
 				// Copy tags
@@ -389,15 +410,23 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 				continue
 			}
 
+			key := tmpBlock.userKeys[i]
+			if hasMin && key < minKey {
+				continue
+			}
+			if hasMax && key > maxKey {
+				continue
+			}
+
 			// Mark data as seen
 			seenData[h] = append(bucket, dataBytes)
 
 			// Copy userKey
-			bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
+			bc.userKeys = append(bc.userKeys, key)
 
 			// Copy data
-			dataCopy := make([]byte, len(tmpBlock.data[i]))
-			copy(dataCopy, tmpBlock.data[i])
+			dataCopy := make([]byte, len(dataBytes))
+			copy(dataCopy, dataBytes)
 			bc.data = append(bc.data, dataCopy)
 
 			// Copy tags
