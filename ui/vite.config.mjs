@@ -64,7 +64,7 @@ export default ({ mode }) => {
       },
     },
     esbuild: {
-      drop: isProduction ? ['console.log', 'debugger'] : [],
+      drop: isProduction ? ['console', 'debugger'] : [],
     },
     define: {
       __VUE_OPTIONS_API__: true,
