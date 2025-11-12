@@ -101,7 +101,7 @@ export function getTableList(data, type) {
       json: data,
       method: 'POST',
     },
-    { staleTime: 1000 },
+    { staleTime: 0 },
   );
 }
 
