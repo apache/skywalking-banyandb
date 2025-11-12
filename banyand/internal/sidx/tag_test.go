@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -114,4 +115,101 @@ func TestTagInWriteRequest(t *testing.T) {
 	assert.Equal(t, 2, len(req.Tags))
 	assert.Equal(t, "service", req.Tags[0].Name)
 	assert.Equal(t, "environment", req.Tags[1].Name)
+}
+
+func TestEncodeDecodeBloomFilter_RoundTrip(t *testing.T) {
+	// Test round-trip encoding and decoding
+	testCases := []struct {
+		name          string
+		expectedItems int
+		itemsToAdd    [][]byte
+		itemsToCheck  [][]byte
+		shouldContain []bool
+	}{
+		{
+			name:          "small filter",
+			expectedItems: 5,
+			itemsToAdd: [][]byte{
+				[]byte("item1"),
+				[]byte("item2"),
+				[]byte("item3"),
+			},
+			itemsToCheck: [][]byte{
+				[]byte("item1"),
+				[]byte("item2"),
+				[]byte("item3"),
+				[]byte("not-added"),
+			},
+			shouldContain: []bool{true, true, true, false},
+		},
+		{
+			name:          "medium filter",
+			expectedItems: 100,
+			itemsToAdd: [][]byte{
+				[]byte("service1"),
+				[]byte("service2"),
+				[]byte("service3"),
+			},
+			itemsToCheck: [][]byte{
+				[]byte("service1"),
+				[]byte("service2"),
+				[]byte("service3"),
+				[]byte("not-added"),
+			},
+			shouldContain: []bool{true, true, true, false},
+		},
+		{
+			name:          "empty filter",
+			expectedItems: 0,
+			itemsToAdd:    [][]byte{},
+			itemsToCheck: [][]byte{
+				[]byte("any-item"),
+			},
+			shouldContain: []bool{false},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create and populate original filter
+			original := generateBloomFilter(tc.expectedItems)
+			defer releaseBloomFilter(original)
+
+			for _, item := range tc.itemsToAdd {
+				original.Add(item)
+			}
+
+			// Encode
+			dst := make([]byte, 0)
+			encoded := encodeBloomFilter(dst, original)
+			require.Greater(t, len(encoded), 0, "encoded data should not be empty")
+
+			// Decode
+			decoded, err := decodeBloomFilter(encoded)
+			require.NoError(t, err, "decoding should succeed")
+			require.NotNil(t, decoded, "decoded filter should not be nil")
+			defer releaseBloomFilter(decoded)
+
+			// Verify N matches
+			assert.Equal(t, original.N(), decoded.N(), "N should match")
+
+			// Verify bits match
+			originalBits := original.Bits()
+			decodedBits := decoded.Bits()
+			assert.Equal(t, len(originalBits), len(decodedBits), "bits length should match")
+			for i := range originalBits {
+				assert.Equal(t, originalBits[i], decodedBits[i], "bits[%d] should match", i)
+			}
+
+			// Verify filter behavior matches
+			for i, item := range tc.itemsToCheck {
+				originalResult := original.MightContain(item)
+				decodedResult := decoded.MightContain(item)
+				assert.Equal(t, originalResult, decodedResult, "MightContain for item %d should match", i)
+				if len(tc.shouldContain) > i {
+					assert.Equal(t, tc.shouldContain[i], decodedResult, "MightContain result should match expected")
+				}
+			}
+		})
+	}
 }

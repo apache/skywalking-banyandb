@@ -130,8 +130,31 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 
 	td.valueType = valueType
 
+	// Count actual number of values that will be added to bloom filter
+	expectedFilterElements := 0
+	if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
+		// For array types, count actual values in arrays
+		for _, tags := range elementTags {
+			for _, tag := range tags {
+				if tag.name == tagName {
+					if tag.valueArr != nil {
+						for _, v := range tag.valueArr {
+							if v != nil {
+								expectedFilterElements++
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+	} else {
+		// For non-array types, count is the number of elements
+		expectedFilterElements = len(b.userKeys)
+	}
+
 	// Create bloom filter for indexed tags
-	td.filter = generateBloomFilter(len(b.userKeys))
+	td.filter = generateBloomFilter(expectedFilterElements)
 	for _, tags := range elementTags {
 		for _, tag := range tags {
 			if tag.name == tagName {
