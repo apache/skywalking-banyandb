@@ -183,44 +183,6 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	return bf, nil
 }
 
-// computeMinMax computes min/max values for int64 tags.
-func (td *tagData) computeMinMax() (min, max []byte) {
-	if td.valueType != pbv1.ValueTypeInt64 || len(td.values) == 0 {
-		return nil, nil
-	}
-
-	var minVal, maxVal int64
-	first := true
-
-	for _, row := range td.values {
-		if len(row.value) != 8 {
-			continue // Skip invalid int64 values
-		}
-
-		val := pkgencoding.BytesToInt64(row.value)
-
-		if first {
-			minVal = val
-			maxVal = val
-			first = false
-		} else {
-			if val < minVal {
-				minVal = val
-			}
-			if val > maxVal {
-				maxVal = val
-			}
-		}
-	}
-
-	if !first {
-		min = pkgencoding.Int64ToBytes(nil, minVal)
-		max = pkgencoding.Int64ToBytes(nil, maxVal)
-	}
-
-	return min, max
-}
-
 // marshalTagRow marshals the tagRow value to a byte slice.
 func marshalTagRow(tr *tagRow, valueType pbv1.ValueType) []byte {
 	if tr.valueArr != nil {

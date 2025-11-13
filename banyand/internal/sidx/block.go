@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -284,35 +285,64 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tm.dataBlock.size = uint64(len(bb.Buf))
 	tdw.MustWrite(bb.Buf)
 
-	// Create and write bloom filter at write time
-	expectedFilterElements := 0
-	if td.valueType == pbv1.ValueTypeStrArr || td.valueType == pbv1.ValueTypeInt64Arr {
-		// For array types, count actual values in arrays
-		for i := range td.values {
-			if td.values[i].valueArr != nil {
-				for _, v := range td.values[i].valueArr {
-					if v != nil {
-						expectedFilterElements++
-					}
-				}
-			}
+	// Create and write bloom filter at write time using unique values
+	uniqueValues := make(map[string]struct{})
+	uniqueEntries := make([][]byte, 0)
+
+	var (
+		minVal    int64
+		maxVal    int64
+		hasMinMax bool
+	)
+
+	updateMinMax := func(v []byte) {
+		if td.valueType != pbv1.ValueTypeInt64 {
+			return
 		}
-	} else {
-		// For non-array types, count is the number of elements
-		expectedFilterElements = len(td.values)
+		if len(v) != 8 {
+			return
+		}
+		val := encoding.BytesToInt64(v)
+		if !hasMinMax {
+			minVal = val
+			maxVal = val
+			hasMinMax = true
+			return
+		}
+		if val < minVal {
+			minVal = val
+		}
+		if val > maxVal {
+			maxVal = val
+		}
 	}
 
-	bf := generateBloomFilter(expectedFilterElements)
+	addUnique := func(v []byte) {
+		if v == nil {
+			return
+		}
+		updateMinMax(v)
+		key := convert.BytesToString(v)
+		if _, exists := uniqueValues[key]; exists {
+			return
+		}
+		uniqueValues[key] = struct{}{}
+		uniqueEntries = append(uniqueEntries, v)
+	}
+
 	for i := range td.values {
 		if td.values[i].valueArr != nil {
 			for _, v := range td.values[i].valueArr {
-				if v != nil {
-					bf.Add(v)
-				}
+				addUnique(v)
 			}
-		} else if td.values[i].value != nil {
-			bf.Add(td.values[i].value)
+			continue
 		}
+		addUnique(td.values[i].value)
+	}
+
+	bf := generateBloomFilter(len(uniqueEntries))
+	for _, v := range uniqueEntries {
+		bf.Add(v)
 	}
 
 	bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)
@@ -321,9 +351,10 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tfw.MustWrite(bb.Buf)
 	releaseBloomFilter(bf)
 
-	// Compute min/max for int64 tags at write time
-	if td.valueType == pbv1.ValueTypeInt64 {
-		tm.min, tm.max = td.computeMinMax()
+	// Compute min/max for int64 tags during unique value iteration
+	if td.valueType == pbv1.ValueTypeInt64 && hasMinMax {
+		tm.min = encoding.Int64ToBytes(nil, minVal)
+		tm.max = encoding.Int64ToBytes(nil, maxVal)
 	}
 
 	// Marshal and write tag metadata
