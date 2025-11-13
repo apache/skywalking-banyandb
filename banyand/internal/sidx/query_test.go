@@ -321,7 +321,9 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 	for i := 0; i < len(keys); i++ {
 		if keys[i] == 100 {
 			assert.Equal(t, "arr_tag", tags[i][0].Name)
-			assert.Equal(t, "a|b|", string(tags[i][0].Value))
+			assert.Equal(t, 2, len(tags[i][0].ValueArr))
+			assert.Equal(t, "a", string(tags[i][0].ValueArr[0]))
+			assert.Equal(t, "b", string(tags[i][0].ValueArr[1]))
 		}
 	}
 }

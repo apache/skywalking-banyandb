@@ -21,7 +21,6 @@ import (
 	"container/heap"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -177,15 +176,14 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	// Create tag data structure and populate block
 	td := generateTagData()
-	// Decode tag values directly (no compression)
-	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb2, tm.valueType, count)
-	if err != nil {
+	td.name = tagName
+	td.valueType = tm.valueType
+
+	// Decode and convert tag values using common helper
+	if err := decodeAndConvertTagValues(td, decoder, bb2, tm.valueType, count); err != nil {
 		logger.Panicf("cannot decode tag values: %v", err)
 		return false
 	}
-
-	td.name = tagName
-	td.valueType = tm.valueType
 
 	tmpBlock.tags[tagName] = td
 	return true
@@ -232,11 +230,17 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 		for _, proj := range qr.request.TagProjection {
 			for _, tagName := range proj.Names {
 				if tagData, exists := block.tags[tagName]; exists && elemIndex < len(tagData.values) {
-					elementTags = append(elementTags, Tag{
+					row := &tagData.values[elemIndex]
+					tag := Tag{
 						Name:      tagName,
-						Value:     tagData.values[elemIndex],
 						ValueType: tagData.valueType,
-					})
+					}
+					if len(row.valueArr) > 0 {
+						tag.ValueArr = row.valueArr
+					} else if len(row.value) > 0 {
+						tag.Value = row.value
+					}
+					elementTags = append(elementTags, tag)
 				}
 			}
 		}
@@ -245,11 +249,17 @@ func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
 		elementTags = make([]Tag, 0, len(block.tags))
 		for tagName, tagData := range block.tags {
 			if elemIndex < len(tagData.values) {
-				elementTags = append(elementTags, Tag{
+				row := &tagData.values[elemIndex]
+				tag := Tag{
 					Name:      tagName,
-					Value:     tagData.values[elemIndex],
 					ValueType: tagData.valueType,
-				})
+				}
+				if len(row.valueArr) > 0 {
+					tag.ValueArr = row.valueArr
+				} else if len(row.value) > 0 {
+					tag.Value = row.value
+				}
+				elementTags = append(elementTags, tag)
 			}
 		}
 	}

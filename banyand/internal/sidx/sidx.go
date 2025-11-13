@@ -341,14 +341,22 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			// Build tags slice for this element
 			tags = tags[:0]
 			for tagName, tagData := range tmpBlock.tags {
-				if i < len(tagData.values) && tagData.values[i] != nil {
-					// Decode []byte to *modelv1.TagValue using the provided decoder
-					tagValue := decoder(tagData.valueType, tagData.values[i])
-					if tagValue != nil {
-						tags = append(tags, &modelv1.Tag{
-							Key:   tagName,
-							Value: tagValue,
-						})
+				if i < len(tagData.values) {
+					row := &tagData.values[i]
+					// Marshal tagRow to bytes for decoder
+					var marshaledValue []byte
+					if row.valueArr != nil || row.value != nil {
+						marshaledValue = marshalTagRow(row, tagData.valueType)
+					}
+					if marshaledValue != nil {
+						// Decode []byte to *modelv1.TagValue using the provided decoder
+						tagValue := decoder(tagData.valueType, marshaledValue)
+						if tagValue != nil {
+							tags = append(tags, &modelv1.Tag{
+								Key:   tagName,
+								Value: tagValue,
+							})
+						}
 					}
 				}
 			}
@@ -383,11 +391,17 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 				// Copy tags
 				for tagName, tagData := range tmpBlock.tags {
 					if i < len(tagData.values) {
-						bc.tags[tagName] = append(bc.tags[tagName], Tag{
+						row := &tagData.values[i]
+						tag := Tag{
 							Name:      tagName,
-							Value:     tagData.values[i],
 							ValueType: tagData.valueType,
-						})
+						}
+						if len(row.valueArr) > 0 {
+							tag.ValueArr = row.valueArr
+						} else if len(row.value) > 0 {
+							tag.Value = row.value
+						}
+						bc.tags[tagName] = append(bc.tags[tagName], tag)
 					}
 				}
 			}
@@ -432,11 +446,17 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 			// Copy tags
 			for tagName, tagData := range tmpBlock.tags {
 				if i < len(tagData.values) {
-					bc.tags[tagName] = append(bc.tags[tagName], Tag{
+					row := &tagData.values[i]
+					tag := Tag{
 						Name:      tagName,
-						Value:     tagData.values[i],
 						ValueType: tagData.valueType,
-					})
+					}
+					if len(row.valueArr) > 0 {
+						tag.ValueArr = row.valueArr
+					} else if len(row.value) > 0 {
+						tag.Value = row.value
+					}
+					bc.tags[tagName] = append(bc.tags[tagName], tag)
 				}
 			}
 		}

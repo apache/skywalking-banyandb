@@ -109,7 +109,7 @@ func (b *block) mustInitFromTags(elementTags [][]*tag) {
 func (b *block) processTag(tagName string, elementTags [][]*tag) {
 	td := generateTagData()
 	td.name = tagName
-	td.values = make([][]byte, len(b.userKeys))
+	td.values = make([]tagRow, len(b.userKeys))
 
 	var valueType pbv1.ValueType
 	// Collect values for this tag across all elements
@@ -117,65 +117,24 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 		found := false
 		for _, tag := range tags {
 			if tag.name == tagName {
-				td.values[i] = tag.marshal()
+				// Store structured tagRow instead of marshaled bytes
+				if tag.valueArr != nil {
+					td.values[i].valueArr = tag.valueArr
+				} else {
+					td.values[i].value = tag.value
+				}
 				valueType = tag.valueType
 				found = true
 				break
 			}
 		}
 		if !found {
-			td.values[i] = nil // Missing tag value
+			// Missing tag value - leave as zero value
+			td.values[i] = tagRow{}
 		}
 	}
 
 	td.valueType = valueType
-
-	// Count actual number of values that will be added to bloom filter
-	expectedFilterElements := 0
-	if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
-		// For array types, count actual values in arrays
-		for _, tags := range elementTags {
-			for _, tag := range tags {
-				if tag.name == tagName {
-					if tag.valueArr != nil {
-						for _, v := range tag.valueArr {
-							if v != nil {
-								expectedFilterElements++
-							}
-						}
-					}
-					break
-				}
-			}
-		}
-	} else {
-		// For non-array types, count is the number of elements
-		expectedFilterElements = len(b.userKeys)
-	}
-
-	// Create bloom filter for indexed tags
-	td.filter = generateBloomFilter(expectedFilterElements)
-	for _, tags := range elementTags {
-		for _, tag := range tags {
-			if tag.name == tagName {
-				if tag.valueArr != nil {
-					for _, v := range tag.valueArr {
-						if v != nil {
-							td.filter.Add(v)
-						}
-					}
-				} else if tag.value != nil {
-					td.filter.Add(tag.value)
-				}
-				break
-			}
-		}
-	}
-
-	// Update min/max for int64 tags
-	if valueType == pbv1.ValueTypeInt64 {
-		td.updateMinMax()
-	}
 
 	b.tags[tagName] = td
 }
@@ -220,9 +179,13 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	// Add tag data sizes
 	for tagName, tagData := range b.tags {
 		nameSize := uint64(len(tagName))
-		for _, value := range tagData.values {
-			if value != nil {
-				size += nameSize + uint64(len(value))
+		for _, row := range tagData.values {
+			if row.valueArr != nil {
+				for _, v := range row.valueArr {
+					size += nameSize + uint64(len(v))
+				}
+			} else if row.value != nil {
+				size += nameSize + uint64(len(row.value))
 			}
 		}
 	}
@@ -290,6 +253,16 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tm.name = tagName
 	tm.valueType = td.valueType
 
+	// Marshal tagRow values to tmpBytes buffer for encoding
+	if cap(td.tmpBytes) < len(td.values) {
+		td.tmpBytes = make([][]byte, len(td.values))
+	} else {
+		td.tmpBytes = td.tmpBytes[:len(td.values)]
+	}
+	for i := range td.values {
+		td.tmpBytes[i] = marshalTagRow(&td.values[i], td.valueType)
+	}
+
 	// Write tag values to data file
 	bb := bigValuePool.Get()
 	if bb == nil {
@@ -301,7 +274,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}()
 
 	// Encode tag values using the encoding module
-	err := internalencoding.EncodeTagValues(bb, td.values, td.valueType)
+	err := internalencoding.EncodeTagValues(bb, td.tmpBytes, td.valueType)
 	if err != nil {
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}
@@ -311,18 +284,46 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tm.dataBlock.size = uint64(len(bb.Buf))
 	tdw.MustWrite(bb.Buf)
 
-	// Write bloom filter
-	if td.filter != nil {
-		filterData := encodeBloomFilter(nil, td.filter)
-		tm.filterBlock.offset = tfw.bytesWritten
-		tm.filterBlock.size = uint64(len(filterData))
-		tfw.MustWrite(filterData)
+	// Create and write bloom filter at write time
+	expectedFilterElements := 0
+	if td.valueType == pbv1.ValueTypeStrArr || td.valueType == pbv1.ValueTypeInt64Arr {
+		// For array types, count actual values in arrays
+		for i := range td.values {
+			if td.values[i].valueArr != nil {
+				for _, v := range td.values[i].valueArr {
+					if v != nil {
+						expectedFilterElements++
+					}
+				}
+			}
+		}
+	} else {
+		// For non-array types, count is the number of elements
+		expectedFilterElements = len(td.values)
 	}
 
-	// Set min/max for int64 tags
+	bf := generateBloomFilter(expectedFilterElements)
+	for i := range td.values {
+		if td.values[i].valueArr != nil {
+			for _, v := range td.values[i].valueArr {
+				if v != nil {
+					bf.Add(v)
+				}
+			}
+		} else if td.values[i].value != nil {
+			bf.Add(td.values[i].value)
+		}
+	}
+
+	bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)
+	tm.filterBlock.offset = tfw.bytesWritten
+	tm.filterBlock.size = uint64(len(bb.Buf))
+	tfw.MustWrite(bb.Buf)
+	releaseBloomFilter(bf)
+
+	// Compute min/max for int64 tags at write time
 	if td.valueType == pbv1.ValueTypeInt64 {
-		tm.min = td.min
-		tm.max = td.max
+		tm.min, tm.max = td.computeMinMax()
 	}
 
 	// Marshal and write tag metadata
@@ -455,7 +456,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		for _, t := range b.tags {
 			newTagData := tagData{name: t.name, valueType: t.valueType}
 			for j := 0; j < existDataSize; j++ {
-				newTagData.values = append(newTagData.values, nil)
+				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
@@ -471,7 +472,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		} else {
 			newTagData := tagData{name: t.name, valueType: t.valueType}
 			for j := 0; j < existDataSize; j++ {
-				newTagData.values = append(newTagData.values, nil)
+				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
@@ -488,7 +489,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	for _, t := range bi.tags {
 		if _, exists := sourceTags[t.name]; !exists {
 			for j := 0; j < emptySize; j++ {
-				bi.tags[t.name].values = append(bi.tags[t.name].values, nil)
+				bi.tags[t.name].values = append(bi.tags[t.name].values, tagRow{})
 			}
 		}
 	}
@@ -631,11 +632,13 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 	td := generateTagData()
 	td.name = tagName
 	td.valueType = tm.valueType
-	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb, tm.valueType, count)
-	if err != nil {
+
+	// Decode and convert tag values using common helper
+	if err := decodeAndConvertTagValues(td, decoder, bb, tm.valueType, count); err != nil {
 		releaseTagData(td)
-		return fmt.Errorf("cannot decode tag values: %w", err)
+		return err
 	}
+
 	b.tags[tagName] = td
 	return nil
 }
