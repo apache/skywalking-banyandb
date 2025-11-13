@@ -300,8 +300,8 @@ func (d *database[T, O]) GetExpiredSegmentsTimeRange() *timestamp.TimeRange {
 	return d.segmentController.getExpiredSegmentsTimeRange()
 }
 
-func (d *database[T, O]) DeleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
-	return d.segmentController.deleteExpiredSegments(timeRange)
+func (d *database[T, O]) DeleteExpiredSegments(segmentSuffixes []string) int64 {
+	return d.segmentController.deleteExpiredSegments(segmentSuffixes)
 }
 
 // PeekOldestSegmentEndTime returns the end time of the oldest segment.

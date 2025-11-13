@@ -341,6 +341,6 @@ func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Messag
 		d.s.l.Error().Err(err).Str("group", req.Group).Msg("failed to load tsdb")
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))
 	}
-	deleted := db.DeleteExpiredSegments(timestamp.NewSectionTimeRange(req.TimeRange.Begin.AsTime(), req.TimeRange.End.AsTime()))
+	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }

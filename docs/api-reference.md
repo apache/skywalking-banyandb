@@ -4299,7 +4299,8 @@ WriteResponse is the response contract for write
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  |  |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  |  |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | Departed: using segment_time_range instead. |
+| segment_suffixes | [string](#string) | repeated |  |
 
 
 
@@ -4761,7 +4762,8 @@ WriteResponse is the response contract for write
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  |  |
-| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  |  |
+| time_range | [banyandb.model.v1.TimeRange](#banyandb-model-v1-TimeRange) |  | Departed: using segment_time_range instead. |
+| segment_suffixes | [string](#string) | repeated |  |
 
 
 

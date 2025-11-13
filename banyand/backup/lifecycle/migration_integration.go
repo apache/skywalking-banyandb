@@ -19,51 +19,36 @@ package lifecycle
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // migrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
-func migrateStreamWithFileBasedAndProgress(
-	tsdbRootPath string,
-	timeRange timestamp.TimeRange,
-	group *commonv1.Group,
-	nodeLabels map[string]string,
-	nodes []*databasev1.Node,
-	metadata metadata.Repo,
-	logger *logger.Logger,
-	progress *Progress,
-	chunkSize int,
-) error {
-	// Use parseGroup function to get sharding parameters and TTL
-	shardNum, replicas, ttl, selector, client, err := parseGroup(group, nodeLabels, nodes, logger, metadata)
-	if err != nil {
-		return err
-	}
-	defer client.GracefulStop()
-
-	// Convert TTL to IntervalRule using storage.MustToIntervalRule
-	intervalRule := storage.MustToIntervalRule(ttl)
+func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+	logger *logger.Logger, progress *Progress, chunkSize int,
+) ([]string, error) {
+	// Convert segment Interval to IntervalRule using storage.MustToIntervalRule
+	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
 
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
 	// Count total parts before starting migration
-	totalParts, err := countStreamParts(tsdbRootPath, timeRange, intervalRule)
+	totalParts, err := countStreamParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to count stream parts, proceeding without part count")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Msg("counted stream parts for progress tracking")
+		logger.Info().Int("total_parts", totalParts).Msg("counted stream parts for progres tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
-	visitor := newStreamMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize, targetStageInterval)
+	visitor := newStreamMigrationVisitor(
+		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		logger, progress, chunkSize, targetStageInterval,
+	)
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking
@@ -72,16 +57,20 @@ func migrateStreamWithFileBasedAndProgress(
 	}
 
 	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
-	return stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
+	err = stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
+	if err != nil {
+		return nil, err
+	}
+	return visitor.getSegmentSuffixes(), err
 }
 
 // countStreamParts counts the total number of parts in the given time range.
-func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, intervalRule storage.IntervalRule) (int, error) {
+func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, error) {
 	// Create a simple visitor to count parts
 	partCounter := &partCountVisitor{}
 
 	// Use the existing VisitStreamsInTimeRange function to count parts
-	err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, intervalRule)
+	err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +84,7 @@ type partCountVisitor struct {
 }
 
 // VisitSeries implements stream.Visitor.
-func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _, _ string, _ []common.ShardID) error {
 	return nil
 }
 
@@ -111,32 +100,17 @@ func (pcv *partCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.
 }
 
 // migrateMeasureWithFileBasedAndProgress performs file-based measure migration with progress tracking.
-func migrateMeasureWithFileBasedAndProgress(
-	tsdbRootPath string,
-	timeRange timestamp.TimeRange,
-	group *commonv1.Group,
-	nodeLabels map[string]string,
-	nodes []*databasev1.Node,
-	metadata metadata.Repo,
-	logger *logger.Logger,
-	progress *Progress,
-	chunkSize int,
-) error {
-	// Use parseGroup function to get sharding parameters and TTL
-	shardNum, replicas, ttl, selector, client, err := parseGroup(group, nodeLabels, nodes, logger, metadata)
-	if err != nil {
-		return err
-	}
-	defer client.GracefulStop()
-
-	// Convert TTL to IntervalRule using storage.MustToIntervalRule
-	intervalRule := storage.MustToIntervalRule(ttl)
+func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+	logger *logger.Logger, progress *Progress, chunkSize int,
+) ([]string, error) {
+	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
+	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
 
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
 	// Count total parts before starting migration
-	totalParts, err := countMeasureParts(tsdbRootPath, timeRange, intervalRule)
+	totalParts, err := countMeasureParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to count measure parts, proceeding without part count")
 	} else {
@@ -144,7 +118,10 @@ func migrateMeasureWithFileBasedAndProgress(
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
-	visitor := newMeasureMigrationVisitor(group, shardNum, replicas, selector, client, logger, progress, chunkSize, targetStageInterval)
+	visitor := newMeasureMigrationVisitor(
+		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		logger, progress, chunkSize, targetStageInterval,
+	)
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking
@@ -153,16 +130,20 @@ func migrateMeasureWithFileBasedAndProgress(
 	}
 
 	// Use the existing VisitMeasuresInTimeRange function with our file-based visitor
-	return measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, visitor, intervalRule)
+	err = measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
+	if err != nil {
+		return nil, err
+	}
+	return visitor.getSegments(), err
 }
 
 // countMeasureParts counts the total number of parts in the given time range.
-func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, intervalRule storage.IntervalRule) (int, error) {
+func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, error) {
 	// Create a simple visitor to count parts
 	partCounter := &measurePartCountVisitor{}
 
 	// Use the existing VisitMeasuresInTimeRange function to count parts
-	err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, intervalRule)
+	err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
 		return 0, err
 	}
@@ -176,7 +157,7 @@ type measurePartCountVisitor struct {
 }
 
 // VisitSeries implements measure.Visitor.
-func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _, _ string, _ []common.ShardID) error {
 	return nil
 }
 

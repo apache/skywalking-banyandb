@@ -46,6 +46,7 @@ type streamMigrationVisitor struct {
 	progress            *Progress // Progress tracker for migration states
 	lfs                 fs.FileSystem
 	group               string
+	segmentSuffixes     []string
 	targetShardNum      uint32               // From parseGroup - target shard count
 	replicas            uint32               // From parseGroup - replica count
 	chunkSize           int                  // Chunk size for streaming data
@@ -71,8 +72,13 @@ func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32,
 	}
 }
 
+func (mv *streamMigrationVisitor) getSegmentSuffixes() []string {
+	return mv.segmentSuffixes
+}
+
 // VisitSeries implements stream.Visitor.
-func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
+func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, segmentSuffix, seriesIndexPath string, shardIDs []common.ShardID) error {
+	mv.segmentSuffixes = append(mv.segmentSuffixes, segmentSuffix)
 	mv.logger.Info().
 		Str("path", seriesIndexPath).
 		Int64("min_timestamp", segmentTR.Start.UnixNano()).
