@@ -1,0 +1,17 @@
+# Quick start docker-compose file for BanyanDB MCP Server testing
+# This starts BanyanDB in standalone mode with HTTP API enabled
+
+services:
+  banyandb:
+    image: ghcr.io/apache/skywalking-banyandb:3122e6f59b85ae6cc41617a2512f76f5e1cdf45e
+    container_name: banyandb
+    command: standalone
+    ports:
+      - "17912:17912"  # gRPC port
+      - "17913:17913"  # HTTP port (used by MCP server)
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:17913/api/v1/bydbql/query"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
