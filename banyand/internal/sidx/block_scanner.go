@@ -108,6 +108,11 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		return
 	}
 
+	batchThreshold := bsn.batchSize
+	if batchThreshold <= 0 {
+		batchThreshold = blockScannerBatchSize
+	}
+
 	var totalBlockBytes uint64
 	for it.nextBlock() {
 		if !bsn.checkContext(ctx) {
@@ -138,7 +143,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		totalBlockBytes += blockSize
 
 		// Check if batch is full
-		if len(batch.bss) >= bsn.batchSize || len(batch.bss) >= cap(batch.bss) {
+		if len(batch.bss) >= batchThreshold || len(batch.bss) >= cap(batch.bss) {
 			if !bsn.sendBatch(ctx, blockCh, batch) {
 				if dl := bsn.l.Debug(); dl.Enabled() {
 					dl.Int("batch.len", len(batch.bss)).Msg("context canceled while sending block")

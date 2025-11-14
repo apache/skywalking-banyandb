@@ -18,7 +18,6 @@
 package sidx
 
 import (
-	"encoding/binary"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -34,19 +33,6 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
-
-func marshalStrArr(strArr [][]byte) []byte {
-	if len(strArr) == 0 {
-		return []byte{}
-	}
-	var result []byte
-	result = binary.LittleEndian.AppendUint32(result, uint32(len(strArr)))
-	for _, str := range strArr {
-		result = binary.LittleEndian.AppendUint32(result, uint32(len(str)))
-		result = append(result, str...)
-	}
-	return result
-}
 
 var conventionalBlock = block{
 	userKeys: []int64{1, 2},

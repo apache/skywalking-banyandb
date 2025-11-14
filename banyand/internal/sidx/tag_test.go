@@ -121,10 +121,10 @@ func TestEncodeDecodeBloomFilter_RoundTrip(t *testing.T) {
 	// Test round-trip encoding and decoding
 	testCases := []struct {
 		name          string
-		expectedItems int
 		itemsToAdd    [][]byte
 		itemsToCheck  [][]byte
 		shouldContain []bool
+		expectedItems int
 	}{
 		{
 			name:          "small filter",

@@ -286,8 +286,15 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	tdw.MustWrite(bb.Buf)
 
 	// Create and write bloom filter at write time using unique values
-	uniqueValues := make(map[string]struct{})
-	uniqueEntries := make([][]byte, 0)
+	uniqueValues := td.uniqueValues
+	if uniqueValues == nil {
+		uniqueValues = make(map[string]struct{})
+		td.uniqueValues = uniqueValues
+	} else {
+		for k := range uniqueValues {
+			delete(uniqueValues, k)
+		}
+	}
 
 	var (
 		minVal    int64
@@ -327,7 +334,6 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 			return
 		}
 		uniqueValues[key] = struct{}{}
-		uniqueEntries = append(uniqueEntries, v)
 	}
 
 	for i := range td.values {
@@ -340,9 +346,9 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		addUnique(td.values[i].value)
 	}
 
-	bf := generateBloomFilter(len(uniqueEntries))
-	for _, v := range uniqueEntries {
-		bf.Add(v)
+	bf := generateBloomFilter(len(uniqueValues))
+	for v := range uniqueValues {
+		bf.Add(convert.StringToBytes(v))
 	}
 
 	bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)

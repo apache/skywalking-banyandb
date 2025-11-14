@@ -163,9 +163,9 @@ func TestBlock_ProcessTag_WithArrValues(t *testing.T) {
 	assert.Equal(t, 2, len(b.tags["arr_tag"].values[0].valueArr))
 	assert.Equal(t, "a", string(b.tags["arr_tag"].values[0].valueArr[0]))
 	assert.Equal(t, "b", string(b.tags["arr_tag"].values[0].valueArr[1]))
-	
+
 	// Check the second element has value
 	assert.Equal(t, "c", string(b.tags["arr_tag"].values[1].value))
-	
+
 	// Note: bloom filter is now created at write time, not during processTag
 }

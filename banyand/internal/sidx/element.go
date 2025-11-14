@@ -52,22 +52,6 @@ func (t *tag) reset() {
 	t.valueType = pbv1.ValueTypeUnknown
 }
 
-// marshal marshals the tag value to a byte slice.
-func (t *tag) marshal() []byte {
-	if t.valueArr != nil {
-		var dst []byte
-		for i := range t.valueArr {
-			if t.valueType == pbv1.ValueTypeInt64Arr {
-				dst = append(dst, t.valueArr[i]...)
-				continue
-			}
-			dst = encoding.MarshalVarArray(dst, t.valueArr[i])
-		}
-		return dst
-	}
-	return t.value
-}
-
 func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte, error) {
 	if valueType == pbv1.ValueTypeInt64Arr {
 		for i := 0; i < len(src); i += 8 {

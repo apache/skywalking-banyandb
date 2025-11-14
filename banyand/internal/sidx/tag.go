@@ -46,10 +46,11 @@ type tagMetadata struct {
 
 // tagData represents the runtime data for a tag with filtering capabilities.
 type tagData struct {
-	values    []tagRow
-	tmpBytes  [][]byte // Temporary buffer for marshaling/unmarshaling to avoid allocations
-	name      string
-	valueType pbv1.ValueType
+	uniqueValues map[string]struct{}
+	name         string
+	values       []tagRow
+	tmpBytes     [][]byte
+	valueType    pbv1.ValueType
 }
 
 type tagRow struct {
@@ -120,6 +121,11 @@ func (td *tagData) reset() {
 		td.tmpBytes[i] = nil
 	}
 	td.tmpBytes = td.tmpBytes[:0]
+
+	// Reset uniqueValues map for reuse
+	for k := range td.uniqueValues {
+		delete(td.uniqueValues, k)
+	}
 }
 
 // reset clears tagMetadata for reuse in object pool.
