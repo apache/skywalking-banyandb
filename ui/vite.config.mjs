@@ -25,9 +25,12 @@ import vue from '@vitejs/plugin-vue';
 import { loadEnv } from 'vite';
 
 export default ({ mode }) => {
-  const { VITE_API_PROXY, VITE_MONITOR_PROXY } = loadEnv(mode, process.cwd());
+  const env = loadEnv(mode, process.cwd(), '');
+  const { VITE_API_PROXY, VITE_MONITOR_PROXY } = env;
+  const isProduction = mode === 'production';
 
   return {
+    cacheDir: fileURLToPath(new URL('./node_modules/.vite-ui', import.meta.url)),
     plugins: [
       AutoImport({
         resolvers: [ElementPlusResolver()],
@@ -40,12 +43,61 @@ export default ({ mode }) => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
+        'vue-demi': 'vue-demi/lib/index.mjs',
       },
+    },
+    optimizeDeps: {
+      include: [
+        '@tanstack/vue-query',
+        'codemirror',
+        'echarts',
+        'element-plus/es',
+        'vue-demi',
+        'vue-router',
+      ],
     },
     css: {
       preprocessorOptions: {
         scss: {
           api: 'modern-compiler',
+        },
+      },
+    },
+    esbuild: {
+      drop: isProduction ? ['console', 'debugger'] : [],
+    },
+    define: {
+      __VUE_OPTIONS_API__: false,
+      __VUE_PROD_DEVTOOLS__: false,
+    },
+    build: {
+      target: 'es2019',
+      cssCodeSplit: true,
+      sourcemap: false,
+      chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) {
+              return;
+            }
+
+            if (id.includes('element-plus')) {
+              return 'element-plus';
+            }
+            if (id.includes('codemirror')) {
+              return 'codemirror';
+            }
+            if (id.includes('echarts')) {
+              return 'echarts';
+            }
+            if (id.includes('@tanstack')) {
+              return 'vue-query';
+            }
+            if (id.includes('vue-router')) {
+              return 'vue-router';
+            }
+          },
         },
       },
     },

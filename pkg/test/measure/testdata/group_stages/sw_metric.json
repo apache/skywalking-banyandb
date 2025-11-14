@@ -11,7 +11,7 @@
     },
     "ttl": {
       "unit": "UNIT_DAY",
-      "num": 7
+      "num": 3
     },
     "stages": [
       {
@@ -23,7 +23,7 @@
         },
         "ttl": {
           "unit": "UNIT_DAY",
-          "num": 30
+          "num": 7
         },
         "node_selector": "type=warm"
       }

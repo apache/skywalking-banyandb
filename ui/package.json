@@ -11,6 +11,7 @@
     "format": "prettier --write  \"src/**/*.{js,tsx,css,scss,vue,html,mjs}\""
   },
   "dependencies": {
+    "@tanstack/vue-query": "^5.90.7",
     "@element-plus/icons-vue": "^2.3.1",
     "codemirror": "^5.65.16",
     "echarts": "^5.5.0",

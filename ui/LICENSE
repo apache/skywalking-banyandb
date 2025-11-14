@@ -73,6 +73,9 @@ MIT licenses
     @parcel/watcher-linux-x64-glibc 2.5.1 MIT
     @parcel/watcher-linux-x64-musl 2.5.1 MIT
     @popperjs/core 2.11.7 MIT
+    @tanstack/match-sorter-utils 8.19.4 MIT
+    @tanstack/query-core 5.90.7 MIT
+    @tanstack/vue-query 5.90.7 MIT
     @types/lodash 4.17.20 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.16 MIT
@@ -124,6 +127,7 @@ MIT licenses
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 4.1.2 MIT
+    remove-accents 0.5.0 MIT
     safe-buffer 5.1.2 MIT
     sass 1.93.1 MIT
     setimmediate 1.0.5 MIT

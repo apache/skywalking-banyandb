@@ -490,4 +490,65 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 			require.Equal(t, common.ShardID(0), shard.shardID)
 		}
 	})
+
+	t.Run("visit with edge case time range boundary", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		// Create TSDB with daily segments
+		opts := TSDBOpts[*MockTSTable, any]{
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+			TTL:             IntervalRule{Unit: DAY, Num: 7},
+			ShardNum:        1,
+			TSTableCreator:  MockTSTableCreator,
+		}
+
+		ctx := context.Background()
+		mc := timestamp.NewMockClock()
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2025-10-31 00:00:00", time.Local)
+		require.NoError(t, err)
+		mc.Set(ts)
+		ctx = timestamp.SetClock(ctx, mc)
+
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
+		require.NoError(t, err)
+		require.NotNil(t, tsdb)
+
+		segmentDates := []time.Time{
+			ts,
+			ts.AddDate(0, 0, 1),
+			ts.AddDate(0, 0, 2),
+		}
+
+		for _, date := range segmentDates {
+			mc.Set(date)
+			seg, segErr := tsdb.CreateSegmentIfNotExist(date)
+			require.NoError(t, segErr)
+
+			// Create shard for each segment
+			shard, shardErr := seg.CreateTSTableIfNotExist(common.ShardID(0))
+			require.NoError(t, shardErr)
+			require.NotNil(t, shard)
+			seg.DecRef()
+		}
+
+		tsdb.Close()
+
+		visitor := NewTestVisitor()
+		tsPlus1Min, err := time.ParseInLocation("2006-01-02 15:04:05", "2025-11-01 00:01:00", time.Local)
+		require.NoError(t, err)
+		timeRange := timestamp.NewSectionTimeRange(time.Time{}, tsPlus1Min)
+		err = VisitSegmentsInTimeRange(dir, timeRange, visitor, opts.SegmentInterval)
+		require.NoError(t, err)
+		require.Len(t, visitor.visitedSeries, 1)
+		// Should only oct 31 be including
+		expectedSeriesPath := filepath.Join(dir, "seg-20251031", seriesIndexDirName)
+		require.Equal(t, expectedSeriesPath, visitor.visitedSeries[0])
+		require.Len(t, visitor.visitedShards, 1)
+		require.Equal(t, common.ShardID(0), visitor.visitedShards[0].shardID)
+		expectedShardPath := filepath.Join(dir, "seg-20251031", "shard-0")
+		require.Equal(t, expectedShardPath, visitor.visitedShards[0].path)
+	})
 }
