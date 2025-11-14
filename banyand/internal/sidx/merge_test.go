@@ -18,7 +18,6 @@
 package sidx
 
 import (
-	"encoding/binary"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -35,19 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-func marshalStrArr(strArr [][]byte) []byte {
-	if len(strArr) == 0 {
-		return []byte{}
-	}
-	var result []byte
-	result = binary.LittleEndian.AppendUint32(result, uint32(len(strArr)))
-	for _, str := range strArr {
-		result = binary.LittleEndian.AppendUint32(result, uint32(len(str)))
-		result = append(result, str...)
-	}
-	return result
-}
-
 var conventionalBlock = block{
 	userKeys: []int64{1, 2},
 	data:     [][]byte{[]byte("data1"), []byte("data2")},
@@ -55,7 +41,10 @@ var conventionalBlock = block{
 		"service": {
 			name:      "service",
 			valueType: pbv1.ValueTypeStr,
-			values:    [][]byte{[]byte("service1"), []byte("service2")},
+			values: []tagRow{
+				{value: []byte("service1")},
+				{value: []byte("service2")},
+			},
 		},
 	},
 }
@@ -67,11 +56,11 @@ var mergedBlock = block{
 		"arrTag": {
 			name:      "arrTag",
 			valueType: pbv1.ValueTypeStrArr,
-			values: [][]byte{
-				marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
-				marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
-				marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
-				marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+			values: []tagRow{
+				{valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+				{valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+				{valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+				{valueArr: [][]byte{[]byte("value7"), []byte("value8")}},
 			},
 		},
 	},
@@ -84,13 +73,13 @@ var duplicatedMergedBlock = block{
 		"arrTag": {
 			name:      "arrTag",
 			valueType: pbv1.ValueTypeStrArr,
-			values: [][]byte{
-				marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
-				marshalStrArr([][]byte{[]byte("duplicated1")}),
-				marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
-				marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
-				marshalStrArr([][]byte{[]byte("duplicated2")}),
-				marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+			values: []tagRow{
+				{valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+				{valueArr: [][]byte{[]byte("duplicated1")}},
+				{valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+				{valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+				{valueArr: [][]byte{[]byte("duplicated2")}},
+				{valueArr: [][]byte{[]byte("value7"), []byte("value8")}},
 			},
 		},
 	},
@@ -131,9 +120,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
-								marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
 							},
 						},
 					},
@@ -147,9 +136,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
-								marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+								{valueArr: [][]byte{[]byte("value7"), []byte("value8")}},
 							},
 						},
 					},
@@ -167,9 +156,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
-								marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
 							},
 						},
 					},
@@ -183,9 +172,9 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
-								marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+								{valueArr: [][]byte{[]byte("value7"), []byte("value8")}},
 							},
 						},
 					},
@@ -203,10 +192,10 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value1"), []byte("value2")}),
-								marshalStrArr([][]byte{[]byte("duplicated1")}),
-								marshalStrArr([][]byte{[]byte("duplicated2")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value1"), []byte("value2")}},
+								{valueArr: [][]byte{[]byte("duplicated1")}},
+								{valueArr: [][]byte{[]byte("duplicated2")}},
 							},
 						},
 					},
@@ -220,10 +209,10 @@ func Test_mergeTwoBlocks(t *testing.T) {
 						"arrTag": {
 							name:      "arrTag",
 							valueType: pbv1.ValueTypeStrArr,
-							values: [][]byte{
-								marshalStrArr([][]byte{[]byte("value3"), []byte("value4")}),
-								marshalStrArr([][]byte{[]byte("value5"), []byte("value6")}),
-								marshalStrArr([][]byte{[]byte("value7"), []byte("value8")}),
+							values: []tagRow{
+								{valueArr: [][]byte{[]byte("value3"), []byte("value4")}},
+								{valueArr: [][]byte{[]byte("value5"), []byte("value6")}},
+								{valueArr: [][]byte{[]byte("value7"), []byte("value8")}},
 							},
 						},
 					},

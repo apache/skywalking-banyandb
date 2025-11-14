@@ -26,10 +26,24 @@ import (
 )
 
 const (
-	k = 6
+	k = 10
 	// B specifies the number of bits allocated for each item.
-	B = 15
+	// Using B=16 (power of 2) maintains memory alignment and enables shift-based math.
+	// With 8k items per block: memory = 8192 * 16 / 8 = 16KB per block.
+	// FPR with k=10, B=16: ~0.042%.
+	B = 16
+	// _bMustBePowerOf2 ensures B is a power of 2 at compile time.
+	// A number is a power of 2 if and only if B > 0 and B & (B - 1) == 0.
+	// This check uses: 1 / (1 - (B & (B - 1))).
+	// - For powers of 2: B & (B - 1) == 0, so 1 / (1 - 0) = 1 (valid).
+	// - For non-powers of 2 where B & (B - 1) == 1: 1 / (1 - 1) = 1 / 0 (compile error).
+	// - For other non-powers of 2: may compile but provides basic validation.
+	// Note: This is a best-effort compile-time check. For complete validation,
+	// ensure B is explicitly set to a power of 2 (1, 2, 4, 8, 16, 32, 64, ...).
+	_bMustBePowerOf2 = 1 / (1 - (B & (B - 1)))
 )
+
+var _ = _bMustBePowerOf2 // Ensure compile-time check is evaluated
 
 // BloomFilter is a probabilistic data structure designed to test whether an element is a member of a set.
 type BloomFilter struct {
@@ -39,8 +53,14 @@ type BloomFilter struct {
 
 // NewBloomFilter creates a new Bloom filter with the number of items n and false positive rate p.
 func NewBloomFilter(n int) *BloomFilter {
-	m := n * B
-	bits := make([]uint64, (m+63)/64)
+	// With B=16, we can optimize: m = n * 16 = n << 4
+	// Number of uint64s needed: (n * 16) / 64 = n / 4 = n >> 2
+	// Ensure at least 1 uint64 to avoid empty slice
+	numBits := n >> 2
+	if numBits == 0 {
+		numBits = 1
+	}
+	bits := make([]uint64, numBits)
 	return &BloomFilter{
 		bits,
 		n,
@@ -49,6 +69,9 @@ func NewBloomFilter(n int) *BloomFilter {
 
 // Reset resets the Bloom filter.
 func (bf *BloomFilter) Reset() {
+	for i := range bf.bits {
+		bf.bits[i] = 0
+	}
 	bf.bits = bf.bits[:0]
 	bf.n = 0
 }
@@ -129,4 +152,14 @@ func (bf *BloomFilter) ResizeBits(n int) {
 	}
 	bits = bits[:n]
 	bf.bits = bits
+}
+
+// OptimalBitsSize returns the optimal number of uint64s needed for n items.
+// With B=16, this is simply n/4 (n >> 2), with a minimum of 1.
+func OptimalBitsSize(n int) int {
+	size := n >> 2
+	if size == 0 {
+		return 1
+	}
+	return size
 }

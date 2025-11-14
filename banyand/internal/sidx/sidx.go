@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -251,6 +252,147 @@ type blockCursor struct {
 	idx      int
 }
 
+type blockCursorBuilder struct {
+	bc      *blockCursor
+	block   *block
+	metrics *batchMetrics
+	seen    map[uint64][][]byte
+	minKey  int64
+	maxKey  int64
+	hasMin  bool
+	hasMax  bool
+}
+
+func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Logger) error {
+	if req.TagFilter == nil {
+		return nil
+	}
+
+	tags := make([]*modelv1.Tag, 0, len(b.block.tags))
+	decoder := req.TagFilter.GetDecoder()
+
+	for i := 0; i < len(b.block.userKeys); i++ {
+		dataBytes := b.block.data[i]
+		hash, duplicate := b.checkDuplicate(dataBytes, true)
+		if duplicate {
+			continue
+		}
+
+		tags = b.collectTagsForFilter(tags, decoder, i)
+
+		matched, err := req.TagFilter.Match(tags)
+		if err != nil {
+			log.Error().Err(err).Msg("tag filter match error")
+			return err
+		}
+		if !matched {
+			continue
+		}
+
+		b.appendElement(i, hash, dataBytes)
+	}
+
+	return nil
+}
+
+func (b *blockCursorBuilder) processWithoutFilter() {
+	for i := 0; i < len(b.block.userKeys); i++ {
+		dataBytes := b.block.data[i]
+		hash, duplicate := b.checkDuplicate(dataBytes, false)
+		if duplicate {
+			continue
+		}
+
+		b.appendElement(i, hash, dataBytes)
+	}
+}
+
+func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte) *modelv1.TagValue, index int) []*modelv1.Tag {
+	buf = buf[:0]
+	for tagName, tagData := range b.block.tags {
+		if index >= len(tagData.values) {
+			continue
+		}
+
+		row := &tagData.values[index]
+		var marshaledValue []byte
+		if row.valueArr != nil || row.value != nil {
+			marshaledValue = marshalTagRow(row, tagData.valueType)
+		}
+		if marshaledValue == nil {
+			continue
+		}
+
+		tagValue := decoder(tagData.valueType, marshaledValue)
+		if tagValue != nil {
+			buf = append(buf, &modelv1.Tag{
+				Key:   tagName,
+				Value: tagValue,
+			})
+		}
+	}
+	return buf
+}
+
+func (b *blockCursorBuilder) appendElement(index int, hash uint64, dataBytes []byte) {
+	key := b.block.userKeys[index]
+	if !b.keyInRange(key) {
+		return
+	}
+
+	b.markSeen(hash, dataBytes)
+
+	b.bc.userKeys = append(b.bc.userKeys, key)
+
+	dataCopy := make([]byte, len(dataBytes))
+	copy(dataCopy, dataBytes)
+	b.bc.data = append(b.bc.data, dataCopy)
+
+	for tagName, tagData := range b.block.tags {
+		if index < len(tagData.values) {
+			row := &tagData.values[index]
+			tag := Tag{
+				Name:      tagName,
+				ValueType: tagData.valueType,
+			}
+			if len(row.valueArr) > 0 {
+				tag.ValueArr = row.valueArr
+			} else if len(row.value) > 0 {
+				tag.Value = row.value
+			}
+			b.bc.tags[tagName] = append(b.bc.tags[tagName], tag)
+		}
+	}
+}
+
+func (b *blockCursorBuilder) checkDuplicate(dataBytes []byte, recordMetric bool) (uint64, bool) {
+	hash := convert.Hash(dataBytes)
+	bucket := b.seen[hash]
+	for _, existing := range bucket {
+		if bytes.Equal(existing, dataBytes) {
+			if recordMetric && b.metrics != nil {
+				b.metrics.elementsDeduplicated.Add(1)
+			}
+			return hash, true
+		}
+	}
+	return hash, false
+}
+
+func (b *blockCursorBuilder) markSeen(hash uint64, dataBytes []byte) {
+	b.seen[hash] = append(b.seen[hash], dataBytes)
+}
+
+func (b *blockCursorBuilder) keyInRange(key int64) bool {
+	if b.hasMin && key < b.minKey {
+		return false
+	}
+	if b.hasMax && key > b.maxKey {
+		return false
+	}
+	return true
+}
+
 // init initializes the block cursor.
 func (bc *blockCursor) init(p *part, bm *blockMetadata, req QueryRequest) {
 	bc.p = p
@@ -288,6 +430,19 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 		return false
 	}
 
+	var (
+		minKey int64
+		maxKey int64
+		hasMin = req.MinKey != nil
+		hasMax = req.MaxKey != nil
+	)
+	if hasMin {
+		minKey = *req.MinKey
+	}
+	if hasMax {
+		maxKey = *req.MaxKey
+	}
+
 	// Pre-allocate slices for filtered data (optimize for common case where most elements match)
 	bc.userKeys = make([]int64, 0, totalElements)
 	bc.data = make([][]byte, 0, totalElements)
@@ -299,118 +454,23 @@ func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanRes
 	}
 
 	// Track seen data for deduplication using hash buckets with collision checks
-	seenData := make(map[uint64][][]byte)
+	builder := &blockCursorBuilder{
+		bc:      bc,
+		block:   tmpBlock,
+		hasMin:  hasMin,
+		minKey:  minKey,
+		hasMax:  hasMax,
+		maxKey:  maxKey,
+		metrics: metrics,
+		seen:    make(map[uint64][][]byte),
+	}
 
-	// Single loop: filter and copy data in one pass
 	if req.TagFilter != nil {
-		tags := make([]*modelv1.Tag, 0, len(tmpBlock.tags))
-		decoder := req.TagFilter.GetDecoder()
-
-		for i := 0; i < totalElements; i++ {
-			// Check for duplicate data before processing via hash + bytes.Equal on collisions
-			dataBytes := tmpBlock.data[i]
-			h := convert.Hash(dataBytes)
-			bucket := seenData[h]
-			duplicate := false
-			for _, b := range bucket {
-				if bytes.Equal(b, dataBytes) {
-					duplicate = true
-					break
-				}
-			}
-			if duplicate {
-				if metrics != nil {
-					metrics.elementsDeduplicated.Add(1)
-				}
-				continue
-			}
-
-			// Build tags slice for this element
-			tags = tags[:0]
-			for tagName, tagData := range tmpBlock.tags {
-				if i < len(tagData.values) && tagData.values[i] != nil {
-					// Decode []byte to *modelv1.TagValue using the provided decoder
-					tagValue := decoder(tagData.valueType, tagData.values[i])
-					if tagValue != nil {
-						tags = append(tags, &modelv1.Tag{
-							Key:   tagName,
-							Value: tagValue,
-						})
-					}
-				}
-			}
-
-			// Apply filter
-			matched, err := req.TagFilter.Match(tags)
-			if err != nil {
-				s.l.Error().Err(err).Msg("tag filter match error")
-				return false
-			}
-
-			if matched {
-				// Mark data as seen
-				seenData[h] = append(bucket, dataBytes)
-
-				// Copy userKey
-				bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
-
-				// Copy data
-				dataCopy := make([]byte, len(tmpBlock.data[i]))
-				copy(dataCopy, tmpBlock.data[i])
-				bc.data = append(bc.data, dataCopy)
-
-				// Copy tags
-				for tagName, tagData := range tmpBlock.tags {
-					if i < len(tagData.values) {
-						bc.tags[tagName] = append(bc.tags[tagName], Tag{
-							Name:      tagName,
-							Value:     tagData.values[i],
-							ValueType: tagData.valueType,
-						})
-					}
-				}
-			}
+		if err := builder.processWithFilter(req, s.l); err != nil {
+			return false
 		}
 	} else {
-		// No filter - copy all elements but skip duplicates
-		for i := 0; i < totalElements; i++ {
-			// Check for duplicate data via hash + bytes.Equal on collisions
-			dataBytes := tmpBlock.data[i]
-			h := convert.Hash(dataBytes)
-			bucket := seenData[h]
-			duplicate := false
-			for _, b := range bucket {
-				if bytes.Equal(b, dataBytes) {
-					duplicate = true
-					break
-				}
-			}
-			if duplicate {
-				continue
-			}
-
-			// Mark data as seen
-			seenData[h] = append(bucket, dataBytes)
-
-			// Copy userKey
-			bc.userKeys = append(bc.userKeys, tmpBlock.userKeys[i])
-
-			// Copy data
-			dataCopy := make([]byte, len(tmpBlock.data[i]))
-			copy(dataCopy, tmpBlock.data[i])
-			bc.data = append(bc.data, dataCopy)
-
-			// Copy tags
-			for tagName, tagData := range tmpBlock.tags {
-				if i < len(tagData.values) {
-					bc.tags[tagName] = append(bc.tags[tagName], Tag{
-						Name:      tagName,
-						Value:     tagData.values[i],
-						ValueType: tagData.valueType,
-					})
-				}
-			}
-		}
+		builder.processWithoutFilter()
 	}
 
 	if metrics != nil {

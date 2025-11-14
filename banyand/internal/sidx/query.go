@@ -215,9 +215,10 @@ func (s *sidx) prepareStreamingResources(
 		minKey:    minKey,
 		maxKey:    maxKey,
 		asc:       asc,
+		batchSize: req.MaxBatchSize,
 	}
 
-	blockCh := make(chan *blockScanResultBatch, 1)
+	blockCh := make(chan *blockScanResultBatch)
 	go func() {
 		bs.scan(ctx, blockCh)
 		close(blockCh)
@@ -259,38 +260,27 @@ func (s *sidx) processStreamingLoop(
 	}
 
 	scannerBatchCount := 0
-	for {
-		select {
-		case <-ctx.Done():
+	for batch := range resources.blockCh {
+		scannerBatchCount++
+		if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, metrics); err != nil {
 			if loopSpan != nil {
-				loopSpan.Tag("termination_reason", "context_canceled")
-				loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
-			}
-			return ctx.Err()
-		case batch, ok := <-resources.blockCh:
-			if !ok {
-				if loopSpan != nil {
-					loopSpan.Tag("termination_reason", "channel_closed")
-					loopSpan.Tagf("total_scanner_batches", "%d", scannerBatchCount)
+				if errors.Is(err, context.Canceled) {
+					loopSpan.Tag("termination_reason", "context_canceled")
+					loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
+				} else {
+					loopSpan.Tag("termination_reason", "batch_error")
+					loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
+					loopSpan.Error(err)
 				}
-				return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 			}
-			scannerBatchCount++
-			if err := s.handleStreamingBatch(ctx, batch, resources, req, resultsCh, metrics); err != nil {
-				if loopSpan != nil {
-					if errors.Is(err, context.Canceled) {
-						loopSpan.Tag("termination_reason", "context_canceled")
-						loopSpan.Tagf("scanner_batches_before_cancel", "%d", scannerBatchCount)
-					} else {
-						loopSpan.Tag("termination_reason", "batch_error")
-						loopSpan.Tagf("scanner_batches_before_error", "%d", scannerBatchCount)
-						loopSpan.Error(err)
-					}
-				}
-				return err
-			}
+			return err
 		}
 	}
+	if loopSpan != nil {
+		loopSpan.Tag("termination_reason", "channel_closed")
+		loopSpan.Tagf("total_scanner_batches", "%d", scannerBatchCount)
+	}
+	return resources.heap.merge(ctx, req.MaxBatchSize, resultsCh, metrics)
 }
 
 func (s *sidx) handleStreamingBatch(
@@ -301,9 +291,9 @@ func (s *sidx) handleStreamingBatch(
 	resultsCh chan<- *QueryResponse,
 	metrics *batchMetrics,
 ) error {
+	defer releaseBlockScanResultBatch(batch)
 	if batch.err != nil {
 		err := batch.err
-		releaseBlockScanResultBatch(batch)
 		return err
 	}
 
@@ -314,7 +304,6 @@ func (s *sidx) handleStreamingBatch(
 	}
 
 	cursors, cursorsErr := s.buildCursorsForBatch(ctx, batch, resources.tagsToLoad, req, resources.asc, metrics)
-	releaseBlockScanResultBatch(batch)
 	if cursorsErr != nil {
 		return cursorsErr
 	}
