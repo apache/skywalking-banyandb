@@ -16,7 +16,7 @@
     "codemirror": "^5.65.16",
     "echarts": "^5.5.0",
     "element-plus": "^2.11.3",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.1.1",
     "jsonfile": "^6.1.0",
     "jszip": "^3.10.1",
     "mitt": "^3.0.1",
