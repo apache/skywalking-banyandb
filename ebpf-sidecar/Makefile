@@ -101,7 +101,11 @@ check-bpftool:
 	@echo "Checking for bpftool..."
 	@if ! command -v bpftool >/dev/null 2>&1; then \
 		echo "bpftool not found. Installing..."; \
-		sudo $(MAKE) install-bpftool-auto; \
+		if [ "$$(id -u)" = "0" ]; then \
+			$(MAKE) install-bpftool-auto; \
+		else \
+			sudo $(MAKE) install-bpftool-auto; \
+		fi; \
 	fi
 	@# Check for Ubuntu wrapper script issues
 	@ver="$$(bpftool version 2>&1 || true)"; \
