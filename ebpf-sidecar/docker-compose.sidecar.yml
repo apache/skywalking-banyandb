@@ -15,8 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Full development stack with monitoring
-# For minimal sidecar deployment, use: docker-compose -f docker-compose.sidecar.yml up
+# Simplified sidecar deployment - only BanyanDB + eBPF Sidecar
+# This mimics the Kubernetes sidecar pattern
 
 version: '3.8'
 
@@ -28,7 +28,6 @@ services:
     ports:
       - "17912:17912"  # gRPC port
       - "17913:17913"  # HTTP port
-      - "18080:18080"  # eBPF sidecar metrics (shared network)
     environment:
       - BANYANDB_MODE=standalone
       - BANYANDB_LOGGING_LEVEL=info
@@ -42,7 +41,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # eBPF Sidecar - true sidecar pattern (shares PID namespace with BanyanDB)
+  # eBPF Sidecar - true sidecar pattern
   ebpf-sidecar:
     build:
       context: ../
@@ -50,7 +49,7 @@ services:
     image: banyandb/ebpf-sidecar:latest
     container_name: ebpf-sidecar
     privileged: true     # Required for eBPF
-    pid: "service:banyandb"  # Share PID namespace with BanyanDB
+    pid: "service:banyandb"  # Share PID namespace with BanyanDB (key!)
     network_mode: "service:banyandb"  # Share network namespace
     volumes:
       - /sys:/sys:ro
@@ -65,50 +64,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Prometheus for scraping metrics (optional)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-    networks:
-      - banyandb-net
-    depends_on:
-      - banyandb
-    profiles:
-      - monitoring
-
-  # Grafana for visualization (optional)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-    networks:
-      - banyandb-net
-    depends_on:
-      - prometheus
-    profiles:
-      - monitoring
-
 networks:
   banyandb-net:
     driver: bridge
 
 volumes:
   banyandb-data:
-  prometheus-data:
-  grafana-data:
