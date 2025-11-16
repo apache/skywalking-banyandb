@@ -213,58 +213,7 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 		result.Data = append(result.Data, block.data[i])
 		result.SIDs = append(result.SIDs, seriesID)
 		result.PartIDs = append(result.PartIDs, partID)
-
-		// Convert tag map to tag slice for this element
-		elementTags := qr.extractElementTags(block, i)
-		result.Tags = append(result.Tags, elementTags)
 	}
-}
-
-// extractElementTags extracts tags for a specific element with projection support.
-func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
-	var elementTags []Tag
-
-	// Apply tag projection from request
-	if len(qr.request.TagProjection) > 0 {
-		elementTags = make([]Tag, 0, len(qr.request.TagProjection))
-		for _, proj := range qr.request.TagProjection {
-			for _, tagName := range proj.Names {
-				if tagData, exists := block.tags[tagName]; exists && elemIndex < len(tagData.values) {
-					row := &tagData.values[elemIndex]
-					tag := Tag{
-						Name:      tagName,
-						ValueType: tagData.valueType,
-					}
-					if len(row.valueArr) > 0 {
-						tag.ValueArr = row.valueArr
-					} else if len(row.value) > 0 {
-						tag.Value = row.value
-					}
-					elementTags = append(elementTags, tag)
-				}
-			}
-		}
-	} else {
-		// Include all tags if no projection specified
-		elementTags = make([]Tag, 0, len(block.tags))
-		for tagName, tagData := range block.tags {
-			if elemIndex < len(tagData.values) {
-				row := &tagData.values[elemIndex]
-				tag := Tag{
-					Name:      tagName,
-					ValueType: tagData.valueType,
-				}
-				if len(row.valueArr) > 0 {
-					tag.ValueArr = row.valueArr
-				} else if len(row.value) > 0 {
-					tag.Value = row.value
-				}
-				elementTags = append(elementTags, tag)
-			}
-		}
-	}
-
-	return elementTags
 }
 
 // mergeQueryResponseShards merges multiple QueryResponse shards.
@@ -286,7 +235,6 @@ func mergeQueryResponseShards(shards []*QueryResponse, maxElements int) *QueryRe
 		return &QueryResponse{
 			Keys:    make([]int64, 0),
 			Data:    make([][]byte, 0),
-			Tags:    make([][]Tag, 0),
 			SIDs:    make([]common.SeriesID, 0),
 			PartIDs: make([]uint64, 0),
 		}
@@ -323,7 +271,6 @@ func mergeQueryResponseShardsDesc(shards []*QueryResponse, maxElements int) *Que
 		return &QueryResponse{
 			Keys:    make([]int64, 0),
 			Data:    make([][]byte, 0),
-			Tags:    make([][]Tag, 0),
 			SIDs:    make([]common.SeriesID, 0),
 			PartIDs: make([]uint64, 0),
 		}
@@ -393,7 +340,6 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 	result := &QueryResponse{
 		Keys:    make([]int64, 0, limit),
 		Data:    make([][]byte, 0, limit),
-		Tags:    make([][]Tag, 0, limit),
 		SIDs:    make([]common.SeriesID, 0, limit),
 		PartIDs: make([]uint64, 0, limit),
 	}
@@ -419,15 +365,11 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 
 		var (
 			data   []byte
-			tags   []Tag
 			sid    common.SeriesID
 			partID uint64
 		)
 		if idx < len(resp.Data) {
 			data = resp.Data[idx]
-		}
-		if idx < len(resp.Tags) {
-			tags = resp.Tags[idx]
 		}
 		if idx < len(resp.SIDs) {
 			sid = resp.SIDs[idx]
@@ -439,7 +381,6 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
 		result.Data = append(result.Data, data)
-		result.Tags = append(result.Tags, tags)
 		result.SIDs = append(result.SIDs, sid)
 		result.PartIDs = append(result.PartIDs, partID)
 
