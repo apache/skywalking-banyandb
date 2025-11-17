@@ -60,7 +60,7 @@ async function main() {
     return {
       tools: [
         {
-          name: "list_banyandb_resources",
+          name: "list_groups_schemas",
           description:
             "List available resources in BanyanDB (groups, streams, measures, traces, properties). Use this to discover what resources exist before querying.",
           inputSchema: {
@@ -82,7 +82,7 @@ async function main() {
         {
           name: "query_banyandb",
           description:
-            "Query BanyanDB data using natural language description. Supports querying streams, measures, traces, and properties. Use list_banyandb_resources first to discover available resources.",
+            "Query BanyanDB data using natural language description. Supports querying streams, measures, traces, and properties. Use list_groups_schemas first to discover available resources.",
           inputSchema: {
             type: "object",
             properties: {
@@ -117,7 +117,7 @@ async function main() {
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
-    if (name === "list_banyandb_resources") {
+    if (name === "list_groups_schemas") {
       if (!args || typeof args !== "object") {
         throw new Error("Invalid arguments: arguments object is required");
       }
@@ -263,7 +263,7 @@ async function main() {
                         `Try:\n` +
                         `1. Verify BanyanDB is running: curl http://localhost:17913/api/healthz\n` +
                         `2. Check network connectivity\n` +
-                        `3. Use list_banyandb_resources to verify BanyanDB is accessible`,
+                        `3. Use list_groups_schemas to verify BanyanDB is accessible`,
                 },
               ],
             };
@@ -273,7 +273,6 @@ async function main() {
               error.message.includes("does not exist") ||
               error.message.includes("Empty response")) {
             const resourceType = args?.resource_type || "resource";
-            const resourceName = args?.resource_name || "unknown";
             const group = args?.group || "default";
             
             return {
@@ -281,9 +280,9 @@ async function main() {
                 {
                   type: "text",
                   text: `Query failed: ${error.message}\n\n` +
-                        `Tip: Use the list_banyandb_resources tool to discover available resources:\n` +
-                        `- First list groups: list_banyandb_resources with resource_type="groups"\n` +
-                        `- Then list ${resourceType}s: list_banyandb_resources with resource_type="${resourceType}s" and group="${group}"\n` +
+                        `Tip: Use the list_groups_schemas tool to discover available resources:\n` +
+                        `- First list groups: list_groups_schemas with resource_type="groups"\n` +
+                        `- Then list ${resourceType}s: list_groups_schemas with resource_type="${resourceType}s" and group="${group}"\n` +
                         `- Then query using the discovered resource names.`,
                 },
               ],

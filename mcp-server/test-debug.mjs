@@ -111,11 +111,11 @@ setTimeout(() => {
     }
   }, 1000);
   
-  // Call list_banyandb_resources
+  // Call list_groups_schemas
   setTimeout(() => {
     if (initialized) {
       sendMessage('tools/call', {
-        name: 'list_banyandb_resources',
+        name: 'list_groups_schemas',
         arguments: {
           resource_type: 'groups'
         }

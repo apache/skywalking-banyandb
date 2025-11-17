@@ -145,7 +145,7 @@ export class BanyanDBClient {
                "- The resource name or group name might be incorrect\n" +
                "- The time range might not contain any data\n\n" +
                "Try:\n" +
-               "1. Use list_banyandb_resources to verify the resource exists\n" +
+               "1. Use list_groups_schemas to verify the resource exists\n" +
                "2. Check the time range in your query\n" +
                "3. Verify the resource name and group name are correct";
       }
@@ -212,9 +212,9 @@ export class BanyanDBClient {
                "- The measure name or group name might be incorrect\n" +
                "- The time range might not contain any data points\n\n" +
                "Suggestions:\n" +
-               "1. Use list_banyandb_resources to verify the measure exists:\n" +
-               "   - List groups: list_banyandb_resources with resource_type=\"groups\"\n" +
-               "   - List measures: list_banyandb_resources with resource_type=\"measures\" and group=\"<group_name>\"\n" +
+               "1. Use list_groups_schemas to verify the measure exists:\n" +
+               "   - List groups: list_groups_schemas with resource_type=\"groups\"\n" +
+               "   - List measures: list_groups_schemas with resource_type=\"measures\" and group=\"<group_name>\"\n" +
                "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
                "3. Verify data was written to BanyanDB for this measure";
       }
@@ -226,9 +226,9 @@ export class BanyanDBClient {
                "- The measure name or group name might be incorrect\n" +
                "- The time range might not contain any data points\n\n" +
                "Suggestions:\n" +
-               "1. Use list_banyandb_resources to verify the measure exists:\n" +
-               "   - List groups: list_banyandb_resources with resource_type=\"groups\"\n" +
-               "   - List measures: list_banyandb_resources with resource_type=\"measures\" and group=\"<group_name>\"\n" +
+               "1. Use list_groups_schemas to verify the measure exists:\n" +
+               "   - List groups: list_groups_schemas with resource_type=\"groups\"\n" +
+               "   - List measures: list_groups_schemas with resource_type=\"measures\" and group=\"<group_name>\"\n" +
                "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
                "3. Verify data was written to BanyanDB for this measure";
       }
