@@ -41,9 +41,9 @@ func decodeBloomFilter(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
 	n := encoding.BytesToInt64(src)
 	bf.SetN(int(n))
 
-	m := n * filter.B
+	// With B=16, use optimized bit shift calculation
 	bits := make([]uint64, 0)
-	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64((m+63)/64))
+	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64(filter.OptimalBitsSize(int(n))))
 	if err != nil {
 		logger.Panicf("failed to decode Bloom filter: %v", err)
 	}

@@ -125,13 +125,13 @@ func TestSnapshotGetParts(t *testing.T) {
 			snapshot: func() *snapshot {
 				bf1 := filter.NewBloomFilter(0)
 				bf1.SetN(2)
-				bf1.ResizeBits((2*filter.B + 63) / 64)
+				bf1.ResizeBits(filter.OptimalBitsSize(2))
 				bf1.Add(convert.StringToBytes("trace1"))
 				bf1.Add(convert.StringToBytes("trace2"))
 
 				bf2 := filter.NewBloomFilter(0)
 				bf2.SetN(1)
-				bf2.ResizeBits((1*filter.B + 63) / 64)
+				bf2.ResizeBits(filter.OptimalBitsSize(1))
 				bf2.Add(convert.StringToBytes("trace3"))
 
 				return &snapshot{
@@ -182,7 +182,7 @@ func TestSnapshotGetParts(t *testing.T) {
 			snapshot: func() *snapshot {
 				bf := filter.NewBloomFilter(0)
 				bf.SetN(2)
-				bf.ResizeBits((2*filter.B + 63) / 64)
+				bf.ResizeBits(filter.OptimalBitsSize(2))
 				bf.Add(convert.StringToBytes("trace1"))
 				bf.Add(convert.StringToBytes("trace2"))
 

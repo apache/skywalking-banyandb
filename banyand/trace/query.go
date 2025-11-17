@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -522,9 +523,9 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 		defer bigValuePool.Release(bb)
 		var err error
 		for len(value) > 0 {
-			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)
+			bb.Buf, value, err = encoding.UnmarshalVarArray(bb.Buf[:0], value)
 			if err != nil {
-				logger.Panicf("unmarshalVarArray failed: %v", err)
+				logger.Panicf("UnmarshalVarArray failed: %v", err)
 			}
 			values = append(values, string(bb.Buf))
 		}

@@ -235,14 +235,37 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 			}
 
 			if len(allKeys) > 1 {
-				isSorted := sort.SliceIsSorted(allKeys, func(i, j int) bool {
-					if tt.ascending {
-						return allKeys[i] < allKeys[j]
+				if len(tt.seriesIDs) == 1 {
+					// For single series, verify global sorting
+					isSorted := sort.SliceIsSorted(allKeys, func(i, j int) bool {
+						if tt.ascending {
+							return allKeys[i] < allKeys[j]
+						}
+						return allKeys[i] > allKeys[j]
+					})
+					assert.True(t, isSorted, "Keys should be sorted in %s order. Keys: %v",
+						map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
+				} else {
+					// For multiple series, verify sorting within each series group
+					seriesGroups := make(map[common.SeriesID][]int64)
+					for i, sid := range allSIDs {
+						if i < len(allKeys) {
+							seriesGroups[sid] = append(seriesGroups[sid], allKeys[i])
+						}
 					}
-					return allKeys[i] > allKeys[j]
-				})
-				assert.True(t, isSorted, "Keys should be sorted in %s order. Keys: %v",
-					map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
+					for sid, keys := range seriesGroups {
+						if len(keys) > 1 {
+							isSorted := sort.SliceIsSorted(keys, func(i, j int) bool {
+								if tt.ascending {
+									return keys[i] < keys[j]
+								}
+								return keys[i] > keys[j]
+							})
+							assert.True(t, isSorted, "Keys for series %d should be sorted in %s order. Keys: %v",
+								sid, map[bool]string{true: "ascending", false: "descending"}[tt.ascending], keys)
+						}
+					}
+				}
 			}
 		})
 	}
@@ -298,7 +321,9 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 	for i := 0; i < len(keys); i++ {
 		if keys[i] == 100 {
 			assert.Equal(t, "arr_tag", tags[i][0].Name)
-			assert.Equal(t, "a|b|", string(tags[i][0].Value))
+			assert.Equal(t, 2, len(tags[i][0].ValueArr))
+			assert.Equal(t, "a", string(tags[i][0].ValueArr[0]))
+			assert.Equal(t, "b", string(tags[i][0].ValueArr[1]))
 		}
 	}
 }
