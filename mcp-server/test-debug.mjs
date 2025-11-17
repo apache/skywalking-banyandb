@@ -123,11 +123,11 @@ setTimeout(() => {
     }
   }, 2000);
   
-  // Call query_banyandb
+  // Call list_resources_bydbql
   setTimeout(() => {
     if (initialized) {
       sendMessage('tools/call', {
-        name: 'query_banyandb',
+        name: 'list_resources_bydbql',
         arguments: {
           description: 'Show me all error logs from the last hour'
         }

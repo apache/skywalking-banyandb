@@ -80,7 +80,7 @@ async function main() {
           },
         },
         {
-          name: "query_banyandb",
+          name: "list_resources_bydbql",
           description:
             "Query BanyanDB data using natural language description. Supports querying streams, measures, traces, and properties. Use list_groups_schemas first to discover available resources.",
           inputSchema: {
@@ -205,7 +205,7 @@ async function main() {
       }
     }
 
-    if (name === "query_banyandb") {
+    if (name === "list_resources_bydbql") {
       const description = args?.description as string;
       if (!description) {
         throw new Error("description is required");
