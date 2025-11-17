@@ -45,7 +45,7 @@ type TestVisitor struct {
 }
 
 // VisitSeries records the visited series path.
-func (tv *TestVisitor) VisitSeries(_ *timestamp.TimeRange, _, seriesIndexPath string, _ []common.ShardID) error {
+func (tv *TestVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
 	tv.visitedSeries = append(tv.visitedSeries, seriesIndexPath)
 	return nil
 }
@@ -104,8 +104,9 @@ func TestVisitStreamsInTimeRange(t *testing.T) {
 	}
 	intervalRule := storage.IntervalRule{Unit: storage.HOUR, Num: 1}
 
-	err = VisitStreamsInTimeRange(tmpDir, timeRange, visitor, intervalRule)
+	suffixes, err := VisitStreamsInTimeRange(tmpDir, timeRange, visitor, intervalRule)
 	require.NoError(t, err)
+	assert.NotEmpty(t, suffixes)
 
 	// Verify visits occurred
 	assert.Len(t, visitor.visitedSeries, 1)

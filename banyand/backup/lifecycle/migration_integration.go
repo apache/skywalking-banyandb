@@ -37,11 +37,12 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	targetStageInterval := getTargetStageInterval(group)
 
 	// Count total parts before starting migration
-	totalParts, err := countStreamParts(tsdbRootPath, timeRange, segmentIntervalRule)
+	totalParts, segmentSuffixes, err := countStreamParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to count stream parts, proceeding without part count")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Msg("counted stream parts for progres tracking")
+		logger.Info().Int("total_parts", totalParts).Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted stream parts for progres tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
@@ -57,25 +58,25 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	}
 
 	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
-	err = stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
+	_, err = stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
 	if err != nil {
 		return nil, err
 	}
-	return visitor.getSegmentSuffixes(), err
+	return segmentSuffixes, nil
 }
 
 // countStreamParts counts the total number of parts in the given time range.
-func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, error) {
+func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
 	// Create a simple visitor to count parts
 	partCounter := &partCountVisitor{}
 
 	// Use the existing VisitStreamsInTimeRange function to count parts
-	err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
+	segmentSuffixes, err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
-	return partCounter.partCount, nil
+	return partCounter.partCount, segmentSuffixes, nil
 }
 
 // partCountVisitor is a simple visitor that counts parts.
@@ -84,7 +85,7 @@ type partCountVisitor struct {
 }
 
 // VisitSeries implements stream.Visitor.
-func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _, _ string, _ []common.ShardID) error {
+func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
 	return nil
 }
 
@@ -110,11 +111,12 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	targetStageInterval := getTargetStageInterval(group)
 
 	// Count total parts before starting migration
-	totalParts, err := countMeasureParts(tsdbRootPath, timeRange, segmentIntervalRule)
+	totalParts, segmentSuffixes, err := countMeasureParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to count measure parts, proceeding without part count")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Msg("counted measure parts for progress tracking")
+		logger.Info().Int("total_parts", totalParts).Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted measure parts for progress tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
@@ -130,25 +132,25 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	}
 
 	// Use the existing VisitMeasuresInTimeRange function with our file-based visitor
-	err = measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
+	_, err = measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
 	if err != nil {
 		return nil, err
 	}
-	return visitor.getSegments(), err
+	return segmentSuffixes, nil
 }
 
 // countMeasureParts counts the total number of parts in the given time range.
-func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, error) {
+func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
 	// Create a simple visitor to count parts
 	partCounter := &measurePartCountVisitor{}
 
 	// Use the existing VisitMeasuresInTimeRange function to count parts
-	err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
+	segmentSuffixes, err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
-	return partCounter.partCount, nil
+	return partCounter.partCount, segmentSuffixes, nil
 }
 
 // measurePartCountVisitor is a simple visitor that counts measure parts.
@@ -157,7 +159,7 @@ type measurePartCountVisitor struct {
 }
 
 // VisitSeries implements measure.Visitor.
-func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _, _ string, _ []common.ShardID) error {
+func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
 	return nil
 }
 

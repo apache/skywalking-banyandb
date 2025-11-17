@@ -19,7 +19,6 @@ syntax = "proto3";
 
 package banyandb.stream.v1;
 
-import "banyandb/model/v1/query.proto";
 import "banyandb/stream/v1/query.proto";
 import "banyandb/stream/v1/write.proto";
 import "google/api/annotations.proto";
@@ -31,9 +30,7 @@ option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_pat
 
 message DeleteExpiredSegmentsRequest {
   string group = 1;
-  // Departed: using segment_time_range instead.
-  model.v1.TimeRange time_range = 2;
-  repeated string segment_suffixes = 3;
+  repeated string segment_suffixes = 2;
 }
 
 message DeleteExpiredSegmentsResponse {

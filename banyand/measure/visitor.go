@@ -30,7 +30,7 @@ import (
 // Visitor defines the interface for visiting measure components.
 type Visitor interface {
 	// VisitSeries visits the series index directory for a segment.
-	VisitSeries(segmentTR *timestamp.TimeRange, segmentSuffix, seriesIndexPath string, shardIDs []common.ShardID) error
+	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error
 	// VisitPart visits a part directory within a shard.
 	VisitPart(segmentTR *timestamp.TimeRange, shardID common.ShardID, partPath string) error
 }
@@ -40,9 +40,9 @@ type measureSegmentVisitor struct {
 	visitor Visitor
 }
 
-// VisitSeries implements Visitor.
-func (mv *measureSegmentVisitor) VisitSeries(segmentTR *timestamp.TimeRange, segmentSuffix, seriesIndexPath string, shardIDs []common.ShardID) error {
-	return mv.visitor.VisitSeries(segmentTR, segmentSuffix, seriesIndexPath, shardIDs)
+// VisitSeries implements storage.SegmentVisitor.
+func (mv *measureSegmentVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
+	return mv.visitor.VisitSeries(segmentTR, seriesIndexPath, shardIDs)
 }
 
 // VisitShard implements storage.SegmentVisitor.
@@ -84,7 +84,8 @@ func (mv *measureSegmentVisitor) visitShardParts(segmentTR *timestamp.TimeRange,
 // VisitMeasuresInTimeRange traverses measure segments within the specified time range
 // and calls the visitor methods for parts within shards.
 // This function works directly with the filesystem without requiring a database instance.
-func VisitMeasuresInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange, visitor Visitor, segmentInterval storage.IntervalRule) error {
+// Returns a list of segment suffixes that were visited.
+func VisitMeasuresInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange, visitor Visitor, segmentInterval storage.IntervalRule) ([]string, error) {
 	adapter := &measureSegmentVisitor{visitor: visitor}
 	return storage.VisitSegmentsInTimeRange(tsdbRootPath, timeRange, adapter, segmentInterval)
 }
