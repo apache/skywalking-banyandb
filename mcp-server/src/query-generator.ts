@@ -64,17 +64,15 @@ export class QueryGenerator {
   async generateQuery(
     description: string,
     args: Record<string, any>
-  ): Promise<string> {
+  ): Promise<string> { 
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
         return await this.generateQueryWithLLM(description, args);
       } catch (error) {
-        console.error(`[MCP] LLM query generation failed, falling back to pattern matching: ${error}`);
         // Fall through to pattern-based generation
       }
     }
-
     return this.generateQueryWithPatterns(description, args);
   }
 
@@ -89,25 +87,28 @@ export class QueryGenerator {
       throw new Error("OpenAI client not initialized");
     }
 
-    const resourceType = args.resource_type || "stream";
+    const resourceType = args.resource_type || this.detectResourceType(description, args) || "stream";
     const resourceName = args.resource_name || this.detectResourceName(description) || "sw";
-    const group = args.group || "default";
+    const group = args.group || this.detectGroup(description) || "default";
 
     const prompt = `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
 
 BydbQL Syntax:
 - SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [WHERE clause] [LIMIT n]
 - Resource types: STREAM, MEASURE, TRACE, PROPERTY
-- TIME clause examples: TIME >= '-1h', TIME BETWEEN '-24h' AND '-1h'
+- TIME clause examples: TIME >= '-1h', TIME > '-30m', TIME BETWEEN '-24h' AND '-1h'
 - WHERE clause examples: WHERE status = 'error', WHERE service_id = 'webapp'
 - Default LIMIT is 100
+- Use TIME > for "after" or "more than", TIME >= for "from" or "since"
 
 User description: "${description}"
-Resource type: ${resourceType}
-Resource name: ${resourceName}
-Group: ${group}
 
-Generate ONLY the BydbQL query, nothing else. Do not include explanations or markdown formatting.`;
+IMPORTANT: Use these EXACT values detected from the description:
+- Resource type: ${resourceType.toUpperCase()}
+- Resource name: ${resourceName}
+- Group name: ${group}
+
+Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({
@@ -171,8 +172,8 @@ Generate ONLY the BydbQL query, nothing else. Do not include explanations or mar
     }
 
     // Extract group
-    const group = args.group || "default";
-
+    const group = args.group || this.detectGroup(description) || "default";
+    
     // Build time clause
     const timeClause = this.buildTimeClause(description);
 
@@ -225,15 +226,80 @@ Generate ONLY the BydbQL query, nothing else. Do not include explanations or mar
    * Try to detect resource name from description.
    */
   private detectResourceName(description: string): string | null {
+    // Common words that shouldn't be treated as resource names
+    const commonWords = new Set(['service', 'services', 'metric', 'metrics', 'measure', 'measures', 
+                                 'stream', 'streams', 'trace', 'traces', 'property', 'properties',
+                                 'from', 'query', 'get', 'show', 'fetch', 'select', 'where', 'data',
+                                 'last', 'past', 'recent', 'hour', 'hours', 'minute', 'minutes',
+                                 'day', 'days', 'week', 'weeks', 'today', 'yesterday', 'now']);
+    
+    // First, try to detect group name to exclude it from resource name detection
+    const groupMatch = description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i) ||
+                       description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i);
+    const groupName = groupMatch ? groupMatch[1] : null;
+    
     const patterns = [
-      /(?:from|in|of)\s+(?:the\s+)?(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
+      // Pattern for common measure names like service_cpm_minute, service_instance_cpm_minute, etc. (most specific, check first)
+      /\b([a-zA-Z][a-zA-Z0-9_]*_(?:cpm|rpm|apdex|sla|percentile)_(?:minute|hour|day))\b/i,
+      // Pattern: resource name right before "in" keyword: "service_cpm_minute in sw_metric" (check early to catch this pattern)
+      /\b([a-zA-Z][a-zA-Z0-9_-]+)\s+in\s+[a-zA-Z]/i,
+      // Explicit resource type patterns: "from measure service_cpm_minute" or "from stream log"
+      /(?:from|in|of|query|get|show|fetch)\s+(?:the\s+)?(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
+      // Resource type followed by name: "measure service_cpm_minute" or "stream log"
       /(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
+      // Pattern for underscore-separated names (at least 1 underscore suggests a resource name)
+      // But exclude group names
+      /\b([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)\b/i,
+      // Simple resource names like "log", "metrics", etc. (but not common words) - check last
+      /\b(?:query|get|show|fetch|from)\s+['"]?([a-zA-Z][a-zA-Z0-9_-]{1,})['"]?(?:\s+in|\s+from|$)/i,
     ];
 
-    for (const pattern of patterns) {
+    for (let i = 0; i < patterns.length; i++) {
+      const pattern = patterns[i];
       const matches = description.match(pattern);
       if (matches && matches[1]) {
-        return matches[1];
+        const resourceName = matches[1];
+        // Skip if this matches the group name
+        if (groupName && resourceName.toLowerCase() === groupName.toLowerCase()) {
+          continue;
+        }
+        // Filter out common words that aren't resource names
+        if (!commonWords.has(resourceName.toLowerCase())) {
+          return resourceName;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Try to detect group name from description.
+   */
+  private detectGroup(description: string): string | null {
+    const patterns = [
+      // Pattern: "in sw_metric" or "group sw_metric" - most specific, check first
+      // Match group names with underscores: sw_metric, sw_recordsLog, etc.
+      /\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "in sw_metric" or "group sw_metric" - also match simple names
+      /\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "from group sw_metric" 
+      /\bfrom\s+group\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "from group sw_metric" - also match simple names
+      /\bfrom\s+group\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i,
+    ];
+
+    for (let i = 0; i < patterns.length; i++) {
+      const pattern = patterns[i];
+      const matches = description.match(pattern);
+      if (matches && matches[1]) {
+        const groupName = matches[1];
+        // Filter out common words that aren't group names
+        const commonWords = new Set(['default', 'from', 'query', 'select', 'where', 'time', 
+                                     'stream', 'measure', 'trace', 'property', 'data', 'the']);
+        if (!commonWords.has(groupName.toLowerCase())) {
+          return groupName;
+        }
       }
     }
 

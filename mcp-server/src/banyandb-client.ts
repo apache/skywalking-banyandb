@@ -22,13 +22,20 @@ interface QueryRequest {
 }
 
 interface QueryResponse {
+  // Response can be either wrapped in result or direct
   result?: {
-    stream_result?: any;
-    measure_result?: any;
-    trace_result?: any;
-    property_result?: any;
-    topn_result?: any;
+    streamResult?: any;
+    measureResult?: any;
+    traceResult?: any;
+    propertyResult?: any;
+    topnResult?: any;
   };
+  // Or directly at top level
+  streamResult?: any;
+  measureResult?: any;
+  traceResult?: any;
+  propertyResult?: any;
+  topnResult?: any;
 }
 
 interface Group {
@@ -78,6 +85,8 @@ export class BanyanDBClient {
 
       const url = `${this.baseUrl}/v1/bydbql/query`;
     
+    const queryDebugInfo = `Query: "${bydbqlQuery}"\nURL: ${url}`;
+    
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -93,17 +102,52 @@ export class BanyanDBClient {
 
       clearTimeout(timeoutId);
 
+      // Read response text once
+      const responseText = await response.text();
+
       if (!response.ok) {
-        const errorText = await response.text();
         throw new Error(
-          `Query execution failed: ${response.status} ${response.statusText} - ${errorText}`
+          `Query execution failed: ${response.status} ${response.statusText}\n\n${queryDebugInfo}\n\nResponse: ${responseText}`
         );
       }
 
-      const data = (await response.json()) as QueryResponse;
+      // Check if response has content
+      if (!responseText || responseText.trim().length === 0) {
+        throw new Error(`Empty response body from BanyanDB\n\n${queryDebugInfo}\n\nHTTP Status: ${response.status} ${response.statusText}`);
+      }
 
-      if (!data || !data.result) {
-        throw new Error("Empty response from BanyanDB");
+      let data: QueryResponse;
+      try {
+        data = JSON.parse(responseText) as QueryResponse;
+      } catch (parseError) {
+        throw new Error(`Invalid JSON response from BanyanDB: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\n${queryDebugInfo}\n\nResponse text: ${responseText.substring(0, 500)}`);
+      }
+
+      const responseDebugInfo = `Raw response: ${JSON.stringify(data, null, 2)}`;
+
+      if (!data) {
+        throw new Error(`Empty response from BanyanDB: response body is null or undefined\n\n${queryDebugInfo}\n\n${responseDebugInfo}`);
+      }
+
+      // Check for result types both at top level and inside result wrapper
+      const hasResultType = data.streamResult || data.measureResult || 
+                           data.traceResult || data.propertyResult || 
+                           data.topnResult ||
+                           (data.result && (data.result.streamResult || data.result.measureResult || 
+                            data.result.traceResult || data.result.propertyResult || 
+                            data.result.topnResult));
+      
+      if (!hasResultType) {
+        // This is a valid response but with no result type - likely an empty result set
+        const debugMsg = `Response has no result type fields\n\n${queryDebugInfo}\n\nFull response: ${JSON.stringify(data, null, 2)}`;
+        return `Query executed successfully but returned no results.\n\n${debugMsg}\n\nPossible reasons:\n` +
+               "- The query matched no data (empty result set)\n" +
+               "- The resource name or group name might be incorrect\n" +
+               "- The time range might not contain any data\n\n" +
+               "Try:\n" +
+               "1. Use list_banyandb_resources to verify the resource exists\n" +
+               "2. Check the time range in your query\n" +
+               "3. Verify the resource name and group name are correct";
       }
 
       // Format the response based on the result type
@@ -115,7 +159,7 @@ export class BanyanDBClient {
           throw new Error(
             `Query timeout after ${timeoutMs}ms. ` +
             `BanyanDB may be slow or unresponsive. ` +
-            `Check that BanyanDB is running and accessible at ${this.baseUrl}`
+            `Check that BanyanDB is running and accessible at ${this.baseUrl}\n\n${queryDebugInfo}`
           );
         }
         // Check if it's a network/connection error
@@ -127,12 +171,16 @@ export class BanyanDBClient {
             `Failed to connect to BanyanDB at ${this.baseUrl}. ` +
             `Please ensure BanyanDB is running and accessible. ` +
             `Check that the HTTP API is enabled on port 17913 (or the port you specified). ` +
-            `You can verify by running: curl http://localhost:17913/api/v1/bydbql/query`
+            `You can verify by running: curl http://localhost:17913/api/v1/bydbql/query\n\n${queryDebugInfo}`
           );
+        }
+        // If error already contains queryDebugInfo, don't duplicate it
+        if (!error.message.includes(queryDebugInfo)) {
+          throw new Error(`${error.message}\n\n${queryDebugInfo}`);
         }
         throw error;
       }
-      throw new Error(`Query execution failed: ${String(error)}`);
+      throw new Error(`Query execution failed: ${String(error)}\n\n${queryDebugInfo}`);
     }
   }
 
@@ -140,25 +188,148 @@ export class BanyanDBClient {
    * Format the query response into a readable string.
    */
   private formatResponse(response: QueryResponse): string {
-    const result = response.result!;
+    // Handle both wrapped and direct response structures
+    const streamResult = response.streamResult || response.result?.streamResult;
+    const measureResult = response.measureResult || response.result?.measureResult;
+    const traceResult = response.traceResult || response.result?.traceResult;
+    const propertyResult = response.propertyResult || response.result?.propertyResult;
+    const topnResult = response.topnResult || response.result?.topnResult;
 
-    if (result.stream_result) {
-      return `Stream Query Result:\n${JSON.stringify(result.stream_result, null, 2)}`;
+    if (streamResult) {
+      // Check if it's an empty result set
+      if (streamResult.elements && Array.isArray(streamResult.elements) && streamResult.elements.length === 0) {
+        return "Stream Query Result: No data found (empty result set)";
+      }
+      return `Stream Query Result:\n${JSON.stringify(streamResult, null, 2)}`;
     }
-    if (result.measure_result) {
-      return `Measure Query Result:\n${JSON.stringify(result.measure_result, null, 2)}`;
+    
+    if (measureResult) {
+      // Check if it's an empty result set
+      if (measureResult.dataPoints && Array.isArray(measureResult.dataPoints) && measureResult.dataPoints.length === 0) {
+        return "Measure Query Result: No data found (empty result set)\n\n" +
+               "Possible reasons:\n" +
+               "- No data exists for the specified time range\n" +
+               "- The measure name or group name might be incorrect\n" +
+               "- The time range might not contain any data points\n\n" +
+               "Suggestions:\n" +
+               "1. Use list_banyandb_resources to verify the measure exists:\n" +
+               "   - List groups: list_banyandb_resources with resource_type=\"groups\"\n" +
+               "   - List measures: list_banyandb_resources with resource_type=\"measures\" and group=\"<group_name>\"\n" +
+               "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
+               "3. Verify data was written to BanyanDB for this measure";
+      }
+      // Also check for snake_case for backward compatibility
+      if (measureResult.data_points && Array.isArray(measureResult.data_points) && measureResult.data_points.length === 0) {
+        return "Measure Query Result: No data found (empty result set)\n\n" +
+               "Possible reasons:\n" +
+               "- No data exists for the specified time range\n" +
+               "- The measure name or group name might be incorrect\n" +
+               "- The time range might not contain any data points\n\n" +
+               "Suggestions:\n" +
+               "1. Use list_banyandb_resources to verify the measure exists:\n" +
+               "   - List groups: list_banyandb_resources with resource_type=\"groups\"\n" +
+               "   - List measures: list_banyandb_resources with resource_type=\"measures\" and group=\"<group_name>\"\n" +
+               "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
+               "3. Verify data was written to BanyanDB for this measure";
+      }
+      return this.formatMeasureResult(measureResult);
     }
-    if (result.trace_result) {
-      return `Trace Query Result:\n${JSON.stringify(result.trace_result, null, 2)}`;
+    
+    if (traceResult) {
+      // Check if it's an empty result set
+      if (traceResult.elements && Array.isArray(traceResult.elements) && traceResult.elements.length === 0) {
+        return "Trace Query Result: No data found (empty result set)";
+      }
+      return `Trace Query Result:\n${JSON.stringify(traceResult, null, 2)}`;
     }
-    if (result.property_result) {
-      return `Property Query Result:\n${JSON.stringify(result.property_result, null, 2)}`;
+    
+    if (propertyResult) {
+      // Check if it's an empty result set
+      if (propertyResult.items && Array.isArray(propertyResult.items) && propertyResult.items.length === 0) {
+        return "Property Query Result: No data found (empty result set)";
+      }
+      return `Property Query Result:\n${JSON.stringify(propertyResult, null, 2)}`;
     }
-    if (result.topn_result) {
-      return `TopN Query Result:\n${JSON.stringify(result.topn_result, null, 2)}`;
+    
+    if (topnResult) {
+      // Check if it's an empty result set
+      if (topnResult.lists && Array.isArray(topnResult.lists) && topnResult.lists.length === 0) {
+        return "TopN Query Result: No data found (empty result set)";
+      }
+      return `TopN Query Result:\n${JSON.stringify(topnResult, null, 2)}`;
     }
 
     return "Unknown result type";
+  }
+
+  /**
+   * Format measure result into a readable table-like format.
+   */
+  private formatMeasureResult(measureResult: any): string {
+    const dataPoints = measureResult.dataPoints || measureResult.data_points || [];
+    
+    if (dataPoints.length === 0) {
+      return "Measure Query Result: No data found (empty result set)";
+    }
+
+    let output = `Measure Query Result (${dataPoints.length} data point${dataPoints.length !== 1 ? 's' : ''}):\n\n`;
+    
+    dataPoints.forEach((point: any, index: number) => {
+      output += `Data Point ${index + 1}:\n`;
+      output += `  Timestamp: ${point.timestamp || 'N/A'}\n`;
+      output += `  Series ID: ${point.sid || 'N/A'}\n`;
+      output += `  Version: ${point.version || 'N/A'}\n`;
+      
+      // Format tags
+      if (point.tagFamilies && Array.isArray(point.tagFamilies)) {
+        output += `  Tags:\n`;
+        point.tagFamilies.forEach((tagFamily: any) => {
+          if (tagFamily.tags && Array.isArray(tagFamily.tags)) {
+            tagFamily.tags.forEach((tag: any) => {
+              const value = this.extractTagValue(tag.value);
+              output += `    ${tag.key}: ${value}\n`;
+            });
+          }
+        });
+      }
+      
+      // Format fields
+      if (point.fields && Array.isArray(point.fields)) {
+        output += `  Fields:\n`;
+        point.fields.forEach((field: any) => {
+          const value = this.extractFieldValue(field.value);
+          output += `    ${field.name}: ${value}\n`;
+        });
+      }
+      
+      output += `\n`;
+    });
+    
+    return output;
+  }
+
+  /**
+   * Extract tag value from the nested structure.
+   */
+  private extractTagValue(valueObj: any): string {
+    if (!valueObj) return 'N/A';
+    if (valueObj.str?.value !== undefined) return valueObj.str.value;
+    if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
+    if (valueObj.float?.value !== undefined) return String(valueObj.float.value);
+    if (valueObj.binaryData) return '[Binary Data]';
+    return JSON.stringify(valueObj);
+  }
+
+  /**
+   * Extract field value from the nested structure.
+   */
+  private extractFieldValue(valueObj: any): string {
+    if (!valueObj) return 'N/A';
+    if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
+    if (valueObj.float?.value !== undefined) return String(valueObj.float.value);
+    if (valueObj.str?.value !== undefined) return valueObj.str.value;
+    if (valueObj.binaryData) return '[Binary Data]';
+    return JSON.stringify(valueObj);
   }
 
   /**

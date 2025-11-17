@@ -1,14 +1,24 @@
 # Quick start docker-compose file for BanyanDB MCP Server testing
 # This starts BanyanDB in standalone mode with HTTP API enabled
+# Data is persisted to ./banyandb-data directory
 
 services:
   banyandb:
     image: ghcr.io/apache/skywalking-banyandb:3122e6f59b85ae6cc41617a2512f76f5e1cdf45e
     container_name: banyandb
-    command: standalone
+    command: >
+      standalone
+      --metadata-root-path=/data/metadata
+      --stream-root-path=/data/stream
+      --measure-root-path=/data/measure
+      --property-root-path=/data/property
+      --trace-root-path=/data/trace
     ports:
       - "17912:17912"  # gRPC port
       - "17913:17913"  # HTTP port (used by MCP server)
+    volumes:
+      # Persist metadata and data to host filesystem
+      - ./banyandb-data:/data
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:17913/api/v1/bydbql/query"]
       interval: 5s

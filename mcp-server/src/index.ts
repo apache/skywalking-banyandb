@@ -235,8 +235,6 @@ async function main() {
         throw error;
       }
 
-      console.error(`[MCP] Generated query: ${bydbqlQuery}`);
-
       try {
         // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQuery);
@@ -309,7 +307,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("[MCP] Fatal error:", error);
   process.exit(1);
 });
 
