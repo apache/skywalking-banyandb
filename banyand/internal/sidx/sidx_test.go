@@ -838,7 +838,7 @@ func (m *mockTagFilterMatcher) GetDecoder() model.TagValueDecoder {
 	return m.decoder
 }
 
-func testTagValueDecoder(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+func testTagValueDecoder(valueType pbv1.ValueType, value []byte, _ [][]byte) *modelv1.TagValue {
 	if value == nil {
 		return pbv1.NullTagValue
 	}
