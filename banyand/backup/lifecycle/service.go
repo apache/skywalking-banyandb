@@ -677,6 +677,8 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	defer group.Close()
+
 	tr := l.getRemovalSegmentsTimeRange(group)
 	if tr.Start.IsZero() && tr.End.IsZero() {
 		l.l.Info().Msgf("no removal segments time range for group %s, skipping measure migration", g.Metadata.Name)
