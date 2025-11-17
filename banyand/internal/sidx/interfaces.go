@@ -93,7 +93,6 @@ type QueryResponse struct {
 	Error    error
 	Keys     []int64
 	Data     [][]byte
-	Tags     [][]Tag
 	SIDs     []common.SeriesID
 	PartIDs  []uint64
 	Metadata ResponseMetadata
@@ -109,7 +108,6 @@ func (qr *QueryResponse) Reset() {
 	qr.Error = nil
 	qr.Keys = qr.Keys[:0]
 	qr.Data = qr.Data[:0]
-	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.PartIDs = qr.PartIDs[:0]
 	qr.Metadata = ResponseMetadata{}
@@ -132,20 +130,6 @@ func (qr *QueryResponse) Validate() error {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, partIDs=%d", keysLen, partIDsLen)
 	}
 
-	// Validate Tags structure if present
-	if len(qr.Tags) > 0 {
-		if len(qr.Tags) != keysLen {
-			return fmt.Errorf("tags length=%d, expected=%d", len(qr.Tags), keysLen)
-		}
-		for i, tagGroup := range qr.Tags {
-			for j, tag := range tagGroup {
-				if tag.Name == "" {
-					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
-				}
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -166,25 +150,6 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	}
 	for i, data := range other.Data {
 		qr.Data[i] = append(qr.Data[i][:0], data...)
-	}
-
-	// Deep copy tags
-	if cap(qr.Tags) < len(other.Tags) {
-		qr.Tags = make([][]Tag, len(other.Tags))
-	} else {
-		qr.Tags = qr.Tags[:len(other.Tags)]
-	}
-	for i, tagGroup := range other.Tags {
-		if cap(qr.Tags[i]) < len(tagGroup) {
-			qr.Tags[i] = make([]Tag, len(tagGroup))
-		} else {
-			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
-		}
-		for j, tag := range tagGroup {
-			qr.Tags[i][j].Name = tag.Name
-			qr.Tags[i][j].Value = append(qr.Tags[i][j].Value[:0], tag.Value...)
-			qr.Tags[i][j].ValueType = tag.ValueType
-		}
 	}
 
 	// Copy metadata

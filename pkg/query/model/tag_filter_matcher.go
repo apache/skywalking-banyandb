@@ -23,7 +23,7 @@ import (
 )
 
 // TagValueDecoder decodes a byte slice to a TagValue based on the value type.
-type TagValueDecoder func(valueType pbv1.ValueType, value []byte) *modelv1.TagValue
+type TagValueDecoder func(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue
 
 // TagValueDecoderProvider provides a decoder for tag values.
 type TagValueDecoderProvider interface {

@@ -645,7 +645,6 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 			result := &QueryResponse{
 				Keys:    make([]int64, 0),
 				Data:    make([][]byte, 0),
-				Tags:    make([][]Tag, 0),
 				SIDs:    make([]common.SeriesID, 0),
 				PartIDs: make([]uint64, 0),
 			}
@@ -657,7 +656,6 @@ func TestQueryResult_MaxBatchSize(t *testing.T) {
 
 			assert.Equal(t, len(result.Keys), len(result.Data), "Keys and Data arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.SIDs), "Keys and SIDs arrays should have same length")
-			assert.Equal(t, len(result.Keys), len(result.Tags), "Keys and Tags arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.PartIDs), "Keys and PartIDs arrays should have same length")
 		})
 	}
@@ -674,7 +672,6 @@ func TestQueryResult_ConvertBlockToResponse_RespectsLimitAcrossCalls(t *testing.
 	result := &QueryResponse{
 		Keys:    make([]int64, 0),
 		Data:    make([][]byte, 0),
-		Tags:    make([][]Tag, 0),
 		SIDs:    make([]common.SeriesID, 0),
 		PartIDs: make([]uint64, 0),
 	}
@@ -729,13 +726,11 @@ func TestQueryResponseHeap_MergeWithHeap(t *testing.T) {
 				{
 					Keys: []int64{100, 300},
 					Data: [][]byte{[]byte("trace1"), []byte("trace3")},
-					Tags: [][]Tag{{}, {}},
 					SIDs: []common.SeriesID{1, 3},
 				},
 				{
 					Keys: []int64{200, 400},
 					Data: [][]byte{[]byte("trace2"), []byte("trace4")},
-					Tags: [][]Tag{{}, {}},
 					SIDs: []common.SeriesID{2, 4},
 				},
 			},
@@ -749,13 +744,11 @@ func TestQueryResponseHeap_MergeWithHeap(t *testing.T) {
 				{
 					Keys: []int64{100, 300},
 					Data: [][]byte{[]byte("trace1"), []byte("trace3")},
-					Tags: [][]Tag{{}, {}},
 					SIDs: []common.SeriesID{1, 3},
 				},
 				{
 					Keys: []int64{200, 400},
 					Data: [][]byte{[]byte("trace2"), []byte("trace4")},
-					Tags: [][]Tag{{}, {}},
 					SIDs: []common.SeriesID{2, 4},
 				},
 			},
@@ -777,7 +770,6 @@ func TestQueryResponseHeap_MergeWithHeap(t *testing.T) {
 
 			assert.Equal(t, len(result.Keys), len(result.Data), "Keys and Data arrays should have same length")
 			assert.Equal(t, len(result.Keys), len(result.SIDs), "Keys and SIDs arrays should have same length")
-			assert.Equal(t, len(result.Keys), len(result.Tags), "Keys and Tags arrays should have same length")
 		})
 	}
 }
@@ -788,13 +780,11 @@ func TestQueryResponseHeap_MergeDescending(t *testing.T) {
 		{
 			Keys: []int64{200, 400}, // stored ascending
 			Data: [][]byte{[]byte("trace2"), []byte("trace4")},
-			Tags: [][]Tag{{}, {}},
 			SIDs: []common.SeriesID{2, 4},
 		},
 		{
 			Keys: []int64{150, 300}, // stored ascending
 			Data: [][]byte{[]byte("trace1"), []byte("trace3")},
-			Tags: [][]Tag{{}, {}},
 			SIDs: []common.SeriesID{1, 3},
 		},
 	}
@@ -815,7 +805,6 @@ func TestQueryResponse_Reset(t *testing.T) {
 	result := &QueryResponse{
 		Keys: []int64{100, 200},
 		Data: [][]byte{[]byte("trace1"), []byte("trace2")},
-		Tags: [][]Tag{{}, {}},
 		SIDs: []common.SeriesID{1, 2},
 		Metadata: ResponseMetadata{
 			Warnings:        []string{"warn"},
@@ -829,7 +818,6 @@ func TestQueryResponse_Reset(t *testing.T) {
 	assert.Nil(t, result.Error)
 	assert.Equal(t, 0, len(result.Keys))
 	assert.Equal(t, 0, len(result.Data))
-	assert.Equal(t, 0, len(result.Tags))
 	assert.Equal(t, 0, len(result.SIDs))
 	assert.Equal(t, ResponseMetadata{}, result.Metadata)
 }
@@ -850,7 +838,7 @@ func (m *mockTagFilterMatcher) GetDecoder() model.TagValueDecoder {
 	return m.decoder
 }
 
-func testTagValueDecoder(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
+func testTagValueDecoder(valueType pbv1.ValueType, value []byte, _ [][]byte) *modelv1.TagValue {
 	if value == nil {
 		return pbv1.NullTagValue
 	}

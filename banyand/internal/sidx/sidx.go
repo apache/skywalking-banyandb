@@ -307,23 +307,16 @@ func (b *blockCursorBuilder) processWithoutFilter() {
 	}
 }
 
-func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte) *modelv1.TagValue, index int) []*modelv1.Tag {
+func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue, index int) []*modelv1.Tag {
 	buf = buf[:0]
+
 	for tagName, tagData := range b.block.tags {
 		if index >= len(tagData.values) {
 			continue
 		}
 
 		row := &tagData.values[index]
-		var marshaledValue []byte
-		if row.valueArr != nil || row.value != nil {
-			marshaledValue = marshalTagRow(row, tagData.valueType)
-		}
-		if marshaledValue == nil {
-			continue
-		}
-
-		tagValue := decoder(tagData.valueType, marshaledValue)
+		tagValue := decoder(tagData.valueType, row.value, row.valueArr)
 		if tagValue != nil {
 			buf = append(buf, &modelv1.Tag{
 				Key:   tagName,
@@ -503,14 +496,6 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	result.SIDs = append(result.SIDs, bc.seriesID)
 	result.PartIDs = append(result.PartIDs, bc.p.ID())
 
-	// Copy tags for this element
-	var elementTags []Tag
-	for _, tagSlice := range bc.tags {
-		if bc.idx < len(tagSlice) {
-			elementTags = append(elementTags, tagSlice[bc.idx])
-		}
-	}
-	result.Tags = append(result.Tags, elementTags)
 	return true
 }
 
@@ -600,7 +585,6 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 	batch := &QueryResponse{
 		Keys:    make([]int64, 0),
 		Data:    make([][]byte, 0),
-		Tags:    make([][]Tag, 0),
 		SIDs:    make([]common.SeriesID, 0),
 		PartIDs: make([]uint64, 0),
 	}
@@ -668,7 +652,6 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 			batch = &QueryResponse{
 				Keys:    make([]int64, 0),
 				Data:    make([][]byte, 0),
-				Tags:    make([][]Tag, 0),
 				SIDs:    make([]common.SeriesID, 0),
 				PartIDs: make([]uint64, 0),
 			}

@@ -134,7 +134,7 @@ func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
 }
 
 func (t *trace) GetTagValueDecoder() model.TagValueDecoder {
-	return mustDecodeTagValue
+	return mustDecodeTagValueAndArray
 }
 
 func (t *trace) ensureTSDB() (storage.TSDB[*tsTable, option], error) {
@@ -501,7 +501,11 @@ func (qr *queryResult) Release() {
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
-	if value == nil {
+	return mustDecodeTagValueAndArray(valueType, value, nil)
+}
+
+func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
+	if value == nil && valueArr == nil {
 		return pbv1.NullTagValue
 	}
 	switch valueType {
@@ -513,12 +517,24 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 		return binaryDataTagValue(value)
 	case pbv1.ValueTypeInt64Arr:
 		var values []int64
+		if valueArr != nil {
+			for _, v := range valueArr {
+				values = append(values, convert.BytesToInt64(v))
+			}
+			return int64ArrTagValue(values)
+		}
 		for i := 0; i < len(value); i += 8 {
 			values = append(values, convert.BytesToInt64(value[i:i+8]))
 		}
 		return int64ArrTagValue(values)
 	case pbv1.ValueTypeStrArr:
 		var values []string
+		if valueArr != nil {
+			for _, v := range valueArr {
+				values = append(values, string(v))
+			}
+			return strArrTagValue(values)
+		}
 		bb := bigValuePool.Generate()
 		defer bigValuePool.Release(bb)
 		var err error
