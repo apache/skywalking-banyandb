@@ -22,6 +22,7 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -77,43 +78,70 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 	return streamDir, measureDir, nil
 }
 
+// GroupConfig encapsulates the parsed lifecycle configuration for a Group.
+// It contains all necessary information for migration and deletion operations.
+type GroupConfig struct {
+	*commonv1.Group
+	NodeSelector    node.Selector
+	QueueClient     queue.Client
+	AccumulatedTTL  *commonv1.IntervalRule
+	SegmentInterval *commonv1.IntervalRule
+	TargetShardNum  uint32
+	TargetReplicas  uint32
+}
+
+// Close releases resources held by the GroupConfig.
+func (gc *GroupConfig) Close() {
+	if gc.QueueClient != nil {
+		gc.QueueClient.GracefulStop()
+	}
+}
+
 func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo,
-) (uint32, uint32, *commonv1.IntervalRule, node.Selector, queue.Client, error) {
+) (*GroupConfig, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
-		return 0, 0, nil, nil, nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
+		return nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
 	}
 	if len(ro.Stages) == 0 {
-		return 0, 0, nil, nil, nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
+		return nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
+	ttlTime := proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
+	segmentInterval := proto.Clone(ro.SegmentInterval).(*commonv1.IntervalRule)
 	var nst *commonv1.LifecycleStage
 	for i, st := range ro.Stages {
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
-			return 0, 0, nil, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+			return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
 		}
+		ttlTime.Num += st.Ttl.Num
 		if !selector.Matches(nodeLabels) {
 			continue
 		}
 		if i+1 >= len(ro.Stages) {
 			l.Info().Msgf("no next stage for group %s at stage %s", g.Metadata.Name, st.Name)
-			return 0, 0, nil, nil, nil, nil
+			return nil, nil
 		}
 		nst = ro.Stages[i+1]
-		l.Info().Msgf("migrating group %s at stage %s to stage %s", g.Metadata.Name, st.Name, nst.Name)
+		segmentInterval = st.SegmentInterval
+		l.Info().Msgf("migrating group %s at stage %s to stage %s, segment interval: %d(%s), total ttl needs: %d(%s)",
+			g.Metadata.Name, st.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
 		break
 	}
 	if nst == nil {
 		nst = ro.Stages[0]
+		ttlTime = proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
+		l.Info().Msgf("no matching stage for group %s, defaulting to first stage %s segment interval: %d(%s), total ttl needs: %d(%s)",
+			g.Metadata.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
 	}
 	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
 	if err != nil {
-		return 0, 0, nil, nil, nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
+		return nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
 	nodeSel := node.NewRoundRobinSelector("", metadata)
 	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
-		return 0, 0, nil, nil, nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
+		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
@@ -138,9 +166,17 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 		}
 	}
 	if !existed {
-		return 0, 0, nil, nil, nil, errors.New("no nodes matched")
+		return nil, errors.New("no nodes matched")
 	}
-	return nst.ShardNum, nst.Replicas, nst.Ttl, nodeSel, client, nil
+	return &GroupConfig{
+		Group:           g,
+		TargetShardNum:  nst.ShardNum,
+		TargetReplicas:  nst.Replicas,
+		AccumulatedTTL:  ttlTime,
+		SegmentInterval: segmentInterval,
+		NodeSelector:    nodeSel,
+		QueueClient:     client,
+	}, nil
 }
 
 type fileInfo struct {

@@ -25,8 +25,11 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+var log = logger.GetLogger("storage", "visitor")
 
 // SegmentVisitor defines the interface for visiting segment components.
 type SegmentVisitor interface {
@@ -39,24 +42,32 @@ type SegmentVisitor interface {
 // VisitSegmentsInTimeRange traverses segments within the specified time range
 // and calls the visitor methods for series index and shard directories.
 // This function works directly with the filesystem without requiring a database instance.
-func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange, visitor SegmentVisitor, intervalRule IntervalRule) error {
+// Returns a list of segment suffixes that were visited.
+func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange, visitor SegmentVisitor, segmentInterval IntervalRule) ([]string, error) {
 	// Parse segment directories in the root path
 	var segmentPaths []segmentInfo
 	err := walkDir(tsdbRootPath, segPathPrefix, func(suffix string) error {
-		startTime, err := parseSegmentTime(suffix, intervalRule.Unit)
+		startTime, err := parseSegmentTime(suffix, segmentInterval.Unit)
 		if err != nil {
 			return err
 		}
 
 		// Calculate end time based on interval rule
-		endTime := intervalRule.NextTime(startTime)
+		endTime := segmentInterval.NextTime(startTime)
 		segTR := timestamp.NewSectionTimeRange(startTime, endTime)
 
 		// Check if segment is completely included in the requested time range
+		logEntry := log.Info().Str("segment_suffix", suffix).
+			Str("tsdb_root_path", tsdbRootPath).
+			Str("segment_interval_rule", fmt.Sprintf("%d(%s)", segmentInterval.Num, segmentInterval.Unit)).
+			Str("total_time_range", timeRange.String()).
+			Str("segment_time_range", segTR.String())
 		if !timeRange.Include(segTR) {
+			logEntry.Msg("segment time range is not included")
 			return nil // Skip segments not fully contained in the time range
 		}
 
+		logEntry.Msg("segment time range is include")
 		segmentPath := filepath.Join(tsdbRootPath, fmt.Sprintf(segTemplate, suffix))
 		segmentPaths = append(segmentPaths, segmentInfo{
 			path:      segmentPath,
@@ -66,30 +77,36 @@ func VisitSegmentsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange
 		return nil
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to walk segment directories")
+		return nil, errors.Wrap(err, "failed to walk segment directories")
 	}
+
+	// Collect segment suffixes to return
+	var visitedSuffixes []string
 
 	// Visit each matching segment
 	for _, segInfo := range segmentPaths {
 		// Collect shard IDs for this segment
 		shardIDs, err := collectSegmentShardIDs(segInfo.path)
 		if err != nil {
-			return errors.Wrapf(err, "failed to collect shard IDs for segment %s", segInfo.suffix)
+			return nil, errors.Wrapf(err, "failed to collect shard IDs for segment %s", segInfo.suffix)
 		}
 
 		// Visit series index directory
 		seriesIndexPath := filepath.Join(segInfo.path, seriesIndexDirName)
 		if err := visitor.VisitSeries(&segInfo.timeRange, seriesIndexPath, shardIDs); err != nil {
-			return errors.Wrapf(err, "failed to visit series index for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
+			return nil, errors.Wrapf(err, "failed to visit series index for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
 		}
 
 		// Visit shard directories
 		if err := visitSegmentShards(segInfo.path, &segInfo.timeRange, visitor); err != nil {
-			return errors.Wrapf(err, "failed to visit shards for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
+			return nil, errors.Wrapf(err, "failed to visit shards for segment (suffix: %s, path: %s, timeRange: %v)", segInfo.suffix, segInfo.path, segInfo.timeRange)
 		}
+
+		// Add visited suffix to result
+		visitedSuffixes = append(visitedSuffixes, segInfo.suffix)
 	}
 
-	return nil
+	return visitedSuffixes, nil
 }
 
 // segmentInfo holds information about a segment directory.
