@@ -60,6 +60,11 @@ type tagRow struct {
 
 func (tr *tagRow) reset() {
 	tr.value = nil
+	if tr.valueArr != nil {
+		for i := range tr.valueArr {
+			tr.valueArr[i] = nil
+		}
+	}
 	tr.valueArr = tr.valueArr[:0]
 }
 
@@ -190,9 +195,8 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 }
 
 // marshalTagRow marshals the tagRow value to a byte slice.
-func marshalTagRow(tr *tagRow, valueType pbv1.ValueType) []byte {
+func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
 	if tr.valueArr != nil {
-		var dst []byte
 		for i := range tr.valueArr {
 			if valueType == pbv1.ValueTypeInt64Arr {
 				dst = append(dst, tr.valueArr[i]...)
@@ -202,7 +206,8 @@ func marshalTagRow(tr *tagRow, valueType pbv1.ValueType) []byte {
 		}
 		return dst
 	}
-	return tr.value
+	dst = append(dst, tr.value...)
+	return dst
 }
 
 // decodeAndConvertTagValues decodes encoded tag values and converts them to tagRow format.

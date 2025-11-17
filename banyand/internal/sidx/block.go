@@ -261,7 +261,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		td.tmpBytes = td.tmpBytes[:len(td.values)]
 	}
 	for i := range td.values {
-		td.tmpBytes[i] = marshalTagRow(&td.values[i], td.valueType)
+		td.tmpBytes[i] = marshalTagRow(td.tmpBytes[i][:0], &td.values[i], td.valueType)
 	}
 
 	// Write tag values to data file
