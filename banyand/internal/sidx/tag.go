@@ -202,6 +202,9 @@ func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
 				dst = append(dst, tr.valueArr[i]...)
 				continue
 			}
+			if len(tr.valueArr[i]) == 0 {
+				continue
+			}
 			dst = internalencoding.MarshalVarArray(dst, tr.valueArr[i])
 		}
 		return dst
