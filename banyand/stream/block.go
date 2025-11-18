@@ -109,12 +109,13 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 			continue
 		}
 		if tags[j].filter == nil {
-			filter := generateBloomFilter()
-			tags[j].filter = filter
+			bf := generateBloomFilter()
+			tags[j].filter = bf
 		}
-		tags[j].filter.SetN(elementsLen)
-		tags[j].filter.ResizeBits(filter.OptimalBitsSize(elementsLen))
-		tags[j].filter.Add(t.value)
+		bf := tags[j].filter.(*filter.BloomFilter)
+		bf.SetN(elementsLen)
+		bf.ResizeBits(filter.OptimalBitsSize(elementsLen))
+		bf.Add(t.value)
 		if t.valueType == pbv1.ValueTypeInt64 {
 			if len(tags[j].min) == 0 {
 				tags[j].min = t.value
@@ -400,7 +401,12 @@ func releaseBlock(b *block) {
 	for _, tf := range b.tagFamilies {
 		for _, t := range tf.tags {
 			if t.filter != nil {
-				releaseBloomFilter(t.filter)
+				switch f := t.filter.(type) {
+				case *filter.BloomFilter:
+					releaseBloomFilter(f)
+				case *filter.DictionaryFilter:
+					releaseDictionaryFilter(f)
+				}
 			}
 		}
 	}

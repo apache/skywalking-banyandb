@@ -21,6 +21,7 @@ import (
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -77,14 +78,15 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
 
-	if t.filter != nil {
+	if tm.valueType == pbv1.ValueTypeInt64 && (t.min != nil || t.max != nil) {
+		tm.min = t.min
+		tm.max = t.max
+	}
+	isDictionaryEncoded := len(bb.Buf) > 0 && pkgencoding.EncodeType(bb.Buf[0]) == pkgencoding.EncodeTypeDictionary
+	if t.filter != nil && !isDictionaryEncoded {
 		bb := bigValuePool.Generate()
 		defer bigValuePool.Release(bb)
-		bb.Buf = encodeBloomFilter(bb.Buf[:0], t.filter)
-		if tm.valueType == pbv1.ValueTypeInt64 {
-			tm.min = t.min
-			tm.max = t.max
-		}
+		bb.Buf = encodeBloomFilter(bb.Buf[:0], t.filter.(*filter.BloomFilter))
 		tm.filterBlock.size = uint64(len(bb.Buf))
 		tm.filterBlock.offset = tagFilterWriter.bytesWritten
 		tagFilterWriter.MustWrite(bb.Buf)
