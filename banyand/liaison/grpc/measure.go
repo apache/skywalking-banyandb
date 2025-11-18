@@ -297,15 +297,19 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var tracer *query.Tracer
+	var span *query.Span
+	var responseDataPointCount int
 	if req.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "measure-grpc")
+		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "measure-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
 		defer func() {
 			if err != nil {
 				span.Error(err)
 				span.Stop()
 			} else {
+				span.Tagf("response_data_point_count", "%d", responseDataPointCount)
 				span.AddSubTrace(resp.Trace)
 				span.Stop()
 				resp.Trace = tracer.ToProto()
@@ -326,6 +330,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	data := msg.Data()
 	switch d := data.(type) {
 	case *measurev1.QueryResponse:
+		responseDataPointCount = len(d.DataPoints)
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())
@@ -348,18 +353,22 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var topNTracer *query.Tracer
+	var topNSpan *query.Span
+	var responseListCount int
 	if topNRequest.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "topn-grpc")
-		span.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
+		topNTracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		topNSpan, _ = topNTracer.StartSpan(ctx, "topn-grpc")
+		topNSpan.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
 		defer func() {
 			if err != nil {
-				span.Error(err)
+				topNSpan.Error(err)
 			} else {
-				span.AddSubTrace(resp.Trace)
-				resp.Trace = tracer.ToProto()
+				topNSpan.Tagf("response_list_count", "%d", responseListCount)
+				topNSpan.AddSubTrace(resp.Trace)
+				resp.Trace = topNTracer.ToProto()
 			}
-			span.Stop()
+			topNSpan.Stop()
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), topNRequest)
@@ -374,6 +383,7 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 	data := msg.Data()
 	switch d := data.(type) {
 	case *measurev1.TopNResponse:
+		responseListCount = len(d.Lists)
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())
