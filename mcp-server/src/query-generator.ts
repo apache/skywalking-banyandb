@@ -24,13 +24,15 @@ import OpenAI from "openai";
  * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
  */
 export class QueryGenerator {
+  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for OpenAI API calls
+  
   private openaiClient: OpenAI | null = null;
 
   constructor(apiKey?: string) {
     if (apiKey) {
       this.openaiClient = new OpenAI({
         apiKey: apiKey,
-        timeout: 20000, // 20 seconds timeout for OpenAI API calls
+        timeout: QueryGenerator.OPENAI_API_TIMEOUT_MS,
       });
     }
   }
@@ -127,7 +129,7 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
         max_tokens: 200,
       }),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("OpenAI API timeout after 20 seconds")), 20000)
+        setTimeout(() => reject(new Error("OpenAI API timeout after 20 seconds")), QueryGenerator.OPENAI_API_TIMEOUT_MS)
       ),
     ]);
 

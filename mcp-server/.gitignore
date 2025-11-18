@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .env
 
+.vscode/
+
+inspector-config.json
+banyandb-data/

@@ -2,7 +2,7 @@
   "mcpServers": {
     "banyandb": {
       "command": "node",
-      "args": ["/Users/fine/opensource/fork/skywalking-banyandb/mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/skywalking-banyandb/mcp-server/dist/index.js"],
       "env": {
         "BANYANDB_ADDRESS": "localhost:17900",
         "OPENAI_API_KEY": "your-openai-api-key-here"

@@ -83,7 +83,7 @@ export class BanyanDBClient {
       query: bydbqlQuery,
     };
 
-      const url = `${this.baseUrl}/v1/bydbql/query`;
+    const url = `${this.baseUrl}/v1/bydbql/query`;
     
     const queryDebugInfo = `Query: "${bydbqlQuery}"\nURL: ${url}`;
     
