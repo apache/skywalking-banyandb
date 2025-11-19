@@ -66,7 +66,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	defer bigValuePool.Release(bb)
 
 	// Use shared encoding module
-	err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
+	encodeType, err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
 	if err != nil {
 		logger.Panicf("failed to encode tag values: %v", err)
 	}
@@ -82,8 +82,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 		tm.min = t.min
 		tm.max = t.max
 	}
-	isDictionaryEncoded := len(bb.Buf) > 0 && pkgencoding.EncodeType(bb.Buf[0]) == pkgencoding.EncodeTypeDictionary
-	if t.filter != nil && !isDictionaryEncoded {
+	if t.filter != nil && encodeType != pkgencoding.EncodeTypeDictionary {
 		bb := bigValuePool.Generate()
 		defer bigValuePool.Release(bb)
 		bb.Buf = encodeBloomFilter(bb.Buf[:0], t.filter.(*filter.BloomFilter))

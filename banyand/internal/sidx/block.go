@@ -275,7 +275,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}()
 
 	// Encode tag values using the encoding module
-	err := internalencoding.EncodeTagValues(bb, td.tmpBytes, td.valueType)
+	_, err := internalencoding.EncodeTagValues(bb, td.tmpBytes, td.valueType)
 	if err != nil {
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}
