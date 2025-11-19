@@ -99,33 +99,80 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 }
 
 func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (bool, error) {
+	var merged bool
+	var currentSegmentID int64
 	var memParts []*partWrapper
 	mergedIDs := make(map[uint64]struct{})
+
+	// Helper function to merge current segment's parts
+	mergeCurrentSegment := func() (bool, error) {
+		if len(memParts) < 2 {
+			return false, nil
+		}
+
+		// Create a copy of mergedIDs for this merge operation
+		currentMergedIDs := make(map[uint64]struct{}, len(mergedIDs))
+		for id := range mergedIDs {
+			currentMergedIDs[id] = struct{}{}
+		}
+
+		// merge memory must not be closed by the tsTable.close
+		closeCh := make(chan struct{})
+		newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
+			currentMergedIDs, mergeCh, closeCh, "mem")
+		close(closeCh)
+		if err != nil {
+			if errors.Is(err, errClosed) {
+				return true, nil
+			}
+			return false, err
+		}
+		return newPart != nil, nil
+	}
+
+	// Process parts grouped by segmentID
 	for i := range snp.parts {
-		if snp.parts[i].mp != nil {
-			memParts = append(memParts, snp.parts[i])
-			mergedIDs[snp.parts[i].ID()] = struct{}{}
+		if snp.parts[i].mp == nil {
 			continue
 		}
-	}
-	if len(memParts) < 2 {
-		return false, nil
-	}
-	// merge memory must not be closed by the tsTable.close
-	closeCh := make(chan struct{})
-	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
-		mergedIDs, mergeCh, closeCh, "mem")
-	close(closeCh)
-	if err != nil {
-		if errors.Is(err, errClosed) {
-			return true, nil
+
+		segID := snp.parts[i].mp.segmentID
+
+		// If this is a new segment, merge the previous segment first
+		if currentSegmentID != 0 && currentSegmentID != segID {
+			m, err := mergeCurrentSegment()
+			if err != nil {
+				return false, err
+			}
+			if m {
+				merged = true
+			}
+
+			// Reset for next segment
+			memParts = memParts[:0]
+			for id := range mergedIDs {
+				delete(mergedIDs, id)
+			}
 		}
-		return false, err
+
+		// Add part to current segment
+		currentSegmentID = segID
+		memParts = append(memParts, snp.parts[i])
+		mergedIDs[snp.parts[i].ID()] = struct{}{}
 	}
-	if newPart == nil {
-		return false, nil
+
+	// Merge the last segment if it has parts
+	if len(memParts) >= 2 {
+		m, err := mergeCurrentSegment()
+		if err != nil {
+			return false, err
+		}
+		if m {
+			merged = true
+		}
 	}
-	return true, nil
+
+	return merged, nil
 }
 
 func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) {

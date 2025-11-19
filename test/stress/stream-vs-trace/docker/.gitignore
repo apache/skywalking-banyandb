@@ -1,0 +1,19 @@
+# Docker volumes
+stream-data/
+trace-data/
+
+# Test output
+*.out
+*.log
+
+# Coverage files
+*.cov
+coverage.html
+
+# Binary files
+*.test
+
+# Stats files
+container-stats.json
+performance-summary.txt
+stats_pid

@@ -101,7 +101,6 @@ dataPoints:
           value: group1
     - key: layer
       value:
-        int:
-          value: "1"
+        int: {}
   timestamp: "2024-11-15T01:04:00Z"
   version: "1"

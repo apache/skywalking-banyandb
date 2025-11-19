@@ -188,6 +188,9 @@ func Trace(trace *databasev1.Trace) error {
 	if trace.TraceIdTagName == "" {
 		return errors.New("trace_id_tag_name is empty")
 	}
+	if trace.SpanIdTagName == "" {
+		return errors.New("span_id_tag_name is empty")
+	}
 	if trace.TimestampTagName == "" {
 		return errors.New("timestamp_tag_name is empty")
 	}

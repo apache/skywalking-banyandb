@@ -18,12 +18,11 @@
 package trace
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -32,19 +31,16 @@ import (
 type primaryBlockMetadata struct {
 	traceID string
 	dataBlock
-	traceIDLen uint32
 }
 
 // reset resets pbm for subsequent re-use.
 func (pbm *primaryBlockMetadata) reset() {
-	pbm.traceIDLen = 0
 	pbm.traceID = ""
 	pbm.offset = 0
 	pbm.size = 0
 }
 
-func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceIDLen uint32, traceID string, sw *writers) {
-	pbm.traceIDLen = traceIDLen
+func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceID string, sw *writers) {
 	pbm.traceID = traceID
 
 	bb := bigValuePool.Generate()
@@ -56,25 +52,21 @@ func (pbm *primaryBlockMetadata) mustWriteBlock(data []byte, traceIDLen uint32, 
 }
 
 func (pbm *primaryBlockMetadata) marshal(dst []byte) []byte {
-	dst = encoding.Uint32ToBytes(dst, pbm.traceIDLen)
-	dst = append(dst, pbm.traceID...)
-	paddingLen := pbm.traceIDLen - uint32(len(pbm.traceID))
-	if paddingLen > 0 {
-		dst = append(dst, bytes.Repeat([]byte{0}, int(paddingLen))...)
-	}
+	dst = encoding.EncodeBytes(dst, convert.StringToBytes(pbm.traceID))
 	dst = encoding.Uint64ToBytes(dst, pbm.offset)
 	dst = encoding.Uint64ToBytes(dst, pbm.size)
 	return dst
 }
 
 func (pbm *primaryBlockMetadata) unmarshal(src []byte) ([]byte, error) {
-	pbm.traceIDLen = encoding.BytesToUint32(src)
-	src = src[4:]
-	if len(src) < int(16+pbm.traceIDLen) {
-		return nil, fmt.Errorf("cannot unmarshal primaryBlockMetadata from %d bytes; expect at least %d bytes", len(src), 32+pbm.traceIDLen)
+	if len(src) < 4 {
+		return nil, fmt.Errorf("cannot unmarshal primaryBlockMetadata from %d bytes; expect at least 4 bytes for traceID length", len(src))
 	}
-	pbm.traceID = strings.TrimRight(string(src[:pbm.traceIDLen]), "\x00")
-	src = src[pbm.traceIDLen:]
+	src, traceIDBytes, err := encoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal traceID: %w", err)
+	}
+	pbm.traceID = string(traceIDBytes)
 	pbm.offset = encoding.BytesToUint64(src)
 	src = src[8:]
 	pbm.size = encoding.BytesToUint64(src)

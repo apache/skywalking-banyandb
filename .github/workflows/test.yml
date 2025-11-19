@@ -19,6 +19,10 @@ name: Reusable Test
 on:
   workflow_call:
     inputs:
+      test-name:
+        required: false
+        type: string
+        default: Test
       options:
         required: false
         type: string
@@ -26,66 +30,61 @@ on:
         required: false
         type: number
         default: 60
+      pkg:
+        required: false
+        type: string
+        default: ./...
+      coverage-flag:
+        required: false
+        type: string
+        default: unittests
+      timezone:
+        required: false
+        type: string
+        default: UTC
 
 jobs:
   test:
-    name: Test
+    name: ${{ inputs.test-name }} (${{ inputs.timezone }})
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    strategy:
-      matrix:
-        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
     steps:
-      - name: Set timezone
-        run: sudo timedatectl set-timezone ${{ matrix.tz }}
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v3
-        id: cache-go
+      - name: Set timezone
+        run: sudo timedatectl set-timezone ${{ inputs.timezone || 'UTC' }}
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          download-artifacts: 'true'
+          setup-docker: 'false'
       - name: Cache tools
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-test-tool-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v3
-        with:
-          go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Generate mocks
-        run: make generate
-      - name: Build
-        run: make build
       - name: Test integration and banyand
-        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci
+        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
         run: |
           ls /tmp
+      - name: Sanitize test name for artifact
+        if: ${{ failure() }}
+        id: sanitize-name
+        run: echo "sanitized=$(echo '${{ inputs.test-name }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:
-          name: test-data-${{ matrix.test.name }}
+          name: test-data-${{ steps.sanitize-name.outputs.sanitized }}
           path: "/tmp/banyandb-test-*"
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          flags: ${{ inputs.coverage-flag }}

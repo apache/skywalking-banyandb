@@ -104,7 +104,7 @@ func (p *part) ID() uint64 {
 // mustOpenPart opens a part from the specified path using the given file system.
 // It opens all standard files and discovers tag files automatically.
 // Panics if any required file cannot be opened.
-func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
+func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 	p := &part{
 		path:       path,
 		fileSystem: fileSystem,
@@ -121,6 +121,7 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 		p.close()
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load part metadata")
 	}
+	p.partMetadata.ID = partID
 
 	// Load primary block metadata from primary.bin.
 	p.loadPrimaryBlockMetadata()
@@ -297,7 +298,6 @@ func (p *part) readAll() ([]*elements, error) {
 	result := make([]*elements, 0, len(p.primaryBlockMetadata))
 	compressedPrimaryBuf := make([]byte, 0, 1024)
 	primaryBuf := make([]byte, 0, 1024)
-	compressedDataBuf := make([]byte, 0, 1024)
 	dataBuf := make([]byte, 0, 1024)
 	compressedKeysBuf := make([]byte, 0, 1024)
 
@@ -348,17 +348,8 @@ func (p *part) readAll() ([]*elements, error) {
 			}
 
 			// Read data payloads
-			compressedDataBuf = bytes.ResizeOver(compressedDataBuf, int(bm.dataBlock.size))
-			fs.MustReadData(p.data, int64(bm.dataBlock.offset), compressedDataBuf)
-
-			dataBuf, err = zstd.Decompress(dataBuf[:0], compressedDataBuf)
-			if err != nil {
-				releaseElements(elems)
-				for _, e := range result {
-					releaseElements(e)
-				}
-				return nil, fmt.Errorf("cannot decompress data block: %w", err)
-			}
+			dataBuf = bytes.ResizeOver(dataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), dataBuf)
 
 			// Decode data payloads - create a new decoder for each block to avoid state corruption
 			blockBytesDecoder := &encoding.BytesBlockDecoder{}
@@ -468,11 +459,6 @@ func (p *part) String() string {
 	return fmt.Sprintf("sidx part at %s", p.path)
 }
 
-// getPartMetadata returns the part metadata.
-func (p *part) getPartMetadata() *partMetadata {
-	return p.partMetadata
-}
-
 // getTagDataReader returns the tag data reader for the specified tag name.
 func (p *part) getTagDataReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagData[tagName]
@@ -489,38 +475,6 @@ func (p *part) getTagMetadataReader(tagName string) (fs.Reader, bool) {
 func (p *part) getTagFilterReader(tagName string) (fs.Reader, bool) {
 	reader, exists := p.tagFilters[tagName]
 	return reader, exists
-}
-
-// getAvailableTagNames returns a slice of all available tag names in this part.
-func (p *part) getAvailableTagNames() []string {
-	tagNames := make(map[string]struct{})
-
-	// Collect tag names from all tag file types.
-	for tagName := range p.tagData {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagMetadata {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagFilters {
-		tagNames[tagName] = struct{}{}
-	}
-
-	// Convert to slice.
-	result := make([]string, 0, len(tagNames))
-	for tagName := range tagNames {
-		result = append(result, tagName)
-	}
-
-	return result
-}
-
-// hasTagFiles returns true if the part has any tag files for the specified tag name.
-func (p *part) hasTagFiles(tagName string) bool {
-	_, hasData := p.tagData[tagName]
-	_, hasMeta := p.tagMetadata[tagName]
-	_, hasFilter := p.tagFilters[tagName]
-	return hasData || hasMeta || hasFilter
 }
 
 // Path returns the part's directory path.
@@ -646,10 +600,26 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 	// Group elements by seriesID and write to blocks
 	currentSeriesID := es.seriesIDs[0]
 	blockStart := 0
+	var accumulatedSize uint64
 
 	for i := 1; i <= len(es.seriesIDs); i++ {
-		// Process block when series changes or at end
-		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+		// Calculate size of current element if not at end
+		if i < len(es.seriesIDs) {
+			// Add userKey size (8 bytes)
+			accumulatedSize += 8
+			// Add data payload size
+			accumulatedSize += uint64(len(es.data[i-1]))
+			// Add tag sizes
+			for _, tag := range es.tags[i-1] {
+				if tag != nil {
+					accumulatedSize += uint64(tag.size())
+				}
+			}
+		}
+
+		// Process block when series changes, size limit reached, count limit reached, or at end
+		seriesChanged := i < len(es.seriesIDs) && es.seriesIDs[i] != currentSeriesID
+		if (i-blockStart) > maxBlockLength || accumulatedSize >= maxUncompressedBlockSize || i == len(es.seriesIDs) || seriesChanged {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
 			seriesData := es.data[blockStart:i]
@@ -661,6 +631,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]
 				blockStart = i
+				accumulatedSize = 0
 			}
 		}
 	}

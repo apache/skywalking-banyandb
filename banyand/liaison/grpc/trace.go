@@ -349,32 +349,35 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		defer func() {
 			if err != nil {
 				span.Error(err)
-			} else {
+				span.Stop()
+			} else if resp != nil && resp != emptyTraceQueryResponse {
 				span.AddSubTrace(resp.TraceQueryResult)
+				span.Stop()
 				resp.TraceQueryResult = tracer.ToProto()
 			}
-			span.Stop()
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
-	feat, errQuery := s.broadcaster.Publish(ctx, data.TopicTraceQuery, message)
-	if errQuery != nil {
-		if errors.Is(errQuery, io.EOF) {
+	var future bus.Future
+	future, err = s.broadcaster.Publish(ctx, data.TopicTraceQuery, message)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
 			return emptyTraceQueryResponse, nil
 		}
-		return nil, errQuery
+		return nil, err
 	}
-	msg, errFeat := feat.Get()
-	if errFeat != nil {
-		return nil, errFeat
+	var msg bus.Message
+	msg, err = future.Get()
+	if err != nil {
+		return nil, err
 	}
-	data := msg.Data()
-	switch d := data.(type) {
+	switch d := msg.Data().(type) {
 	case *tracev1.InternalQueryResponse:
 		traces := make([]*tracev1.Trace, 0, len(d.InternalTraces))
 		for _, internalTrace := range d.InternalTraces {
 			trace := &tracev1.Trace{
-				Spans: internalTrace.Spans,
+				Spans:   internalTrace.Spans,
+				TraceId: internalTrace.TraceId,
 			}
 			traces = append(traces, trace)
 		}

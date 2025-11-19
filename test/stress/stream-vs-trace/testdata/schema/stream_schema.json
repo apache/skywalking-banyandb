@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "name": "segment_stream",
+    "group": "stream_performance_test"
+  },
+  "entity": {
+    "tag_names": ["serviceId", "serviceInstanceId"]
+  },
+  "tag_families": [
+    {
+      "name": "primary",
+      "tags": [
+        {
+          "name": "serviceId",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "serviceInstanceId",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "traceId",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "startTime",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "latency",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "isError",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "spanId",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "parentSpanId",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "operationName",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "component",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    },
+    {
+      "name": "data_binary",
+      "tags": [
+        {
+          "name": "dataBinary",
+          "type": "TAG_TYPE_DATA_BINARY"
+        }
+      ]
+    }
+  ]
+}

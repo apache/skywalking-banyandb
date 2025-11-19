@@ -48,20 +48,21 @@ const (
 )
 
 type tsTable struct {
-	l             *logger.Logger
-	fileSystem    fs.FileSystem
-	sidxMap       map[string]sidx.SIDX
 	pm            protector.Memory
+	fileSystem    fs.FileSystem
+	handoffCtrl   *handoffController
 	metrics       *metrics
 	snapshot      *snapshot
 	loopCloser    *run.Closer
 	getNodes      func() []string
-	option        option
+	l             *logger.Logger
+	sidxMap       map[string]sidx.SIDX
 	introductions chan *introduction
 	p             common.Position
 	root          string
 	group         string
 	gc            garbageCleaner
+	option        option
 	curPartID     uint64
 	sync.RWMutex
 	shardID common.ShardID
@@ -106,6 +107,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	}
 	snp.incRef()
 	tst.snapshot = &snp
+	tst.loadSidxMap(parts)
 	if needToPersist {
 		tst.persistSnapshot(&snp)
 	}
@@ -123,15 +125,16 @@ func (tst *tsTable) startLoop(cur uint64) {
 	go tst.mergeLoop(mergeCh, flusherWatcher)
 }
 
-func (tst *tsTable) startLoopNoMerge(cur uint64) {
+func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	tst.loopCloser = run.NewCloser(1 + 3)
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
 	syncCh := make(chan *syncIntroduction)
+	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoopNoMerger(flushCh, introducerWatcher, flusherWatcher, cur)
+	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
+	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	go tst.syncLoop(syncCh, flusherWatcher)
 }
 
@@ -203,7 +206,6 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	if m != nil {
 		tst.metrics = m.(*metrics)
 	}
-	tst.loadSidxMap()
 	tst.gc.init(&tst)
 	ee := fileSystem.ReadDir(rootPath)
 	if len(ee) == 0 {
@@ -215,6 +217,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	for i := range ee {
 		if ee[i].IsDir() {
 			if ee[i].Name() == sidxDirName {
+				continue
+			}
+			if ee[i].Name() == storage.FailedPartsDirName {
 				continue
 			}
 			p, err := parseEpoch(ee[i].Name())
@@ -248,6 +253,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		for _, id := range loadedSnapshots {
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
 		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -271,6 +279,22 @@ func (tst *tsTable) getSidx(name string) (sidx.SIDX, bool) {
 	defer tst.RUnlock()
 	sidxInstance, ok := tst.sidxMap[name]
 	return sidxInstance, ok
+}
+
+func (tst *tsTable) mustGetSidx(name string) sidx.SIDX {
+	sidxInstance, ok := tst.getSidx(name)
+	if !ok {
+		tst.l.Panic().Str("name", name).Msg("sidx not found")
+	}
+	return sidxInstance
+}
+
+func (tst *tsTable) mustGetOrCreateSidx(name string) sidx.SIDX {
+	sidxInstance, err := tst.getOrCreateSidx(name)
+	if err != nil {
+		tst.l.Panic().Str("name", name).Msg("cannot get or create sidx")
+	}
+	return sidxInstance
 }
 
 func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
@@ -297,36 +321,83 @@ func (tst *tsTable) getOrCreateSidx(name string) (sidx.SIDX, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create sidx for %s: %w", name, err)
 	}
+	if tst.sidxMap == nil {
+		tst.sidxMap = make(map[string]sidx.SIDX)
+	}
 
 	tst.sidxMap[name] = newSidx
 	return newSidx, nil
 }
 
 // getAllSidx returns all sidx instances for potential multi-sidx queries.
-func (tst *tsTable) getAllSidx() []sidx.SIDX {
+func (tst *tsTable) getAllSidx() map[string]sidx.SIDX {
 	tst.RLock()
 	defer tst.RUnlock()
 
-	result := make([]sidx.SIDX, 0, len(tst.sidxMap))
-	for _, sidxInstance := range tst.sidxMap {
-		result = append(result, sidxInstance)
+	result := make(map[string]sidx.SIDX, len(tst.sidxMap))
+	for name, sidxInstance := range tst.sidxMap {
+		result[name] = sidxInstance
 	}
 	return result
 }
 
-// getAllSidxNames returns all sidx names.
-func (tst *tsTable) getAllSidxNames() []string {
-	tst.RLock()
-	defer tst.RUnlock()
-
-	result := make([]string, 0, len(tst.sidxMap))
-	for sidxName := range tst.sidxMap {
-		result = append(result, sidxName)
+// enqueueForOfflineNodes enqueues parts for offline nodes via the handoff controller.
+func (tst *tsTable) enqueueForOfflineNodes(onlineNodes []string, partsToSync []*part, partIDsToSync map[uint64]struct{}) {
+	if tst.handoffCtrl == nil {
+		return
 	}
-	return result
+
+	// Check if there are any offline nodes before doing expensive preparation work
+	offlineNodes := tst.handoffCtrl.calculateOfflineNodes(onlineNodes, tst.group, tst.shardID)
+	tst.l.Debug().
+		Str("group", tst.group).
+		Uint32("shardID", uint32(tst.shardID)).
+		Strs("onlineNodes", onlineNodes).
+		Strs("offlineNodes", offlineNodes).
+		Msg("handoff enqueue evaluation")
+	if len(offlineNodes) == 0 {
+		return
+	}
+
+	// Prepare core parts info
+	coreParts := make([]partInfo, 0, len(partsToSync))
+	for _, part := range partsToSync {
+		coreParts = append(coreParts, partInfo{
+			partID:  part.partMetadata.ID,
+			path:    part.path,
+			group:   tst.group,
+			shardID: tst.shardID,
+		})
+	}
+
+	// Get sidx part paths from each sidx instance
+	sidxMap := tst.getAllSidx()
+	sidxParts := make(map[string][]partInfo)
+	for sidxName, sidxInstance := range sidxMap {
+		partPaths := sidxInstance.PartPaths(partIDsToSync)
+		if len(partPaths) == 0 {
+			continue
+		}
+
+		parts := make([]partInfo, 0, len(partPaths))
+		for partID, path := range partPaths {
+			parts = append(parts, partInfo{
+				partID:  partID,
+				path:    path,
+				group:   tst.group,
+				shardID: tst.shardID,
+			})
+		}
+		sidxParts[sidxName] = parts
+	}
+
+	// Call handoff controller with offline nodes
+	if err := tst.handoffCtrl.enqueueForOfflineNodes(offlineNodes, coreParts, sidxParts); err != nil {
+		tst.l.Warn().Err(err).Msg("handoff enqueue completed with errors")
+	}
 }
 
-func (tst *tsTable) loadSidxMap() {
+func (tst *tsTable) loadSidxMap(availablePartIDs []uint64) {
 	tst.sidxMap = make(map[string]sidx.SIDX)
 	sidxRootPath := filepath.Join(tst.root, sidxDirName)
 	if _, err := os.Stat(sidxRootPath); os.IsNotExist(err) {
@@ -350,6 +421,7 @@ func (tst *tsTable) loadSidxMap() {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx options, skipping")
 			continue
 		}
+		sidxOpts.AvailablePartIDs = availablePartIDs
 		newSidx, err := sidx.NewSIDX(tst.fileSystem, sidxOpts)
 		if err != nil {
 			tst.l.Error().Err(err).Str("name", sidxName).Msg("failed to create sidx instance, skipping")
@@ -387,7 +459,7 @@ func (tst *tsTable) Close() error {
 	return tst.closeSidxMap()
 }
 
-func (tst *tsTable) mustAddMemPart(mp *memPart) {
+func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
@@ -395,11 +467,13 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	ind.applied = make(chan struct{})
 	ind.memPart = newPartWrapper(mp, p)
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	ind.sidxReqsMap = sidxReqsMap
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		ind.memPart.decRef()
 		return
 	}
 	select {
@@ -411,14 +485,20 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
 }
 
-func (tst *tsTable) mustAddTraces(ts *traces) {
+func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
+	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
+}
+
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
-	tst.mustAddMemPart(mp)
+	mp.segmentID = segmentID
+
+	tst.mustAddMemPart(mp, sidxReqsMap)
 }
 
 type tstIter struct {
@@ -429,10 +509,7 @@ type tstIter struct {
 }
 
 func (ti *tstIter) reset() {
-	for i := range ti.parts {
-		ti.parts[i] = nil
-	}
-	ti.parts = ti.parts[:0]
+	ti.parts = nil
 
 	for i := range ti.piPool {
 		ti.piPool[i].reset()
@@ -443,7 +520,7 @@ func (ti *tstIter) reset() {
 	ti.idx = 0
 }
 
-func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
+func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, groupedTids [][]string) {
 	ti.reset()
 	ti.parts = parts
 
@@ -453,7 +530,7 @@ func (ti *tstIter) init(bma *blockMetadataArray, parts []*part, tids []string) {
 	ti.piPool = ti.piPool[:len(ti.parts)]
 	for i, p := range ti.parts {
 		ti.piPool[i] = &partIter{}
-		ti.piPool[i].init(bma, p, tids)
+		ti.piPool[i].init(bma, p, groupedTids[i])
 	}
 
 	if len(ti.piPool) == 0 {

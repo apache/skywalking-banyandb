@@ -1,0 +1,58 @@
+[
+  {
+    "metadata": {
+      "name": "latency_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["latency"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "trace_id_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["traceId"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "span_id_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["spanId"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "parent_span_id_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["parentSpanId"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "operation_name_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["operationName"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "component_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["component"],
+    "type": "TYPE_INVERTED"
+  },
+  {
+    "metadata": {
+      "name": "is_error_index",
+      "group": "stream_performance_test"
+    },
+    "tags": ["isError"],
+    "type": "TYPE_INVERTED"
+  }
+]

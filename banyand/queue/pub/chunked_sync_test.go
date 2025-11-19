@@ -228,7 +228,208 @@ var _ = ginkgo.Describe("Chunked Sync Retry Mechanism", func() {
 			gomega.Expect(mockServer.checksumMismatchCount).To(gomega.Equal(0))
 		})
 	})
+
+	ginkgo.Context("when a part fails mid-read during chunk building", func() {
+		ginkgo.It("should discard incomplete chunk and continue with non-failed parts", func() {
+			address := getAddress()
+
+			// Track chunks received to verify no partial data is sent
+			var receivedChunks []*clusterv1.SyncPartRequest
+			var mu sync.Mutex
+
+			// Custom mock server that records chunks
+			s := grpc.NewServer()
+			mockSvc := &recordingMockServer{
+				receivedChunks: &receivedChunks,
+				mu:             &mu,
+			}
+			clusterv1.RegisterChunkedSyncServiceServer(s, mockSvc)
+
+			lis, err := net.Listen("tcp", address)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			go func() {
+				_ = s.Serve(lis)
+			}()
+			defer s.GracefulStop()
+
+			conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer conn.Close()
+
+			client := &chunkedSyncClient{
+				conn:      conn,
+				log:       logger.GetLogger("test-chunked-sync"),
+				chunkSize: 1024, // Small chunk size to force multiple chunks
+			}
+
+			// Create test data: Part 1 (will succeed), Part 2 (will fail mid-read), Part 3 (will succeed)
+			part1Data := make([]byte, 800)
+			for i := range part1Data {
+				part1Data[i] = byte('A')
+			}
+
+			part2Data := make([]byte, 1500) // Large enough to span multiple reads
+			for i := range part2Data {
+				part2Data[i] = byte('B')
+			}
+
+			part3Data := make([]byte, 600)
+			for i := range part3Data {
+				part3Data[i] = byte('C')
+			}
+
+			parts := []queue.StreamingPartData{
+				{
+					ID:      1,
+					Group:   "test-group",
+					ShardID: 1,
+					Topic:   "stream_write",
+					Files: []queue.FileInfo{
+						createFileInfo("part1-file1.dat", part1Data),
+					},
+				},
+				{
+					ID:      2,
+					Group:   "test-group",
+					ShardID: 1,
+					Topic:   "stream_write",
+					Files: []queue.FileInfo{
+						{
+							Name: "part2-file1.dat",
+							Reader: &failingReader{
+								data:      part2Data,
+								failAfter: 500, // Fail after reading 500 bytes
+							},
+						},
+					},
+				},
+				{
+					ID:      3,
+					Group:   "test-group",
+					ShardID: 1,
+					Topic:   "stream_write",
+					Files: []queue.FileInfo{
+						createFileInfo("part3-file1.dat", part3Data),
+					},
+				},
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			result, err := client.SyncStreamingParts(ctx, parts)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(result).NotTo(gomega.BeNil())
+
+			// Verify that part 2 is marked as failed
+			gomega.Expect(result.FailedParts).To(gomega.HaveLen(1))
+			gomega.Expect(result.FailedParts[0].PartID).To(gomega.Equal("2"))
+
+			// Verify that the result is still considered successful (partial success)
+			gomega.Expect(result.Success).To(gomega.BeTrue())
+
+			// Verify chunks received
+			mu.Lock()
+			defer mu.Unlock()
+
+			// Find where part 2 appears in chunks
+			var part2FirstChunkIdx, part2LastChunkIdx int = -1, -1
+			for idx, chunk := range receivedChunks {
+				if chunk.GetCompletion() != nil {
+					continue
+				}
+				for _, partInfo := range chunk.PartsInfo {
+					if partInfo.Id == 2 {
+						if part2FirstChunkIdx == -1 {
+							part2FirstChunkIdx = idx
+						}
+						part2LastChunkIdx = idx
+					}
+				}
+			}
+
+			// Part 2 should appear in at least one chunk (data read before failure)
+			gomega.Expect(part2FirstChunkIdx).To(gomega.BeNumerically(">=", 0),
+				"Part 2 should have contributed to at least one chunk before failing")
+
+			// After part 2 fails, no subsequent chunks should contain part 2 data
+			// This verifies that the buffer was discarded and no mixed data was sent
+			if part2LastChunkIdx >= 0 {
+				// Check all chunks after the last part 2 chunk
+				for idx := part2LastChunkIdx + 1; idx < len(receivedChunks); idx++ {
+					chunk := receivedChunks[idx]
+					if chunk.GetCompletion() != nil {
+						continue
+					}
+					for _, partInfo := range chunk.PartsInfo {
+						gomega.Expect(partInfo.Id).NotTo(gomega.Equal(uint64(2)),
+							"No chunks after the failure should contain part 2 data")
+					}
+				}
+			}
+
+			// Verify that part 1 and part 3 data were successfully sent
+			var foundPart1, foundPart3 bool
+			for _, chunk := range receivedChunks {
+				for _, partInfo := range chunk.PartsInfo {
+					if partInfo.Id == 1 {
+						foundPart1 = true
+					}
+					if partInfo.Id == 3 {
+						foundPart3 = true
+					}
+				}
+			}
+			gomega.Expect(foundPart1).To(gomega.BeTrue(), "Part 1 data should be sent")
+			gomega.Expect(foundPart3).To(gomega.BeTrue(), "Part 3 data should be sent")
+		})
+	})
 })
+
+type recordingMockServer struct {
+	clusterv1.UnimplementedChunkedSyncServiceServer
+	receivedChunks *[]*clusterv1.SyncPartRequest
+	mu             *sync.Mutex
+}
+
+func (r *recordingMockServer) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) error {
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		r.mu.Lock()
+		*r.receivedChunks = append(*r.receivedChunks, req)
+		r.mu.Unlock()
+
+		if req.GetCompletion() != nil {
+			return stream.Send(&clusterv1.SyncPartResponse{
+				SessionId:  req.SessionId,
+				ChunkIndex: req.ChunkIndex,
+				Status:     clusterv1.SyncStatus_SYNC_STATUS_SYNC_COMPLETE,
+				SyncResult: &clusterv1.SyncResult{
+					Success: true,
+				},
+			})
+		}
+
+		resp := &clusterv1.SyncPartResponse{
+			SessionId:  req.SessionId,
+			ChunkIndex: req.ChunkIndex,
+			Status:     clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+		}
+
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func createFileInfo(name string, data []byte) queue.FileInfo {
 	var buf bytes.Buffer
@@ -239,4 +440,37 @@ func createFileInfo(name string, data []byte) queue.FileInfo {
 		Name:   name,
 		Reader: buf.SequentialRead(),
 	}
+}
+
+type failingReader struct {
+	data        []byte
+	offset      int
+	failAfter   int // fail after this many bytes have been read
+	readCount   int
+	alreadyRead int
+}
+
+func (f *failingReader) Read(p []byte) (n int, err error) {
+	if f.alreadyRead >= f.failAfter && f.failAfter > 0 {
+		return 0, fmt.Errorf("simulated read failure after %d bytes", f.alreadyRead)
+	}
+
+	if f.offset >= len(f.data) {
+		return 0, io.EOF
+	}
+
+	n = copy(p, f.data[f.offset:])
+	f.offset += n
+	f.alreadyRead += n
+	f.readCount++
+
+	return n, nil
+}
+
+func (f *failingReader) Close() error {
+	return nil
+}
+
+func (f *failingReader) Path() string {
+	return "failing-reader"
 }

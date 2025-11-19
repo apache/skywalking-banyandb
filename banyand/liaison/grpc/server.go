@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -46,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -91,6 +93,7 @@ type server struct {
 	streamSVC *streamService
 	*streamRegistryServer
 	measureSVC *measureService
+	bydbQLSVC  *bydbQLService
 	log        *logger.Logger
 	*propertyRegistryServer
 	ser         *grpclib.Server
@@ -140,12 +143,27 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
+	propertyService := &propertyServer{
+		schemaRegistry:   schemaRegistry,
+		pipeline:         tir2Client,
+		nodeRegistry:     nr.PropertyNodeRegistry,
+		discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
+	}
+	bydbQLSVC := &bydbQLService{
+		repo:           schemaRegistry,
+		transformer:    bydbql.NewTransformer(schemaRegistry),
+		streamSvc:      streamSVC,
+		measureSvc:     measureSVC,
+		traceSvc:       traceSVC,
+		propertyServer: propertyService,
+	}
 
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
 		traceSVC:   traceSVC,
+		bydbQLSVC:  bydbQLSVC,
 		groupRepo:  gr,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -165,12 +183,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		topNAggregationRegistryServer: &topNAggregationRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		propertyServer: &propertyServer{
-			schemaRegistry:   schemaRegistry,
-			pipeline:         tir2Client,
-			nodeRegistry:     nr.PropertyNodeRegistry,
-			discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
-		},
+		propertyServer: propertyService,
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -192,6 +205,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.measureSVC.setLogger(s.log)
 	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
+	s.bydbQLSVC.setLogger(s.log.Named("bydbql"))
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
@@ -231,6 +245,7 @@ func (s *server) PreRun(_ context.Context) error {
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
 	s.traceSVC.metrics = metrics
+	s.bydbQLSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
@@ -284,9 +299,9 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.enableQueryAccessLog, "enable-query-access-log", false, "enable query access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
 	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
-	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
-	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
-	fs.DurationVar(&s.traceSVC.writeTimeout, "trace-write-timeout", 15*time.Second, "timeout for writing trace among liaison nodes")
+	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", time.Minute, "timeout for writing stream among liaison nodes")
+	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", time.Minute, "timeout for writing measure among liaison nodes")
+	fs.DurationVar(&s.traceSVC.writeTimeout, "trace-write-timeout", time.Minute, "timeout for writing trace among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
@@ -367,6 +382,7 @@ func (s *server) Serve() run.StopNotify {
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
 	tracev1.RegisterTraceServiceServer(s.ser, s.traceSVC)
+	bydbqlv1.RegisterBydbQLServiceServer(s.ser, s.bydbQLSVC)
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)

@@ -245,9 +245,7 @@ func (pi *partIter) findBlock() bool {
 				return false
 			}
 			if shouldSkip {
-				if !pi.nextSeriesID() {
-					return false
-				}
+				bhs = bhs[1:]
 				continue
 			}
 		}
@@ -268,7 +266,6 @@ type partMergeIter struct {
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
 	block                blockPointer
-	partID               uint64
 	primaryMetadataIdx   int
 }
 
@@ -277,7 +274,6 @@ func (pmi *partMergeIter) reset() {
 	pmi.seqReaders.reset()
 	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
-	pmi.partID = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
 	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
 	pmi.block.reset()
@@ -287,7 +283,6 @@ func (pmi *partMergeIter) mustInitFromPart(p *part) {
 	pmi.reset()
 	pmi.seqReaders.init(p)
 	pmi.primaryBlockMetadata = p.primaryBlockMetadata
-	pmi.partID = p.partMetadata.ID
 }
 
 func (pmi *partMergeIter) error() error {

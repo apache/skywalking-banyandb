@@ -204,6 +204,7 @@ type traceIDFilter struct {
 }
 
 func (tf *traceIDFilter) reset() {
+	releaseTraceIDBloomFilter(tf.filter)
 	tf.filter = nil
 }
 
@@ -225,7 +226,7 @@ func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPat
 		return
 	}
 
-	bf := filter.NewBloomFilter(0)
+	bf := generateTraceIDBloomFilter()
 	tf.filter = decodeBloomFilter(data, bf)
 }
 

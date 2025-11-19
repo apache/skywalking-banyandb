@@ -18,9 +18,10 @@
 package sidx
 
 import (
-	"bytes"
 	"fmt"
 
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -45,12 +46,26 @@ type tagMetadata struct {
 
 // tagData represents the runtime data for a tag with filtering capabilities.
 type tagData struct {
-	values    [][]byte
-	filter    *filter.BloomFilter // For indexed tags
-	name      string
-	min       []byte // For int64 tags
-	max       []byte // For int64 tags
-	valueType pbv1.ValueType
+	uniqueValues map[string]struct{}
+	name         string
+	values       []tagRow
+	tmpBytes     [][]byte
+	valueType    pbv1.ValueType
+}
+
+type tagRow struct {
+	value    []byte
+	valueArr [][]byte
+}
+
+func (tr *tagRow) reset() {
+	tr.value = nil
+	if tr.valueArr != nil {
+		for i := range tr.valueArr {
+			tr.valueArr[i] = nil
+		}
+	}
+	tr.valueArr = tr.valueArr[:0]
 }
 
 var (
@@ -102,19 +117,20 @@ func (td *tagData) reset() {
 
 	// Reset values slice
 	for i := range td.values {
-		td.values[i] = nil
+		td.values[i].reset()
 	}
 	td.values = td.values[:0]
 
-	// Reset filter
-	if td.filter != nil {
-		releaseBloomFilter(td.filter)
-		td.filter = nil
+	// Reset tmpBytes slice
+	for i := range td.tmpBytes {
+		td.tmpBytes[i] = nil
 	}
+	td.tmpBytes = td.tmpBytes[:0]
 
-	// Reset min/max
-	td.min = nil
-	td.max = nil
+	// Reset uniqueValues map for reuse
+	for k := range td.uniqueValues {
+		delete(td.uniqueValues, k)
+	}
 }
 
 // reset clears tagMetadata for reuse in object pool.
@@ -135,8 +151,7 @@ func generateBloomFilter(expectedElements int) *filter.BloomFilter {
 	}
 	// Reset and resize for new expected elements
 	v.SetN(expectedElements)
-	m := expectedElements * filter.B
-	v.ResizeBits((m + 63) / 64)
+	v.ResizeBits(filter.OptimalBitsSize(expectedElements))
 	return v
 }
 
@@ -167,11 +182,9 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 
 	n := pkgencoding.BytesToInt64(src)
 	bf := generateBloomFilter(int(n))
+	bitsLen := len(bf.Bits())
 
-	m := n * filter.B
-	bits := make([]uint64, 0, (m+63)/64)
-	var err error
-	bits, _, err = pkgencoding.DecodeUint64Block(bits, src[8:], uint64((m+63)/64))
+	bits, _, err := pkgencoding.DecodeUint64Block(bf.Bits()[:0], src[8:], uint64(bitsLen))
 	if err != nil {
 		releaseBloomFilter(bf)
 		return nil, fmt.Errorf("failed to decode bloom filter bits: %w", err)
@@ -181,65 +194,59 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	return bf, nil
 }
 
-// updateMinMax updates min/max values for int64 tags.
-func (td *tagData) updateMinMax() {
-	if td.valueType != pbv1.ValueTypeInt64 || len(td.values) == 0 {
-		return
+// marshalTagRow marshals the tagRow value to a byte slice.
+func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
+	if tr.valueArr != nil {
+		for i := range tr.valueArr {
+			if valueType == pbv1.ValueTypeInt64Arr {
+				dst = append(dst, tr.valueArr[i]...)
+				continue
+			}
+			dst = internalencoding.MarshalVarArray(dst, tr.valueArr[i])
+		}
+		return dst
+	}
+	dst = append(dst, tr.value...)
+	return dst
+}
+
+// decodeAndConvertTagValues decodes encoded tag values and converts them to tagRow format.
+// This is a common operation shared between reading from disk and querying.
+func decodeAndConvertTagValues(td *tagData, decoder *pkgencoding.BytesBlockDecoder, encodedData *bytes.Buffer, valueType pbv1.ValueType, count int) error {
+	var err error
+
+	// Decode to tmpBytes buffer, reusing the existing slice to avoid allocations
+	td.tmpBytes, err = internalencoding.DecodeTagValues(td.tmpBytes[:0], decoder, encodedData, valueType, count)
+	if err != nil {
+		return fmt.Errorf("cannot decode tag values: %w", err)
 	}
 
-	var minVal, maxVal int64
-	first := true
+	// Convert [][]byte to []tagRow based on valueType
+	if cap(td.values) < len(td.tmpBytes) {
+		td.values = make([]tagRow, len(td.tmpBytes))
+	} else {
+		td.values = td.values[:len(td.tmpBytes)]
+	}
 
-	for _, value := range td.values {
-		if len(value) != 8 {
-			continue // Skip invalid int64 values
+	for i, encodedValue := range td.tmpBytes {
+		if encodedValue == nil {
+			td.values[i] = tagRow{}
+			continue
 		}
 
-		val := pkgencoding.BytesToInt64(value)
-
-		if first {
-			minVal = val
-			maxVal = val
-			first = false
+		if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
+			// For array types, unmarshal to valueArr
+			td.values[i].valueArr, err = unmarshalTag(td.values[i].valueArr[:0], encodedValue, valueType)
+			if err != nil {
+				return fmt.Errorf("cannot unmarshal tag array: %w", err)
+			}
 		} else {
-			if val < minVal {
-				minVal = val
-			}
-			if val > maxVal {
-				maxVal = val
-			}
+			// For scalar types, set value directly
+			td.values[i].value = encodedValue
 		}
 	}
 
-	if !first {
-		td.min = pkgencoding.Int64ToBytes(nil, minVal)
-		td.max = pkgencoding.Int64ToBytes(nil, maxVal)
-	}
-}
-
-// addValue adds a value to the tag data.
-func (td *tagData) addValue(value []byte) {
-	td.values = append(td.values, value)
-
-	// Update filter for indexed tags
-	if td.filter != nil {
-		td.filter.Add(value)
-	}
-}
-
-// hasValue checks if a value exists in the tag using the bloom filter.
-func (td *tagData) hasValue(value []byte) bool {
-	if td.filter == nil {
-		// For non-indexed tags, do linear search
-		for _, v := range td.values {
-			if bytes.Equal(v, value) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return td.filter.MightContain(value)
+	return nil
 }
 
 // marshal serializes tag metadata to bytes using encoding package.

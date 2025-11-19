@@ -32,6 +32,8 @@ message Span {
   repeated model.v1.Tag tags = 1;
   // span is the raw span data.
   bytes span = 2;
+  // span_id is the unique identifier of the span.
+  string span_id = 3;
 }
 
 // InternalTrace is the trace that is used for internal use.
@@ -48,6 +50,8 @@ message InternalTrace {
 message Trace {
   // spans is the list of spans that belong to this trace.
   repeated Span spans = 1;
+  // trace_id is the unique identifier of the trace.
+  string trace_id = 2;
 }
 
 // QueryResponse is the response of a query.

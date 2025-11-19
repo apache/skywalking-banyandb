@@ -77,7 +77,6 @@ dataPoints:
           value: service_name_3
     - key: layer
       value:
-        int:
-          value: "1"
+        int: {}
   timestamp: "2024-11-15T01:41:00Z"
   version: "1"

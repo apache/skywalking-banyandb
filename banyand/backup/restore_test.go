@@ -91,3 +91,41 @@ func TestRestoreDelete(t *testing.T) {
 		t.Fatalf("expected extra file %q to be deleted", extraFilePath)
 	}
 }
+
+func TestRestoreSame(t *testing.T) {
+	remoteDir := t.TempDir()
+	localRestoreDir := t.TempDir()
+
+	fs, err := local.NewFS(remoteDir)
+	if err != nil {
+		t.Fatalf("failed to create remote FS: %v", err)
+	}
+
+	streamDir := filepath.Join(localRestoreDir, "stream", storage.DataDir)
+	if err = os.MkdirAll(streamDir, storage.DirPerm); err != nil {
+		t.Fatalf("failed to create local stream directory: %v", err)
+	}
+	extraFilePath := filepath.Join(streamDir, "test.txt")
+	extraContent := "hello"
+	if err = os.WriteFile(extraFilePath, []byte(extraContent), 0o600); err != nil {
+		t.Fatalf("failed to write extra local file: %v", err)
+	}
+
+	timeDir := "2023-10-10"
+	remoteFilePath := filepath.Join(timeDir, snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM), "test.txt")
+	content := "hello"
+	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("failed to upload file: %v", err)
+	}
+
+	err = restoreCatalog(fs, timeDir, localRestoreDir, commonv1.Catalog_CATALOG_STREAM)
+	if err != nil {
+		t.Fatalf("restoreCatalog failed: %v", err)
+	}
+
+	_, err = os.Stat(extraFilePath)
+	if err != nil {
+		t.Fatalf("expected extra file %q exist", extraFilePath)
+	}
+}

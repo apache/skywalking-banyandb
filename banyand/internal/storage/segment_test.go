@@ -619,12 +619,11 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Now delete expired segments
 	// Get the time range for segments 0, 1, and 2 (the expired ones)
-	timeRange := timestamp.NewInclusiveTimeRange(
-		segments[0].Start,
-		segments[2].End,
-	)
-
-	deletedCount := sc.deleteExpiredSegments(timeRange)
+	deletedCount := sc.deleteExpiredSegments([]string{
+		time.Now().AddDate(0, 0, -6).Format(dayFormat),
+		time.Now().AddDate(0, 0, -5).Format(dayFormat),
+		time.Now().AddDate(0, 0, -4).Format(dayFormat),
+	})
 	assert.Equal(t, int64(3), deletedCount, "Should have deleted 3 expired segments")
 
 	// Verify segment controller's segment list

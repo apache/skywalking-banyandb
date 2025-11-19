@@ -1,0 +1,96 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: '3.8'
+
+services:
+  banyandb-stream:
+    build:
+      context: ../../../..
+      dockerfile: test/stress/stream-vs-trace/docker/Dockerfile
+    container_name: banyandb-stream
+    hostname: banyandb-stream
+    environment:
+      - GRPC_GO_LOG_SEVERITY_LEVEL=ERROR
+      - GRPC_GO_LOG_FORMATTER=json
+    volumes:
+      - stream-data:/data
+    ports:
+      - "17912:17912"  # gRPC port
+      - "17913:17913"  # HTTP port
+      - "6060:6060"    # pprof port
+      - "2121:2121"    # metrics port
+    networks:
+      - banyandb-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    command: ["standalone", "--stream-data-path=/data", "--logging-level=info"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:17913/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  banyandb-trace:
+    build:
+      context: ../../../..
+      dockerfile: test/stress/stream-vs-trace/docker/Dockerfile
+    container_name: banyandb-trace
+    hostname: banyandb-trace
+    environment:
+      - GRPC_GO_LOG_SEVERITY_LEVEL=ERROR
+      - GRPC_GO_LOG_FORMATTER=json
+    volumes:
+      - trace-data:/data
+    ports:
+      - "27912:17912"  # gRPC port (offset by 10000)
+      - "27913:17913"  # HTTP port (offset by 10000)
+      - "16060:6060"   # pprof port (offset by 10000)
+      - "12121:2121"   # metrics port (offset by 10000)
+    networks:
+      - banyandb-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    command: ["standalone", "--trace-data-path=/data", "--logging-level=info"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:17913/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  stream-data:
+    driver: local
+  trace-data:
+    driver: local
+
+networks:
+  banyandb-network:
+    driver: bridge

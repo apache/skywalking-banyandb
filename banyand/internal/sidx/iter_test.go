@@ -37,16 +37,7 @@ func TestIterComprehensive(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Test cases for comprehensive iterator testing
-	testCases := []struct {
-		blockFilter  index.Filter
-		name         string
-		parts        [][]testElement
-		querySids    []common.SeriesID
-		expectOrder  []blockExpectation
-		minKey       int64
-		maxKey       int64
-		expectBlocks int
-	}{
+	testCases := []iterTestCase{
 		{
 			name: "single_part_single_block",
 			parts: [][]testElement{
@@ -215,8 +206,10 @@ func TestIterComprehensive(t *testing.T) {
 
 	// Test both file-based and memory-based parts
 	for _, partType := range []string{"file_based", "memory_based"} {
+		partType := partType
 		t.Run(partType, func(t *testing.T) {
 			for _, tc := range testCases {
+				tc := tc
 				t.Run(tc.name, func(t *testing.T) {
 					var parts []*part
 
@@ -233,7 +226,7 @@ func TestIterComprehensive(t *testing.T) {
 						if partType == "file_based" {
 							partDir := filepath.Join(tempDir, fmt.Sprintf("%s_%s_part%d", partType, tc.name, i))
 							mp.mustFlush(testFS, partDir)
-							testPart = mustOpenPart(partDir, testFS)
+							testPart = mustOpenPart(uint64(i), partDir, testFS)
 						} else {
 							testPart = openMemPart(mp)
 						}
@@ -241,8 +234,29 @@ func TestIterComprehensive(t *testing.T) {
 						parts = append(parts, testPart)
 					}
 
-					// Test the iterator
-					runIteratorTest(t, tc, parts)
+					ascBlocks := runIteratorPass(t, tc, parts, true)
+					descBlocks := runIteratorPass(t, tc, parts, false)
+
+					assertSameBlocksIgnoreOrder(t, ascBlocks, descBlocks)
+
+					require.True(t, sort.SliceIsSorted(ascBlocks, func(i, j int) bool {
+						if ascBlocks[i].minKey == ascBlocks[j].minKey {
+							return ascBlocks[i].seriesID <= ascBlocks[j].seriesID
+						}
+						return ascBlocks[i].minKey <= ascBlocks[j].minKey
+					}), "ascending pass should be ordered by non-decreasing minKey")
+
+					require.True(t, sort.SliceIsSorted(descBlocks, func(i, j int) bool {
+						if descBlocks[i].minKey == descBlocks[j].minKey {
+							return descBlocks[i].seriesID >= descBlocks[j].seriesID
+						}
+						return descBlocks[i].minKey >= descBlocks[j].minKey
+					}), "descending pass should be ordered by non-increasing minKey")
+
+					if len(tc.expectOrder) > 0 {
+						require.Equal(t, tc.expectOrder, ascBlocks, "ascending pass order should match expectation")
+						require.Equal(t, reverseExpectations(tc.expectOrder), descBlocks, "descending pass should be reverse of expectation")
+					}
 				})
 			}
 		})
@@ -254,15 +268,13 @@ func TestIterEdgeCases(t *testing.T) {
 	tempDir := t.TempDir()
 
 	t.Run("empty_parts_list", func(t *testing.T) {
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		it := generateIter()
-		defer releaseIter(it)
-
-		it.init(bma, nil, []common.SeriesID{1, 2, 3}, 100, 200, nil)
-		assert.False(t, it.nextBlock())
-		assert.Nil(t, it.Error())
+		for _, asc := range []bool{true, false} {
+			it := generateIter()
+			it.init(nil, []common.SeriesID{1, 2, 3}, 100, 200, nil, asc)
+			assert.False(t, it.nextBlock())
+			assert.Nil(t, it.Error())
+			releaseIter(it)
+		}
 	})
 
 	t.Run("empty_series_list", func(t *testing.T) {
@@ -278,18 +290,16 @@ func TestIterEdgeCases(t *testing.T) {
 
 		partDir := filepath.Join(tempDir, "empty_series")
 		mp.mustFlush(testFS, partDir)
-		testPart := mustOpenPart(partDir, testFS)
+		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		it := generateIter()
-		defer releaseIter(it)
-
-		it.init(bma, []*part{testPart}, []common.SeriesID{}, 0, 1000, nil)
-		assert.False(t, it.nextBlock())
-		assert.Nil(t, it.Error())
+		for _, asc := range []bool{true, false} {
+			it := generateIter()
+			it.init([]*part{testPart}, []common.SeriesID{}, 0, 1000, nil, asc)
+			assert.False(t, it.nextBlock())
+			assert.Nil(t, it.Error())
+			releaseIter(it)
+		}
 	})
 
 	t.Run("no_matching_key_range", func(t *testing.T) {
@@ -317,21 +327,19 @@ func TestIterEdgeCases(t *testing.T) {
 		mp1.mustFlush(testFS, partDir1)
 		mp2.mustFlush(testFS, partDir2)
 
-		testPart1 := mustOpenPart(partDir1, testFS)
+		testPart1 := mustOpenPart(1, partDir1, testFS)
 		defer testPart1.close()
-		testPart2 := mustOpenPart(partDir2, testFS)
+		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		it := generateIter()
-		defer releaseIter(it)
-
-		// Query range that doesn't overlap with any blocks
-		it.init(bma, []*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil)
-		assert.False(t, it.nextBlock())
-		assert.Nil(t, it.Error())
+		for _, asc := range []bool{true, false} {
+			it := generateIter()
+			// Query range that doesn't overlap with any blocks
+			it.init([]*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil, asc)
+			assert.False(t, it.nextBlock())
+			assert.Nil(t, it.Error())
+			releaseIter(it)
+		}
 	})
 
 	t.Run("single_part_single_block", func(t *testing.T) {
@@ -346,20 +354,18 @@ func TestIterEdgeCases(t *testing.T) {
 
 		partDir := filepath.Join(tempDir, "single_part")
 		mp.mustFlush(testFS, partDir)
-		testPart := mustOpenPart(partDir, testFS)
+		testPart := mustOpenPart(1, partDir, testFS)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
+		for _, asc := range []bool{true, false} {
+			it := generateIter()
+			it.init([]*part{testPart}, []common.SeriesID{1}, 50, 150, nil, asc)
 
-		it := generateIter()
-		defer releaseIter(it)
-
-		it.init(bma, []*part{testPart}, []common.SeriesID{1}, 50, 150, nil)
-
-		assert.True(t, it.nextBlock())
-		assert.False(t, it.nextBlock()) // Should be only one block
-		assert.Nil(t, it.Error())
+			assert.True(t, it.nextBlock())
+			assert.False(t, it.nextBlock()) // Should be only one block
+			assert.Nil(t, it.Error())
+			releaseIter(it)
+		}
 	})
 
 	t.Run("block_filter_error", func(t *testing.T) {
@@ -375,20 +381,18 @@ func TestIterEdgeCases(t *testing.T) {
 		testPart := openMemPart(mp)
 		defer testPart.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		it := generateIter()
-		defer releaseIter(it)
-
 		expectedErr := fmt.Errorf("test filter error")
 		mockFilter := &mockBlockFilter{err: expectedErr}
 
-		it.init(bma, []*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter)
+		for _, asc := range []bool{true, false} {
+			it := generateIter()
+			it.init([]*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter, asc)
 
-		assert.False(t, it.nextBlock())
-		assert.Error(t, it.Error())
-		assert.Contains(t, it.Error().Error(), "cannot initialize sidx iteration")
+			assert.False(t, it.nextBlock())
+			assert.Error(t, it.Error())
+			assert.Contains(t, it.Error().Error(), "cannot initialize sidx iteration")
+			releaseIter(it)
+		}
 	})
 }
 
@@ -427,42 +431,46 @@ func TestIterOrdering(t *testing.T) {
 		mp1.mustFlush(testFS, partDir1)
 		mp2.mustFlush(testFS, partDir2)
 
-		testPart1 := mustOpenPart(partDir1, testFS)
+		testPart1 := mustOpenPart(1, partDir1, testFS)
 		defer testPart1.close()
-		testPart2 := mustOpenPart(partDir2, testFS)
+		testPart2 := mustOpenPart(2, partDir2, testFS)
 		defer testPart2.close()
 
-		bma := generateBlockMetadataArray()
-		defer releaseBlockMetadataArray(bma)
-
-		it := generateIter()
-		defer releaseIter(it)
-
-		it.init(bma, []*part{testPart1, testPart2}, []common.SeriesID{1, 2, 3, 4, 5, 6}, 0, 1000, nil)
-
-		// Blocks should come in series ID order: 1, 2, 3, 4, 5, 6
-		var foundSeries []common.SeriesID
-		for it.nextBlock() {
-			// Access the current block from the heap - need to be careful about heap structure
-			if len(it.piHeap) > 0 {
-				foundSeries = append(foundSeries, it.piHeap[0].curBlock.seriesID)
-			}
+		tc := iterTestCase{
+			name:         "interleaved_series_ordering",
+			parts:        nil, // not used by helper during verification
+			querySids:    []common.SeriesID{1, 2, 3, 4, 5, 6},
+			minKey:       0,
+			maxKey:       1000,
+			blockFilter:  nil,
+			expectBlocks: 6,
+			expectOrder: []blockExpectation{
+				{seriesID: 1, minKey: 100, maxKey: 100},
+				{seriesID: 2, minKey: 200, maxKey: 200},
+				{seriesID: 3, minKey: 300, maxKey: 300},
+				{seriesID: 4, minKey: 400, maxKey: 400},
+				{seriesID: 5, minKey: 500, maxKey: 500},
+				{seriesID: 6, minKey: 600, maxKey: 600},
+			},
 		}
 
-		assert.NoError(t, it.Error())
+		ascBlocks := runIteratorPass(t, tc, []*part{testPart1, testPart2}, true)
+		descBlocks := runIteratorPass(t, tc, []*part{testPart1, testPart2}, false)
 
-		// We expect to find all 6 series
-		assert.Equal(t, 6, len(foundSeries))
+		assertSameBlocksIgnoreOrder(t, ascBlocks, descBlocks)
+		require.Len(t, ascBlocks, 6)
 
-		// Verify ordering
-		expectedOrder := []common.SeriesID{1, 2, 3, 4, 5, 6}
-		assert.True(t, sort.SliceIsSorted(foundSeries, func(i, j int) bool {
-			return foundSeries[i] < foundSeries[j]
-		}), "found series should be in ascending order: %v", foundSeries)
+		require.True(t, sort.SliceIsSorted(ascBlocks, func(i, j int) bool {
+			return ascBlocks[i].seriesID <= ascBlocks[j].seriesID
+		}), "ascending iteration should retain increasing series order")
 
-		// All expected series should be found
-		for _, expectedSeries := range expectedOrder {
-			assert.Contains(t, foundSeries, expectedSeries, "should find series %d", expectedSeries)
+		require.True(t, sort.SliceIsSorted(descBlocks, func(i, j int) bool {
+			return descBlocks[i].seriesID >= descBlocks[j].seriesID
+		}), "descending iteration should retain decreasing series order")
+
+		for _, expected := range tc.expectOrder {
+			assert.Contains(t, ascBlocks, expected)
+			assert.Contains(t, descBlocks, expected)
 		}
 	})
 }
@@ -491,15 +499,13 @@ func TestIterPoolOperations(t *testing.T) {
 
 		// Set some state
 		it.err = fmt.Errorf("test error")
-		it.nextBlockNoop = true
 
 		// Reset should clear everything
 		it.reset()
 		assert.Nil(t, it.err)
 		assert.Equal(t, 0, len(it.parts))
-		assert.Equal(t, 0, len(it.piPool))
-		assert.Equal(t, 0, len(it.piHeap))
-		assert.False(t, it.nextBlockNoop)
+		assert.Equal(t, 0, len(it.partIters))
+		assert.Equal(t, 0, len(it.heap))
 	})
 }
 
@@ -525,18 +531,60 @@ func TestBlockMetadataLess(t *testing.T) {
 	})
 }
 
-// Helper types and functions.
+func TestIterOverlappingBlockGroups(t *testing.T) {
+	elementsPart1 := createTestElements([]testElement{
+		{seriesID: 1, userKey: 100, data: []byte("p1-a")},
+		{seriesID: 1, userKey: 200, data: []byte("p1-b")},
+	})
+	defer releaseElements(elementsPart1)
 
-type blockExpectation struct {
-	seriesID common.SeriesID
-	minKey   int64
-	maxKey   int64
+	mp1 := GenerateMemPart()
+	defer ReleaseMemPart(mp1)
+	mp1.mustInitFromElements(elementsPart1)
+	part1 := openMemPart(mp1)
+	defer part1.close()
+
+	elementsPart2 := createTestElements([]testElement{
+		{seriesID: 2, userKey: 150, data: []byte("p2-a")},
+		{seriesID: 2, userKey: 180, data: []byte("p2-b")},
+	})
+	defer releaseElements(elementsPart2)
+
+	mp2 := GenerateMemPart()
+	defer ReleaseMemPart(mp2)
+	mp2.mustInitFromElements(elementsPart2)
+	part2 := openMemPart(mp2)
+	defer part2.close()
+
+	for _, asc := range []bool{true, false} {
+		it := generateIter()
+		it.init([]*part{part1, part2}, []common.SeriesID{1, 2}, 0, 500, nil, asc)
+
+		// Now we iterate individual blocks from both parts
+		partsSeen := make(map[*part]struct{})
+		seriesSeen := make(map[common.SeriesID]struct{})
+		totalBlocks := 0
+
+		for it.nextBlock() {
+			bm, p := it.current()
+			require.NotNil(t, bm, "current block should not be nil")
+			require.NotNil(t, p, "current part should not be nil")
+			partsSeen[p] = struct{}{}
+			seriesSeen[bm.seriesID] = struct{}{}
+			totalBlocks++
+		}
+
+		require.Len(t, partsSeen, 2, "expected contributions from both parts")
+		require.Len(t, seriesSeen, 2, "expected blocks from both series")
+		require.GreaterOrEqual(t, totalBlocks, 2, "should iterate at least 2 blocks (one per part)")
+		assert.NoError(t, it.Error())
+		releaseIter(it)
+	}
 }
 
-// mockBlockFilter is already defined in part_iter_test.go.
+// Helper types and functions.
 
-// runIteratorTest runs the iterator test with the given test case and parts.
-func runIteratorTest(t *testing.T, tc struct {
+type iterTestCase struct {
 	blockFilter  index.Filter
 	name         string
 	parts        [][]testElement
@@ -545,28 +593,24 @@ func runIteratorTest(t *testing.T, tc struct {
 	minKey       int64
 	maxKey       int64
 	expectBlocks int
-}, parts []*part,
-) {
-	bma := generateBlockMetadataArray()
-	defer releaseBlockMetadataArray(bma)
+}
+
+// mockBlockFilter is already defined in part_iter_test.go.
+
+func runIteratorPass(t *testing.T, tc iterTestCase, parts []*part, asc bool) []blockExpectation {
+	t.Helper()
 
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(bma, parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter)
+	it.init(parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter, asc)
 
 	var foundBlocks []blockExpectation
-	blockCount := 0
 
 	for it.nextBlock() {
-		blockCount++
-		// Get the minimum block from heap (the one currently being processed)
-		require.True(t, len(it.piHeap) > 0, "heap should not be empty when nextBlock returns true")
+		curBlock, _ := it.current()
+		require.NotNil(t, curBlock, "current block should not be nil when nextBlock returns true (order=%s)", orderName(asc))
 
-		curBlock := it.piHeap[0].curBlock
-		t.Logf("Found block for seriesID %d, key range [%d, %d]", curBlock.seriesID, curBlock.minKey, curBlock.maxKey)
-
-		// Verify the block overlaps with query range
 		overlaps := curBlock.maxKey >= tc.minKey && curBlock.minKey <= tc.maxKey
 		assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
 			tc.minKey, tc.maxKey, curBlock.minKey, curBlock.maxKey)
@@ -585,23 +629,34 @@ func runIteratorTest(t *testing.T, tc struct {
 	// Verify the number of blocks found
 	assert.Equal(t, tc.expectBlocks, len(foundBlocks), "should find expected number of blocks")
 
-	// Verify ordering - blocks should come out in sorted order by (seriesID, minKey)
-	assert.True(t, sort.SliceIsSorted(foundBlocks, func(i, j int) bool {
-		if foundBlocks[i].seriesID == foundBlocks[j].seriesID {
-			return foundBlocks[i].minKey < foundBlocks[j].minKey
-		}
-		return foundBlocks[i].seriesID < foundBlocks[j].seriesID
-	}), "blocks should be in sorted order by (seriesID, minKey)")
+	return foundBlocks
+}
 
-	// If specific order is expected, verify it
-	if len(tc.expectOrder) > 0 {
-		require.Equal(t, len(tc.expectOrder), len(foundBlocks), "number of found blocks should match expected")
-		for i, expected := range tc.expectOrder {
-			assert.Equal(t, expected.seriesID, foundBlocks[i].seriesID, "block %d seriesID should match", i)
-			assert.Equal(t, expected.minKey, foundBlocks[i].minKey, "block %d minKey should match", i)
-			assert.Equal(t, expected.maxKey, foundBlocks[i].maxKey, "block %d maxKey should match", i)
-		}
+func reverseExpectations(src []blockExpectation) []blockExpectation {
+	if len(src) == 0 {
+		return nil
 	}
+	out := make([]blockExpectation, len(src))
+	for i := range src {
+		out[i] = src[len(src)-1-i]
+	}
+	return out
+}
 
-	t.Logf("Test %s completed: found %d blocks, expected %d", tc.name, blockCount, tc.expectBlocks)
+func assertSameBlocksIgnoreOrder(t *testing.T, left, right []blockExpectation) {
+	t.Helper()
+
+	require.Equal(t, len(left), len(right), "block counts should match across orders")
+
+	counts := make(map[blockExpectation]int, len(left))
+	for _, block := range left {
+		counts[block]++
+	}
+	for _, block := range right {
+		counts[block]--
+		require.GreaterOrEqual(t, counts[block], 0, "unexpected block encountered %+v", block)
+	}
+	for block, count := range counts {
+		require.Equal(t, 0, count, "missing block %+v in comparison", block)
+	}
 }

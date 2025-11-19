@@ -18,18 +18,21 @@
 package trace
 
 import (
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
 type introduction struct {
-	memPart *partWrapper
-	applied chan struct{}
+	memPart     *partWrapper
+	applied     chan struct{}
+	sidxReqsMap map[string]*sidx.MemPart
 }
 
 func (i *introduction) reset() {
 	i.memPart = nil
 	i.applied = nil
+	i.sidxReqsMap = nil
 }
 
 var introductionPool = pool.Register[*introduction]("trace-introduction")
@@ -37,7 +40,9 @@ var introductionPool = pool.Register[*introduction]("trace-introduction")
 func generateIntroduction() *introduction {
 	v := introductionPool.Get()
 	if v == nil {
-		return &introduction{}
+		return &introduction{
+			sidxReqsMap: make(map[string]*sidx.MemPart),
+		}
 	}
 	intro := v
 	intro.reset()
@@ -49,13 +54,17 @@ func releaseIntroduction(i *introduction) {
 }
 
 type flusherIntroduction struct {
-	flushed map[uint64]*partWrapper
-	applied chan struct{}
+	flushed               map[uint64]*partWrapper
+	sidxFlusherIntroduced map[string]*sidx.FlusherIntroduction
+	applied               chan struct{}
 }
 
 func (i *flusherIntroduction) reset() {
 	for k := range i.flushed {
 		delete(i.flushed, k)
+	}
+	for k := range i.sidxFlusherIntroduced {
+		delete(i.sidxFlusherIntroduced, k)
 	}
 	i.applied = nil
 }
@@ -66,7 +75,8 @@ func generateFlusherIntroduction() *flusherIntroduction {
 	v := flusherIntroductionPool.Get()
 	if v == nil {
 		return &flusherIntroduction{
-			flushed: make(map[uint64]*partWrapper),
+			flushed:               make(map[uint64]*partWrapper),
+			sidxFlusherIntroduced: make(map[string]*sidx.FlusherIntroduction),
 		}
 	}
 	fi := v
@@ -79,16 +89,16 @@ func releaseFlusherIntroduction(i *flusherIntroduction) {
 }
 
 type mergerIntroduction struct {
-	merged  map[partHandle]struct{}
-	newPart *partWrapper
-	applied chan struct{}
-	creator snapshotCreator
+	merged               map[uint64]struct{}
+	newPart              *partWrapper
+	sidxMergerIntroduced map[string]*sidx.MergerIntroduction
+	applied              chan struct{}
+	creator              snapshotCreator
 }
 
 func (i *mergerIntroduction) reset() {
-	for k := range i.merged {
-		delete(i.merged, partHandle{partID: k.partID, partType: PartTypeCore})
-	}
+	i.merged = nil
+	i.sidxMergerIntroduced = nil
 	i.newPart = nil
 	i.applied = nil
 	i.creator = 0
@@ -110,13 +120,8 @@ func releaseMergerIntroduction(i *mergerIntroduction) {
 	mergerIntroductionPool.Put(i)
 }
 
-type partHandle struct {
-	partType string
-	partID   uint64
-}
-
 type syncIntroduction struct {
-	synced  map[partHandle]struct{}
+	synced  map[uint64]struct{}
 	applied chan struct{}
 }
 
@@ -133,7 +138,7 @@ func generateSyncIntroduction() *syncIntroduction {
 	v := syncIntroductionPool.Get()
 	if v == nil {
 		return &syncIntroduction{
-			synced: make(map[partHandle]struct{}),
+			synced: make(map[uint64]struct{}),
 		}
 	}
 	si := v
@@ -177,7 +182,9 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 	}
 }
 
-func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64) {
+func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, mergeCh chan *mergerIntroduction,
+	syncCh chan *syncIntroduction, watcherCh watcher.Channel, epoch uint64,
+) {
 	var introducerWatchers watcher.Epochs
 	defer tst.loopCloser.Done()
 	for {
@@ -193,6 +200,12 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, sy
 			tst.incTotalIntroduceLoopStarted("flush")
 			tst.introduceFlushed(next, epoch)
 			tst.incTotalIntroduceLoopFinished("flush")
+			tst.gc.clean()
+			epoch++
+		case next := <-mergeCh:
+			tst.incTotalIntroduceLoopStarted("merge")
+			tst.introduceMerged(next, epoch)
+			tst.incTotalIntroduceLoopFinished("merge")
 			tst.gc.clean()
 			epoch++
 		case next := <-syncCh:
@@ -222,6 +235,9 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
 	tst.replaceSnapshot(&nextSnp)
+	for name, memPart := range nextIntroduction.sidxReqsMap {
+		tst.mustGetOrCreateSidx(name).IntroduceMemPart(next.p.partMetadata.ID, memPart)
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -237,6 +253,9 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	nextSnp.creator = snapshotCreatorFlusher
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
+	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
+		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -254,19 +273,33 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 	nextSnp.creator = nextIntroduction.creator
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)
+	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
+		deferFuncs := tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
+		if deferFuncs != nil {
+			defer deferFuncs()
+		}
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
 }
 
 func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint64) {
+	synced := nextIntroduction.synced
+	allSidx := tst.getAllSidx()
+	for _, sidx := range allSidx {
+		deferFuncs := sidx.IntroduceSynced(synced)
+		if deferFuncs != nil {
+			defer deferFuncs()
+		}
+	}
 	cur := tst.currentSnapshot()
 	if cur == nil {
 		tst.l.Panic().Msg("current snapshot is nil")
 		return
 	}
 	defer cur.decRef()
-	nextSnp := cur.remove(epoch, nextIntroduction.synced)
+	nextSnp := cur.remove(epoch, synced)
 	nextSnp.creator = snapshotCreatorSyncer
 	tst.replaceSnapshot(&nextSnp)
 	tst.persistSnapshot(&nextSnp)

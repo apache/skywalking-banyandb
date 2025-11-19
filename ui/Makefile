@@ -38,7 +38,7 @@ all: build
 .PHONY: generate
 generate: install
 
-$(DIST_INDEX):
+$(DIST_INDEX): install
 	@echo "Building $(NAME)"
 	npm run build
 	@echo "Done building $(NAME)"

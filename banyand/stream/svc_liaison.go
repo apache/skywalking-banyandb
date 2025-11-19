@@ -45,19 +45,20 @@ import (
 )
 
 type liaison struct {
-	pm                  protector.Memory
-	metadata            metadata.Repo
-	pipeline            queue.Server
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	writeListener       bus.MessageListener
-	dataNodeSelector    node.Selector
-	l                   *logger.Logger
-	schemaRepo          schemaRepo
-	dataPath            string
-	root                string
-	option              option
-	maxDiskUsagePercent int
+	pm                        protector.Memory
+	metadata                  metadata.Repo
+	pipeline                  queue.Server
+	omr                       observability.MetricsRegistry
+	lfs                       fs.FileSystem
+	writeListener             bus.MessageListener
+	dataNodeSelector          node.Selector
+	l                         *logger.Logger
+	schemaRepo                schemaRepo
+	dataPath                  string
+	root                      string
+	option                    option
+	maxDiskUsagePercent       int
+	failedPartsMaxSizePercent int
 }
 
 func (s *liaison) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -83,6 +84,10 @@ func (s *liaison) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.DurationVar(&s.option.syncInterval, "stream-sync-interval", defaultSyncInterval, "the periodic sync interval for stream data")
+	flagS.IntVar(&s.failedPartsMaxSizePercent, "failed-parts-max-size-percent", 10,
+		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
+			"Calculated as: totalDisk * stream-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
+			"Set to 0 to disable copying failed parts. Valid range: 0-100")
 	return flagS
 }
 
@@ -95,6 +100,9 @@ func (s *liaison) Validate() error {
 	}
 	if s.maxDiskUsagePercent > 100 {
 		return errors.New("stream-max-disk-usage-percent must be less than or equal to 100")
+	}
+	if s.failedPartsMaxSizePercent < 0 || s.failedPartsMaxSizePercent > 100 {
+		return errors.New("failed-parts-max-size-percent must be between 0 and 100")
 	}
 	return nil
 }
@@ -122,6 +130,22 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	}
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
 		observability.UpdatePath(s.dataPath)
+	}
+	s.lfs.MkdirIfNotExist(s.dataPath, storage.DirPerm)
+
+	s.option.failedPartsMaxTotalSizeBytes = 0
+	if s.failedPartsMaxSizePercent > 0 {
+		totalSpace := s.lfs.MustGetTotalSpace(s.dataPath)
+		maxTotalSizeBytes := totalSpace * uint64(s.maxDiskUsagePercent) / 100
+		maxTotalSizeBytes = maxTotalSizeBytes * uint64(s.failedPartsMaxSizePercent) / 100
+		s.option.failedPartsMaxTotalSizeBytes = maxTotalSizeBytes
+		s.l.Info().
+			Uint64("maxFailedPartsBytes", maxTotalSizeBytes).
+			Int("failedPartsMaxSizePercent", s.failedPartsMaxSizePercent).
+			Int("maxDiskUsagePercent", s.maxDiskUsagePercent).
+			Msg("configured failed parts storage limit")
+	} else {
+		s.l.Info().Msg("failed parts storage limit disabled (percent set to 0)")
 	}
 	streamDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicStreamPartSync, s.option.tire2Client, s.dataNodeSelector)
 	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, streamDataNodeRegistry)

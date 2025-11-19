@@ -22,12 +22,9 @@ tagProjection:
   - name: "default"
     tags: ["service_id", "layer", "name", "short_name"]
 criteria:
-  le:
-    op: "LOGICAL_OP_AND"
-    left:
-      condition:
-        name: "id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "1"
+  condition:
+    name: "id"
+    op: "BINARY_OP_EQ"
+    value:
+      str:
+        value: "1"

@@ -42,14 +42,13 @@ func (t *tag) reset() {
 	t.values = values[:0]
 }
 
-func (t *tag) resizeValues(valuesLen int) [][]byte {
+func (t *tag) resizeValues(valuesLen int) {
 	values := t.values
 	if n := valuesLen - cap(values); n > 0 {
 		values = append(values[:cap(values)], make([][]byte, n)...)
 	}
 	values = values[:valuesLen]
 	t.values = values
-	return values
 }
 
 func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {

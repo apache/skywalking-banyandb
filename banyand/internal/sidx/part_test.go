@@ -139,7 +139,7 @@ func TestPartStringRepresentation(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	part := mustOpenPart(tempDir, testFS)
+	part := mustOpenPart(pm.ID, tempDir, testFS)
 
 	expectedString := fmt.Sprintf("sidx part %d at %s", pm.ID, tempDir)
 	assert.Equal(t, expectedString, part.String())
@@ -390,7 +390,7 @@ func TestMemPartFlushAndReadAllRoundTrip(t *testing.T) {
 			mp.mustFlush(testFS, partDir)
 
 			// Step 3: Open the flushed part from disk
-			part := mustOpenPart(partDir, testFS)
+			part := mustOpenPart(1, partDir, testFS)
 			defer part.close()
 
 			// Step 4: Read all elements back from part

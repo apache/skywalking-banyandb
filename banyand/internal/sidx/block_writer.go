@@ -329,8 +329,6 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	bw.totalBlocksCount++
 
 	// Serialize block metadata
-	bm.setSeriesID(sid)
-	bm.setKeyRange(minKey, maxKey)
 	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
 
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
@@ -343,8 +341,7 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
 		bw.primaryBlockMetadata.mustWriteBlock(data, bw.sidFirst, bw.minKey, bw.maxKey, &bw.writers)
-		bmData := bw.primaryBlockMetadata.marshal(bw.metaData[:0])
-		bw.metaData = append(bw.metaData, bmData...)
+		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.hasWrittenBlocks = false
 	bw.minKey = 0

@@ -198,3 +198,49 @@ func TestEncodeDecodeTagValues_Int64_EmptyInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, decoded)
 }
+
+func TestMarshalVarArray(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected []byte
+	}{
+		{
+			name:     "empty",
+			input:    []byte{},
+			expected: []byte{'|'},
+		},
+		{
+			name:     "no special chars",
+			input:    []byte("abc"),
+			expected: []byte("abc|"),
+		},
+		{
+			name:     "with delimiter",
+			input:    []byte("a|b"),
+			expected: []byte("a\\|b|"),
+		},
+		{
+			name:     "with escape",
+			input:    []byte("a\\b"),
+			expected: []byte("a\\\\b|"),
+		},
+		{
+			name:     "with delimiter and escape",
+			input:    []byte("a|\\b"),
+			expected: []byte("a\\|\\\\b|"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, MarshalVarArray(nil, tt.input))
+		})
+	}
+
+	t.Run("multiple values", func(t *testing.T) {
+		var result []byte
+		result = MarshalVarArray(result, []byte("a|b"))
+		result = MarshalVarArray(result, []byte("c\\d"))
+		assert.Equal(t, []byte("a\\|b|c\\\\d|"), result)
+	})
+}

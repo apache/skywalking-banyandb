@@ -18,9 +18,8 @@
 -->
 
 <script setup>
-  import { reactive } from 'vue';
+  import { reactive, getCurrentInstance } from 'vue';
   import { useRouter, useRoute } from 'vue-router';
-  import { getCurrentInstance } from '@vue/runtime-core';
 
   const router = useRouter();
   const route = useRoute();

@@ -117,14 +117,15 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 			data := resp.Data()
 			switch d := data.(type) {
 			case *tracev1.InternalQueryResponse:
+				span.Stop()
 				d.TraceQueryResult = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
+				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &tracev1.QueryResponse{TraceQueryResult: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
-			span.Stop()
 		}()
 	}
 	te := plan.(executor.TraceExecutable)
@@ -162,7 +163,6 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 
 // BuildTracesFromResult builds traces from the result iterator.
 func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], queryCriteria *tracev1.QueryRequest) ([]*tracev1.InternalTrace, error) {
-	traceIndex := make(map[string]int)
 	traces := make([]*tracev1.InternalTrace, 0)
 	for {
 		result, hasNext := resultIterator.Next()
@@ -172,18 +172,11 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 		if !hasNext {
 			break
 		}
-		traceID := result.TID
-		_, exists := traceIndex[traceID]
-		var trace *tracev1.InternalTrace
-		if !exists {
-			trace = &tracev1.InternalTrace{
-				Spans: make([]*tracev1.Span, 0),
-			}
-			traceIndex[traceID] = len(traces)
-			traces = append(traces, trace)
-		} else {
-			trace = traces[traceIndex[traceID]]
+		trace := &tracev1.InternalTrace{
+			TraceId: result.TID,
+			Spans:   make([]*tracev1.Span, 0),
 		}
+		traces = append(traces, trace)
 		for i, spanBytes := range result.Spans {
 			var traceTags []*modelv1.Tag
 			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
@@ -200,11 +193,11 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 				}
 			}
 			span := &tracev1.Span{
-				Tags: traceTags,
-				Span: spanBytes,
+				Tags:   traceTags,
+				Span:   spanBytes,
+				SpanId: result.SpanIDs[i],
 			}
 			trace.Spans = append(trace.Spans, span)
-			trace.TraceId = result.TID
 		}
 	}
 	return traces, nil

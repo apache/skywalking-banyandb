@@ -63,8 +63,9 @@ BanyanDB uses etcd for service discovery and configuration. The following flags 
 
 The following flags are used to configure the timeout of data sending from liaison to data servers:
 
-- `--stream-write-timeout duration`: Stream write timeout (default: 15s).
-- `--measure-write-timeout duration`: Measure write timeout (default: 15s).
+- `--stream-write-timeout duration`: Stream write timeout (default: 1m).
+- `--measure-write-timeout duration`: Measure write timeout (default: 1m).
+- `--trace-write-timeout duration`: Trace write timeout (default: 1m).
 
 ### TLS
 

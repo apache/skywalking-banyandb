@@ -181,7 +181,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElements(es.elements)
+			es.tsTable.mustAddElementsWithSegmentID(es.elements, es.timeRange.Start.UnixNano())
 			releaseElements(es.elements)
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)

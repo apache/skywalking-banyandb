@@ -24,9 +24,13 @@ env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
+  prepare:
+    uses: ./.github/workflows/prepare.yml
   test:
+    needs: [prepare]
     if: github.repository == 'apache/skywalking-banyandb'
     uses: ./.github/workflows/test.yml
     with:
+      test-name: Flaky Tests
       options:  --vv --repeat 3 --label-filter '(integration&&!slow)||banyand'
       timeout-minutes: 50

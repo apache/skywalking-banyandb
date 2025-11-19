@@ -29,6 +29,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -38,25 +40,26 @@ import (
 
 func TestSnapshotGetParts(t *testing.T) {
 	tests := []struct {
-		snapshot *snapshot
-		name     string
-		dst      []*part
-		expected []*part
-		opts     queryOptions
-		count    int
+		snapshot     *snapshot
+		name         string
+		dst          []*part
+		expected     []*part
+		opts         queryOptions
+		minTimestamp int64
+		maxTimestamp int64
+		count        int
 	}{
 		{
 			name: "Test with empty snapshot",
 			snapshot: &snapshot{
 				parts: []*partWrapper{},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 0,
-				maxTimestamp: 10,
-			},
-			expected: []*part{},
-			count:    0,
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 0,
+			maxTimestamp: 10,
+			expected:     []*part{},
+			count:        0,
 		},
 		{
 			name: "Test with non-empty snapshot and no matching parts",
@@ -76,13 +79,12 @@ func TestSnapshotGetParts(t *testing.T) {
 					},
 				},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 11,
-				maxTimestamp: 15,
-			},
-			expected: []*part{},
-			count:    0,
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 11,
+			maxTimestamp: 15,
+			expected:     []*part{},
+			count:        0,
 		},
 		{
 			name: "Test with non-empty snapshot and some matching parts",
@@ -102,11 +104,10 @@ func TestSnapshotGetParts(t *testing.T) {
 					},
 				},
 			},
-			dst: []*part{},
-			opts: queryOptions{
-				minTimestamp: 5,
-				maxTimestamp: 10,
-			},
+			dst:          []*part{},
+			opts:         queryOptions{},
+			minTimestamp: 5,
+			maxTimestamp: 10,
 			expected: []*part{
 				{partMetadata: partMetadata{
 					MinTimestamp: 0,
@@ -119,13 +120,107 @@ func TestSnapshotGetParts(t *testing.T) {
 			},
 			count: 2,
 		},
+		{
+			name: "Test with non-empty snapshot and matching traceID",
+			snapshot: func() *snapshot {
+				bf1 := filter.NewBloomFilter(0)
+				bf1.SetN(2)
+				bf1.ResizeBits(filter.OptimalBitsSize(2))
+				bf1.Add(convert.StringToBytes("trace1"))
+				bf1.Add(convert.StringToBytes("trace2"))
+
+				bf2 := filter.NewBloomFilter(0)
+				bf2.SetN(1)
+				bf2.ResizeBits(filter.OptimalBitsSize(1))
+				bf2.Add(convert.StringToBytes("trace3"))
+
+				return &snapshot{
+					parts: []*partWrapper{
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 0,
+									MaxTimestamp: 5,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf1,
+								},
+							},
+						},
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 6,
+									MaxTimestamp: 10,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf2,
+								},
+							},
+						},
+					},
+				}
+			}(),
+			dst: []*part{},
+			opts: queryOptions{
+				traceIDs: []string{"trace1"},
+			},
+			minTimestamp: 0,
+			maxTimestamp: 10,
+			expected: []*part{
+				{
+					partMetadata: partMetadata{
+						MinTimestamp: 0,
+						MaxTimestamp: 5,
+					},
+				},
+			},
+			count: 1,
+		},
+		{
+			name: "Test with non-empty snapshot and non-matching traceID",
+			snapshot: func() *snapshot {
+				bf := filter.NewBloomFilter(0)
+				bf.SetN(2)
+				bf.ResizeBits(filter.OptimalBitsSize(2))
+				bf.Add(convert.StringToBytes("trace1"))
+				bf.Add(convert.StringToBytes("trace2"))
+
+				return &snapshot{
+					parts: []*partWrapper{
+						{
+							p: &part{
+								partMetadata: partMetadata{
+									MinTimestamp: 0,
+									MaxTimestamp: 5,
+								},
+								traceIDFilter: traceIDFilter{
+									filter: bf,
+								},
+							},
+						},
+					},
+				}
+			}(),
+			dst: []*part{},
+			opts: queryOptions{
+				traceIDs: []string{"trace0"},
+			},
+			minTimestamp: 0,
+			maxTimestamp: 10,
+			expected:     []*part{},
+			count:        0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, tt.opts.minTimestamp, tt.opts.maxTimestamp)
-			assert.Equal(t, tt.expected, result)
+			result, count := tt.snapshot.getParts(tt.dst, tt.minTimestamp, tt.maxTimestamp, tt.opts.traceIDs)
 			assert.Equal(t, tt.count, count)
+			require.Equal(t, len(tt.expected), len(result))
+			for i := range tt.expected {
+				assert.Equal(t, tt.expected[i].partMetadata, result[i].partMetadata)
+			}
 		})
 	}
 }
@@ -302,7 +397,7 @@ func TestSnapshotMerge(t *testing.T) {
 func TestSnapshotRemove(t *testing.T) {
 	tests := []struct {
 		snapshot    *snapshot
-		mergedParts map[partHandle]struct{}
+		mergedParts map[uint64]struct{}
 		name        string
 		expected    snapshot
 		nextEpoch   uint64
@@ -314,7 +409,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -330,7 +425,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -349,8 +444,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[partHandle]struct{}{
-				{partID: 1, partType: PartTypeCore}: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -366,7 +461,7 @@ func TestSnapshotRemove(t *testing.T) {
 				parts: []*partWrapper{},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -383,7 +478,7 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch:   1,
-			mergedParts: map[partHandle]struct{}{},
+			mergedParts: map[uint64]struct{}{},
 			expected: snapshot{
 				epoch: 1,
 				ref:   1,
@@ -407,8 +502,8 @@ func TestSnapshotRemove(t *testing.T) {
 				},
 			},
 			nextEpoch: 1,
-			mergedParts: map[partHandle]struct{}{
-				{partID: 1, partType: PartTypeCore}: {},
+			mergedParts: map[uint64]struct{}{
+				1: {},
 			},
 			expected: snapshot{
 				epoch: 1,
@@ -459,8 +554,8 @@ func TestSnapshotFunctionality(t *testing.T) {
 	}
 	defer tst.Close()
 
-	tst.mustAddTraces(tsTS1)
-	tst.mustAddTraces(tsTS2)
+	tst.mustAddTraces(tsTS1, nil)
+	tst.mustAddTraces(tsTS2, nil)
 	time.Sleep(100 * time.Millisecond) // allow time for flushing
 
 	require.Eventually(t, func() bool {

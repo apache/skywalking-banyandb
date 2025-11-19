@@ -21,14 +21,11 @@ import (
 	"container/heap"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // queryResult is used internally for processing logic only.
@@ -71,6 +68,7 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	var err error
 	tmpBlock.userKeys, err = encoding.BytesToInt64List(tmpBlock.userKeys[:0], bb.Buf, bm.keysEncodeType, bm.minKey, int(bm.count))
 	if err != nil {
+		logger.Panicf("cannot decode user keys: %v", err)
 		return false
 	}
 
@@ -87,15 +85,11 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	bb2.Buf = bytes.ResizeOver(bb2.Buf[:0], int(bm.dataBlock.size))
 	fs.MustReadData(p.data, int64(bm.dataBlock.offset), bb2.Buf)
 
-	dataBuf, err := zstd.Decompress(bb.Buf[:0], bb2.Buf)
-	if err != nil {
-		return false
-	}
-
 	// Decode data payloads
 	decoder := &encoding.BytesBlockDecoder{}
-	tmpBlock.data, err = decoder.Decode(tmpBlock.data[:0], dataBuf, bm.count)
+	tmpBlock.data, err = decoder.Decode(tmpBlock.data[:0], bb2.Buf, bm.count)
 	if err != nil {
+		logger.Panicf("cannot decode data payloads: %v", err)
 		return false
 	}
 
@@ -162,6 +156,7 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	tm, err := unmarshalTagMetadata(bb.Buf)
 	if err != nil {
+		logger.Panicf("cannot unmarshal tag metadata: %v", err)
 		return false
 	}
 	defer releaseTagMetadata(tm)
@@ -181,27 +176,13 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	// Create tag data structure and populate block
 	td := generateTagData()
-	// Decode tag values directly (no compression)
-	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb2, tm.valueType, count)
-	if err != nil {
-		return false
-	}
-
 	td.name = tagName
 	td.valueType = tm.valueType
 
-	// Set min/max for int64 tags
-	if tm.valueType == pbv1.ValueTypeInt64 {
-		td.min = tm.min
-		td.max = tm.max
-	}
-
-	// Create bloom filter for indexed tags
-	td.filter = generateBloomFilter(count)
-	for _, value := range td.values {
-		if value != nil {
-			td.filter.Add(value)
-		}
+	// Decode and convert tag values using common helper
+	if err := decodeAndConvertTagValues(td, decoder, bb2, tm.valueType, count); err != nil {
+		logger.Panicf("cannot decode tag values: %v", err)
+		return false
 	}
 
 	tmpBlock.tags[tagName] = td
@@ -209,17 +190,8 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 }
 
 // convertBlockToResponse converts SIDX block data to QueryResponse format.
-func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, result *QueryResponse) {
+func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.SeriesID, partID uint64, result *QueryResponse) {
 	elemCount := len(block.userKeys)
-
-	// Initialize unique Data tracking if needed
-	if qr.request.MaxElementSize > 0 && result.uniqueTracker == nil {
-		result.InitUniqueTracker(qr.request.MaxElementSize)
-		// Initialize tracker with existing data
-		for _, data := range result.Data {
-			result.uniqueTracker.ShouldAdd(data)
-		}
-	}
 
 	for i := 0; i < elemCount; i++ {
 		// Filter by key range from QueryRequest
@@ -231,8 +203,8 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 			continue
 		}
 
-		// Check unique Data element limit using QueryResponse's tracker
-		if !result.ShouldAddData(block.data[i]) {
+		// Enforce MaxBatchSize by total element count
+		if qr.request.MaxBatchSize > 0 && result.Len() >= qr.request.MaxBatchSize {
 			break
 		}
 
@@ -240,46 +212,8 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 		result.Keys = append(result.Keys, key)
 		result.Data = append(result.Data, block.data[i])
 		result.SIDs = append(result.SIDs, seriesID)
-
-		// Convert tag map to tag slice for this element
-		elementTags := qr.extractElementTags(block, i)
-		result.Tags = append(result.Tags, elementTags)
+		result.PartIDs = append(result.PartIDs, partID)
 	}
-}
-
-// extractElementTags extracts tags for a specific element with projection support.
-func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
-	var elementTags []Tag
-
-	// Apply tag projection from request
-	if len(qr.request.TagProjection) > 0 {
-		elementTags = make([]Tag, 0, len(qr.request.TagProjection))
-		for _, proj := range qr.request.TagProjection {
-			for _, tagName := range proj.Names {
-				if tagData, exists := block.tags[tagName]; exists && elemIndex < len(tagData.values) {
-					elementTags = append(elementTags, Tag{
-						Name:      tagName,
-						Value:     tagData.values[elemIndex],
-						ValueType: tagData.valueType,
-					})
-				}
-			}
-		}
-	} else {
-		// Include all tags if no projection specified
-		elementTags = make([]Tag, 0, len(block.tags))
-		for tagName, tagData := range block.tags {
-			if elemIndex < len(tagData.values) {
-				elementTags = append(elementTags, Tag{
-					Name:      tagName,
-					Value:     tagData.values[elemIndex],
-					ValueType: tagData.valueType,
-				})
-			}
-		}
-	}
-
-	return elementTags
 }
 
 // mergeQueryResponseShards merges multiple QueryResponse shards.
@@ -299,10 +233,10 @@ func mergeQueryResponseShards(shards []*QueryResponse, maxElements int) *QueryRe
 
 	if len(qrh.cursors) == 0 {
 		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
+			Keys:    make([]int64, 0),
+			Data:    make([][]byte, 0),
+			SIDs:    make([]common.SeriesID, 0),
+			PartIDs: make([]uint64, 0),
 		}
 	}
 
@@ -335,10 +269,10 @@ func mergeQueryResponseShardsDesc(shards []*QueryResponse, maxElements int) *Que
 
 	if len(qrh.cursors) == 0 {
 		return &QueryResponse{
-			Keys: make([]int64, 0),
-			Data: make([][]byte, 0),
-			Tags: make([][]Tag, 0),
-			SIDs: make([]common.SeriesID, 0),
+			Keys:    make([]int64, 0),
+			Data:    make([][]byte, 0),
+			SIDs:    make([]common.SeriesID, 0),
+			PartIDs: make([]uint64, 0),
 		}
 	}
 
@@ -404,15 +338,10 @@ func (qrh *QueryResponseHeap) reset() {
 // mergeWithHeap performs heap-based merge of QueryResponse shards.
 func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 	result := &QueryResponse{
-		Keys: make([]int64, 0, limit),
-		Data: make([][]byte, 0, limit),
-		Tags: make([][]Tag, 0, limit),
-		SIDs: make([]common.SeriesID, 0, limit),
-	}
-
-	// Initialize unique data tracker if limit is specified
-	if limit > 0 {
-		result.InitUniqueTracker(limit)
+		Keys:    make([]int64, 0, limit),
+		Data:    make([][]byte, 0, limit),
+		SIDs:    make([]common.SeriesID, 0, limit),
+		PartIDs: make([]uint64, 0, limit),
 	}
 
 	step := -1
@@ -421,20 +350,39 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 	}
 
 	for qrh.Len() > 0 {
+		if limit > 0 && result.Len() >= limit {
+			break
+		}
+
 		topCursor := qrh.cursors[0]
 		idx := topCursor.idx
 		resp := topCursor.response
 
-		// Check unique Data element limit before adding
-		if !result.ShouldAddData(resp.Data[idx]) {
-			break
+		if idx < 0 || idx >= resp.Len() {
+			heap.Pop(qrh)
+			continue
+		}
+
+		var (
+			data   []byte
+			sid    common.SeriesID
+			partID uint64
+		)
+		if idx < len(resp.Data) {
+			data = resp.Data[idx]
+		}
+		if idx < len(resp.SIDs) {
+			sid = resp.SIDs[idx]
+		}
+		if idx < len(resp.PartIDs) {
+			partID = resp.PartIDs[idx]
 		}
 
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
-		result.Data = append(result.Data, resp.Data[idx])
-		result.Tags = append(result.Tags, resp.Tags[idx])
-		result.SIDs = append(result.SIDs, resp.SIDs[idx])
+		result.Data = append(result.Data, data)
+		result.SIDs = append(result.SIDs, sid)
+		result.PartIDs = append(result.PartIDs, partID)
 
 		// Advance cursor
 		topCursor.idx += step

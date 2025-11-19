@@ -39,44 +39,25 @@ jobs:
     env:
       TAG: ${{ github.sha }}
     steps:
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v3
-        id: cache-go
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          download-artifacts: 'false'
+          setup-docker: 'true'
       - name: Cache Tools
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
           key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
           restore-keys: |
             ${{ runner.os }}-build-tool-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v3
-        with:
-          go-version-file: 'go.mod'
-      - name: Update dependencies
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
       - name: Generate codes
         run: make generate
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
       - name: Build Linux binaries
         run: |
           TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release

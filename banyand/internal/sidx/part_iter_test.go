@@ -314,7 +314,7 @@ func TestPartIterVerification(t *testing.T) {
 				partDir := filepath.Join(tempDir, fmt.Sprintf("part_%s", tt.name))
 				mp.mustFlush(testFS, partDir)
 
-				part := mustOpenPart(partDir, testFS)
+				part := mustOpenPart(1, partDir, testFS)
 				defer part.close()
 
 				// Run the test case
@@ -376,7 +376,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "empty_series_test")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with empty series list
@@ -417,7 +417,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "no_match_key_range")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with non-overlapping key range
@@ -458,7 +458,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 		partDir := filepath.Join(tempDir, "no_match_series")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with different series ID
@@ -504,7 +504,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "nil_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Test with nil blockFilter
@@ -546,7 +546,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "allow_all_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that allows all blocks
@@ -591,7 +591,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "skip_all_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that skips all blocks
@@ -636,7 +636,7 @@ func TestPartIterBlockFilter(t *testing.T) {
 		partDir := filepath.Join(tempDir, "error_filter")
 		mp.mustFlush(testFS, partDir)
 
-		part := mustOpenPart(partDir, testFS)
+		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
 		// Create a mock filter that returns an error
@@ -679,5 +679,161 @@ func (mbf *mockBlockFilter) String() string {
 
 func (mbf *mockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	// Not used in our tests, return empty implementation
+	return nil, nil, nil
+}
+
+func TestPartIterShouldSkip(t *testing.T) {
+	tempDir := t.TempDir()
+	testFS := fs.NewLocalFileSystem()
+
+	// Strategy: Create many elements to exceed maxElementsPerBlock (8192) and force multiple blocks.
+	// We'll create elements in two batches with different tag values but same seriesID.
+
+	const elementsPerBatch = 8200 // Exceed maxElementsPerBlock to force multiple blocks
+	var allElements []testElement
+
+	// First batch: seriesID=1, status="pending", keys 0-8199
+	for i := 0; i < elementsPerBatch; i++ {
+		allElements = append(allElements, testElement{
+			seriesID: 1,
+			userKey:  int64(i),
+			data:     []byte(fmt.Sprintf("pending_data_%d", i)),
+			tags: []tag{
+				{
+					name:      "status",
+					value:     []byte("pending"),
+					valueType: pbv1.ValueTypeStr,
+				},
+			},
+		})
+	}
+
+	// Second batch: seriesID=1, status="success", keys 20000-28199
+	// Use a large gap in keys to ensure they're in different blocks
+	for i := 0; i < elementsPerBatch; i++ {
+		allElements = append(allElements, testElement{
+			seriesID: 1,
+			userKey:  int64(20000 + i),
+			data:     []byte(fmt.Sprintf("success_data_%d", i)),
+			tags: []tag{
+				{
+					name:      "status",
+					value:     []byte("success"),
+					valueType: pbv1.ValueTypeStr,
+				},
+			},
+		})
+	}
+
+	// Add a third series to verify we don't incorrectly skip to this
+	allElements = append(allElements, testElement{
+		seriesID: 2,
+		userKey:  5000,
+		data:     []byte("series2_data"),
+		tags: []tag{
+			{
+				name:      "status",
+				value:     []byte("other"),
+				valueType: pbv1.ValueTypeStr,
+			},
+		},
+	})
+
+	elements := createTestElements(allElements)
+	defer releaseElements(elements)
+
+	// Create memPart and flush it
+	mp := GenerateMemPart()
+	defer ReleaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	partDir := filepath.Join(tempDir, "test_part")
+	mp.mustFlush(testFS, partDir)
+
+	part := mustOpenPart(1, partDir, testFS)
+	defer part.close()
+
+	// Log the blocks in the part to understand the structure
+	t.Logf("Part has %d primary block metadata entries", len(part.primaryBlockMetadata))
+	for i, pbm := range part.primaryBlockMetadata {
+		t.Logf("  Primary block %d: seriesID=%d, keys [%d-%d]", i, pbm.seriesID, pbm.minKey, pbm.maxKey)
+	}
+
+	// Create a selective mock filter that skips blocks with status="pending"
+	// but allows blocks with status="success"
+	selectiveFilter := &selectiveMockBlockFilter{
+		tagName:       "status",
+		skipValue:     "pending",
+		skipCallCount: 0,
+	}
+
+	// Test with the selective filter, querying only seriesID=1
+	bma := &blockMetadataArray{}
+	defer bma.reset()
+	pi := &partIter{}
+
+	bma.reset()
+	pi.init(bma, part, []common.SeriesID{1, 2}, 0, 30000, selectiveFilter)
+
+	// Iterate through blocks and collect results
+	var foundBlocks []struct {
+		seriesID common.SeriesID
+		minKey   int64
+		maxKey   int64
+	}
+
+	for pi.nextBlock() {
+		foundBlocks = append(foundBlocks, struct {
+			seriesID common.SeriesID
+			minKey   int64
+			maxKey   int64
+		}{
+			seriesID: pi.curBlock.seriesID,
+			minKey:   pi.curBlock.minKey,
+			maxKey:   pi.curBlock.maxKey,
+		})
+		t.Logf("Found block: seriesID=%d, minKey=%d, maxKey=%d",
+			pi.curBlock.seriesID, pi.curBlock.minKey, pi.curBlock.maxKey)
+	}
+
+	require.NoError(t, pi.error())
+
+	// Verify the filter was called at least once
+	assert.Greater(t, selectiveFilter.skipCallCount, 0, "filter should have been called")
+
+	foundSeries1Success := false
+	for _, block := range foundBlocks {
+		if block.seriesID == 1 && block.minKey >= 20000 {
+			foundSeries1Success = true
+			t.Logf("✓ Found the expected seriesID=1 success block: keys [%d-%d]", block.minKey, block.maxKey)
+		}
+	}
+
+	// This assertion will FAIL with the bug, demonstrating the issue
+	assert.True(t, foundSeries1Success,
+		"BUG: Should find seriesID=1 block with status='success' (minKey >= 20000), "+
+			"but the iterator incorrectly skipped to next series after first block with status='pending' failed the filter. "+
+			"Found %d total blocks", len(foundBlocks))
+}
+
+// selectiveMockBlockFilter is a mock filter that selectively skips blocks based on tag values.
+type selectiveMockBlockFilter struct {
+	tagName       string
+	skipValue     string
+	skipCallCount int
+}
+
+func (smf *selectiveMockBlockFilter) ShouldSkip(filterOp index.FilterOp) (bool, error) {
+	smf.skipCallCount++
+	// Check if the block contains the skip value for the specified tag
+	hasSkipValue := filterOp.Eq(smf.tagName, smf.skipValue)
+	return hasSkipValue, nil
+}
+
+func (smf *selectiveMockBlockFilter) String() string {
+	return fmt.Sprintf("selectiveMockBlockFilter(tag=%s, skipValue=%s)", smf.tagName, smf.skipValue)
+}
+
+func (smf *selectiveMockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	return nil, nil, nil
 }

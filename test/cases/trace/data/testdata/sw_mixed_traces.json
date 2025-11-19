@@ -30,6 +30,11 @@
                 "int": {
                     "value": 750
                 }
+            },
+            {
+                "str": {
+                    "value": "span_001_4"
+                }
             }
         ],
         "span": "trace_001_span_4"
@@ -64,6 +69,11 @@
             {
                 "int": {
                     "value": 320
+                }
+            },
+            {
+                "str": {
+                    "value": "span_001_5"
                 }
             }
         ],
@@ -100,6 +110,11 @@
                 "int": {
                     "value": 450
                 }
+            },
+            {
+                "str": {
+                    "value": "span_002_3"
+                }
             }
         ],
         "span": "trace_002_span_3"
@@ -134,6 +149,11 @@
             {
                 "int": {
                     "value": 180
+                }
+            },
+            {
+                "str": {
+                    "value": "span_002_4"
                 }
             }
         ],
@@ -170,6 +190,11 @@
                 "int": {
                     "value": 1190
                 }
+            },
+            {
+                "str": {
+                    "value": "span_006_1"
+                }
             }
         ],
         "span": "trace_006_span_1"
@@ -204,6 +229,11 @@
             {
                 "int": {
                     "value": 280
+                }
+            },
+            {
+                "str": {
+                    "value": "span_006_2"
                 }
             }
         ],
@@ -240,6 +270,11 @@
                 "int": {
                     "value": 150
                 }
+            },
+            {
+                "str": {
+                    "value": "span_006_3"
+                }
             }
         ],
         "span": "trace_006_span_3"
@@ -274,6 +309,11 @@
             {
                 "int": {
                     "value": 650
+                }
+            },
+            {
+                "str": {
+                    "value": "span_007_1"
                 }
             }
         ],
@@ -310,6 +350,11 @@
                 "int": {
                     "value": 420
                 }
+            },
+            {
+                "str": {
+                    "value": "span_007_2"
+                }
             }
         ],
         "span": "trace_007_span_2"
@@ -344,6 +389,11 @@
             {
                 "int": {
                     "value": 890
+                }
+            },
+            {
+                "str": {
+                    "value": "span_008_1"
                 }
             }
         ],
@@ -380,6 +430,11 @@
                 "int": {
                     "value": 340
                 }
+            },
+            {
+                "str": {
+                    "value": "span_008_2"
+                }
             }
         ],
         "span": "trace_008_span_2"
@@ -414,6 +469,11 @@
             {
                 "int": {
                     "value": 2100
+                }
+            },
+            {
+                "str": {
+                    "value": "span_008_3"
                 }
             }
         ],

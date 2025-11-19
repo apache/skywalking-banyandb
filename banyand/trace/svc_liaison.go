@@ -20,8 +20,11 @@ package trace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -43,19 +46,23 @@ import (
 )
 
 type liaison struct {
-	pm                  protector.Memory
-	metadata            metadata.Repo
-	pipeline            queue.Server
-	omr                 observability.MetricsRegistry
-	lfs                 fs.FileSystem
-	writeListener       bus.MessageListener
-	dataNodeSelector    node.Selector
-	l                   *logger.Logger
-	schemaRepo          schemaRepo
-	dataPath            string
-	root                string
-	option              option
-	maxDiskUsagePercent int
+	metadata                  metadata.Repo
+	pipeline                  queue.Server
+	omr                       observability.MetricsRegistry
+	lfs                       fs.FileSystem
+	writeListener             bus.MessageListener
+	dataNodeSelector          node.Selector
+	pm                        protector.Memory
+	handoffCtrl               *handoffController
+	l                         *logger.Logger
+	schemaRepo                schemaRepo
+	dataPath                  string
+	root                      string
+	dataNodeList              []string
+	option                    option
+	maxDiskUsagePercent       int
+	handoffMaxSizePercent     int
+	failedPartsMaxSizePercent int
 }
 
 var _ Service = (*liaison)(nil)
@@ -85,9 +92,19 @@ func (l *liaison) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("trace")
 	fs.StringVar(&l.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&l.dataPath, "trace-data-path", "", "the path for trace data (optional)")
-	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
+	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", 3*time.Second, "the timeout for trace data flush")
 	fs.IntVar(&l.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
 	fs.DurationVar(&l.option.syncInterval, "trace-sync-interval", defaultSyncInterval, "the periodic sync interval for trace data")
+	fs.StringSliceVar(&l.dataNodeList, "data-node-list", nil, "comma-separated list of data node names to monitor for handoff")
+	fs.IntVar(&l.handoffMaxSizePercent, "handoff-max-size-percent", 10,
+		"percentage of BanyanDB's allowed disk usage allocated to handoff storage. "+
+			"Calculated as: totalDisk * trace-max-disk-usage-percent * handoff-max-size-percent / 10000. "+
+			"Example: 100GB disk with 95% max usage and 10% handoff = 9.5GB; 50% handoff = 47.5GB. "+
+			"Valid range: 0-100")
+	fs.IntVar(&l.failedPartsMaxSizePercent, "failed-parts-max-size-percent", 10,
+		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
+			"Calculated as: totalDisk * trace-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
+			"Set to 0 to disable copying failed parts. Valid range: 0-100")
 	return fs
 }
 
@@ -95,6 +112,21 @@ func (l *liaison) Validate() error {
 	if l.root == "" {
 		return errEmptyRootPath
 	}
+
+	// Validate handoff-max-size-percent is within valid range
+	// Since handoffMaxSizePercent represents the percentage of BanyanDB's allowed disk usage
+	// that goes to handoff storage, it should be between 0-100%
+	if l.handoffMaxSizePercent < 0 || l.handoffMaxSizePercent > 100 {
+		return fmt.Errorf("invalid handoff-max-size-percent: %d%%. Must be between 0 and 100. "+
+			"This represents what percentage of BanyanDB's allowed disk usage is allocated to handoff storage. "+
+			"Example: 100GB disk with 95%% max usage and 50%% handoff = 100 * 95%% * 50%% = 47.5GB for handoff",
+			l.handoffMaxSizePercent)
+	}
+
+	if l.failedPartsMaxSizePercent < 0 || l.failedPartsMaxSizePercent > 100 {
+		return fmt.Errorf("invalid failed-parts-max-size-percent: %d%%. Must be between 0 and 100", l.failedPartsMaxSizePercent)
+	}
+
 	return nil
 }
 
@@ -119,8 +151,85 @@ func (l *liaison) PreRun(ctx context.Context) error {
 	if l.dataPath == "" {
 		l.dataPath = filepath.Join(path, storage.DataDir)
 	}
+	l.lfs.MkdirIfNotExist(l.dataPath, storage.DirPerm)
 
 	traceDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicTracePartSync, l.option.tire2Client, l.dataNodeSelector)
+	l.option.failedPartsMaxTotalSizeBytes = 0
+	if l.failedPartsMaxSizePercent > 0 {
+		totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
+		maxTotalSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100
+		maxTotalSizeBytes = maxTotalSizeBytes * uint64(l.failedPartsMaxSizePercent) / 100
+		l.option.failedPartsMaxTotalSizeBytes = maxTotalSizeBytes
+		l.l.Info().
+			Uint64("maxFailedPartsBytes", maxTotalSizeBytes).
+			Int("failedPartsMaxSizePercent", l.failedPartsMaxSizePercent).
+			Int("maxDiskUsagePercent", l.maxDiskUsagePercent).
+			Msg("configured failed parts storage limit")
+	} else {
+		l.l.Info().Msg("failed parts storage limit disabled (percent set to 0)")
+	}
+	// Initialize handoff controller if data nodes are configured
+	l.l.Info().Strs("dataNodeList", l.dataNodeList).Int("maxSizePercent", l.handoffMaxSizePercent).
+		Msg("handoff configuration")
+	if len(l.dataNodeList) > 0 && l.option.tire2Client != nil {
+		// Calculate max handoff size based on percentage of disk space
+		// Formula: totalDisk * maxDiskUsagePercent * handoffMaxSizePercent / 10000
+		// Example: 100GB disk, 95% max usage, 10% handoff = 100 * 95 * 10 / 10000 = 9.5GB
+		maxSize := 0
+		if l.handoffMaxSizePercent > 0 {
+			totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
+			// Divide after each multiplication to avoid overflow with large disk capacities
+			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100 * uint64(l.handoffMaxSizePercent) / 100
+			maxSize = int(maxSizeBytes / 1024 / 1024)
+		}
+
+		// nolint:contextcheck
+		resolveAssignments := func(group string, shardID uint32) ([]string, error) {
+			if l.metadata == nil {
+				return nil, fmt.Errorf("metadata repo is not initialized")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			groupSchema, err := l.metadata.GroupRegistry().GetGroup(ctx, group)
+			if err != nil {
+				return nil, err
+			}
+			if groupSchema == nil || groupSchema.ResourceOpts == nil {
+				return nil, fmt.Errorf("group %s missing resource options", group)
+			}
+			copies := groupSchema.ResourceOpts.Replicas + 1
+			if len(l.dataNodeList) == 0 {
+				return nil, fmt.Errorf("no data nodes configured for handoff")
+			}
+			sortedNodes := append([]string(nil), l.dataNodeList...)
+			sort.Strings(sortedNodes)
+			nodes := make([]string, 0, copies)
+			seen := make(map[string]struct{}, copies)
+			for replica := uint32(0); replica < copies; replica++ {
+				nodeID := sortedNodes[(int(shardID)+int(replica))%len(sortedNodes)]
+				if _, ok := seen[nodeID]; ok {
+					continue
+				}
+				nodes = append(nodes, nodeID)
+				seen[nodeID] = struct{}{}
+			}
+			return nodes, nil
+		}
+
+		var err error
+		// nolint:contextcheck
+		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSize, l.l, resolveAssignments)
+		if err != nil {
+			return err
+		}
+		l.l.Info().
+			Int("dataNodes", len(l.dataNodeList)).
+			Int("maxSize", maxSize).
+			Int("maxSizePercent", l.handoffMaxSizePercent).
+			Int("diskUsagePercent", l.maxDiskUsagePercent).
+			Msg("handoff controller initialized")
+	}
+
 	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry)
 	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
 
@@ -139,6 +248,11 @@ func (l *liaison) Serve() run.StopNotify {
 }
 
 func (l *liaison) GracefulStop() {
+	if l.handoffCtrl != nil {
+		if err := l.handoffCtrl.close(); err != nil {
+			l.l.Warn().Err(err).Msg("failed to close handoff controller")
+		}
+	}
 	if l.schemaRepo.Repository != nil {
 		l.schemaRepo.Repository.Close()
 	}

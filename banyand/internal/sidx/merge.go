@@ -19,10 +19,10 @@ package sidx
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
@@ -31,53 +31,42 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(closeCh <-chan struct{}) error {
+func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error) {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return nil
+		return nil, nil
 	}
 	defer snap.decRef()
-
-	// Create merge introduction
-	mergeIntro := generateMergerIntroduction()
-	defer releaseMergerIntroduction(mergeIntro)
-	mergeIntro.applied = make(chan struct{})
 
 	// Select parts to merge (all active non-memory parts)
 	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() {
+		if _, ok := partIDtoMerge[pw.ID()]; ok {
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
 
-	if len(partsToMerge) < 2 {
-		return nil
+	if len(partsToMerge) != len(partIDtoMerge) {
+		logger.Panicf("not enough parts to merge: %d", len(partsToMerge))
 	}
+
+	// Create new merged part
+	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create merge introduction
+	mergeIntro := generateMergerIntroduction()
 
 	// Mark parts for merging
 	for _, pw := range partsToMerge {
 		mergeIntro.merged[pw.ID()] = struct{}{}
 	}
 
-	// Generate new part ID using atomic increment
-	newPartID := atomic.AddUint64(&s.curPartID, 1)
-
-	// Create new merged part
-	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
-	if err != nil {
-		return err
-	}
-	mergeIntro.newPart = newPart.p
-
-	// Send to introducer loop
-	s.mergeCh <- mergeIntro
-
-	// Wait for merge to complete
-	<-mergeIntro.applied
-
-	return nil
+	mergeIntro.newPart = newPart
+	return mergeIntro, nil
 }
 
 func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
@@ -110,7 +99,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
-	p := mustOpenPart(dstPath, fileSystem)
+	p := mustOpenPart(partID, dstPath, fileSystem)
 
 	return newPartWrapper(nil, p), nil
 }
@@ -119,7 +108,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
-	var tmpBlock, tmpBlock2 *blockPointer
+	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
@@ -149,7 +138,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
-			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) {
+			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) ||
+			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
 			br.loadBlockData(getDecoder())
@@ -165,14 +155,14 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		tmpBlock.bm.seriesID = b.bm.seriesID
 		br.loadBlockData(getDecoder())
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
-		if len(tmpBlock.userKeys) <= maxBlockLength {
+		if len(tmpBlock.userKeys) <= maxBlockLength && tmpBlock.block.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.userKeys) == 0 {
 				pendingBlockIsEmpty = true
 			}
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()

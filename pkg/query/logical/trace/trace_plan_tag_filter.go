@@ -38,14 +38,17 @@ import (
 var _ logical.UnresolvedPlan = (*unresolvedTraceTagFilter)(nil)
 
 type unresolvedTraceTagFilter struct {
-	startTime      time.Time
-	endTime        time.Time
-	ec             executor.TraceExecutionContext
-	metadata       *commonv1.Metadata
-	criteria       *modelv1.Criteria
-	traceIDTagName string
-	orderByTag     string
-	projectionTags [][]*logical.Tag
+	startTime        time.Time
+	endTime          time.Time
+	ec               executor.TraceExecutionContext
+	metadata         *commonv1.Metadata
+	criteria         *modelv1.Criteria
+	traceIDTagName   string
+	spanIDTagName    string
+	orderByTag       string
+	timestampTagName string
+	projectionTags   [][]*logical.Tag
+	groupIndex       int
 }
 
 func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -65,11 +68,11 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	var minVal, maxVal int64
 	// For trace, we use skipping filter and capture entities for query optimization
 	ctx.skippingFilter, entities, conditionTagNames, traceIDs, minVal, maxVal, err = buildTraceFilter(
-		uis.criteria, s, entityDict, entity, uis.traceIDTagName, uis.orderByTag)
+		uis.criteria, s, entityDict, entity, uis.traceIDTagName, uis.spanIDTagName, uis.orderByTag)
 	if err != nil {
 		return nil, err
 	}
-	if uis.orderByTag == "" {
+	if uis.orderByTag == "" || uis.orderByTag == uis.timestampTagName {
 		minVal = uis.startTime.UnixNano()
 		maxVal = uis.endTime.UnixNano()
 	}
@@ -85,7 +88,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
-				if tag.GetTagName() == uis.traceIDTagName {
+				if tag.GetTagName() == uis.traceIDTagName || tag.GetTagName() == uis.spanIDTagName {
 					continue
 				}
 				ctx.projectionTags.Names = append(ctx.projectionTags.Names, tag.GetTagName())
@@ -94,8 +97,19 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	}
 
 	// Add tag names from filter conditions to projection
+	var conditionSchema logical.Schema
 	if len(conditionTagNames) > 0 {
 		ctx.projectionTags.Names = append(ctx.projectionTags.Names, conditionTagNames...)
+		tags := make([]*logical.Tag, len(conditionTagNames))
+		for i, tagName := range conditionTagNames {
+			tags[i] = logical.NewTag("", tagName)
+		}
+		var conditionTagRefs [][]*logical.TagRef
+		conditionTagRefs, err = s.CreateTagRef(tags)
+		if err != nil {
+			return nil, err
+		}
+		conditionSchema = s.ProjTags(conditionTagRefs...)
 	}
 
 	// Deduplicate tag names
@@ -113,22 +127,40 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 			return nil, errProject
 		}
 	}
-	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal)
+	// Build tag filter and create matcher for SIDX
+	var tagFilterMatcher model.TagFilterMatcher
+	var tagFilter logical.TagFilter
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, s, len(traceIDs) > 0, uis.traceIDTagName)
-		if errFilter != nil {
-			return nil, errFilter
+		var orderByTags []string
+		if ok, indexRule := s.IndexRuleDefined(uis.orderByTag); ok {
+			orderByTags = indexRule.Tags
 		}
-		if tagFilter != logical.DummyFilter {
-			// create tagFilter with a projected view
-			plan = newTraceTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter)
+		skippedTagNames := make([]string, 0, len(orderByTags)+2)
+		skippedTagNames = append(skippedTagNames, uis.traceIDTagName, uis.spanIDTagName)
+		skippedTagNames = append(skippedTagNames, orderByTags...)
+		tagFilter, err = logical.BuildTagFilter(uis.criteria, entityDict, s, s, len(traceIDs) > 0, skippedTagNames...)
+		if err != nil {
+			return nil, err
+		}
+		// Get the decoder from the execution context (trace module)
+		decoder := uis.ec.(model.TagValueDecoderProvider).GetTagValueDecoder()
+		// Create tag filter matcher for SIDX
+		tagFilterMatcher = logical.NewTagFilterMatcher(tagFilter, conditionSchema, decoder)
+	}
+
+	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal, tagFilterMatcher)
+	if uis.criteria != nil {
+		spanIDFilter := buildSpanIDFilter(uis.criteria, uis.spanIDTagName)
+		if len(traceIDs) > 0 || tagFilter != logical.DummyFilter || spanIDFilter != nil {
+			// create filter with a projected view
+			plan = newTraceTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter, spanIDFilter)
 		}
 	}
 	return plan, err
 }
 
 func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext,
-	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64,
+	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64, tagFilterMatcher model.TagFilterMatcher,
 ) logical.Plan {
 	return &localScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
@@ -137,12 +169,14 @@ func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext
 		projectionTags:    ctx.projectionTags,
 		metadata:          uis.metadata,
 		skippingFilter:    ctx.skippingFilter,
+		tagFilterMatcher:  tagFilterMatcher,
 		entities:          ctx.entities,
 		l:                 logger.GetLogger("query", "trace", "local-scan"),
 		ec:                ec,
 		traceIDs:          traceIDs,
 		minVal:            minVal,
 		maxVal:            maxVal,
+		groupIndex:        uis.groupIndex,
 	}
 }
 
@@ -177,7 +211,7 @@ func deduplicateStrings(strings []string) []string {
 // Unlike stream, trace only needs skipping filter.
 // Returns min/max int64 values for the orderByTag if provided, otherwise returns math.MaxInt64, math.MinInt64.
 func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict map[string]int,
-	entity []*modelv1.TagValue, traceIDTagName string, orderByTag string,
+	entity []*modelv1.TagValue, traceIDTagName, spanIDTagName string, orderByTag string,
 ) (index.Filter, [][]*modelv1.TagValue, []string, []string, int64, int64, error) {
 	if criteria == nil {
 		return nil, [][]*modelv1.TagValue{entity}, nil, nil, math.MinInt64, math.MaxInt64, nil
@@ -189,7 +223,7 @@ func buildTraceFilter(criteria *modelv1.Criteria, s logical.Schema, entityDict m
 		tagNames[tagName] = true
 	}
 
-	filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err := buildFilter(criteria, s, tagNames, entityDict, entity, traceIDTagName, orderByTag)
+	filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err := buildFilter(criteria, s, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)
 	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
 }
 
@@ -199,20 +233,22 @@ var (
 )
 
 type traceTagFilterPlan struct {
-	s         logical.Schema
-	parent    logical.Plan
-	tagFilter logical.TagFilter
+	s            logical.Schema
+	parent       logical.Plan
+	tagFilter    logical.TagFilter
+	spanIDFilter *spanIDFilter
 }
 
 func (t *traceTagFilterPlan) Close() {
 	t.parent.(executor.TraceExecutable).Close()
 }
 
-func newTraceTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter) logical.Plan {
+func newTraceTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, spanIDFilter *spanIDFilter) logical.Plan {
 	return &traceTagFilterPlan{
-		s:         s,
-		parent:    parent,
-		tagFilter: tagFilter,
+		s:            s,
+		parent:       parent,
+		tagFilter:    tagFilter,
+		spanIDFilter: spanIDFilter,
 	}
 }
 
@@ -227,15 +263,17 @@ func (t *traceTagFilterPlan) Execute(ctx context.Context) (iter.Iterator[model.T
 		sourceIterator: resultIterator,
 		tagFilter:      t.tagFilter,
 		schema:         t.s,
+		spanIDFilter:   t.spanIDFilter,
 	}, nil
 }
 
 // traceTagFilterIterator implements iter.Iterator[model.TraceResult] by lazily
-// filtering results from the source iterator using the tag filter.
+// filtering results from the source iterator using the tag filter and spanID filter.
 type traceTagFilterIterator struct {
 	sourceIterator iter.Iterator[model.TraceResult]
 	tagFilter      logical.TagFilter
 	schema         logical.Schema
+	spanIDFilter   *spanIDFilter
 	err            error
 }
 
@@ -260,6 +298,11 @@ func (tfti *traceTagFilterIterator) Next() (model.TraceResult, bool) {
 
 		// Check each row to see if any matches the filter
 		for rowIdx := 0; rowIdx < maxRows; rowIdx++ {
+			// Skip this row if spanID filter exists and doesn't match
+			if tfti.spanIDFilter != nil && !tfti.spanIDFilter.matchSpanID(result.SpanIDs[rowIdx]) {
+				continue
+			}
+
 			// Create TagFamilies for this specific row
 			family := &modelv1.TagFamily{
 				Name: "",
@@ -283,7 +326,7 @@ func (tfti *traceTagFilterIterator) Next() (model.TraceResult, bool) {
 				return model.TraceResult{}, false
 			}
 
-			// If ANY row matches, return this result
+			// If both spanID and tag filters match, return this result
 			if ok {
 				matched = true
 				break
@@ -308,4 +351,63 @@ func (t *traceTagFilterPlan) Children() []logical.Plan {
 
 func (t *traceTagFilterPlan) Schema() logical.Schema {
 	return t.s
+}
+
+type spanIDFilter struct {
+	targetSpanIDs []string
+}
+
+func newSpanIDFilter(spanIDs []string) *spanIDFilter {
+	return &spanIDFilter{
+		targetSpanIDs: spanIDs,
+	}
+}
+
+func (sf *spanIDFilter) matchSpanID(spanID string) bool {
+	for _, targetSpanID := range sf.targetSpanIDs {
+		if spanID == targetSpanID {
+			return true
+		}
+	}
+	return false
+}
+
+func buildSpanIDFilter(criteria *modelv1.Criteria, spanIDTagName string) *spanIDFilter {
+	if criteria == nil || spanIDTagName == "" {
+		return nil
+	}
+
+	var hasSpanIDCondition bool
+	var extractSpanIDs func(*modelv1.Criteria) []string
+	extractSpanIDs = func(c *modelv1.Criteria) []string {
+		if c == nil {
+			return nil
+		}
+
+		switch c.GetExp().(type) {
+		case *modelv1.Criteria_Condition:
+			cond := c.GetCondition()
+			if cond.Name == spanIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
+				hasSpanIDCondition = true
+				return extractIDsFromCondition(cond)
+			}
+		case *modelv1.Criteria_Le:
+			le := c.GetLe()
+			var spanIDs []string
+			if le.Left != nil {
+				spanIDs = append(spanIDs, extractSpanIDs(le.Left)...)
+			}
+			if le.Right != nil {
+				spanIDs = append(spanIDs, extractSpanIDs(le.Right)...)
+			}
+			return spanIDs
+		}
+		return nil
+	}
+
+	spanIDs := extractSpanIDs(criteria)
+	if hasSpanIDCondition {
+		return newSpanIDFilter(spanIDs)
+	}
+	return nil
 }

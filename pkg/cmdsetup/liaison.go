@@ -135,7 +135,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel} {
+				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel, traceDataNodeSel} {
 					sel.SetNodeSelector(ls)
 				}
 			}

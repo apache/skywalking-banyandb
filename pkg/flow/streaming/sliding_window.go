@@ -105,8 +105,10 @@ func (s *tumblingTimeWindows) Setup(_ context.Context) (err error) {
 		}
 		s.snapshots, err = lru.NewWithEvict(s.windowCount, func(key interface{}, value interface{}) {
 			flushed := s.flushSnapshot(key.(timeWindow), value.(flow.AggregationOp))
-			if e := s.l.Debug(); e.Enabled() {
-				e.Stringer("window", key.(timeWindow)).Bool("flushed", flushed).Msg("evict window on lru cache is full")
+			if s.l != nil {
+				if e := s.l.Debug(); e.Enabled() {
+					e.Stringer("window", key.(timeWindow)).Bool("flushed", flushed).Msg("evict window on lru cache is full")
+				}
 			}
 		})
 		if err != nil {
@@ -131,8 +133,11 @@ func (s *tumblingTimeWindows) flushSnapshot(w timeWindow, snapshot flow.Aggregat
 func (s *tumblingTimeWindows) flushWindow(w timeWindow) {
 	if snapshot, ok := s.snapshots.Get(w); ok {
 		flushed := s.flushSnapshot(w, snapshot.(flow.AggregationOp))
-		if e := s.l.Debug(); e.Enabled() {
-			e.Stringer("window", w).Bool("flushed", flushed).Msg("flush window")
+		if s.l != nil {
+			if e := s.l.Debug(); e.Enabled() {
+				windowsStr := w.String()
+				e.Str("window", windowsStr).Bool("flushed", flushed).Msg("flush window")
+			}
 		}
 	}
 }
@@ -179,8 +184,10 @@ func (s *tumblingTimeWindows) receive() {
 			newAggr := s.aggregationFactory()
 			newAggr.Add([]flow.StreamRecord{elem})
 			s.snapshots.Add(tw, newAggr)
-			if e := s.l.Debug(); e.Enabled() {
-				e.Stringer("window", tw).Msg("create new window")
+			if s.l != nil {
+				if e := s.l.Debug(); e.Enabled() {
+					e.Stringer("window", tw).Msg("create new window")
+				}
 			}
 		}
 

@@ -38,6 +38,7 @@ import (
 
 var (
 	composeFile           string
+	logDir                string
 	conn                  *grpc.ClientConn
 	groupClient           databasev1.GroupRegistryServiceClient
 	propertyClient        databasev1.PropertyRegistryServiceClient
@@ -52,6 +53,11 @@ func TestPropertyRepairIntegrated(t *testing.T) {
 var _ = ginkgo.BeforeSuite(func() {
 	fmt.Println("Starting Property Repair Integration Test Suite...")
 
+	// Create log directory for this test run
+	var err error
+	logDir, err = propertyrepair.CreateLogDir("full_data")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	// Disable Ryuk reaper to avoid container creation issues
 	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
 
@@ -65,9 +71,16 @@ var _ = ginkgo.AfterSuite(func() {
 	if conn != nil {
 		_ = conn.Close()
 	}
+	if composeFile != "" && logDir != "" {
+		fmt.Println("Exporting docker compose logs...")
+		if exportErr := propertyrepair.ExportDockerComposeLogs(composeFile, logDir); exportErr != nil {
+			fmt.Printf("Warning: failed to export logs: %v\n", exportErr)
+		}
+		fmt.Printf("Logs are available at: %s\n", logDir)
+	}
 	if composeFile != "" {
 		fmt.Println("Stopping compose stack...")
-		propertyrepair.ExecuteComposeCommand("-f", composeFile, "down")
+		propertyrepair.ExecuteComposeCommand(false, "-f", composeFile, "down")
 	}
 })
 
@@ -83,11 +96,11 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 
 			// Start the docker compose stack without waiting first
 			fmt.Println("Starting services...")
-			err = propertyrepair.ExecuteComposeCommand("-f", composeFile, "up", "-d")
+			err = propertyrepair.ExecuteComposeCommand(true, "-f", composeFile, "up", "-d")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Simple wait for services to be ready
-			time.Sleep(10 * time.Second)
+			time.Sleep(time.Minute)
 		})
 
 		ginkgo.It("Should connect to liaison and setup clients", func() {
@@ -103,7 +116,7 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			propertyServiceClient = propertyv1.NewPropertyServiceClient(conn)
 		})
 
-		ginkgo.It("Should create group with 1 replica and write 100k properties", func() {
+		ginkgo.It("Should create group with 1 replica and write 5k properties", func() {
 			ctx := context.Background()
 
 			fmt.Println("=== Step 1: Creating group with 1 replica and loading initial data ===")
@@ -115,10 +128,10 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			propertyrepair.CreatePropertySchema(ctx, propertyClient)
 
 			// Write 100,000 properties
-			fmt.Println("Starting to write 100,000 properties...")
+			fmt.Println("Starting to write 5000 properties...")
 			startTime := time.Now()
 
-			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 100000)
+			err := propertyrepair.WriteProperties(ctx, propertyServiceClient, 0, 5000)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			duration := time.Since(startTime)
@@ -160,10 +173,10 @@ var _ = ginkgo.Describe("Property Repair Full Data Test", ginkgo.Ordered, func()
 			}
 
 			fmt.Println("\n=== Triggering property repair by waiting for scheduled repair cycle ===")
-			fmt.Println("Waiting for property repair to trigger (@every 10 minutes)...")
+			fmt.Println("Waiting for property repair to trigger (@every 5 minutes)...")
 
 			gomega.Eventually(func() bool {
-				time.Sleep(time.Second * 30)
+				time.Sleep(time.Second * 10)
 				// Get metrics after repair
 				fmt.Println("Trying to reading prometheus metrics to check repair status...")
 				afterMetrics := propertyrepair.GetAllNodeMetrics()

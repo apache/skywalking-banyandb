@@ -55,6 +55,22 @@ func TestBloomFilter(t *testing.T) {
 	}
 }
 
+func TestBloomFilterResetClearsBits(t *testing.T) {
+	assert := assert.New(t)
+
+	const expected = 16
+	key := []byte("reuse-key")
+
+	bf := NewBloomFilter(expected)
+	assert.True(bf.Add(key))
+
+	bf.Reset()
+	bf.SetN(expected)
+	bf.ResizeBits(OptimalBitsSize(expected))
+
+	assert.False(bf.MightContain(key))
+}
+
 func BenchmarkFilterAdd(b *testing.B) {
 	for _, n := range []int{1e3, 1e4, 1e5, 1e6, 1e7} {
 		data := generateTestData(n)

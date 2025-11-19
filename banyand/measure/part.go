@@ -109,6 +109,7 @@ type memPart struct {
 	timestamps        bytes.Buffer
 	fieldValues       bytes.Buffer
 	partMetadata      partMetadata
+	segmentID         int64
 }
 
 func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Writer) {

@@ -75,6 +75,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	var needToDelete []string
 	for i := range ee {
 		if ee[i].IsDir() {
+			if ee[i].Name() == storage.FailedPartsDirName {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
@@ -106,6 +109,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		for _, id := range loadedSnapshots {
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
 		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -141,18 +147,18 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 
 type tsTable struct {
 	fileSystem    fs.FileSystem
-	l             *logger.Logger
-	snapshot      *snapshot
-	introductions chan *introduction
+	pm            protector.Memory
 	loopCloser    *run.Closer
+	introductions chan *introduction
+	snapshot      *snapshot
 	*metrics
-	p         common.Position
-	option    option
-	pm        protector.Memory
-	root      string
 	getNodes  func() []string
+	l         *logger.Logger
+	p         common.Position
+	root      string
 	group     string
 	gc        garbageCleaner
+	option    option
 	curPartID uint64
 	sync.RWMutex
 	shardID common.ShardID
@@ -279,12 +285,17 @@ func (tst *tsTable) Close() error {
 }
 
 func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
+	tst.mustAddDataPointsWithSegmentID(dps, 0)
+}
+
+func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID int64) {
 	if len(dps.seriesIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
 	mp.mustInitFromDataPoints(dps)
+	mp.segmentID = segmentID
 	tst.mustAddMemPart(mp)
 }
 

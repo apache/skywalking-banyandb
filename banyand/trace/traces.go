@@ -18,11 +18,8 @@
 package trace
 
 import (
-	"bytes"
-
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
@@ -45,19 +42,6 @@ func (t *tagValue) reset() {
 	t.valueArr = nil
 }
 
-func (t *tagValue) size() int {
-	s := len(t.tag)
-	if t.value != nil {
-		s += len(t.value)
-	}
-	if t.valueArr != nil {
-		for i := range t.valueArr {
-			s += len(t.valueArr[i])
-		}
-	}
-	return s
-}
-
 func (t *tagValue) marshal() []byte {
 	if t.valueArr != nil {
 		var dst []byte
@@ -66,7 +50,7 @@ func (t *tagValue) marshal() []byte {
 				dst = append(dst, t.valueArr[i]...)
 				continue
 			}
-			dst = marshalVarArray(dst, t.valueArr[i])
+			dst = encoding.MarshalVarArray(dst, t.valueArr[i])
 		}
 		return dst
 	}
@@ -88,70 +72,12 @@ func releaseTagValue(v *tagValue) {
 
 var tagValuePool = pool.Register[*tagValue]("trace-tagValue")
 
-const (
-	entityDelimiter = '|'
-	escape          = '\\'
-)
-
-func marshalVarArray(dest, src []byte) []byte {
-	if bytes.IndexByte(src, entityDelimiter) < 0 && bytes.IndexByte(src, escape) < 0 {
-		dest = append(dest, src...)
-		dest = append(dest, entityDelimiter)
-		return dest
-	}
-	for _, b := range src {
-		if b == entityDelimiter || b == escape {
-			dest = append(dest, escape)
-		}
-		dest = append(dest, b)
-	}
-	dest = append(dest, entityDelimiter)
-	return dest
-}
-
-func unmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
-	if len(src) == 0 {
-		return nil, nil, errors.New("empty entity value")
-	}
-	if src[0] == entityDelimiter {
-		return dest, src[1:], nil
-	}
-	for len(src) > 0 {
-		switch {
-		case src[0] == escape:
-			if len(src) < 2 {
-				return nil, nil, errors.New("invalid escape character")
-			}
-			src = src[1:]
-			dest = append(dest, src[0])
-		case src[0] == entityDelimiter:
-			return dest, src[1:], nil
-		default:
-			dest = append(dest, src[0])
-		}
-		src = src[1:]
-	}
-	return nil, nil, errors.New("invalid variable array")
-}
-
-type tagValues struct {
-	tag    string
-	values []*tagValue
-}
-
-func (t *tagValues) reset() {
-	t.tag = ""
-	for i := range t.values {
-		releaseTagValue(t.values[i])
-	}
-	t.values = t.values[:0]
-}
-
 type traces struct {
 	traceIDs   []string
 	timestamps []int64
 	tags       [][]*tagValue
 	spans      [][]byte
+	spanIDs    []string
 }
 
 func (t *traces) reset() {
@@ -164,6 +90,7 @@ func (t *traces) reset() {
 	}
 	t.tags = t.tags[:0]
 	t.spans = t.spans[:0]
+	t.spanIDs = t.spanIDs[:0]
 }
 
 func (t *traces) Len() int {
@@ -179,6 +106,7 @@ func (t *traces) Swap(i, j int) {
 	t.timestamps[i], t.timestamps[j] = t.timestamps[j], t.timestamps[i]
 	t.tags[i], t.tags[j] = t.tags[j], t.tags[i]
 	t.spans[i], t.spans[j] = t.spans[j], t.spans[i]
+	t.spanIDs[i], t.spanIDs[j] = t.spanIDs[j], t.spanIDs[i]
 }
 
 func generateTraces() *traces {

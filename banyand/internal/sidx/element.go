@@ -22,18 +22,17 @@ package sidx
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-)
-
-const (
-	maxPooledSliceSize = 1024 * 1024 // 1MB
 )
 
 // tag represents an individual tag (not tag family like stream).
 type tag struct {
 	name      string
 	value     []byte
+	valueArr  [][]byte
 	valueType pbv1.ValueType
 }
 
@@ -49,7 +48,41 @@ type elements struct {
 func (t *tag) reset() {
 	t.name = ""
 	t.value = nil
+	t.valueArr = nil
 	t.valueType = pbv1.ValueTypeUnknown
+}
+
+func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte, error) {
+	if valueType == pbv1.ValueTypeInt64Arr {
+		for i := 0; i < len(src); i += 8 {
+			dest = append(dest, src[i:i+8])
+		}
+		return dest, nil
+	}
+	if valueType == pbv1.ValueTypeStrArr {
+		bb := bigValuePool.Get()
+		if bb == nil {
+			bb = &bytes.Buffer{}
+		}
+		defer func() {
+			bb.Buf = bb.Buf[:0]
+			bigValuePool.Put(bb)
+		}()
+		var err error
+		for len(src) > 0 {
+			bb.Buf, src, err = encoding.UnmarshalVarArray(bb.Buf[:0], src)
+			if err != nil {
+				return nil, err
+			}
+			// Make a copy since bb.Buf will be reused
+			valueCopy := make([]byte, len(bb.Buf))
+			copy(valueCopy, bb.Buf)
+			dest = append(dest, valueCopy)
+		}
+		return dest, nil
+	}
+	dest = append(dest, src)
+	return dest, nil
 }
 
 // reset elements collection for pooling.
@@ -73,7 +106,15 @@ func (e *elements) reset() {
 
 // size returns the size of the tag in bytes.
 func (t *tag) size() int {
-	return len(t.name) + len(t.value) + 1 // +1 for valueType
+	size := len(t.name) + 1 // +1 for valueType
+	if t.valueArr != nil {
+		for _, v := range t.valueArr {
+			size += len(v)
+		}
+	} else {
+		size += len(t.value)
+	}
+	return size
 }
 
 // size returns the total size of all elements.
@@ -166,7 +207,14 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 	for _, t := range tags {
 		newTag := generateTag()
 		newTag.name = t.Name
-		newTag.value = append([]byte(nil), t.Value...)
+		if t.ValueArr != nil {
+			newTag.valueArr = make([][]byte, len(t.ValueArr))
+			for i, v := range t.ValueArr {
+				newTag.valueArr[i] = append(newTag.valueArr[i][:0], v...)
+			}
+		} else {
+			newTag.value = append(newTag.value[:0], t.Value...)
+		}
 		newTag.valueType = t.ValueType
 		elementTags = append(elementTags, newTag)
 	}

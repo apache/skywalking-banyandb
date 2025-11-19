@@ -17,180 +17,350 @@
  * under the License.
  */
 
-// api file
+import { queryClient } from '@/plugins/vue-query';
+import { httpQuery } from './base';
 
-import request from '@/utils/axios';
+/**
+ * Fetches data using TanStack Query with automatic caching.
+ *
+ * Results are cached by queryKey. Subsequent calls with the same queryKey return
+ * cached data if available and not stale.
+ *
+ * @param {Array<string|number|boolean>} queryKey - Unique cache key array.
+ *   Example: `['groups']` or `['tableData', type, JSON.stringify(data)]`
+ * @param {Object} request - HTTP request config.
+ * @param {string} request.url - API endpoint URL.
+ * @param {string} request.method - HTTP method ('GET', 'POST', etc.).
+ * @param {Object} [request.json] - Optional JSON payload for request body.
+ * @param {Object} [request.headers={}] - Optional additional headers.
+ * @param {Object} [options={}] - TanStack Query options (e.g., `staleTime`, `retry`).
+ * @returns {Promise<any>} Promise resolving to API response or error object.
+ */
+function fetchWithQuery(queryKey, request, options = {}) {
+  return queryClient.fetchQuery({
+    queryKey,
+    queryFn: () => httpQuery(request),
+    ...options,
+  });
+}
 
-// Some request methods
+async function invalidateQueries(keys = []) {
+  if (!Array.isArray(keys) || keys.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    keys.map((key) => {
+      if (typeof key === 'function') {
+        return queryClient.invalidateQueries({ predicate: key });
+      }
+      if (key && typeof key === 'object' && key.queryKey) {
+        return queryClient.invalidateQueries(key);
+      }
+      const queryKey = Array.isArray(key) ? key : [key];
+      return queryClient.invalidateQueries({ queryKey });
+    }),
+  );
+}
+
+async function mutateWithInvalidation(request, invalidate = []) {
+  const result = await httpQuery(request);
+  if (!result?.error && invalidate.length) {
+    await invalidateQueries(invalidate);
+  }
+  return result;
+}
+
 export function getGroupList() {
-  return request({
+  return fetchWithQuery(['groups'], {
     url: '/api/v1/group/schema/lists',
-    method: 'get',
+    method: 'GET',
   });
 }
 
-export function getStreamOrMeasureList(type, name) {
-  return request({
+export function getAllTypesOfResourceList(type, name) {
+  return fetchWithQuery(['groupResources', type, name], {
     url: `/api/v1/${type}/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
-export function getStreamOrMeasure(type, group, name) {
-  return request({
+export function getResourceOfAllType(type, group, name) {
+  return fetchWithQuery(['resource', type, group, name], {
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTableList(data, type) {
-  return request({
-    url: `/api/v1/${type}/data`,
-    data: data,
-    method: 'post',
-  });
+  const queryKey = ['tableData', type, JSON.stringify(data)];
+  return fetchWithQuery(
+    queryKey,
+    {
+      url: `/api/v1/${type}/data`,
+      json: data,
+      method: 'POST',
+    },
+    { staleTime: 0 },
+  );
 }
 
-export function deleteStreamOrMeasure(type, group, name) {
-  return request({
-    url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'delete',
-  });
+export function deleteAllTypesOfResource(type, group, name) {
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema/${group}/${name}`,
+      method: 'DELETE',
+    },
+    [
+      ['groupResources', type, group],
+      ['resource', type, group, name],
+    ],
+  );
 }
 
 export function deleteGroup(group) {
-  return request({
-    url: `/api/v1/group/schema/${group}`,
-    method: 'delete',
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/group/schema/${group}`,
+      method: 'DELETE',
+    },
+    [['groups'], ['groupResources']],
+  );
 }
 
 export function createGroup(data) {
-  return request({
-    url: `/api/v1/group/schema`,
-    method: 'post',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/group/schema`,
+      method: 'POST',
+      json: data,
+    },
+    [['groups'], ['groupResources']],
+  );
 }
 
 export function editGroup(group, data) {
-  return request({
-    url: `/api/v1/group/schema/${group}`,
-    method: 'put',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/group/schema/${group}`,
+      method: 'PUT',
+      json: data,
+    },
+    [['groups'], ['groupResources']],
+  );
 }
 
 export function createResources(type, data) {
-  return request({
-    url: `/api/v1/${type}/schema`,
-    method: 'post',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema`,
+      method: 'POST',
+      json: data,
+    },
+    [['groupResources'], ['resource']],
+  );
 }
 
 export function editResources(type, group, name, data) {
-  return request({
-    url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema/${group}/${name}`,
+      method: 'PUT',
+      json: data,
+    },
+    [
+      ['groupResources', type, group],
+      ['resource', type, group, name],
+    ],
+  );
 }
 
 export function getindexRuleList(name) {
-  return request({
+  return fetchWithQuery(['indexRuleList', name], {
     url: `/api/v1/index-rule/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getindexRuleBindingList(name) {
-  return request({
+  return fetchWithQuery(['indexRuleBindingList', name], {
     url: `/api/v1/index-rule-binding/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTopNAggregationList(name) {
-  return request({
+  return fetchWithQuery(['topNAggregationList', name], {
     url: `/api/v1/topn-agg/schema/lists/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function getTopNAggregationData(data) {
-  return request({
-    url: `/api/v1/measure/topn`,
-    data,
-    method: 'post',
-  });
+  const queryKey = ['topNAggregationData', JSON.stringify(data)];
+  return fetchWithQuery(
+    queryKey,
+    {
+      url: `/api/v1/measure/topn`,
+      json: data,
+      method: 'POST',
+    },
+    { staleTime: 0 },
+  );
 }
 
 export function getSecondaryDataModel(type, group, name) {
-  return request({
+  return fetchWithQuery(['secondaryDataModel', type, group, name], {
     url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'get',
+    method: 'GET',
   });
 }
 
 export function createSecondaryDataModel(type, data) {
-  return request({
-    url: `/api/v1/${type}/schema`,
-    method: 'post',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema`,
+      method: 'POST',
+      json: data,
+    },
+    [['secondaryDataModel'], ['groupResources']],
+  );
 }
 
 export function updateSecondaryDataModel(type, group, name, data) {
-  return request({
-    url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema/${group}/${name}`,
+      method: 'PUT',
+      json: data,
+    },
+    [
+      ['secondaryDataModel', type, group, name],
+      ['groupResources', type, group],
+    ],
+  );
 }
 
 export function deleteSecondaryDataModel(type, group, name) {
-  return request({
-    url: `/api/v1/${type}/schema/${group}/${name}`,
-    method: 'delete',
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/${type}/schema/${group}/${name}`,
+      method: 'DELETE',
+    },
+    [
+      ['secondaryDataModel', type, group, name],
+      ['groupResources', type, group],
+    ],
+  );
 }
 
 export function fetchProperties(data) {
-  return request({
-    url: `/api/v1/property/data/query`,
-    method: 'post',
-    data,
-  });
+  const queryKey = ['properties', JSON.stringify(data)];
+  return fetchWithQuery(
+    queryKey,
+    {
+      url: `/api/v1/property/data/query`,
+      method: 'POST',
+      json: data,
+    },
+    { staleTime: 0 },
+  );
 }
 
 export function deleteProperty(group, name) {
-  return request({
-    url: `/api/v1/property/schema/${group}/${name}`,
-    method: 'delete',
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/property/schema/${group}/${name}`,
+      method: 'DELETE',
+    },
+    [['properties'], ['groupResources']],
+  );
 }
 
 export function updateProperty(group, name, data) {
-  return request({
-    url: `/api/v1/property/schema/${group}/${name}`,
-    method: 'put',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/property/schema/${group}/${name}`,
+      method: 'PUT',
+      json: data,
+    },
+    [['properties'], ['groupResources']],
+  );
 }
 
 export function createProperty(data) {
-  return request({
-    url: `/api/v1/property/schema`,
-    method: 'post',
-    data: data,
-  });
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/property/schema`,
+      method: 'POST',
+      json: data,
+    },
+    [['properties'], ['groupResources']],
+  );
 }
 
 export function applyProperty(group, name, id, data) {
-  return request({
-    url: `/api/v1/property/data/${group}/${name}/${id}`,
-    method: 'put',
-    data: data,
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/property/data/${group}/${name}/${id}`,
+      method: 'PUT',
+      json: data,
+    },
+    [['properties'], ['groupResources']],
+  );
+}
+
+export function getTrace(group, name) {
+  return fetchWithQuery(['trace', group, name], {
+    url: `/api/v1/trace/schema/${group}/${name}`,
+    method: 'GET',
   });
+}
+
+export function createTrace(json) {
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/trace/schema`,
+      method: 'POST',
+      json,
+    },
+    [['trace'], ['groupResources']],
+  );
+}
+
+export function updateTrace(group, name, json) {
+  return mutateWithInvalidation(
+    {
+      url: `/api/v1/trace/schema/${group}/${name}`,
+      json,
+      method: 'PUT',
+    },
+    [['trace', group, name], ['groupResources']],
+  );
+}
+
+export function queryTraces(json) {
+  const queryKey = ['traceQuery', JSON.stringify(json)];
+  return fetchWithQuery(
+    queryKey,
+    {
+      url: `/api/v1/trace/data`,
+      json,
+      method: 'POST',
+    },
+    { staleTime: 0 },
+  );
+}
+
+export function executeBydbQLQuery(data) {
+  const queryKey = ['bydbql', JSON.stringify(data)];
+  return fetchWithQuery(
+    queryKey,
+    {
+      url: `/api/v1/bydbql/query`,
+      json: data,
+      method: 'POST',
+    },
+    { staleTime: 0 },
+  );
 }

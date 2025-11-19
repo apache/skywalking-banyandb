@@ -17,6 +17,8 @@
  * under the License.
  */
 
+import { CatalogToGroupType, GroupTypeToCatalog, TypeMap, SupportedIndexRuleTypes } from '../common/data.js';
+
 export const StageFields = [
   { label: 'Name', key: 'name' },
   { label: 'Shard number', key: 'shardNum' },
@@ -105,23 +107,5 @@ export const TargetTypes = {
   Group: 'group',
   Resources: 'resources',
 };
-// catalog to group type
-export const CatalogToGroupType = {
-  CATALOG_MEASURE: 'measure',
-  CATALOG_STREAM: 'stream',
-  CATALOG_PROPERTY: 'property',
-};
 
-// group type to catalog
-export const GroupTypeToCatalog = {
-  measure: 'CATALOG_MEASURE',
-  stream: 'CATALOG_STREAM',
-  property: 'CATALOG_PROPERTY',
-};
-
-export const TypeMap = {
-  topNAggregation: 'topn-agg',
-  indexRule: 'index-rule',
-  indexRuleBinding: 'index-rule-binding',
-  children: 'children',
-};
+export { CatalogToGroupType, GroupTypeToCatalog, TypeMap, SupportedIndexRuleTypes };

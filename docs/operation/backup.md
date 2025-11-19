@@ -11,6 +11,7 @@ The backup tool performs the following operations:
   - **Stream Catalog:** Uses the `stream-root-path`.
   - **Measure Catalog:** Uses the `measure-root-path`.
   - **Property Catalog:** Uses the `property-root-path`.
+  - **Trace Catalog:** Uses the `trace-root-path`.
 - Computes a time-based directory name (formatted as daily or hourly).
 - Uploads files that are not found in the remote storage to the specified destination.
 - Deletes orphaned files in the remote destination that no longer exist locally.
@@ -28,7 +29,7 @@ Before running the backup tool, ensure you have:
   - Azure Blob Storage: Azure URLs with account credentials
   - Google Cloud Storage: GCS URLs with service account
 - Necessary access rights for writing to the destination.
-- Sufficient permissions to access the snapshots directories for **Stream**, **Measure**, and **Property** catalogs on the data node.
+- Sufficient permissions to access the snapshots directories for **Stream**, **Measure**, **Property**, **Trace** catalogs on the data node.
 
 ## Command-Line Usage
 
@@ -96,32 +97,33 @@ When a schedule is provided, the tool:
 
 ## Detailed Options
 
-| Flag                | Description                                                                               | Default Value         |
-| ------------------- | ----------------------------------------------------------------------------------------- | --------------------- |
-| `--grpc-addr`       | gRPC address of the data node.                                                          | `127.0.0.1:17912`     |
-| `--enable-tls`      | Enable TLS for the gRPC connection.                                                     | `false`               |
-| `--insecure`        | Skip server certificate verification.                                                   | `false`               |
-| `--cert`            | Path to the gRPC server certificate.                                                    | _empty_               |
-| `--dest`            | Destination URL for backup data (`file:///`, `s3://`, `azure://`, `gs://`)            | _required_            |
-| `--stream-root-path`| Root directory for the stream catalog snapshots.                                        | `/tmp`                |
-| `--measure-root-path`| Root directory for the measure catalog snapshots.                                      | `/tmp`                |
-| `--property-root-path`| Root directory for the property catalog snapshots.                                     | `/tmp`                |
-| `--time-style`      | Directory naming style based on time (`daily` or `hourly`)                               | `daily`               |
-| `--schedule`        | Schedule expression for periodic backup. Options: `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@every <duration>` | _empty_               |
-| `--logging-level`   | Root logging level (`debug`, `info`, `warn`, `error`)                                   | `info`                |
-| `--logging-env`     | Logging environment (`dev` or `prod`)                                                   | `prod`                |
-| **AWS S3 specific** |  |  |
-| `--s3-profile`      | AWS profile name                                                                        | _empty_               |
-| `--s3-config-file`  | Path to the AWS config file                                                            | _empty_               |
-| `--s3-credential-file`| Path to the AWS credential file                                                      | _empty_               |
-| `--s3-storage-class`| AWS S3 storage class for uploaded objects                                              | _empty_               |
-| `--s3-checksum-algorithm`| Checksum algorithm when uploading to S3                                           | _empty_               |
-| **Azure Blob specific** |  |  |
-| `--azure-account-name`| Azure storage account name                                                           | _empty_               |
-| `--azure-account-key`| Azure storage account key                                                            | _empty_               |
-| `--azure-sas-token`  | Azure SAS token (alternative to account key)                                         | _empty_               |
-| `--azure-endpoint`   | Azure blob service endpoint                                                          | _empty_               |
-| **Google Cloud Storage specific** |  |  |
-| `--gcp-service-account-file`| Path to the GCP service account JSON file                                      | _empty_               |
+| Flag                              | Description                                                                                                                  | Default Value     |
+|-----------------------------------|------------------------------------------------------------------------------------------------------------------------------|-------------------|
+| `--grpc-addr`                     | gRPC address of the data node.                                                                                               | `127.0.0.1:17912` |
+| `--enable-tls`                    | Enable TLS for the gRPC connection.                                                                                          | `false`           |
+| `--insecure`                      | Skip server certificate verification.                                                                                        | `false`           |
+| `--cert`                          | Path to the gRPC server certificate.                                                                                         | _empty_           |
+| `--dest`                          | Destination URL for backup data (`file:///`, `s3://`, `azure://`, `gs://`)                                                   | _required_        |
+| `--stream-root-path`              | Root directory for the stream catalog snapshots.                                                                             | `/tmp`            |
+| `--measure-root-path`             | Root directory for the measure catalog snapshots.                                                                            | `/tmp`            |
+| `--property-root-path`            | Root directory for the property catalog snapshots.                                                                           | `/tmp`            |
+| `--trace-root-path`               | Root directory for the trace catalog snapshots.                                                                              | `/tmp`            |
+| `--time-style`                    | Directory naming style based on time (`daily` or `hourly`)                                                                   | `daily`           |
+| `--schedule`                      | Schedule expression for periodic backup. Options: `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@every <duration>` | _empty_           |
+| `--logging-level`                 | Root logging level (`debug`, `info`, `warn`, `error`)                                                                        | `info`            |
+| `--logging-env`                   | Logging environment (`dev` or `prod`)                                                                                        | `prod`            |
+| **AWS S3 specific**               |                                                                                                                              |                   |
+| `--s3-profile`                    | AWS profile name                                                                                                             | _empty_           |
+| `--s3-config-file`                | Path to the AWS config file                                                                                                  | _empty_           |
+| `--s3-credential-file`            | Path to the AWS credential file                                                                                              | _empty_           |
+| `--s3-storage-class`              | AWS S3 storage class for uploaded objects                                                                                    | _empty_           |
+| `--s3-checksum-algorithm`         | Checksum algorithm when uploading to S3                                                                                      | _empty_           |
+| **Azure Blob specific**           |                                                                                                                              |                   |
+| `--azure-account-name`            | Azure storage account name                                                                                                   | _empty_           |
+| `--azure-account-key`             | Azure storage account key                                                                                                    | _empty_           |
+| `--azure-sas-token`               | Azure SAS token (alternative to account key)                                                                                 | _empty_           |
+| `--azure-endpoint`                | Azure blob service endpoint                                                                                                  | _empty_           |
+| **Google Cloud Storage specific** |                                                                                                                              |                   |
+| `--gcp-service-account-file`      | Path to the GCP service account JSON file                                                                                    | _empty_           |
 
 This guide should provide you with the necessary steps and information to effectively use the backup tool for your data backup operations.

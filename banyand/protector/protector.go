@@ -269,7 +269,9 @@ func (m *memory) GetThreshold() int64 {
 	// Try reading cgroup memory limit
 	cgLimit, err := cgroups.MemoryLimit()
 	if err != nil {
-		m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		if dl := m.l.Debug(); dl.Enabled() {
+			dl.Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		}
 		// Fallback default threshold of 64MB
 		return 64 << 20
 	}

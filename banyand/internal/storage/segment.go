@@ -40,9 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// ErrExpiredData is returned when the data is expired.
-var ErrExpiredData = errors.New("expired data")
-
 // ErrSegmentClosed is returned when trying to access a closed segment.
 var ErrSegmentClosed = errors.New("segment closed")
 
@@ -311,7 +308,6 @@ type segmentController[T TSTable, O any] struct {
 	stage       string
 	location    string
 	lst         []*segment[T, O]
-	deadline    atomic.Int64
 	idleTimeout time.Duration
 	optsMutex   sync.RWMutex
 	sync.RWMutex
@@ -379,10 +375,6 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
-	// Before the first remove old segment run, any segment should be created.
-	if sc.deadline.Load() > ts.UnixNano() {
-		return nil, ErrExpiredData
-	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -598,17 +590,36 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 	return timeRange
 }
 
-func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
+func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
 	ss, _ := sc.segments(false)
+	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
+		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
+		Str("deadline", deadline.String()).
+		Int("total_segment_count", len(ss)).Msg("deleting expired segments")
+	shouldDeleteSuffixes := make(map[string]bool)
+	for _, s := range segmentSuffixes {
+		shouldDeleteSuffixes[s] = true
+	}
 	for _, s := range ss {
-		if s.Before(deadline) && s.Overlapping(timeRange) {
+		if shouldDeleteSuffixes[s.suffix] {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("deleting an expired segment")
 			s.delete()
 			sc.Lock()
 			sc.removeSeg(s.id)
 			sc.Unlock()
 			count++
+		} else {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("segment is not expired or not in the time range, skipping deletion")
 		}
 		s.DecRef()
 	}
@@ -619,11 +630,6 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
-			if len(sc.lst) < 1 {
-				sc.deadline.Store(0)
-			} else {
-				sc.deadline.Store(sc.lst[0].Start.UnixNano())
-			}
 			break
 		}
 	}

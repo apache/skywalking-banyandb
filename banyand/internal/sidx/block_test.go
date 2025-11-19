@@ -19,6 +19,10 @@ package sidx
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func TestBlock_BasicOperations(t *testing.T) {
@@ -127,26 +131,41 @@ func TestBlock_KeyRange(t *testing.T) {
 	}
 }
 
-func TestBlock_MemoryManagement(t *testing.T) {
+func TestBlock_ProcessTag_WithArrValues(t *testing.T) {
 	b := generateBlock()
 	defer releaseBlock(b)
 
-	// Add some normal-sized data
-	b.data = append(b.data, make([]byte, 100), make([]byte, 200))
-
-	// Add an oversized slice (larger than maxPooledSliceSize)
-	oversizedData := make([]byte, maxPooledSliceSize+1)
-	b.data = append(b.data, oversizedData)
-
-	// Reset should handle both normal and oversized slices correctly
-	b.reset()
-
-	// After reset, data slice should be empty but not nil (since the outer slice is within limits)
-	if b.data == nil {
-		t.Error("Data slice should not be nil after reset when within count limits")
+	b.userKeys = []int64{100, 101}
+	elementTags := [][]*tag{
+		{
+			{
+				name: "arr_tag",
+				valueArr: [][]byte{
+					[]byte("a"),
+					[]byte("b"),
+				},
+				valueType: pbv1.ValueTypeStrArr,
+			},
+		},
+		{
+			{
+				name:      "arr_tag",
+				value:     []byte("c"),
+				valueType: pbv1.ValueTypeStr,
+			},
+		},
 	}
 
-	if len(b.data) != 0 {
-		t.Errorf("Data slice should be empty after reset, got length %d", len(b.data))
-	}
+	b.processTag("arr_tag", elementTags)
+
+	// Check the first element has valueArr
+	assert.NotNil(t, b.tags["arr_tag"].values[0].valueArr)
+	assert.Equal(t, 2, len(b.tags["arr_tag"].values[0].valueArr))
+	assert.Equal(t, "a", string(b.tags["arr_tag"].values[0].valueArr[0]))
+	assert.Equal(t, "b", string(b.tags["arr_tag"].values[0].valueArr[1]))
+
+	// Check the second element has value
+	assert.Equal(t, "c", string(b.tags["arr_tag"].values[1].value))
+
+	// Note: bloom filter is now created at write time, not during processTag
 }

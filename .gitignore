@@ -27,6 +27,11 @@ include
 target
 tmp
 
+# go cache
+.gocache
+.gomodcache
+.cache
+
 # Test binary, build with `go test -c`
 *.test
 *.log
@@ -74,3 +79,5 @@ Claude.md
 .claude/
 CLAUDE.md
 
+# Codex
+AGENTS.md

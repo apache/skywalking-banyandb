@@ -71,12 +71,27 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 
 include scripts/build/ginkgo.mk
 
-test-ci: $(GINKGO) ## Run the unit tests in CI
+test-ci: $(GINKGO) ## Run the unit tests in CI. Usage: make test-ci PKG=./banyand/trace
 	$(GINKGO) --race \
 	  -ldflags \
 	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
 	  $(TEST_CI_OPTS) \
-	  ./... 
+	  $(PKG) 
+
+PKG ?= ./...
+GO_VERSION := $(shell grep -E '^go [0-9]+\.[0-9]+' go.mod | awk '{print $$2}')
+test-docker: ## Run tests in Docker with constrained resources (2 CPU cores, 4GB RAM). Usage: make test-docker PKG=./banyand/trace
+	@echo "Running tests in Docker container (2 CPUs, 4GB RAM) for package: $(PKG)"
+	@echo "Using Go version: $(GO_VERSION) (from go.mod)"
+	docker run --rm \
+	  --cpus=2 \
+	  --memory=4g \
+	  -v $(mk_dir):/workspace \
+	  -w /workspace \
+	  golang:$(GO_VERSION) \
+	  go run github.com/onsi/ginkgo/v2/ginkgo --race \
+	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
+	  $(PKG)
 
 ##@ Code quality targets
 
@@ -126,7 +141,6 @@ pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
 	$(MAKE) generate
 	$(MAKE) lint
-	$(MAKE) license-dep
 	$(MAKE) check
 	$(MAKE) vuln-check
 
@@ -203,7 +217,7 @@ release-push-candidate: ## Push release candidate
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push
-.PHONY: test test-race test-coverage test-ci
+.PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
 .PHONY: vendor-update

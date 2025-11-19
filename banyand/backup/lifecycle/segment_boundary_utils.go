@@ -20,7 +20,6 @@ package lifecycle
 import (
 	"time"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -62,7 +61,7 @@ func getSegmentTimeRange(segmentStart time.Time, interval storage.IntervalRule) 
 	return timestamp.NewSectionTimeRange(segmentStart, segmentEnd)
 }
 
-func getTargetStageInterval(group *commonv1.Group) storage.IntervalRule {
+func getTargetStageInterval(group *GroupConfig) storage.IntervalRule {
 	if group.ResourceOpts != nil && len(group.ResourceOpts.Stages) > 0 {
 		stage := group.ResourceOpts.Stages[0]
 		if stage.SegmentInterval != nil {
