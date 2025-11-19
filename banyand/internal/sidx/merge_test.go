@@ -21,6 +21,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -281,6 +282,36 @@ var (
 		})
 		return es
 	}()
+
+	esStrArr1 = func() *elements {
+		es := generateElements()
+		es.mustAppend(1, 100, make([]byte, 100), []Tag{
+			{Name: "arrTag", ValueArr: [][]byte{[]byte("value1"), []byte("value2")}, ValueType: pbv1.ValueTypeStrArr},
+		})
+		es.mustAppend(2, 200, make([]byte, 100), []Tag{
+			{Name: "arrTag", ValueArr: [][]byte{[]byte("value3"), []byte("value4")}, ValueType: pbv1.ValueTypeStrArr},
+		})
+		return es
+	}()
+
+	esStrArr2 = func() *elements {
+		es := generateElements()
+		es.mustAppend(1, 150, make([]byte, 100), []Tag{
+			{Name: "arrTag", ValueArr: [][]byte{[]byte("value5"), []byte("value6")}, ValueType: pbv1.ValueTypeStrArr},
+		})
+		es.mustAppend(2, 250, make([]byte, 100), []Tag{
+			{Name: "arrTag", ValueArr: [][]byte{[]byte("value7"), []byte("value8")}, ValueType: pbv1.ValueTypeStrArr},
+		})
+		return es
+	}()
+
+	esStrArrWithEmpty = func() *elements {
+		es := generateElements()
+		es.mustAppend(1, 300, make([]byte, 100), []Tag{
+			{Name: "arrTag", ValueArr: [][]byte{[]byte("a"), []byte(""), []byte("b")}, ValueType: pbv1.ValueTypeStrArr},
+		})
+		return es
+	}()
 )
 
 func Test_mergeParts(t *testing.T) {
@@ -331,10 +362,27 @@ func Test_mergeParts(t *testing.T) {
 				{seriesID: 4, count: 1, uncompressedSize: 77},
 			},
 		},
+		{
+			name:   "Test with string array value type",
+			esList: []*elements{esStrArr1, esStrArr2},
+			want: []blockMetadata{
+				{seriesID: 1, count: 2, uncompressedSize: 264},
+				{seriesID: 2, count: 2, uncompressedSize: 264},
+			},
+		},
+		{
+			name:   "Test with string array containing empty strings",
+			esList: []*elements{esStrArrWithEmpty},
+			want: []blockMetadata{
+				{seriesID: 1, count: 1, uncompressedSize: 128},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			wantBlocks := elementsToBlocks(tt.esList)
+
 			verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
@@ -356,8 +404,14 @@ func Test_mergeParts(t *testing.T) {
 				reader := &blockReader{}
 				reader.init([]*partMergeIter{pmi})
 				var got []blockMetadata
+				var gotBlocks []block
+				decoder := generateTagValuesDecoder()
+				defer releaseTagValuesDecoder(decoder)
+
 				for reader.nextBlockMetadata() {
 					got = append(got, reader.block.bm)
+					reader.loadBlockData(decoder)
+					gotBlocks = append(gotBlocks, deepCopyBlock(&reader.block.block))
 				}
 				require.NoError(t, reader.error())
 
@@ -372,6 +426,13 @@ func Test_mergeParts(t *testing.T) {
 					cmp.AllowUnexported(blockMetadata{}),
 				); diff != "" {
 					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+
+				if diff := cmp.Diff(gotBlocks, wantBlocks,
+					cmpopts.IgnoreFields(tagData{}, "uniqueValues", "tmpBytes"),
+					cmp.AllowUnexported(block{}, tagData{}, tagRow{}),
+				); diff != "" {
+					t.Errorf("Unexpected blocks (-got +want):\n%s", diff)
 				}
 			}
 
@@ -416,4 +477,83 @@ func Test_mergeParts(t *testing.T) {
 			})
 		})
 	}
+}
+
+func elementsToBlocks(esList []*elements) []block {
+	merged := generateElements()
+	defer releaseElements(merged)
+
+	for _, es := range esList {
+		for i := 0; i < len(es.seriesIDs); i++ {
+			var tags []Tag
+			for _, t := range es.tags[i] {
+				tags = append(tags, Tag{
+					Name:      t.name,
+					Value:     t.value,
+					ValueArr:  t.valueArr,
+					ValueType: t.valueType,
+				})
+			}
+			merged.mustAppend(es.seriesIDs[i], es.userKeys[i], es.data[i], tags)
+		}
+	}
+
+	sort.Sort(merged)
+
+	var blocks []block
+	if merged.Len() == 0 {
+		return blocks
+	}
+
+	start := 0
+	for i := 1; i <= merged.Len(); i++ {
+		if i == merged.Len() || merged.seriesIDs[i] != merged.seriesIDs[start] {
+			b := block{
+				tags:     make(map[string]*tagData),
+				userKeys: make([]int64, i-start),
+				data:     make([][]byte, i-start),
+			}
+			copy(b.userKeys, merged.userKeys[start:i])
+			for k := 0; k < i-start; k++ {
+				b.data[k] = merged.data[start+k]
+			}
+			(&b).mustInitFromTags(merged.tags[start:i])
+			blocks = append(blocks, b)
+			start = i
+		}
+	}
+	return blocks
+}
+
+func deepCopyBlock(b *block) block {
+	newB := block{
+		tags: make(map[string]*tagData),
+	}
+	newB.userKeys = append([]int64(nil), b.userKeys...)
+	newB.data = make([][]byte, len(b.data))
+	for i, d := range b.data {
+		newB.data[i] = append([]byte(nil), d...)
+	}
+	for k, v := range b.tags {
+		newTd := &tagData{
+			name:      v.name,
+			valueType: v.valueType,
+			values:    make([]tagRow, len(v.values)),
+		}
+		for i, row := range v.values {
+			newRow := tagRow{}
+			if row.value != nil {
+				newRow.value = append([]byte(nil), row.value...)
+			}
+			if row.valueArr != nil {
+				newRow.valueArr = make([][]byte, len(row.valueArr))
+				for j, arrVal := range row.valueArr {
+					newRow.valueArr[j] = append([]byte(nil), arrVal...)
+				}
+			}
+			newTd.values[i] = newRow
+		}
+		newB.tags[k] = newTd
+	}
+	return newB
 }

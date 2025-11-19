@@ -23,6 +23,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -496,7 +497,35 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	result.SIDs = append(result.SIDs, bc.seriesID)
 	result.PartIDs = append(result.PartIDs, bc.p.ID())
 
+	// Copy projected tags if specified
+	if len(bc.request.TagProjection) > 0 && len(result.Tags) > 0 {
+		for _, proj := range bc.request.TagProjection {
+			for _, tagName := range proj.Names {
+				if tagData, exists := bc.tags[tagName]; exists && bc.idx < len(tagData) {
+					tagValue := formatTagValue(tagData[bc.idx])
+					result.Tags[tagName] = append(result.Tags[tagName], tagValue)
+				} else {
+					// Tag not present for this row
+					result.Tags[tagName] = append(result.Tags[tagName], "")
+				}
+			}
+		}
+	}
+
 	return true
+}
+
+// formatTagValue converts a Tag to a string representation
+func formatTagValue(tag Tag) string {
+	if len(tag.ValueArr) > 0 {
+		// Array of values
+		values := make([]string, len(tag.ValueArr))
+		for i, v := range tag.ValueArr {
+			values[i] = string(v)
+		}
+		return "[" + strings.Join(values, ",") + "]"
+	}
+	return string(tag.Value)
 }
 
 // blockCursorHeap implements heap.Interface for sorting block cursors.

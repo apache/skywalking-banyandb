@@ -18,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -30,49 +31,76 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 func newTraceCmd() *cobra.Command {
-	var partPath string
+	var shardPath string
+	var segmentPath string
 	var verbose bool
 	var csvOutput bool
+	var criteriaJSON string
+	var projectionTags string
 
 	cmd := &cobra.Command{
 		Use:   "trace",
-		Short: "Dump trace part data",
-		Long: `Dump and display contents of a trace part directory.
-Outputs trace data in human-readable format or CSV.`,
-		Example: `  # Display trace data in text format
-  dump trace -path /path/to/part/0000000000004db4
+		Short: "Dump trace shard data",
+		Long: `Dump and display contents of a trace shard directory (containing multiple parts).
+Outputs trace data in human-readable format or CSV.
+
+Supports filtering by criteria and projecting specific tags.`,
+		Example: `  # Display trace data from shard in text format
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment
 
   # Display with verbose hex dumps
-  dump trace -path /path/to/part/0000000000004db4 -v
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment -v
+
+  # Filter by criteria
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment \
+    --criteria '{"condition":{"name":"query","op":"BINARY_OP_HAVING","value":{"strArray":{"value":["tag1=value1","tag2=value2"]}}}}'
+
+  # Project specific tags
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment \
+    --projection "tag1,tag2,tag3"
 
   # Output as CSV
-  dump trace -path /path/to/part/0000000000004db4 -csv
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment --csv
 
   # Save CSV to file
-  dump trace -path /path/to/part/0000000000004db4 -csv > output.csv`,
+  dump trace --shard-path /path/to/shard-0 --segment-path /path/to/segment --csv > output.csv`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if partPath == "" {
-				return fmt.Errorf("-path flag is required")
+			if shardPath == "" {
+				return fmt.Errorf("--shard-path flag is required")
 			}
-			return dumpTracePart(partPath, verbose, csvOutput)
+			if segmentPath == "" {
+				return fmt.Errorf("--segment-path flag is required")
+			}
+			return dumpTraceShard(shardPath, segmentPath, verbose, csvOutput, criteriaJSON, projectionTags)
 		},
 	}
 
-	cmd.Flags().StringVarP(&partPath, "path", "p", "", "Path to the trace part directory (required)")
+	cmd.Flags().StringVar(&shardPath, "shard-path", "", "Path to the shard directory (required)")
+	cmd.Flags().StringVarP(&segmentPath, "segment-path", "g", "", "Path to the segment directory (required)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output (show raw data)")
-	cmd.Flags().BoolVarP(&csvOutput, "csv", "c", false, "Output as CSV format")
-	_ = cmd.MarkFlagRequired("path")
+	cmd.Flags().BoolVar(&csvOutput, "csv", false, "Output as CSV format")
+	cmd.Flags().StringVarP(&criteriaJSON, "criteria", "c", "", "Criteria filter as JSON string")
+	cmd.Flags().StringVarP(&projectionTags, "projection", "p", "", "Comma-separated list of tags to include as columns (e.g., tag1,tag2,tag3)")
+	_ = cmd.MarkFlagRequired("shard-path")
+	_ = cmd.MarkFlagRequired("segment-path")
 
 	return cmd
 }
@@ -244,6 +272,196 @@ func dumpTracePart(partPath string, verbose bool, csvOutput bool) error {
 	}
 
 	fmt.Printf("Total rows: %d\n", rowNum)
+	return nil
+}
+
+func dumpTraceShard(shardPath, segmentPath string, verbose bool, csvOutput bool, criteriaJSON, projectionTagsStr string) error {
+	// Discover all part directories in the shard
+	partIDs, err := discoverTracePartIDs(shardPath)
+	if err != nil {
+		return fmt.Errorf("failed to discover part IDs: %w", err)
+	}
+
+	if len(partIDs) == 0 {
+		fmt.Println("No parts found in shard directory")
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d parts in shard\n", len(partIDs))
+
+	// Load series information for human-readable output
+	seriesMap, err := loadTraceSeriesMap(segmentPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load series information: %v\n", err)
+		seriesMap = nil // Continue without series names
+	} else {
+		fmt.Fprintf(os.Stderr, "Loaded %d series from segment\n", len(seriesMap))
+	}
+
+	// Parse criteria if provided
+	var criteria *modelv1.Criteria
+	var tagFilter logical.TagFilter
+	if criteriaJSON != "" {
+		criteria, err = parseTraceCriteriaJSON(criteriaJSON)
+		if err != nil {
+			return fmt.Errorf("failed to parse criteria: %w", err)
+		}
+		tagFilter, err = logical.BuildSimpleTagFilter(criteria)
+		if err != nil {
+			return fmt.Errorf("failed to build tag filter: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Applied criteria filter\n")
+	}
+
+	// Parse projection tags
+	var projectionTags []string
+	if projectionTagsStr != "" {
+		projectionTags = parseTraceProjectionTags(projectionTagsStr)
+		fmt.Fprintf(os.Stderr, "Projection tags: %v\n", projectionTags)
+	}
+
+	// Open the file system
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Determine tag columns for CSV output
+	var tagColumns []string
+	if csvOutput {
+		if len(projectionTags) > 0 {
+			tagColumns = projectionTags
+		} else {
+			// Scan first part to determine all available tags
+			tagColumns, err = discoverTagColumns(partIDs, shardPath, fileSystem)
+			if err != nil {
+				return fmt.Errorf("failed to discover tag columns: %w", err)
+			}
+		}
+	}
+
+	// Initialize output
+	var writer *csv.Writer
+	var rowNum int
+	if csvOutput {
+		writer = csv.NewWriter(os.Stdout)
+		defer writer.Flush()
+
+		// Write CSV header
+		header := []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}
+		header = append(header, tagColumns...)
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write CSV header: %w", err)
+		}
+	} else {
+		fmt.Printf("================================================================================\n")
+		fmt.Fprintf(os.Stderr, "Processing parts...\n")
+	}
+
+	// Process each part and stream output
+	for partIdx, partID := range partIDs {
+		fmt.Fprintf(os.Stderr, "Processing part %d/%d (0x%016x)...\n", partIdx+1, len(partIDs), partID)
+
+		p, err := openFilePart(partID, shardPath, fileSystem)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to open part %016x: %v\n", partID, err)
+			continue
+		}
+
+		decoder := &encoding.BytesBlockDecoder{}
+		partRowCount := 0
+
+		// Process all blocks in this part
+		for _, pbm := range p.primaryBlockMetadata {
+			// Read primary data block
+			primaryData := make([]byte, pbm.size)
+			fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+
+			// Decompress
+			decompressed, err := zstd.Decompress(nil, primaryData)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Error decompressing primary data in part %016x: %v\n", partID, err)
+				continue
+			}
+
+			// Parse ALL block metadata entries from this primary block
+			blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Error parsing block metadata in part %016x: %v\n", partID, err)
+				continue
+			}
+
+			// Process each trace block within this primary block
+			for _, bm := range blockMetadatas {
+				// Read spans
+				spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Error reading spans for trace %s in part %016x: %v\n", bm.traceID, partID, err)
+					continue
+				}
+
+				// Read tags
+				tags := make(map[string][][]byte)
+				for tagName, tagBlock := range bm.tags {
+					tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count), p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: Error reading tag %s for trace %s in part %016x: %v\n", tagName, bm.traceID, partID, err)
+						continue
+					}
+					tags[tagName] = tagValues
+				}
+
+				// Process each span as a row
+				for i := 0; i < len(spans); i++ {
+					// Build tag map for this span
+					spanTags := make(map[string][]byte)
+					for tagName, tagValues := range tags {
+						if i < len(tagValues) {
+							spanTags[tagName] = tagValues[i]
+						}
+					}
+
+					// Calculate series ID from entity tags
+					seriesID := calculateSeriesIDFromTags(spanTags)
+
+					// Apply criteria filter if specified
+					if tagFilter != nil && tagFilter != logical.DummyFilter {
+						if !matchesCriteria(spanTags, p.tagType, tagFilter) {
+							continue
+						}
+					}
+
+					row := traceRowData{
+						partID:   partID,
+						traceID:  bm.traceID,
+						spanID:   spanIDs[i],
+						spanData: spans[i],
+						tags:     spanTags,
+						seriesID: seriesID,
+					}
+
+					// Stream output immediately
+					if csvOutput {
+						if err := writeTraceRowAsCSV(writer, row, tagColumns, seriesMap); err != nil {
+							return err
+						}
+					} else {
+						writeTraceRowAsText(row, rowNum+1, verbose, projectionTags, seriesMap)
+					}
+
+					rowNum++
+					partRowCount++
+				}
+			}
+		}
+
+		closePart(p)
+		fmt.Fprintf(os.Stderr, "  Part %d/%d: processed %d rows (total: %d)\n", partIdx+1, len(partIDs), partRowCount, rowNum)
+	}
+
+	if !csvOutput {
+		fmt.Printf("\nTotal rows: %d\n", rowNum)
+	} else {
+		fmt.Fprintf(os.Stderr, "Total rows written: %d\n", rowNum)
+	}
+
 	return nil
 }
 
@@ -561,6 +779,15 @@ type part struct {
 	partMetadata         partMetadata
 }
 
+type traceRowData struct {
+	partID   uint64
+	traceID  string
+	spanID   string
+	spanData []byte
+	tags     map[string][]byte
+	seriesID common.SeriesID
+}
+
 func openFilePart(id uint64, root string, fileSystem fs.FileSystem) (*part, error) {
 	var p part
 	partPath := filepath.Join(root, fmt.Sprintf("%016x", id))
@@ -874,6 +1101,533 @@ func unmarshalTagMetadata(tm *tagMetadata, src []byte) error {
 	tm.filterBlock.offset = n
 	_, n = encoding.BytesToVarUint64(src)
 	tm.filterBlock.size = n
+
+	return nil
+}
+
+// Helper functions for new shard-level dump
+
+func discoverTracePartIDs(shardPath string) ([]uint64, error) {
+	entries, err := os.ReadDir(shardPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read shard directory: %w", err)
+	}
+
+	var partIDs []uint64
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip special directories
+		name := entry.Name()
+		if name == "sidx" || name == "meta" {
+			continue
+		}
+		// Try to parse as hex part ID
+		partID, err := strconv.ParseUint(name, 16, 64)
+		if err == nil {
+			partIDs = append(partIDs, partID)
+		}
+	}
+
+	sort.Slice(partIDs, func(i, j int) bool {
+		return partIDs[i] < partIDs[j]
+	})
+
+	return partIDs, nil
+}
+
+func loadTraceSeriesMap(segmentPath string) (map[common.SeriesID]string, error) {
+	seriesIndexPath := filepath.Join(segmentPath, "sidx")
+
+	l := logger.GetLogger("dump-trace")
+
+	// Create inverted index store
+	store, err := inverted.NewStore(inverted.StoreOpts{
+		Path:   seriesIndexPath,
+		Logger: l,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open series index: %w", err)
+	}
+	defer store.Close()
+
+	// Get series iterator
+	ctx := context.Background()
+	iter, err := store.SeriesIterator(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create series iterator: %w", err)
+	}
+	defer iter.Close()
+
+	// Build map of SeriesID -> text representation
+	seriesMap := make(map[common.SeriesID]string)
+	for iter.Next() {
+		series := iter.Val()
+		if len(series.EntityValues) > 0 {
+			seriesID := common.SeriesID(convert.Hash(series.EntityValues))
+			// Convert EntityValues bytes to readable string
+			seriesText := string(series.EntityValues)
+			seriesMap[seriesID] = seriesText
+		}
+	}
+
+	return seriesMap, nil
+}
+
+func parseTraceCriteriaJSON(criteriaJSON string) (*modelv1.Criteria, error) {
+	criteria := &modelv1.Criteria{}
+	err := protojson.Unmarshal([]byte(criteriaJSON), criteria)
+	if err != nil {
+		return nil, fmt.Errorf("invalid criteria JSON: %w", err)
+	}
+	return criteria, nil
+}
+
+func parseTraceProjectionTags(projectionStr string) []string {
+	if projectionStr == "" {
+		return nil
+	}
+
+	tags := strings.Split(projectionStr, ",")
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			result = append(result, tag)
+		}
+	}
+	return result
+}
+
+func calculateSeriesIDFromTags(tags map[string][]byte) common.SeriesID {
+	// Extract entity values from tags to calculate series ID
+	// Entity tags typically follow naming conventions like "service_id", "instance_id", etc.
+	// We'll collect all tag key-value pairs and hash them
+	var entityValues []byte
+
+	// Sort tag names for consistent hashing
+	tagNames := make([]string, 0, len(tags))
+	for name := range tags {
+		tagNames = append(tagNames, name)
+	}
+	sort.Strings(tagNames)
+
+	// Build entity values
+	for _, name := range tagNames {
+		value := tags[name]
+		if value != nil {
+			// Append tag name=value
+			entityValues = append(entityValues, []byte(name)...)
+			entityValues = append(entityValues, '=')
+			entityValues = append(entityValues, value...)
+			entityValues = append(entityValues, internalencoding.EntityDelimiter)
+		}
+	}
+
+	if len(entityValues) == 0 {
+		return 0
+	}
+
+	return common.SeriesID(convert.Hash(entityValues))
+}
+
+func matchesCriteria(tags map[string][]byte, tagTypes map[string]pbv1.ValueType, filter logical.TagFilter) bool {
+	// Convert tags to modelv1.Tag format
+	modelTags := make([]*modelv1.Tag, 0, len(tags))
+	for name, value := range tags {
+		if value == nil {
+			continue
+		}
+
+		valueType := tagTypes[name]
+		tagValue := convertTagValue(value, valueType)
+		if tagValue != nil {
+			modelTags = append(modelTags, &modelv1.Tag{
+				Key:   name,
+				Value: tagValue,
+			})
+		}
+	}
+
+	// Use TagFilterMatcher to check if tags match the filter
+	// Create a simple registry for the available tags
+	registry := &traceTagRegistry{
+		tagTypes: tagTypes,
+	}
+
+	matcher := logical.NewTagFilterMatcher(filter, registry, traceTagValueDecoder)
+	match, _ := matcher.Match(modelTags)
+	return match
+}
+
+func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
+	if value == nil {
+		return pbv1.NullTagValue
+	}
+
+	switch valueType {
+	case pbv1.ValueTypeStr:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{
+					Value: string(value),
+				},
+			},
+		}
+	case pbv1.ValueTypeInt64:
+		if len(value) >= 8 {
+			return &modelv1.TagValue{
+				Value: &modelv1.TagValue_Int{
+					Int: &modelv1.Int{
+						Value: convert.BytesToInt64(value),
+					},
+				},
+			}
+		}
+	case pbv1.ValueTypeStrArr:
+		// Decode string array
+		var values []string
+		var err error
+		remaining := value
+		for len(remaining) > 0 {
+			var decoded []byte
+			decoded, remaining, err = unmarshalVarArray(nil, remaining)
+			if err != nil {
+				break
+			}
+			if len(decoded) > 0 {
+				values = append(values, string(decoded))
+			}
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_StrArray{
+				StrArray: &modelv1.StrArray{
+					Value: values,
+				},
+			},
+		}
+	case pbv1.ValueTypeBinaryData:
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_BinaryData{
+				BinaryData: value,
+			},
+		}
+	}
+
+	// Default: try to return as string
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_Str{
+			Str: &modelv1.Str{
+				Value: string(value),
+			},
+		},
+	}
+}
+
+// traceTagRegistry implements logical.Schema for tag filtering
+type traceTagRegistry struct {
+	tagTypes map[string]pbv1.ValueType
+}
+
+func (r *traceTagRegistry) FindTagSpecByName(name string) *logical.TagSpec {
+	valueType := r.tagTypes[name]
+	var tagType databasev1.TagType
+	switch valueType {
+	case pbv1.ValueTypeStr:
+		tagType = databasev1.TagType_TAG_TYPE_STRING
+	case pbv1.ValueTypeInt64:
+		tagType = databasev1.TagType_TAG_TYPE_INT
+	case pbv1.ValueTypeStrArr:
+		tagType = databasev1.TagType_TAG_TYPE_STRING_ARRAY
+	default:
+		tagType = databasev1.TagType_TAG_TYPE_STRING
+	}
+
+	return &logical.TagSpec{
+		Spec: &databasev1.TagSpec{
+			Name: name,
+			Type: tagType,
+		},
+		TagFamilyIdx: 0,
+		TagIdx:       0,
+	}
+}
+
+func (r *traceTagRegistry) IndexDefined(_ string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
+func (r *traceTagRegistry) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
+func (r *traceTagRegistry) EntityList() []string {
+	return nil
+}
+
+func (r *traceTagRegistry) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+	return nil, fmt.Errorf("CreateTagRef not supported in dump tool")
+}
+
+func (r *traceTagRegistry) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+	return nil, fmt.Errorf("CreateFieldRef not supported in dump tool")
+}
+
+func (r *traceTagRegistry) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+	return r
+}
+
+func (r *traceTagRegistry) ProjFields(refs ...*logical.FieldRef) logical.Schema {
+	return r
+}
+
+func (r *traceTagRegistry) Children() []logical.Schema {
+	return nil
+}
+
+func traceTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
+	if value == nil && valueArr == nil {
+		return pbv1.NullTagValue
+	}
+
+	switch valueType {
+	case pbv1.ValueTypeStr:
+		if value == nil {
+			return pbv1.NullTagValue
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{
+					Value: string(value),
+				},
+			},
+		}
+	case pbv1.ValueTypeInt64:
+		if value == nil {
+			return pbv1.NullTagValue
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_Int{
+				Int: &modelv1.Int{
+					Value: convert.BytesToInt64(value),
+				},
+			},
+		}
+	case pbv1.ValueTypeStrArr:
+		var values []string
+		for _, v := range valueArr {
+			values = append(values, string(v))
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_StrArray{
+				StrArray: &modelv1.StrArray{
+					Value: values,
+				},
+			},
+		}
+	case pbv1.ValueTypeBinaryData:
+		if value == nil {
+			return pbv1.NullTagValue
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_BinaryData{
+				BinaryData: value,
+			},
+		}
+	default:
+		if value != nil {
+			return &modelv1.TagValue{
+				Value: &modelv1.TagValue_Str{
+					Str: &modelv1.Str{
+						Value: string(value),
+					},
+				},
+			}
+		}
+		return pbv1.NullTagValue
+	}
+}
+
+func discoverTagColumns(partIDs []uint64, shardPath string, fileSystem fs.FileSystem) ([]string, error) {
+	if len(partIDs) == 0 {
+		return nil, nil
+	}
+
+	// Open first part to discover tag columns
+	p, err := openFilePart(partIDs[0], shardPath, fileSystem)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open first part: %w", err)
+	}
+	defer closePart(p)
+
+	// Collect all tag names
+	tagNames := make([]string, 0, len(p.tagType))
+	for name := range p.tagType {
+		tagNames = append(tagNames, name)
+	}
+	sort.Strings(tagNames)
+
+	return tagNames, nil
+}
+
+func writeTraceRowAsText(row traceRowData, rowNum int, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) {
+	fmt.Printf("Row %d:\n", rowNum)
+	fmt.Printf("  PartID: %d (0x%016x)\n", row.partID, row.partID)
+	fmt.Printf("  TraceID: %s\n", row.traceID)
+	fmt.Printf("  SpanID: %s\n", row.spanID)
+	fmt.Printf("  SeriesID: %d\n", row.seriesID)
+
+	// Add series text if available
+	if seriesMap != nil {
+		if seriesText, ok := seriesMap[row.seriesID]; ok {
+			fmt.Printf("  Series: %s\n", seriesText)
+		}
+	}
+
+	fmt.Printf("  Span Data: %d bytes\n", len(row.spanData))
+	if verbose {
+		fmt.Printf("  Span Content:\n")
+		printHexDump(row.spanData, 4)
+	} else {
+		if isPrintable(row.spanData) {
+			fmt.Printf("  Span: %s\n", string(row.spanData))
+		} else {
+			fmt.Printf("  Span: (binary data, %d bytes)\n", len(row.spanData))
+		}
+	}
+
+	// Print projected tags or all tags
+	if len(row.tags) > 0 {
+		fmt.Printf("  Tags:\n")
+
+		var tagsToShow []string
+		if len(projectionTags) > 0 {
+			tagsToShow = projectionTags
+		} else {
+			// Show all tags
+			for name := range row.tags {
+				tagsToShow = append(tagsToShow, name)
+			}
+			sort.Strings(tagsToShow)
+		}
+
+		for _, name := range tagsToShow {
+			value, exists := row.tags[name]
+			if !exists {
+				continue
+			}
+			if value == nil {
+				fmt.Printf("    %s: <nil>\n", name)
+			} else {
+				fmt.Printf("    %s: %s\n", name, formatTagValueForDisplay(value, pbv1.ValueTypeStr))
+			}
+		}
+	}
+	fmt.Printf("\n")
+}
+
+func writeTraceRowAsCSV(writer *csv.Writer, row traceRowData, tagColumns []string, seriesMap map[common.SeriesID]string) error {
+	seriesText := ""
+	if seriesMap != nil {
+		if text, ok := seriesMap[row.seriesID]; ok {
+			seriesText = text
+		}
+	}
+
+	csvRow := []string{
+		fmt.Sprintf("%d", row.partID),
+		row.traceID,
+		row.spanID,
+		fmt.Sprintf("%d", row.seriesID),
+		seriesText,
+		strconv.Itoa(len(row.spanData)),
+	}
+
+	// Add tag values
+	for _, tagName := range tagColumns {
+		value := ""
+		if tagValue, exists := row.tags[tagName]; exists && tagValue != nil {
+			value = string(tagValue)
+		}
+		csvRow = append(csvRow, value)
+	}
+
+	return writer.Write(csvRow)
+}
+
+func dumpTraceRowsAsText(rows []traceRowData, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) error {
+	fmt.Printf("================================================================================\n")
+	fmt.Printf("Total rows: %d\n\n", len(rows))
+
+	for idx, row := range rows {
+		writeTraceRowAsText(row, idx+1, verbose, projectionTags, seriesMap)
+	}
+
+	return nil
+}
+
+func dumpTraceRowsAsCSV(rows []traceRowData, projectionTags []string, seriesMap map[common.SeriesID]string) error {
+	writer := csv.NewWriter(os.Stdout)
+	defer writer.Flush()
+
+	// Determine which tags to include in CSV
+	var tagColumns []string
+	if len(projectionTags) > 0 {
+		tagColumns = projectionTags
+	} else {
+		// Collect all unique tag names
+		tagSet := make(map[string]bool)
+		for _, row := range rows {
+			for name := range row.tags {
+				tagSet[name] = true
+			}
+		}
+		for name := range tagSet {
+			tagColumns = append(tagColumns, name)
+		}
+		sort.Strings(tagColumns)
+	}
+
+	// Write header
+	header := []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}
+	header = append(header, tagColumns...)
+
+	if err := writer.Write(header); err != nil {
+		return fmt.Errorf("failed to write CSV header: %w", err)
+	}
+
+	// Write rows
+	for _, row := range rows {
+		seriesText := ""
+		if seriesMap != nil {
+			if text, ok := seriesMap[row.seriesID]; ok {
+				seriesText = text
+			}
+		}
+
+		csvRow := []string{
+			fmt.Sprintf("%d", row.partID),
+			row.traceID,
+			row.spanID,
+			fmt.Sprintf("%d", row.seriesID),
+			seriesText,
+			strconv.Itoa(len(row.spanData)),
+		}
+
+		// Add tag values
+		for _, tagName := range tagColumns {
+			value := ""
+			if tagValue, exists := row.tags[tagName]; exists && tagValue != nil {
+				value = string(tagValue)
+			}
+			csvRow = append(csvRow, value)
+		}
+
+		if err := writer.Write(csvRow); err != nil {
+			return fmt.Errorf("failed to write CSV row: %w", err)
+		}
+	}
 
 	return nil
 }

@@ -37,7 +37,6 @@ func TestPartIterVerification(t *testing.T) {
 	tests := []struct {
 		name        string
 		elements    []testElement
-		querySids   []common.SeriesID
 		minKey      int64
 		maxKey      int64
 		expectedLen int
@@ -58,7 +57,6 @@ func TestPartIterVerification(t *testing.T) {
 					},
 				},
 			},
-			querySids:   []common.SeriesID{1},
 			minKey:      50,
 			maxKey:      150,
 			expectedLen: 1,
@@ -91,7 +89,6 @@ func TestPartIterVerification(t *testing.T) {
 					},
 				},
 			},
-			querySids:   []common.SeriesID{1},
 			minKey:      50,
 			maxKey:      250,
 			expectedLen: 1, // Elements from same series are grouped into 1 block
@@ -136,10 +133,9 @@ func TestPartIterVerification(t *testing.T) {
 					},
 				},
 			},
-			querySids:   []common.SeriesID{1, 2, 3},
 			minKey:      50,
 			maxKey:      250,
-			expectedLen: 3,
+			expectedLen: 3, // All series returned in full scan
 		},
 		{
 			name: "filtered by key range",
@@ -181,13 +177,12 @@ func TestPartIterVerification(t *testing.T) {
 					},
 				},
 			},
-			querySids:   []common.SeriesID{1},
 			minKey:      75,
 			maxKey:      150,
 			expectedLen: 1, // Block contains all elements [50-200], overlaps query range [75-150]
 		},
 		{
-			name: "filtered by series ID",
+			name: "all series returned in range",
 			elements: []testElement{
 				{
 					seriesID: 1,
@@ -226,10 +221,9 @@ func TestPartIterVerification(t *testing.T) {
 					},
 				},
 			},
-			querySids:   []common.SeriesID{2},
 			minKey:      50,
 			maxKey:      150,
-			expectedLen: 1, // Only series 2 should match
+			expectedLen: 3, // All series in full scan mode
 		},
 	}
 
@@ -237,7 +231,6 @@ func TestPartIterVerification(t *testing.T) {
 	runTestCase := func(t *testing.T, tt struct {
 		name        string
 		elements    []testElement
-		querySids   []common.SeriesID
 		minKey      int64
 		maxKey      int64
 		expectedLen int
@@ -251,7 +244,7 @@ func TestPartIterVerification(t *testing.T) {
 
 		// Initialize partIter with clean blockMetadataArray
 		bma.reset() // Keep blockMetadataArray clean before passing to init
-		pi.init(bma, part, tt.querySids, tt.minKey, tt.maxKey, nil)
+		pi.init(bma, part, tt.minKey, tt.maxKey)
 
 		// Iterate through blocks and collect results
 		var foundElements []testElement
@@ -268,7 +261,6 @@ func TestPartIterVerification(t *testing.T) {
 			overlaps := curBlock.maxKey >= tt.minKey && curBlock.minKey <= tt.maxKey
 			assert.True(t, overlaps, "block should overlap with query range [%d, %d], but got block range [%d, %d]",
 				tt.minKey, tt.maxKey, curBlock.minKey, curBlock.maxKey)
-			assert.Contains(t, tt.querySids, curBlock.seriesID, "block seriesID should be in query sids")
 
 			// For verification, create a test element representing this block
 			// Note: In a real scenario, you'd read the actual block data
@@ -285,11 +277,6 @@ func TestPartIterVerification(t *testing.T) {
 
 		// Verify results
 		assert.Equal(t, tt.expectedLen, len(foundElements), "should find expected number of elements")
-
-		// Additional verification: ensure all found elements match expected series
-		for _, elem := range foundElements {
-			assert.Contains(t, tt.querySids, elem.seriesID, "found element should have expected seriesID")
-		}
 
 		t.Logf("Test %s completed: found %d blocks, expected %d", tt.name, blockCount, tt.expectedLen)
 	}
@@ -351,7 +338,7 @@ func TestPartIterEdgeCases(t *testing.T) {
 	testFS := fs.NewLocalFileSystem()
 	tempDir := t.TempDir()
 
-	t.Run("empty series list", func(t *testing.T) {
+	t.Run("full scan with data", func(t *testing.T) {
 		// Create a simple part with data
 		elements := createTestElements([]testElement{
 			{
@@ -373,23 +360,23 @@ func TestPartIterEdgeCases(t *testing.T) {
 		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
-		partDir := filepath.Join(tempDir, "empty_series_test")
+		partDir := filepath.Join(tempDir, "full_scan_test")
 		mp.mustFlush(testFS, partDir)
 
 		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
-		// Test with empty series list
+		// Test full scan
 		bma := &blockMetadataArray{}
 		defer bma.reset()
 		pi := &partIter{}
 
 		bma.reset()
-		pi.init(bma, part, []common.SeriesID{}, 0, 1000, nil)
+		pi.init(bma, part, 0, 1000)
 
-		// Should not find any blocks with empty series list
+		// Should find the block in full scan mode
 		foundAny := pi.nextBlock()
-		assert.False(t, foundAny, "should not find any blocks with empty series list")
+		assert.True(t, foundAny, "should find blocks in full scan mode")
 	})
 
 	t.Run("no matching key range", func(t *testing.T) {
@@ -426,15 +413,15 @@ func TestPartIterEdgeCases(t *testing.T) {
 		pi := &partIter{}
 
 		bma.reset()
-		pi.init(bma, part, []common.SeriesID{1}, 200, 300, nil) // No overlap with key 100
+		pi.init(bma, part, 200, 300) // No overlap with key 100
 
 		// Should not find any blocks
 		foundAny := pi.nextBlock()
 		assert.False(t, foundAny, "should not find any blocks with non-overlapping key range")
 	})
 
-	t.Run("no matching series ID", func(t *testing.T) {
-		// Create a part with seriesID 1
+	t.Run("all series returned in full scan", func(t *testing.T) {
+		// Create a part with multiple series
 		elements := createTestElements([]testElement{
 			{
 				seriesID: 1,
@@ -443,7 +430,19 @@ func TestPartIterEdgeCases(t *testing.T) {
 				tags: []tag{
 					{
 						name:      "service",
-						value:     []byte("test-service"),
+						value:     []byte("test-service-1"),
+						valueType: pbv1.ValueTypeStr,
+					},
+				},
+			},
+			{
+				seriesID: 2,
+				userKey:  100,
+				data:     []byte("data2"),
+				tags: []tag{
+					{
+						name:      "service",
+						value:     []byte("test-service-2"),
 						valueType: pbv1.ValueTypeStr,
 					},
 				},
@@ -455,23 +454,26 @@ func TestPartIterEdgeCases(t *testing.T) {
 		defer ReleaseMemPart(mp)
 		mp.mustInitFromElements(elements)
 
-		partDir := filepath.Join(tempDir, "no_match_series")
+		partDir := filepath.Join(tempDir, "all_series")
 		mp.mustFlush(testFS, partDir)
 
 		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
-		// Test with different series ID
+		// Full scan returns all series
 		bma := &blockMetadataArray{}
 		defer bma.reset()
 		pi := &partIter{}
 
 		bma.reset()
-		pi.init(bma, part, []common.SeriesID{2}, 0, 200, nil) // Different series ID
+		pi.init(bma, part, 0, 200)
 
-		// Should not find any blocks
-		foundAny := pi.nextBlock()
-		assert.False(t, foundAny, "should not find any blocks with non-matching series ID")
+		// Should find blocks for all series
+		count := 0
+		for pi.nextBlock() {
+			count++
+		}
+		assert.Equal(t, 2, count, "should find blocks for all series in full scan mode")
 	})
 }
 
@@ -507,233 +509,73 @@ func TestPartIterBlockFilter(t *testing.T) {
 		part := mustOpenPart(1, partDir, testFS)
 		defer part.close()
 
-		// Test with nil blockFilter
+		// Test with nil blockFilter (note: blockFilter removed from init, always nil now)
 		bma := &blockMetadataArray{}
 		defer bma.reset()
 		pi := &partIter{}
 
 		bma.reset()
-		pi.init(bma, part, []common.SeriesID{1}, 0, 200, nil) // nil blockFilter
+		pi.init(bma, part, 0, 200)
 
 		// Should find the block
 		foundAny := pi.nextBlock()
-		assert.True(t, foundAny, "should find blocks when blockFilter is nil")
+		assert.True(t, foundAny, "should find blocks")
 		assert.NoError(t, pi.error())
 	})
 
-	t.Run("blockFilter with mock filter that allows all", func(t *testing.T) {
-		// Create test elements
-		elements := createTestElements([]testElement{
-			{
-				seriesID: 1,
-				userKey:  100,
-				data:     []byte("data1"),
-				tags: []tag{
-					{
-						name:      "service",
-						value:     []byte("test-service"),
-						valueType: pbv1.ValueTypeStr,
-					},
-				},
-			},
-		})
-		defer releaseElements(elements)
-
-		mp := GenerateMemPart()
-		defer ReleaseMemPart(mp)
-		mp.mustInitFromElements(elements)
-
-		partDir := filepath.Join(tempDir, "allow_all_filter")
-		mp.mustFlush(testFS, partDir)
-
-		part := mustOpenPart(1, partDir, testFS)
-		defer part.close()
-
-		// Create a mock filter that allows all blocks
-		mockFilter := &mockBlockFilter{shouldSkip: false}
-
-		// Test with blockFilter that allows all
-		bma := &blockMetadataArray{}
-		defer bma.reset()
-		pi := &partIter{}
-
-		bma.reset()
-		pi.init(bma, part, []common.SeriesID{1}, 0, 200, mockFilter)
-
-		// Should find the block
-		foundAny := pi.nextBlock()
-		assert.True(t, foundAny, "should find blocks when blockFilter allows all")
-		assert.NoError(t, pi.error())
-	})
-
-	t.Run("blockFilter with mock filter that skips all", func(t *testing.T) {
-		// Create test elements
-		elements := createTestElements([]testElement{
-			{
-				seriesID: 1,
-				userKey:  100,
-				data:     []byte("data1"),
-				tags: []tag{
-					{
-						name:      "service",
-						value:     []byte("test-service"),
-						valueType: pbv1.ValueTypeStr,
-					},
-				},
-			},
-		})
-		defer releaseElements(elements)
-
-		mp := GenerateMemPart()
-		defer ReleaseMemPart(mp)
-		mp.mustInitFromElements(elements)
-
-		partDir := filepath.Join(tempDir, "skip_all_filter")
-		mp.mustFlush(testFS, partDir)
-
-		part := mustOpenPart(1, partDir, testFS)
-		defer part.close()
-
-		// Create a mock filter that skips all blocks
-		mockFilter := &mockBlockFilter{shouldSkip: true}
-
-		// Test with blockFilter that skips all
-		bma := &blockMetadataArray{}
-		defer bma.reset()
-		pi := &partIter{}
-
-		bma.reset()
-		pi.init(bma, part, []common.SeriesID{1}, 0, 200, mockFilter)
-
-		// Should not find any blocks
-		foundAny := pi.nextBlock()
-		assert.False(t, foundAny, "should not find blocks when blockFilter skips all")
-		assert.NoError(t, pi.error())
-	})
-
-	t.Run("blockFilter with error should propagate error", func(t *testing.T) {
-		// Create test elements
-		elements := createTestElements([]testElement{
-			{
-				seriesID: 1,
-				userKey:  100,
-				data:     []byte("data1"),
-				tags: []tag{
-					{
-						name:      "service",
-						value:     []byte("test-service"),
-						valueType: pbv1.ValueTypeStr,
-					},
-				},
-			},
-		})
-		defer releaseElements(elements)
-
-		mp := GenerateMemPart()
-		defer ReleaseMemPart(mp)
-		mp.mustInitFromElements(elements)
-
-		partDir := filepath.Join(tempDir, "error_filter")
-		mp.mustFlush(testFS, partDir)
-
-		part := mustOpenPart(1, partDir, testFS)
-		defer part.close()
-
-		// Create a mock filter that returns an error
-		expectedErr := fmt.Errorf("test filter error")
-		mockFilter := &mockBlockFilter{shouldSkip: false, err: expectedErr}
-
-		// Test with blockFilter that returns an error
-		bma := &blockMetadataArray{}
-		defer bma.reset()
-		pi := &partIter{}
-
-		bma.reset()
-		pi.init(bma, part, []common.SeriesID{1}, 0, 200, mockFilter)
-
-		// Should not find any blocks and should have error
-		foundAny := pi.nextBlock()
-		assert.False(t, foundAny, "should not find blocks when blockFilter returns error")
-		assert.Error(t, pi.error())
-		assert.Contains(t, pi.error().Error(), "test filter error")
-	})
+	// Note: blockFilter tests removed as blockFilter is no longer supported in partIter.init()
+	// The blockFilter functionality is still available in partIter.findBlock() but is always nil
+	// when initialized through init(). For block filtering, use the ScanQuery API with TagFilter instead.
 }
 
-// mockBlockFilter is a mock implementation of index.Filter for testing.
-type mockBlockFilter struct {
-	err        error
-	shouldSkip bool
-}
-
-func (mbf *mockBlockFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
-	if mbf.err != nil {
-		return false, mbf.err
-	}
-	return mbf.shouldSkip, nil
-}
-
-// These methods are required to satisfy the index.Filter interface.
-func (mbf *mockBlockFilter) String() string {
-	return "mockBlockFilter"
-}
-
-func (mbf *mockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
-	// Not used in our tests, return empty implementation
-	return nil, nil, nil
-}
-
-func TestPartIterShouldSkip(t *testing.T) {
+func TestPartIterFullScan(t *testing.T) {
 	tempDir := t.TempDir()
 	testFS := fs.NewLocalFileSystem()
 
-	// Strategy: Create many elements to exceed maxElementsPerBlock (8192) and force multiple blocks.
-	// We'll create elements in two batches with different tag values but same seriesID.
-
-	const elementsPerBatch = 8200 // Exceed maxElementsPerBlock to force multiple blocks
+	// Test full-scan behavior: Create elements for multiple series
 	var allElements []testElement
 
-	// First batch: seriesID=1, status="pending", keys 0-8199
-	for i := 0; i < elementsPerBatch; i++ {
+	// First series: seriesID=1
+	for i := 0; i < 100; i++ {
 		allElements = append(allElements, testElement{
 			seriesID: 1,
 			userKey:  int64(i),
-			data:     []byte(fmt.Sprintf("pending_data_%d", i)),
+			data:     []byte(fmt.Sprintf("series1_data_%d", i)),
 			tags: []tag{
 				{
-					name:      "status",
-					value:     []byte("pending"),
+					name:      "service",
+					value:     []byte("service-1"),
 					valueType: pbv1.ValueTypeStr,
 				},
 			},
 		})
 	}
 
-	// Second batch: seriesID=1, status="success", keys 20000-28199
-	// Use a large gap in keys to ensure they're in different blocks
-	for i := 0; i < elementsPerBatch; i++ {
+	// Second series: seriesID=2
+	for i := 0; i < 100; i++ {
 		allElements = append(allElements, testElement{
-			seriesID: 1,
-			userKey:  int64(20000 + i),
-			data:     []byte(fmt.Sprintf("success_data_%d", i)),
+			seriesID: 2,
+			userKey:  int64(i),
+			data:     []byte(fmt.Sprintf("series2_data_%d", i)),
 			tags: []tag{
 				{
-					name:      "status",
-					value:     []byte("success"),
+					name:      "service",
+					value:     []byte("service-2"),
 					valueType: pbv1.ValueTypeStr,
 				},
 			},
 		})
 	}
 
-	// Add a third series to verify we don't incorrectly skip to this
+	// Third series: seriesID=3
 	allElements = append(allElements, testElement{
-		seriesID: 2,
+		seriesID: 3,
 		userKey:  5000,
-		data:     []byte("series2_data"),
+		data:     []byte("series3_data"),
 		tags: []tag{
 			{
-				name:      "status",
-				value:     []byte("other"),
+				name:      "service",
+				value:     []byte("service-3"),
 				valueType: pbv1.ValueTypeStr,
 			},
 		},
@@ -759,21 +601,13 @@ func TestPartIterShouldSkip(t *testing.T) {
 		t.Logf("  Primary block %d: seriesID=%d, keys [%d-%d]", i, pbm.seriesID, pbm.minKey, pbm.maxKey)
 	}
 
-	// Create a selective mock filter that skips blocks with status="pending"
-	// but allows blocks with status="success"
-	selectiveFilter := &selectiveMockBlockFilter{
-		tagName:       "status",
-		skipValue:     "pending",
-		skipCallCount: 0,
-	}
-
-	// Test with the selective filter, querying only seriesID=1
+	// Test full scan - should return all series
 	bma := &blockMetadataArray{}
 	defer bma.reset()
 	pi := &partIter{}
 
 	bma.reset()
-	pi.init(bma, part, []common.SeriesID{1, 2}, 0, 30000, selectiveFilter)
+	pi.init(bma, part, 0, 10000)
 
 	// Iterate through blocks and collect results
 	var foundBlocks []struct {
@@ -798,25 +632,44 @@ func TestPartIterShouldSkip(t *testing.T) {
 
 	require.NoError(t, pi.error())
 
-	// Verify the filter was called at least once
-	assert.Greater(t, selectiveFilter.skipCallCount, 0, "filter should have been called")
-
-	foundSeries1Success := false
+	// Verify all series are found in full scan mode
+	foundSeries := make(map[common.SeriesID]bool)
 	for _, block := range foundBlocks {
-		if block.seriesID == 1 && block.minKey >= 20000 {
-			foundSeries1Success = true
-			t.Logf("✓ Found the expected seriesID=1 success block: keys [%d-%d]", block.minKey, block.maxKey)
-		}
+		foundSeries[block.seriesID] = true
 	}
 
-	// This assertion will FAIL with the bug, demonstrating the issue
-	assert.True(t, foundSeries1Success,
-		"BUG: Should find seriesID=1 block with status='success' (minKey >= 20000), "+
-			"but the iterator incorrectly skipped to next series after first block with status='pending' failed the filter. "+
-			"Found %d total blocks", len(foundBlocks))
+	assert.True(t, foundSeries[1], "should find series 1 in full scan")
+	assert.True(t, foundSeries[2], "should find series 2 in full scan")
+	assert.True(t, foundSeries[3], "should find series 3 in full scan")
+	assert.Equal(t, 3, len(foundSeries), "should find all 3 series in full scan mode")
+}
+
+// mockBlockFilter is a mock implementation of index.Filter for testing.
+// NOTE: This is kept for other test files that still reference it.
+type mockBlockFilter struct {
+	err        error
+	shouldSkip bool
+}
+
+func (mbf *mockBlockFilter) ShouldSkip(_ index.FilterOp) (bool, error) {
+	if mbf.err != nil {
+		return false, mbf.err
+	}
+	return mbf.shouldSkip, nil
+}
+
+// These methods are required to satisfy the index.Filter interface.
+func (mbf *mockBlockFilter) String() string {
+	return "mockBlockFilter"
+}
+
+func (mbf *mockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	// Not used in our tests, return empty implementation
+	return nil, nil, nil
 }
 
 // selectiveMockBlockFilter is a mock filter that selectively skips blocks based on tag values.
+// NOTE: This is kept for other test files that still reference it.
 type selectiveMockBlockFilter struct {
 	tagName       string
 	skipValue     string
@@ -837,3 +690,4 @@ func (smf *selectiveMockBlockFilter) String() string {
 func (smf *selectiveMockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	return nil, nil, nil
 }
+

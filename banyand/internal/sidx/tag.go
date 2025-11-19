@@ -60,12 +60,7 @@ type tagRow struct {
 
 func (tr *tagRow) reset() {
 	tr.value = nil
-	if tr.valueArr != nil {
-		for i := range tr.valueArr {
-			tr.valueArr[i] = nil
-		}
-	}
-	tr.valueArr = tr.valueArr[:0]
+	tr.valueArr = nil
 }
 
 var (
@@ -200,9 +195,6 @@ func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
 		for i := range tr.valueArr {
 			if valueType == pbv1.ValueTypeInt64Arr {
 				dst = append(dst, tr.valueArr[i]...)
-				continue
-			}
-			if len(tr.valueArr[i]) == 0 {
 				continue
 			}
 			dst = internalencoding.MarshalVarArray(dst, tr.valueArr[i])
