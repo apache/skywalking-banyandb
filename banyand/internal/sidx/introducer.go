@@ -18,6 +18,9 @@
 package sidx
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -144,6 +147,31 @@ func (s *sidx) IntroduceSynced(partIDsToSync map[uint64]struct{}) func() {
 	nextSnp := cur.remove(partIDsToSync)
 	s.replaceSnapshot(nextSnp)
 	return cur.decRef
+}
+
+func (s *sidx) TakeFileSnapshot(dst string) error {
+	currentSnapshot := s.currentSnapshot()
+	if currentSnapshot == nil {
+		return nil
+	}
+	defer currentSnapshot.decRef()
+	for _, pw := range currentSnapshot.parts {
+		if pw.mp != nil {
+			continue
+		}
+
+		part := pw.p
+		srcPath := part.path
+		destPath := filepath.Join(dst, filepath.Base(srcPath))
+
+		if err := s.fileSystem.CreateHardLink(srcPath, destPath, nil); err != nil {
+			return fmt.Errorf("failed to take file snapshot %s: %w", srcPath, err)
+		}
+	}
+
+	parent := filepath.Dir(dst)
+	s.fileSystem.SyncPath(parent)
+	return nil
 }
 
 func (s *sidx) replaceSnapshot(next *snapshot) {

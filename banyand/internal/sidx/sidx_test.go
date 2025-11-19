@@ -20,6 +20,7 @@ package sidx
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -32,8 +33,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 const (
@@ -147,6 +151,44 @@ func TestSIDX_Write_BatchRequest(t *testing.T) {
 	stats, err := sidx.Stats(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), stats.WriteCount.Load()) // One batch write
+}
+
+func TestSIDX_Take_File_Snapshot(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	t.Run("Take snapshot of existing sidx", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		snapshotDir := filepath.Join(dir, "snapshot")
+
+		idx := createTestSIDX(t)
+		defer func() {
+			assert.NoError(t, idx.Close())
+		}()
+
+		// Test batch write requests
+		reqs := []WriteRequest{
+			createTestWriteRequest(1, 100, "data1", createTestTag("tag1", "value1")),
+			createTestWriteRequest(1, 101, "data2", createTestTag("tag1", "value2")),
+			createTestWriteRequest(2, 200, "data3", createTestTag("tag2", "value3")),
+		}
+
+		writeTestData(t, idx, reqs, 2, 2) // Test with segmentID=2, partID=2
+
+		raw := idx.(*sidx)
+		flushIntro, err := raw.Flush(map[uint64]struct{}{2: {}})
+		require.NoError(t, err)
+		require.NotNil(t, flushIntro)
+		raw.IntroduceFlushed(flushIntro)
+		flushIntro.Release()
+
+		err = idx.TakeFileSnapshot(snapshotDir)
+		assert.NoError(t, err)
+	})
 }
 
 func TestSIDX_Write_Validation(t *testing.T) {
