@@ -123,6 +123,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			data := resp.Data()
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
+				span.Tag("resp_count", fmt.Sprintf("%d", len(d.Elements)))
 				span.Stop()
 				d.Trace = tracer.ToProto()
 			case *common.Error:
@@ -272,6 +273,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 			data := resp.Data()
 			switch d := data.(type) {
 			case *measurev1.QueryResponse:
+				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
 				d.Trace = tracer.ToProto()
 				span.Stop()
 			case *common.Error:
@@ -551,6 +553,7 @@ func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
 	data := resp.Data()
 	switch d := data.(type) {
 	case *tracev1.InternalQueryResponse:
+		tm.span.Tag("resp_count", fmt.Sprintf("%d", len(d.InternalTraces)))
 		tm.span.Stop()
 		d.TraceQueryResult = tm.tracer.ToProto()
 	case *common.Error:

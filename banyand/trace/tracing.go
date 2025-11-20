@@ -28,6 +28,7 @@ import (
 	"github.com/dustin/go-humanize"
 
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 const (
@@ -353,4 +354,82 @@ func startAggregatedBlockScanSpan(ctx context.Context, groupedIDs [][]string, pa
 			}
 			span.Stop()
 		}
+}
+
+// startQueryResultSpan records aggregated metrics for cursor consumption and trace results.
+// It returns recorders for cursor/result events and a finish function to complete the span.
+func startQueryResultSpan(ctx context.Context) (func(*blockCursor), func(*model.TraceResult), func(int, error)) {
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return nil, nil, nil
+	}
+
+	span, _ := tracer.StartSpan(ctx, "query-result")
+
+	var (
+		cursorCount     int
+		cursorBytes     uint64
+		cursorTraceStat = make(map[string]int)
+		cursorSamples   []string
+
+		resultRecorded  int
+		resultTraceStat = make(map[string]int)
+		resultSamples   []string
+	)
+
+	recordCursor := func(bc *blockCursor) {
+		if bc == nil {
+			return
+		}
+		cursorCount++
+		cursorBytes += bc.bm.uncompressedSpanSizeBytes
+		cursorTraceStat[bc.bm.traceID]++
+		if len(cursorSamples) < traceIDSampleLimit {
+			cursorSamples = append(cursorSamples, fmt.Sprintf("%s:%d", bc.bm.traceID, bc.bm.count))
+		}
+	}
+
+	recordResult := func(res *model.TraceResult) {
+		if res == nil || res.Error != nil || res.TID == "" {
+			return
+		}
+		resultRecorded++
+		resultTraceStat[res.TID]++
+		if len(resultSamples) < traceIDSampleLimit {
+			resultSamples = append(resultSamples, fmt.Sprintf("%s:%d", res.TID, len(res.Spans)))
+		}
+	}
+
+	finish := func(hit int, err error) {
+		span.Tag("cursor_total", strconv.Itoa(cursorCount))
+		if cursorBytes > 0 {
+			span.Tag("cursor_bytes", humanize.Bytes(cursorBytes))
+		}
+		span.Tag("cursor_trace_total", strconv.Itoa(len(cursorTraceStat)))
+		if len(cursorSamples) > 0 {
+			span.Tag("cursor_sample", strings.Join(cursorSamples, ","))
+		}
+
+		span.Tag("result_recorded", strconv.Itoa(resultRecorded))
+		span.Tag("result_trace_total", strconv.Itoa(len(resultTraceStat)))
+		if len(resultSamples) > 0 {
+			span.Tag("result_sample", strings.Join(resultSamples, ","))
+		}
+
+		span.Tag("result_hit_count", strconv.Itoa(hit))
+		if resultRecorded != hit {
+			span.Tag("result_hit_mismatch", strconv.Itoa(resultRecorded-hit))
+		}
+		traceGap := len(cursorTraceStat) - len(resultTraceStat)
+		if traceGap > 0 {
+			span.Tag("result_trace_gap", strconv.Itoa(traceGap))
+		}
+
+		if err != nil {
+			span.Error(err)
+		}
+		span.Stop()
+	}
+
+	return recordCursor, recordResult, finish
 }

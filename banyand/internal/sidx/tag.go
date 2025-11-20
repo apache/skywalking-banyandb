@@ -60,12 +60,7 @@ type tagRow struct {
 
 func (tr *tagRow) reset() {
 	tr.value = nil
-	if tr.valueArr != nil {
-		for i := range tr.valueArr {
-			tr.valueArr[i] = nil
-		}
-	}
-	tr.valueArr = tr.valueArr[:0]
+	tr.valueArr = nil
 }
 
 var (
