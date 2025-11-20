@@ -30,13 +30,22 @@ export class QueryGenerator {
   private openaiClient: OpenAI | null = null;
 
   constructor(apiKey?: string) {
-    if (apiKey) {
+    // Validate API key format before creating client
+    if (apiKey && apiKey.trim().length > 0) {
+      // Basic validation: API key should not be empty and should have some content
+      // TARS API keys typically start with specific prefixes, but we'll be lenient here
+      // and let the API validate the actual format
+      const trimmedKey = apiKey.trim();
+      if (trimmedKey.length < 10) {
+        console.error("[QueryGenerator] Warning: API key appears to be too short. LLM query generation may fail.");
+      }
       this.openaiClient = new OpenAI({
-        apiKey: apiKey,
+        apiKey: trimmedKey,
         baseURL: "https://api.router.tetrate.ai/v1",
       });
     }
   }
+  
   private timePatterns: RegExp[] = [
     /(last|past|recent)\s+(\d+)\s*(hour|hours|hr|hrs|h)/i,
     /(last|past|recent)\s+(\d+)\s*(minute|minutes|min|mins|m)/i,
@@ -52,59 +61,6 @@ export class QueryGenerator {
     ["property", /(property|properties|metadata|config)/i],
   ]);
 
-  private filterPatterns: Map<string, RegExp> = new Map([
-    ["error", /(error|errors|failed|failure|exception|exceptions)/i],
-    ["warning", /(warn|warning|warnings)/i],
-    [
-      "service",
-      /(service|services|app|application|apps)\s+(?:named|called|is|are)?\s*['"]?([a-zA-Z0-9_-]+)['"]?/i,
-    ],
-  ]);
-
-  /**
-   * Check if the input is already a valid BydbQL query.
-   */
-  private isAlreadyBydbQLQuery(description: string): boolean {
-    const trimmed = description.trim();
-    
-    // Check for TOP N queries (TOPN queries) - must have proper BydbQL structure
-    // Pattern matches: [COMMAND] TOP [NUMBER] followed by FROM MEASURE and proper TIME clause
-    const hasTopNPattern = /^\s*\w+\s+TOP\s+\d+/i.test(trimmed);
-    if (hasTopNPattern) {
-      // For TOPN queries, require proper BydbQL structure:
-      // - Must have FROM MEASURE clause
-      // - Must have proper TIME clause (not natural language like "from last 48 hours")
-      const hasFromMeasure = /\bFROM\s+MEASURE\b/i.test(trimmed);
-      const hasProperTimeClause = /\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed);
-      
-      // Only consider it a BydbQL query if it has both FROM MEASURE and proper TIME clause
-      // Natural language descriptions like "from last 48 hours" won't match the TIME clause pattern
-      if (hasFromMeasure && hasProperTimeClause) {
-        return true;
-      }
-      // If it has FROM MEASURE but no proper TIME clause, it's likely natural language
-      return false;
-    }
-    
-    // If it contains a TIME clause, it's almost certainly already a BydbQL query
-    // TIME clauses are specific to BydbQL syntax
-    const hasTimeClause = /\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed);
-    if (hasTimeClause && /^\s*SELECT\s+/i.test(trimmed)) {
-      return true;
-    }
-    
-    // More lenient check: if it starts with SELECT and contains FROM with a resource type, it's likely a BydbQL query
-    // This handles cases where IN might be lowercase or the structure is slightly different
-    const hasSelectFrom = /^\s*SELECT\s+/i.test(trimmed);
-    const hasFromResourceType = /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY)\s+/i.test(trimmed);
-    
-    // Also check for common BydbQL keywords that indicate it's already a query
-    const hasBydbQLKeywords = /\b(IN|TIME|ORDER\s+BY|TOP)\b/i.test(trimmed);
-    
-    // If it has SELECT, FROM with resource type, and BydbQL keywords, it's likely already a BydbQL query
-    return hasSelectFrom && hasFromResourceType && hasBydbQLKeywords;
-  }
-
   /**
    * Generate a BydbQL query from a natural language description.
    */
@@ -112,23 +68,22 @@ export class QueryGenerator {
     description: string,
     args: Record<string, any>
   ): Promise<string> {
-    // If the input is already a valid BydbQL query, return it as-is
-    if (this.isAlreadyBydbQLQuery(description)) {
-      const trimmed = description.trim();
-      // Double-check: if it contains a TIME clause, definitely return as-is
-      if (/\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed)) {
-        return trimmed;
-      }
-      return trimmed;
-    }
-
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
         return await this.generateQueryWithLLM(description, args);
-      } catch (error) {
+      } catch (error: any) {
+        // Check for API key authentication errors
+        if (error?.status === 401 || error?.message?.includes("401") || error?.message?.includes("Invalid API key")) {
+          console.error("[QueryGenerator] API key authentication failed. Falling back to pattern-based generation.");
+          console.error("[QueryGenerator] Error details:", error.message || error);
+          // Disable LLM client to prevent repeated failures
+          this.openaiClient = null;
+        } else {
+          // For other errors (timeout, network, etc.), log but don't disable
+          console.error("[QueryGenerator] Error generating query with LLM:", error.message || error);
+        }
         // Fall through to pattern-based generation
-        console.error("Error generating query with LLM:", error);
       }
     }
     return this.generateQueryWithPatterns(description, args);
@@ -141,11 +96,6 @@ export class QueryGenerator {
     description: string,
     args: Record<string, any>
   ): Promise<string> {
-    // Safety check: if this is already a complete BydbQL query, return it as-is
-    if (this.isAlreadyBydbQLQuery(description)) {
-      return description.trim();
-    }
-
     if (!this.openaiClient) {
       throw new Error("OpenAI client not initialized");
     }
@@ -201,11 +151,6 @@ export class QueryGenerator {
     description: string,
     args: Record<string, any>
   ): string {
-    // Safety check: if this is already a complete BydbQL query, return it as-is
-    if (this.isAlreadyBydbQLQuery(description)) {
-      return description.trim();
-    }
-
     // Determine resource type
     const resourceType = this.detectResourceType(description, args) || "stream";
 

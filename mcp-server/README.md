@@ -10,48 +10,43 @@ MCP server for BanyanDB that translates natural language queries to BydbQL.
 
 Opens `http://localhost:6274` for interactive testing.
 
-## Features
-
-- Natural language to BydbQL query translation
-- Supports streams, measures, traces, and properties
-- Time-based queries ("last hour", "past 2 days")
-- Filter support (errors, warnings, service names)
-
 ## Configuration
 
 ### Environment Variables
 
 - `BANYANDB_ADDRESS`: BanyanDB address (default: `localhost:17900`). Auto-converts gRPC port (17900) to HTTP port (17913).
-- `OPENAI_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
+- `TARS_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
 
 ### MCP Inspector
 
 **UI Mode:**
 ```bash
-export OPENAI_API_KEY="your-api-key-here"  # Optional
+export TARS_API_KEY="your-api-key-here"  # Optional
 npx @modelcontextprotocol/inspector --config inspector-config.json
 ```
 
 **CLI Mode:**
 ```bash
+export TARS_API_KEY="your-api-key-here"  # Optional
 npx @modelcontextprotocol/inspector --cli node dist/index.js \
   --method tools/call \
   --tool-name list_resources_bydbql \
-  --tool-arg "description=Show me all error logs from the last hour"
+  --tool-arg "description=show TOP3 MEASURE endpoint_2xx in metricsMinute from last 48 hours, AGGREGATE BY MAX and ORDER BY DESC"
 ```
 
 See [CONFIGURATION.md](./CONFIGURATION.md) for detailed setup.
 
 ## Example Queries
 
-- "Show me all error logs from the last hour"
-- "Get CPU metrics for service webapp"
-- "Find traces from the past 2 days"
-- "Show me warnings from service api-server"
+- "Show STREAM log in recordsLog from last hour"
+- "List TRACE zipkin_span in zipkinTrace from last 48 hour, order by timestamp_millis desc"
+- "Show TOP3 MEASURE endpoint_2xx in metricsMinute from last 48 hours, AGGREGATE BY MAX and ORDER BY DESC"
+- "Show MEASURE service_cpm_minute in sw_metricsMinute from last hour"
+- "Show PROPERTY ui_menu IN sw_property from last hour"
 
 ## Development
 
-**Requirements:** Node.js 18+, BanyanDB running on HTTP port 17913
+**Requirements:** Node.js 20+, BanyanDB running on HTTP port 17913
 
 **Project Structure:**
 - `src/index.ts`: MCP server implementation

@@ -52,12 +52,18 @@ async function main() {
 
   // Initialize BanyanDB client
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
-  const queryGenerator = new QueryGenerator(TARS_API_KEY);
+  
+  // Validate API key before creating QueryGenerator
+  const validApiKey = TARS_API_KEY && TARS_API_KEY.trim().length > 0 ? TARS_API_KEY.trim() : undefined;
+  const queryGenerator = new QueryGenerator(validApiKey);
 
-  if (TARS_API_KEY) {
+  if (validApiKey) {
     console.error("[MCP] LLM query generation enabled (using Tetrate Agent Router Service)");
   } else {
     console.error("[MCP] LLM query generation disabled, using pattern matching");
+    if (TARS_API_KEY !== undefined) {
+      console.error("[MCP] Warning: TARS_API_KEY is set but appears to be empty or invalid");
+    }
   }
 
   // List available tools
@@ -227,10 +233,10 @@ async function main() {
             content: [
               {
                 type: "text",
-                text: `Query generation timeout: ${error.message}\n\n` +
+                text:                       `Query generation timeout: ${error.message}\n\n` +
                       `The LLM query generation timed out. Falling back to pattern-based generation...\n` +
                       `If this persists, try:\n` +
-                      `1. Check your TARS API key and network connectivity\n` +
+                      `1. Check your API key and network connectivity\n` +
                       `2. Use more specific query descriptions\n` +
                       `3. Set TARS_API_KEY environment variable if not already set`,
               },
