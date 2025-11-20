@@ -87,10 +87,11 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		resp = bus.NewMessage(now, common.NewError("no stage found"))
 		return
 	}
+	var span *pkgquery.Span
 	if request.Trace {
 		var tracer *pkgquery.Tracer
 		tracer, ctx = pkgquery.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "distributed-client")
+		span, _ = tracer.StartSpan(ctx, "distributed-client")
 		span.Tag("request", convert.BytesToString(logger.Proto(request)))
 		span.Tagf("nodeSelectors", "%v", nodeSelectors)
 		defer func() {
@@ -118,6 +119,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	aggregator := query.CreateTopNPostAggregator(request.GetTopN(),
 		agg, request.GetFieldValueSort())
 	var tags []string
+	var responseCount int
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
@@ -126,6 +128,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			if d == nil {
 				continue
 			}
+			responseCount++
 			topNResp := d.(*measurev1.TopNResponse)
 			for _, l := range topNResp.Lists {
 				for _, tn := range l.Items {
@@ -144,6 +147,9 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			}
 		}
 	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+	}
 	if allErr != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
 		return
@@ -153,6 +159,9 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	lists := aggregator.Val(tags)
+	if span != nil {
+		span.Tagf("list_count", "%d", len(lists))
+	}
 	resp = bus.NewMessage(now, &measurev1.TopNResponse{
 		Lists: lists,
 	})

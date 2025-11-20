@@ -101,6 +101,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
+	result.recordCursor, result.recordResult, result.finishResultSpan = startQueryResultSpan(pipelineCtx)
 
 	if result.keys == nil {
 		result.keys = make(map[string]int64)
@@ -244,17 +245,20 @@ func (t *trace) prepareSIDXStreaming(
 type queryResult struct {
 	ctx                 context.Context
 	err                 error
-	currentBatch        *scanBatch
-	tagProjection       *model.TagProjection
+	streamDone          <-chan struct{}
+	recordCursor        func(*blockCursor)
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
 	cancel              context.CancelFunc
 	currentCursorGroups map[string][]*blockCursor
-	streamDone          <-chan struct{}
+	currentBatch        *scanBatch
+	tagProjection       *model.TagProjection
+	finishResultSpan    func(int, error)
+	recordResult        func(*model.TraceResult)
 	currentTraceIDs     []string
 	segments            []storage.Segment[*tsTable, option]
-	currentIndex        int
 	hit                 int
+	currentIndex        int
 }
 
 func (qr *queryResult) Pull() *model.TraceResult {
@@ -313,6 +317,10 @@ func (qr *queryResult) Pull() *model.TraceResult {
 		qr.currentIndex++
 		delete(qr.currentCursorGroups, traceID)
 
+		if qr.recordResult != nil {
+			qr.recordResult(result)
+		}
+
 		return result
 	}
 }
@@ -367,6 +375,9 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 						return true
 					}
 					if result.cursor != nil {
+						if qr.recordCursor != nil {
+							qr.recordCursor(result.cursor)
+						}
 						traceID := result.cursor.bm.traceID
 						qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
 					}
@@ -498,6 +509,16 @@ func (qr *queryResult) Release() {
 		qr.segments[i].DecRef()
 	}
 	qr.segments = qr.segments[:0]
+
+	qr.finishTracing(qr.err)
+}
+
+func (qr *queryResult) finishTracing(err error) {
+	if qr.finishResultSpan == nil {
+		return
+	}
+	qr.finishResultSpan(qr.hit, err)
+	qr.finishResultSpan = nil
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -506,6 +527,11 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 
 func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
 	if value == nil && valueArr == nil {
+		return pbv1.NullTagValue
+	}
+	if value == nil &&
+		valueType != pbv1.ValueTypeInt64Arr &&
+		valueType != pbv1.ValueTypeStrArr {
 		return pbv1.NullTagValue
 	}
 	switch valueType {

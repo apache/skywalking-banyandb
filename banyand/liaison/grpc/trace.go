@@ -342,15 +342,19 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var tracer *query.Tracer
+	var span *query.Span
+	var responseTraceCount int
 	if req.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "trace-grpc")
+		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "trace-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
 		defer func() {
 			if err != nil {
 				span.Error(err)
 				span.Stop()
 			} else if resp != nil && resp != emptyTraceQueryResponse {
+				span.Tagf("response_trace_count", "%d", responseTraceCount)
 				span.AddSubTrace(resp.TraceQueryResult)
 				span.Stop()
 				resp.TraceQueryResult = tracer.ToProto()
@@ -381,6 +385,7 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 			}
 			traces = append(traces, trace)
 		}
+		responseTraceCount = len(traces)
 		return &tracev1.QueryResponse{
 			Traces:           traces,
 			TraceQueryResult: d.TraceQueryResult,

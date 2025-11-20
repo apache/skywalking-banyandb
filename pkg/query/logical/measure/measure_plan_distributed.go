@@ -262,6 +262,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	}
 	var see []sort.Iterator[*comparableDataPoint]
 	var pushedDownAggDps []*measurev1.DataPoint
+	var responseCount int
+	var dataPointCount int
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -271,17 +273,24 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				continue
 			}
 			resp := d.(*measurev1.QueryResponse)
+			responseCount++
 			if span != nil {
 				span.AddSubTrace(resp.Trace)
 			}
 			if t.needCompletePushDownAgg {
 				pushedDownAggDps = append(pushedDownAggDps, resp.DataPoints...)
+				dataPointCount += len(resp.DataPoints)
 				continue
 			}
+			dataPointCount += len(resp.DataPoints)
 			see = append(see,
 				newSortableElements(resp.DataPoints,
 					t.sortByTime, t.sortTagSpec))
 		}
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
 		return &pushedDownAggregatedIterator{dataPoints: pushedDownAggDps}, err

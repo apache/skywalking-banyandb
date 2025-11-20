@@ -155,6 +155,7 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 		return iter.Empty[model.TraceResult](), err
 	}
 	var allErr error
+	var responseCount int
 	var st []sort.Iterator[*comparableTrace]
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
@@ -165,12 +166,16 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 				continue
 			}
 			resp := d.(*tracev1.InternalQueryResponse)
+			responseCount++
 			if span != nil {
 				span.AddSubTrace(resp.TraceQueryResult)
 			}
 			st = append(st,
 				newSortableTraces(resp.InternalTraces, p.sortByTraceID))
 		}
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
 	}
 	sortIter := sort.NewItemIter(st, p.desc)
 	var result []*tracev1.InternalTrace
@@ -194,6 +199,9 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 				}
 			}
 		}
+	}
+	if span != nil {
+		span.Tagf("trace_id_count", "%d", len(seen))
 	}
 
 	return &distributedTraceResultIterator{
