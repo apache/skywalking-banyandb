@@ -63,6 +63,8 @@ type SIDX interface {
 	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
 	// IntroduceSynced introduces a synced map to the SIDX instance.
 	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
+	// TakeFileSnapshot creates a snapshot of the SIDX files at the specified destination path.
+	TakeFileSnapshot(dst string) error
 }
 
 // WriteRequest contains data for a single write operation within a batch.

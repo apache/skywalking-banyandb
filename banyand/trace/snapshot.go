@@ -204,6 +204,13 @@ func parseSnapshot(name string) (uint64, error) {
 }
 
 func (tst *tsTable) TakeFileSnapshot(dst string) error {
+	for k, v := range tst.sidxMap {
+		indexDir := filepath.Join(dst, k)
+		tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
+		if err := v.TakeFileSnapshot(indexDir); err != nil {
+			return fmt.Errorf("failed to take file snapshot for index, %s: %w", k, err)
+		}
+	}
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
 		return fmt.Errorf("no current snapshot available")
