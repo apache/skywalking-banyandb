@@ -69,10 +69,10 @@ func TestTagFilterOpReset(t *testing.T) {
 		part:          &part{},
 		tagCache: map[string]*tagFilterCache{
 			"tag1": {
-				bloomFilter: filter.NewBloomFilter(100),
-				min:         []byte("min"),
-				max:         []byte("max"),
-				valueType:   pbv1.ValueTypeStr,
+				filter:    filter.NewBloomFilter(100),
+				min:       []byte("min"),
+				max:       []byte("max"),
+				valueType: pbv1.ValueTypeStr,
 			},
 		},
 	}
@@ -386,10 +386,11 @@ func TestDecodeBloomFilterFromBytes(t *testing.T) {
 	buf.Write(encodedBits)
 
 	// Test decoding
-	decodedBF := filter.NewBloomFilter(0)
-	result := decodeBloomFilterFromBytes(buf.Bytes(), decodedBF)
+	decodedBF, err := decodeBloomFilter(buf.Bytes())
+	assert.NoError(t, err)
 
 	// Verify decoded bloom filter
+	result := decodedBF
 	assert.Equal(t, originalBF.N(), result.N())
 	assert.True(t, result.MightContain([]byte("test-value-1")))
 	assert.True(t, result.MightContain([]byte("test-value-2")))
@@ -402,13 +403,13 @@ func TestTagFilterCacheIntegration(t *testing.T) {
 	// For now, we test the basic structure and error handling
 	t.Run("cache creation structure", func(t *testing.T) {
 		cache := &tagFilterCache{
-			bloomFilter: filter.NewBloomFilter(100),
-			min:         []byte("min_value"),
-			max:         []byte("max_value"),
-			valueType:   pbv1.ValueTypeStr,
+			filter:    filter.NewBloomFilter(100),
+			min:       []byte("min_value"),
+			max:       []byte("max_value"),
+			valueType: pbv1.ValueTypeStr,
 		}
 
-		assert.NotNil(t, cache.bloomFilter)
+		assert.NotNil(t, cache.filter)
 		assert.Equal(t, []byte("min_value"), cache.min)
 		assert.Equal(t, []byte("max_value"), cache.max)
 		assert.Equal(t, pbv1.ValueTypeStr, cache.valueType)
@@ -487,8 +488,7 @@ func BenchmarkDecodeBloomFilterFromBytes(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		decodedBF := filter.NewBloomFilter(0)
-		decodeBloomFilterFromBytes(testData, decodedBF)
+		decodeBloomFilter(testData)
 	}
 }
 
@@ -500,8 +500,8 @@ func BenchmarkTagFilterOpHaving(b *testing.B) {
 	}
 
 	cache := &tagFilterCache{
-		bloomFilter: bf,
-		valueType:   pbv1.ValueTypeStr,
+		filter:    bf,
+		valueType: pbv1.ValueTypeStr,
 	}
 
 	tfo := &tagFilterOp{
@@ -667,8 +667,8 @@ func TestTagFilterOpHavingWithBloomFilter(t *testing.T) {
 
 	// Create cache with bloom filter
 	cache := &tagFilterCache{
-		bloomFilter: bf,
-		valueType:   pbv1.ValueTypeStr,
+		filter:    bf,
+		valueType: pbv1.ValueTypeStr,
 	}
 
 	tfo := &tagFilterOp{
@@ -750,8 +750,8 @@ func TestTagFilterOpHavingWithBloomFilter(t *testing.T) {
 func TestTagFilterOpHavingWithoutBloomFilter(t *testing.T) {
 	// Create cache without bloom filter
 	cache := &tagFilterCache{
-		bloomFilter: nil,
-		valueType:   pbv1.ValueTypeStr,
+		filter:    nil,
+		valueType: pbv1.ValueTypeStr,
 	}
 
 	tfo := &tagFilterOp{
@@ -781,8 +781,8 @@ func TestTagFilterOpHavingLargeList(t *testing.T) {
 	bf.Add([]byte("target-service"))
 
 	cache := &tagFilterCache{
-		bloomFilter: bf,
-		valueType:   pbv1.ValueTypeStr,
+		filter:    bf,
+		valueType: pbv1.ValueTypeStr,
 	}
 
 	tfo := &tagFilterOp{

@@ -256,8 +256,8 @@ func decodeBitPacking(dst []uint32, src []byte) ([]uint32, error) {
 	return decoder.decode(dst)
 }
 
-// ExtractDictionaryValues extracts only the dictionary values without decoding indices.
-func ExtractDictionaryValues(src []byte) ([][]byte, error) {
+// DecodeDictionaryValues extracts only the dictionary values without decoding indices.
+func DecodeDictionaryValues(src []byte) ([][]byte, error) {
 	if len(src) == 0 {
 		return nil, nil
 	}

@@ -37,12 +37,17 @@ type tagFilterOp struct {
 	tagCache      map[string]*tagFilterCache
 }
 
+// Filter is an interface for tag filtering.
+type Filter interface {
+	MightContain(item []byte) bool
+}
+
 // tagFilterCache caches tag filter data for a specific tag.
 type tagFilterCache struct {
-	bloomFilter *filter.BloomFilter
-	min         []byte
-	max         []byte
-	valueType   pbv1.ValueType
+	filter    Filter
+	min       []byte
+	max       []byte
+	valueType pbv1.ValueType
 }
 
 // Eq checks if a tag equals a specific value by reading tag data and checking bloom filter.
@@ -64,12 +69,12 @@ func (tfo *tagFilterOp) Eq(tagName string, tagValue string) bool {
 		return true // Conservative approach - don't filter out
 	}
 
-	// Use bloom filter to check if the value might exist
-	if cache.bloomFilter != nil {
-		return cache.bloomFilter.MightContain([]byte(tagValue))
+	// Use filter to check if the value might exist
+	if cache.filter != nil {
+		return cache.filter.MightContain([]byte(tagValue))
 	}
 
-	// If no bloom filter, conservatively return true
+	// If no filter, conservatively return true
 	return true
 }
 
@@ -93,18 +98,18 @@ func (tfo *tagFilterOp) Having(tagName string, tagValues []string) bool {
 		return true // Conservative approach - don't filter out
 	}
 
-	// Use bloom filter to check if any value might exist
-	if cache.bloomFilter != nil {
+	// Use filter to check if any value might exist
+	if cache.filter != nil {
 		for _, tagValue := range tagValues {
-			if cache.bloomFilter.MightContain([]byte(tagValue)) {
+			if cache.filter.MightContain([]byte(tagValue)) {
 				return true // Return true as soon as we find a potential match
 			}
 		}
-		// None of the values might exist in the bloom filter
+		// None of the values might exist in the filter
 		return false
 	}
 
-	// If no bloom filter, conservatively return true
+	// If no filter, conservatively return true
 	return true
 }
 
@@ -183,13 +188,29 @@ func (tfo *tagFilterOp) getTagFilterCache(tagName string, tagBlock dataBlock) (*
 	copy(cache.min, tagMetadata.min)
 	copy(cache.max, tagMetadata.max)
 
-	// Read bloom filter if available
+	// Read filter data
 	if tagMetadata.filterBlock.size > 0 {
 		bf, err := tfo.readBloomFilter(tagName, tagMetadata.filterBlock)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read bloom filter: %w", err)
 		}
-		cache.bloomFilter = bf
+		cache.filter = bf
+	} else {
+		tagDataReader, _ := tfo.part.getTagDataReader(tagName)
+		encodingTypeBuf := make([]byte, 1)
+		fs.MustReadData(tagDataReader, int64(tagMetadata.dataBlock.offset), encodingTypeBuf)
+		encodingType := encoding.EncodeType(encodingTypeBuf[0])
+		if encodingType == encoding.EncodeTypeDictionary {
+			tagData := make([]byte, tagMetadata.dataBlock.size)
+			fs.MustReadData(tagDataReader, int64(tagMetadata.dataBlock.offset), tagData)
+			dictValues, err := encoding.DecodeDictionaryValues(tagData[1:])
+			if err != nil {
+				logger.Panicf("failed to extract dictionary values for tag %s: %v", tagName, err)
+			}
+			df := generateDictionaryFilter()
+			df.SetValues(dictValues)
+			cache.filter = df
+		}
 	}
 
 	// Cache the result
@@ -241,29 +262,18 @@ func (tfo *tagFilterOp) readBloomFilter(tagName string, filterBlock dataBlock) (
 	return decodeBloomFilter(filterData)
 }
 
-// decodeBloomFilterFromBytes decodes bloom filter data (similar to stream module).
-func decodeBloomFilterFromBytes(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
-	n := encoding.BytesToInt64(src)
-	bf.SetN(int(n))
-
-	// With B=16, use optimized bit shift calculation
-	bits := make([]uint64, 0)
-	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64(filter.OptimalBitsSize(int(n))))
-	if err != nil {
-		logger.Panicf("failed to decode Bloom filter: %v", err)
-	}
-	bf.SetBits(bits)
-
-	return bf
-}
-
 // reset resets the tagFilterOp for reuse.
 func (tfo *tagFilterOp) reset() {
 	tfo.blockMetadata = nil
 	tfo.part = nil
 	for key, cache := range tfo.tagCache {
-		if cache.bloomFilter != nil {
-			releaseBloomFilter(cache.bloomFilter)
+		if cache.filter != nil {
+			switch f := cache.filter.(type) {
+			case *filter.BloomFilter:
+				releaseBloomFilter(f)
+			case *filter.DictionaryFilter:
+				releaseDictionaryFilter(f)
+			}
 		}
 		delete(tfo.tagCache, key)
 	}

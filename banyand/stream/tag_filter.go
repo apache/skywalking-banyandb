@@ -158,7 +158,7 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 			if encodingType == encoding.EncodeTypeDictionary {
 				bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.size))
 				fs.MustReadData(tagValueReader, int64(tm.offset), bb.Buf)
-				dictValues, err := encoding.ExtractDictionaryValues(bb.Buf[1:])
+				dictValues, err := encoding.DecodeDictionaryValues(bb.Buf[1:])
 				if err != nil {
 					logger.Panicf("failed to extract dictionary values: %v", err)
 				}
