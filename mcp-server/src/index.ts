@@ -33,6 +33,24 @@ import { QueryGenerator } from "./query-generator.js";
 // Load environment variables first
 dotenv.config();
 
+// Set up global error handlers to ensure all errors are visible
+process.on('uncaughtException', (error) => {
+  console.error('[MCP] Uncaught Exception:', error.message);
+  if (error.stack) {
+    console.error('[MCP] Stack trace:', error.stack);
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[MCP] Unhandled Rejection at:', promise);
+  console.error('[MCP] Reason:', reason instanceof Error ? reason.message : String(reason));
+  if (reason instanceof Error && reason.stack) {
+    console.error('[MCP] Stack trace:', reason.stack);
+  }
+  process.exit(1);
+});
+
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || "localhost:17900";
 const TARS_API_KEY = process.env.TARS_API_KEY;
 
@@ -317,6 +335,10 @@ async function main() {
 }
 
 main().catch((error) => {
+  console.error("[MCP] Fatal error:", error instanceof Error ? error.message : String(error));
+  if (error instanceof Error && error.stack) {
+    console.error("[MCP] Stack trace:", error.stack);
+  }
   process.exit(1);
 });
 
