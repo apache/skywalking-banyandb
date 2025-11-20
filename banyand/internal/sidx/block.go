@@ -120,7 +120,11 @@ func (b *block) processTag(tagName string, elementTags [][]*tag) {
 			if tag.name == tagName {
 				// Store structured tagRow instead of marshaled bytes
 				if tag.valueArr != nil {
-					td.values[i].valueArr = tag.valueArr
+					td.values[i].valueArr = make([][]byte, len(tag.valueArr))
+					for j, v := range tag.valueArr {
+						td.values[i].valueArr[j] = make([]byte, len(v))
+						copy(td.values[i].valueArr[j], v)
+					}
 				} else {
 					td.values[i].value = tag.value
 				}

@@ -81,6 +81,10 @@ func (f *fakeSIDX) StreamingParts(map[uint64]struct{}, string, uint32, string) (
 }
 func (f *fakeSIDX) PartPaths(map[uint64]struct{}) map[uint64]string { return map[uint64]string{} }
 func (f *fakeSIDX) IntroduceSynced(map[uint64]struct{}) func()      { return func() {} }
+func (f *fakeSIDX) TakeFileSnapshot(_ string) error                 { return nil }
+func (f *fakeSIDX) ScanQuery(context.Context, sidx.ScanQueryRequest) ([]*sidx.QueryResponse, error) {
+	return nil, nil
+}
 
 type fakeSIDXWithErr struct {
 	*fakeSIDX
@@ -565,6 +569,10 @@ type fakeSIDXInfinite struct {
 	keyStart      int64
 }
 
+func (f *fakeSIDXInfinite) ScanQuery(context.Context, sidx.ScanQueryRequest) ([]*sidx.QueryResponse, error) {
+	return nil, nil
+}
+
 func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryRequest) (<-chan *sidx.QueryResponse, <-chan error) {
 	results := make(chan *sidx.QueryResponse)
 	errCh := make(chan error, 1)
@@ -653,6 +661,7 @@ func (f *fakeSIDXInfinite) PartPaths(map[uint64]struct{}) map[uint64]string {
 	return map[uint64]string{}
 }
 func (f *fakeSIDXInfinite) IntroduceSynced(map[uint64]struct{}) func() { return func() {} }
+func (f *fakeSIDXInfinite) TakeFileSnapshot(_ string) error            { return nil }
 
 // TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled verifies that
 // the streaming pipeline continues streaming from an infinite channel until context is canceled.

@@ -198,7 +198,7 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 			epoch++
 		case next := <-flushCh:
 			tst.incTotalIntroduceLoopStarted("flush")
-			tst.introduceFlushed(next, epoch)
+			tst.introduceFlushedForSync(next, epoch)
 			tst.incTotalIntroduceLoopFinished("flush")
 			tst.gc.clean()
 			epoch++
@@ -256,6 +256,28 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
 		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
 	}
+	if nextIntroduction.applied != nil {
+		close(nextIntroduction.applied)
+	}
+}
+
+// introduceFlushedForSync introduces the flushed trace parts for syncing.
+// The SIDX parts are flushed before the trace parts so the syncer can always find
+// the corresponding index on disk once a flushed trace part becomes visible.
+func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroduction, epoch uint64) {
+	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
+		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
+	}
+	cur := tst.currentSnapshot()
+	if cur == nil {
+		tst.l.Panic().Msg("current snapshot is nil")
+	}
+	defer cur.decRef()
+	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
+	nextSnp.creator = snapshotCreatorFlusher
+	tst.replaceSnapshot(&nextSnp)
+	tst.persistSnapshot(&nextSnp)
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
