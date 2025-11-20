@@ -529,21 +529,17 @@ func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr
 	if value == nil && valueArr == nil {
 		return pbv1.NullTagValue
 	}
+	if value == nil &&
+		valueType != pbv1.ValueTypeInt64Arr &&
+		valueType != pbv1.ValueTypeStrArr {
+		return pbv1.NullTagValue
+	}
 	switch valueType {
 	case pbv1.ValueTypeInt64:
-		if value == nil {
-			return pbv1.NullTagValue
-		}
 		return int64TagValue(convert.BytesToInt64(value))
 	case pbv1.ValueTypeStr:
-		if value == nil {
-			return pbv1.NullTagValue
-		}
 		return strTagValue(string(value))
 	case pbv1.ValueTypeBinaryData:
-		if value == nil {
-			return pbv1.NullTagValue
-		}
 		return binaryDataTagValue(value)
 	case pbv1.ValueTypeInt64Arr:
 		var values []int64
@@ -577,9 +573,6 @@ func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr
 		}
 		return strArrTagValue(values)
 	case pbv1.ValueTypeTimestamp:
-		if value == nil {
-			return pbv1.NullTagValue
-		}
 		// Convert 64-bit nanoseconds since epoch back to protobuf timestamp
 		epochNanos := convert.BytesToInt64(value)
 		seconds := epochNanos / 1e9

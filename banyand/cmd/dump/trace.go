@@ -48,6 +48,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+type traceDumpOptions struct {
+	shardPath      string
+	segmentPath    string
+	criteriaJSON   string
+	projectionTags string
+	verbose        bool
+	csvOutput      bool
+}
+
 func newTraceCmd() *cobra.Command {
 	var shardPath string
 	var segmentPath string
@@ -89,7 +98,14 @@ Supports filtering by criteria and projecting specific tags.`,
 			if segmentPath == "" {
 				return fmt.Errorf("--segment-path flag is required")
 			}
-			return dumpTraceShard(shardPath, segmentPath, verbose, csvOutput, criteriaJSON, projectionTags)
+			return dumpTraceShard(traceDumpOptions{
+				shardPath:      shardPath,
+				segmentPath:    segmentPath,
+				verbose:        verbose,
+				csvOutput:      csvOutput,
+				criteriaJSON:   criteriaJSON,
+				projectionTags: projectionTags,
+			})
 		},
 	}
 
@@ -105,194 +121,19 @@ Supports filtering by criteria and projecting specific tags.`,
 	return cmd
 }
 
-//nolint:gocyclo // dumpTraceShard has high complexity due to multiple output formats and filtering options
-func dumpTraceShard(shardPath, segmentPath string, verbose bool, csvOutput bool, criteriaJSON, projectionTagsStr string) error {
-	// Discover all part directories in the shard
-	partIDs, err := discoverTracePartIDs(shardPath)
-	if err != nil {
-		return fmt.Errorf("failed to discover part IDs: %w", err)
+// dumpTraceShard has high complexity due to multiple output formats and filtering options.
+func dumpTraceShard(opts traceDumpOptions) error {
+	ctx, err := newTraceDumpContext(opts)
+	if err != nil || ctx == nil {
+		return err
+	}
+	defer ctx.close()
+
+	if err := ctx.processParts(); err != nil {
+		return err
 	}
 
-	if len(partIDs) == 0 {
-		fmt.Println("No parts found in shard directory")
-		return nil
-	}
-
-	fmt.Fprintf(os.Stderr, "Found %d parts in shard\n", len(partIDs))
-
-	// Load series information for human-readable output
-	seriesMap, err := loadTraceSeriesMap(segmentPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to load series information: %v\n", err)
-		seriesMap = nil // Continue without series names
-	} else {
-		fmt.Fprintf(os.Stderr, "Loaded %d series from segment\n", len(seriesMap))
-	}
-
-	// Parse criteria if provided
-	var criteria *modelv1.Criteria
-	var tagFilter logical.TagFilter
-	if criteriaJSON != "" {
-		criteria, err = parseTraceCriteriaJSON(criteriaJSON)
-		if err != nil {
-			return fmt.Errorf("failed to parse criteria: %w", err)
-		}
-		tagFilter, err = logical.BuildSimpleTagFilter(criteria)
-		if err != nil {
-			return fmt.Errorf("failed to build tag filter: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Applied criteria filter\n")
-	}
-
-	// Parse projection tags
-	var projectionTags []string
-	if projectionTagsStr != "" {
-		projectionTags = parseTraceProjectionTags(projectionTagsStr)
-		fmt.Fprintf(os.Stderr, "Projection tags: %v\n", projectionTags)
-	}
-
-	// Open the file system
-	fileSystem := fs.NewLocalFileSystem()
-
-	// Determine tag columns for CSV output
-	var tagColumns []string
-	if csvOutput {
-		if len(projectionTags) > 0 {
-			tagColumns = projectionTags
-		} else {
-			// Scan first part to determine all available tags
-			tagColumns, err = discoverTagColumns(partIDs, shardPath, fileSystem)
-			if err != nil {
-				return fmt.Errorf("failed to discover tag columns: %w", err)
-			}
-		}
-	}
-
-	// Initialize output
-	var writer *csv.Writer
-	var rowNum int
-	if csvOutput {
-		writer = csv.NewWriter(os.Stdout)
-		defer writer.Flush()
-
-		// Write CSV header
-		header := []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}
-		header = append(header, tagColumns...)
-		if err := writer.Write(header); err != nil {
-			return fmt.Errorf("failed to write CSV header: %w", err)
-		}
-	} else {
-		fmt.Printf("================================================================================\n")
-		fmt.Fprintf(os.Stderr, "Processing parts...\n")
-	}
-
-	// Process each part and stream output
-	for partIdx, partID := range partIDs {
-		fmt.Fprintf(os.Stderr, "Processing part %d/%d (0x%016x)...\n", partIdx+1, len(partIDs), partID)
-
-		p, err := openFilePart(partID, shardPath, fileSystem)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to open part %016x: %v\n", partID, err)
-			continue
-		}
-
-		decoder := &encoding.BytesBlockDecoder{}
-		partRowCount := 0
-
-		// Process all blocks in this part
-		for _, pbm := range p.primaryBlockMetadata {
-			// Read primary data block
-			primaryData := make([]byte, pbm.size)
-			fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-
-			// Decompress
-			decompressed, err := zstd.Decompress(nil, primaryData)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Error decompressing primary data in part %016x: %v\n", partID, err)
-				continue
-			}
-
-			// Parse ALL block metadata entries from this primary block
-			blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Error parsing block metadata in part %016x: %v\n", partID, err)
-				continue
-			}
-
-			// Process each trace block within this primary block
-			for _, bm := range blockMetadatas {
-				// Read spans
-				spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Error reading spans for trace %s in part %016x: %v\n", bm.traceID, partID, err)
-					continue
-				}
-
-				// Read tags
-				tags := make(map[string][][]byte)
-				for tagName, tagBlock := range bm.tags {
-					tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count), p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: Error reading tag %s for trace %s in part %016x: %v\n", tagName, bm.traceID, partID, err)
-						continue
-					}
-					tags[tagName] = tagValues
-				}
-
-				// Process each span as a row
-				for i := 0; i < len(spans); i++ {
-					// Build tag map for this span
-					spanTags := make(map[string][]byte)
-					for tagName, tagValues := range tags {
-						if i < len(tagValues) {
-							spanTags[tagName] = tagValues[i]
-						}
-					}
-
-					// Calculate series ID from entity tags
-					seriesID := calculateSeriesIDFromTags(spanTags)
-
-					// Apply criteria filter if specified
-					if tagFilter != nil && tagFilter != logical.DummyFilter {
-						if !matchesCriteria(spanTags, p.tagType, tagFilter) {
-							continue
-						}
-					}
-
-					row := traceRowData{
-						partID:   partID,
-						traceID:  bm.traceID,
-						spanID:   spanIDs[i],
-						spanData: spans[i],
-						tags:     spanTags,
-						seriesID: seriesID,
-					}
-
-					// Stream output immediately
-					if csvOutput {
-						if err := writeTraceRowAsCSV(writer, row, tagColumns, seriesMap); err != nil {
-							return err
-						}
-					} else {
-						writeTraceRowAsText(row, rowNum+1, verbose, projectionTags, seriesMap)
-					}
-
-					rowNum++
-					partRowCount++
-				}
-			}
-		}
-
-		closePart(p)
-		fmt.Fprintf(os.Stderr, "  Part %d/%d: processed %d rows (total: %d)\n", partIdx+1, len(partIDs), partRowCount, rowNum)
-	}
-
-	if !csvOutput {
-		fmt.Printf("\nTotal rows: %d\n", rowNum)
-	} else {
-		fmt.Fprintf(os.Stderr, "Total rows written: %d\n", rowNum)
-	}
-
+	ctx.printSummary()
 	return nil
 }
 
@@ -454,6 +295,234 @@ type traceRowData struct {
 	spanData []byte
 	partID   uint64
 	seriesID common.SeriesID
+}
+
+type traceDumpContext struct {
+	tagFilter      logical.TagFilter
+	fileSystem     fs.FileSystem
+	seriesMap      map[common.SeriesID]string
+	writer         *csv.Writer
+	opts           traceDumpOptions
+	partIDs        []uint64
+	projectionTags []string
+	tagColumns     []string
+	rowNum         int
+}
+
+func newTraceDumpContext(opts traceDumpOptions) (*traceDumpContext, error) {
+	ctx := &traceDumpContext{
+		opts:       opts,
+		fileSystem: fs.NewLocalFileSystem(),
+	}
+
+	partIDs, err := discoverTracePartIDs(opts.shardPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover part IDs: %w", err)
+	}
+	if len(partIDs) == 0 {
+		fmt.Println("No parts found in shard directory")
+		return nil, nil
+	}
+	ctx.partIDs = partIDs
+	fmt.Fprintf(os.Stderr, "Found %d parts in shard\n", len(partIDs))
+
+	ctx.seriesMap, err = loadTraceSeriesMap(opts.segmentPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load series information: %v\n", err)
+		ctx.seriesMap = nil
+	} else {
+		fmt.Fprintf(os.Stderr, "Loaded %d series from segment\n", len(ctx.seriesMap))
+	}
+
+	if opts.criteriaJSON != "" {
+		var criteria *modelv1.Criteria
+		criteria, err = parseTraceCriteriaJSON(opts.criteriaJSON)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse criteria: %w", err)
+		}
+		ctx.tagFilter, err = logical.BuildSimpleTagFilter(criteria)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build tag filter: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Applied criteria filter\n")
+	}
+
+	if opts.projectionTags != "" {
+		ctx.projectionTags = parseTraceProjectionTags(opts.projectionTags)
+		fmt.Fprintf(os.Stderr, "Projection tags: %v\n", ctx.projectionTags)
+	}
+
+	if opts.csvOutput {
+		if len(ctx.projectionTags) > 0 {
+			ctx.tagColumns = ctx.projectionTags
+		} else {
+			ctx.tagColumns, err = discoverTagColumns(ctx.partIDs, opts.shardPath, ctx.fileSystem)
+			if err != nil {
+				return nil, fmt.Errorf("failed to discover tag columns: %w", err)
+			}
+		}
+	}
+
+	if err := ctx.initOutput(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
+func (ctx *traceDumpContext) initOutput() error {
+	if !ctx.opts.csvOutput {
+		fmt.Printf("================================================================================\n")
+		fmt.Fprintf(os.Stderr, "Processing parts...\n")
+		return nil
+	}
+
+	ctx.writer = csv.NewWriter(os.Stdout)
+	header := []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}
+	header = append(header, ctx.tagColumns...)
+	if err := ctx.writer.Write(header); err != nil {
+		return fmt.Errorf("failed to write CSV header: %w", err)
+	}
+	return nil
+}
+
+func (ctx *traceDumpContext) close() {
+	if ctx.writer != nil {
+		ctx.writer.Flush()
+	}
+}
+
+func (ctx *traceDumpContext) processParts() error {
+	for partIdx, partID := range ctx.partIDs {
+		fmt.Fprintf(os.Stderr, "Processing part %d/%d (0x%016x)...\n", partIdx+1, len(ctx.partIDs), partID)
+
+		p, err := openFilePart(partID, ctx.opts.shardPath, ctx.fileSystem)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to open part %016x: %v\n", partID, err)
+			continue
+		}
+
+		partRowCount, partErr := ctx.processPart(partID, p)
+		closePart(p)
+		if partErr != nil {
+			return partErr
+		}
+
+		fmt.Fprintf(os.Stderr, "  Part %d/%d: processed %d rows (total: %d)\n", partIdx+1, len(ctx.partIDs), partRowCount, ctx.rowNum)
+	}
+	return nil
+}
+
+func (ctx *traceDumpContext) processPart(partID uint64, p *part) (int, error) {
+	decoder := &encoding.BytesBlockDecoder{}
+	partRowCount := 0
+
+	for _, pbm := range p.primaryBlockMetadata {
+		primaryData := make([]byte, pbm.size)
+		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+
+		decompressed, err := zstd.Decompress(nil, primaryData)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error decompressing primary data in part %016x: %v\n", partID, err)
+			continue
+		}
+
+		blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error parsing block metadata in part %016x: %v\n", partID, err)
+			continue
+		}
+
+		for _, bm := range blockMetadatas {
+			rows, err := ctx.processBlock(partID, bm, p, decoder)
+			if err != nil {
+				return partRowCount, err
+			}
+			partRowCount += rows
+		}
+	}
+
+	return partRowCount, nil
+}
+
+func (ctx *traceDumpContext) processBlock(partID uint64, bm *blockMetadata, p *part, decoder *encoding.BytesBlockDecoder) (int, error) {
+	spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Error reading spans for trace %s in part %016x: %v\n", bm.traceID, partID, err)
+		return 0, nil
+	}
+
+	tagsBySpan := ctx.readBlockTags(partID, bm, p, decoder)
+	rows := 0
+	for i := 0; i < len(spans); i++ {
+		spanTags := make(map[string][]byte)
+		for tagName, tagValues := range tagsBySpan {
+			if i < len(tagValues) {
+				spanTags[tagName] = tagValues[i]
+			}
+		}
+
+		if ctx.shouldSkip(spanTags, p.tagType) {
+			continue
+		}
+
+		row := traceRowData{
+			partID:   partID,
+			traceID:  bm.traceID,
+			spanID:   spanIDs[i],
+			spanData: spans[i],
+			tags:     spanTags,
+			seriesID: calculateSeriesIDFromTags(spanTags),
+		}
+
+		if err := ctx.writeRow(row); err != nil {
+			return rows, err
+		}
+
+		rows++
+	}
+
+	return rows, nil
+}
+
+func (ctx *traceDumpContext) readBlockTags(partID uint64, bm *blockMetadata, p *part, decoder *encoding.BytesBlockDecoder) map[string][][]byte {
+	tags := make(map[string][][]byte)
+	for tagName, tagBlock := range bm.tags {
+		tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count), p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error reading tag %s for trace %s in part %016x: %v\n", tagName, bm.traceID, partID, err)
+			continue
+		}
+		tags[tagName] = tagValues
+	}
+	return tags
+}
+
+func (ctx *traceDumpContext) shouldSkip(tags map[string][]byte, tagTypes map[string]pbv1.ValueType) bool {
+	if ctx.tagFilter == nil || ctx.tagFilter == logical.DummyFilter {
+		return false
+	}
+	return !matchesCriteria(tags, tagTypes, ctx.tagFilter)
+}
+
+func (ctx *traceDumpContext) writeRow(row traceRowData) error {
+	if ctx.opts.csvOutput {
+		if err := writeTraceRowAsCSV(ctx.writer, row, ctx.tagColumns, ctx.seriesMap); err != nil {
+			return err
+		}
+	} else {
+		writeTraceRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap)
+	}
+	ctx.rowNum++
+	return nil
+}
+
+func (ctx *traceDumpContext) printSummary() {
+	if ctx.opts.csvOutput {
+		fmt.Fprintf(os.Stderr, "Total rows written: %d\n", ctx.rowNum)
+		return
+	}
+	fmt.Printf("\nTotal rows: %d\n", ctx.rowNum)
 }
 
 func openFilePart(id uint64, root string, fileSystem fs.FileSystem) (*part, error) {
@@ -869,9 +938,6 @@ func parseTraceProjectionTags(projectionStr string) []string {
 }
 
 func calculateSeriesIDFromTags(tags map[string][]byte) common.SeriesID {
-	// Extract entity values from tags to calculate series ID
-	// Entity tags typically follow naming conventions like "service_id", "instance_id", etc.
-	// We'll collect all tag key-value pairs and hash them
 	var entityValues []byte
 
 	// Sort tag names for consistent hashing

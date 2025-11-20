@@ -76,13 +76,8 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 	// Scan all parts
 	totalParts := len(snap.parts)
 	for partIdx, pw := range snap.parts {
-		rowsBefore := 0
-		for _, res := range results {
-			rowsBefore += res.Len()
-		}
-		rowsBefore += currentBatch.Len()
-
-		if err := s.scanPart(ctx, pw, req, minKey, maxKey, &results, &currentBatch, maxBatchSize); err != nil {
+		var err error
+		if currentBatch, err = s.scanPart(ctx, pw, req, minKey, maxKey, &results, currentBatch, maxBatchSize); err != nil {
 			return nil, err
 		}
 
@@ -108,9 +103,9 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 }
 
 func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryRequest,
-	minKey, maxKey int64, results *[]*QueryResponse, currentBatch **QueryResponse,
+	minKey, maxKey int64, results *[]*QueryResponse, currentBatch *QueryResponse,
 	maxBatchSize int,
-) error {
+) (*QueryResponse, error) {
 	p := pw.p
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
@@ -124,7 +119,7 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 	// Iterate through all blocks
 	for pi.nextBlock() {
 		if err := ctx.Err(); err != nil {
-			return err
+			return currentBatch, err
 		}
 
 		// Create a temporary QueryRequest to reuse existing blockCursor infrastructure
@@ -167,8 +162,8 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 				bc.idx = idx
 
 				// Check if batch is full before adding
-				if (*currentBatch).Len() >= maxBatchSize {
-					*results = append(*results, *currentBatch)
+				if currentBatch.Len() >= maxBatchSize {
+					*results = append(*results, currentBatch)
 
 					// Prepare Tags map for new batch if projection is specified
 					var newTagsMap map[string][]string
@@ -181,7 +176,7 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 						}
 					}
 
-					*currentBatch = &QueryResponse{
+					currentBatch = &QueryResponse{
 						Keys:    make([]int64, 0, maxBatchSize),
 						Data:    make([][]byte, 0, maxBatchSize),
 						SIDs:    make([]common.SeriesID, 0, maxBatchSize),
@@ -191,7 +186,7 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 				}
 
 				// Add to current batch
-				_ = bc.copyTo(*currentBatch)
+				_ = bc.copyTo(currentBatch)
 			}
 		}
 
@@ -199,5 +194,5 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 		releaseBlockCursor(bc)
 	}
 
-	return pi.error()
+	return currentBatch, pi.error()
 }

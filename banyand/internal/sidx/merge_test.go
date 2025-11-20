@@ -532,7 +532,7 @@ func deepCopyBlock(b *block) block {
 	newB.userKeys = append([]int64(nil), b.userKeys...)
 	newB.data = make([][]byte, len(b.data))
 	for i, d := range b.data {
-		newB.data[i] = append([]byte(nil), d...)
+		newB.data[i] = cloneBytes(d)
 	}
 	for k, v := range b.tags {
 		newTd := &tagData{
@@ -543,12 +543,12 @@ func deepCopyBlock(b *block) block {
 		for i, row := range v.values {
 			newRow := tagRow{}
 			if row.value != nil {
-				newRow.value = append([]byte(nil), row.value...)
+				newRow.value = cloneBytes(row.value)
 			}
 			if row.valueArr != nil {
 				newRow.valueArr = make([][]byte, len(row.valueArr))
 				for j, arrVal := range row.valueArr {
-					newRow.valueArr[j] = append([]byte(nil), arrVal...)
+					newRow.valueArr[j] = cloneBytes(arrVal)
 				}
 			}
 			newTd.values[i] = newRow
@@ -556,4 +556,13 @@ func deepCopyBlock(b *block) block {
 		newB.tags[k] = newTd
 	}
 	return newB
+}
+
+func cloneBytes(src []byte) []byte {
+	if src == nil {
+		return nil
+	}
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
 }

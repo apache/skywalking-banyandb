@@ -515,7 +515,9 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	return true
 }
 
-// formatTagValue converts a Tag to a string representation.
+// formatTagValue converts a Tag to its string form: arrays are serialized as
+// bracketed, comma-separated values, while scalar values are returned as-is.
+// When both Value and ValueArr are empty, the function returns an empty string.
 func formatTagValue(tag Tag) string {
 	if len(tag.ValueArr) > 0 {
 		// Array of values
