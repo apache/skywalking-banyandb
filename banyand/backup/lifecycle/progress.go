@@ -33,6 +33,7 @@ type Progress struct {
 	CompletedGroups             map[string]bool                                            `json:"completed_groups"`
 	DeletedStreamGroups         map[string]bool                                            `json:"deleted_stream_groups"`
 	DeletedMeasureGroups        map[string]bool                                            `json:"deleted_measure_groups"`
+	DeletedTraceGroups          map[string]bool                                            `json:"deleted_trace_groups"`
 	CompletedStreamParts        map[string]map[string]map[common.ShardID]map[uint64]bool   `json:"completed_stream_parts"`
 	StreamPartErrors            map[string]map[string]map[common.ShardID]map[uint64]string `json:"stream_part_errors"`
 	CompletedStreamSeries       map[string]map[string]map[common.ShardID]bool              `json:"completed_stream_series"`
@@ -54,10 +55,24 @@ type Progress struct {
 	MeasureSeriesErrors    map[string]map[string]map[common.ShardID]string            `json:"measure_series_errors"`
 	MeasureSeriesCounts    map[string]int                                             `json:"measure_series_counts"`
 	MeasureSeriesProgress  map[string]int                                             `json:"measure_series_progress"`
-	progressFilePath       string                                                     `json:"-"`
-	SnapshotStreamDir      string                                                     `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir     string                                                     `json:"snapshot_measure_dir"`
-	mu                     sync.Mutex                                                 `json:"-"`
+	// Trace part-specific progress tracking
+	CompletedTraceParts  map[string]map[string]map[common.ShardID]map[uint64]bool   `json:"completed_trace_parts"`
+	TracePartErrors      map[string]map[string]map[common.ShardID]map[uint64]string `json:"trace_part_errors"`
+	TracePartCounts      map[string]int                                             `json:"trace_part_counts"`
+	TracePartProgress    map[string]int                                             `json:"trace_part_progress"`
+	CompletedTraceSeries map[string]map[string]map[common.ShardID]bool              `json:"completed_trace_series"`
+	TraceSeriesErrors    map[string]map[string]map[common.ShardID]string            `json:"trace_series_errors"`
+	TraceSeriesCounts    map[string]int                                             `json:"trace_series_counts"`
+	TraceSeriesProgress  map[string]int                                             `json:"trace_series_progress"`
+	CompletedTraceSidx   map[string]map[string]map[common.ShardID]bool              `json:"completed_trace_sidx"`
+	TraceSidxErrors      map[string]map[string]map[common.ShardID]string            `json:"trace_sidx_errors"`
+	TraceSidxCounts      map[string]int                                             `json:"trace_sidx_counts"`
+	TraceSidxProgress    map[string]int                                             `json:"trace_sidx_progress"`
+	progressFilePath     string                                                     `json:"-"`
+	SnapshotStreamDir    string                                                     `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir   string                                                     `json:"snapshot_measure_dir"`
+	SnapshotTraceDir     string                                                     `json:"snapshot_trace_dir"`
+	mu                   sync.Mutex                                                 `json:"-"`
 }
 
 // AllGroupsNotFullyCompleted find is there have any group not fully completed.
@@ -80,6 +95,7 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		CompletedGroups:             make(map[string]bool),
 		DeletedStreamGroups:         make(map[string]bool),
 		DeletedMeasureGroups:        make(map[string]bool),
+		DeletedTraceGroups:          make(map[string]bool),
 		CompletedStreamParts:        make(map[string]map[string]map[common.ShardID]map[uint64]bool),
 		StreamPartErrors:            make(map[string]map[string]map[common.ShardID]map[uint64]string),
 		StreamPartCounts:            make(map[string]int),
@@ -100,6 +116,17 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		MeasureSeriesErrors:         make(map[string]map[string]map[common.ShardID]string),
 		MeasureSeriesCounts:         make(map[string]int),
 		MeasureSeriesProgress:       make(map[string]int),
+		CompletedTraceParts:         make(map[string]map[string]map[common.ShardID]map[uint64]bool),
+		TracePartErrors:             make(map[string]map[string]map[common.ShardID]map[uint64]string),
+		TracePartCounts:             make(map[string]int),
+		TracePartProgress:           make(map[string]int),
+		CompletedTraceSeries:        make(map[string]map[string]map[common.ShardID]bool),
+		TraceSeriesErrors:           make(map[string]map[string]map[common.ShardID]string),
+		TraceSeriesCounts:           make(map[string]int),
+		TraceSeriesProgress:         make(map[string]int),
+		CompletedTraceSidx:          make(map[string]map[string]map[common.ShardID]bool),
+		TraceSidxErrors:             make(map[string]map[string]map[common.ShardID]string),
+		TraceSidxProgress:           make(map[string]int),
 		progressFilePath:            path,
 		logger:                      l,
 	}
@@ -693,6 +720,233 @@ func (p *Progress) GetMeasureSeriesProgress(group string) int {
 	defer p.mu.Unlock()
 
 	if progress, ok := p.MeasureSeriesProgress[group]; ok {
+		return progress
+	}
+	return 0
+}
+
+// MarkTraceGroupDeleted marks a trace group as deleted.
+func (p *Progress) MarkTraceGroupDeleted(group string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.DeletedTraceGroups[group] = true
+}
+
+// IsTraceGroupDeleted checks if a trace group has been deleted.
+func (p *Progress) IsTraceGroupDeleted(group string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.DeletedTraceGroups[group]
+}
+
+// MarkTracePartCompleted marks a specific part of a trace as completed.
+func (p *Progress) MarkTracePartCompleted(group string, segmentID string, shardID common.ShardID, partID uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.CompletedTraceParts[group] == nil {
+		p.CompletedTraceParts[group] = make(map[string]map[common.ShardID]map[uint64]bool)
+	}
+	if p.CompletedTraceParts[group][segmentID] == nil {
+		p.CompletedTraceParts[group][segmentID] = make(map[common.ShardID]map[uint64]bool)
+	}
+	if p.CompletedTraceParts[group][segmentID][shardID] == nil {
+		p.CompletedTraceParts[group][segmentID][shardID] = make(map[uint64]bool)
+	}
+	p.CompletedTraceParts[group][segmentID][shardID][partID] = true
+
+	// Increment progress
+	p.TracePartProgress[group]++
+}
+
+// IsTracePartCompleted checks if a specific part of a trace has been completed.
+func (p *Progress) IsTracePartCompleted(group string, segmentID string, shardID common.ShardID, partID uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if segments, ok := p.CompletedTraceParts[group]; ok {
+		if shards, ok := segments[segmentID]; ok {
+			if parts, ok := shards[shardID]; ok {
+				return parts[partID]
+			}
+		}
+	}
+	return false
+}
+
+// MarkTracePartError marks an error for a specific part of a trace.
+func (p *Progress) MarkTracePartError(group string, segmentID string, shardID common.ShardID, partID uint64, errorMsg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TracePartErrors[group] == nil {
+		p.TracePartErrors[group] = make(map[string]map[common.ShardID]map[uint64]string)
+	}
+	if p.TracePartErrors[group][segmentID] == nil {
+		p.TracePartErrors[group][segmentID] = make(map[common.ShardID]map[uint64]string)
+	}
+	if p.TracePartErrors[group][segmentID][shardID] == nil {
+		p.TracePartErrors[group][segmentID][shardID] = make(map[uint64]string)
+	}
+	p.TracePartErrors[group][segmentID][shardID][partID] = errorMsg
+}
+
+// SetTracePartCount sets the total number of parts for the current trace.
+func (p *Progress) SetTracePartCount(group string, totalParts int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.TracePartCounts[group] = totalParts
+}
+
+// GetTracePartCount gets the total number of parts for the current trace.
+func (p *Progress) GetTracePartCount(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if count, ok := p.TracePartCounts[group]; ok {
+		return count
+	}
+	return 0
+}
+
+// GetTracePartProgress gets the number of completed parts for the current trace.
+func (p *Progress) GetTracePartProgress(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if progress, ok := p.TracePartProgress[group]; ok {
+		return progress
+	}
+	return 0
+}
+
+// MarkTraceSeriesCompleted marks a specific series segment of a trace as completed.
+func (p *Progress) MarkTraceSeriesCompleted(group string, segmentID string, shardID common.ShardID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.CompletedTraceSeries[group] == nil {
+		p.CompletedTraceSeries[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.CompletedTraceSeries[group][segmentID] == nil {
+		p.CompletedTraceSeries[group][segmentID] = make(map[common.ShardID]bool)
+	}
+	p.CompletedTraceSeries[group][segmentID][shardID] = true
+
+	// Increment progress
+	p.TraceSeriesProgress[group]++
+}
+
+// IsTraceSeriesCompleted checks if a specific series segment of a trace has been completed.
+func (p *Progress) IsTraceSeriesCompleted(group string, segmentID string, shardID common.ShardID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if segments, ok := p.CompletedTraceSeries[group]; ok {
+		if shards, ok := segments[segmentID]; ok {
+			return shards[shardID]
+		}
+	}
+	return false
+}
+
+// MarkTraceSeriesError marks an error for a specific series segment of a trace.
+func (p *Progress) MarkTraceSeriesError(group string, segmentID string, shardID common.ShardID, errorMsg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceSeriesErrors[group] == nil {
+		p.TraceSeriesErrors[group] = make(map[string]map[common.ShardID]string)
+	}
+	if p.TraceSeriesErrors[group][segmentID] == nil {
+		p.TraceSeriesErrors[group][segmentID] = make(map[common.ShardID]string)
+	}
+	p.TraceSeriesErrors[group][segmentID][shardID] = errorMsg
+}
+
+// SetTraceSeriesCount sets the total number of series segments for the current trace.
+func (p *Progress) SetTraceSeriesCount(group string, totalSegments int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.TraceSeriesCounts[group] = totalSegments
+}
+
+// GetTraceSeriesCount gets the total number of series segments for the current trace.
+func (p *Progress) GetTraceSeriesCount(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if count, ok := p.TraceSeriesCounts[group]; ok {
+		return count
+	}
+	return 0
+}
+
+// GetTraceSeriesProgress gets the number of completed series segments for the current trace.
+func (p *Progress) GetTraceSeriesProgress(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if progress, ok := p.TraceSeriesProgress[group]; ok {
+		return progress
+	}
+	return 0
+}
+
+// MarkTraceSidxCompleted marks a specific sidx segment of a trace as completed.
+func (p *Progress) MarkTraceSidxCompleted(group string, segmentID string, shardID common.ShardID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.CompletedTraceSidx[group] == nil {
+		p.CompletedTraceSidx[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.CompletedTraceSidx[group][segmentID] == nil {
+		p.CompletedTraceSidx[group][segmentID] = make(map[common.ShardID]bool)
+	}
+	p.CompletedTraceSidx[group][segmentID][shardID] = true
+
+	// Increment progress
+	p.TraceSidxProgress[group]++
+}
+
+// IsTraceSidxCompleted checks if a specific sidx segment of a trace has been completed.
+func (p *Progress) IsTraceSidxCompleted(group string, segmentID string, shardID common.ShardID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if segments, ok := p.CompletedTraceSidx[group]; ok {
+		if shards, ok := segments[segmentID]; ok {
+			return shards[shardID]
+		}
+	}
+	return false
+}
+
+// MarkTraceSidxError marks an error for a specific sidx segment of a trace.
+func (p *Progress) MarkTraceSidxError(group string, segmentID string, shardID common.ShardID, errorMsg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceSidxErrors[group] == nil {
+		p.TraceSidxErrors[group] = make(map[string]map[common.ShardID]string)
+	}
+	if p.TraceSidxErrors[group][segmentID] == nil {
+		p.TraceSidxErrors[group][segmentID] = make(map[common.ShardID]string)
+	}
+	p.TraceSidxErrors[group][segmentID][shardID] = errorMsg
+}
+
+// GetTraceSidxProgress gets the number of completed sidx segment files for the current trace.
+func (p *Progress) GetTraceSidxProgress(group string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if progress, ok := p.TraceSidxProgress[group]; ok {
 		return progress
 	}
 	return 0

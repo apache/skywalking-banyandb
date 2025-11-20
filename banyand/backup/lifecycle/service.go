@@ -61,6 +61,7 @@ type lifecycleService struct {
 	sch               *timestamp.Scheduler
 	measureRoot       string
 	streamRoot        string
+	traceRoot         string
 	progressFilePath  string
 	reportDir         string
 	schedule          string
@@ -90,6 +91,7 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.BoolVar(&l.insecure, "insecure", false, "Skip server certificate verification")
 	flagS.StringVar(&l.cert, "cert", "", "Path to the gRPC server certificate")
 	flagS.StringVar(&l.streamRoot, "stream-root-path", "/tmp", "Root directory for stream catalog")
+	flagS.StringVar(&l.traceRoot, "trace-root-path", "/tmp", "Root directory for trace catalog")
 	flagS.StringVar(&l.measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	flagS.StringVar(&l.progressFilePath, "progress-file", "/tmp/lifecycle-progress.json", "Path to store progress for crash recovery")
 	flagS.StringVar(&l.reportDir, "report-dir", "/tmp/lifecycle-reports", "Directory to store migration reports")
@@ -174,12 +176,12 @@ func (l *lifecycleService) action() error {
 	}
 
 	// Pass progress to getSnapshots
-	streamDir, measureDir, err := l.getSnapshots(groups, progress)
+	streamDir, measureDir, traceDir, err := l.getSnapshots(groups, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err
 	}
-	if streamDir == "" && measureDir == "" {
+	if streamDir == "" && measureDir == "" && traceDir == "" {
 		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
 		l.generateReport(progress)
 		return nil
@@ -187,6 +189,7 @@ func (l *lifecycleService) action() error {
 	l.l.Info().
 		Str("stream_snapshot", streamDir).
 		Str("measure_snapshot", measureDir).
+		Str("trace_snapshot", traceDir).
 		Msg("created snapshots")
 	progress.Save(l.progressFilePath, l.l)
 
@@ -215,9 +218,12 @@ func (l *lifecycleService) action() error {
 			}
 			l.processMeasureGroup(ctx, g, measureDir, nodes, labels, progress)
 		case commonv1.Catalog_CATALOG_TRACE:
-			progress.MarkGroupCompleted(g.Metadata.Name)
-			l.l.Info().Msgf("group trace not supported, skipping group: %s", g.Metadata.Name)
-			continue
+			if traceDir == "" {
+				l.l.Warn().Msgf("trace snapshot directory is not available, skipping group: %s", g.Metadata.Name)
+				progress.MarkGroupCompleted(g.Metadata.Name)
+				continue
+			}
+			l.processTraceGroup(ctx, g, traceDir, nodes, labels, progress)
 		default:
 			l.l.Info().Msgf("group catalog: %s doesn't support lifecycle management", g.Catalog)
 		}
@@ -750,4 +756,78 @@ func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *
 	l.l.Info().Msgf("deleted %d expired segments in group %s, suffixes: %s", resp.Deleted, g.Metadata.Name, segmentSuffixes)
 	progress.MarkMeasureGroupDeleted(g.Metadata.Name)
 	progress.Save(l.progressFilePath, l.l)
+}
+
+func (l *lifecycleService) deleteExpiredTraceSegments(_ context.Context, g *commonv1.Group, segmentSuffixes []string, progress *Progress) {
+	if progress.IsTraceGroupDeleted(g.Metadata.Name) {
+		l.l.Info().Msgf("skipping already deleted trace group segments: %s", g.Metadata.Name)
+		return
+	}
+
+	// TODO: Implement trace DeleteExpiredSegments RPC in trace service
+	// For now, log a warning that this functionality is not yet implemented
+	l.l.Warn().Msgf("trace DeleteExpiredSegments RPC not yet implemented for group %s, segments: %v", g.Metadata.Name, segmentSuffixes)
+
+	// Mark as deleted to allow progress tracking
+	progress.MarkTraceGroupDeleted(g.Metadata.Name)
+	progress.Save(l.progressFilePath, l.l)
+}
+
+func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
+	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
+) {
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata)
+	if err != nil {
+		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
+		return
+	}
+	defer group.Close()
+
+	tr := l.getRemovalSegmentsTimeRange(group)
+	if tr.Start.IsZero() && tr.End.IsZero() {
+		l.l.Info().Msgf("no removal segments time range for group %s, skipping trace migration", g.Metadata.Name)
+		progress.MarkGroupCompleted(g.Metadata.Name)
+		progress.Save(l.progressFilePath, l.l)
+		return
+	}
+
+	// Try file-based migration first
+	segmentSuffixes, err := l.processTraceGroupFileBased(ctx, group, traceDir, tr, progress)
+	if err != nil {
+		l.l.Error().Err(err).Msgf("failed to migrate trace group %s using file-based approach", g.Metadata.Name)
+		return
+	}
+
+	l.l.Info().Msgf("deleting expired trace segments for group: %s", g.Metadata.Name)
+	l.deleteExpiredTraceSegments(ctx, g, segmentSuffixes, progress)
+	progress.MarkGroupCompleted(g.Metadata.Name)
+	progress.Save(l.progressFilePath, l.l)
+}
+
+func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *GroupConfig, traceDir string,
+	tr *timestamp.TimeRange, progress *Progress,
+) ([]string, error) {
+	if progress.IsTraceGroupDeleted(g.Metadata.Name) {
+		l.l.Info().Msgf("skipping already completed file-based trace migration for group: %s", g.Metadata.Name)
+		return nil, nil
+	}
+
+	l.l.Info().Msgf("starting file-based trace migration for group: %s", g.Metadata.Name)
+
+	rootDir := filepath.Join(traceDir, g.Metadata.Name)
+	// skip the counting if the tsdb root path does not exist
+	// may no data found in the snapshot
+	if _, err := os.Stat(rootDir); err != nil && errors.Is(err, os.ErrNotExist) {
+		l.l.Info().Msgf("skipping file-based trace migration for group because is empty in the snapshot dir: %s", g.Metadata.Name)
+		return nil, nil
+	}
+
+	// Use the file-based migration with existing visitor pattern
+	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize))
+	if err != nil {
+		return nil, fmt.Errorf("file-based trace migration failed: %w", err)
+	}
+
+	l.l.Info().Msgf("completed file-based trace migration for group: %s", g.Metadata.Name)
+	return segmentSuffixes, nil
 }

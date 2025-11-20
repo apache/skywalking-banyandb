@@ -41,6 +41,7 @@ import (
 	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	caseslifecycle "github.com/apache/skywalking-banyandb/test/cases/lifecycle"
@@ -95,13 +96,16 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ctx := context.Background()
 	test_stream.LoadSchemaWithStages(ctx, schemaRegistry)
 	test_measure.LoadSchemaWithStages(ctx, schemaRegistry)
+	test_trace.PreloadSchema(ctx, schemaRegistry)
 	test_property.PreloadSchema(ctx, schemaRegistry)
 	By("Starting hot data node")
 	var closeDataNode0 func()
-	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=hot", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
+	dataAddr, srcDir, closeDataNode0 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=hot",
+		"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 	By("Starting warm data node")
 	var closeDataNode1 func()
-	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm", "--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s")
+	_, destDir, closeDataNode1 = setup.DataNodeWithAddrAndDir(ep, "--node-labels", "type=warm",
+		"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 	By("Starting liaison node")
 	var closerLiaisonNode func()
 	liaisonAddr, closerLiaisonNode = setup.LiaisonNode(ep, "--data-node-selector", "type=hot")

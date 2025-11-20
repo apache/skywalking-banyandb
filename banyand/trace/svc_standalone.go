@@ -164,6 +164,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSeriesSync, setUpSeriesSyncCallback(s.l, &s.schemaRepo))
 	err = s.pipeline.Subscribe(data.TopicTraceSidxSeriesWrite, setUpSidxSeriesIndexCallback(s.l, &s.schemaRepo))
 	if err != nil {
 		return err
