@@ -78,7 +78,7 @@ type queueClient interface {
 
 // newHandoffController creates a new handoff controller.
 func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client queueClient,
-	dataNodeList []string, maxSize int, l *logger.Logger,
+	dataNodeList []string, maxTotalSizeBytes uint64, l *logger.Logger,
 	resolveShardAssignments func(group string, shardID uint32) ([]string, error),
 ) (*handoffController, error) {
 	if fileSystem == nil {
@@ -109,7 +109,7 @@ func newHandoffController(fileSystem fs.FileSystem, root string, tire2Client que
 		inFlightSends:           make(map[string]map[uint64]struct{}),
 		replayBatchSize:         10,
 		replayPollInterval:      1 * time.Second,
-		maxTotalSizeBytes:       uint64(maxSize),
+		maxTotalSizeBytes:       maxTotalSizeBytes,
 		currentTotalSize:        0,
 		resolveShardAssignments: resolveShardAssignments,
 	}

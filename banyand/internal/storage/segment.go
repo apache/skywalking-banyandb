@@ -590,17 +590,36 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 	return timeRange
 }
 
-func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
+func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
 	ss, _ := sc.segments(false)
+	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
+		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
+		Str("deadline", deadline.String()).
+		Int("total_segment_count", len(ss)).Msg("deleting expired segments")
+	shouldDeleteSuffixes := make(map[string]bool)
+	for _, s := range segmentSuffixes {
+		shouldDeleteSuffixes[s] = true
+	}
 	for _, s := range ss {
-		if s.Before(deadline) && s.Overlapping(timeRange) {
+		if shouldDeleteSuffixes[s.suffix] {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("deleting an expired segment")
 			s.delete()
 			sc.Lock()
 			sc.removeSeg(s.id)
 			sc.Unlock()
 			count++
+		} else {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("segment is not expired or not in the time range, skipping deletion")
 		}
 		s.DecRef()
 	}

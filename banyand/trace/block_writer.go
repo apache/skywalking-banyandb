@@ -192,7 +192,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart, traceSize int) {
 			filter: generateTraceIDBloomFilter(),
 		}
 		bw.traceIDFilter.filter.SetN(traceSize)
-		bw.traceIDFilter.filter.ResizeBits((traceSize*filter.B + 63) / 64)
+		bw.traceIDFilter.filter.ResizeBits(filter.OptimalBitsSize(traceSize))
 	}
 }
 
@@ -214,7 +214,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 			filter: generateTraceIDBloomFilter(),
 		}
 		bw.traceIDFilter.filter.SetN(traceSize)
-		bw.traceIDFilter.filter.ResizeBits((traceSize*filter.B + 63) / 64)
+		bw.traceIDFilter.filter.ResizeBits(filter.OptimalBitsSize(traceSize))
 	}
 }
 

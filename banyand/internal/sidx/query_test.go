@@ -235,14 +235,37 @@ func TestSIDX_Query_Ordering(t *testing.T) {
 			}
 
 			if len(allKeys) > 1 {
-				isSorted := sort.SliceIsSorted(allKeys, func(i, j int) bool {
-					if tt.ascending {
-						return allKeys[i] < allKeys[j]
+				if len(tt.seriesIDs) == 1 {
+					// For single series, verify global sorting
+					isSorted := sort.SliceIsSorted(allKeys, func(i, j int) bool {
+						if tt.ascending {
+							return allKeys[i] < allKeys[j]
+						}
+						return allKeys[i] > allKeys[j]
+					})
+					assert.True(t, isSorted, "Keys should be sorted in %s order. Keys: %v",
+						map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
+				} else {
+					// For multiple series, verify sorting within each series group
+					seriesGroups := make(map[common.SeriesID][]int64)
+					for i, sid := range allSIDs {
+						if i < len(allKeys) {
+							seriesGroups[sid] = append(seriesGroups[sid], allKeys[i])
+						}
 					}
-					return allKeys[i] > allKeys[j]
-				})
-				assert.True(t, isSorted, "Keys should be sorted in %s order. Keys: %v",
-					map[bool]string{true: "ascending", false: "descending"}[tt.ascending], allKeys)
+					for sid, keys := range seriesGroups {
+						if len(keys) > 1 {
+							isSorted := sort.SliceIsSorted(keys, func(i, j int) bool {
+								if tt.ascending {
+									return keys[i] < keys[j]
+								}
+								return keys[i] > keys[j]
+							})
+							assert.True(t, isSorted, "Keys for series %d should be sorted in %s order. Keys: %v",
+								sid, map[bool]string{true: "ascending", false: "descending"}[tt.ascending], keys)
+						}
+					}
+				}
 			}
 		})
 	}
@@ -284,23 +307,15 @@ func TestSIDX_Query_WithArrValues(t *testing.T) {
 	resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
 
 	var keys []int64
-	var tags [][]Tag
 	for res := range resultsCh {
 		require.NoError(t, res.Error)
 		keys = append(keys, res.Keys...)
-		tags = append(tags, res.Tags...)
 	}
 	if err, ok := <-errCh; ok {
 		require.NoError(t, err)
 	}
 
 	assert.Equal(t, 3, len(keys))
-	for i := 0; i < len(keys); i++ {
-		if keys[i] == 100 {
-			assert.Equal(t, "arr_tag", tags[i][0].Name)
-			assert.Equal(t, "a|b|", string(tags[i][0].Value))
-		}
-	}
 }
 
 func TestSIDX_Query_Validation(t *testing.T) {
@@ -442,7 +457,6 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 			var (
 				expectedKeys []int64
 				expectedData [][]byte
-				expectedTags [][]Tag
 				expectedSIDs []common.SeriesID
 			)
 
@@ -451,7 +465,6 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 				require.NoError(t, res.Error)
 				expectedKeys = append(expectedKeys, res.Keys...)
 				expectedData = append(expectedData, res.Data...)
-				expectedTags = append(expectedTags, res.Tags...)
 				expectedSIDs = append(expectedSIDs, res.SIDs...)
 			}
 			if err, ok := <-errCh; ok {
@@ -462,7 +475,6 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 			var (
 				gotKeys []int64
 				gotData [][]byte
-				gotTags [][]Tag
 				gotSIDs []common.SeriesID
 			)
 
@@ -471,7 +483,6 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 				require.NoError(t, res.Error)
 				gotKeys = append(gotKeys, res.Keys...)
 				gotData = append(gotData, res.Data...)
-				gotTags = append(gotTags, res.Tags...)
 				gotSIDs = append(gotSIDs, res.SIDs...)
 			}
 			if err, ok := <-errCh2; ok {
@@ -481,7 +492,6 @@ func TestSIDX_StreamingQuery_MatchesBlockingQuery(t *testing.T) {
 			require.Equal(t, expectedKeys, gotKeys)
 			require.Equal(t, expectedData, gotData)
 			require.Equal(t, expectedSIDs, gotSIDs)
-			require.Equal(t, expectedTags, gotTags)
 			require.Equal(t, len(expectedKeys), len(gotKeys))
 		})
 	}

@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -100,6 +101,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
+	result.recordCursor, result.recordResult, result.finishResultSpan = startQueryResultSpan(pipelineCtx)
 
 	if result.keys == nil {
 		result.keys = make(map[string]int64)
@@ -133,7 +135,7 @@ func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
 }
 
 func (t *trace) GetTagValueDecoder() model.TagValueDecoder {
-	return mustDecodeTagValue
+	return mustDecodeTagValueAndArray
 }
 
 func (t *trace) ensureTSDB() (storage.TSDB[*tsTable, option], error) {
@@ -243,17 +245,20 @@ func (t *trace) prepareSIDXStreaming(
 type queryResult struct {
 	ctx                 context.Context
 	err                 error
-	currentBatch        *scanBatch
-	tagProjection       *model.TagProjection
+	streamDone          <-chan struct{}
+	recordCursor        func(*blockCursor)
 	keys                map[string]int64
 	cursorBatchCh       <-chan *scanBatch
 	cancel              context.CancelFunc
 	currentCursorGroups map[string][]*blockCursor
-	streamDone          <-chan struct{}
+	currentBatch        *scanBatch
+	tagProjection       *model.TagProjection
+	finishResultSpan    func(int, error)
+	recordResult        func(*model.TraceResult)
 	currentTraceIDs     []string
 	segments            []storage.Segment[*tsTable, option]
-	currentIndex        int
 	hit                 int
+	currentIndex        int
 }
 
 func (qr *queryResult) Pull() *model.TraceResult {
@@ -312,6 +317,10 @@ func (qr *queryResult) Pull() *model.TraceResult {
 		qr.currentIndex++
 		delete(qr.currentCursorGroups, traceID)
 
+		if qr.recordResult != nil {
+			qr.recordResult(result)
+		}
+
 		return result
 	}
 }
@@ -366,6 +375,9 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 						return true
 					}
 					if result.cursor != nil {
+						if qr.recordCursor != nil {
+							qr.recordCursor(result.cursor)
+						}
 						traceID := result.cursor.bm.traceID
 						qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
 					}
@@ -497,10 +509,29 @@ func (qr *queryResult) Release() {
 		qr.segments[i].DecRef()
 	}
 	qr.segments = qr.segments[:0]
+
+	qr.finishTracing(qr.err)
+}
+
+func (qr *queryResult) finishTracing(err error) {
+	if qr.finishResultSpan == nil {
+		return
+	}
+	qr.finishResultSpan(qr.hit, err)
+	qr.finishResultSpan = nil
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
-	if value == nil {
+	return mustDecodeTagValueAndArray(valueType, value, nil)
+}
+
+func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
+	if value == nil && valueArr == nil {
+		return pbv1.NullTagValue
+	}
+	if value == nil &&
+		valueType != pbv1.ValueTypeInt64Arr &&
+		valueType != pbv1.ValueTypeStrArr {
 		return pbv1.NullTagValue
 	}
 	switch valueType {
@@ -512,19 +543,31 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 		return binaryDataTagValue(value)
 	case pbv1.ValueTypeInt64Arr:
 		var values []int64
+		if valueArr != nil {
+			for _, v := range valueArr {
+				values = append(values, convert.BytesToInt64(v))
+			}
+			return int64ArrTagValue(values)
+		}
 		for i := 0; i < len(value); i += 8 {
 			values = append(values, convert.BytesToInt64(value[i:i+8]))
 		}
 		return int64ArrTagValue(values)
 	case pbv1.ValueTypeStrArr:
 		var values []string
+		if valueArr != nil {
+			for _, v := range valueArr {
+				values = append(values, string(v))
+			}
+			return strArrTagValue(values)
+		}
 		bb := bigValuePool.Generate()
 		defer bigValuePool.Release(bb)
 		var err error
 		for len(value) > 0 {
-			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)
+			bb.Buf, value, err = encoding.UnmarshalVarArray(bb.Buf[:0], value)
 			if err != nil {
-				logger.Panicf("unmarshalVarArray failed: %v", err)
+				logger.Panicf("UnmarshalVarArray failed: %v", err)
 			}
 			values = append(values, string(bb.Buf))
 		}

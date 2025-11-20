@@ -23,6 +23,7 @@ package sidx
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
@@ -51,20 +52,37 @@ func (t *tag) reset() {
 	t.valueType = pbv1.ValueTypeUnknown
 }
 
-// marshal marshals the tag value to a byte slice.
-func (t *tag) marshal() []byte {
-	if t.valueArr != nil {
-		var dst []byte
-		for i := range t.valueArr {
-			if t.valueType == pbv1.ValueTypeInt64Arr {
-				dst = append(dst, t.valueArr[i]...)
-				continue
-			}
-			dst = encoding.MarshalVarArray(dst, t.valueArr[i])
+func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte, error) {
+	if valueType == pbv1.ValueTypeInt64Arr {
+		for i := 0; i < len(src); i += 8 {
+			dest = append(dest, src[i:i+8])
 		}
-		return dst
+		return dest, nil
 	}
-	return t.value
+	if valueType == pbv1.ValueTypeStrArr {
+		bb := bigValuePool.Get()
+		if bb == nil {
+			bb = &bytes.Buffer{}
+		}
+		defer func() {
+			bb.Buf = bb.Buf[:0]
+			bigValuePool.Put(bb)
+		}()
+		var err error
+		for len(src) > 0 {
+			bb.Buf, src, err = encoding.UnmarshalVarArray(bb.Buf[:0], src)
+			if err != nil {
+				return nil, err
+			}
+			// Make a copy since bb.Buf will be reused
+			valueCopy := make([]byte, len(bb.Buf))
+			copy(valueCopy, bb.Buf)
+			dest = append(dest, valueCopy)
+		}
+		return dest, nil
+	}
+	dest = append(dest, src)
+	return dest, nil
 }
 
 // reset elements collection for pooling.

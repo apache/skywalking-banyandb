@@ -48,6 +48,11 @@ type SIDX interface {
 	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
 	// unique Data elements (when positive). The error channel delivers any fatal execution error.
 	StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error)
+	// ScanQuery executes a synchronous full scan query without requiring series IDs.
+	// It scans all blocks in parts sequentially and applies filters to each row.
+	// Returns a slice of QueryResponse objects containing all matching results.
+	// This is a synchronous operation suitable for dump/debug tools.
+	ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryResponse, error)
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
@@ -63,6 +68,8 @@ type SIDX interface {
 	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
 	// IntroduceSynced introduces a synced map to the SIDX instance.
 	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
+	// TakeFileSnapshot creates a snapshot of the SIDX files at the specified destination path.
+	TakeFileSnapshot(dst string) error
 }
 
 // WriteRequest contains data for a single write operation within a batch.
@@ -86,6 +93,26 @@ type QueryRequest struct {
 	MaxBatchSize  int
 }
 
+// ScanProgressFunc is a callback for reporting scan progress.
+// It receives the current part number (1-based), total parts, and rows found so far.
+type ScanProgressFunc func(currentPart, totalParts int, rowsFound int)
+
+// ScanQueryRequest specifies parameters for a full-scan query operation.
+// Unlike QueryRequest, this does not require SeriesIDs and does not support Filter
+// (all blocks are scanned, none are skipped).
+//
+//nolint:govet // struct layout optimized for readability; 64 bytes is acceptable
+type ScanQueryRequest struct {
+	TagFilter     model.TagFilterMatcher
+	TagProjection []model.TagProjection
+	OnProgress    ScanProgressFunc
+	MinKey        *int64
+	MaxKey        *int64
+	MaxBatchSize  int
+	// OnProgress is an optional callback for progress reporting during scan.
+	// Called after processing each part with the current progress.
+}
+
 // QueryResponse contains a batch of query results and execution metadata.
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
 // Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
@@ -93,9 +120,9 @@ type QueryResponse struct {
 	Error    error
 	Keys     []int64
 	Data     [][]byte
-	Tags     [][]Tag
 	SIDs     []common.SeriesID
 	PartIDs  []uint64
+	Tags     map[string][]string // Projected tags: tag name -> values for each row
 	Metadata ResponseMetadata
 }
 
@@ -109,7 +136,6 @@ func (qr *QueryResponse) Reset() {
 	qr.Error = nil
 	qr.Keys = qr.Keys[:0]
 	qr.Data = qr.Data[:0]
-	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
 	qr.PartIDs = qr.PartIDs[:0]
 	qr.Metadata = ResponseMetadata{}
@@ -132,20 +158,6 @@ func (qr *QueryResponse) Validate() error {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, partIDs=%d", keysLen, partIDsLen)
 	}
 
-	// Validate Tags structure if present
-	if len(qr.Tags) > 0 {
-		if len(qr.Tags) != keysLen {
-			return fmt.Errorf("tags length=%d, expected=%d", len(qr.Tags), keysLen)
-		}
-		for i, tagGroup := range qr.Tags {
-			for j, tag := range tagGroup {
-				if tag.Name == "" {
-					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
-				}
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -166,25 +178,6 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	}
 	for i, data := range other.Data {
 		qr.Data[i] = append(qr.Data[i][:0], data...)
-	}
-
-	// Deep copy tags
-	if cap(qr.Tags) < len(other.Tags) {
-		qr.Tags = make([][]Tag, len(other.Tags))
-	} else {
-		qr.Tags = qr.Tags[:len(other.Tags)]
-	}
-	for i, tagGroup := range other.Tags {
-		if cap(qr.Tags[i]) < len(tagGroup) {
-			qr.Tags[i] = make([]Tag, len(tagGroup))
-		} else {
-			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
-		}
-		for j, tag := range tagGroup {
-			qr.Tags[i][j].Name = tag.Name
-			qr.Tags[i][j].Value = append(qr.Tags[i][j].Value[:0], tag.Value...)
-			qr.Tags[i][j].ValueType = tag.ValueType
-		}
 	}
 
 	// Copy metadata
@@ -339,6 +332,17 @@ func (qr QueryRequest) Validate() error {
 	}
 	// Validate key range
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
+		return fmt.Errorf("MinKey cannot be greater than MaxKey")
+	}
+	return nil
+}
+
+// Validate validates a ScanQueryRequest for correctness.
+func (sqr ScanQueryRequest) Validate() error {
+	if sqr.MaxBatchSize < 0 {
+		return fmt.Errorf("maxBatchSize cannot be negative")
+	}
+	if sqr.MinKey != nil && sqr.MaxKey != nil && *sqr.MinKey > *sqr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
 	return nil
