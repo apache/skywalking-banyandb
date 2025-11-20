@@ -150,12 +150,9 @@ The server uses the official MCP TypeScript SDK (`@modelcontextprotocol/sdk`) an
 
 ### Debugging
 
-**📖 For detailed debugging instructions, see [DEBUGGING.md](./DEBUGGING.md)**
-
 Quick start:
-- **VS Code**: Press `F5` and select "Debug MCP Server (tsx)"
-- **Command line**: `BANYANDB_ADDRESS=localhost:17900 npx tsx --inspect src/index.ts`
-- Then attach Chrome DevTools at `chrome://inspect`
+- **VS Code**: Run → Start Debugging and select "Debug with MCP Server"
+- Go to the MCP Inspector page (http://localhost:6274)
 
 ### Troubleshooting
 

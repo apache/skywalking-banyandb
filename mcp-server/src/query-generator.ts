@@ -61,12 +61,48 @@ export class QueryGenerator {
   ]);
 
   /**
+   * Check if the input is already a valid BydbQL query.
+   */
+  private isAlreadyBydbQLQuery(description: string): boolean {
+    const trimmed = description.trim();
+    
+    // If it contains a TIME clause, it's almost certainly already a BydbQL query
+    // TIME clauses are specific to BydbQL syntax
+    const hasTimeClause = /\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed);
+    if (hasTimeClause && /^\s*SELECT\s+/i.test(trimmed)) {
+      return true;
+    }
+    
+    // More lenient check: if it starts with SELECT and contains FROM with a resource type, it's likely a BydbQL query
+    // This handles cases where IN might be lowercase or the structure is slightly different
+    const hasSelectFrom = /^\s*SELECT\s+/i.test(trimmed);
+    const hasFromResourceType = /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+/i.test(trimmed);
+    
+    // Also check for common BydbQL keywords that indicate it's already a query
+    const hasBydbQLKeywords = /\b(IN|TIME|WHERE|ORDER\s+BY|LIMIT)\b/i.test(trimmed);
+    
+    // If it has SELECT, FROM with resource type, and BydbQL keywords, it's likely already a BydbQL query
+    return hasSelectFrom && hasFromResourceType && hasBydbQLKeywords;
+  }
+
+  /**
    * Generate a BydbQL query from a natural language description.
    */
   async generateQuery(
     description: string,
     args: Record<string, any>
-  ): Promise<string> { 
+  ): Promise<string> {
+    // If the input is already a valid BydbQL query, return it as-is
+    // This preserves TIME clauses and other query components exactly as provided
+    if (this.isAlreadyBydbQLQuery(description)) {
+      const trimmed = description.trim();
+      // Double-check: if it contains a TIME clause, definitely return as-is
+      if (/\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed)) {
+        return trimmed;
+      }
+      return trimmed;
+    }
+
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
@@ -85,10 +121,15 @@ export class QueryGenerator {
     description: string,
     args: Record<string, any>
   ): Promise<string> {
+    // Safety check: if this is already a complete BydbQL query, return it as-is
+    // This prevents the LLM from modifying valid queries
+    if (this.isAlreadyBydbQLQuery(description)) {
+      return description.trim();
+    }
+
     if (!this.openaiClient) {
       throw new Error("OpenAI client not initialized");
     }
-
     const resourceType = args.resource_type || this.detectResourceType(description, args) || "stream";
     const resourceName = args.resource_name || this.detectResourceName(description) || "sw";
     const group = args.group || this.detectGroup(description) || "default";
@@ -96,10 +137,13 @@ export class QueryGenerator {
     const prompt = `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
 
 BydbQL Syntax:
-- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [WHERE clause] [LIMIT n]
-- Resource types: STREAM, MEASURE, TRACE, PROPERTY
+- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [WHERE clause] [ORDER BY clause] [LIMIT n]
+- Resource types: STREAM, MEASURE, TRACE, PROPERTY, TOPN
 - TIME clause examples: TIME >= '-1h', TIME > '-30m', TIME BETWEEN '-24h' AND '-1h'
 - WHERE clause examples: WHERE status = 'error', WHERE service_id = 'webapp'
+- ORDER BY clause examples: ORDER BY latency DESC, ORDER BY start_time ASC, ORDER BY TIME DESC
+- ORDER BY supports: ORDER BY field [ASC|DESC], ORDER BY TIME [ASC|DESC] (shorthand for timestamps)
+- Common ORDER BY fields: latency, start_time, timestamp, timestamp_millis, duration, value
 - Default LIMIT is 100
 - Use TIME > for "after" or "more than", TIME >= for "from" or "since"
 
@@ -109,6 +153,9 @@ IMPORTANT: Use these EXACT values detected from the description:
 - Resource type: ${resourceType.toUpperCase()}
 - Resource name: ${resourceName}
 - Group name: ${group}
+
+CRITICAL: If the user description contains a TIME clause, you MUST preserve it exactly as provided. Do not remove or modify TIME clauses.
+CRITICAL: If the user description contains an ORDER BY clause, you MUST preserve it in the generated query. Do not remove or modify ORDER BY clauses.
 
 Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 
@@ -149,6 +196,11 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
     description: string,
     args: Record<string, any>
   ): string {
+    // Safety check: if this is already a complete BydbQL query, return it as-is
+    if (this.isAlreadyBydbQLQuery(description)) {
+      return description.trim();
+    }
+
     // Determine resource type
     const resourceType = this.detectResourceType(description, args) || "stream";
 
@@ -182,6 +234,9 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
     // Build WHERE clause
     const whereClause = this.buildWhereClause(description);
 
+    // Build ORDER BY clause
+    const orderByClause = this.buildOrderByClause(description);
+
     // Build SELECT clause
     const selectClause = this.buildSelectClause(description, resourceType);
 
@@ -194,6 +249,10 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
 
     if (whereClause) {
       query += ` ${whereClause}`;
+    }
+
+    if (orderByClause) {
+      query += ` ${orderByClause}`;
     }
 
     query += " LIMIT 100";
@@ -309,9 +368,43 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
   }
 
   /**
+   * Extract existing TIME clause from the description if present.
+   */
+  private extractExistingTimeClause(description: string): string | null {
+    // Pattern to match TIME clauses: TIME [operator] '[value]' or TIME BETWEEN '[value1]' AND '[value2]'
+    // Match patterns like: TIME > '-24h', TIME >= '-1h', TIME BETWEEN '-24h' AND '-1h'
+    const timeClausePatterns = [
+      // TIME BETWEEN pattern
+      /\bTIME\s+BETWEEN\s+['"]([^'"]+)['"]\s+AND\s+['"]([^'"]+)['"]/i,
+      // TIME with comparison operators
+      /\bTIME\s+(>=|<=|>|<|=)\s+['"]([^'"]+)['"]/i,
+    ];
+
+    for (const pattern of timeClausePatterns) {
+      const match = description.match(pattern);
+      if (match) {
+        if (match[0].includes('BETWEEN')) {
+          // TIME BETWEEN pattern
+          return `TIME BETWEEN '${match[1]}' AND '${match[2]}'`;
+        } else {
+          // TIME with comparison operator
+          return `TIME ${match[1]} '${match[2]}'`;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Build a TIME clause from the description.
    */
   private buildTimeClause(description: string): string {
+    // First, check if there's already a TIME clause in the input
+    const existingTimeClause = this.extractExistingTimeClause(description);
+    if (existingTimeClause) {
+      return existingTimeClause;
+    }
+
     const lowerDescription = description.toLowerCase();
 
     // Check for relative time patterns
@@ -420,6 +513,80 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
 
     // Default to select all
     return "*";
+  }
+
+  /**
+   * Build an ORDER BY clause from the description.
+   */
+  private buildOrderByClause(description: string): string {
+    const lowerDescription = description.toLowerCase();
+
+    // Explicit "order by" patterns (highest priority)
+    const orderByMatch = description.match(/order\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i);
+    if (orderByMatch) {
+      const field = orderByMatch[1];
+      const direction = orderByMatch[2] 
+        ? (orderByMatch[2].toLowerCase().startsWith("desc") ? "DESC" : "ASC")
+        : "DESC"; // Default to DESC if not specified
+      return `ORDER BY ${field} ${direction}`;
+    }
+
+    // "sort by" patterns
+    const sortByMatch = description.match(/sort\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i);
+    if (sortByMatch) {
+      const field = sortByMatch[1];
+      const direction = sortByMatch[2]
+        ? (sortByMatch[2].toLowerCase().startsWith("desc") ? "DESC" : "ASC")
+        : "DESC";
+      return `ORDER BY ${field} ${direction}`;
+    }
+
+    // Natural language patterns for ordering
+    const highestMatch = description.match(/(highest|largest|biggest|longest|slowest|top)\s+(?:by\s+)?(\w+)/i);
+    if (highestMatch) {
+      return `ORDER BY ${highestMatch[2]} DESC`;
+    }
+
+    const lowestMatch = description.match(/(lowest|smallest|shortest|fastest|bottom)\s+(?:by\s+)?(\w+)/i);
+    if (lowestMatch) {
+      return `ORDER BY ${lowestMatch[2]} ASC`;
+    }
+
+    // Check for common field names that suggest ordering
+    const commonOrderFields = [
+      "latency",
+      "duration",
+      "start_time",
+      "timestamp",
+      "time",
+      "value",
+      "response_time",
+    ];
+
+    for (const field of commonOrderFields) {
+      // Check if the field is mentioned with ordering context
+      const fieldPattern = new RegExp(
+        `(?:order|sort|highest|lowest|largest|smallest|top|bottom).*?${field}|${field}.*?(?:desc|asc|descending|ascending|highest|lowest)`,
+        "i"
+      );
+      if (fieldPattern.test(lowerDescription)) {
+        // Determine direction based on context
+        let direction: "ASC" | "DESC" = "DESC";
+        if (
+          lowerDescription.includes("lowest") ||
+          lowerDescription.includes("smallest") ||
+          lowerDescription.includes("shortest") ||
+          lowerDescription.includes("fastest") ||
+          lowerDescription.includes("bottom") ||
+          lowerDescription.includes("asc")
+        ) {
+          direction = "ASC";
+        }
+        return `ORDER BY ${field} ${direction}`;
+      }
+    }
+
+    return "";
   }
 }
 
