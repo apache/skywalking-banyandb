@@ -26,6 +26,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -175,13 +177,21 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		// Calculate max handoff size based on percentage of disk space
 		// Formula: totalDisk * maxDiskUsagePercent * handoffMaxSizePercent / 10000
 		// Example: 100GB disk, 95% max usage, 10% handoff = 100 * 95 * 10 / 10000 = 9.5GB
-		maxSize := 0
+		var maxSizeBytes uint64
 		if l.handoffMaxSizePercent > 0 {
 			totalSpace := l.lfs.MustGetTotalSpace(l.dataPath)
 			// Divide after each multiplication to avoid overflow with large disk capacities
-			maxSizeBytes := totalSpace * uint64(l.maxDiskUsagePercent) / 100 * uint64(l.handoffMaxSizePercent) / 100
-			maxSize = int(maxSizeBytes / 1024 / 1024)
+			maxSizeBytes = totalSpace * uint64(l.maxDiskUsagePercent) / 100 * uint64(l.handoffMaxSizePercent) / 100
 		}
+		if maxSizeBytes == 0 {
+			return fmt.Errorf("handoff max size is 0 because handoff-max-size-percent is 0 or not set. " +
+				"Set BYDB_HANDOFF_MAX_SIZE_PERCENT environment variable or --handoff-max-size-percent flag to enable handoff storage limit")
+		}
+		l.l.Info().
+			Str("maxSizeBytes", humanize.Bytes(maxSizeBytes)).
+			Int("maxSizePercent", l.handoffMaxSizePercent).
+			Int("diskUsagePercent", l.maxDiskUsagePercent).
+			Msg("handoff max size")
 
 		// nolint:contextcheck
 		resolveAssignments := func(group string, shardID uint32) ([]string, error) {
@@ -218,13 +228,13 @@ func (l *liaison) PreRun(ctx context.Context) error {
 
 		var err error
 		// nolint:contextcheck
-		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSize, l.l, resolveAssignments)
+		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSizeBytes, l.l, resolveAssignments)
 		if err != nil {
 			return err
 		}
 		l.l.Info().
 			Int("dataNodes", len(l.dataNodeList)).
-			Int("maxSize", maxSize).
+			Uint64("maxSize", maxSizeBytes).
 			Int("maxSizePercent", l.handoffMaxSizePercent).
 			Int("diskUsagePercent", l.maxDiskUsagePercent).
 			Msg("handoff controller initialized")
