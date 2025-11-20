@@ -18,13 +18,14 @@
  */
 
 import OpenAI from "openai";
+import { generateQueryPrompt } from "./llm-prompt.js";
 
 /**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
  * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
  */
 export class QueryGenerator {
-  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for OpenAI API calls
+  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for TARS API calls
   
   private openaiClient: OpenAI | null = null;
 
@@ -32,7 +33,7 @@ export class QueryGenerator {
     if (apiKey) {
       this.openaiClient = new OpenAI({
         apiKey: apiKey,
-        timeout: QueryGenerator.OPENAI_API_TIMEOUT_MS,
+        baseURL: "https://api.router.tetrate.ai/v1",
       });
     }
   }
@@ -98,7 +99,7 @@ export class QueryGenerator {
     const hasFromResourceType = /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY)\s+/i.test(trimmed);
     
     // Also check for common BydbQL keywords that indicate it's already a query
-    const hasBydbQLKeywords = /\b(IN|TIME|ORDER\s+BY|LIMIT|TOP)\b/i.test(trimmed);
+    const hasBydbQLKeywords = /\b(IN|TIME|ORDER\s+BY|TOP)\b/i.test(trimmed);
     
     // If it has SELECT, FROM with resource type, and BydbQL keywords, it's likely already a BydbQL query
     return hasSelectFrom && hasFromResourceType && hasBydbQLKeywords;
@@ -156,44 +157,18 @@ export class QueryGenerator {
     const aggregateByClause = this.extractExistingAggregateByClause(description);
     const orderByClause = this.extractExistingOrderByClause(description);
 
-    const prompt = `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
-
-BydbQL Syntax:
-- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [ORDER BY clause] [LIMIT n]
-- Resource types: STREAM, MEASURE, TRACE, PROPERTY
-- TIME clause examples: TIME >= '-1h', TIME > '-30m', TIME BETWEEN '-24h' AND '-1h'
-- ORDER BY clause examples: ORDER BY latency DESC, ORDER BY start_time ASC, ORDER BY TIME DESC
-- ORDER BY supports: ORDER BY field [ASC|DESC], ORDER BY TIME [ASC|DESC] (shorthand for timestamps)
-- ORDER BY fields are flexible: You can use any field from the resource for ordering. Common examples include: latency, start_time, timestamp, timestamp_millis, duration, value, but any valid field can be used
-- Default LIMIT is 100
-- Use TIME > for "after" or "more than", TIME >= for "from" or "since"
-
-Top-N Query Syntax (for measures):
-- SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
-- IMPORTANT: Clause order must be: TIME, then AGGREGATE BY (if present), then ORDER BY (if present)
-- AGGREGATE BY clause: AGGREGATE BY SUM | MEAN | COUNT | MAX | MIN
-- AGGREGATE BY examples: AGGREGATE BY SUM, AGGREGATE BY MAX, AGGREGATE BY MEAN
-- AGGREGATE BY is used to aggregate data points over the time range (SUM for totals, MAX for maximum values, MIN for minimum values, MEAN/AVG for averages, COUNT for counts)
-- ORDER BY clause: ORDER BY DESC (for highest values) or ORDER BY ASC (for lowest values) - field name is optional for TOPN queries
-- CRITICAL: AGGREGATE BY must come BEFORE ORDER BY in the query
-
-User description: "${description}"
-
-IMPORTANT: Use these EXACT values detected from the description:
-- Resource type: ${resourceType.toUpperCase()}
-- Resource name: ${resourceName}
-- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ''}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ''}
-
-CRITICAL: If the user description contains a TIME clause, you MUST preserve it exactly as provided. Do not remove or modify TIME clauses.
-CRITICAL: If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query. Do not remove or modify AGGREGATE BY clauses.${aggregateByClause ? ` Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ''}
-CRITICAL: If the user description contains an ORDER BY clause, you MUST preserve it in the generated query. Do not remove or modify ORDER BY clauses.${orderByClause ? ` Use this EXACT ORDER BY clause: ${orderByClause}` : ''}
-CRITICAL: For TOPN queries, the clause order MUST be: TIME, then WHERE (if present), then AGGREGATE BY (if present), then ORDER BY (if present). AGGREGATE BY must always come before ORDER BY.
-
-Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
+    const prompt = generateQueryPrompt(
+      description,
+      resourceType,
+      resourceName,
+      group,
+      aggregateByClause,
+      orderByClause
+    );
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "o3-mini",
         messages: [
           {
             role: "system",
@@ -204,11 +179,9 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
             content: prompt,
           },
         ],
-        temperature: 0.1,
-        max_tokens: 200,
       }),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("OpenAI API timeout after 20 seconds")), QueryGenerator.OPENAI_API_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`TARS API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`)), QueryGenerator.OPENAI_API_TIMEOUT_MS)
       ),
     ]);
 
@@ -278,15 +251,12 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
     if (timeClause) {
       query += ` ${timeClause}`;
     }
-    if (orderByClause) {
-      query += ` ${orderByClause}`;
-    }
-
     if (aggregateByClause) {
       query += ` ${aggregateByClause}`;
     }
-
-    query += " LIMIT 100";
+    if (orderByClause) {
+      query += ` ${orderByClause}`;
+    }
 
     return query;
   }

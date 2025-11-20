@@ -19,6 +19,8 @@
  * under the License.
  */
 
+import dotenv from "dotenv";
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -28,8 +30,11 @@ import {
 import { BanyanDBClient } from "./banyandb-client.js";
 import { QueryGenerator } from "./query-generator.js";
 
+// Load environment variables first
+dotenv.config();
+
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || "localhost:17900";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const TARS_API_KEY = process.env.TARS_API_KEY;
 
 async function main() {
   // Create MCP server
@@ -47,10 +52,10 @@ async function main() {
 
   // Initialize BanyanDB client
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
-  const queryGenerator = new QueryGenerator(OPENAI_API_KEY);
+  const queryGenerator = new QueryGenerator(TARS_API_KEY);
 
-  if (OPENAI_API_KEY) {
-    console.error("[MCP] LLM query generation enabled (using OpenAI)");
+  if (TARS_API_KEY) {
+    console.error("[MCP] LLM query generation enabled (using Tetrate Agent Router Service)");
   } else {
     console.error("[MCP] LLM query generation disabled, using pattern matching");
   }
@@ -225,9 +230,9 @@ async function main() {
                 text: `Query generation timeout: ${error.message}\n\n` +
                       `The LLM query generation timed out. Falling back to pattern-based generation...\n` +
                       `If this persists, try:\n` +
-                      `1. Check your OpenAI API key and network connectivity\n` +
+                      `1. Check your TARS API key and network connectivity\n` +
                       `2. Use more specific query descriptions\n` +
-                      `3. Set OPENAI_API_KEY environment variable if not already set`,
+                      `3. Set TARS_API_KEY environment variable if not already set`,
               },
             ],
           };
