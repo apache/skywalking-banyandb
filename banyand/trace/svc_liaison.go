@@ -173,7 +173,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 	// Initialize handoff controller if data nodes are configured
 	l.l.Info().Strs("dataNodeList", l.dataNodeList).Int("maxSizePercent", l.handoffMaxSizePercent).
 		Msg("handoff configuration")
-	if len(l.dataNodeList) > 0 && l.option.tire2Client != nil {
+	if len(l.dataNodeList) > 0 && l.option.tire2Client != nil && l.handoffMaxSizePercent > 0 {
 		// Calculate max handoff size based on percentage of disk space
 		// Formula: totalDisk * maxDiskUsagePercent * handoffMaxSizePercent / 10000
 		// Example: 100GB disk, 95% max usage, 10% handoff = 100 * 95 * 10 / 10000 = 9.5GB
