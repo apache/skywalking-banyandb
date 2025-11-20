@@ -158,10 +158,7 @@ func dumpSidx(sidxPath, segmentPath, criteriaJSON string, csvOutput bool, timeBe
 	// Filter parts by time range if specified
 	var partIDs []uint64
 	if hasTimeRange {
-		partIDs, err = filterPartsByTimeRange(sidxPath, allPartIDs, minKeyNanos, maxKeyNanos)
-		if err != nil {
-			return fmt.Errorf("failed to filter parts by time range: %w", err)
-		}
+		partIDs = filterPartsByTimeRange(sidxPath, allPartIDs, minKeyNanos, maxKeyNanos)
 		fmt.Fprintf(os.Stderr, "Filtered to %d parts (out of %d) based on time range\n", len(partIDs), len(allPartIDs))
 	} else {
 		partIDs = allPartIDs
@@ -183,7 +180,7 @@ func dumpSidx(sidxPath, segmentPath, criteriaJSON string, csvOutput bool, timeBe
 
 	// Use full-scan mode if requested
 	if fullScan {
-		return dumpSidxFullScan(sidxPath, segmentPath, criteria, csvOutput, hasTimeRange, minKeyNanos, maxKeyNanos, allPartIDs, partIDs, tagNames, dataFilter)
+		return dumpSidxFullScan(sidxPath, segmentPath, criteria, csvOutput, hasTimeRange, minKeyNanos, maxKeyNanos, partIDs, tagNames, dataFilter)
 	}
 
 	// Open the file system
@@ -274,7 +271,7 @@ func parseTimeRange(timeBegin, timeEnd string) (int64, int64, error) {
 	return minKeyNanos, maxKeyNanos, nil
 }
 
-func filterPartsByTimeRange(sidxPath string, partIDs []uint64, minKey, maxKey int64) ([]uint64, error) {
+func filterPartsByTimeRange(sidxPath string, partIDs []uint64, minKey, maxKey int64) []uint64 {
 	fileSystem := fs.NewLocalFileSystem()
 	var filteredParts []uint64
 
@@ -306,7 +303,7 @@ func filterPartsByTimeRange(sidxPath string, partIDs []uint64, minKey, maxKey in
 		}
 	}
 
-	return filteredParts, nil
+	return filteredParts
 }
 
 func parseCriteriaJSON(criteriaJSON string) (*modelv1.Criteria, error) {
@@ -407,7 +404,9 @@ func discoverSeriesIDs(segmentPath string) ([]common.SeriesID, error) {
 	return seriesIDs, nil
 }
 
-func buildQueryRequest(criteria *modelv1.Criteria, seriesIDs []common.SeriesID, hasTimeRange bool, minKeyNanos, maxKeyNanos int64, tagRegistry *dynamicTagRegistry) (sidx.QueryRequest, error) {
+func buildQueryRequest(
+	criteria *modelv1.Criteria, seriesIDs []common.SeriesID, hasTimeRange bool, minKeyNanos, maxKeyNanos int64, tagRegistry *dynamicTagRegistry,
+) (sidx.QueryRequest, error) {
 	// Use discovered series IDs if available, otherwise fall back to default range
 	if len(seriesIDs) == 0 {
 		// Use a range of series IDs to increase chance of finding data
@@ -582,8 +581,8 @@ func outputSidxResultsAsCSV(resultsCh <-chan *sidx.QueryResponse, errCh <-chan e
 	return nil
 }
 
-// simpleTagValueDecoder is a simple decoder for tag values used in filtering
-// It handles basic tag value types without needing full schema information
+// simpleTagValueDecoder is a simple decoder for tag values used in filtering.
+// It handles basic tag value types without needing full schema information.
 func simpleTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
 	if value == nil && valueArr == nil {
 		return pbv1.NullTagValue
@@ -648,12 +647,12 @@ func simpleTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]
 	}
 }
 
-// dynamicTagRegistry implements TagSpecRegistry by discovering tags from the sidx
+// dynamicTagRegistry implements TagSpecRegistry by discovering tags from the sidx.
 type dynamicTagRegistry struct {
 	tagSpecs map[string]*logical.TagSpec
 }
 
-// newDynamicTagRegistry creates a registry by discovering tag names from the sidx directory
+// newDynamicTagRegistry creates a registry by discovering tag names from the sidx directory.
 func newDynamicTagRegistry(sidxPath string) (*dynamicTagRegistry, error) {
 	registry := &dynamicTagRegistry{
 		tagSpecs: make(map[string]*logical.TagSpec),
@@ -732,49 +731,49 @@ func (d *dynamicTagRegistry) FindTagSpecByName(name string) *logical.TagSpec {
 	}
 }
 
-// IndexDefined implements IndexChecker interface (stub implementation)
+// IndexDefined implements IndexChecker interface (stub implementation).
 func (d *dynamicTagRegistry) IndexDefined(_ string) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
-// IndexRuleDefined implements IndexChecker interface (stub implementation)
+// IndexRuleDefined implements IndexChecker interface (stub implementation).
 func (d *dynamicTagRegistry) IndexRuleDefined(_ string) (bool, *databasev1.IndexRule) {
 	return false, nil
 }
 
-// EntityList implements Schema interface (stub implementation)
+// EntityList implements Schema interface (stub implementation).
 func (d *dynamicTagRegistry) EntityList() []string {
 	return nil
 }
 
-// CreateTagRef implements Schema interface (stub implementation)
-func (d *dynamicTagRegistry) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+// CreateTagRef implements Schema interface (stub implementation).
+func (d *dynamicTagRegistry) CreateTagRef(_ ...[]*logical.Tag) ([][]*logical.TagRef, error) {
 	return nil, fmt.Errorf("CreateTagRef not supported in dump tool")
 }
 
-// CreateFieldRef implements Schema interface (stub implementation)
-func (d *dynamicTagRegistry) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+// CreateFieldRef implements Schema interface (stub implementation).
+func (d *dynamicTagRegistry) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error) {
 	return nil, fmt.Errorf("CreateFieldRef not supported in dump tool")
 }
 
-// ProjTags implements Schema interface (stub implementation)
-func (d *dynamicTagRegistry) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+// ProjTags implements Schema interface (stub implementation).
+func (d *dynamicTagRegistry) ProjTags(_ ...[]*logical.TagRef) logical.Schema {
 	return d
 }
 
-// ProjFields implements Schema interface (stub implementation)
-func (d *dynamicTagRegistry) ProjFields(refs ...*logical.FieldRef) logical.Schema {
+// ProjFields implements Schema interface (stub implementation).
+func (d *dynamicTagRegistry) ProjFields(_ ...*logical.FieldRef) logical.Schema {
 	return d
 }
 
-// Children implements Schema interface (stub implementation)
+// Children implements Schema interface (stub implementation).
 func (d *dynamicTagRegistry) Children() []logical.Schema {
 	return nil
 }
 
 func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, csvOutput bool,
-	hasTimeRange bool, minKeyNanos, maxKeyNanos int64, allPartIDs, partIDs []uint64, projectionTagNames []string, dataFilter string) error {
-
+	hasTimeRange bool, minKeyNanos, maxKeyNanos int64, partIDs []uint64, projectionTagNames []string, dataFilter string,
+) error {
 	fmt.Fprintf(os.Stderr, "Using full-scan mode (no series ID filtering)\n")
 
 	// Load series information for human-readable output
@@ -801,10 +800,10 @@ func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, 
 	// Create dynamic tag registry if criteria is provided
 	var tagRegistry *dynamicTagRegistry
 	if criteria != nil {
-		var err error
-		tagRegistry, err = newDynamicTagRegistry(sidxPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to create tag registry: %v\n", err)
+		var regErr error
+		tagRegistry, regErr = newDynamicTagRegistry(sidxPath)
+		if regErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create tag registry: %v\n", regErr)
 		}
 	}
 
@@ -838,9 +837,9 @@ func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, 
 	if criteria != nil && tagRegistry != nil {
 		fmt.Fprintf(os.Stderr, "Discovered %d tags from sidx\n", len(tagRegistry.tagSpecs))
 
-		tagFilter, err := logical.BuildSimpleTagFilter(criteria)
-		if err != nil {
-			return fmt.Errorf("failed to build tag filter: %w", err)
+		tagFilter, filterErr := logical.BuildSimpleTagFilter(criteria)
+		if filterErr != nil {
+			return fmt.Errorf("failed to build tag filter: %w", filterErr)
 		}
 		if tagFilter != nil && tagFilter != logical.DummyFilter {
 			scanReq.TagFilter = logical.NewTagFilterMatcher(tagFilter, tagRegistry, simpleTagValueDecoder)
@@ -884,7 +883,7 @@ func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, 
 	return outputScanResultsAsText(results, sidxPath, seriesMap, projectionTagNames, dataFilter)
 }
 
-// parseProjectionTags parses a comma-separated list of tag names
+// parseProjectionTags parses a comma-separated list of tag names.
 func parseProjectionTags(projectionStr string) []string {
 	if projectionStr == "" {
 		return nil
@@ -901,7 +900,7 @@ func parseProjectionTags(projectionStr string) []string {
 	return result
 }
 
-// loadSeriesMap loads all series from the segment's series index and creates a map from SeriesID to text representation
+// loadSeriesMap loads all series from the segment's series index and creates a map from SeriesID to text representation.
 func loadSeriesMap(segmentPath string) (map[common.SeriesID]string, error) {
 	seriesIndexPath := filepath.Join(segmentPath, "sidx")
 
@@ -952,7 +951,6 @@ func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, ser
 		}
 
 		batchPrinted := false
-		batchStartRow := totalRows
 
 		for i := 0; i < resp.Len(); i++ {
 			dataStr := string(resp.Data[i])
@@ -999,10 +997,7 @@ func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, ser
 			totalRows++
 		}
 
-		// Add newline after batch if we printed anything
-		if batchPrinted && totalRows > batchStartRow {
-			// Already added newline after each row
-		}
+		// (Already added newline after each row)
 	}
 
 	if dataFilter != "" {

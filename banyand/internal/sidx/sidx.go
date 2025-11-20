@@ -515,7 +515,7 @@ func (bc *blockCursor) copyTo(result *QueryResponse) bool {
 	return true
 }
 
-// formatTagValue converts a Tag to a string representation
+// formatTagValue converts a Tag to a string representation.
 func formatTagValue(tag Tag) string {
 	if len(tag.ValueArr) > 0 {
 		// Array of values

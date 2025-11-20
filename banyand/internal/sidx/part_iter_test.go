@@ -690,4 +690,3 @@ func (smf *selectiveMockBlockFilter) String() string {
 func (smf *selectiveMockBlockFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
 	return nil, nil, nil
 }
-

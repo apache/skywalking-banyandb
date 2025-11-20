@@ -105,176 +105,7 @@ Supports filtering by criteria and projecting specific tags.`,
 	return cmd
 }
 
-func dumpTracePart(partPath string, verbose bool, csvOutput bool) error {
-	// Get the part ID from the directory name
-	partName := filepath.Base(partPath)
-	partID, err := strconv.ParseUint(partName, 16, 64)
-	if err != nil {
-		return fmt.Errorf("invalid part name %q: %w", partName, err)
-	}
-
-	// Get the root path (parent directory)
-	rootPath := filepath.Dir(partPath)
-
-	// Open the file system
-	fileSystem := fs.NewLocalFileSystem()
-
-	// Open the part
-	p, err := openFilePart(partID, rootPath, fileSystem)
-	if err != nil {
-		return fmt.Errorf("failed to open part: %w", err)
-	}
-	defer closePart(p)
-
-	if csvOutput {
-		return dumpPartAsCSV(p)
-	}
-
-	// Original text output
-	fmt.Printf("Opening trace part: %s (ID: %d)\n", partPath, partID)
-	fmt.Printf("================================================================================\n\n")
-
-	// Print part metadata
-	fmt.Printf("Part Metadata:\n")
-	fmt.Printf("  ID: %d (0x%016x)\n", p.partMetadata.ID, p.partMetadata.ID)
-	fmt.Printf("  Total Count: %d\n", p.partMetadata.TotalCount)
-	fmt.Printf("  Blocks Count: %d\n", p.partMetadata.BlocksCount)
-	fmt.Printf("  Min Timestamp: %s (%d)\n", formatTimestamp(p.partMetadata.MinTimestamp), p.partMetadata.MinTimestamp)
-	fmt.Printf("  Max Timestamp: %s (%d)\n", formatTimestamp(p.partMetadata.MaxTimestamp), p.partMetadata.MaxTimestamp)
-	fmt.Printf("  Compressed Size: %d bytes\n", p.partMetadata.CompressedSizeBytes)
-	fmt.Printf("  Uncompressed Span Size: %d bytes\n", p.partMetadata.UncompressedSpanSizeBytes)
-	fmt.Printf("\n")
-
-	// Print tag types
-	if len(p.tagType) > 0 {
-		fmt.Printf("Tag Types:\n")
-		tagNames := make([]string, 0, len(p.tagType))
-		for name := range p.tagType {
-			tagNames = append(tagNames, name)
-		}
-		sort.Strings(tagNames)
-		for _, name := range tagNames {
-			fmt.Printf("  %s: %s\n", name, valueTypeName(p.tagType[name]))
-		}
-		fmt.Printf("\n")
-	}
-
-	// Print primary block metadata
-	fmt.Printf("Primary Block Metadata (Total: %d blocks):\n", len(p.primaryBlockMetadata))
-	fmt.Printf("--------------------------------------------------------------------------------\n")
-	for i, pbm := range p.primaryBlockMetadata {
-		fmt.Printf("Block %d:\n", i)
-		fmt.Printf("  TraceID: %s\n", pbm.traceID)
-		fmt.Printf("  Offset: %d\n", pbm.offset)
-		fmt.Printf("  Size: %d bytes\n", pbm.size)
-
-		// Read and decompress the primary data for this block
-		if verbose {
-			primaryData := make([]byte, pbm.size)
-			fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-			decompressed, err := zstd.Decompress(nil, primaryData)
-			if err == nil {
-				fmt.Printf("  Primary Data (decompressed %d bytes):\n", len(decompressed))
-				printHexDump(decompressed, 4)
-			}
-		}
-	}
-	fmt.Printf("\n")
-
-	// Read and display trace data
-	fmt.Printf("Trace Data:\n")
-	fmt.Printf("================================================================================\n\n")
-
-	decoder := &encoding.BytesBlockDecoder{}
-
-	rowNum := 0
-	for _, pbm := range p.primaryBlockMetadata {
-		// Read primary data block
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-
-		// Decompress
-		decompressed, err := zstd.Decompress(nil, primaryData)
-		if err != nil {
-			fmt.Printf("Error decompressing primary data: %v\n", err)
-			continue
-		}
-
-		// Parse ALL block metadata entries from this primary block
-		blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
-		if err != nil {
-			fmt.Printf("Error parsing block metadata: %v\n", err)
-			continue
-		}
-
-		// Process each trace block within this primary block
-		for _, bm := range blockMetadatas {
-			// Read spans
-			spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
-			if err != nil {
-				fmt.Printf("Error reading spans for trace %s: %v\n", bm.traceID, err)
-				continue
-			}
-
-			// Read tags
-			tags := make(map[string][][]byte)
-			for tagName, tagBlock := range bm.tags {
-				tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count), p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
-				if err != nil {
-					fmt.Printf("Error reading tag %s for trace %s: %v\n", tagName, bm.traceID, err)
-					continue
-				}
-				tags[tagName] = tagValues
-			}
-
-			// Display each span as a row
-			for i := 0; i < len(spans); i++ {
-				rowNum++
-				fmt.Printf("Row %d:\n", rowNum)
-				fmt.Printf("  TraceID: %s\n", bm.traceID)
-				fmt.Printf("  SpanID: %s\n", spanIDs[i])
-				fmt.Printf("  Span Data: %d bytes\n", len(spans[i]))
-				if verbose {
-					fmt.Printf("  Span Content:\n")
-					printHexDump(spans[i], 4)
-				} else {
-					// Try to print as string if it's printable
-					if isPrintable(spans[i]) {
-						fmt.Printf("  Span: %s\n", string(spans[i]))
-					} else {
-						fmt.Printf("  Span: (binary data, %d bytes)\n", len(spans[i]))
-					}
-				}
-
-				// Print tags for this span
-				if len(tags) > 0 {
-					fmt.Printf("  Tags:\n")
-					tagNames := make([]string, 0, len(tags))
-					for name := range tags {
-						tagNames = append(tagNames, name)
-					}
-					sort.Strings(tagNames)
-					for _, name := range tagNames {
-						if i < len(tags[name]) {
-							tagValue := tags[name][i]
-							if tagValue == nil {
-								fmt.Printf("    %s: <nil>\n", name)
-							} else {
-								valueType := p.tagType[name]
-								fmt.Printf("    %s (%s): %s\n", name, valueTypeName(valueType), formatTagValueForDisplay(tagValue, valueType))
-							}
-						}
-					}
-				}
-				fmt.Printf("\n")
-			}
-		}
-	}
-
-	fmt.Printf("Total rows: %d\n", rowNum)
-	return nil
-}
-
+//nolint:gocyclo // dumpTraceShard has high complexity due to multiple output formats and filtering options
 func dumpTraceShard(shardPath, segmentPath string, verbose bool, csvOutput bool, criteriaJSON, projectionTagsStr string) error {
 	// Discover all part directories in the shard
 	partIDs, err := discoverTracePartIDs(shardPath)
@@ -465,114 +296,6 @@ func dumpTraceShard(shardPath, segmentPath string, verbose bool, csvOutput bool,
 	return nil
 }
 
-func dumpPartAsCSV(p *part) error {
-	decoder := &encoding.BytesBlockDecoder{}
-
-	// Collect all tag names in sorted order
-	allTagNames := make([]string, 0, len(p.tagType))
-	for name := range p.tagType {
-		allTagNames = append(allTagNames, name)
-	}
-	sort.Strings(allTagNames)
-
-	// Create CSV writer
-	writer := csv.NewWriter(os.Stdout)
-	defer writer.Flush()
-
-	// Write header
-	header := []string{"TraceID", "SpanID", "SpanDataSize"}
-	header = append(header, allTagNames...)
-	if err := writer.Write(header); err != nil {
-		return fmt.Errorf("failed to write CSV header: %w", err)
-	}
-
-	// Process all blocks and write rows
-	for _, pbm := range p.primaryBlockMetadata {
-		// Read primary data block
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-
-		// Decompress
-		decompressed, err := zstd.Decompress(nil, primaryData)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error decompressing primary data: %v\n", err)
-			continue
-		}
-
-		// Parse ALL block metadata entries from this primary block
-		blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing block metadata: %v\n", err)
-			continue
-		}
-
-		// Process each block
-		for _, bm := range blockMetadatas {
-			// Read spans
-			spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading spans for trace %s: %v\n", bm.traceID, err)
-				continue
-			}
-
-			// Read tags
-			tags := make(map[string][][]byte)
-			for tagName, tagBlock := range bm.tags {
-				tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count), p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error reading tag %s for trace %s: %v\n", tagName, bm.traceID, err)
-					continue
-				}
-				tags[tagName] = tagValues
-			}
-
-			// Write each span as a CSV row
-			for i := 0; i < len(spans); i++ {
-				row := append(make([]string, 0, len(header)), bm.traceID, spanIDs[i], strconv.Itoa(len(spans[i])))
-
-				// Add tag values in the same order as header
-				for _, tagName := range allTagNames {
-					var value string
-					if i < len(tags[tagName]) && tags[tagName][i] != nil {
-						valueType := p.tagType[tagName]
-						value = formatTagValueForCSV(tags[tagName][i], valueType)
-					}
-					row = append(row, value)
-				}
-
-				if err := writer.Write(row); err != nil {
-					return fmt.Errorf("failed to write CSV row: %w", err)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func valueTypeName(vt pbv1.ValueType) string {
-	switch vt {
-	case pbv1.ValueTypeStr:
-		return "STRING"
-	case pbv1.ValueTypeInt64:
-		return "INT64"
-	case pbv1.ValueTypeFloat64:
-		return "FLOAT64"
-	case pbv1.ValueTypeStrArr:
-		return "STRING_ARRAY"
-	case pbv1.ValueTypeInt64Arr:
-		return "INT64_ARRAY"
-	case pbv1.ValueTypeBinaryData:
-		return "BINARY_DATA"
-	case pbv1.ValueTypeTimestamp:
-		return "TIMESTAMP"
-	case pbv1.ValueTypeUnknown:
-		return "UNKNOWN"
-	default:
-		return fmt.Sprintf("UNKNOWN(%d)", vt)
-	}
-}
-
 func formatTimestamp(nanos int64) string {
 	if nanos == 0 {
 		return "N/A"
@@ -613,61 +336,6 @@ func formatTagValueForDisplay(data []byte, vt pbv1.ValueType) string {
 	default:
 		if isPrintable(data) {
 			return fmt.Sprintf("%q", string(data))
-		}
-		return fmt.Sprintf("(binary: %d bytes)", len(data))
-	}
-}
-
-func formatTagValueForCSV(data []byte, vt pbv1.ValueType) string {
-	if data == nil {
-		return ""
-	}
-	switch vt {
-	case pbv1.ValueTypeStr:
-		return string(data)
-	case pbv1.ValueTypeInt64:
-		if len(data) >= 8 {
-			return strconv.FormatInt(convert.BytesToInt64(data), 10)
-		}
-		return ""
-	case pbv1.ValueTypeFloat64:
-		if len(data) >= 8 {
-			return strconv.FormatFloat(convert.BytesToFloat64(data), 'f', -1, 64)
-		}
-		return ""
-	case pbv1.ValueTypeTimestamp:
-		if len(data) >= 8 {
-			nanos := convert.BytesToInt64(data)
-			return formatTimestamp(nanos)
-		}
-		return ""
-	case pbv1.ValueTypeStrArr:
-		// Decode string array - each element is separated by EntityDelimiter
-		var values []string
-		var err error
-		remaining := data
-		for len(remaining) > 0 {
-			var decoded []byte
-			decoded, remaining, err = unmarshalVarArray(nil, remaining)
-			if err != nil {
-				break
-			}
-			if len(decoded) > 0 {
-				values = append(values, string(decoded))
-			}
-		}
-		if len(values) > 0 {
-			return strings.Join(values, ";")
-		}
-		return ""
-	case pbv1.ValueTypeBinaryData:
-		if isPrintable(data) {
-			return string(data)
-		}
-		return fmt.Sprintf("(binary: %d bytes)", len(data))
-	default:
-		if isPrintable(data) {
-			return string(data)
 		}
 		return fmt.Sprintf("(binary: %d bytes)", len(data))
 	}
@@ -780,11 +448,11 @@ type part struct {
 }
 
 type traceRowData struct {
-	partID   uint64
+	tags     map[string][]byte
 	traceID  string
 	spanID   string
 	spanData []byte
-	tags     map[string][]byte
+	partID   uint64
 	seriesID common.SeriesID
 }
 
@@ -1105,7 +773,7 @@ func unmarshalTagMetadata(tm *tagMetadata, src []byte) error {
 	return nil
 }
 
-// Helper functions for new shard-level dump
+// Helper functions for new shard-level dump.
 
 func discoverTracePartIDs(shardPath string) ([]uint64, error) {
 	entries, err := os.ReadDir(shardPath)
@@ -1313,6 +981,14 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 				BinaryData: value,
 			},
 		}
+	case pbv1.ValueTypeUnknown:
+		// Fall through to default
+	case pbv1.ValueTypeFloat64:
+		// Fall through to default
+	case pbv1.ValueTypeInt64Arr:
+		// Fall through to default
+	case pbv1.ValueTypeTimestamp:
+		// Fall through to default
 	}
 
 	// Default: try to return as string
@@ -1325,7 +1001,7 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 	}
 }
 
-// traceTagRegistry implements logical.Schema for tag filtering
+// traceTagRegistry implements logical.Schema for tag filtering.
 type traceTagRegistry struct {
 	tagTypes map[string]pbv1.ValueType
 }
@@ -1366,19 +1042,19 @@ func (r *traceTagRegistry) EntityList() []string {
 	return nil
 }
 
-func (r *traceTagRegistry) CreateTagRef(tags ...[]*logical.Tag) ([][]*logical.TagRef, error) {
+func (r *traceTagRegistry) CreateTagRef(_ ...[]*logical.Tag) ([][]*logical.TagRef, error) {
 	return nil, fmt.Errorf("CreateTagRef not supported in dump tool")
 }
 
-func (r *traceTagRegistry) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, error) {
+func (r *traceTagRegistry) CreateFieldRef(_ ...*logical.Field) ([]*logical.FieldRef, error) {
 	return nil, fmt.Errorf("CreateFieldRef not supported in dump tool")
 }
 
-func (r *traceTagRegistry) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
+func (r *traceTagRegistry) ProjTags(_ ...[]*logical.TagRef) logical.Schema {
 	return r
 }
 
-func (r *traceTagRegistry) ProjFields(refs ...*logical.FieldRef) logical.Schema {
+func (r *traceTagRegistry) ProjFields(_ ...*logical.FieldRef) logical.Schema {
 	return r
 }
 
@@ -1554,80 +1230,4 @@ func writeTraceRowAsCSV(writer *csv.Writer, row traceRowData, tagColumns []strin
 	}
 
 	return writer.Write(csvRow)
-}
-
-func dumpTraceRowsAsText(rows []traceRowData, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) error {
-	fmt.Printf("================================================================================\n")
-	fmt.Printf("Total rows: %d\n\n", len(rows))
-
-	for idx, row := range rows {
-		writeTraceRowAsText(row, idx+1, verbose, projectionTags, seriesMap)
-	}
-
-	return nil
-}
-
-func dumpTraceRowsAsCSV(rows []traceRowData, projectionTags []string, seriesMap map[common.SeriesID]string) error {
-	writer := csv.NewWriter(os.Stdout)
-	defer writer.Flush()
-
-	// Determine which tags to include in CSV
-	var tagColumns []string
-	if len(projectionTags) > 0 {
-		tagColumns = projectionTags
-	} else {
-		// Collect all unique tag names
-		tagSet := make(map[string]bool)
-		for _, row := range rows {
-			for name := range row.tags {
-				tagSet[name] = true
-			}
-		}
-		for name := range tagSet {
-			tagColumns = append(tagColumns, name)
-		}
-		sort.Strings(tagColumns)
-	}
-
-	// Write header
-	header := []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}
-	header = append(header, tagColumns...)
-
-	if err := writer.Write(header); err != nil {
-		return fmt.Errorf("failed to write CSV header: %w", err)
-	}
-
-	// Write rows
-	for _, row := range rows {
-		seriesText := ""
-		if seriesMap != nil {
-			if text, ok := seriesMap[row.seriesID]; ok {
-				seriesText = text
-			}
-		}
-
-		csvRow := []string{
-			fmt.Sprintf("%d", row.partID),
-			row.traceID,
-			row.spanID,
-			fmt.Sprintf("%d", row.seriesID),
-			seriesText,
-			strconv.Itoa(len(row.spanData)),
-		}
-
-		// Add tag values
-		for _, tagName := range tagColumns {
-			value := ""
-			if tagValue, exists := row.tags[tagName]; exists && tagValue != nil {
-				value = string(tagValue)
-			}
-			csvRow = append(csvRow, value)
-		}
-
-		if err := writer.Write(csvRow); err != nil {
-			return fmt.Errorf("failed to write CSV row: %w", err)
-		}
-	}
-
-	return nil
 }

@@ -91,22 +91,24 @@ type QueryRequest struct {
 	MaxBatchSize  int
 }
 
-// ScanQueryRequest specifies parameters for a full-scan query operation.
-// Unlike QueryRequest, this does not require SeriesIDs and does not support Filter
-// (all blocks are scanned, none are skipped).
 // ScanProgressFunc is a callback for reporting scan progress.
 // It receives the current part number (1-based), total parts, and rows found so far.
 type ScanProgressFunc func(currentPart, totalParts int, rowsFound int)
 
+// ScanQueryRequest specifies parameters for a full-scan query operation.
+// Unlike QueryRequest, this does not require SeriesIDs and does not support Filter
+// (all blocks are scanned, none are skipped).
+//
+//nolint:govet // struct layout optimized for readability; 64 bytes is acceptable
 type ScanQueryRequest struct {
 	TagFilter     model.TagFilterMatcher
+	TagProjection []model.TagProjection
+	OnProgress    ScanProgressFunc
 	MinKey        *int64
 	MaxKey        *int64
-	TagProjection []model.TagProjection
-	MaxBatchSize  int // Max results per response batch
+	MaxBatchSize  int
 	// OnProgress is an optional callback for progress reporting during scan.
 	// Called after processing each part with the current progress.
-	OnProgress ScanProgressFunc
 }
 
 // QueryResponse contains a batch of query results and execution metadata.

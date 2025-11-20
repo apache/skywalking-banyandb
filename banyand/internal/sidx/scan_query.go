@@ -109,8 +109,8 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 
 func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryRequest,
 	minKey, maxKey int64, results *[]*QueryResponse, currentBatch **QueryResponse,
-	maxBatchSize int) error {
-
+	maxBatchSize int,
+) error {
 	p := pw.p
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
@@ -191,9 +191,7 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 				}
 
 				// Add to current batch
-				if bc.copyTo(*currentBatch) {
-					// copyTo already appends to the batch
-				}
+				_ = bc.copyTo(*currentBatch)
 			}
 		}
 
