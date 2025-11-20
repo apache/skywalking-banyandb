@@ -32,9 +32,6 @@ export class QueryGenerator {
   constructor(apiKey?: string) {
     // Validate API key format before creating client
     if (apiKey && apiKey.trim().length > 0) {
-      // Basic validation: API key should not be empty and should have some content
-      // TARS API keys typically start with specific prefixes, but we'll be lenient here
-      // and let the API validate the actual format
       const trimmedKey = apiKey.trim();
       if (trimmedKey.length < 10) {
         console.error("[QueryGenerator] Warning: API key appears to be too short. LLM query generation may fail.");

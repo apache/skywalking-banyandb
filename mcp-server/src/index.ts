@@ -29,27 +29,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BanyanDBClient } from "./banyandb-client.js";
 import { QueryGenerator } from "./query-generator.js";
+import { log, setupGlobalErrorHandlers } from "./logger.js";
 
 // Load environment variables first
 dotenv.config();
 
-// Set up global error handlers to ensure all errors are visible
-process.on('uncaughtException', (error) => {
-  console.error('[MCP] Uncaught Exception:', error.message);
-  if (error.stack) {
-    console.error('[MCP] Stack trace:', error.stack);
-  }
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[MCP] Unhandled Rejection at:', promise);
-  console.error('[MCP] Reason:', reason instanceof Error ? reason.message : String(reason));
-  if (reason instanceof Error && reason.stack) {
-    console.error('[MCP] Stack trace:', reason.stack);
-  }
-  process.exit(1);
-});
+// Set up global error handlers early to catch all errors
+setupGlobalErrorHandlers();
 
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || "localhost:17900";
 const TARS_API_KEY = process.env.TARS_API_KEY;
@@ -76,11 +62,11 @@ async function main() {
   const queryGenerator = new QueryGenerator(validApiKey);
 
   if (validApiKey) {
-    console.error("[MCP] LLM query generation enabled (using Tetrate Agent Router Service)");
+    log.info("LLM query generation enabled (using Tetrate Agent Router Service)");
   } else {
-    console.error("[MCP] LLM query generation disabled, using pattern matching");
+    log.info("LLM query generation disabled, using pattern matching");
     if (TARS_API_KEY !== undefined) {
-      console.error("[MCP] Warning: TARS_API_KEY is set but appears to be empty or invalid");
+      log.warn("TARS_API_KEY is set but appears to be empty or invalid");
     }
   }
 
@@ -330,14 +316,14 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("[MCP] BanyanDB MCP server started");
-  console.error(`[MCP] Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
+  log.info("BanyanDB MCP server started");
+  log.info(`Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
 }
 
 main().catch((error) => {
-  console.error("[MCP] Fatal error:", error instanceof Error ? error.message : String(error));
+  log.error("Fatal error:", error instanceof Error ? error.message : String(error));
   if (error instanceof Error && error.stack) {
-    console.error("[MCP] Stack trace:", error.stack);
+    log.error("Stack trace:", error.stack);
   }
   process.exit(1);
 });
