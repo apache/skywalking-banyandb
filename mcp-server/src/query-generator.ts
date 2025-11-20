@@ -66,6 +66,25 @@ export class QueryGenerator {
   private isAlreadyBydbQLQuery(description: string): boolean {
     const trimmed = description.trim();
     
+    // Check for TOP N queries (TOPN queries) - must have proper BydbQL structure
+    // Pattern matches: [COMMAND] TOP [NUMBER] followed by FROM MEASURE and proper TIME clause
+    const hasTopNPattern = /^\s*\w+\s+TOP\s+\d+/i.test(trimmed);
+    if (hasTopNPattern) {
+      // For TOPN queries, require proper BydbQL structure:
+      // - Must have FROM MEASURE clause
+      // - Must have proper TIME clause (not natural language like "from last 48 hours")
+      const hasFromMeasure = /\bFROM\s+MEASURE\b/i.test(trimmed);
+      const hasProperTimeClause = /\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed);
+      
+      // Only consider it a BydbQL query if it has both FROM MEASURE and proper TIME clause
+      // Natural language descriptions like "from last 48 hours" won't match the TIME clause pattern
+      if (hasFromMeasure && hasProperTimeClause) {
+        return true;
+      }
+      // If it has FROM MEASURE but no proper TIME clause, it's likely natural language
+      return false;
+    }
+    
     // If it contains a TIME clause, it's almost certainly already a BydbQL query
     // TIME clauses are specific to BydbQL syntax
     const hasTimeClause = /\bTIME\s+(?:>=|<=|>|<|=|BETWEEN)\s+['"][^'"]+['"]/i.test(trimmed);
@@ -76,10 +95,10 @@ export class QueryGenerator {
     // More lenient check: if it starts with SELECT and contains FROM with a resource type, it's likely a BydbQL query
     // This handles cases where IN might be lowercase or the structure is slightly different
     const hasSelectFrom = /^\s*SELECT\s+/i.test(trimmed);
-    const hasFromResourceType = /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY|TOPN)\s+/i.test(trimmed);
+    const hasFromResourceType = /\bFROM\s+(STREAM|MEASURE|TRACE|PROPERTY)\s+/i.test(trimmed);
     
     // Also check for common BydbQL keywords that indicate it's already a query
-    const hasBydbQLKeywords = /\b(IN|TIME|WHERE|ORDER\s+BY|LIMIT)\b/i.test(trimmed);
+    const hasBydbQLKeywords = /\b(IN|TIME|ORDER\s+BY|LIMIT|TOP)\b/i.test(trimmed);
     
     // If it has SELECT, FROM with resource type, and BydbQL keywords, it's likely already a BydbQL query
     return hasSelectFrom && hasFromResourceType && hasBydbQLKeywords;
@@ -93,7 +112,6 @@ export class QueryGenerator {
     args: Record<string, any>
   ): Promise<string> {
     // If the input is already a valid BydbQL query, return it as-is
-    // This preserves TIME clauses and other query components exactly as provided
     if (this.isAlreadyBydbQLQuery(description)) {
       const trimmed = description.trim();
       // Double-check: if it contains a TIME clause, definitely return as-is
@@ -109,6 +127,7 @@ export class QueryGenerator {
         return await this.generateQueryWithLLM(description, args);
       } catch (error) {
         // Fall through to pattern-based generation
+        console.error("Error generating query with LLM:", error);
       }
     }
     return this.generateQueryWithPatterns(description, args);
@@ -122,7 +141,6 @@ export class QueryGenerator {
     args: Record<string, any>
   ): Promise<string> {
     // Safety check: if this is already a complete BydbQL query, return it as-is
-    // This prevents the LLM from modifying valid queries
     if (this.isAlreadyBydbQLQuery(description)) {
       return description.trim();
     }
@@ -131,31 +149,45 @@ export class QueryGenerator {
       throw new Error("OpenAI client not initialized");
     }
     const resourceType = args.resource_type || this.detectResourceType(description, args) || "stream";
-    const resourceName = args.resource_name || this.detectResourceName(description) || "sw";
-    const group = args.group || this.detectGroup(description) || "default";
+    const resourceName = args.resource_name || this.detectResourceName(description);
+    const group = args.group || this.detectGroup(description);
+    
+    // Extract existing clauses if present
+    const aggregateByClause = this.extractExistingAggregateByClause(description);
+    const orderByClause = this.extractExistingOrderByClause(description);
 
     const prompt = `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
 
 BydbQL Syntax:
-- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [WHERE clause] [ORDER BY clause] [LIMIT n]
-- Resource types: STREAM, MEASURE, TRACE, PROPERTY, TOPN
+- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [ORDER BY clause] [LIMIT n]
+- Resource types: STREAM, MEASURE, TRACE, PROPERTY
 - TIME clause examples: TIME >= '-1h', TIME > '-30m', TIME BETWEEN '-24h' AND '-1h'
-- WHERE clause examples: WHERE status = 'error', WHERE service_id = 'webapp'
 - ORDER BY clause examples: ORDER BY latency DESC, ORDER BY start_time ASC, ORDER BY TIME DESC
 - ORDER BY supports: ORDER BY field [ASC|DESC], ORDER BY TIME [ASC|DESC] (shorthand for timestamps)
-- Common ORDER BY fields: latency, start_time, timestamp, timestamp_millis, duration, value
+- ORDER BY fields are flexible: You can use any field from the resource for ordering. Common examples include: latency, start_time, timestamp, timestamp_millis, duration, value, but any valid field can be used
 - Default LIMIT is 100
 - Use TIME > for "after" or "more than", TIME >= for "from" or "since"
+
+Top-N Query Syntax (for measures):
+- SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
+- IMPORTANT: Clause order must be: TIME, then AGGREGATE BY (if present), then ORDER BY (if present)
+- AGGREGATE BY clause: AGGREGATE BY SUM | MEAN | COUNT | MAX | MIN
+- AGGREGATE BY examples: AGGREGATE BY SUM, AGGREGATE BY MAX, AGGREGATE BY MEAN
+- AGGREGATE BY is used to aggregate data points over the time range (SUM for totals, MAX for maximum values, MIN for minimum values, MEAN/AVG for averages, COUNT for counts)
+- ORDER BY clause: ORDER BY DESC (for highest values) or ORDER BY ASC (for lowest values) - field name is optional for TOPN queries
+- CRITICAL: AGGREGATE BY must come BEFORE ORDER BY in the query
 
 User description: "${description}"
 
 IMPORTANT: Use these EXACT values detected from the description:
 - Resource type: ${resourceType.toUpperCase()}
 - Resource name: ${resourceName}
-- Group name: ${group}
+- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ''}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ''}
 
 CRITICAL: If the user description contains a TIME clause, you MUST preserve it exactly as provided. Do not remove or modify TIME clauses.
-CRITICAL: If the user description contains an ORDER BY clause, you MUST preserve it in the generated query. Do not remove or modify ORDER BY clauses.
+CRITICAL: If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query. Do not remove or modify AGGREGATE BY clauses.${aggregateByClause ? ` Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ''}
+CRITICAL: If the user description contains an ORDER BY clause, you MUST preserve it in the generated query. Do not remove or modify ORDER BY clauses.${orderByClause ? ` Use this EXACT ORDER BY clause: ${orderByClause}` : ''}
+CRITICAL: For TOPN queries, the clause order MUST be: TIME, then WHERE (if present), then AGGREGATE BY (if present), then ORDER BY (if present). AGGREGATE BY must always come before ORDER BY.
 
 Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 
@@ -231,11 +263,11 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
     // Build time clause
     const timeClause = this.buildTimeClause(description);
 
-    // Build WHERE clause
-    const whereClause = this.buildWhereClause(description);
-
     // Build ORDER BY clause
     const orderByClause = this.buildOrderByClause(description);
+
+    // Build AGGREGATE BY clause
+    const aggregateByClause = this.buildAggregateByClause(description);
 
     // Build SELECT clause
     const selectClause = this.buildSelectClause(description, resourceType);
@@ -246,13 +278,12 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
     if (timeClause) {
       query += ` ${timeClause}`;
     }
-
-    if (whereClause) {
-      query += ` ${whereClause}`;
-    }
-
     if (orderByClause) {
       query += ` ${orderByClause}`;
+    }
+
+    if (aggregateByClause) {
+      query += ` ${aggregateByClause}`;
     }
 
     query += " LIMIT 100";
@@ -356,7 +387,7 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
       if (matches && matches[1]) {
         const groupName = matches[1];
         // Filter out common words that aren't group names
-        const commonWords = new Set(['default', 'from', 'query', 'select', 'where', 'time', 
+        const commonWords = new Set(['from', 'query', 'select', 'where', 'time', 
                                      'stream', 'measure', 'trace', 'property', 'data', 'the']);
         if (!commonWords.has(groupName.toLowerCase())) {
           return groupName;
@@ -464,38 +495,6 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
   }
 
   /**
-   * Build a WHERE clause from the description.
-   */
-  private buildWhereClause(description: string): string {
-    const conditions: string[] = [];
-    const lowerDescription = description.toLowerCase();
-
-    // Check for error patterns
-    if (this.filterPatterns.get("error")!.test(lowerDescription)) {
-      conditions.push("status = 'error'");
-    }
-
-    // Check for warning patterns
-    if (this.filterPatterns.get("warning")!.test(lowerDescription)) {
-      conditions.push("status = 'warning'");
-    }
-
-    // Check for service patterns
-    const serviceMatch = lowerDescription.match(
-      this.filterPatterns.get("service")!
-    );
-    if (serviceMatch && serviceMatch[2]) {
-      conditions.push(`service_id = '${serviceMatch[2]}'`);
-    }
-
-    if (conditions.length === 0) {
-      return "";
-    }
-
-    return "WHERE " + conditions.join(" AND ");
-  }
-
-  /**
    * Build a SELECT clause from the description.
    */
   private buildSelectClause(description: string, resourceType: string): string {
@@ -519,6 +518,12 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
    * Build an ORDER BY clause from the description.
    */
   private buildOrderByClause(description: string): string {
+    // First, check if there's already an ORDER BY clause in the input
+    const existingOrderBy = this.extractExistingOrderByClause(description);
+    if (existingOrderBy) {
+      return existingOrderBy;
+    }
+
     const lowerDescription = description.toLowerCase();
 
     // Explicit "order by" patterns (highest priority)
@@ -583,6 +588,97 @@ Generate ONLY the BydbQL query using these exact values. Do not change the resou
           direction = "ASC";
         }
         return `ORDER BY ${field} ${direction}`;
+      }
+    }
+
+    return "";
+  }
+
+  /**
+   * Extract existing ORDER BY clause from the description if present.
+   */
+  private extractExistingOrderByClause(description: string): string | null {
+    // Pattern to match ORDER BY clauses: ORDER BY [field] [ASC|DESC]
+    // Match patterns like: ORDER BY value DESC, ORDER BY latency ASC, ORDER BY DESC, etc.
+    const orderByPatterns = [
+      // ORDER BY field DESC/ASC (check this first to avoid matching field names as direction)
+      /\bORDER\s+BY\s+(\w+)\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
+      // ORDER BY DESC/ASC (for TOPN queries - preserve as-is without field name)
+      /\bORDER\s+BY\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
+    ];
+    
+    for (const pattern of orderByPatterns) {
+      const match = description.match(pattern);
+      if (match) {
+        if (match[2]) {
+          // Has field name (first pattern matched)
+          const field = match[1];
+          const direction = match[2].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
+          return `ORDER BY ${field} ${direction}`;
+        } else if (match[1] && (match[1].toUpperCase() === 'DESC' || match[1].toUpperCase() === 'ASC' || 
+                                 match[1].toUpperCase() === 'DESCENDING' || match[1].toUpperCase() === 'ASCENDING')) {
+          // Only direction (for TOPN queries) - preserve as "ORDER BY DESC" or "ORDER BY ASC"
+          const direction = match[1].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
+          return `ORDER BY ${direction}`;
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Extract existing AGGREGATE BY clause from the description if present.
+   */
+  private extractExistingAggregateByClause(description: string): string | null {
+    // Pattern to match AGGREGATE BY clauses: AGGREGATE BY [FUNCTION]
+    // Match patterns like: AGGREGATE BY SUM, AGGREGATE BY MAX, AGGREGATE BY MEAN, etc.
+    const aggregateByPattern = /\bAGGREGATE\s+BY\s+(SUM|MEAN|COUNT|MAX|MIN|AVG)\b/i;
+    
+    const match = description.match(aggregateByPattern);
+    if (match) {
+      const functionName = match[1].toUpperCase();
+      // Normalize AVG to MEAN (both are valid, but MEAN is the standard in BydbQL)
+      const normalizedFunction = functionName === 'AVG' ? 'MEAN' : functionName;
+      return `AGGREGATE BY ${normalizedFunction}`;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Build an AGGREGATE BY clause from the description.
+   */
+  private buildAggregateByClause(description: string): string {
+    // First, check if there's already an AGGREGATE BY clause in the input
+    const existingAggregateBy = this.extractExistingAggregateByClause(description);
+    if (existingAggregateBy) {
+      return existingAggregateBy;
+    }
+
+    const lowerDescription = description.toLowerCase();
+
+    // Check for explicit "aggregate by" patterns first (highest priority)
+    const explicitMatch = description.match(/\baggregate\s+by\s+(sum|mean|count|max|min|avg)\b/i);
+    if (explicitMatch && explicitMatch[1]) {
+      const functionName = explicitMatch[1].toUpperCase();
+      const normalizedFunction = functionName === 'AVG' ? 'MEAN' : functionName;
+      return `AGGREGATE BY ${normalizedFunction}`;
+    }
+
+    // Natural language patterns for aggregation
+    const aggregatePatterns = [
+      { pattern: /\b(sum|total|totals|summing)\b/i, func: 'SUM' },
+      { pattern: /\b(max|maximum|maximize|highest\s+value)\b/i, func: 'MAX' },
+      { pattern: /\b(min|minimum|minimize|lowest\s+value)\b/i, func: 'MIN' },
+      { pattern: /\b(mean|average|avg|averaging)\b/i, func: 'MEAN' },
+      { pattern: /\b(count|counting|number\s+of)\b/i, func: 'COUNT' },
+    ];
+
+    // Check natural language patterns
+    for (const { pattern, func } of aggregatePatterns) {
+      if (pattern.test(lowerDescription)) {
+        return `AGGREGATE BY ${func}`;
       }
     }
 
