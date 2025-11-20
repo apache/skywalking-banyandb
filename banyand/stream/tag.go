@@ -20,6 +20,7 @@ package stream
 import (
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -28,10 +29,12 @@ import (
 )
 
 type tag struct {
-	tagFilter
-	name      string
-	values    [][]byte
-	valueType pbv1.ValueType
+	uniqueValues map[string]struct{}
+	min          []byte
+	max          []byte
+	name         string
+	values       [][]byte
+	valueType    pbv1.ValueType
 }
 
 func (t *tag) reset() {
@@ -43,7 +46,14 @@ func (t *tag) reset() {
 	}
 	t.values = values[:0]
 
-	t.tagFilter.reset()
+	t.min = t.min[:0]
+	t.max = t.max[:0]
+
+	if t.uniqueValues != nil {
+		for v := range t.uniqueValues {
+			delete(t.uniqueValues, v)
+		}
+	}
 }
 
 func (t *tag) resizeValues(valuesLen int) [][]byte {
@@ -82,10 +92,19 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 		tm.min = t.min
 		tm.max = t.max
 	}
-	if t.filter != nil && encodeType != pkgencoding.EncodeTypeDictionary {
+	isDictionaryEncoded := encodeType == pkgencoding.EncodeTypeDictionary
+	isArrayType := tm.valueType == pbv1.ValueTypeStrArr || tm.valueType == pbv1.ValueTypeInt64Arr
+	if len(t.uniqueValues) > 0 && (!isDictionaryEncoded || isArrayType) {
+		bf := generateBloomFilter()
+		defer releaseBloomFilter(bf)
+		bf.SetN(len(t.uniqueValues))
+		bf.ResizeBits(filter.OptimalBitsSize(len(t.uniqueValues)))
+		for v := range t.uniqueValues {
+			bf.Add(convert.StringToBytes(v))
+		}
 		bb := bigValuePool.Generate()
 		defer bigValuePool.Release(bb)
-		bb.Buf = encodeBloomFilter(bb.Buf[:0], t.filter.(*filter.BloomFilter))
+		bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)
 		tm.filterBlock.size = uint64(len(bb.Buf))
 		tm.filterBlock.offset = tagFilterWriter.bytesWritten
 		tagFilterWriter.MustWrite(bb.Buf)
