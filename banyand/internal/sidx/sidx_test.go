@@ -18,9 +18,14 @@
 package sidx
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +54,88 @@ const (
 func waitForIntroducerLoop() {
 	// Small delay to allow the introducer loop to process writes
 	time.Sleep(10 * time.Millisecond)
+}
+
+// compareDirectories compares two directories recursively and returns whether they are identical.
+func compareDirectories(t *testing.T, originalDir, snapshotDir string) {
+	t.Helper()
+
+	// Get all files in both directories
+	originalFiles, err := collectFiles(originalDir)
+	require.NoError(t, err, "Failed to collect files from original directory")
+
+	snapshotFiles, err := collectFiles(snapshotDir)
+	require.NoError(t, err, "Failed to collect files from snapshot directory")
+
+	// Compare number of files
+	require.Equal(t, len(originalFiles), len(snapshotFiles),
+		"Number of files should be equal. Original: %d, Snapshot: %d",
+		len(originalFiles), len(snapshotFiles))
+
+	// Sort files for consistent comparison
+	sort.Strings(originalFiles)
+	sort.Strings(snapshotFiles)
+
+	// Compare each file
+	for idx, originalFile := range originalFiles {
+		snapshotFile := snapshotFiles[idx]
+
+		// Compare file sizes
+		originalInfo, err := os.Stat(originalFile)
+		require.NoError(t, err)
+
+		snapshotInfo, err := os.Stat(snapshotFile)
+		require.NoError(t, err)
+
+		require.Equal(t, originalInfo.Size(), snapshotInfo.Size(),
+			"File size mismatch at index %d", idx)
+
+		// Compare file contents using hash
+		originalHash, err := calculateFileHash(originalFile)
+		require.NoError(t, err)
+
+		snapshotHash, err := calculateFileHash(snapshotFile)
+		require.NoError(t, err)
+
+		require.True(t, bytes.Equal(originalHash, snapshotHash),
+			"File content mismatch at index %d", idx)
+	}
+}
+
+// collectFiles recursively collects all regular files in a directory.
+func collectFiles(rootDir string) ([]string, error) {
+	var files []string
+
+	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		// Skip directories, only collect regular files
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+
+		return nil
+	})
+
+	return files, err
+}
+
+// calculateFileHash calculates SHA-256 hash of a file.
+func calculateFileHash(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return nil, fmt.Errorf("failed to calculate hash for file %s: %w", filePath, err)
+	}
+
+	return hash.Sum(nil), nil
 }
 
 func createTestOptions(t *testing.T) *Options {
@@ -180,6 +267,7 @@ func TestSIDX_Take_File_Snapshot(t *testing.T) {
 		writeTestData(t, idx, reqs, 2, 2) // Test with segmentID=2, partID=2
 
 		raw := idx.(*sidx)
+		originalDir := raw.root
 		flushIntro, err := raw.Flush(map[uint64]struct{}{2: {}})
 		require.NoError(t, err)
 		require.NotNil(t, flushIntro)
@@ -188,6 +276,7 @@ func TestSIDX_Take_File_Snapshot(t *testing.T) {
 
 		err = idx.TakeFileSnapshot(snapshotDir)
 		assert.NoError(t, err)
+		compareDirectories(t, originalDir, snapshotDir)
 	})
 }
 
