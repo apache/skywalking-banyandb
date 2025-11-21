@@ -21,6 +21,7 @@ package test
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -84,4 +85,9 @@ func (f *MockMemoryProtector) Serve() run.StopNotify {
 	ch := make(chan struct{})
 	close(ch)
 	return ch
+}
+
+// State returns the mocked memory state.
+func (f *MockMemoryProtector) State() protector.State {
+	return protector.StateLow
 }
