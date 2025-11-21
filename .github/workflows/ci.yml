@@ -68,6 +68,8 @@ jobs:
         run: make license-check
       - name: Check requirements
         run: make check-req
+      - name: Make generate
+        run: make generate
       - name: Build binaries and UI dist
         run: make build
       - name: Lint
