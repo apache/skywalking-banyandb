@@ -1,0 +1,46 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build output (will be built in container)
+dist
+
+# Development files
+*.md
+.git
+.gitignore
+.dockerignore
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Test files
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Config files (may contain sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Docker files
+docker-compose.yml
+Dockerfile*
+
+# Data directories
+banyandb-data/
+
+# Example and test configs
+example-config.json
+inspector-config.json
+
+# Build artifacts
+*.log
+*.map
+

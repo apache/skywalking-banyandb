@@ -26,9 +26,10 @@ MCP server for BanyanDB that translates natural language queries to BydbQL.
 
 ## Documentation
 
-For detailed configuration and usage instructions, see:
-- [Overview](../../docs/interacting/mcp-server/mcp.md)
-- [Configuration Guide](../../docs/interacting/mcp-server/configuration.md)
+For detailed setup and usage instructions, see:
+- [Setup MCP](../../docs/operation/mcp-server/setup) - How to use from binary or Docker images
+- [Test via Inspector](../../docs/operation/mcp-server/inspector) - How to test using MCP Inspector
+- [Build and Package](../../docs/operation/mcp-server/build) - For developers building from source
 
 ## Development
 
