@@ -21,21 +21,78 @@ interface QueryRequest {
   query: string;
 }
 
+interface TagValue {
+  str?: { value: string };
+  int?: { value: number };
+  float?: { value: number };
+  binaryData?: unknown;
+}
+
+interface Tag {
+  key: string;
+  value: TagValue;
+}
+
+interface TagFamily {
+  tags?: Tag[];
+}
+
+interface FieldValue {
+  int?: { value: number };
+  float?: { value: number };
+  str?: { value: string };
+  binaryData?: unknown;
+}
+
+interface Field {
+  name: string;
+  value: FieldValue;
+}
+
+interface DataPoint {
+  timestamp?: string | number;
+  sid?: string;
+  version?: string | number;
+  tagFamilies?: TagFamily[];
+  fields?: Field[];
+}
+
+interface StreamResult {
+  elements?: unknown[];
+}
+
+interface MeasureResult {
+  dataPoints?: DataPoint[];
+  data_points?: DataPoint[];
+}
+
+interface TraceResult {
+  elements?: unknown[];
+}
+
+interface PropertyResult {
+  items?: unknown[];
+}
+
+interface TopNResult {
+  lists?: unknown[];
+}
+
 interface QueryResponse {
   // Response can be either wrapped in result or direct
   result?: {
-    streamResult?: any;
-    measureResult?: any;
-    traceResult?: any;
-    propertyResult?: any;
-    topnResult?: any;
+    streamResult?: StreamResult;
+    measureResult?: MeasureResult;
+    traceResult?: TraceResult;
+    propertyResult?: PropertyResult;
+    topnResult?: TopNResult;
   };
   // Or directly at top level
-  streamResult?: any;
-  measureResult?: any;
-  traceResult?: any;
-  propertyResult?: any;
-  topnResult?: any;
+  streamResult?: StreamResult;
+  measureResult?: MeasureResult;
+  traceResult?: TraceResult;
+  propertyResult?: PropertyResult;
+  topnResult?: TopNResult;
 }
 
 interface Group {
@@ -44,7 +101,7 @@ interface Group {
   };
 }
 
-interface ResourceMetadata {
+export interface ResourceMetadata {
   metadata?: {
     name?: string;
     group?: string;
@@ -313,7 +370,7 @@ export class BanyanDBClient {
   /**
    * Format measure result into a readable table-like format.
    */
-  private formatMeasureResult(measureResult: any): string {
+  private formatMeasureResult(measureResult: MeasureResult): string {
     const dataPoints =
       measureResult.dataPoints || measureResult.data_points || [];
 
@@ -323,7 +380,7 @@ export class BanyanDBClient {
 
     let output = `Measure Query Result (${dataPoints.length} data point${dataPoints.length !== 1 ? "s" : ""}):\n\n`;
 
-    dataPoints.forEach((point: any, index: number) => {
+    dataPoints.forEach((point: DataPoint, index: number) => {
       output += `Data Point ${index + 1}:\n`;
       output += `  Timestamp: ${point.timestamp || "N/A"}\n`;
       output += `  Series ID: ${point.sid || "N/A"}\n`;
@@ -332,9 +389,9 @@ export class BanyanDBClient {
       // Format tags
       if (point.tagFamilies && Array.isArray(point.tagFamilies)) {
         output += `  Tags:\n`;
-        point.tagFamilies.forEach((tagFamily: any) => {
+        point.tagFamilies.forEach((tagFamily: TagFamily) => {
           if (tagFamily.tags && Array.isArray(tagFamily.tags)) {
-            tagFamily.tags.forEach((tag: any) => {
+            tagFamily.tags.forEach((tag: Tag) => {
               const value = this.extractTagValue(tag.value);
               output += `    ${tag.key}: ${value}\n`;
             });
@@ -345,7 +402,7 @@ export class BanyanDBClient {
       // Format fields
       if (point.fields && Array.isArray(point.fields)) {
         output += `  Fields:\n`;
-        point.fields.forEach((field: any) => {
+        point.fields.forEach((field: Field) => {
           const value = this.extractFieldValue(field.value);
           output += `    ${field.name}: ${value}\n`;
         });
@@ -360,7 +417,7 @@ export class BanyanDBClient {
   /**
    * Extract tag value from the nested structure.
    */
-  private extractTagValue(valueObj: any): string {
+  private extractTagValue(valueObj: TagValue): string {
     if (!valueObj) return "N/A";
     if (valueObj.str?.value !== undefined) return valueObj.str.value;
     if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
@@ -373,7 +430,7 @@ export class BanyanDBClient {
   /**
    * Extract field value from the nested structure.
    */
-  private extractFieldValue(valueObj: any): string {
+  private extractFieldValue(valueObj: FieldValue): string {
     if (!valueObj) return "N/A";
     if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
     if (valueObj.float?.value !== undefined)

@@ -65,25 +65,26 @@ export class QueryGenerator {
    */
   async generateQuery(
     description: string,
-    args: Record<string, any>,
+    args: Record<string, unknown>,
   ): Promise<string> {
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
         return await this.generateQueryWithLLM(description, args);
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Check for API key authentication errors
+        const errorObj = error as { status?: number; message?: string };
         if (
-          error?.status === 401 ||
-          error?.message?.includes("401") ||
-          error?.message?.includes("Invalid API key")
+          errorObj?.status === 401 ||
+          errorObj?.message?.includes("401") ||
+          errorObj?.message?.includes("Invalid API key")
         ) {
           console.error(
             "[QueryGenerator] API key authentication failed. Falling back to pattern-based generation.",
           );
           console.error(
             "[QueryGenerator] Error details:",
-            error.message || error,
+            errorObj.message || String(error),
           );
           // Disable LLM client to prevent repeated failures
           this.openaiClient = null;
@@ -91,7 +92,7 @@ export class QueryGenerator {
           // For other errors (timeout, network, etc.), log but don't disable
           console.error(
             "[QueryGenerator] Error generating query with LLM:",
-            error.message || error,
+            errorObj.message || String(error),
           );
         }
         // Fall through to pattern-based generation
@@ -105,18 +106,23 @@ export class QueryGenerator {
    */
   private async generateQueryWithLLM(
     description: string,
-    args: Record<string, any>,
+    args: Record<string, unknown>,
   ): Promise<string> {
     if (!this.openaiClient) {
       throw new Error("OpenAI client not initialized");
     }
     const resourceType =
-      args.resource_type ||
+      (typeof args.resource_type === "string" ? args.resource_type : null) ||
       this.detectResourceType(description, args) ||
       "stream";
     const resourceName =
-      args.resource_name || this.detectResourceName(description);
-    const group = args.group || this.detectGroup(description);
+      (typeof args.resource_name === "string" ? args.resource_name : null) ||
+      this.detectResourceName(description) ||
+      "";
+    const group =
+      (typeof args.group === "string" ? args.group : null) ||
+      this.detectGroup(description) ||
+      "default";
 
     // Extract existing clauses if present
     const aggregateByClause =
@@ -177,14 +183,15 @@ export class QueryGenerator {
    */
   private generateQueryWithPatterns(
     description: string,
-    args: Record<string, any>,
+    args: Record<string, unknown>,
   ): string {
     // Determine resource type
     const resourceType = this.detectResourceType(description, args) || "stream";
 
     // Extract resource name if provided
     let resourceName =
-      args.resource_name || this.detectResourceName(description);
+      (typeof args.resource_name === "string" ? args.resource_name : null) ||
+      this.detectResourceName(description);
     if (!resourceName) {
       // Use common defaults
       switch (resourceType) {
@@ -204,7 +211,10 @@ export class QueryGenerator {
     }
 
     // Extract group
-    const group = args.group || this.detectGroup(description) || "default";
+    const group =
+      (typeof args.group === "string" ? args.group : null) ||
+      this.detectGroup(description) ||
+      "default";
 
     // Build time clause
     const timeClause = this.buildTimeClause(description);
@@ -239,10 +249,10 @@ export class QueryGenerator {
    */
   private detectResourceType(
     description: string,
-    args: Record<string, any>,
+    args: Record<string, unknown>,
   ): string | null {
     // Check args first
-    if (args.resource_type) {
+    if (args.resource_type && typeof args.resource_type === "string") {
       return args.resource_type.toLowerCase();
     }
 

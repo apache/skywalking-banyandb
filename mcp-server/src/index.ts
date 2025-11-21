@@ -25,7 +25,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { BanyanDBClient } from "./banyandb-client.js";
+import { BanyanDBClient, ResourceMetadata } from "./banyandb-client.js";
 import { QueryGenerator } from "./query-generator.js";
 import { log, setupGlobalErrorHandlers } from "./logger.js";
 
@@ -186,7 +186,7 @@ async function main() {
             throw new Error(`group is required for listing ${resourceType}`);
           }
 
-          let resources: any[] = [];
+          let resources: ResourceMetadata[] = [];
           let resourceName = "";
 
           switch (resourceType) {

@@ -25,9 +25,9 @@
  * the protocol stream.
  */
 export const log = {
-  info: (...args: any[]) => console.error("[MCP] [INFO]", ...args),
-  warn: (...args: any[]) => console.error("[MCP] [WARN]", ...args),
-  error: (...args: any[]) => console.error("[MCP] [ERROR]", ...args),
+  info: (...args: unknown[]) => console.error("[MCP] [INFO]", ...args),
+  warn: (...args: unknown[]) => console.error("[MCP] [WARN]", ...args),
+  error: (...args: unknown[]) => console.error("[MCP] [ERROR]", ...args),
 };
 
 /**
