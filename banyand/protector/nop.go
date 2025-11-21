@@ -26,6 +26,11 @@ import (
 // Nop is a no-op implementation of Memory interface for testing.
 type Nop struct{}
 
+// State implements Memory.
+func (n Nop) State() State {
+	return StateLow
+}
+
 // Ensure Nop implements Memory interface.
 var _ Memory = (*Nop)(nil)
 
