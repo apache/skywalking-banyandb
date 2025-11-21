@@ -66,7 +66,16 @@ This runs `src/index.ts` directly using `tsx`, which is faster for iterative dev
 
 Edit files in the `src/` directory.
 
-### 2. Test Changes
+### 2. Format and Lint
+
+Before testing, format your code and check for linting issues:
+
+```bash
+npm run format
+npm run lint
+```
+
+### 3. Test Changes
 
 Use development mode for quick testing:
 
@@ -203,6 +212,7 @@ After building, test the image:
 docker run --rm \
   -e BANYANDB_ADDRESS=localhost:17900 \
   -e LLM_API_KEY=your-api-key \
+  -e LLM_BASE_URL=your-api-key \
   apache/skywalking-banyandb-mcp-server:latest
 ```
 
@@ -232,7 +242,7 @@ The MCP server is already integrated into the main project Makefile. The `mcp-se
 #### Common Makefile Commands
 
 ```bash
-# Build the project
+# Build the project (includes format check, lint, and TypeScript compilation)
 make -C mcp-server build
 
 # Build Docker image
@@ -252,6 +262,8 @@ make -C mcp-server license-fix
 ```
 
 The Makefile automatically handles:
+- Code formatting checks (`format:check`)
+- Code linting (`lint`)
 - Dependency installation
 - TypeScript compilation
 - Docker image building (with proper tagging)
@@ -300,48 +312,40 @@ Test with real BanyanDB instance:
 
 ### Linting
 
-Install ESLint:
+The project includes ESLint for code quality checks. Run linting:
 
 ```bash
-npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+npm run lint
 ```
 
-Add lint script to `package.json`:
-
-```json
-{
-  "scripts": {
-    "lint": "eslint src/**/*.ts"
-  }
-}
-```
+This will check all TypeScript files in the `src/` directory for code quality issues.
 
 ### Formatting
 
-Use Prettier:
+The project uses Prettier for code formatting. Format your code:
 
 ```bash
-npm install --save-dev prettier
+npm run format
 ```
 
-Add format script:
+Check formatting without making changes (useful for CI):
 
-```json
-{
-  "scripts": {
-    "format": "prettier --write src/**/*.ts"
-  }
-}
+```bash
+npm run format:check
 ```
+
+Both linting and formatting are integrated into the build process via the Makefile.
 
 ## Release Process
 
 1. **Update version** in `package.json`
-2. **Build** the project: `npm run build`
-3. **Test** with Inspector
-4. **Create package** or Docker image
-5. **Tag** the release in git
-6. **Publish** Docker image (if applicable)
+2. **Format code**: `npm run format`
+3. **Lint code**: `npm run lint`
+4. **Build** the project: `npm run build` (or `make build` which includes lint/format checks)
+5. **Test** with Inspector
+6. **Create package** or Docker image
+7. **Tag** the release in git
+8. **Publish** Docker image (if applicable)
 
 ## Troubleshooting
 

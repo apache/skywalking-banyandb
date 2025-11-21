@@ -14,13 +14,7 @@ The MCP server binary is included in the BanyanDB release package. After extract
 
 ### Building from Source Package
 
-If you have the source package, you can build the MCP server using the Makefile:
-
 ```bash
-# From the project root
-make -C mcp-server build
-
-# Or from the mcp-server directory
 cd mcp-server
 make build
 ```
@@ -78,10 +72,6 @@ docker build -t apache/skywalking-banyandb-mcp-server:latest .
 Or using the Makefile:
 
 ```bash
-# From the project root
-make -C mcp-server docker
-
-# Or from the mcp-server directory
 cd mcp-server
 make docker
 ```
@@ -95,7 +85,7 @@ docker run -d \
   --name banyandb-mcp-server \
   -e BANYANDB_ADDRESS=banyandb:17900 \
   -e LLM_API_KEY=sk-your-key-here \
-  -e LLM_BASE_URL=https://api.openai.com/v1 \
+  -e LLM_BASE_URL=your-llm-base-url \
   apache/skywalking-banyandb-mcp-server:latest
 ```
 
@@ -114,7 +104,7 @@ When using Docker, configure your MCP client to connect to the container:
         "-i",
         "-e", "BANYANDB_ADDRESS=banyandb:17900",
         "-e", "LLM_API_KEY=sk-your-key-here",
-        "-e", "LLM_BASE_URL=https://api.openai.com/v1",
+        "-e", "LLM_BASE_URL=your-llm-base-url",
         "--network", "host",
         "apache/skywalking-banyandb-mcp-server:latest"
       ]

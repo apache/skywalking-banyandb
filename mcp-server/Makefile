@@ -43,6 +43,8 @@ generate: install
 
 $(DIST_INDEX): install
 	@echo "Building $(NAME)"
+	npm run format:check
+	npm run lint
 	npm run build
 	@echo "Done building $(NAME)"
 
