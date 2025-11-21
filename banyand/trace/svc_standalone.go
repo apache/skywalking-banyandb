@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -160,6 +161,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 	err = s.pipeline.Subscribe(data.TopicSnapshot, &standaloneSnapshotListener{s: s})
+	if err != nil {
+		return err
+	}
+	err = s.pipeline.Subscribe(data.TopicDeleteExpiredTraceSegments, &standaloneDeleteTraceSegmentsListener{s: s})
 	if err != nil {
 		return err
 	}
@@ -355,6 +360,27 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 func (d *standaloneSnapshotListener) snapshotName() string {
 	d.snapshotSeq++
 	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
+}
+
+type standaloneDeleteTraceSegmentsListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (s *standaloneDeleteTraceSegmentsListener) Rev(_ context.Context, message bus.Message) bus.Message {
+	req := message.Data().(*tracev1.DeleteExpiredSegmentsRequest)
+	if req == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))
+	}
+
+	db, err := s.s.schemaRepo.loadTSDB(req.Group)
+	if err != nil {
+		s.s.l.Error().Err(err).Str("group", req.Group).Msg("fail to load tsdb")
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), int64(0))
+	}
+	s.s.l.Info().Msg("test")
+	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }
 
 // NewService returns a new service.

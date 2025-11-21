@@ -21,13 +21,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
@@ -210,7 +211,7 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 			partData := mv.createStreamingSegmentFromFiles(targetShardID, ff, segmentTR, data.TopicTraceSeriesSync.String())
 
 			// Stream segment to target shard replicas
-			if err := mv.streamPartToTargetShard(partData); err != nil {
+			if err := mv.streamPartToTargetShard(targetShardID, []queue.StreamingPartData{partData}); err != nil {
 				errorMsg := fmt.Sprintf("failed to stream trace segment to target shard %d: %v", targetShardID, err)
 				mv.progress.MarkTraceSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
 				return fmt.Errorf("failed to stream trace segment to target shard %d: %w", targetShardID, err)
@@ -223,107 +224,77 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 	return nil
 }
 
-// VisitPart implements trace.Visitor - core migration logic.
-func (mv *traceMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardID common.ShardID, partPath string) error {
-	partData, err := trace.ParsePartMetadata(mv.lfs, partPath)
-	if err != nil {
-		return fmt.Errorf("failed to parse trace part metadata: %w", err)
-	}
-	partID, err := parsePartIDFromPath(partPath)
-	if err != nil {
-		return fmt.Errorf("failed to parse part ID from path: %w", err)
-	}
-
-	// Calculate ALL target segments this part should go to
-	targetSegments := calculateTargetSegments(
-		partData.MinTimestamp,
-		partData.MaxTimestamp,
-		mv.targetStageInterval,
-	)
-
-	mv.logger.Info().
-		Uint64("part_id", partID).
-		Uint32("source_shard", uint32(sourceShardID)).
-		Int("target_segments_count", len(targetSegments)).
-		Int64("part_min_ts", partData.MinTimestamp).
-		Int64("part_max_ts", partData.MaxTimestamp).
-		Str("group", mv.group).
-		Msg("migrating trace part to multiple target segments")
-
-	// Send part to EACH target segment that overlaps with its time range
-	for i, targetSegmentTime := range targetSegments {
-		targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
-
-		// Check if this part has already been completed for this segment
-		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
-		if mv.progress.IsTracePartCompleted(mv.group, segmentIDStr, sourceShardID, partID) {
-			mv.logger.Debug().
-				Uint64("part_id", partID).
-				Uint32("source_shard", uint32(sourceShardID)).
-				Time("target_segment", targetSegmentTime).
-				Str("group", mv.group).
-				Msg("trace part already completed for this target segment, skipping")
-			continue
-		}
-
-		// Create file readers for this part
-		files, release := trace.CreatePartFileReaderFromPath(partPath, mv.lfs)
-		defer func() {
-			if i == len(targetSegments)-1 { // Only release on last iteration
-				release()
-			}
-		}()
-
-		// Clone part data for this target segment
-		targetPartData := partData
-		targetPartData.Group = mv.group
-		targetPartData.ShardID = targetShardID
-		targetPartData.Topic = data.TopicTracePartSync.String()
-		targetPartData.Files = files
-		targetPartData.PartType = trace.PartTypeCore
-
-		// Stream part to target segment
-		if err := mv.streamPartToTargetShard(targetPartData); err != nil {
-			errorMsg := fmt.Sprintf("failed to stream trace part to target segment %s: %v", targetSegmentTime.Format(time.RFC3339), err)
-			mv.progress.MarkTracePartError(mv.group, segmentIDStr, sourceShardID, partID, errorMsg)
-			return fmt.Errorf("failed to stream trace part to target segment: %w", err)
-		}
-
-		// Mark part as completed for this specific target segment
-		mv.progress.MarkTracePartCompleted(mv.group, segmentIDStr, sourceShardID, partID)
-
-		mv.logger.Info().
-			Uint64("part_id", partID).
-			Time("target_segment", targetSegmentTime).
+// VisitShard implements trace.Visitor - core and sidx migration logic.
+func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, sourceShardID common.ShardID, shardPath string) error {
+	segmentIDStr := timestampTR.String()
+	if mv.progress.IsTraceShardCompleted(mv.group, shardPath, sourceShardID) {
+		mv.logger.Debug().
+			Str("shard_path", shardPath).
 			Str("group", mv.group).
-			Msgf("trace part migration completed for target segment %d/%d", i+1, len(targetSegments))
+			Uint32("source_shard", uint32(sourceShardID)).
+			Msg("trace shard already completed for this target segment, skipping")
+		return nil
 	}
+	allParts := make([]queue.StreamingPartData, 0)
+
+	sidxPartData, sidxReleases, err := mv.generateAllSidxPartData(timestampTR, sourceShardID, filepath.Join(shardPath, "sidx"))
+	if err != nil {
+		return fmt.Errorf("failed to generate sidx part data: %s: %w", shardPath, err)
+	}
+	defer func() {
+		for _, release := range sidxReleases {
+			release()
+		}
+	}()
+	allParts = append(allParts, sidxPartData...)
+
+	partDatas, partDataReleases, err := mv.generateAllPartData(sourceShardID, shardPath)
+	if err != nil {
+		return fmt.Errorf("failed to generate core par data: %s: %w", shardPath, err)
+	}
+	defer func() {
+		for _, release := range partDataReleases {
+			release()
+		}
+	}()
+	allParts = append(allParts, partDatas...)
+
+	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
+
+	sort.Slice(allParts, func(i, j int) bool {
+		if allParts[i].ID == allParts[j].ID {
+			return allParts[i].PartType < allParts[j].PartType
+		}
+		return allParts[i].ID < allParts[j].ID
+	})
+
+	// Stream part to target segment
+	if err := mv.streamPartToTargetShard(targetShardID, allParts); err != nil {
+		errorMsg := fmt.Errorf("failed to stream to target shard %d: %w", targetShardID, err)
+		mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, errorMsg.Error())
+		return fmt.Errorf("failed to stream trace shard to target segment shard: %w", err)
+	}
+
+	// Mark shard as completed for this target segment
+	mv.progress.MarkTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
+	mv.logger.Info().
+		Str("group", mv.group).
+		Msgf("trace shard migration completed for target segment")
 
 	return nil
 }
 
-// VisitElementIndex implements trace.Visitor - shard sidx migration logic.
-func (mv *traceMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRange, sourceShardID common.ShardID, indexPath string) error {
-	segmentIDStr := segmentTR.String()
-	if mv.progress.IsTraceSidxCompleted(mv.group, segmentIDStr, sourceShardID) {
-		mv.logger.Debug().
-			Str("group", mv.group).
-			Uint32("source_shard", uint32(sourceShardID)).
-			Msg("trace sidx segment already completed, skipping")
-		return nil
-	}
-
-	mv.logger.Info().
-		Str("path", indexPath).
-		Uint32("shard_id", uint32(sourceShardID)).
-		Int64("min_timestamp", segmentTR.Start.UnixNano()).
-		Int64("max_timestamp", segmentTR.End.UnixNano()).
-		Str("group", mv.group).
-		Msg("migrating trace sidx")
-
+func (mv *traceMigrationVisitor) generateAllSidxPartData(
+	segmentTR *timestamp.TimeRange,
+	sourceShardID common.ShardID,
+	sidxPath string,
+) ([]queue.StreamingPartData, []func(), error) {
 	// Sidx structure: sidx/{index-name}/{part-id}/files
 	// Find all index directories in the sidx directory
-	entries := mv.lfs.ReadDir(indexPath)
+	entries := mv.lfs.ReadDir(sidxPath)
+
+	parts := make([]queue.StreamingPartData, 0, len(entries))
+	releases := make([]func(), 0, len(entries))
 
 	var indexDirs []string
 	for _, entry := range entries {
@@ -334,14 +305,14 @@ func (mv *traceMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRang
 
 	if len(indexDirs) == 0 {
 		mv.logger.Debug().
-			Str("path", indexPath).
+			Str("path", sidxPath).
 			Msg("no index directories found in trace sidx directory")
-		return nil
+		return nil, nil, nil
 	}
 
 	mv.logger.Info().
 		Int("index_count", len(indexDirs)).
-		Str("path", indexPath).
+		Str("path", sidxPath).
 		Uint32("source_shard", uint32(sourceShardID)).
 		Msg("found trace sidx indexes for migration")
 
@@ -350,7 +321,7 @@ func (mv *traceMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRang
 
 	// Process each index directory
 	for _, indexName := range indexDirs {
-		indexDirPath := filepath.Join(indexPath, indexName)
+		indexDirPath := filepath.Join(sidxPath, indexName)
 
 		// Find all part directories in this index
 		partEntries := mv.lfs.ReadDir(indexDirPath)
@@ -385,19 +356,20 @@ func (mv *traceMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRang
 
 			// Create file readers for this sidx part
 			files, release := trace.CreatePartFileReaderFromPath(partPath, mv.lfs)
-			defer release()
 
 			// Create StreamingPartData with PartType = index name
-			partData := queue.StreamingPartData{
-				Group:        mv.group,
-				ShardID:      targetShardID,
-				Topic:        data.TopicTracePartSync.String(),
-				ID:           partID,
-				PartType:     indexName, // Use index name as PartType (not "core")
-				Files:        files,
-				MinTimestamp: segmentTR.Start.UnixNano(),
-				MaxTimestamp: segmentTR.End.UnixNano(),
+			partData, err := sidx.ParsePartMetadata(mv.lfs, partPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to parse sidx part metadata: %s: %w", partPath, err)
 			}
+			partData.Group = mv.group
+			partData.ShardID = targetShardID
+			partData.Topic = data.TopicTracePartSync.String()
+			partData.ID = partID
+			partData.PartType = indexName // Use index name as PartType (not "core")
+			partData.Files = files
+			partData.MinTimestamp = segmentTR.Start.UnixNano()
+			partData.MaxTimestamp = segmentTR.End.UnixNano()
 
 			mv.logger.Info().
 				Str("index_name", indexName).
@@ -405,27 +377,102 @@ func (mv *traceMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRang
 				Uint32("source_shard", uint32(sourceShardID)).
 				Uint32("target_shard", targetShardID).
 				Str("group", mv.group).
-				Msg("migrating trace sidx part")
+				Msg("generated trace sidx part data")
 
-			// Stream part to target shard replicas
-			if err := mv.streamPartToTargetShard(partData); err != nil {
-				errorMsg := fmt.Sprintf("failed to stream trace sidx part %d for index %s: %v", partID, indexName, err)
-				mv.progress.MarkTraceSidxError(mv.group, segmentIDStr, sourceShardID, errorMsg)
-				return fmt.Errorf("failed to stream trace sidx part %d for index %s: %w", partID, indexName, err)
-			}
-
-			mv.logger.Info().
-				Str("index_name", indexName).
-				Uint64("part_id", partID).
-				Str("group", mv.group).
-				Msg("trace sidx part migration completed successfully")
+			parts = append(parts, *partData)
+			releases = append(releases, release)
 		}
 	}
 
-	// Mark segment as completed
-	mv.progress.MarkTraceSidxCompleted(mv.group, segmentIDStr, sourceShardID)
+	return parts, releases, nil
+}
 
-	return nil
+func (mv *traceMigrationVisitor) generateAllPartData(sourceShardID common.ShardID, shardPath string) ([]queue.StreamingPartData, []func(), error) {
+	entries := mv.lfs.ReadDir(shardPath)
+
+	allParts := make([]queue.StreamingPartData, 0)
+	allReleases := make([]func(), 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		// Check if this is a part directory (16-character hex string)
+		if len(name) != 16 {
+			continue // Skip non-part entries
+		}
+
+		// Validate it's a valid hex string (part ID)
+		if _, err := strconv.ParseUint(name, 16, 64); err != nil {
+			continue // Skip invalid part entries
+		}
+
+		partPath := filepath.Join(shardPath, name)
+		parts, releases, err := mv.generatePartData(sourceShardID, partPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate part data for path %s: %w", partPath, err)
+		}
+		allParts = append(allParts, parts...)
+		allReleases = append(allReleases, releases...)
+	}
+
+	return allParts, allReleases, nil
+}
+
+func (mv *traceMigrationVisitor) generatePartData(sourceShardID common.ShardID, partPath string) ([]queue.StreamingPartData, []func(), error) {
+	partData, err := trace.ParsePartMetadata(mv.lfs, partPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse trace part metadata: %w", err)
+	}
+	partID, err := parsePartIDFromPath(partPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse part ID from path: %w", err)
+	}
+	// Calculate ALL target segments this part should go to
+	targetSegments := calculateTargetSegments(
+		partData.MinTimestamp,
+		partData.MaxTimestamp,
+		mv.targetStageInterval,
+	)
+
+	mv.logger.Info().
+		Uint64("part_id", partID).
+		Uint32("source_shard", uint32(sourceShardID)).
+		Int("target_segments_count", len(targetSegments)).
+		Int64("part_min_ts", partData.MinTimestamp).
+		Int64("part_max_ts", partData.MaxTimestamp).
+		Str("group", mv.group).
+		Msg("generate trace part files to multiple target segments")
+
+	parts := make([]queue.StreamingPartData, 0)
+	releases := make([]func(), 0)
+	// Send part to EACH target segment that overlaps with its time range
+	for i, targetSegmentTime := range targetSegments {
+		targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
+
+		// Create file readers for this part
+		files, release := trace.CreatePartFileReaderFromPath(partPath, mv.lfs)
+
+		// Clone part data for this target segment
+		targetPartData := partData
+		targetPartData.ID = partID
+		targetPartData.Group = mv.group
+		targetPartData.ShardID = targetShardID
+		targetPartData.Topic = data.TopicTracePartSync.String()
+		targetPartData.Files = files
+		targetPartData.PartType = trace.PartTypeCore
+		parts = append(parts, targetPartData)
+		releases = append(releases, release)
+
+		mv.logger.Info().
+			Uint64("part_id", partID).
+			Time("target_segment", targetSegmentTime).
+			Str("group", mv.group).
+			Msgf("generated trace part file migration completed for target segment %d/%d", i+1, len(targetSegments))
+	}
+
+	return parts, releases, nil
 }
 
 // calculateTargetShardID maps source shard ID to target shard ID.
@@ -434,8 +481,7 @@ func (mv *traceMigrationVisitor) calculateTargetShardID(sourceShardID uint32) ui
 }
 
 // streamPartToTargetShard sends part data to all replicas of the target shard.
-func (mv *traceMigrationVisitor) streamPartToTargetShard(partData queue.StreamingPartData) error {
-	targetShardID := partData.ShardID
+func (mv *traceMigrationVisitor) streamPartToTargetShard(targetShardID uint32, partData []queue.StreamingPartData) error {
 	copies := mv.replicas + 1
 
 	// Send to all replicas using the exact pattern from steps.go:219-236
@@ -456,7 +502,7 @@ func (mv *traceMigrationVisitor) streamPartToTargetShard(partData queue.Streamin
 }
 
 // streamPartToNode streams part data to a specific target node.
-func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID uint32, partData queue.StreamingPartData) error {
+func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID uint32, partData []queue.StreamingPartData) error {
 	// Get or create chunked client for this node (cache hit optimization)
 	chunkedClient, exists := mv.chunkedClients[nodeID]
 	if !exists {
@@ -471,7 +517,7 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 
 	// Stream using chunked transfer (same as syncer.go:202)
 	ctx := context.Background()
-	result, err := chunkedClient.SyncStreamingParts(ctx, []queue.StreamingPartData{partData})
+	result, err := chunkedClient.SyncStreamingParts(ctx, partData)
 	if err != nil {
 		return fmt.Errorf("failed to sync streaming parts to node %s: %w", nodeID, err)
 	}
@@ -480,7 +526,6 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 		return fmt.Errorf("chunked sync partially failed: %v", result.FailedParts)
 	}
 
-	// Log success metrics (same pattern as syncer.go:210-217)
 	mv.logger.Info().
 		Str("node", nodeID).
 		Str("session", result.SessionID).
@@ -489,9 +534,8 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 		Uint32("chunks", result.ChunksCount).
 		Uint32("parts", result.PartsCount).
 		Uint32("target_shard", targetShardID).
-		Uint64("part_id", partData.ID).
 		Str("group", mv.group).
-		Msg("file-based trace migration part completed successfully")
+		Msg("file-based trace migration shard completed successfully")
 
 	return nil
 }
@@ -526,13 +570,13 @@ func (mv *traceMigrationVisitor) createStreamingSegmentFromFiles(
 	return segmentData
 }
 
-// SetTracePartCount sets the total number of parts for the current trace.
-func (mv *traceMigrationVisitor) SetTracePartCount(totalParts int) {
+// SetTraceShardCount sets the total number of shards for the current trace.
+func (mv *traceMigrationVisitor) SetTraceShardCount(totalShards int) {
 	if mv.progress != nil {
-		mv.progress.SetTracePartCount(mv.group, totalParts)
+		mv.progress.SetTraceShardCount(mv.group, totalShards)
 		mv.logger.Info().
 			Str("group", mv.group).
-			Int("total_parts", totalParts).
+			Int("total_shards", totalShards).
 			Msg("set trace part count for progress tracking")
 	}
 }

@@ -18,12 +18,8 @@
 package trace
 
 import (
-	"path/filepath"
-	"strconv"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -31,10 +27,8 @@ import (
 type Visitor interface {
 	// VisitSeries visits the series index directory for a segment.
 	VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error
-	// VisitPart visits a part directory for a shard.
-	VisitPart(segmentTR *timestamp.TimeRange, shardID common.ShardID, partPath string) error
-	// VisitElementIndex visits the element index(sidx) directory within a shard.
-	VisitElementIndex(segmentTR *timestamp.TimeRange, shardID common.ShardID, indexPath string) error
+	// VisitShard visits the shard directory for a segment.
+	VisitShard(segmentTR *timestamp.TimeRange, shardID common.ShardID, segmentPath string) error
 }
 
 // traceSegmentVisitor adapts Visitor to work with storage.SegmentVisitor.
@@ -50,70 +44,7 @@ func (tv *traceSegmentVisitor) VisitSeries(segmentTR *timestamp.TimeRange, serie
 // VisitShard implements storage.SegmentVisitor.
 func (tv *traceSegmentVisitor) VisitShard(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
 	// Visit parts within the shard
-	if err := tv.visitShardParts(segmentTR, shardID, shardPath); err != nil {
-		return err
-	}
-	lfs := fs.NewLocalFileSystem()
-	entries := lfs.ReadDir(shardPath)
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		// Check if this is a part directory (16-character hex string)
-		if len(name) != 16 {
-			continue // Skip non-part entries
-		}
-
-		// Validate it's a valid hex string (part ID)
-		if _, err := strconv.ParseUint(name, 16, 64); err != nil {
-			continue // Skip invalid part entries
-		}
-
-		partPath := filepath.Join(shardPath, name)
-		if err := tv.visitor.VisitPart(segmentTR, shardID, partPath); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (tv *traceSegmentVisitor) visitShardParts(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
-	lfs := fs.NewLocalFileSystem()
-	entries := lfs.ReadDir(shardPath)
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		// Check if this is a part directory (16-character hex string)
-		if len(name) != 16 {
-			continue // Skip non-part entries
-		}
-
-		// Validate it's a valid hex string (part ID)
-		if _, err := strconv.ParseUint(name, 16, 64); err != nil {
-			continue // Skip invalid part entries
-		}
-
-		partPath := filepath.Join(shardPath, name)
-		if err := tv.visitor.VisitPart(segmentTR, shardID, partPath); err != nil {
-			return err
-		}
-	}
-
-	return tv.visitShardElementIndex(segmentTR, shardID, shardPath)
-}
-
-// visitShardElementIndex visits the element index directory within a shard.
-func (tv *traceSegmentVisitor) visitShardElementIndex(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
-	indexPath := filepath.Join(shardPath, sidxDirName)
-	return tv.visitor.VisitElementIndex(segmentTR, shardID, indexPath)
+	return tv.visitor.VisitShard(segmentTR, shardID, shardPath)
 }
 
 // VisitTracesInTimeRange traverses trace parts within the specified time range

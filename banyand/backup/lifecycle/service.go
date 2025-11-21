@@ -36,6 +36,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -758,17 +759,25 @@ func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *
 	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) deleteExpiredTraceSegments(_ context.Context, g *commonv1.Group, segmentSuffixes []string, progress *Progress) {
+func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *commonv1.Group, segmentSuffixes []string, progress *Progress) {
 	if progress.IsTraceGroupDeleted(g.Metadata.Name) {
 		l.l.Info().Msgf("skipping already deleted trace group segments: %s", g.Metadata.Name)
 		return
 	}
 
-	// TODO: Implement trace DeleteExpiredSegments RPC in trace service
-	// For now, log a warning that this functionality is not yet implemented
-	l.l.Warn().Msgf("trace DeleteExpiredSegments RPC not yet implemented for group %s, segments: %v", g.Metadata.Name, segmentSuffixes)
+	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpc.ClientConn) (*tracev1.DeleteExpiredSegmentsResponse, error) {
+		client := tracev1.NewTraceServiceClient(conn)
+		return client.DeleteExpiredSegments(ctx, &tracev1.DeleteExpiredSegmentsRequest{
+			Group:           g.Metadata.Name,
+			SegmentSuffixes: segmentSuffixes,
+		})
+	})
+	if err != nil {
+		l.l.Error().Err(err).Msgf("failed to delete expired segments in group %s, suffixes: %s", g.Metadata.Name, segmentSuffixes)
+		return
+	}
 
-	// Mark as deleted to allow progress tracking
+	l.l.Warn().Msgf("deleted %d expired segments in group %s, suffixes: %s", resp.Deleted, g.Metadata.Name, segmentSuffixes)
 	progress.MarkTraceGroupDeleted(g.Metadata.Name)
 	progress.Save(l.progressFilePath, l.l)
 }

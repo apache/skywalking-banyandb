@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -161,6 +162,28 @@ func (p *part) loadPartMetadata() error {
 
 	p.partMetadata = pm
 	return nil
+}
+
+// ParsePartMetadata reads and parses part metadata from manifest.json in the specified parent path.
+func ParsePartMetadata(fs fs.FileSystem, parentPath string) (*queue.StreamingPartData, error) {
+	manifestData, err := fs.Read(filepath.Join(parentPath, manifestFilename))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest.json: %w", err)
+	}
+	// Parse JSON manifest
+	pm := &partMetadata{}
+	if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
+	}
+	return &queue.StreamingPartData{
+		ID:                    pm.ID,
+		CompressedSizeBytes:   pm.CompressedSizeBytes,
+		UncompressedSizeBytes: pm.UncompressedSizeBytes,
+		TotalCount:            pm.TotalCount,
+		BlocksCount:           pm.BlocksCount,
+		MinKey:                pm.MinKey,
+		MaxKey:                pm.MaxKey,
+	}, nil
 }
 
 // loadPrimaryBlockMetadata reads and parses primary block metadata from meta.bin.

@@ -180,12 +180,12 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
-	// Count total parts before starting migration
-	totalParts, segmentSuffixes, err := countTraceParts(tsdbRootPath, timeRange, segmentIntervalRule)
+	// Count total shards before starting migration
+	totalShards, segmentSuffixes, err := countTraceShards(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to count trace parts, proceeding without part count")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Strs("segment_suffixes", segmentSuffixes).
+		logger.Info().Int("total_shards", totalShards).Strs("segment_suffixes", segmentSuffixes).
 			Msg("counted trace parts for progress tracking")
 	}
 
@@ -197,8 +197,8 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	defer visitor.Close()
 
 	// Set the total part count for progress tracking
-	if totalParts > 0 {
-		visitor.SetTracePartCount(totalParts)
+	if totalShards > 0 {
+		visitor.SetTraceShardCount(totalShards)
 	}
 
 	// Use the existing VisitTracesInTimeRange function with our file-based visitor
@@ -209,37 +209,32 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	return segmentSuffixes, nil
 }
 
-// countTraceParts counts the total number of parts in the given time range.
-func countTraceParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
-	// Create a simple visitor to count parts
-	partCounter := &tracePartCountVisitor{}
+// countTraceShards counts the total number of shards in the given time range.
+func countTraceShards(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
+	// Create a simple visitor to count shards
+	shardCounter := &traceShardsCountVisitor{}
 
 	// Use the existing VisitTracesInTimeRange function to count parts
-	segmentSuffixes, err := trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
+	segmentSuffixes, err := trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, shardCounter, segmentInterval)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	return partCounter.partCount, segmentSuffixes, nil
+	return shardCounter.shardCount, segmentSuffixes, nil
 }
 
-// tracePartCountVisitor is a simple visitor that counts trace parts.
-type tracePartCountVisitor struct {
-	partCount int
+// traceShardsCountVisitor is a simple visitor that counts trace shards.
+type traceShardsCountVisitor struct {
+	shardCount int
 }
 
 // VisitSeries implements trace.Visitor.
-func (pcv *tracePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+func (pcv *traceShardsCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
 	return nil
 }
 
-// VisitPart implements trace.Visitor.
-func (pcv *tracePartCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
-	pcv.partCount++
-	return nil
-}
-
-// VisitElementIndex implements trace.Visitor.
-func (pcv *tracePartCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+// VisitShard implements trace.Visitor.
+func (pcv *traceShardsCountVisitor) VisitShard(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+	pcv.shardCount++
 	return nil
 }

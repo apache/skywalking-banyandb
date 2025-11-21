@@ -96,7 +96,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	ctx := context.Background()
 	test_stream.LoadSchemaWithStages(ctx, schemaRegistry)
 	test_measure.LoadSchemaWithStages(ctx, schemaRegistry)
-	test_trace.PreloadSchema(ctx, schemaRegistry)
+	test_trace.PreloadSchemaWithStages(ctx, schemaRegistry)
 	test_property.PreloadSchema(ctx, schemaRegistry)
 	By("Starting hot data node")
 	var closeDataNode0 func()
