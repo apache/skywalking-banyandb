@@ -17,10 +17,10 @@
  * under the License.
  */
 
-const path = require('path');
-const fs = require('fs');
-const jsonfile = require('jsonfile');
-const semver = require('semver');
+import path from 'path';
+import fs from 'fs';
+import jsonfile from 'jsonfile';
+import semver from 'semver';
 const packageJsonPath = path.join(process.cwd(), 'package.json')
 
 fs.accessSync(packageJsonPath);
