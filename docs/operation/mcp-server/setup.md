@@ -46,7 +46,7 @@ Set the following environment variables:
 
 ### 3. Configure MCP Client
 
-Create a configuration file for your MCP client. For example, for MCP Inspector, see [MCP client](inspector) - Basic Setup
+Create a configuration file for your MCP client. For example, for MCP Inspector, see [MCP client](inspector.md) - Basic Setup
 
 ## Using Docker Image
 
