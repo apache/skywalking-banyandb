@@ -39,24 +39,16 @@ const (
 	tracePrimaryName        = "primary"
 	traceMetaName           = "meta"
 	traceSpansName          = "spans"
-	traceDataName           = "data"
-	traceKeysName           = "keys"
 	traceTagsPrefix         = "t:"
 	traceTagMetadataPrefix  = "tm:"
-	traceTagDataPrefix      = "td:"
-	traceTagFilterPrefix    = "tf:"
 	metadataFilename        = "metadata.json"
 	traceIDFilterFilename   = "traceID.filter"
 	tagTypeFilename         = "tag.type"
 	primaryFilename         = tracePrimaryName + ".bin"
 	metaFilename            = traceMetaName + ".bin"
 	spansFilename           = traceSpansName + ".bin"
-	dataFilename            = traceDataName + ".bin"
-	keysFilename            = traceKeysName + ".bin"
 	tagsMetadataFilenameExt = ".tm"
 	tagsFilenameExt         = ".t"
-	tagDataFilenameExt      = ".td"
-	tagFilterFilenameExt    = ".tf"
 )
 
 type part struct {
@@ -456,21 +448,22 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 		})
 	}
 
-	keysPath := path.Join(partPath, keysFilename)
-	if keysReader, err := lfs.OpenFile(keysPath); err == nil {
-		readers = append(readers, keysReader)
+	// Special trace files: traceID.filter and tag.type
+	traceIDFilterPath := path.Join(partPath, traceIDFilterFilename)
+	if filterReader, err := lfs.OpenFile(traceIDFilterPath); err == nil {
+		readers = append(readers, filterReader)
 		files = append(files, queue.FileInfo{
-			Name:   traceKeysName,
-			Reader: keysReader.SequentialRead(),
+			Name:   traceIDFilterFilename,
+			Reader: filterReader.SequentialRead(),
 		})
 	}
 
-	dataPath := path.Join(partPath, dataFilename)
-	if dataReader, err := lfs.OpenFile(dataPath); err == nil {
-		readers = append(readers, dataReader)
+	tagTypePath := path.Join(partPath, tagTypeFilename)
+	if tagTypeReader, err := lfs.OpenFile(tagTypePath); err == nil {
+		readers = append(readers, tagTypeReader)
 		files = append(files, queue.FileInfo{
-			Name:   traceDataName,
-			Reader: dataReader.SequentialRead(),
+			Name:   tagTypeFilename,
+			Reader: tagTypeReader.SequentialRead(),
 		})
 	}
 
@@ -510,55 +503,6 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 				Reader: tReader.SequentialRead(),
 			})
 		}
-
-		// Tag family files (.tf)
-		if filepath.Ext(e.Name()) == tagFilterFilenameExt {
-			tPath := path.Join(partPath, e.Name())
-			tReader, err := lfs.OpenFile(tPath)
-			if err != nil {
-				logger.Panicf("cannot open trace tag file %q: %s", tPath, err)
-			}
-			readers = append(readers, tReader)
-			tagName := removeExt(e.Name(), tagFilterFilenameExt)
-			files = append(files, queue.FileInfo{
-				Name:   traceTagFilterPrefix + tagName,
-				Reader: tReader.SequentialRead(),
-			})
-		}
-
-		// Tag data files (.td)
-		if filepath.Ext(e.Name()) == tagDataFilenameExt {
-			tdPath := path.Join(partPath, e.Name())
-			tdReader, err := lfs.OpenFile(tdPath)
-			if err != nil {
-				logger.Panicf("cannot open trace tag data file %q: %s", tdPath, err)
-			}
-			readers = append(readers, tdReader)
-			tagName := removeExt(e.Name(), tagDataFilenameExt)
-			files = append(files, queue.FileInfo{
-				Name:   traceTagDataPrefix + tagName,
-				Reader: tdReader.SequentialRead(),
-			})
-		}
-	}
-
-	// Special trace files: traceID.filter and tag.type
-	traceIDFilterPath := path.Join(partPath, traceIDFilterFilename)
-	if filterReader, err := lfs.OpenFile(traceIDFilterPath); err == nil {
-		readers = append(readers, filterReader)
-		files = append(files, queue.FileInfo{
-			Name:   traceIDFilterFilename,
-			Reader: filterReader.SequentialRead(),
-		})
-	}
-
-	tagTypePath := path.Join(partPath, tagTypeFilename)
-	if tagTypeReader, err := lfs.OpenFile(tagTypePath); err == nil {
-		readers = append(readers, tagTypeReader)
-		files = append(files, queue.FileInfo{
-			Name:   tagTypeFilename,
-			Reader: tagTypeReader.SequentialRead(),
-		})
 	}
 
 	cleanup := func() {

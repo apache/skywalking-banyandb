@@ -355,7 +355,7 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 			partPath := filepath.Join(indexDirPath, partDirName)
 
 			// Create file readers for this sidx part
-			files, release := trace.CreatePartFileReaderFromPath(partPath, mv.lfs)
+			files, release := sidx.CreatePartFileReaderFromPath(partPath, mv.lfs)
 
 			// Create StreamingPartData with PartType = index name
 			partData, err := sidx.ParsePartMetadata(mv.lfs, partPath)

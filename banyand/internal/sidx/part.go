@@ -20,6 +20,7 @@ package sidx
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -184,6 +185,114 @@ func ParsePartMetadata(fs fs.FileSystem, parentPath string) (*queue.StreamingPar
 		MinKey:                pm.MinKey,
 		MaxKey:                pm.MaxKey,
 	}, nil
+}
+
+// CreatePartFileReaderFromPath opens all files in a part directory and returns their FileInfo and a cleanup function.
+func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+	var readers []fs.Reader
+
+	// Core trace files (required files)
+	metaPath := path.Join(partPath, metaFilename)
+	metaReader, err := lfs.OpenFile(metaPath)
+	if err != nil {
+		logger.Panicf("cannot open trace meta file %q: %s", metaPath, err)
+	}
+	readers = append(readers, metaReader)
+	files = append(files, queue.FileInfo{
+		Name:   SidxMetaName,
+		Reader: metaReader.SequentialRead(),
+	})
+
+	primaryPath := path.Join(partPath, primaryFilename)
+	primaryReader, err := lfs.OpenFile(primaryPath)
+	if err != nil {
+		logger.Panicf("cannot open trace primary file %q: %s", primaryPath, err)
+	}
+	readers = append(readers, primaryReader)
+	files = append(files, queue.FileInfo{
+		Name:   SidxPrimaryName,
+		Reader: primaryReader.SequentialRead(),
+	})
+
+	keysPath := path.Join(partPath, keysFilename)
+	if keysReader, err := lfs.OpenFile(keysPath); err == nil {
+		readers = append(readers, keysReader)
+		files = append(files, queue.FileInfo{
+			Name:   SidxKeysName,
+			Reader: keysReader.SequentialRead(),
+		})
+	}
+
+	dataPath := path.Join(partPath, dataFilename)
+	if dataReader, err := lfs.OpenFile(dataPath); err == nil {
+		readers = append(readers, dataReader)
+		files = append(files, queue.FileInfo{
+			Name:   SidxDataName,
+			Reader: dataReader.SequentialRead(),
+		})
+	}
+
+	// Dynamic tag files (*.t and *.tm)
+	ee := lfs.ReadDir(partPath)
+	for _, e := range ee {
+		if e.IsDir() {
+			continue
+		}
+
+		// Tag metadata files (.tm)
+		if filepath.Ext(e.Name()) == tagMetadataExtension {
+			tmPath := path.Join(partPath, e.Name())
+			tmReader, err := lfs.OpenFile(tmPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag metadata file %q: %s", tmPath, err)
+			}
+			readers = append(readers, tmReader)
+			tagName := removeExt(e.Name(), tagMetadataExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagMetadataPrefix + tagName,
+				Reader: tmReader.SequentialRead(),
+			})
+		}
+
+		// Tag family files (.tf)
+		if filepath.Ext(e.Name()) == tagFilterExtension {
+			tPath := path.Join(partPath, e.Name())
+			tReader, err := lfs.OpenFile(tPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag file %q: %s", tPath, err)
+			}
+			readers = append(readers, tReader)
+			tagName := removeExt(e.Name(), tagFilterExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagFilterPrefix + tagName,
+				Reader: tReader.SequentialRead(),
+			})
+		}
+
+		// Tag data files (.td)
+		if filepath.Ext(e.Name()) == tagDataExtension {
+			tdPath := path.Join(partPath, e.Name())
+			tdReader, err := lfs.OpenFile(tdPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag data file %q: %s", tdPath, err)
+			}
+			readers = append(readers, tdReader)
+			tagName := removeExt(e.Name(), tagDataExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagDataPrefix + tagName,
+				Reader: tdReader.SequentialRead(),
+			})
+		}
+	}
+
+	cleanup := func() {
+		for _, reader := range readers {
+			fs.MustClose(reader)
+		}
+	}
+
+	return files, cleanup
 }
 
 // loadPrimaryBlockMetadata reads and parses primary block metadata from meta.bin.
@@ -806,4 +915,8 @@ func (spc *SyncPartContext) Close() {
 	ReleaseWriters(spc.writers)
 	spc.writers = nil
 	spc.memPart = nil
+}
+
+func removeExt(nameWithExt, ext string) string {
+	return nameWithExt[:len(nameWithExt)-len(ext)]
 }
