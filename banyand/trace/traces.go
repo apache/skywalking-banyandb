@@ -18,8 +18,6 @@
 package trace
 
 import (
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
@@ -73,31 +71,6 @@ func releaseTagValue(v *tagValue) {
 }
 
 var tagValuePool = pool.Register[*tagValue]("trace-tagValue")
-
-func unmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
-	if len(src) == 0 {
-		return nil, nil, errors.New("empty entity value")
-	}
-	if src[0] == encoding.EntityDelimiter {
-		return dest, src[1:], nil
-	}
-	for len(src) > 0 {
-		switch {
-		case src[0] == encoding.Escape:
-			if len(src) < 2 {
-				return nil, nil, errors.New("invalid escape character")
-			}
-			src = src[1:]
-			dest = append(dest, src[0])
-		case src[0] == encoding.EntityDelimiter:
-			return dest, src[1:], nil
-		default:
-			dest = append(dest, src[0])
-		}
-		src = src[1:]
-	}
-	return nil, nil, errors.New("invalid variable array")
-}
 
 type traces struct {
 	traceIDs   []string

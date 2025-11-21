@@ -22,6 +22,7 @@ package encoding
 
 import (
 	stdbytes "bytes"
+	"errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -111,6 +112,32 @@ func MarshalVarArray(dest, src []byte) []byte {
 	}
 	dest = append(dest, EntityDelimiter)
 	return dest
+}
+
+// UnmarshalVarArray unmarshals a variable-length array into a byte slice.
+func UnmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
+	if len(src) == 0 {
+		return nil, nil, errors.New("empty entity value")
+	}
+	if src[0] == EntityDelimiter {
+		return dest, src[1:], nil
+	}
+	for len(src) > 0 {
+		switch {
+		case src[0] == Escape:
+			if len(src) < 2 {
+				return nil, nil, errors.New("invalid escape character")
+			}
+			src = src[1:]
+			dest = append(dest, src[0])
+		case src[0] == EntityDelimiter:
+			return dest, src[1:], nil
+		default:
+			dest = append(dest, src[0])
+		}
+		src = src[1:]
+	}
+	return nil, nil, errors.New("invalid variable array")
 }
 
 // EncodeTagValues encodes tag values based on the value type with optimal compression.

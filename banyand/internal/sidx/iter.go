@@ -29,11 +29,21 @@ import (
 )
 
 type iter struct {
-	err           error
-	parts         []*part
-	piPool        []partIter
-	piHeap        partIterHeap
-	nextBlockNoop bool
+	err       error
+	curBlock  *blockMetadata
+	curPart   *part
+	parts     []*part
+	partIters []*partKeyIter
+	heap      partKeyIterHeap
+	asc       bool
+}
+
+func (it *iter) releaseCurBlock() {
+	if it.curBlock != nil {
+		releaseBlockMetadata(it.curBlock)
+		it.curBlock = nil
+	}
+	it.curPart = nil
 }
 
 func (it *iter) reset() {
@@ -42,88 +52,132 @@ func (it *iter) reset() {
 	}
 	it.parts = it.parts[:0]
 
-	for i := range it.piPool {
-		it.piPool[i].reset()
+	for i := range it.partIters {
+		if it.partIters[i] != nil {
+			releasePartKeyIter(it.partIters[i])
+			it.partIters[i] = nil
+		}
 	}
-	it.piPool = it.piPool[:0]
+	it.partIters = it.partIters[:0]
 
-	for i := range it.piHeap {
-		it.piHeap[i] = nil
+	for i := range it.heap {
+		it.heap[i] = nil
 	}
-	it.piHeap = it.piHeap[:0]
+	it.heap = it.heap[:0]
+
+	it.releaseCurBlock()
 
 	it.err = nil
-	it.nextBlockNoop = false
+	it.asc = false
 }
 
-func (it *iter) init(bma *blockMetadataArray, parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter) {
+func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) {
 	it.reset()
-	it.parts = parts
+	it.parts = append(it.parts[:0], parts...)
+	it.asc = asc
 
-	if n := len(it.parts) - cap(it.piPool); n > 0 {
-		it.piPool = append(it.piPool[:cap(it.piPool)], make([]partIter, n)...)
-	}
-	it.piPool = it.piPool[:len(it.parts)]
-	for i, p := range it.parts {
-		it.piPool[i].init(bma, p, sids, minKey, maxKey, blockFilter)
+	if cap(it.partIters) < len(parts) {
+		it.partIters = make([]*partKeyIter, len(parts))
+	} else {
+		it.partIters = it.partIters[:len(parts)]
+		for i := range it.partIters {
+			if it.partIters[i] != nil {
+				releasePartKeyIter(it.partIters[i])
+				it.partIters[i] = nil
+			}
+		}
 	}
 
-	it.piHeap = it.piHeap[:0]
-	for i := range it.piPool {
-		ps := &it.piPool[i]
-		if !ps.nextBlock() {
-			if err := ps.error(); err != nil {
+	it.heap = it.heap[:0]
+
+	for i, p := range parts {
+		pki := generatePartKeyIter()
+		it.partIters[i] = pki
+
+		pki.init(p, sids, minKey, maxKey, blockFilter, asc)
+		if err := pki.error(); err != nil {
+			if !errors.Is(err, io.EOF) {
+				releasePartKeyIter(pki)
+				it.partIters[i] = nil
 				it.err = fmt.Errorf("cannot initialize sidx iteration: %w", err)
 				return
 			}
+			releasePartKeyIter(pki)
+			it.partIters[i] = nil
 			continue
 		}
-		it.piHeap = append(it.piHeap, ps)
+
+		if !pki.nextBlock() {
+			if err := pki.error(); err != nil && !errors.Is(err, io.EOF) {
+				releasePartKeyIter(pki)
+				it.partIters[i] = nil
+				it.err = fmt.Errorf("cannot initialize sidx iteration: %w", err)
+				return
+			}
+			releasePartKeyIter(pki)
+			it.partIters[i] = nil
+			continue
+		}
+
+		bm, _ := pki.current()
+		if bm == nil {
+			releasePartKeyIter(pki)
+			it.partIters[i] = nil
+			continue
+		}
+
+		it.heap = append(it.heap, pki)
 	}
-	if len(it.piHeap) == 0 {
+
+	if len(it.heap) == 0 {
 		it.err = io.EOF
 		return
 	}
-	heap.Init(&it.piHeap)
-	it.nextBlockNoop = true
+
+	heap.Init(&it.heap)
 }
 
 func (it *iter) nextBlock() bool {
 	if it.err != nil {
 		return false
 	}
-	if it.nextBlockNoop {
-		it.nextBlockNoop = false
-		return true
-	}
 
-	it.err = it.next()
-	if it.err != nil {
-		if errors.Is(it.err, io.EOF) {
-			it.err = fmt.Errorf("cannot obtain the next block to search in the partition: %w", it.err)
-		}
+	it.releaseCurBlock()
+
+	if len(it.heap) == 0 {
+		it.err = io.EOF
 		return false
 	}
+
+	pki := heap.Pop(&it.heap).(*partKeyIter)
+	bm, p := pki.current()
+	if bm == nil {
+		it.releasePartIter(pki)
+		it.err = fmt.Errorf("partKeyIter has no current block")
+		return false
+	}
+
+	it.curBlock = generateBlockMetadata()
+	it.curBlock.copyFrom(bm)
+	it.curPart = p
+
+	if !pki.nextBlock() {
+		err := pki.error()
+		it.releasePartIter(pki)
+		if err != nil && !errors.Is(err, io.EOF) {
+			it.releaseCurBlock()
+			it.err = err
+			return false
+		}
+	} else {
+		heap.Push(&it.heap, pki)
+	}
+
 	return true
 }
 
-func (it *iter) next() error {
-	psMin := it.piHeap[0]
-	if psMin.nextBlock() {
-		heap.Fix(&it.piHeap, 0)
-		return nil
-	}
-
-	if err := psMin.error(); err != nil {
-		return err
-	}
-
-	heap.Pop(&it.piHeap)
-
-	if len(it.piHeap) == 0 {
-		return io.EOF
-	}
-	return nil
+func (it *iter) current() (*blockMetadata, *part) {
+	return it.curBlock, it.curPart
 }
 
 func (it *iter) Error() error {
@@ -148,29 +202,60 @@ func releaseIter(it *iter) {
 
 var iterPool = pool.Register[*iter]("sidx-iter")
 
-type partIterHeap []*partIter
+type partKeyIterHeap []*partKeyIter
 
-func (pih *partIterHeap) Len() int {
+func (pih *partKeyIterHeap) Len() int {
 	return len(*pih)
 }
 
-func (pih *partIterHeap) Less(i, j int) bool {
+func (pih *partKeyIterHeap) Less(i, j int) bool {
 	x := *pih
-	return x[i].curBlock.less(x[j].curBlock)
+	bmi, _ := x[i].current()
+	bmj, _ := x[j].current()
+	if bmi == nil {
+		return false
+	}
+	if bmj == nil {
+		return true
+	}
+	asc := true
+	if x[i] != nil {
+		asc = x[i].asc
+	} else if x[j] != nil {
+		asc = x[j].asc
+	}
+	if asc {
+		return bmi.lessByKey(bmj)
+	}
+	return bmj.lessByKey(bmi)
 }
 
-func (pih *partIterHeap) Swap(i, j int) {
+func (pih *partKeyIterHeap) Swap(i, j int) {
 	x := *pih
 	x[i], x[j] = x[j], x[i]
 }
 
-func (pih *partIterHeap) Push(x any) {
-	*pih = append(*pih, x.(*partIter))
+func (pih *partKeyIterHeap) Push(x any) {
+	*pih = append(*pih, x.(*partKeyIter))
 }
 
-func (pih *partIterHeap) Pop() any {
+func (pih *partKeyIterHeap) Pop() any {
 	a := *pih
 	v := a[len(a)-1]
 	*pih = a[:len(a)-1]
 	return v
+}
+
+func (it *iter) releasePartIter(p *partKeyIter) {
+	if p == nil {
+		return
+	}
+	for i := range it.partIters {
+		if it.partIters[i] == p {
+			releasePartKeyIter(p)
+			it.partIters[i] = nil
+			return
+		}
+	}
+	releasePartKeyIter(p)
 }

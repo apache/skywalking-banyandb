@@ -159,6 +159,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 	}
 	var allErr error
 	var see []sort.Iterator[*comparableElement]
+	var responseCount int
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
@@ -168,6 +169,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 				continue
 			}
 			resp := d.(*streamv1.QueryResponse)
+			responseCount++
 			if span != nil {
 				span.AddSubTrace(resp.Trace)
 			}
@@ -184,6 +186,10 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			seen[element.ElementId] = true
 			result = append(result, element)
 		}
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+		span.Tagf("element_id_count", "%d", len(seen))
 	}
 
 	return result, allErr

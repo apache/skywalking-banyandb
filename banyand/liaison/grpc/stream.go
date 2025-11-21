@@ -279,15 +279,19 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var tracer *query.Tracer
+	var span *query.Span
+	var responseElementCount int
 	if req.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "stream-grpc")
+		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "stream-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
 		defer func() {
 			if err != nil {
 				span.Error(err)
 				span.Stop()
 			} else {
+				span.Tagf("response_element_count", "%d", responseElementCount)
 				span.AddSubTrace(resp.Trace)
 				span.Stop()
 				resp.Trace = tracer.ToProto()
@@ -309,6 +313,7 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	data := msg.Data()
 	switch d := data.(type) {
 	case *streamv1.QueryResponse:
+		responseElementCount = len(d.Elements)
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())

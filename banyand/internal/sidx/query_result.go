@@ -21,13 +21,11 @@ import (
 	"container/heap"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // queryResult is used internally for processing logic only.
@@ -178,28 +176,13 @@ func (qr *queryResult) loadTagData(tmpBlock *block, p *part, tagName string, tag
 
 	// Create tag data structure and populate block
 	td := generateTagData()
-	// Decode tag values directly (no compression)
-	td.values, err = internalencoding.DecodeTagValues(td.values[:0], decoder, bb2, tm.valueType, count)
-	if err != nil {
-		logger.Panicf("cannot decode tag values: %v", err)
-		return false
-	}
-
 	td.name = tagName
 	td.valueType = tm.valueType
 
-	// Set min/max for int64 tags
-	if tm.valueType == pbv1.ValueTypeInt64 {
-		td.min = tm.min
-		td.max = tm.max
-	}
-
-	// Create bloom filter for indexed tags
-	td.filter = generateBloomFilter(count)
-	for _, value := range td.values {
-		if value != nil {
-			td.filter.Add(value)
-		}
+	// Decode and convert tag values using common helper
+	if err := decodeAndConvertTagValues(td, decoder, bb2, tm.valueType, count); err != nil {
+		logger.Panicf("cannot decode tag values: %v", err)
+		return false
 	}
 
 	tmpBlock.tags[tagName] = td
@@ -230,46 +213,7 @@ func (qr *queryResult) convertBlockToResponse(block *block, seriesID common.Seri
 		result.Data = append(result.Data, block.data[i])
 		result.SIDs = append(result.SIDs, seriesID)
 		result.PartIDs = append(result.PartIDs, partID)
-
-		// Convert tag map to tag slice for this element
-		elementTags := qr.extractElementTags(block, i)
-		result.Tags = append(result.Tags, elementTags)
 	}
-}
-
-// extractElementTags extracts tags for a specific element with projection support.
-func (qr *queryResult) extractElementTags(block *block, elemIndex int) []Tag {
-	var elementTags []Tag
-
-	// Apply tag projection from request
-	if len(qr.request.TagProjection) > 0 {
-		elementTags = make([]Tag, 0, len(qr.request.TagProjection))
-		for _, proj := range qr.request.TagProjection {
-			for _, tagName := range proj.Names {
-				if tagData, exists := block.tags[tagName]; exists && elemIndex < len(tagData.values) {
-					elementTags = append(elementTags, Tag{
-						Name:      tagName,
-						Value:     tagData.values[elemIndex],
-						ValueType: tagData.valueType,
-					})
-				}
-			}
-		}
-	} else {
-		// Include all tags if no projection specified
-		elementTags = make([]Tag, 0, len(block.tags))
-		for tagName, tagData := range block.tags {
-			if elemIndex < len(tagData.values) {
-				elementTags = append(elementTags, Tag{
-					Name:      tagName,
-					Value:     tagData.values[elemIndex],
-					ValueType: tagData.valueType,
-				})
-			}
-		}
-	}
-
-	return elementTags
 }
 
 // mergeQueryResponseShards merges multiple QueryResponse shards.
@@ -291,7 +235,6 @@ func mergeQueryResponseShards(shards []*QueryResponse, maxElements int) *QueryRe
 		return &QueryResponse{
 			Keys:    make([]int64, 0),
 			Data:    make([][]byte, 0),
-			Tags:    make([][]Tag, 0),
 			SIDs:    make([]common.SeriesID, 0),
 			PartIDs: make([]uint64, 0),
 		}
@@ -328,7 +271,6 @@ func mergeQueryResponseShardsDesc(shards []*QueryResponse, maxElements int) *Que
 		return &QueryResponse{
 			Keys:    make([]int64, 0),
 			Data:    make([][]byte, 0),
-			Tags:    make([][]Tag, 0),
 			SIDs:    make([]common.SeriesID, 0),
 			PartIDs: make([]uint64, 0),
 		}
@@ -398,7 +340,6 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 	result := &QueryResponse{
 		Keys:    make([]int64, 0, limit),
 		Data:    make([][]byte, 0, limit),
-		Tags:    make([][]Tag, 0, limit),
 		SIDs:    make([]common.SeriesID, 0, limit),
 		PartIDs: make([]uint64, 0, limit),
 	}
@@ -424,15 +365,11 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 
 		var (
 			data   []byte
-			tags   []Tag
 			sid    common.SeriesID
 			partID uint64
 		)
 		if idx < len(resp.Data) {
 			data = resp.Data[idx]
-		}
-		if idx < len(resp.Tags) {
-			tags = resp.Tags[idx]
 		}
 		if idx < len(resp.SIDs) {
 			sid = resp.SIDs[idx]
@@ -444,7 +381,6 @@ func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
 		// Copy element from top cursor
 		result.Keys = append(result.Keys, resp.Keys[idx])
 		result.Data = append(result.Data, data)
-		result.Tags = append(result.Tags, tags)
 		result.SIDs = append(result.SIDs, sid)
 		result.PartIDs = append(result.PartIDs, partID)
 
