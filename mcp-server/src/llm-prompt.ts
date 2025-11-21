@@ -26,7 +26,7 @@ export function generateQueryPrompt(
   resourceName: string,
   group: string,
   aggregateByClause?: string | null,
-  orderByClause?: string | null
+  orderByClause?: string | null,
 ): string {
   return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
 
@@ -60,12 +60,12 @@ User description: "${description}"
 IMPORTANT: Use these EXACT values detected from the description:
 - Resource type: ${resourceType.toUpperCase()}
 - Resource name: ${resourceName}
-- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ''}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ''}
+- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ""}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ""}
 
 CRITICAL Preservation Rules:
 - If the user description contains a TIME clause, you MUST preserve it exactly as provided
-- If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ''}
-- If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ''}
+- If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ""}
+- If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ""}
 
 Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 }

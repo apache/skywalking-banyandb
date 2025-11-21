@@ -19,7 +19,7 @@
 
 /**
  * Logging helper for MCP servers.
- * 
+ *
  * Note: All logging uses console.error (stderr) because stdout is reserved
  * for the MCP protocol (JSON-RPC messages). Using console.log would corrupt
  * the protocol stream.
@@ -35,7 +35,7 @@ export const log = {
  * This should be called early in the application startup, before any async operations.
  */
 export function setupGlobalErrorHandlers(): void {
-  process.on('uncaughtException', (error) => {
+  process.on("uncaughtException", (error) => {
     log.error("Uncaught Exception:", error.message);
     if (error.stack) {
       log.error("Stack trace:", error.stack);
@@ -43,13 +43,15 @@ export function setupGlobalErrorHandlers(): void {
     process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
+  process.on("unhandledRejection", (reason, promise) => {
     log.error("Unhandled Rejection at:", promise);
-    log.error("Reason:", reason instanceof Error ? reason.message : String(reason));
+    log.error(
+      "Reason:",
+      reason instanceof Error ? reason.message : String(reason),
+    );
     if (reason instanceof Error && reason.stack) {
       log.error("Stack trace:", reason.stack);
     }
     process.exit(1);
   });
 }
-

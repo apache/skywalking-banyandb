@@ -19,7 +19,7 @@
 
 import dotenv from "dotenv";
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
@@ -50,15 +50,21 @@ async function main() {
       capabilities: {
         tools: {},
       },
-    }
+    },
   );
 
   // Initialize BanyanDB client
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
-  
+
   // Validate API key before creating QueryGenerator
-  const validApiKey = LLM_API_KEY && LLM_API_KEY.trim().length > 0 ? LLM_API_KEY.trim() : undefined;
-  const validBaseURL = LLM_BASE_URL && LLM_BASE_URL.trim().length > 0 ? LLM_BASE_URL.trim() : undefined;
+  const validApiKey =
+    LLM_API_KEY && LLM_API_KEY.trim().length > 0
+      ? LLM_API_KEY.trim()
+      : undefined;
+  const validBaseURL =
+    LLM_BASE_URL && LLM_BASE_URL.trim().length > 0
+      ? LLM_BASE_URL.trim()
+      : undefined;
   const queryGenerator = new QueryGenerator(validApiKey, validBaseURL);
 
   if (validApiKey) {
@@ -83,12 +89,14 @@ async function main() {
             properties: {
               resource_type: {
                 type: "string",
-                description: "Type of resource to list: groups, streams, measures, traces, or properties",
+                description:
+                  "Type of resource to list: groups, streams, measures, traces, or properties",
                 enum: ["groups", "streams", "measures", "traces", "properties"],
               },
               group: {
                 type: "string",
-                description: "Group name (required for streams, measures, traces, and properties)",
+                description:
+                  "Group name (required for streams, measures, traces, and properties)",
               },
             },
             required: ["resource_type"],
@@ -108,7 +116,8 @@ async function main() {
               },
               resource_type: {
                 type: "string",
-                description: "Optional resource type: stream, measure, trace, or property",
+                description:
+                  "Optional resource type: stream, measure, trace, or property",
                 enum: ["stream", "measure", "trace", "property"],
               },
               resource_name: {
@@ -136,19 +145,25 @@ async function main() {
       if (!args || typeof args !== "object") {
         throw new Error("Invalid arguments: arguments object is required");
       }
-      
+
       const resourceType = args.resource_type as string | undefined;
-      const validResourceTypes = ["groups", "streams", "measures", "traces", "properties"];
-      
+      const validResourceTypes = [
+        "groups",
+        "streams",
+        "measures",
+        "traces",
+        "properties",
+      ];
+
       if (!resourceType || typeof resourceType !== "string") {
         throw new Error(
-          `resource_type is required and must be one of: ${validResourceTypes.join(", ")}`
+          `resource_type is required and must be one of: ${validResourceTypes.join(", ")}`,
         );
       }
-      
+
       if (!validResourceTypes.includes(resourceType)) {
         throw new Error(
-          `Invalid resource_type "${resourceType}". Must be one of: ${validResourceTypes.join(", ")}`
+          `Invalid resource_type "${resourceType}". Must be one of: ${validResourceTypes.join(", ")}`,
         );
       }
 
@@ -162,7 +177,8 @@ async function main() {
             .filter((n) => n !== "unknown");
           result = `Available Groups (${groupNames.length}):\n${groupNames.join("\n")}`;
           if (groupNames.length === 0) {
-            result += "\n\nNo groups found. BanyanDB may be empty or not configured.";
+            result +=
+              "\n\nNo groups found. BanyanDB may be empty or not configured.";
           }
         } else {
           const group = args?.group as string;
@@ -229,20 +245,27 @@ async function main() {
       let bydbqlQuery: string;
       try {
         // Generate BydbQL query from natural language description
-        bydbqlQuery = await queryGenerator.generateQuery(description, args || {});
+        bydbqlQuery = await queryGenerator.generateQuery(
+          description,
+          args || {},
+        );
       } catch (error) {
-        if (error instanceof Error && 
-            (error.message.includes("timeout") || error.message.includes("Timeout"))) {
+        if (
+          error instanceof Error &&
+          (error.message.includes("timeout") ||
+            error.message.includes("Timeout"))
+        ) {
           return {
             content: [
               {
                 type: "text",
-                text:                       `Query generation timeout: ${error.message}\n\n` +
-                      `The LLM query generation timed out. Falling back to pattern-based generation...\n` +
-                      `If this persists, try:\n` +
-                      `1. Check your API key and network connectivity\n` +
-                      `2. Use more specific query descriptions\n` +
-                      `3. Set LLM_API_KEY environment variable if not already set`,
+                text:
+                  `Query generation timeout: ${error.message}\n\n` +
+                  `The LLM query generation timed out. Falling back to pattern-based generation...\n` +
+                  `If this persists, try:\n` +
+                  `1. Check your API key and network connectivity\n` +
+                  `2. Use more specific query descriptions\n` +
+                  `3. Set LLM_API_KEY environment variable if not already set`,
               },
             ],
           };
@@ -265,40 +288,47 @@ async function main() {
       } catch (error) {
         if (error instanceof Error) {
           // Check if it's a timeout error
-          if (error.message.includes("timeout") || error.message.includes("Timeout")) {
+          if (
+            error.message.includes("timeout") ||
+            error.message.includes("Timeout")
+          ) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Query timeout: ${error.message}\n\n` +
-                        `Possible causes:\n` +
-                        `- BanyanDB is not running or not accessible\n` +
-                        `- Network connectivity issues\n` +
-                        `- BanyanDB is overloaded or slow\n\n` +
-                        `Try:\n` +
-                        `1. Verify BanyanDB is running: curl http://localhost:17913/api/healthz\n` +
-                        `2. Check network connectivity\n` +
-                        `3. Use list_groups_schemas to verify BanyanDB is accessible`,
+                  text:
+                    `Query timeout: ${error.message}\n\n` +
+                    `Possible causes:\n` +
+                    `- BanyanDB is not running or not accessible\n` +
+                    `- Network connectivity issues\n` +
+                    `- BanyanDB is overloaded or slow\n\n` +
+                    `Try:\n` +
+                    `1. Verify BanyanDB is running: curl http://localhost:17913/api/healthz\n` +
+                    `2. Check network connectivity\n` +
+                    `3. Use list_groups_schemas to verify BanyanDB is accessible`,
                 },
               ],
             };
           }
           // Check if it's a resource not found error
-          if (error.message.includes("not found") || 
-              error.message.includes("does not exist") ||
-              error.message.includes("Empty response")) {
+          if (
+            error.message.includes("not found") ||
+            error.message.includes("does not exist") ||
+            error.message.includes("Empty response")
+          ) {
             const resourceType = args?.resource_type || "resource";
             const group = args?.group || "default";
-            
+
             return {
               content: [
                 {
                   type: "text",
-                  text: `Query failed: ${error.message}\n\n` +
-                        `Tip: Use the list_groups_schemas tool to discover available resources:\n` +
-                        `- First list groups: list_groups_schemas with resource_type="groups"\n` +
-                        `- Then list ${resourceType}s: list_groups_schemas with resource_type="${resourceType}s" and group="${group}"\n` +
-                        `- Then query using the discovered resource names.`,
+                  text:
+                    `Query failed: ${error.message}\n\n` +
+                    `Tip: Use the list_groups_schemas tool to discover available resources:\n` +
+                    `- First list groups: list_groups_schemas with resource_type="groups"\n` +
+                    `- Then list ${resourceType}s: list_groups_schemas with resource_type="${resourceType}s" and group="${group}"\n` +
+                    `- Then query using the discovered resource names.`,
                 },
               ],
             };
@@ -321,10 +351,12 @@ async function main() {
 }
 
 main().catch((error) => {
-  log.error("Fatal error:", error instanceof Error ? error.message : String(error));
+  log.error(
+    "Fatal error:",
+    error instanceof Error ? error.message : String(error),
+  );
   if (error instanceof Error && error.stack) {
     log.error("Stack trace:", error.stack);
   }
   process.exit(1);
 });
-
