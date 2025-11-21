@@ -49,8 +49,6 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-check-tool-
       - name: npm ci and format
         run: |
           cd ui

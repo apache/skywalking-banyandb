@@ -34,8 +34,6 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-tool-
       - uses: actions/setup-node@v4
         with:
           node-version: 20.12
