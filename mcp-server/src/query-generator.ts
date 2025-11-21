@@ -25,7 +25,7 @@ import { generateQueryPrompt } from "./llm-prompt.js";
  * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
  */
 export class QueryGenerator {
-  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for TARS API calls
+  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for LLM API calls
 
   private openaiClient: OpenAI | null = null;
 
@@ -158,7 +158,7 @@ export class QueryGenerator {
           () =>
             reject(
               new Error(
-                `TARS API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`,
+                `LLM API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`,
               ),
             ),
           QueryGenerator.OPENAI_API_TIMEOUT_MS,
