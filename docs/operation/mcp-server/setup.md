@@ -76,7 +76,7 @@ cd mcp-server
 make docker
 ```
 
-For more details on building, see [Build and Package Guide](./build).
+For more details on building, see [Build and Package Guide](build.md).
 
 ### 2. Run the Container
 
@@ -185,6 +185,6 @@ grpcurl -plaintext localhost:17912 list
 
 ## Next Steps
 
-- [Test via Inspector Guide](inspector) - Learn how to test the MCP server using MCP Inspector
-- [Build and Package](build) - For developers who want to build from source
+- [Test via Inspector Guide](inspector.md) - Learn how to test the MCP server using MCP Inspector
+- [Build and Package](build.md) - For developers who want to build from source
 
