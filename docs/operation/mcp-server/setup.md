@@ -46,7 +46,7 @@ Set the following environment variables:
 
 ### 3. Configure MCP Client
 
-Create a configuration file for your MCP client. For example, for MCP Inspector, see [MCP client](./inspector) - Basic Setup
+Create a configuration file for your MCP client. For example, for MCP Inspector, see [MCP client](inspector) - Basic Setup
 
 ## Using Docker Image
 
@@ -185,6 +185,6 @@ grpcurl -plaintext localhost:17912 list
 
 ## Next Steps
 
-- [Test via Inspector Guide](./inspector) - Learn how to test the MCP server using MCP Inspector
-- [Build and Package](./build) - For developers who want to build from source
+- [Test via Inspector Guide](inspector) - Learn how to test the MCP server using MCP Inspector
+- [Build and Package](build) - For developers who want to build from source
 

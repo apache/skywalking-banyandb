@@ -86,10 +86,6 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 license-dep:$(LICENSE_EYE)
 	@rm -rf licenses
 	$(LICENSE_EYE) dep resolve -o mcp-server-licenses -s LICENSE.tpl
-	@mkdir -p $(root_dir)/dist/licenses
-	@rm -rf $(root_dir)/dist/licenses/mcp-server-licenses
-	@cp -r mcp-server-licenses $(root_dir)/dist/licenses/
-	@rm -rf mcp-server-licenses
 
 .PHONY: vendor-update
 vendor-update:
