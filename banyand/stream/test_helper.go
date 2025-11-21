@@ -80,4 +80,3 @@ func CreateTestPartForDump(tmpPath string, fileSystem fs.FileSystem) (string, fu
 
 	return path, cleanup
 }
-

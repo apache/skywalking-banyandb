@@ -92,7 +92,7 @@ func TestDumpStreamPartFormat(t *testing.T) {
 		// Process each stream block
 		for bmIdx, bm := range blockMetadatas {
 			// Read timestamps and element IDs
-			timestamps, elementIDs, err := readStreamTimestamps(decoder, bm.timestamps, int(bm.count), p.timestamps)
+			timestamps, elementIDs, err := readStreamTimestamps(bm.timestamps, int(bm.count), p.timestamps)
 			require.NoError(t, err, "should read timestamps/elementIDs for series %d", bm.seriesID)
 			assert.Len(t, timestamps, int(bm.count), "should have correct number of timestamps")
 			assert.Len(t, elementIDs, int(bm.count), "should have correct number of elementIDs")
@@ -148,4 +148,3 @@ func TestDumpStreamPartFormat(t *testing.T) {
 func createTestStreamPartForDump(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
 	return stream.CreateTestPartForDump(tmpPath, fileSystem)
 }
-

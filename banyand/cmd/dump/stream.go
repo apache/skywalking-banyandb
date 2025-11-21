@@ -159,20 +159,20 @@ type streamDataBlock struct {
 }
 
 type streamBlockMetadata struct {
-	tagFamilies   map[string]*streamDataBlock
-	timestamps    streamTimestampsMetadata
-	elementIDs    streamElementIDsMetadata
-	seriesID      common.SeriesID
+	tagFamilies           map[string]*streamDataBlock
+	timestamps            streamTimestampsMetadata
+	elementIDs            streamElementIDsMetadata
+	seriesID              common.SeriesID
 	uncompressedSizeBytes uint64
-	count         uint64
+	count                 uint64
 }
 
 type streamTimestampsMetadata struct {
-	dataBlock      streamDataBlock
-	min            int64
-	max            int64
+	dataBlock        streamDataBlock
+	min              int64
+	max              int64
 	elementIDsOffset uint64
-	encodeType      encoding.EncodeType
+	encodeType       encoding.EncodeType
 }
 
 type streamElementIDsMetadata struct {
@@ -193,12 +193,12 @@ type streamPart struct {
 }
 
 type streamRowData struct {
-	tags       map[string][]byte
-	elementID  uint64
-	timestamp  int64
-	partID     uint64
-	seriesID   common.SeriesID
+	tags        map[string][]byte
 	elementData []byte
+	elementID   uint64
+	partID      uint64
+	seriesID    common.SeriesID
+	timestamp   int64
 }
 
 type streamDumpContext struct {
@@ -351,7 +351,7 @@ func (ctx *streamDumpContext) processPart(partID uint64, p *streamPart) (int, er
 
 func (ctx *streamDumpContext) processBlock(partID uint64, bm *streamBlockMetadata, p *streamPart, decoder *encoding.BytesBlockDecoder) (int, error) {
 	// Read timestamps and element IDs (they are stored together in timestamps.bin)
-	timestamps, elementIDs, err := readStreamTimestamps(decoder, bm.timestamps, int(bm.count), p.timestamps)
+	timestamps, elementIDs, err := readStreamTimestamps(bm.timestamps, int(bm.count), p.timestamps)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Error reading timestamps/elementIDs for series %d in part %016x: %v\n", bm.seriesID, partID, err)
 		return 0, nil
@@ -693,7 +693,7 @@ func (db *streamDataBlock) unmarshal(src []byte) []byte {
 	return src
 }
 
-func readStreamTimestamps(decoder *encoding.BytesBlockDecoder, tm streamTimestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64, error) {
+func readStreamTimestamps(tm streamTimestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64, error) {
 	data := make([]byte, tm.dataBlock.size)
 	fs.MustReadData(reader, int64(tm.dataBlock.offset), data)
 
@@ -1092,4 +1092,3 @@ func streamTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]
 		return pbv1.NullTagValue
 	}
 }
-
