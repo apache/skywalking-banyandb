@@ -23,6 +23,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -46,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -54,7 +56,10 @@ import (
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
-const defaultRecvSize = 16 << 20
+const (
+	defaultRecvSize         = 16 << 20
+	maxReasonableBufferSize = 1 << 30 // 1GB
+)
 
 var (
 	errServerCert        = errors.New("invalid server cert file")
@@ -85,9 +90,9 @@ type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
-	*indexRuleBindingRegistryServer
-	groupRepo *groupRepo
-	stopCh    chan struct{}
+	protector  protector.Memory
+	traceSVC   *traceService
+	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	streamSVC *streamService
@@ -102,18 +107,20 @@ type server struct {
 	*topNAggregationRegistryServer
 	*groupRegistryServer
 	*traceRegistryServer
-	traceSVC                 *traceService
-	authReloader             *auth.Reloader
+	authReloader *auth.Reloader
+	groupRepo    *groupRepo
+	*indexRuleBindingRegistryServer
 	metrics                  *metrics
 	keyFile                  string
 	authConfigFile           string
-	host                     string
 	addr                     string
 	accessLogRootPath        string
 	certFile                 string
+	host                     string
 	accessLogRecorders       []accessLogRecorder
 	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
+	grpcBufferMemoryRatio    float64
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
@@ -125,6 +132,7 @@ type server struct {
 // NewServer returns a new gRPC server.
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
+	protectorService protector.Memory,
 ) Server {
 	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
@@ -192,6 +200,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		},
 		schemaRepo:   schemaRegistry,
 		authReloader: auth.InitAuthReloader(),
+		protector:    protectorService,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -309,6 +318,9 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
+	s.grpcBufferMemoryRatio = 0.1
+	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
+		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")
 	return fs
 }
 
@@ -319,6 +331,9 @@ func (s *server) Validate() error {
 	}
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
 		return errAccessLogRootPath
+	}
+	if s.grpcBufferMemoryRatio <= 0.0 || s.grpcBufferMemoryRatio > 1.0 {
+		return errors.Errorf("grpc-buffer-memory-ratio must be in range (0.0, 1.0], got %f", s.grpcBufferMemoryRatio)
 	}
 	if !s.tls {
 		return nil
@@ -371,6 +386,20 @@ func (s *server) Serve() run.StopNotify {
 		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
 		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
 	}
+	if s.protector != nil {
+		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
+	}
+
+	// Calculate dynamic buffer sizes based on available memory
+	connWindowSize, streamWindowSize := s.calculateGrpcBufferSizes()
+	if connWindowSize > 0 && streamWindowSize > 0 {
+		opts = append(opts,
+			grpclib.InitialConnWindowSize(connWindowSize),
+			grpclib.InitialWindowSize(streamWindowSize),
+		)
+	} else if s.log != nil {
+		s.log.Warn().Msg("using gRPC default buffer sizes")
+	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
@@ -413,6 +442,100 @@ func (s *server) Serve() run.StopNotify {
 		close(s.stopCh)
 	}()
 	return s.stopCh
+}
+
+// protectorLoadSheddingInterceptor rejects streams when memory pressure is high.
+func (s *server) protectorLoadSheddingInterceptor(srv interface{}, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		return handler(srv, ss)
+	}
+
+	// Get current memory state and update metric
+	state := s.protector.State()
+	if s.metrics != nil {
+		stateValue := 0 // StateLow
+		if state == protector.StateHigh {
+			stateValue = 1 // StateHigh
+		}
+		s.metrics.updateMemoryState(stateValue)
+	}
+
+	if state == protector.StateHigh {
+		// Extract service name from FullMethod (e.g., "/banyandb.stream.v1.StreamService/Write")
+		serviceName := "unknown"
+		if info != nil && info.FullMethod != "" {
+			// Extract service name from FullMethod
+			parts := strings.Split(info.FullMethod, "/")
+			if len(parts) >= 2 {
+				serviceName = parts[1]
+			}
+		}
+
+		// Log rejection with metrics
+		if s.log != nil {
+			s.log.Warn().
+				Str("service", info.FullMethod).
+				Msg("rejecting new stream due to high memory pressure")
+		}
+		if s.metrics != nil {
+			s.metrics.memoryLoadSheddingRejections.Inc(1, serviceName)
+		}
+
+		return status.Errorf(codes.ResourceExhausted, "server is under memory pressure, please retry later")
+	}
+
+	return handler(srv, ss)
+}
+
+// calculateGrpcBufferSizes calculates the gRPC buffer sizes based on available system memory.
+// Returns (connWindowSize, streamWindowSize) in bytes.
+// Returns (0, 0) if protector is unavailable, which will cause gRPC to use defaults.
+func (s *server) calculateGrpcBufferSizes() (int32, int32) {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		if s.log != nil {
+			s.log.Warn().Msg("protector unavailable, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Get memory limit from protector
+	memoryLimit := s.protector.GetLimit()
+	if memoryLimit == 0 {
+		if s.log != nil {
+			s.log.Warn().Msg("memory limit not set, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Calculate total buffer size: min(availableMemory * ratio, maxReasonableBufferSize)
+	// Note: We use the memory limit (not available bytes) as the basis for calculation
+	// to ensure consistent buffer sizing regardless of current usage
+	totalBufferSize := uint64(float64(memoryLimit) * s.grpcBufferMemoryRatio)
+	if totalBufferSize > maxReasonableBufferSize {
+		totalBufferSize = maxReasonableBufferSize
+	}
+
+	// Split buffer size: 2/3 for connection-level, 1/3 for stream-level
+	connWindowSize := int32(totalBufferSize * 2 / 3)
+	streamWindowSize := int32(totalBufferSize * 1 / 3)
+
+	if s.log != nil {
+		s.log.Info().
+			Uint64("memory_limit", memoryLimit).
+			Float64("ratio", s.grpcBufferMemoryRatio).
+			Int32("conn_window_size", connWindowSize).
+			Int32("stream_window_size", streamWindowSize).
+			Msg("calculated gRPC buffer sizes")
+	}
+
+	// Update metrics
+	if s.metrics != nil {
+		s.metrics.updateBufferSizeMetrics(connWindowSize, streamWindowSize)
+	}
+
+	return connWindowSize, streamWindowSize
 }
 
 func (s *server) GracefulStop() {
