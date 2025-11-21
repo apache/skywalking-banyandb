@@ -4,7 +4,7 @@ MCP Inspector is a tool for testing and debugging MCP servers. This guide explai
 
 ## Prerequisites
 
-- MCP server set up (see [Setup Guide](./setup))
+- MCP server set up (see [Setup Guide](setup.md))
 - BanyanDB running and accessible
 - Node.js 20+ installed (for running Inspector)
 
