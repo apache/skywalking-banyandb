@@ -26,6 +26,7 @@ include ../scripts/build/base.mk
 include ../scripts/build/docker.mk
 include ../scripts/build/license.mk
 include ../scripts/build/help.mk
+include ../scripts/build/lint.mk
 
 .PHONY: check-version
 check-version: install
