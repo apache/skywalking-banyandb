@@ -607,6 +607,7 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 	protectorService.SetState(protector.StateLow)
 	time.Sleep(100 * time.Millisecond)
 
+	var mu sync.Mutex
 	successCount := 0
 	failureCount := 0
 	const numRequests = 10
@@ -621,12 +622,26 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 			defer cancel()
 			stream, err := client.Write(ctx)
 			if err != nil {
+				mu.Lock()
 				failureCount++
+				mu.Unlock()
 				return
 			}
+			mu.Lock()
 			successCount++
+			mu.Unlock()
+			// Close the stream and try to drain response with timeout
 			_ = stream.CloseSend()
-			_, _ = stream.Recv()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = stream.Recv()
+			}()
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+				// Timeout - stream may not have sent a response, that's OK
+			}
 		}()
 	}
 	wg.Wait()
@@ -642,7 +657,6 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 	failureCountHigh := 0
 
 	// Make concurrent requests under memory pressure
-	var mu sync.Mutex
 	for i := 0; i < numRequests; i++ {
 		wg.Add(1)
 		go func() {
@@ -672,8 +686,18 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 			mu.Lock()
 			successCountHigh++
 			mu.Unlock()
+			// Close the stream and try to drain response with timeout
 			_ = stream.CloseSend()
-			_, _ = stream.Recv()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = stream.Recv()
+			}()
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+				// Timeout - stream may not have sent a response, that's OK
+			}
 		}()
 	}
 	wg.Wait()

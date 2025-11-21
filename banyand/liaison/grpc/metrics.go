@@ -45,8 +45,7 @@ type metrics struct {
 	totalRegistryLatency  meter.Counter
 
 	memoryLoadSheddingRejections meter.Counter
-	grpcBufferSizeConn           meter.Gauge
-	grpcBufferSizeStream         meter.Gauge
+	grpcBufferSize               meter.Gauge // Shared gauge for both conn and stream buffer sizes
 	memoryState                  meter.Gauge
 }
 
@@ -70,8 +69,7 @@ func newMetrics(factory *observability.Factory) *metrics {
 		totalRegistryErr:             factory.NewCounter("total_registry_err", "group", "service", "method"),
 		totalRegistryLatency:         factory.NewCounter("total_registry_latency", "group", "service", "method"),
 		memoryLoadSheddingRejections: factory.NewCounter("memory_load_shedding_rejections_total", "service"),
-		grpcBufferSizeConn:           factory.NewGauge("grpc_buffer_size_bytes", "type"),
-		grpcBufferSizeStream:         factory.NewGauge("grpc_buffer_size_bytes", "type"),
+		grpcBufferSize:               factory.NewGauge("grpc_buffer_size_bytes", "type"),
 		memoryState:                  factory.NewGauge("memory_state"),
 	}
 }
@@ -79,10 +77,10 @@ func newMetrics(factory *observability.Factory) *metrics {
 // updateBufferSizeMetrics updates the buffer size metrics.
 func (m *metrics) updateBufferSizeMetrics(connSize, streamSize int32) {
 	if connSize > 0 {
-		m.grpcBufferSizeConn.Set(float64(connSize), "conn")
+		m.grpcBufferSize.Set(float64(connSize), "conn")
 	}
 	if streamSize > 0 {
-		m.grpcBufferSizeStream.Set(float64(streamSize), "stream")
+		m.grpcBufferSize.Set(float64(streamSize), "stream")
 	}
 }
 
