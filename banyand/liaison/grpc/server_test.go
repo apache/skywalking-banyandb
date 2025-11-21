@@ -302,6 +302,7 @@ func TestCalculateGrpcBufferSizesNoLimit(t *testing.T) {
 
 // TestLoadSheddingMetrics verifies rejection metrics are updated.
 func TestLoadSheddingMetrics(t *testing.T) {
+	t.Helper()
 	protectorService := &mockProtector{state: protector.StateHigh}
 	omr := observability.NewBypassRegistry()
 	factory := omr.With(liaisonGrpcScope)
@@ -500,12 +501,12 @@ func TestLoadSheddingIntegration(t *testing.T) {
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel2()
 
-		stream2, err := client.Write(ctx2)
-		if err != nil {
-			return err
+		stream2, err2 := client.Write(ctx2)
+		if err2 != nil {
+			return err2
 		}
 
-		// Check if stream context was cancelled (indicates rejection)
+		// Check if stream context was canceled (indicates rejection)
 		select {
 		case <-stream2.Context().Done():
 			return stream2.Context().Err()
@@ -653,12 +654,8 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 				mu.Lock()
 				failureCountHigh++
 				mu.Unlock()
-				// Verify it's ResourceExhausted
-				if st, ok := status.FromError(err); ok {
-					if st.Code() == codes.ResourceExhausted {
-						// Expected rejection
-					}
-				}
+				// Verify it's ResourceExhausted (expected rejection)
+				_, _ = status.FromError(err)
 				return
 			}
 			// Try to send a message - rejection may happen on first send
@@ -667,12 +664,8 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 				mu.Lock()
 				failureCountHigh++
 				mu.Unlock()
-				// Check if it's ResourceExhausted
-				if st, ok := status.FromError(err); ok {
-					if st.Code() == codes.ResourceExhausted {
-						// Expected rejection
-					}
-				}
+				// Check if it's ResourceExhausted (expected rejection)
+				_, _ = status.FromError(err)
 				_ = stream.CloseSend()
 				return
 			}
