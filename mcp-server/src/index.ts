@@ -36,7 +36,8 @@ dotenv.config();
 setupGlobalErrorHandlers();
 
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || "localhost:17900";
-const TARS_API_KEY = process.env.TARS_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL;
 
 async function main() {
   // Create MCP server
@@ -56,15 +57,16 @@ async function main() {
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
   
   // Validate API key before creating QueryGenerator
-  const validApiKey = TARS_API_KEY && TARS_API_KEY.trim().length > 0 ? TARS_API_KEY.trim() : undefined;
-  const queryGenerator = new QueryGenerator(validApiKey);
+  const validApiKey = OPENAI_API_KEY && OPENAI_API_KEY.trim().length > 0 ? OPENAI_API_KEY.trim() : undefined;
+  const validBaseURL = OPENAI_BASE_URL && OPENAI_BASE_URL.trim().length > 0 ? OPENAI_BASE_URL.trim() : undefined;
+  const queryGenerator = new QueryGenerator(validApiKey, validBaseURL);
 
   if (validApiKey) {
-    log.info("LLM query generation enabled (using Tetrate Agent Router Service)");
+    log.info("LLM query generation enabled (using OpenAI API)");
   } else {
     log.info("LLM query generation disabled, using pattern matching");
-    if (TARS_API_KEY !== undefined) {
-      log.warn("TARS_API_KEY is set but appears to be empty or invalid");
+    if (OPENAI_API_KEY !== undefined) {
+      log.warn("OPENAI_API_KEY is set but appears to be empty or invalid");
     }
   }
 
@@ -240,7 +242,7 @@ async function main() {
                       `If this persists, try:\n` +
                       `1. Check your API key and network connectivity\n` +
                       `2. Use more specific query descriptions\n` +
-                      `3. Set TARS_API_KEY environment variable if not already set`,
+                      `3. Set OPENAI_API_KEY environment variable if not already set`,
               },
             ],
           };

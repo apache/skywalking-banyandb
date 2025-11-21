@@ -29,7 +29,7 @@ export class QueryGenerator {
   
   private openaiClient: OpenAI | null = null;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, baseURL?: string) {
     // Validate API key format before creating client
     if (apiKey && apiKey.trim().length > 0) {
       const trimmedKey = apiKey.trim();
@@ -38,7 +38,7 @@ export class QueryGenerator {
       }
       this.openaiClient = new OpenAI({
         apiKey: trimmedKey,
-        baseURL: "https://api.router.tetrate.ai/v1",
+        ...(baseURL && { baseURL }),
       });
     }
   }
@@ -115,7 +115,7 @@ export class QueryGenerator {
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({
-        model: "o3-mini",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

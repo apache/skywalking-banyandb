@@ -36,7 +36,7 @@ Edit `inspector-config.json` with absolute path:
       "args": ["/absolute/path/to/mcp-server/dist/index.js"],
       "env": {
         "BANYANDB_ADDRESS": "localhost:17900",
-        "TARS_API_KEY": "sk-your-key-here"
+        "OPENAI_API_KEY": "sk-your-key-here"
       }
     }
   }
@@ -65,7 +65,8 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 ### Environment Variables
 
 - `BANYANDB_ADDRESS`: BanyanDB address (default: `localhost:17900`). Auto-converts gRPC port (17900) to HTTP port (17913).
-- `TARS_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
+- `OPENAI_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
+- `OPENAI_BASE_URL`: (Optional) Base URL for the LLM API (default: `https://api.openai.com/v1`). Only used when `OPENAI_API_KEY` is set.
 
 **Address formats:**
 - `localhost:17900` - Local BanyanDB
@@ -103,7 +104,7 @@ Create the `.vscode/launch.json` file using one of these methods:
       ],
       "env": {
         "BANYANDB_ADDRESS": "localhost:17900",
-        "TARS_API_KEY": "${env:TARS_API_KEY}"
+        "OPENAI_API_KEY": "${env:OPENAI_API_KEY}"
       },
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -151,7 +152,7 @@ Create the `.vscode/launch.json` file using one of these methods:
 ### Usage
 
 1. **Set environment variables** (optional):
-   - Set `TARS_API_KEY` in your environment or VS Code settings
+   - Set `OPENAI_API_KEY` in your environment or VS Code settings
    - Default `BANYANDB_ADDRESS` is `localhost:17900`
 
 2. **Start debugging:**
@@ -175,7 +176,8 @@ Create the `.vscode/launch.json` file using one of these methods:
 
 The launch configurations use these environment variables:
 - `BANYANDB_ADDRESS`: BanyanDB server address (default: `localhost:17900`)
-- `TARS_API_KEY`: API key for LLM query generation (from environment)
+- `OPENAI_API_KEY`: API key for LLM query generation (from environment)
+- `OPENAI_BASE_URL`: Base URL for the LLM API (optional, default: `https://api.openai.com/v1`)
 
 To customize, edit `.vscode/launch.json` and modify the `env` section in each configuration.
 
