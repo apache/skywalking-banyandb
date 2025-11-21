@@ -15,19 +15,19 @@ Opens `http://localhost:6274` for interactive testing.
 ### Environment Variables
 
 - `BANYANDB_ADDRESS`: BanyanDB address (default: `localhost:17900`). Auto-converts gRPC port (17900) to HTTP port (17913).
-- `OPENAI_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
+- `LLM_API_KEY`: (Optional) For LLM-powered query generation. Falls back to pattern-based if not set.
 
 ### MCP Inspector
 
 **UI Mode:**
 ```bash
-export OPENAI_API_KEY="your-api-key-here"  # Optional
+export LLM_API_KEY="your-api-key-here"  # Optional
 npx @modelcontextprotocol/inspector --config inspector-config.json
 ```
 
 **CLI Mode:**
 ```bash
-export OPENAI_API_KEY="your-api-key-here"  # Optional
+export LLM_API_KEY="your-api-key-here"  # Optional
 npx @modelcontextprotocol/inspector --cli node dist/index.js \
   --method tools/call \
   --tool-name list_resources_bydbql \
