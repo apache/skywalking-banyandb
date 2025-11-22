@@ -79,7 +79,7 @@ Supports filtering by criteria and projecting specific tags.`,
 
   # Filter by criteria
   dump stream --shard-path /path/to/shard-0 --segment-path /path/to/segment \
-    --criteria '{"condition":{"name":"query","op":"BINARY_OP_HAVING","value":{"strArray":{"value":["tag1=value1","tag2=value2"]}}}}
+    --criteria '{"condition":{"name":"query","op":"BINARY_OP_HAVING","value":{"strArray":{"value":["tag1=value1","tag2=value2"]}}}}'
 
   # Project specific tags
   dump stream --shard-path /path/to/shard-0 --segment-path /path/to/segment \
