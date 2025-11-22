@@ -891,18 +891,23 @@ func discoverStreamTagColumns(partIDs []uint64, shardPath string, fileSystem fs.
 	defer closeStreamPart(p)
 
 	tagNames := make(map[string]bool)
+	partID := partIDs[0]
 	for tagFamilyName := range p.tagFamilies {
 		// Read tag family metadata to get tag names
 		if tagFamilyMetadataReader, ok := p.tagFamilyMetadata[tagFamilyName]; ok {
 			metaData, err := io.ReadAll(tagFamilyMetadataReader.SequentialRead())
-			if err == nil {
-				tagMetadatas, err := parseStreamTagFamilyMetadata(metaData)
-				if err == nil {
-					for _, tm := range tagMetadatas {
-						fullTagName := tagFamilyName + "." + tm.name
-						tagNames[fullTagName] = true
-					}
-				}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Error reading tag family metadata %s in part %016x: %v\n", tagFamilyName, partID, err)
+				continue
+			}
+			tagMetadatas, err := parseStreamTagFamilyMetadata(metaData)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Error parsing tag family metadata %s in part %016x: %v\n", tagFamilyName, partID, err)
+				continue
+			}
+			for _, tm := range tagMetadatas {
+				fullTagName := tagFamilyName + "." + tm.name
+				tagNames[fullTagName] = true
 			}
 		}
 	}
