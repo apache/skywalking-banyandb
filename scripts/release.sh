@@ -38,6 +38,7 @@ binary(){
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
     make generate && make -C ui build
+    make -C mcp-server release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
     bindir=./build
     mkdir -p ${bindir}/bin
@@ -46,6 +47,12 @@ binary(){
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
     cp -Rfv ./dist/* ${bindir}
+    # Copy MCP server
+    mkdir -p ${bindir}/mcp-server
+    cp -Rfv ./mcp-server/dist ${bindir}/mcp-server/
+    cp -Rfv ./mcp-server/package.json ${bindir}/mcp-server/
+    cp -Rfv ./mcp-server/LICENSE ${bindir}/mcp-server/ 2>/dev/null || true
+    cp -Rfv ./mcp-server/README.md ${bindir}/mcp-server/ 2>/dev/null || true
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz -C ${bindir} .
 
