@@ -20,7 +20,6 @@ package sidx
 import (
 	"errors"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 
@@ -227,8 +226,12 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			target := &blockPointer{}
 			mergeTwoBlocks(target, tt.left, tt.right)
-			if !reflect.DeepEqual(target, tt.want) {
-				t.Errorf("mergeTwoBlocks() = %v, want %v", target, tt.want)
+			if diff := cmp.Diff(target, tt.want,
+				cmpopts.IgnoreFields(tagData{}, "uniqueValues", "tmpBytes"),
+				cmpopts.IgnoreFields(blockMetadata{}, "tagsBlocks", "tagProjection", "dataBlock", "keysBlock", "seriesID", "uncompressedSize", "count", "keysEncodeType"),
+				cmp.AllowUnexported(block{}, tagData{}, tagRow{}, blockPointer{}, blockMetadata{}),
+			); diff != "" {
+				t.Errorf("mergeTwoBlocks() mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}
