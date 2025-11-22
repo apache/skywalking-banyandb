@@ -101,15 +101,15 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		},
 		{
 			name:  "Merge left is non-empty right is empty",
-			left:  &blockPointer{block: conventionalBlock},
+			left:  &blockPointer{block: deepCopyBlock(&conventionalBlock)},
 			right: &blockPointer{},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{minKey: 1, maxKey: 2}},
+			want:  &blockPointer{block: deepCopyBlock(&conventionalBlock), bm: blockMetadata{minKey: 1, maxKey: 2}},
 		},
 		{
 			name:  "Merge left is empty right is non-empty",
 			left:  &blockPointer{},
-			right: &blockPointer{block: conventionalBlock},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{minKey: 1, maxKey: 2}},
+			right: &blockPointer{block: deepCopyBlock(&conventionalBlock)},
+			want:  &blockPointer{block: deepCopyBlock(&conventionalBlock), bm: blockMetadata{minKey: 1, maxKey: 2}},
 		},
 		{
 			name: "Merge two non-empty blocks without overlap",
@@ -145,7 +145,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&mergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 		{
 			name: "Merge two non-empty blocks without duplicated userKeys",
@@ -181,7 +181,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&mergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 		{
 			name: "Merge two non-empty blocks with duplicated userKeys",
@@ -219,7 +219,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: duplicatedMergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&duplicatedMergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 	}
 
