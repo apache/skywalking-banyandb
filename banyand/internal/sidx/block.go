@@ -496,13 +496,16 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	}
 	if len(bi.tags) == 0 {
 		for _, t := range b.tags {
-			newTagData := tagData{name: t.name, valueType: t.valueType}
+			newTagData := generateTagData()
+			newTagData.reset()
+			newTagData.name = t.name
+			newTagData.valueType = t.valueType
 			for j := 0; j < existDataSize; j++ {
 				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
-			bi.tags[t.name] = &newTagData
+			bi.tags[t.name] = newTagData
 		}
 		return
 	}
@@ -512,13 +515,16 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
 		} else {
-			newTagData := tagData{name: t.name, valueType: t.valueType}
+			newTagData := generateTagData()
+			newTagData.reset()
+			newTagData.name = t.name
+			newTagData.valueType = t.valueType
 			for j := 0; j < existDataSize; j++ {
 				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
-			bi.tags[t.name] = &newTagData
+			bi.tags[t.name] = newTagData
 		}
 	}
 

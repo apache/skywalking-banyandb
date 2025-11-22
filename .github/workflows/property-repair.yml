@@ -46,8 +46,6 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-test-tool-
       - name: Generate codes
         run: make generate
       - name: Build Linux binaries

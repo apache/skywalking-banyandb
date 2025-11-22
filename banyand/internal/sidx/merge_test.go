@@ -20,7 +20,6 @@ package sidx
 import (
 	"errors"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"testing"
 
@@ -101,15 +100,15 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		},
 		{
 			name:  "Merge left is non-empty right is empty",
-			left:  &blockPointer{block: conventionalBlock},
+			left:  &blockPointer{block: deepCopyBlock(&conventionalBlock)},
 			right: &blockPointer{},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{minKey: 1, maxKey: 2}},
+			want:  &blockPointer{block: deepCopyBlock(&conventionalBlock), bm: blockMetadata{minKey: 1, maxKey: 2}},
 		},
 		{
 			name:  "Merge left is empty right is non-empty",
 			left:  &blockPointer{},
-			right: &blockPointer{block: conventionalBlock},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{minKey: 1, maxKey: 2}},
+			right: &blockPointer{block: deepCopyBlock(&conventionalBlock)},
+			want:  &blockPointer{block: deepCopyBlock(&conventionalBlock), bm: blockMetadata{minKey: 1, maxKey: 2}},
 		},
 		{
 			name: "Merge two non-empty blocks without overlap",
@@ -145,7 +144,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&mergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 		{
 			name: "Merge two non-empty blocks without duplicated userKeys",
@@ -181,7 +180,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&mergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 		{
 			name: "Merge two non-empty blocks with duplicated userKeys",
@@ -219,7 +218,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: duplicatedMergedBlock, bm: blockMetadata{minKey: 1, maxKey: 4}},
+			want: &blockPointer{block: deepCopyBlock(&duplicatedMergedBlock), bm: blockMetadata{minKey: 1, maxKey: 4}},
 		},
 	}
 
@@ -227,8 +226,12 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			target := &blockPointer{}
 			mergeTwoBlocks(target, tt.left, tt.right)
-			if !reflect.DeepEqual(target, tt.want) {
-				t.Errorf("mergeTwoBlocks() = %v, want %v", target, tt.want)
+			if diff := cmp.Diff(target, tt.want,
+				cmpopts.IgnoreFields(tagData{}, "uniqueValues", "tmpBytes"),
+				cmpopts.IgnoreFields(blockMetadata{}, "tagsBlocks", "tagProjection", "dataBlock", "keysBlock", "seriesID", "uncompressedSize", "count", "keysEncodeType"),
+				cmp.AllowUnexported(block{}, tagData{}, tagRow{}, blockPointer{}, blockMetadata{}),
+			); diff != "" {
+				t.Errorf("mergeTwoBlocks() mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}
