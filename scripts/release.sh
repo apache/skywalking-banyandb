@@ -51,8 +51,6 @@ binary(){
     mkdir -p ${bindir}/mcp-server
     cp -Rfv ./mcp-server/dist ${bindir}/mcp-server/
     cp -Rfv ./mcp-server/package.json ${bindir}/mcp-server/
-    cp -Rfv ./mcp-server/LICENSE ${bindir}/mcp-server/ 2>/dev/null || true
-    cp -Rfv ./mcp-server/README.md ${bindir}/mcp-server/ 2>/dev/null || true
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz -C ${bindir} .
 
