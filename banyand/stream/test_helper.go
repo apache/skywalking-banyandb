@@ -27,7 +27,16 @@ import (
 )
 
 // CreateTestPartForDump creates a test stream part for testing the dump tool.
-// It returns the part path (directory) and cleanup function.
+// 
+// It takes a temporary path and a file system as input, generates test elements with various tag types,
+// creates a memory part, flushes it to disk, and returns the path to the created part directory.
+// 
+// Parameters:
+//   tmpPath:    the base directory where the part will be created.
+//   fileSystem: the file system to use for writing the part.
+//
+// Returns:
+//   The path to the created part directory and a cleanup function.
 func CreateTestPartForDump(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
 	now := time.Now().UnixNano()
 
