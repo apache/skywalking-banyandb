@@ -64,9 +64,10 @@ func (tr *tagRow) reset() {
 }
 
 var (
-	tagDataPool     = pool.Register[*tagData]("sidx-tagData")
-	tagMetadataPool = pool.Register[*tagMetadata]("sidx-tagMetadata")
-	bloomFilterPool = pool.Register[*filter.BloomFilter]("sidx-bloomFilter")
+	tagDataPool          = pool.Register[*tagData]("sidx-tagData")
+	tagMetadataPool      = pool.Register[*tagMetadata]("sidx-tagMetadata")
+	bloomFilterPool      = pool.Register[*filter.BloomFilter]("sidx-bloomFilter")
+	dictionaryFilterPool = pool.Register[*filter.DictionaryFilter]("sidx-dictionaryFilter")
 )
 
 // generateTagData gets a tagData from pool or creates new.
@@ -157,6 +158,24 @@ func releaseBloomFilter(bf *filter.BloomFilter) {
 	}
 	bf.Reset()
 	bloomFilterPool.Put(bf)
+}
+
+// generateDictionaryFilter gets a dictionary filter from pool or creates new.
+func generateDictionaryFilter() *filter.DictionaryFilter {
+	v := dictionaryFilterPool.Get()
+	if v == nil {
+		return &filter.DictionaryFilter{}
+	}
+	return v
+}
+
+// releaseDictionaryFilter returns dictionary filter to pool after reset.
+func releaseDictionaryFilter(df *filter.DictionaryFilter) {
+	if df == nil {
+		return
+	}
+	df.Reset()
+	dictionaryFilterPool.Put(df)
 }
 
 // encodeBloomFilter encodes a bloom filter to bytes.

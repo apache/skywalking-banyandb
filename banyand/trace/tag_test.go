@@ -48,7 +48,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test encoding
 		bb := &pkgbytes.Buffer{}
-		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		_, err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
 		assert.NoError(t, err)
 		assert.NotNil(t, bb.Buf)
 		assert.Greater(t, len(bb.Buf), 0)
@@ -74,7 +74,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test encoding
 		bb := &pkgbytes.Buffer{}
-		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		_, err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
 		assert.NoError(t, err)
 		assert.NotNil(t, bb.Buf)
 		assert.Greater(t, len(bb.Buf), 0)
@@ -100,7 +100,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test encoding
 		bb := &pkgbytes.Buffer{}
-		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		_, err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
 		assert.NoError(t, err)
 		assert.NotNil(t, bb.Buf)
 		assert.Greater(t, len(bb.Buf), 0)
@@ -131,7 +131,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test encoding
 		bb := &pkgbytes.Buffer{}
-		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		_, err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
 		assert.NoError(t, err)
 		assert.NotNil(t, bb.Buf)
 		assert.Greater(t, len(bb.Buf), 0)
@@ -162,7 +162,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test encoding
 		bb := &pkgbytes.Buffer{}
-		err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
+		_, err := encoding.EncodeTagValues(bb, tag.values, tag.valueType)
 		assert.NoError(t, err)
 		assert.Nil(t, bb.Buf)
 
