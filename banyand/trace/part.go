@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -408,4 +409,107 @@ func partPath(root string, epoch uint64) string {
 
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// CreatePartFileReaderFromPath opens all files in a part directory and returns their FileInfo and a cleanup function.
+func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+	var readers []fs.Reader
+
+	// Core trace files (required files)
+	metaPath := path.Join(partPath, metaFilename)
+	metaReader, err := lfs.OpenFile(metaPath)
+	if err != nil {
+		logger.Panicf("cannot open trace meta file %q: %s", metaPath, err)
+	}
+	readers = append(readers, metaReader)
+	files = append(files, queue.FileInfo{
+		Name:   traceMetaName,
+		Reader: metaReader.SequentialRead(),
+	})
+
+	primaryPath := path.Join(partPath, primaryFilename)
+	primaryReader, err := lfs.OpenFile(primaryPath)
+	if err != nil {
+		logger.Panicf("cannot open trace primary file %q: %s", primaryPath, err)
+	}
+	readers = append(readers, primaryReader)
+	files = append(files, queue.FileInfo{
+		Name:   tracePrimaryName,
+		Reader: primaryReader.SequentialRead(),
+	})
+
+	spansPath := path.Join(partPath, spansFilename)
+	if spansReader, err := lfs.OpenFile(spansPath); err == nil {
+		readers = append(readers, spansReader)
+		files = append(files, queue.FileInfo{
+			Name:   traceSpansName,
+			Reader: spansReader.SequentialRead(),
+		})
+	}
+
+	// Special trace files: traceID.filter and tag.type
+	traceIDFilterPath := path.Join(partPath, traceIDFilterFilename)
+	if filterReader, err := lfs.OpenFile(traceIDFilterPath); err == nil {
+		readers = append(readers, filterReader)
+		files = append(files, queue.FileInfo{
+			Name:   traceIDFilterFilename,
+			Reader: filterReader.SequentialRead(),
+		})
+	}
+
+	tagTypePath := path.Join(partPath, tagTypeFilename)
+	if tagTypeReader, err := lfs.OpenFile(tagTypePath); err == nil {
+		readers = append(readers, tagTypeReader)
+		files = append(files, queue.FileInfo{
+			Name:   tagTypeFilename,
+			Reader: tagTypeReader.SequentialRead(),
+		})
+	}
+
+	// Dynamic tag files (*.t and *.tm)
+	ee := lfs.ReadDir(partPath)
+	for _, e := range ee {
+		if e.IsDir() {
+			continue
+		}
+
+		// Tag metadata files (.tm)
+		if filepath.Ext(e.Name()) == tagsMetadataFilenameExt {
+			tmPath := path.Join(partPath, e.Name())
+			tmReader, err := lfs.OpenFile(tmPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag metadata file %q: %s", tmPath, err)
+			}
+			readers = append(readers, tmReader)
+			tagName := removeExt(e.Name(), tagsMetadataFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   traceTagMetadataPrefix + tagName,
+				Reader: tmReader.SequentialRead(),
+			})
+		}
+
+		// Tag data files (.t)
+		if filepath.Ext(e.Name()) == tagsFilenameExt {
+			tPath := path.Join(partPath, e.Name())
+			tReader, err := lfs.OpenFile(tPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag file %q: %s", tPath, err)
+			}
+			readers = append(readers, tReader)
+			tagName := removeExt(e.Name(), tagsFilenameExt)
+			files = append(files, queue.FileInfo{
+				Name:   traceTagsPrefix + tagName,
+				Reader: tReader.SequentialRead(),
+			})
+		}
+	}
+
+	cleanup := func() {
+		for _, reader := range readers {
+			fs.MustClose(reader)
+		}
+	}
+
+	return files, cleanup
 }

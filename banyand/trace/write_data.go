@@ -23,8 +23,11 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -114,24 +117,126 @@ func (s *syncPartContext) Close() error {
 	return nil
 }
 
-type syncCallback struct {
+type syncSeriesContext struct {
+	streamer index.ExternalSegmentStreamer
+	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l        *logger.Logger
+	fileName string
+}
+
+func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
+	logger.Panicf("new part type is not supported for trace")
+	return nil
+}
+
+func (s *syncSeriesContext) FinishSync() error {
+	if s.streamer != nil {
+		if err := s.streamer.CompleteSegment(); err != nil {
+			s.l.Error().Err(err).Msg("failed to complete external segment")
+			return err
+		}
+	}
+	return s.Close()
+}
+
+func (s *syncSeriesContext) Close() error {
+	if s.segment != nil {
+		s.segment.DecRef()
+	}
+	s.streamer = nil
+	s.fileName = ""
+	s.segment = nil
+	return nil
+}
+
+type syncSeriesCallback struct {
+	l          *logger.Logger
+	schemaRepo *schemaRepo
+}
+
+func setUpSeriesSyncCallback(l *logger.Logger, s *schemaRepo) queue.ChunkedSyncHandler {
+	return &syncSeriesCallback{
+		l:          l,
+		schemaRepo: s,
+	}
+}
+
+func (s *syncSeriesCallback) CheckHealth() *common.Error {
+	return nil
+}
+
+func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
+		return nil, err
+	}
+	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
+	if err != nil {
+		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
+		return nil, err
+	}
+	return &syncSeriesContext{
+		l:       s.l,
+		segment: segment,
+	}, nil
+}
+
+// HandleFileChunk implements queue.ChunkedSyncHandler for streaming series index chunks.
+func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+	if ctx.Handler == nil {
+		return fmt.Errorf("part handler is nil")
+	}
+	seriesCtx := ctx.Handler.(*syncSeriesContext)
+
+	if seriesCtx.segment == nil {
+		return fmt.Errorf("segment is nil")
+	}
+	if seriesCtx.fileName != ctx.FileName {
+		if seriesCtx.streamer != nil {
+			if err := seriesCtx.streamer.CompleteSegment(); err != nil {
+				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment")
+				return err
+			}
+		}
+		indexDB := seriesCtx.segment.IndexDB()
+		streamer, err := indexDB.EnableExternalSegments()
+		if err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to enable external segments")
+			return err
+		}
+		if err := streamer.StartSegment(); err != nil {
+			s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to start external segment")
+			return err
+		}
+		seriesCtx.fileName = ctx.FileName
+		seriesCtx.streamer = streamer
+	}
+	if err := seriesCtx.streamer.WriteChunk(chunk); err != nil {
+		return fmt.Errorf("failed to write chunk (size: %d) to file %q: %w", len(chunk), ctx.FileName, err)
+	}
+	return nil
+}
+
+type syncChunkCallback struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 }
 
 func setUpChunkedSyncCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
-	return &syncCallback{
+	return &syncChunkCallback{
 		l:          l,
 		schemaRepo: schemaRepo,
 	}
 }
 
-func (s *syncCallback) CheckHealth() *common.Error {
+func (s *syncChunkCallback) CheckHealth() *common.Error {
 	return nil
 }
 
 // CreatePartHandler implements queue.ChunkedSyncHandler.
-func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+func (s *syncChunkCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
 	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
 		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
@@ -159,7 +264,7 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 }
 
 // HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.
-func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+func (s *syncChunkCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
 	if ctx.Handler == nil {
 		return fmt.Errorf("part handler is nil")
 	}
@@ -169,7 +274,7 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 	return s.handleTraceFileChunk(ctx, chunk)
 }
 
-func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+func (s *syncChunkCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
 	sidxName := ctx.PartType
 	fileName := ctx.FileName
 	partCtx := ctx.Handler.(*syncPartContext)
@@ -202,7 +307,7 @@ func (s *syncCallback) handleSidxFileChunk(ctx *queue.ChunkedSyncPartContext, ch
 	return nil
 }
 
-func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
+func (s *syncChunkCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
 	fileName := ctx.FileName
 	partCtx := ctx.Handler.(*syncPartContext)
 	switch {
@@ -235,10 +340,10 @@ func (s *syncCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartContext, c
 	return nil
 }
 
-func (s *syncCallback) handleTraceIDFilterChunk(partCtx *syncPartContext, chunk []byte) {
+func (s *syncChunkCallback) handleTraceIDFilterChunk(partCtx *syncPartContext, chunk []byte) {
 	partCtx.traceIDFilterBuffer = append(partCtx.traceIDFilterBuffer, chunk...)
 }
 
-func (s *syncCallback) handleTagTypeChunk(partCtx *syncPartContext, chunk []byte) {
+func (s *syncChunkCallback) handleTagTypeChunk(partCtx *syncPartContext, chunk []byte) {
 	partCtx.tagTypeBuffer = append(partCtx.tagTypeBuffer, chunk...)
 }

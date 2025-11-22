@@ -22,6 +22,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -166,5 +167,74 @@ func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string
 // VisitPart implements measure.Visitor.
 func (pcv *measurePartCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
 	pcv.partCount++
+	return nil
+}
+
+// migrateTraceWithFileBasedAndProgress performs file-based trace migration with progress tracking.
+func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+	logger *logger.Logger, progress *Progress, chunkSize int,
+) ([]string, error) {
+	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
+	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
+
+	// Get target stage configuration
+	targetStageInterval := getTargetStageInterval(group)
+
+	// Count total shards before starting migration
+	totalShards, segmentSuffixes, err := countTraceShards(tsdbRootPath, timeRange, segmentIntervalRule)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to count trace parts, proceeding without part count")
+	} else {
+		logger.Info().Int("total_shards", totalShards).Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted trace parts for progress tracking")
+	}
+
+	// Create file-based migration visitor with progress tracking and target stage interval
+	visitor := newTraceMigrationVisitor(
+		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		logger, progress, chunkSize, targetStageInterval,
+	)
+	defer visitor.Close()
+
+	// Set the total part count for progress tracking
+	if totalShards > 0 {
+		visitor.SetTraceShardCount(totalShards)
+	}
+
+	// Use the existing VisitTracesInTimeRange function with our file-based visitor
+	_, err = trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
+	if err != nil {
+		return nil, err
+	}
+	return segmentSuffixes, nil
+}
+
+// countTraceShards counts the total number of shards in the given time range.
+func countTraceShards(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
+	// Create a simple visitor to count shards
+	shardCounter := &traceShardsCountVisitor{}
+
+	// Use the existing VisitTracesInTimeRange function to count parts
+	segmentSuffixes, err := trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, shardCounter, segmentInterval)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return shardCounter.shardCount, segmentSuffixes, nil
+}
+
+// traceShardsCountVisitor is a simple visitor that counts trace shards.
+type traceShardsCountVisitor struct {
+	shardCount int
+}
+
+// VisitSeries implements trace.Visitor.
+func (pcv *traceShardsCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+	return nil
+}
+
+// VisitShard implements trace.Visitor.
+func (pcv *traceShardsCountVisitor) VisitShard(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+	pcv.shardCount++
 	return nil
 }

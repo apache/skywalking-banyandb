@@ -43,6 +43,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -225,6 +226,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
+	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())

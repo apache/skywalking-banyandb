@@ -23,6 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -79,4 +80,31 @@ func (s *measureService) DeleteExpiredSegments(ctx context.Context, request *mea
 		}
 	}
 	return &measurev1.DeleteExpiredSegmentsResponse{Deleted: deleted}, nil
+}
+
+type traceService struct {
+	tracev1.UnimplementedTraceServiceServer
+	ser *server
+}
+
+func (s *traceService) DeleteExpiredSegments(ctx context.Context, request *tracev1.DeleteExpiredSegmentsRequest) (*tracev1.DeleteExpiredSegmentsResponse, error) {
+	s.ser.listenersLock.RLock()
+	defer s.ser.listenersLock.RUnlock()
+	ll := s.ser.getListeners(data.TopicDeleteExpiredTraceSegments)
+	if len(ll) == 0 {
+		logger.Panicf("no listener found for topic %s", data.TopicDeleteExpiredTraceSegments)
+	}
+	var deleted int64
+	for _, l := range ll {
+		message := l.Rev(ctx, bus.NewMessage(bus.MessageID(0), request))
+		data := message.Data()
+		if data != nil {
+			d, ok := data.(int64)
+			if !ok {
+				logger.Panicf("invalid data type %T", data)
+			}
+			deleted += d
+		}
+	}
+	return &tracev1.DeleteExpiredSegmentsResponse{Deleted: deleted}, nil
 }

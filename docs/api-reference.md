@@ -331,6 +331,9 @@
     - [WriteResponse](#banyandb-trace-v1-WriteResponse)
   
 - [banyandb/trace/v1/rpc.proto](#banyandb_trace_v1_rpc-proto)
+    - [DeleteExpiredSegmentsRequest](#banyandb-trace-v1-DeleteExpiredSegmentsRequest)
+    - [DeleteExpiredSegmentsResponse](#banyandb-trace-v1-DeleteExpiredSegmentsResponse)
+  
     - [TraceService](#banyandb-trace-v1-TraceService)
   
 - [Scalar Value Types](#scalar-value-types)
@@ -4877,6 +4880,37 @@ WriteResponse is the response contract for write
 ## banyandb/trace/v1/rpc.proto
 
 
+
+<a name="banyandb-trace-v1-DeleteExpiredSegmentsRequest"></a>
+
+### DeleteExpiredSegmentsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| segment_suffixes | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-DeleteExpiredSegmentsResponse"></a>
+
+### DeleteExpiredSegmentsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [int64](#int64) |  |  |
+
+
+
+
+
  
 
  
@@ -4893,6 +4927,7 @@ WriteResponse is the response contract for write
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-trace-v1-QueryRequest) | [QueryResponse](#banyandb-trace-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-trace-v1-WriteRequest) stream | [WriteResponse](#banyandb-trace-v1-WriteResponse) stream |  |
+| DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-trace-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-trace-v1-DeleteExpiredSegmentsResponse) |  |
 
  
 
