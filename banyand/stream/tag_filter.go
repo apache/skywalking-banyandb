@@ -152,10 +152,10 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 			bf = decodeBloomFilter(bb.Buf, bf)
 			tf.filter = bf
 		} else {
-			encodingTypeBuf := make([]byte, 1)
-			fs.MustReadData(tagValueReader, int64(tm.offset), encodingTypeBuf)
-			encodingType := encoding.EncodeType(encodingTypeBuf[0])
-			if encodingType == encoding.EncodeTypeDictionary {
+			encodeTypeBuf := make([]byte, 1)
+			fs.MustReadData(tagValueReader, int64(tm.offset), encodeTypeBuf)
+			encodeType := encoding.EncodeType(encodeTypeBuf[0])
+			if encodeType == encoding.EncodeTypeDictionary {
 				bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.size))
 				fs.MustReadData(tagValueReader, int64(tm.offset), bb.Buf)
 				dictValues, err := encoding.DecodeDictionaryValues(bb.Buf[1:])
@@ -164,6 +164,7 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 				}
 				df := generateDictionaryFilter()
 				df.SetValues(dictValues)
+				df.SetValueType(tm.valueType)
 				tf.filter = df
 			}
 		}

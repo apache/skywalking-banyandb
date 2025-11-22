@@ -93,8 +93,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 		tm.max = t.max
 	}
 	isDictionaryEncoded := encodeType == pkgencoding.EncodeTypeDictionary
-	isArrayType := tm.valueType == pbv1.ValueTypeStrArr || tm.valueType == pbv1.ValueTypeInt64Arr
-	if len(t.uniqueValues) > 0 && (!isDictionaryEncoded || isArrayType) {
+	if len(t.uniqueValues) > 0 && !isDictionaryEncoded {
 		bf := generateBloomFilter()
 		defer releaseBloomFilter(bf)
 		bf.SetN(len(t.uniqueValues))

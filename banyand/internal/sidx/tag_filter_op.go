@@ -197,10 +197,10 @@ func (tfo *tagFilterOp) getTagFilterCache(tagName string, tagBlock dataBlock) (*
 		cache.filter = bf
 	} else {
 		tagDataReader, _ := tfo.part.getTagDataReader(tagName)
-		encodingTypeBuf := make([]byte, 1)
-		fs.MustReadData(tagDataReader, int64(tagMetadata.dataBlock.offset), encodingTypeBuf)
-		encodingType := encoding.EncodeType(encodingTypeBuf[0])
-		if encodingType == encoding.EncodeTypeDictionary {
+		encodeTypeBuf := make([]byte, 1)
+		fs.MustReadData(tagDataReader, int64(tagMetadata.dataBlock.offset), encodeTypeBuf)
+		encodeType := encoding.EncodeType(encodeTypeBuf[0])
+		if encodeType == encoding.EncodeTypeDictionary {
 			tagData := make([]byte, tagMetadata.dataBlock.size)
 			fs.MustReadData(tagDataReader, int64(tagMetadata.dataBlock.offset), tagData)
 			dictValues, err := encoding.DecodeDictionaryValues(tagData[1:])
@@ -209,6 +209,7 @@ func (tfo *tagFilterOp) getTagFilterCache(tagName string, tagBlock dataBlock) (*
 			}
 			df := generateDictionaryFilter()
 			df.SetValues(dictValues)
+			df.SetValueType(tagMetadata.valueType)
 			cache.filter = df
 		}
 	}

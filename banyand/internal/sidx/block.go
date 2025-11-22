@@ -355,8 +355,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		tm.max = encoding.Int64ToBytes(nil, maxVal)
 	}
 	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
-	isArrayType := td.valueType == pbv1.ValueTypeStrArr || td.valueType == pbv1.ValueTypeInt64Arr
-	if !isDictionaryEncoded || isArrayType {
+	if !isDictionaryEncoded {
 		bf := generateBloomFilter(len(uniqueValues))
 		for v := range uniqueValues {
 			bf.Add(convert.StringToBytes(v))
