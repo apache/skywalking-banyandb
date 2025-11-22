@@ -58,7 +58,7 @@ Release Notes.
 - Add dump command-line tool to parse and display trace part data with support for CSV export and human-readable timestamp formatting.
 - Implement backoff retry mechanism for sending queue failures.
 - Implement memory load shedding and dynamic gRPC buffer sizing for liaison server to prevent OOM errors under high-throughput write traffic.
-- Implement Additional Dump Commands.
+- Add stream dump command to parse and display stream shard data with support for CSV export, filtering, and projection.
 
 ### Bug Fixes
 
