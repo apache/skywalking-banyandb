@@ -48,9 +48,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-check-tool-
+          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
       - name: npm ci and format
         run: |
           cd ui

@@ -135,7 +135,7 @@ var _ = Describe("Property Operation", func() {
 		applyData(rootCmd, addr, p2YAML, false, propertyTagCount)
 
 		// check the property
-		queryData(rootCmd, addr, propertyGroup, "", 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, "", 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo333"))
 		})
 	})
@@ -421,10 +421,10 @@ var _ = Describe("Property Cluster Operation", func() {
 		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
 		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
 		applyData(rootCmd, node1Addr, p3YAML, true, propertyTagCount)
-		queryData(rootCmd, node1Addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, node1Addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo111"))
 		})
-		queryData(rootCmd, node1Addr, propertyGroup, property2ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, node1Addr, propertyGroup, property2ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo-mesh"))
 		})
 		node1Defer()
@@ -440,7 +440,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
 		applyData(rootCmd, node2Addr, p3YAML, true, propertyTagCount)
 		deleteData(rootCmd, node2Addr, propertyGroup, "service", property2ID, true)
-		queryData(rootCmd, node2Addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, node2Addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo333"))
 		})
 		node2Defer()
@@ -490,7 +490,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		// after querying and repairing, it should contain three documents,
 		// one deleted in node1, one in node1, and one in node2,
 		// and not deleted documents(property) should have the same mod revision
-		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).Should(ContainSubstring("foo333"))
 		})
 		// property 2 should have one older version in node1, and same version in node2, then deleted in node2
@@ -530,7 +530,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		p1NotDeletedInNode2 := filterProperties(node2Search, func(property *propertyv1.Property, deleted bool) bool {
 			return !deleted && property.Id == property1ID
 		})
-		p1Total := filterProperties(totalProperties, func(property *propertyv1.Property, deleted bool) bool {
+		p1Total := filterProperties(totalProperties, func(property *propertyv1.Property, _ bool) bool {
 			return property.Id == property1ID
 		})
 		Expect(len(p1Total)).To(Equal(3))
@@ -541,7 +541,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(p1NotDeletedOnNode1[0].Metadata.ModRevision == p1NotDeletedInNode2[0].Metadata.ModRevision).
 			To(BeTrue(), "the mod revision of not deleted property should be the same")
 
-		p2Total := filterProperties(totalProperties, func(property *propertyv1.Property, deleted bool) bool {
+		p2Total := filterProperties(totalProperties, func(property *propertyv1.Property, _ bool) bool {
 			return property.Id == property2ID
 		})
 		p2DeletedOnNode1 := filterProperties(node1Search, func(property *propertyv1.Property, deleted bool) bool {
@@ -811,7 +811,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		applyData(rootCmd, addr, p1YAML, true, propertyTagCount)
 
 		By("Verifying data can be queried initially")
-		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo111"))
 		})
 
@@ -826,7 +826,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		}
 
 		By(fmt.Sprintf("Verifying data can still be queried after closing %d nodes", closedNodeCount))
-		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo111"))
 		})
 
@@ -835,7 +835,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		applyData(rootCmd, addr, p3YAML, true, propertyTagCount)
 
 		By("Verifying new data can be queried")
-		queryData(rootCmd, addr, propertyGroup, property2ID, 1, func(data string, resp *propertyv1.QueryResponse) {
+		queryData(rootCmd, addr, propertyGroup, property2ID, 1, func(data string, _ *propertyv1.QueryResponse) {
 			Expect(data).To(ContainSubstring("foo-mesh"))
 		})
 

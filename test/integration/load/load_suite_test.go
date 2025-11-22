@@ -173,7 +173,7 @@ var _ = Describe("Load Test Suit", func() {
 
 			experiment := gmeasure.NewExperiment("Scanning all data")
 			AddReportEntry(experiment.Name, experiment)
-			experiment.Sample(func(idx int) {
+			experiment.Sample(func(_ int) {
 				experiment.MeasureDuration("scanning", func() {
 					queryPureFn(start, dur, connection)
 				})
