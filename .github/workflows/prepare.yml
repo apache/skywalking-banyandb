@@ -33,9 +33,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-tool-
+          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20.12
