@@ -191,11 +191,12 @@ func (l *localIndexCallback) Rev(_ context.Context, message bus.Message) (resp b
 		return
 	}
 
-	l.l.Info().
-		Str("group", group).
-		Uint32("shardID", shardID).
-		Int("documentCount", len(documents)).
-		Msg("successfully inserted documents to tsTable index")
+	if dl := l.l.Debug(); dl.Enabled() {
+		dl.Str("group", group).
+			Uint32("shardID", shardID).
+			Int("documentCount", len(documents)).
+			Msg("successfully inserted documents to tsTable index")
+	}
 
 	return
 }
