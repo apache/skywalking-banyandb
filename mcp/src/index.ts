@@ -282,6 +282,7 @@ async function main() {
             {
               type: "text",
               text: result,
+              bydbql: bydbqlQuery,
             },
           ],
         };
