@@ -125,7 +125,7 @@ SELECT * FROM STREAM log IN recordsLog TIME >= '-1h'
 **Result:**
 ```json
 {
-  "dataPoints": [
+  "elements": [
     {
       "timestamp": "2024-01-15T10:30:00Z",
       "fields": {
@@ -161,7 +161,7 @@ SELECT * FROM TRACE zipkin_span IN zipkinTrace TIME >= '-48h' ORDER BY timestamp
 **Result:**
 ```json
 {
-  "dataPoints": [
+  "traces": [
     {
       "timestamp": "2024-01-15T10:45:00Z",
       "fields": {
