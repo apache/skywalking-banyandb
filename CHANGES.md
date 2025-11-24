@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.10.0
+
+### Features
+
+- Remove Bloom filter for dictionary-encoded tags.
+
 ## 0.9.0
 
 ### Features
@@ -57,7 +63,6 @@ Release Notes.
 - Implement the handoff queue for Trace.
 - Add dump command-line tool to parse and display trace part data with support for CSV export and human-readable timestamp formatting.
 - Implement backoff retry mechanism for sending queue failures.
-- Remove Bloom filter for dictionary-encoded tags.
 - Implement memory load shedding and dynamic gRPC buffer sizing for liaison server to prevent OOM errors under high-throughput write traffic.
 - Add stream dump command to parse and display stream shard data with support for CSV export, filtering, and projection.
 
