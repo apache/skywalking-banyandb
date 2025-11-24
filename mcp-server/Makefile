@@ -36,6 +36,18 @@ check-version: install
 install:
 	npm install
 
+.PHONY: lint
+lint: install
+	npm run lint
+
+.PHONY: format
+format: install
+	npm run format
+
+.PHONY: format-check
+format-check: install
+	npm run format:check
+
 .PHONY: all
 all: build
 
