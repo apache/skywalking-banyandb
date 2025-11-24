@@ -59,6 +59,7 @@ Release Notes.
 - Implement backoff retry mechanism for sending queue failures.
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement memory load shedding and dynamic gRPC buffer sizing for liaison server to prevent OOM errors under high-throughput write traffic.
+- Add stream dump command to parse and display stream shard data with support for CSV export, filtering, and projection.
 
 ### Bug Fixes
 
