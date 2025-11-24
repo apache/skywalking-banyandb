@@ -29,13 +29,13 @@ if (!engines) {
   console.error('✘ No engines found in package.json');
   process.exit(1); 
 }
-const nodeVersion = engines['node']
+const nodeVersionRequirement = engines['node']
 const running = process.version;
 
-if (semver.lt(running, nodeVersion)) {
+if (!semver.satisfies(running, nodeVersionRequirement)) {
   console.error(
-    `You are running Node ${running} but version ^${nodeVersion} is expected. ` +
-      `Use nvm or another version manager to install ${nodeVersion}, and then activate it.`
+    `You are running Node ${running} but version ${nodeVersionRequirement} is required. ` +
+      `Use nvm or another version manager to install a compatible version, and then activate it.`
   );
   process.exit(1);
 }
