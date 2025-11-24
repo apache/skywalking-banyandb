@@ -43,7 +43,7 @@ async function main() {
   // Create MCP server
   const server = new McpServer(
     {
-      name: "banyandb-mcp-server",
+      name: "banyandb-mcp",
       version: "1.0.0",
     },
     {

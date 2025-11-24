@@ -2,7 +2,7 @@
   "mcpServers": {
     "banyandb": {
       "command": "node",
-      "args": ["/absolute/path/to/skywalking-banyandb/mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/skywalking-banyandb/mcp/dist/index.js"],
       "env": {
         "BANYANDB_ADDRESS": "localhost:17900",
         "LLM_API_KEY": "your-llm-api-key-here",

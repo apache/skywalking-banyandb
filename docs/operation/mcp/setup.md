@@ -10,12 +10,12 @@ This guide explains how to set up and use the BanyanDB MCP server from pre-built
 
 ## Using Pre-built Binary
 
-The MCP server binary is included in the BanyanDB release package. After extracting the release, you can find the MCP server in the `mcp-server` directory.
+The MCP server binary is included in the BanyanDB release package. After extracting the release, you can find the MCP server in the `mcp` directory.
 
 ### Building from Source Package
 
 ```bash
-cd mcp-server
+cd mcp
 make build
 ```
 
@@ -27,7 +27,7 @@ The build process will:
 ### 1. Verify Binary
 
 ```bash
-cd mcp-server
+cd mcp
 node dist/index.js --help
 ```
 
@@ -55,7 +55,7 @@ The MCP server is available as a Docker image for easy deployment.
 ### Option 1: Pull Pre-built Image
 
 ```bash
-docker pull apache/skywalking-banyandb-mcp-server:latest
+docker pull apache/skywalking-banyandb-mcp:latest
 ```
 
 ### Option 2: Build from Source
@@ -63,16 +63,16 @@ docker pull apache/skywalking-banyandb-mcp-server:latest
 If you want to build the Docker image from source:
 
 ```bash
-cd mcp-server
+cd mcp
 
 # Build the image
-docker build -t apache/skywalking-banyandb-mcp-server:latest .
+docker build -t apache/skywalking-banyandb-mcp:latest .
 ```
 
 Or using the Makefile:
 
 ```bash
-cd mcp-server
+cd mcp
 make docker
 ```
 
@@ -82,11 +82,11 @@ For more details on building, see [Build and Package Guide](build.md).
 
 ```bash
 docker run -d \
-  --name banyandb-mcp-server \
+  --name banyandb-mcp \
   -e BANYANDB_ADDRESS=banyandb:17900 \
   -e LLM_API_KEY=sk-your-key-here \
   -e LLM_BASE_URL=your-llm-base-url \
-  apache/skywalking-banyandb-mcp-server:latest
+  apache/skywalking-banyandb-mcp:latest
 ```
 
 ### 3. Configure MCP Client for Docker
@@ -106,7 +106,7 @@ When using Docker, configure your MCP client to connect to the container:
         "-e", "LLM_API_KEY=sk-your-key-here",
         "-e", "LLM_BASE_URL=your-llm-base-url",
         "--network", "host",
-        "apache/skywalking-banyandb-mcp-server:latest"
+        "apache/skywalking-banyandb-mcp:latest"
       ]
     }
   }
@@ -129,9 +129,9 @@ services:
     volumes:
       - ./banyandb-data:/data
 
-  mcp-server:
-    image: apache/skywalking-banyandb-mcp-server:latest
-    container_name: banyandb-mcp-server
+  mcp:
+    image: apache/skywalking-banyandb-mcp:latest
+    container_name: banyandb-mcp
     environment:
       - BANYANDB_ADDRESS=banyandb:17900
       - LLM_API_KEY=${LLM_API_KEY}

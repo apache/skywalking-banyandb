@@ -11,7 +11,7 @@ This guide is for developers who want to build the MCP server from source and cr
 ## Project Structure
 
 ```
-mcp-server/
+mcp/
 ├── src/
 │   ├── index.ts              # MCP server implementation
 │   ├── banyandb-client.ts    # BanyanDB HTTP client
@@ -32,7 +32,7 @@ mcp-server/
 ### 1. Install Dependencies
 
 ```bash
-cd mcp-server
+cd mcp
 npm install
 ```
 
@@ -106,7 +106,7 @@ npx @modelcontextprotocol/inspector --config inspector-config.json
 
 ### VS Code Debug Configuration
 
-Create `.vscode/launch.json` in the `mcp-server` directory:
+Create `.vscode/launch.json` in the `mcp` directory:
 
 ```json
 {
@@ -156,7 +156,7 @@ The build process creates a `dist/` directory with compiled JavaScript files. To
 npm run build
 
 # Create package (includes dist/ and package.json)
-tar -czf banyandb-mcp-server.tar.gz dist/ package.json README.md
+tar -czf banyandb-mcp.tar.gz dist/ package.json README.md
 ```
 
 ### Docker Image
@@ -168,20 +168,20 @@ The project includes a production-ready Dockerfile that uses a multi-stage build
 To build a Docker image:
 
 ```bash
-cd mcp-server
+cd mcp
 
 # Build the image
-docker build -t apache/skywalking-banyandb-mcp-server:latest .
+docker build -t apache/skywalking-banyandb-mcp:latest .
 ```
 
 Or using the Makefile:
 
 ```bash
 # From the project root
-make -C mcp-server docker
+make -C mcp docker
 
-# Or from the mcp-server directory
-cd mcp-server
+# Or from the mcp directory
+cd mcp
 make docker
 ```
 
@@ -200,7 +200,7 @@ The Dockerfile supports standard Docker build arguments. You can customize the b
 ```bash
 docker build \
   --build-arg NODE_ENV=production \
-  -t apache/skywalking-banyandb-mcp-server:latest .
+  -t apache/skywalking-banyandb-mcp:latest .
 ```
 
 #### Testing the Docker Image
@@ -213,7 +213,7 @@ docker run --rm \
   -e BANYANDB_ADDRESS=localhost:17900 \
   -e LLM_API_KEY=your-api-key \
   -e LLM_BASE_URL=your-api-key \
-  apache/skywalking-banyandb-mcp-server:latest
+  apache/skywalking-banyandb-mcp:latest
 ```
 
 #### Publishing Docker Image
@@ -222,16 +222,16 @@ To publish the image to a registry:
 
 ```bash
 # Tag the image
-docker tag apache/skywalking-banyandb-mcp-server:latest \
-  ghcr.io/apache/skywalking-banyandb-mcp-server:v1.0.0
+docker tag apache/skywalking-banyandb-mcp:latest \
+  ghcr.io/apache/skywalking-banyandb-mcp:v1.0.0
 
 # Push to registry
-docker push ghcr.io/apache/skywalking-banyandb-mcp-server:v1.0.0
+docker push ghcr.io/apache/skywalking-banyandb-mcp:v1.0.0
 ```
 
 ### Integration with Main Makefile
 
-The MCP server is already integrated into the main project Makefile. The `mcp-server/Makefile` includes:
+The MCP server is already integrated into the main project Makefile. The `mcp/Makefile` includes:
 
 - **Build targets**: `build`, `all`, `docker`
 - **Clean targets**: `clean-build`
@@ -243,22 +243,22 @@ The MCP server is already integrated into the main project Makefile. The `mcp-se
 
 ```bash
 # Build the project (includes format check, lint, and TypeScript compilation)
-make -C mcp-server build
+make -C mcp build
 
 # Build Docker image
-make -C mcp-server docker
+make -C mcp docker
 
 # Install dependencies
-make -C mcp-server install
+make -C mcp install
 
 # Clean build artifacts
-make -C mcp-server clean-build
+make -C mcp clean-build
 
 # Check license headers
-make -C mcp-server license-check
+make -C mcp license-check
 
 # Fix license headers
-make -C mcp-server license-fix
+make -C mcp license-fix
 ```
 
 The Makefile automatically handles:

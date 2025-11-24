@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl mcp-server
+PROJECTS := ui banyand bydbctl mcp
 
 TEST_CI_OPTS ?=
 
@@ -117,7 +117,7 @@ format: default ## Run the linters on all projects
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
 	@$(MAKE) -C ui check-version
-	@$(MAKE) -C mcp-server check-version
+	@$(MAKE) -C mcp check-version
 
 include scripts/build/vuln.mk
 
@@ -151,31 +151,31 @@ include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE)
 license-check: TARGET=license-check
-license-check: PROJECTS:=ui mcp-server
+license-check: PROJECTS:=ui mcp
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
  
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui mcp-server
+license-fix: PROJECTS:=ui mcp
 license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui mcp-server
+license-dep: PROJECTS:=ui mcp
 license-dep: default ## Fix license header issues
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
-	mv $(mk_dir)/mcp-server/mcp-server-licenses $(mk_dir)/dist/licenses
-	cat $(mk_dir)/mcp-server/LICENSE >> $(mk_dir)/dist/LICENSE
+	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
+	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
 
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: PROJECTS:= banyand bydbctl mcp-server
+docker.build: PROJECTS:= banyand bydbctl mcp
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push

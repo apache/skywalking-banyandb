@@ -16,10 +16,10 @@
 # under the License.
 #
 
-NAME := mcp-server
+NAME := mcp
 DIST_INDEX := dist/index.js
 
-IMG_NAME := skywalking-banyandb-mcp-server
+IMG_NAME := skywalking-banyandb-mcp
 
 include ../scripts/build/version.mk
 include ../scripts/build/base.mk
@@ -98,7 +98,7 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 .PHONY: license-dep
 license-dep:$(LICENSE_EYE)
 	@rm -rf licenses
-	$(LICENSE_EYE) dep resolve -o mcp-server-licenses -s LICENSE.tpl
+	$(LICENSE_EYE) dep resolve -o mcp-licenses -s LICENSE.tpl
 
 .PHONY: vendor-update
 vendor-update:
