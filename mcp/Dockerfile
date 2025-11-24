@@ -38,8 +38,8 @@ FROM node:20-alpine AS final
 WORKDIR /app
 
 # Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
+RUN addgroup -g 1001 appuser && \
+    adduser -D -u 1001 -G appuser appuser
 
 # Copy package files
 COPY package.json package-lock.json ./
