@@ -12,18 +12,6 @@ This guide explains how to set up and use the BanyanDB MCP server from pre-built
 
 The MCP server binary is included in the BanyanDB release package. After extracting the release, you can find the MCP server in the `mcp` directory.
 
-### Building from Source Package
-
-```bash
-cd mcp
-make build
-```
-
-The build process will:
-1. Install npm dependencies
-2. Compile TypeScript to JavaScript
-3. Create the `dist/` directory with the compiled binary
-
 ### 1. Verify Binary
 
 ```bash

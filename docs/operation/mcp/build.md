@@ -156,7 +156,7 @@ The build process creates a `dist/` directory with compiled JavaScript files. To
 npm run build
 
 # Create package (includes dist/ and package.json)
-tar -czf banyandb-mcp.tar.gz dist/ package.json README.md
+tar -czf banyandb-mcp.tar.gz dist/ package.json
 ```
 
 ### Docker Image
@@ -270,26 +270,6 @@ The Makefile automatically handles:
 - Version management
 
 ## Testing
-
-### Unit Tests
-
-Currently, the project doesn't have unit tests. To add them:
-
-1. Install a testing framework (e.g., Jest, Mocha):
-   ```bash
-   npm install --save-dev jest @types/jest
-   ```
-
-2. Add test script to `package.json`:
-   ```json
-   {
-     "scripts": {
-       "test": "jest"
-     }
-   }
-   ```
-
-3. Write tests in `src/**/*.test.ts`
 
 ### Integration Tests
 
