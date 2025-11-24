@@ -23,6 +23,13 @@ warningCode = 1
 [rule.context-as-argument]
 [rule.context-keys-type]
 [rule.dot-imports]
+arguments = [
+  { allowed-packages = [
+    "github.com/onsi/ginkgo/v2",
+    "github.com/onsi/gomega",
+    "github.com/apache/skywalking-banyandb/pkg/bydbql",
+  ] },
+]
 [rule.error-return]
 [rule.error-strings]
 [rule.error-naming]
@@ -30,6 +37,7 @@ warningCode = 1
 [rule.if-return]
 [rule.increment-decrement]
 [rule.var-naming]
+arguments = [[], [], [{ skip-package-name-checks = true }]]
 [rule.var-declaration]
 [rule.package-comments]
 [rule.range]

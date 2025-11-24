@@ -66,8 +66,6 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-test-tool-
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
