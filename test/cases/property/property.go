@@ -42,4 +42,8 @@ var _ = g.DescribeTable("Scanning Properties", verify,
 	g.Entry("limit", helpers.Args{Input: "limit"}),
 	g.Entry("query by criteria", helpers.Args{Input: "query_by_criteria"}),
 	g.Entry("query by ids", helpers.Args{Input: "query_by_ids"}),
+	g.Entry("order by asc", helpers.Args{Input: "order_by_asc"}),
+	g.Entry("order by desc", helpers.Args{Input: "order_by_desc"}),
+	g.Entry("order by with limit", helpers.Args{Input: "order_by_with_limit"}),
+	g.Entry("query with order", helpers.Args{Input: "query_with_order"}),
 )

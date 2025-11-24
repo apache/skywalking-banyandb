@@ -2,6 +2,20 @@
 
 Release Notes.
 
+## 0.10.0
+
+### Features
+
+- Add sorted query support for the Property.
+
+### Bug Fixes
+
+
+### Document
+
+- Update bydbQL to add sorted query support for the Property.
+
+
 ## 0.9.0
 
 ### Features

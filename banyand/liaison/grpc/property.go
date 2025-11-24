@@ -18,9 +18,11 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -482,10 +484,18 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			p.Tags = tags
 		}
 		properties = append(properties, p.Property)
-		if len(properties) >= int(req.Limit) {
-			break
-		}
 	}
+
+	// Sort if order_by is specified
+	if req.OrderBy != nil && req.OrderBy.TagName != "" {
+		properties = sortProperties(properties, req.OrderBy)
+	}
+
+	// Apply limit after sorting
+	if len(properties) > int(req.Limit) {
+		properties = properties[:req.Limit]
+	}
+
 	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
 }
 
@@ -761,4 +771,116 @@ type repairTask struct {
 type repairInProcessKey struct {
 	entity  string
 	modTime int64
+}
+
+// sortProperties sorts properties based on the specified order_by field.
+func sortProperties(properties []*propertyv1.Property, orderBy *propertyv1.QueryOrder) []*propertyv1.Property {
+	if len(properties) == 0 || orderBy == nil || orderBy.TagName == "" {
+		return properties
+	}
+
+	isDesc := orderBy.Sort == modelv1.Sort_SORT_DESC
+
+	sort.Slice(properties, func(i, j int) bool {
+		// Extract tag values
+		valI := getPropertyTagValue(properties[i], orderBy.TagName)
+		valJ := getPropertyTagValue(properties[j], orderBy.TagName)
+
+		// Handle nil values - put them at the end
+		if valI == nil {
+			return false
+		}
+		if valJ == nil {
+			return true
+		}
+
+		// Compare values
+		cmp := comparePropertyTagValues(valI, valJ)
+
+		if isDesc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+
+	return properties
+}
+
+// getPropertyTagValue retrieves a tag value by name from a property.
+func getPropertyTagValue(prop *propertyv1.Property, tagName string) *modelv1.TagValue {
+	for _, tag := range prop.Tags {
+		if tag.Key == tagName {
+			return tag.Value
+		}
+	}
+	return nil
+}
+
+// comparePropertyTagValues compares two tag values.
+// Returns: -1 if a < b, 0 if a == b, 1 if a > b.
+func comparePropertyTagValues(a, b *modelv1.TagValue) int {
+	// String values
+	if a.GetStr() != nil && b.GetStr() != nil {
+		return bytes.Compare([]byte(a.GetStr().Value), []byte(b.GetStr().Value))
+	}
+
+	// Integer values
+	if a.GetInt() != nil && b.GetInt() != nil {
+		aVal := a.GetInt().Value
+		bVal := b.GetInt().Value
+		if aVal < bVal {
+			return -1
+		} else if aVal > bVal {
+			return 1
+		}
+		return 0
+	}
+
+	// String array values
+	if a.GetStrArray() != nil && b.GetStrArray() != nil {
+		aArr := a.GetStrArray().Value
+		bArr := b.GetStrArray().Value
+		minLen := len(aArr)
+		if len(bArr) < minLen {
+			minLen = len(bArr)
+		}
+		for i := 0; i < minLen; i++ {
+			cmp := bytes.Compare([]byte(aArr[i]), []byte(bArr[i]))
+			if cmp != 0 {
+				return cmp
+			}
+		}
+		if len(aArr) < len(bArr) {
+			return -1
+		} else if len(aArr) > len(bArr) {
+			return 1
+		}
+		return 0
+	}
+
+	// Integer array values
+	if a.GetIntArray() != nil && b.GetIntArray() != nil {
+		aArr := a.GetIntArray().Value
+		bArr := b.GetIntArray().Value
+		minLen := len(aArr)
+		if len(bArr) < minLen {
+			minLen = len(bArr)
+		}
+		for i := 0; i < minLen; i++ {
+			if aArr[i] < bArr[i] {
+				return -1
+			} else if aArr[i] > bArr[i] {
+				return 1
+			}
+		}
+		if len(aArr) < len(bArr) {
+			return -1
+		} else if len(aArr) > len(bArr) {
+			return 1
+		}
+		return 0
+	}
+
+	// For other types or mixed types, use 0 as fallback
+	return 0
 }

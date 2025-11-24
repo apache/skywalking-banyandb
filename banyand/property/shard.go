@@ -152,7 +152,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		}
 		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(t.Key))}, tv)
 		tagField.Index = true
-		tagField.NoSort = true
+		tagField.NoSort = false // Enable sorting on tag fields
 		doc.Fields = append(doc.Fields, tagField)
 	}
 

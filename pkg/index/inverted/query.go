@@ -69,6 +69,15 @@ func (q *queryNode) String() string {
 	return q.node.String()
 }
 
+type searchRequestQuery struct {
+	req bluge.SearchRequest
+	node
+}
+
+func (s *searchRequestQuery) String() string {
+	return s.node.String()
+}
+
 // BuildQuery returns blugeQuery for local indices.
 func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,
@@ -468,6 +477,37 @@ func (m *matchAllNode) String() string {
 	return "matchAll"
 }
 
+type topNNode struct {
+	subNode   node
+	orderName string
+	orderSort modelv1.Sort
+}
+
+func newTopNNode() *topNNode {
+	return &topNNode{}
+}
+
+func (m *topNNode) SetSubNode(subNode node) {
+	m.subNode = subNode
+}
+
+func (m *topNNode) SetOrder(name string, sort modelv1.Sort) {
+	m.orderName = name
+	m.orderSort = sort
+}
+
+func (m *topNNode) MarshalJSON() ([]byte, error) {
+	data := make(map[string]interface{}, 1)
+	data["query"] = m.subNode
+	data["order_name"] = m.orderName
+	data["order_sort"] = m.orderSort
+	return json.Marshal(data)
+}
+
+func (m *topNNode) String() string {
+	return convert.JSONToString(m)
+}
+
 type termRangeInclusiveNode struct {
 	indexRule        *databasev1.IndexRule
 	min              string
@@ -677,10 +717,33 @@ func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string
 		bq.AddMust(iq)
 		bn.Append(in)
 	}
+
+	// If the request contains the order by, then wrapper the request as TopN Search
+	if req.OrderBy != nil {
+		nNode := newTopNNode()
+		nNode.SetSubNode(bn)
+		nNode.SetOrder(req.OrderBy.TagName, req.OrderBy.Sort)
+		return &searchRequestQuery{
+			req: bluge.NewTopNSearch(int(req.Limit), bq).
+				SortBy(generatePropertySortByKey(req.OrderBy)),
+			node: nNode,
+		}, nil
+	}
 	return &queryNode{
 		query: bq,
 		node:  bn,
 	}, nil
+}
+
+func generatePropertySortByKey(s *propertyv1.QueryOrder) []string {
+	prefix := ""
+	if s.Sort == modelv1.Sort_SORT_DESC {
+		prefix = "-"
+	}
+	tagMarshal := index.FieldKey{IndexRuleID: uint32(convert.HashStr(s.TagName))}.Marshal()
+	return []string{
+		fmt.Sprintf("%s%s", prefix, tagMarshal),
+	}
 }
 
 // BuildPropertyQueryFromEntity builds a property query from entity information.

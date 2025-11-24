@@ -76,6 +76,7 @@
     - [InternalRepairRequest](#banyandb-property-v1-InternalRepairRequest)
     - [InternalRepairResponse](#banyandb-property-v1-InternalRepairResponse)
     - [InternalUpdateRequest](#banyandb-property-v1-InternalUpdateRequest)
+    - [QueryOrder](#banyandb-property-v1-QueryOrder)
     - [QueryRequest](#banyandb-property-v1-QueryRequest)
     - [QueryResponse](#banyandb-property-v1-QueryResponse)
   
@@ -1388,6 +1389,22 @@ Property stores the user defined data
 
 
 
+<a name="banyandb-property-v1-QueryOrder"></a>
+
+### QueryOrder
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_name | [string](#string) |  | tag_name is the name of the tag to be ordered. |
+| sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | order_by is given to specify the sort for a tag. |
+
+
+
+
+
+
 <a name="banyandb-property-v1-QueryRequest"></a>
 
 ### QueryRequest
@@ -1403,6 +1420,7 @@ QueryRequest is the request contract for query.
 | tag_projection | [string](#string) | repeated | tag_projection can be used to select tags of the data points in the response |
 | limit | [uint32](#uint32) |  |  |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
+| order_by | [QueryOrder](#banyandb-property-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 
 
 

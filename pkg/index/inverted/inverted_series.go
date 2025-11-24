@@ -211,7 +211,14 @@ func (s *store) Search(ctx context.Context,
 		_ = reader.Close()
 	}()
 
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*queryNode).query))
+	var q bluge.SearchRequest
+	switch qt := query.(type) {
+	case *queryNode:
+		q = bluge.NewAllMatches(qt.query)
+	case *searchRequestQuery:
+		q = qt.req
+	}
+	dmi, err := reader.Search(ctx, q)
 	if err != nil {
 		return nil, err
 	}

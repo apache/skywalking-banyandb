@@ -498,6 +498,18 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 		limit = uint32(statement.Limit.Value)
 	}
 
+	// handle ORDER BY
+	var orderBy *propertyv1.QueryOrder
+	if statement.OrderBy != nil {
+		modelQueryOrder := t.convertSelectOrderBy(statement.OrderBy)
+		if modelQueryOrder != nil {
+			orderBy = &propertyv1.QueryOrder{
+				TagName: modelQueryOrder.IndexRuleName,
+				Sort:    modelQueryOrder.Sort,
+			}
+		}
+	}
+
 	return &TransformResult{
 		Type:     QueryTypeProperty,
 		Original: grammar,
@@ -508,6 +520,7 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 			Criteria:      criteria,
 			TagProjection: tagProjection,
 			Limit:         limit,
+			OrderBy:       orderBy,
 			Trace:         statement.WithQueryTrace != nil,
 		},
 	}, nil
