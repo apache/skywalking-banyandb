@@ -20,6 +20,18 @@
 import OpenAI from 'openai';
 import { generateQueryPrompt } from './llm-prompt.js';
 
+
+export type QueryGeneratorResult = {
+  description: string;
+  resourceType: string;
+  resourceName: string;
+  group: string;
+  aggregateByClause: string | null;
+  orderByClause: string | null;
+  query: string;
+};
+
+
 /**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
  * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
@@ -65,7 +77,7 @@ export class QueryGenerator {
   /**
    * Generate a BydbQL query from a natural language description.
    */
-  async generateQuery(description: string, args: Record<string, unknown>): Promise<string> {
+  async generateQuery(description: string, args: Record<string, unknown>): Promise<QueryGeneratorResult> {
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
@@ -95,7 +107,7 @@ export class QueryGenerator {
   /**
    * Generate query using LLM (OpenAI).
    */
-  private async generateQueryWithLLM(description: string, args: Record<string, unknown>): Promise<string> {
+  private async generateQueryWithLLM(description: string, args: Record<string, unknown>): Promise<QueryGeneratorResult> {
     if (!this.openaiClient) {
       throw new Error('OpenAI client not initialized');
     }
@@ -150,16 +162,27 @@ export class QueryGenerator {
     }
 
     // Clean up the response (remove markdown code blocks if present)
-    return query
+    const cleanedQuery = query
       .replace(/^```(?:bydbql|sql)?\n?/i, '')
       .replace(/\n?```$/i, '')
       .trim();
+
+    // Return parameters used for query generation (lines 117-122)
+    return {
+      description,
+      resourceType,
+      resourceName,
+      group,
+      aggregateByClause,
+      orderByClause,
+      query: cleanedQuery
+    };
   }
 
   /**
    * Generate query using pattern matching (fallback method).
    */
-  private generateQueryWithPatterns(description: string, args: Record<string, unknown>): string {
+  private generateQueryWithPatterns(description: string, args: Record<string, unknown>): QueryGeneratorResult {
     // Determine resource type
     const resourceType = this.detectResourceType(description, args) || 'stream';
 
@@ -212,7 +235,15 @@ export class QueryGenerator {
       query += ` ${orderByClause}`;
     }
 
-    return query;
+    return {
+      description,
+      resourceType,
+      resourceName: resourceName || '',
+      group,
+      aggregateByClause: aggregateByClause || null,
+      orderByClause: orderByClause || null,
+      query,
+    };
   }
 
   /**

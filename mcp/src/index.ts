@@ -23,7 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BanyanDBClient, ResourceMetadata } from './banyandb-client.js';
-import { QueryGenerator } from './query-generator.js';
+import { QueryGenerator, QueryGeneratorResult } from './query-generator.js';
 import { log, setupGlobalErrorHandlers } from './logger.js';
 
 // Load environment variables first
@@ -214,10 +214,10 @@ async function main() {
         throw new Error('description is required');
       }
 
-      let bydbqlQuery: string;
+      let bydbqlQueryResult: QueryGeneratorResult;
       try {
         // Generate BydbQL query from natural language description
-        bydbqlQuery = await queryGenerator.generateQuery(description, args || {});
+        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {});
       } catch (error) {
         if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('Timeout'))) {
           return {
@@ -240,15 +240,8 @@ async function main() {
 
       try {
         // Execute query via BanyanDB client
-        const result = await banyandbClient.query(bydbqlQuery);
-        const debugInfo = {
-          description,
-          resource_type: args?.resource_type || 'unknown',
-          resource_name: args?.resource_name || 'unknown',
-          group: args?.group || 'unknown',
-          bydbql: bydbqlQuery,
-        };
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${debugInfo.bydbql}\n\n=== Debug Information ===\nDescription: ${debugInfo.description}\nResource Type: ${debugInfo.resource_type}\nResource Name: ${debugInfo.resource_name}\nGroup: ${debugInfo.group}`;
+        const result = await banyandbClient.query(bydbqlQueryResult.query);
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}\n\n=== Debug Information ===\nDescription: ${bydbqlQueryResult.description}\nResource Type: ${bydbqlQueryResult.resourceType}\nResource Name: ${bydbqlQueryResult.resourceName}\nGroup: ${bydbqlQueryResult.group}\nAggregate By: ${bydbqlQueryResult.aggregateByClause}\nOrder By: ${bydbqlQueryResult.orderByClause}`;
 
         return {
           content: [
