@@ -43,7 +43,7 @@ The MCP server is available as a Docker image for easy deployment.
 ### Option 1: Pull Pre-built Image
 
 ```bash
-docker pull apache/skywalking-banyandb-mcp:latest
+docker pull apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
 
 
