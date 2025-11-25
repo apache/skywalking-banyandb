@@ -276,12 +276,20 @@ async function main() {
       try {
         // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQuery);
+        const debugInfo = {
+          description,
+          resource_type: args?.resource_type || "unknown",
+          resource_name: args?.resource_name || "unknown",
+          group: args?.group || "unknown",
+          bydbql: bydbqlQuery,
+        };
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${debugInfo.bydbql}\n\n=== Debug Information ===\nDescription: ${debugInfo.description}\nResource Type: ${debugInfo.resource_type}\nResource Name: ${debugInfo.resource_name}\nGroup: ${debugInfo.group}`;
 
         return {
           content: [
             {
               type: "text",
-              text: result,
+              text: resultWithDebug,
             },
           ],
         };

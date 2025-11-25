@@ -442,9 +442,11 @@ export class QueryGenerator {
     }
 
     const lowerDescription = description.toLowerCase();
-    
+
     // Check for "from last X" pattern first (should use TIME >)
-    const fromLastMatch = lowerDescription.match(/from\s+last\s+(\d+)?\s*(day|days|hour|hours|minute|minutes|week|weeks|h|hr|hrs|m|min|mins|d|w)/i);
+    const fromLastMatch = lowerDescription.match(
+      /from\s+last\s+(\d+)?\s*(day|days|hour|hours|minute|minutes|week|weeks|h|hr|hrs|m|min|mins|d|w)/i,
+    );
     if (fromLastMatch) {
       const number = fromLastMatch[1] ? parseInt(fromLastMatch[1], 10) : 1;
       const unit = fromLastMatch[2];
@@ -483,8 +485,10 @@ export class QueryGenerator {
     }
 
     // Check for "last day" without number (implies 1 day, use TIME >)
-    if (lowerDescription.match(/\bfrom\s+last\s+(day|days)\b/i) || 
-        lowerDescription.match(/\blast\s+(day|days)\b/i)) {
+    if (
+      lowerDescription.match(/\bfrom\s+last\s+(day|days)\b/i) ||
+      lowerDescription.match(/\blast\s+(day|days)\b/i)
+    ) {
       return "TIME > '-1d'";
     }
 
