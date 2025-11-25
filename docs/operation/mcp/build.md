@@ -18,13 +18,22 @@ mcp/
 │   ├── query-generator.ts    # Natural language to BydbQL translator
 │   ├── llm-prompt.ts         # LLM prompt generation
 │   └── logger.ts             # Logging utilities
+├── tools/
+│   └── checkversion.js        # Version checking utility
 ├── dist/                     # Compiled JavaScript (generated)
+├── banyandb-data/            # BanyanDB data directory (runtime)
 ├── Dockerfile                # Multi-stage Docker build file
-├── .dockerignore             # Docker build exclusions
-├── package.json
-├── tsconfig.json
+├── docker-compose.yml        # Docker Compose configuration
+├── eslint.config.mjs         # ESLint configuration
+├── tsconfig.json             # TypeScript configuration
+├── package.json              # Node.js dependencies and scripts
+├── package-lock.json         # Dependency lock file
+├── example-config.json       # Example MCP configuration
+├── inspector-config.json     # MCP Inspector configuration
+├── LICENSE                   # License file
+├── LICENSE.tpl               # License template
 ├── Makefile                  # Build automation
-└── README.md
+└── README.md                 # Project documentation
 ```
 
 ## Building from Source

@@ -25,9 +25,9 @@
  * the protocol stream.
  */
 export const log = {
-  info: (...args: unknown[]) => console.error("[MCP] [INFO]", ...args),
-  warn: (...args: unknown[]) => console.error("[MCP] [WARN]", ...args),
-  error: (...args: unknown[]) => console.error("[MCP] [ERROR]", ...args),
+  info: (...args: unknown[]) => console.error('[MCP] [INFO]', ...args),
+  warn: (...args: unknown[]) => console.error('[MCP] [WARN]', ...args),
+  error: (...args: unknown[]) => console.error('[MCP] [ERROR]', ...args),
 };
 
 /**
@@ -35,22 +35,19 @@ export const log = {
  * This should be called early in the application startup, before any async operations.
  */
 export function setupGlobalErrorHandlers(): void {
-  process.on("uncaughtException", (error) => {
-    log.error("Uncaught Exception:", error.message);
+  process.on('uncaughtException', (error) => {
+    log.error('Uncaught Exception:', error.message);
     if (error.stack) {
-      log.error("Stack trace:", error.stack);
+      log.error('Stack trace:', error.stack);
     }
     process.exit(1);
   });
 
-  process.on("unhandledRejection", (reason, promise) => {
-    log.error("Unhandled Rejection at:", promise);
-    log.error(
-      "Reason:",
-      reason instanceof Error ? reason.message : String(reason),
-    );
+  process.on('unhandledRejection', (reason, promise) => {
+    log.error('Unhandled Rejection at:', promise);
+    log.error('Reason:', reason instanceof Error ? reason.message : String(reason));
     if (reason instanceof Error && reason.stack) {
-      log.error("Stack trace:", reason.stack);
+      log.error('Stack trace:', reason.stack);
     }
     process.exit(1);
   });

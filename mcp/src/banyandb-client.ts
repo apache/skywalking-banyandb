@@ -118,10 +118,10 @@ export class BanyanDBClient {
   constructor(address: string) {
     // Convert gRPC address to HTTP address
     // Default HTTP port is 17913, gRPC is 17900
-    if (address.includes(":")) {
-      const [host, port] = address.split(":");
+    if (address.includes(':')) {
+      const [host, port] = address.split(':');
       // If it's the gRPC port, convert to HTTP port
-      if (port === "17900") {
+      if (port === '17900') {
         this.baseUrl = `http://${host}:17913/api`;
       } else {
         this.baseUrl = `http://${host}:${port}/api`;
@@ -149,9 +149,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
         signal: controller.signal,
@@ -211,13 +211,13 @@ export class BanyanDBClient {
         const debugMsg = `Response has no result type fields\n\n${queryDebugInfo}\n\nFull response: ${JSON.stringify(data, null, 2)}`;
         return (
           `Query executed successfully but returned no results.\n\n${debugMsg}\n\nPossible reasons:\n` +
-          "- The query matched no data (empty result set)\n" +
-          "- The resource name or group name might be incorrect\n" +
-          "- The time range might not contain any data\n\n" +
-          "Try:\n" +
-          "1. Use list_groups_schemas to verify the resource exists\n" +
-          "2. Check the time range in your query\n" +
-          "3. Verify the resource name and group name are correct"
+          '- The query matched no data (empty result set)\n' +
+          '- The resource name or group name might be incorrect\n' +
+          '- The time range might not contain any data\n\n' +
+          'Try:\n' +
+          '1. Use list_groups_schemas to verify the resource exists\n' +
+          '2. Check the time range in your query\n' +
+          '3. Verify the resource name and group name are correct'
         );
       }
 
@@ -226,7 +226,7 @@ export class BanyanDBClient {
     } catch (error) {
       if (error instanceof Error) {
         // Check if it's a timeout error
-        if (error.name === "AbortError" || error.message.includes("aborted")) {
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
           throw new Error(
             `Query timeout after ${timeoutMs}ms. ` +
               `BanyanDB may be slow or unresponsive. ` +
@@ -235,10 +235,10 @@ export class BanyanDBClient {
         }
         // Check if it's a network/connection error
         if (
-          error.message.includes("fetch failed") ||
-          error.message.includes("ECONNREFUSED") ||
-          error.message.includes("Failed to fetch") ||
-          error.name === "TypeError"
+          error.message.includes('fetch failed') ||
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('Failed to fetch') ||
+          error.name === 'TypeError'
         ) {
           throw new Error(
             `Failed to connect to BanyanDB at ${this.baseUrl}. ` +
@@ -253,9 +253,7 @@ export class BanyanDBClient {
         }
         throw error;
       }
-      throw new Error(
-        `Query execution failed: ${String(error)}\n\n${queryDebugInfo}`,
-      );
+      throw new Error(`Query execution failed: ${String(error)}\n\n${queryDebugInfo}`);
     }
   }
 
@@ -265,21 +263,15 @@ export class BanyanDBClient {
   private formatResponse(response: QueryResponse): string {
     // Handle both wrapped and direct response structures
     const streamResult = response.streamResult || response.result?.streamResult;
-    const measureResult =
-      response.measureResult || response.result?.measureResult;
+    const measureResult = response.measureResult || response.result?.measureResult;
     const traceResult = response.traceResult || response.result?.traceResult;
-    const propertyResult =
-      response.propertyResult || response.result?.propertyResult;
+    const propertyResult = response.propertyResult || response.result?.propertyResult;
     const topnResult = response.topnResult || response.result?.topnResult;
 
     if (streamResult) {
       // Check if it's an empty result set
-      if (
-        streamResult.elements &&
-        Array.isArray(streamResult.elements) &&
-        streamResult.elements.length === 0
-      ) {
-        return "Stream Query Result: No data found (empty result set)";
+      if (streamResult.elements && Array.isArray(streamResult.elements) && streamResult.elements.length === 0) {
+        return 'Stream Query Result: No data found (empty result set)';
       }
       return `Stream Query Result:\n${JSON.stringify(streamResult, null, 2)}`;
     }
@@ -292,17 +284,17 @@ export class BanyanDBClient {
         measureResult.dataPoints.length === 0
       ) {
         return (
-          "Measure Query Result: No data found (empty result set)\n\n" +
-          "Possible reasons:\n" +
-          "- No data exists for the specified time range\n" +
-          "- The measure name or group name might be incorrect\n" +
-          "- The time range might not contain any data points\n\n" +
-          "Suggestions:\n" +
-          "1. Use list_groups_schemas to verify the measure exists:\n" +
+          'Measure Query Result: No data found (empty result set)\n\n' +
+          'Possible reasons:\n' +
+          '- No data exists for the specified time range\n' +
+          '- The measure name or group name might be incorrect\n' +
+          '- The time range might not contain any data points\n\n' +
+          'Suggestions:\n' +
+          '1. Use list_groups_schemas to verify the measure exists:\n' +
           '   - List groups: list_groups_schemas with resource_type="groups"\n' +
           '   - List measures: list_groups_schemas with resource_type="measures" and group="<group_name>"\n' +
           "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
-          "3. Verify data was written to BanyanDB for this measure"
+          '3. Verify data was written to BanyanDB for this measure'
         );
       }
       // Also check for snake_case for backward compatibility
@@ -312,134 +304,48 @@ export class BanyanDBClient {
         measureResult.data_points.length === 0
       ) {
         return (
-          "Measure Query Result: No data found (empty result set)\n\n" +
-          "Possible reasons:\n" +
-          "- No data exists for the specified time range\n" +
-          "- The measure name or group name might be incorrect\n" +
-          "- The time range might not contain any data points\n\n" +
-          "Suggestions:\n" +
-          "1. Use list_groups_schemas to verify the measure exists:\n" +
+          'Measure Query Result: No data found (empty result set)\n\n' +
+          'Possible reasons:\n' +
+          '- No data exists for the specified time range\n' +
+          '- The measure name or group name might be incorrect\n' +
+          '- The time range might not contain any data points\n\n' +
+          'Suggestions:\n' +
+          '1. Use list_groups_schemas to verify the measure exists:\n' +
           '   - List groups: list_groups_schemas with resource_type="groups"\n' +
           '   - List measures: list_groups_schemas with resource_type="measures" and group="<group_name>"\n' +
           "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
-          "3. Verify data was written to BanyanDB for this measure"
+          '3. Verify data was written to BanyanDB for this measure'
         );
       }
-      return this.formatMeasureResult(measureResult);
+      return `Measure Query Result:\n${JSON.stringify(measureResult.dataPoints, null, 2)}`;
     }
 
     if (traceResult) {
       // Check if it's an empty result set
-      if (
-        traceResult.elements &&
-        Array.isArray(traceResult.elements) &&
-        traceResult.elements.length === 0
-      ) {
-        return "Trace Query Result: No data found (empty result set)";
+      if (traceResult.elements && Array.isArray(traceResult.elements) && traceResult.elements.length === 0) {
+        return 'Trace Query Result: No data found (empty result set)';
       }
       return `Trace Query Result:\n${JSON.stringify(traceResult, null, 2)}`;
     }
 
     if (propertyResult) {
       // Check if it's an empty result set
-      if (
-        propertyResult.items &&
-        Array.isArray(propertyResult.items) &&
-        propertyResult.items.length === 0
-      ) {
-        return "Property Query Result: No data found (empty result set)";
+      if (propertyResult.items && Array.isArray(propertyResult.items) && propertyResult.items.length === 0) {
+        return 'Property Query Result: No data found (empty result set)';
       }
       return `Property Query Result:\n${JSON.stringify(propertyResult, null, 2)}`;
     }
 
     if (topnResult) {
       // Check if it's an empty result set
-      if (
-        topnResult.lists &&
-        Array.isArray(topnResult.lists) &&
-        topnResult.lists.length === 0
-      ) {
-        return "TopN Query Result: No data found (empty result set)";
+      if (topnResult.lists && Array.isArray(topnResult.lists) && topnResult.lists.length === 0) {
+        return 'TopN Query Result: No data found (empty result set)';
       }
       return `TopN Query Result:\n${JSON.stringify(topnResult, null, 2)}`;
     }
 
-    return "Unknown result type";
+    return 'Unknown result type';
   }
-
-  /**
-   * Format measure result into a readable table-like format.
-   */
-  private formatMeasureResult(measureResult: MeasureResult): string {
-    const dataPoints =
-      measureResult.dataPoints || measureResult.data_points || [];
-
-    if (dataPoints.length === 0) {
-      return "Measure Query Result: No data found (empty result set)";
-    }
-
-    let output = `Measure Query Result (${dataPoints.length} data point${dataPoints.length !== 1 ? "s" : ""}):\n\n`;
-
-    dataPoints.forEach((point: DataPoint, index: number) => {
-      output += `Data Point ${index + 1}:\n`;
-      output += `  Timestamp: ${point.timestamp || "N/A"}\n`;
-      output += `  Series ID: ${point.sid || "N/A"}\n`;
-      output += `  Version: ${point.version || "N/A"}\n`;
-
-      // Format tags
-      if (point.tagFamilies && Array.isArray(point.tagFamilies)) {
-        output += `  Tags:\n`;
-        point.tagFamilies.forEach((tagFamily: TagFamily) => {
-          if (tagFamily.tags && Array.isArray(tagFamily.tags)) {
-            tagFamily.tags.forEach((tag: Tag) => {
-              const value = this.extractTagValue(tag.value);
-              output += `    ${tag.key}: ${value}\n`;
-            });
-          }
-        });
-      }
-
-      // Format fields
-      if (point.fields && Array.isArray(point.fields)) {
-        output += `  Fields:\n`;
-        point.fields.forEach((field: Field) => {
-          const value = this.extractFieldValue(field.value);
-          output += `    ${field.name}: ${value}\n`;
-        });
-      }
-
-      output += `\n`;
-    });
-
-    return output;
-  }
-
-  /**
-   * Extract tag value from the nested structure.
-   */
-  private extractTagValue(valueObj: TagValue): string {
-    if (!valueObj) return "N/A";
-    if (valueObj.str?.value !== undefined) return valueObj.str.value;
-    if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
-    if (valueObj.float?.value !== undefined)
-      return String(valueObj.float.value);
-    if (valueObj.binaryData) return "[Binary Data]";
-    return JSON.stringify(valueObj);
-  }
-
-  /**
-   * Extract field value from the nested structure.
-   */
-  private extractFieldValue(valueObj: FieldValue): string {
-    if (!valueObj) return "N/A";
-    if (valueObj.int?.value !== undefined) return String(valueObj.int.value);
-    if (valueObj.float?.value !== undefined)
-      return String(valueObj.float.value);
-    if (valueObj.str?.value !== undefined) return valueObj.str.value;
-    if (valueObj.binaryData) return "[Binary Data]";
-    return JSON.stringify(valueObj);
-  }
-
   /**
    * List all groups.
    */
@@ -451,9 +357,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         signal: controller.signal,
       });
@@ -462,16 +368,14 @@ export class BanyanDBClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to list groups: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to list groups: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = (await response.json()) as { group?: Group[] };
       return data.group || [];
     } catch (error) {
       if (error instanceof Error) {
-        if (error.name === "AbortError" || error.message.includes("aborted")) {
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
           throw new Error(
             `List groups timeout after ${timeoutMs}ms. ` +
               `BanyanDB may be slow or unresponsive. ` +
@@ -479,14 +383,13 @@ export class BanyanDBClient {
           );
         }
         if (
-          error.message.includes("fetch failed") ||
-          error.message.includes("ECONNREFUSED") ||
-          error.message.includes("Failed to fetch") ||
-          error.name === "TypeError"
+          error.message.includes('fetch failed') ||
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('Failed to fetch') ||
+          error.name === 'TypeError'
         ) {
           throw new Error(
-            `Failed to connect to BanyanDB at ${this.baseUrl}. ` +
-              `Please ensure BanyanDB is running and accessible.`,
+            `Failed to connect to BanyanDB at ${this.baseUrl}. ` + `Please ensure BanyanDB is running and accessible.`,
           );
         }
         throw error;
@@ -498,10 +401,7 @@ export class BanyanDBClient {
   /**
    * List streams in a group.
    */
-  async listStreams(
-    group: string,
-    timeoutMs: number = 30000,
-  ): Promise<ResourceMetadata[]> {
+  async listStreams(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/stream/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -509,9 +409,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         signal: controller.signal,
       });
@@ -520,9 +420,7 @@ export class BanyanDBClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to list streams: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to list streams: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = (await response.json()) as { stream?: ResourceMetadata[] };
@@ -538,10 +436,7 @@ export class BanyanDBClient {
   /**
    * List measures in a group.
    */
-  async listMeasures(
-    group: string,
-    timeoutMs: number = 30000,
-  ): Promise<ResourceMetadata[]> {
+  async listMeasures(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/measure/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -549,9 +444,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         signal: controller.signal,
       });
@@ -560,9 +455,7 @@ export class BanyanDBClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to list measures: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to list measures: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = (await response.json()) as { measure?: ResourceMetadata[] };
@@ -578,10 +471,7 @@ export class BanyanDBClient {
   /**
    * List traces in a group.
    */
-  async listTraces(
-    group: string,
-    timeoutMs: number = 30000,
-  ): Promise<ResourceMetadata[]> {
+  async listTraces(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/trace/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -589,9 +479,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         signal: controller.signal,
       });
@@ -600,9 +490,7 @@ export class BanyanDBClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to list traces: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to list traces: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = (await response.json()) as { trace?: ResourceMetadata[] };
@@ -618,10 +506,7 @@ export class BanyanDBClient {
   /**
    * List properties in a group.
    */
-  async listProperties(
-    group: string,
-    timeoutMs: number = 30000,
-  ): Promise<ResourceMetadata[]> {
+  async listProperties(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/property/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -629,9 +514,9 @@ export class BanyanDBClient {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const response = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         signal: controller.signal,
       });
@@ -640,9 +525,7 @@ export class BanyanDBClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to list properties: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to list properties: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = (await response.json()) as {
@@ -668,24 +551,22 @@ export class BanyanDBClient {
       const group = JSON.parse(groupJson);
 
       const response = await fetch(url, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({ group }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Failed to create group: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        throw new Error(`Failed to create group: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
-      return `Group "${group.metadata?.name || "unknown"}" created successfully`;
+      return `Group "${group.metadata?.name || 'unknown'}" created successfully`;
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message.includes("JSON")) {
+        if (error.message.includes('JSON')) {
           throw new Error(`Invalid JSON format: ${error.message}`);
         }
         throw error;

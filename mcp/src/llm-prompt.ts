@@ -71,12 +71,12 @@ User description: "${description}"
 IMPORTANT: Use these EXACT values detected from the description:
 - Resource type: ${resourceType.toUpperCase()}
 - Resource name: ${resourceName}
-- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ""}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ""}
+- Group name: ${group}${aggregateByClause ? `\n- AGGREGATE BY clause: ${aggregateByClause}` : ''}${orderByClause ? `\n- ORDER BY clause: ${orderByClause}` : ''}
 
 CRITICAL Preservation Rules:
 - If the user description contains a TIME clause, you MUST preserve it exactly as provided
-- If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ""}
-- If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ""}
+- If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ''}
+- If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ''}
 - CRITICAL FORMAT SELECTION: Check if the description contains "TOP" or similar words (e.g., "top 10", "top 5", "highest N", "show top N", "top N", "top-N", "topN")
   - If YES and resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
   - If NO or resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]"

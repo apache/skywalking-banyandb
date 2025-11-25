@@ -17,8 +17,8 @@
  * under the License.
  */
 
-import OpenAI from "openai";
-import { generateQueryPrompt } from "./llm-prompt.js";
+import OpenAI from 'openai';
+import { generateQueryPrompt } from './llm-prompt.js';
 
 /**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
@@ -34,9 +34,7 @@ export class QueryGenerator {
     if (apiKey && apiKey.trim().length > 0) {
       const trimmedKey = apiKey.trim();
       if (trimmedKey.length < 10) {
-        console.error(
-          "[QueryGenerator] Warning: API key appears to be too short. LLM query generation may fail.",
-        );
+        console.error('[QueryGenerator] Warning: API key appears to be too short. LLM query generation may fail.');
       }
       this.openaiClient = new OpenAI({
         apiKey: trimmedKey,
@@ -58,19 +56,16 @@ export class QueryGenerator {
   ];
 
   private resourcePatterns: Map<string, RegExp> = new Map([
-    ["stream", /(log|logs|stream|streams|event|events)/i],
-    ["measure", /(metric|metrics|measure|measures|stat|stats|statistics)/i],
-    ["trace", /(trace|traces|span|spans|tracing)/i],
-    ["property", /(property|properties|metadata|config)/i],
+    ['stream', /(log|logs|stream|streams|event|events)/i],
+    ['measure', /(metric|metrics|measure|measures|stat|stats|statistics)/i],
+    ['trace', /(trace|traces|span|spans|tracing)/i],
+    ['property', /(property|properties|metadata|config)/i],
   ]);
 
   /**
    * Generate a BydbQL query from a natural language description.
    */
-  async generateQuery(
-    description: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
+  async generateQuery(description: string, args: Record<string, unknown>): Promise<string> {
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
@@ -80,24 +75,16 @@ export class QueryGenerator {
         const errorObj = error as { status?: number; message?: string };
         if (
           errorObj?.status === 401 ||
-          errorObj?.message?.includes("401") ||
-          errorObj?.message?.includes("Invalid API key")
+          errorObj?.message?.includes('401') ||
+          errorObj?.message?.includes('Invalid API key')
         ) {
-          console.error(
-            "[QueryGenerator] API key authentication failed. Falling back to pattern-based generation.",
-          );
-          console.error(
-            "[QueryGenerator] Error details:",
-            errorObj.message || String(error),
-          );
+          console.error('[QueryGenerator] API key authentication failed. Falling back to pattern-based generation.');
+          console.error('[QueryGenerator] Error details:', errorObj.message || String(error));
           // Disable LLM client to prevent repeated failures
           this.openaiClient = null;
         } else {
           // For other errors (timeout, network, etc.), log but don't disable
-          console.error(
-            "[QueryGenerator] Error generating query with LLM:",
-            errorObj.message || String(error),
-          );
+          console.error('[QueryGenerator] Error generating query with LLM:', errorObj.message || String(error));
         }
         // Fall through to pattern-based generation
       }
@@ -108,29 +95,22 @@ export class QueryGenerator {
   /**
    * Generate query using LLM (OpenAI).
    */
-  private async generateQueryWithLLM(
-    description: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
+  private async generateQueryWithLLM(description: string, args: Record<string, unknown>): Promise<string> {
     if (!this.openaiClient) {
-      throw new Error("OpenAI client not initialized");
+      throw new Error('OpenAI client not initialized');
     }
     const resourceType =
-      (typeof args.resource_type === "string" ? args.resource_type : null) ||
+      (typeof args.resource_type === 'string' ? args.resource_type : null) ||
       this.detectResourceType(description, args) ||
-      "stream";
+      'stream';
     const resourceName =
-      (typeof args.resource_name === "string" ? args.resource_name : null) ||
+      (typeof args.resource_name === 'string' ? args.resource_name : null) ||
       this.detectResourceName(description) ||
-      "";
-    const group =
-      (typeof args.group === "string" ? args.group : null) ||
-      this.detectGroup(description) ||
-      "default";
+      '';
+    const group = (typeof args.group === 'string' ? args.group : null) || this.detectGroup(description) || 'default';
 
     // Extract existing clauses if present
-    const aggregateByClause =
-      this.extractExistingAggregateByClause(description);
+    const aggregateByClause = this.extractExistingAggregateByClause(description);
     const orderByClause = this.extractExistingOrderByClause(description);
 
     const prompt = generateQueryPrompt(
@@ -144,27 +124,21 @@ export class QueryGenerator {
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: 'gpt-4o-mini',
         messages: [
           {
-            role: "system",
-            content:
-              "You are a BydbQL query generator. Always return only the query, no explanations.",
+            role: 'system',
+            content: 'You are a BydbQL query generator. Always return only the query, no explanations.',
           },
           {
-            role: "user",
+            role: 'user',
             content: prompt,
           },
         ],
       }),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () =>
-            reject(
-              new Error(
-                `LLM API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`,
-              ),
-            ),
+          () => reject(new Error(`LLM API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`)),
           QueryGenerator.OPENAI_API_TIMEOUT_MS,
         ),
       ),
@@ -172,53 +146,46 @@ export class QueryGenerator {
 
     const query = completion.choices[0]?.message?.content?.trim();
     if (!query) {
-      throw new Error("Empty response from LLM");
+      throw new Error('Empty response from LLM');
     }
 
     // Clean up the response (remove markdown code blocks if present)
     return query
-      .replace(/^```(?:bydbql|sql)?\n?/i, "")
-      .replace(/\n?```$/i, "")
+      .replace(/^```(?:bydbql|sql)?\n?/i, '')
+      .replace(/\n?```$/i, '')
       .trim();
   }
 
   /**
    * Generate query using pattern matching (fallback method).
    */
-  private generateQueryWithPatterns(
-    description: string,
-    args: Record<string, unknown>,
-  ): string {
+  private generateQueryWithPatterns(description: string, args: Record<string, unknown>): string {
     // Determine resource type
-    const resourceType = this.detectResourceType(description, args) || "stream";
+    const resourceType = this.detectResourceType(description, args) || 'stream';
 
     // Extract resource name if provided
     let resourceName =
-      (typeof args.resource_name === "string" ? args.resource_name : null) ||
-      this.detectResourceName(description);
+      (typeof args.resource_name === 'string' ? args.resource_name : null) || this.detectResourceName(description);
     if (!resourceName) {
       // Use common defaults
       switch (resourceType) {
-        case "stream":
-          resourceName = "sw";
+        case 'stream':
+          resourceName = 'sw';
           break;
-        case "measure":
-          resourceName = "service_cpm";
+        case 'measure':
+          resourceName = 'service_cpm';
           break;
-        case "trace":
-          resourceName = "sw";
+        case 'trace':
+          resourceName = 'sw';
           break;
-        case "property":
-          resourceName = "sw";
+        case 'property':
+          resourceName = 'sw';
           break;
       }
     }
 
     // Extract group
-    const group =
-      (typeof args.group === "string" ? args.group : null) ||
-      this.detectGroup(description) ||
-      "default";
+    const group = (typeof args.group === 'string' ? args.group : null) || this.detectGroup(description) || 'default';
 
     // Build time clause
     const timeClause = this.buildTimeClause(description);
@@ -251,12 +218,9 @@ export class QueryGenerator {
   /**
    * Detect the resource type from the description or args.
    */
-  private detectResourceType(
-    description: string,
-    args: Record<string, unknown>,
-  ): string | null {
+  private detectResourceType(description: string, args: Record<string, unknown>): string | null {
     // Check args first
-    if (args.resource_type && typeof args.resource_type === "string") {
+    if (args.resource_type && typeof args.resource_type === 'string') {
       return args.resource_type.toLowerCase();
     }
 
@@ -277,47 +241,45 @@ export class QueryGenerator {
   private detectResourceName(description: string): string | null {
     // Common words that shouldn't be treated as resource names
     const commonWords = new Set([
-      "service",
-      "services",
-      "metric",
-      "metrics",
-      "measure",
-      "measures",
-      "stream",
-      "streams",
-      "trace",
-      "traces",
-      "property",
-      "properties",
-      "from",
-      "query",
-      "get",
-      "show",
-      "fetch",
-      "select",
-      "where",
-      "data",
-      "last",
-      "past",
-      "recent",
-      "hour",
-      "hours",
-      "minute",
-      "minutes",
-      "day",
-      "days",
-      "week",
-      "weeks",
-      "today",
-      "yesterday",
-      "now",
+      'service',
+      'services',
+      'metric',
+      'metrics',
+      'measure',
+      'measures',
+      'stream',
+      'streams',
+      'trace',
+      'traces',
+      'property',
+      'properties',
+      'from',
+      'query',
+      'get',
+      'show',
+      'fetch',
+      'select',
+      'where',
+      'data',
+      'last',
+      'past',
+      'recent',
+      'hour',
+      'hours',
+      'minute',
+      'minutes',
+      'day',
+      'days',
+      'week',
+      'weeks',
+      'today',
+      'yesterday',
+      'now',
     ]);
 
     // First, try to detect group name to exclude it from resource name detection
     const groupMatch =
-      description.match(
-        /\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i,
-      ) ||
+      description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i) ||
       description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i);
     const groupName = groupMatch ? groupMatch[1] : null;
 
@@ -343,10 +305,7 @@ export class QueryGenerator {
       if (matches && matches[1]) {
         const resourceName = matches[1];
         // Skip if this matches the group name
-        if (
-          groupName &&
-          resourceName.toLowerCase() === groupName.toLowerCase()
-        ) {
+        if (groupName && resourceName.toLowerCase() === groupName.toLowerCase()) {
           continue;
         }
         // Filter out common words that aren't resource names
@@ -382,17 +341,17 @@ export class QueryGenerator {
         const groupName = matches[1];
         // Filter out common words that aren't group names
         const commonWords = new Set([
-          "from",
-          "query",
-          "select",
-          "where",
-          "time",
-          "stream",
-          "measure",
-          "trace",
-          "property",
-          "data",
-          "the",
+          'from',
+          'query',
+          'select',
+          'where',
+          'time',
+          'stream',
+          'measure',
+          'trace',
+          'property',
+          'data',
+          'the',
         ]);
         if (!commonWords.has(groupName.toLowerCase())) {
           return groupName;
@@ -419,7 +378,7 @@ export class QueryGenerator {
     for (const pattern of timeClausePatterns) {
       const match = description.match(pattern);
       if (match) {
-        if (match[0].includes("BETWEEN")) {
+        if (match[0].includes('BETWEEN')) {
           // TIME BETWEEN pattern
           return `TIME BETWEEN '${match[1]}' AND '${match[2]}'`;
         } else {
@@ -453,42 +412,39 @@ export class QueryGenerator {
       let duration: string;
 
       switch (unit.toLowerCase()) {
-        case "h":
-        case "hour":
-        case "hours":
-        case "hr":
-        case "hrs":
+        case 'h':
+        case 'hour':
+        case 'hours':
+        case 'hr':
+        case 'hrs':
           duration = `-${number}h`;
           break;
-        case "m":
-        case "minute":
-        case "minutes":
-        case "min":
-        case "mins":
+        case 'm':
+        case 'minute':
+        case 'minutes':
+        case 'min':
+        case 'mins':
           duration = `-${number}m`;
           break;
-        case "d":
-        case "day":
-        case "days":
+        case 'd':
+        case 'day':
+        case 'days':
           duration = `-${number}d`;
           break;
-        case "w":
-        case "week":
-        case "weeks":
+        case 'w':
+        case 'week':
+        case 'weeks':
           duration = `-${number * 7}d`;
           break;
         default:
-          duration = "-1d";
+          duration = '-1d';
       }
 
       return `TIME > '${duration}'`;
     }
 
     // Check for "last day" without number (implies 1 day, use TIME >)
-    if (
-      lowerDescription.match(/\bfrom\s+last\s+(day|days)\b/i) ||
-      lowerDescription.match(/\blast\s+(day|days)\b/i)
-    ) {
+    if (lowerDescription.match(/\bfrom\s+last\s+(day|days)\b/i) || lowerDescription.match(/\blast\s+(day|days)\b/i)) {
       return "TIME > '-1d'";
     }
 
@@ -496,10 +452,10 @@ export class QueryGenerator {
     for (const pattern of this.timePatterns) {
       const matches = lowerDescription.match(pattern);
       if (matches) {
-        if (matches[0] === "now" || matches[0] === "today") {
+        if (matches[0] === 'now' || matches[0] === 'today') {
           return "TIME >= '-1h'";
         }
-        if (matches[0] === "yesterday") {
+        if (matches[0] === 'yesterday') {
           return "TIME BETWEEN '-24h' AND '-1h'";
         }
 
@@ -511,32 +467,32 @@ export class QueryGenerator {
           let duration: string;
 
           switch (unit) {
-            case "h":
-            case "hour":
-            case "hours":
-            case "hr":
-            case "hrs":
+            case 'h':
+            case 'hour':
+            case 'hours':
+            case 'hr':
+            case 'hrs':
               duration = `-${number}h`;
               break;
-            case "m":
-            case "minute":
-            case "minutes":
-            case "min":
-            case "mins":
+            case 'm':
+            case 'minute':
+            case 'minutes':
+            case 'min':
+            case 'mins':
               duration = `-${number}m`;
               break;
-            case "d":
-            case "day":
-            case "days":
+            case 'd':
+            case 'day':
+            case 'days':
               duration = `-${number}d`;
               break;
-            case "w":
-            case "week":
-            case "weeks":
+            case 'w':
+            case 'week':
+            case 'weeks':
               duration = `-${number * 7}d`;
               break;
             default:
-              duration = "-1h";
+              duration = '-1h';
           }
 
           return `TIME >= '${duration}'`;
@@ -555,17 +511,14 @@ export class QueryGenerator {
     const lowerDescription = description.toLowerCase();
 
     // Check for specific field requests
-    if (
-      lowerDescription.includes("count") ||
-      lowerDescription.includes("number")
-    ) {
-      if (resourceType === "measure") {
-        return "COUNT(*)";
+    if (lowerDescription.includes('count') || lowerDescription.includes('number')) {
+      if (resourceType === 'measure') {
+        return 'COUNT(*)';
       }
     }
 
     // Default to select all
-    return "*";
+    return '*';
   }
 
   /**
@@ -581,83 +534,59 @@ export class QueryGenerator {
     const lowerDescription = description.toLowerCase();
 
     // Explicit "order by" patterns (highest priority)
-    const orderByMatch = description.match(
-      /order\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i,
-    );
+    const orderByMatch = description.match(/order\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i);
     if (orderByMatch) {
       const field = orderByMatch[1];
-      const direction = orderByMatch[2]
-        ? orderByMatch[2].toLowerCase().startsWith("desc")
-          ? "DESC"
-          : "ASC"
-        : "DESC"; // Default to DESC if not specified
+      const direction = orderByMatch[2] ? (orderByMatch[2].toLowerCase().startsWith('desc') ? 'DESC' : 'ASC') : 'DESC'; // Default to DESC if not specified
       return `ORDER BY ${field} ${direction}`;
     }
 
     // "sort by" patterns
-    const sortByMatch = description.match(
-      /sort\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i,
-    );
+    const sortByMatch = description.match(/sort\s+by\s+(\w+)(?:\s+(desc|asc|descending|ascending))?/i);
     if (sortByMatch) {
       const field = sortByMatch[1];
-      const direction = sortByMatch[2]
-        ? sortByMatch[2].toLowerCase().startsWith("desc")
-          ? "DESC"
-          : "ASC"
-        : "DESC";
+      const direction = sortByMatch[2] ? (sortByMatch[2].toLowerCase().startsWith('desc') ? 'DESC' : 'ASC') : 'DESC';
       return `ORDER BY ${field} ${direction}`;
     }
 
     // Natural language patterns for ordering
-    const highestMatch = description.match(
-      /(highest|largest|biggest|longest|slowest|top)\s+(?:by\s+)?(\w+)/i,
-    );
+    const highestMatch = description.match(/(highest|largest|biggest|longest|slowest|top)\s+(?:by\s+)?(\w+)/i);
     if (highestMatch) {
       return `ORDER BY ${highestMatch[2]} DESC`;
     }
 
-    const lowestMatch = description.match(
-      /(lowest|smallest|shortest|fastest|bottom)\s+(?:by\s+)?(\w+)/i,
-    );
+    const lowestMatch = description.match(/(lowest|smallest|shortest|fastest|bottom)\s+(?:by\s+)?(\w+)/i);
     if (lowestMatch) {
       return `ORDER BY ${lowestMatch[2]} ASC`;
     }
 
     // Check for common field names that suggest ordering
-    const commonOrderFields = [
-      "latency",
-      "duration",
-      "start_time",
-      "timestamp",
-      "time",
-      "value",
-      "response_time",
-    ];
+    const commonOrderFields = ['latency', 'duration', 'start_time', 'timestamp', 'time', 'value', 'response_time'];
 
     for (const field of commonOrderFields) {
       // Check if the field is mentioned with ordering context
       const fieldPattern = new RegExp(
         `(?:order|sort|highest|lowest|largest|smallest|top|bottom).*?${field}|${field}.*?(?:desc|asc|descending|ascending|highest|lowest)`,
-        "i",
+        'i',
       );
       if (fieldPattern.test(lowerDescription)) {
         // Determine direction based on context
-        let direction: "ASC" | "DESC" = "DESC";
+        let direction: 'ASC' | 'DESC' = 'DESC';
         if (
-          lowerDescription.includes("lowest") ||
-          lowerDescription.includes("smallest") ||
-          lowerDescription.includes("shortest") ||
-          lowerDescription.includes("fastest") ||
-          lowerDescription.includes("bottom") ||
-          lowerDescription.includes("asc")
+          lowerDescription.includes('lowest') ||
+          lowerDescription.includes('smallest') ||
+          lowerDescription.includes('shortest') ||
+          lowerDescription.includes('fastest') ||
+          lowerDescription.includes('bottom') ||
+          lowerDescription.includes('asc')
         ) {
-          direction = "ASC";
+          direction = 'ASC';
         }
         return `ORDER BY ${field} ${direction}`;
       }
     }
 
-    return "";
+    return '';
   }
 
   /**
@@ -679,21 +608,17 @@ export class QueryGenerator {
         if (match[2]) {
           // Has field name (first pattern matched)
           const field = match[1];
-          const direction = match[2].toUpperCase().startsWith("DESC")
-            ? "DESC"
-            : "ASC";
+          const direction = match[2].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
           return `ORDER BY ${field} ${direction}`;
         } else if (
           match[1] &&
-          (match[1].toUpperCase() === "DESC" ||
-            match[1].toUpperCase() === "ASC" ||
-            match[1].toUpperCase() === "DESCENDING" ||
-            match[1].toUpperCase() === "ASCENDING")
+          (match[1].toUpperCase() === 'DESC' ||
+            match[1].toUpperCase() === 'ASC' ||
+            match[1].toUpperCase() === 'DESCENDING' ||
+            match[1].toUpperCase() === 'ASCENDING')
         ) {
           // Only direction (for TOPN queries) - preserve as "ORDER BY DESC" or "ORDER BY ASC"
-          const direction = match[1].toUpperCase().startsWith("DESC")
-            ? "DESC"
-            : "ASC";
+          const direction = match[1].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
           return `ORDER BY ${direction}`;
         }
       }
@@ -708,14 +633,13 @@ export class QueryGenerator {
   private extractExistingAggregateByClause(description: string): string | null {
     // Pattern to match AGGREGATE BY clauses: AGGREGATE BY [FUNCTION]
     // Match patterns like: AGGREGATE BY SUM, AGGREGATE BY MAX, AGGREGATE BY MEAN, etc.
-    const aggregateByPattern =
-      /\bAGGREGATE\s+BY\s+(SUM|MEAN|COUNT|MAX|MIN|AVG)\b/i;
+    const aggregateByPattern = /\bAGGREGATE\s+BY\s+(SUM|MEAN|COUNT|MAX|MIN|AVG)\b/i;
 
     const match = description.match(aggregateByPattern);
     if (match) {
       const functionName = match[1].toUpperCase();
       // Normalize AVG to MEAN (both are valid, but MEAN is the standard in BydbQL)
-      const normalizedFunction = functionName === "AVG" ? "MEAN" : functionName;
+      const normalizedFunction = functionName === 'AVG' ? 'MEAN' : functionName;
       return `AGGREGATE BY ${normalizedFunction}`;
     }
 
@@ -727,8 +651,7 @@ export class QueryGenerator {
    */
   private buildAggregateByClause(description: string): string {
     // First, check if there's already an AGGREGATE BY clause in the input
-    const existingAggregateBy =
-      this.extractExistingAggregateByClause(description);
+    const existingAggregateBy = this.extractExistingAggregateByClause(description);
     if (existingAggregateBy) {
       return existingAggregateBy;
     }
@@ -736,22 +659,20 @@ export class QueryGenerator {
     const lowerDescription = description.toLowerCase();
 
     // Check for explicit "aggregate by" patterns first (highest priority)
-    const explicitMatch = description.match(
-      /\baggregate\s+by\s+(sum|mean|count|max|min|avg)\b/i,
-    );
+    const explicitMatch = description.match(/\baggregate\s+by\s+(sum|mean|count|max|min|avg)\b/i);
     if (explicitMatch && explicitMatch[1]) {
       const functionName = explicitMatch[1].toUpperCase();
-      const normalizedFunction = functionName === "AVG" ? "MEAN" : functionName;
+      const normalizedFunction = functionName === 'AVG' ? 'MEAN' : functionName;
       return `AGGREGATE BY ${normalizedFunction}`;
     }
 
     // Natural language patterns for aggregation
     const aggregatePatterns = [
-      { pattern: /\b(sum|total|totals|summing)\b/i, func: "SUM" },
-      { pattern: /\b(max|maximum|maximize|highest\s+value)\b/i, func: "MAX" },
-      { pattern: /\b(min|minimum|minimize|lowest\s+value)\b/i, func: "MIN" },
-      { pattern: /\b(mean|average|avg|averaging)\b/i, func: "MEAN" },
-      { pattern: /\b(count|counting|number\s+of)\b/i, func: "COUNT" },
+      { pattern: /\b(sum|total|totals|summing)\b/i, func: 'SUM' },
+      { pattern: /\b(max|maximum|maximize|highest\s+value)\b/i, func: 'MAX' },
+      { pattern: /\b(min|minimum|minimize|lowest\s+value)\b/i, func: 'MIN' },
+      { pattern: /\b(mean|average|avg|averaging)\b/i, func: 'MEAN' },
+      { pattern: /\b(count|counting|number\s+of)\b/i, func: 'COUNT' },
     ];
 
     // Check natural language patterns
@@ -761,6 +682,6 @@ export class QueryGenerator {
       }
     }
 
-    return "";
+    return '';
   }
 }
