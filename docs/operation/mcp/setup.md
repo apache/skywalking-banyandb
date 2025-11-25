@@ -46,25 +46,6 @@ The MCP server is available as a Docker image for easy deployment.
 docker pull apache/skywalking-banyandb-mcp:latest
 ```
 
-### Option 2: Build from Source
-
-If you want to build the Docker image from source:
-
-```bash
-cd mcp
-
-# Build the image
-docker build -t apache/skywalking-banyandb-mcp:latest .
-```
-
-Or using the Makefile:
-
-```bash
-cd mcp
-make docker
-```
-
-For more details on building, see [Build and Package Guide](build.md).
 
 ### 2. Run the Container
 
