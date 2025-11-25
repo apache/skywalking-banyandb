@@ -31,6 +31,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+// Filter interface provides a unified interface for both BloomFilter and DictionaryFilter.
+type Filter interface {
+	MightContain(item []byte) bool
+}
+
 func encodeBloomFilter(dst []byte, bf *filter.BloomFilter) []byte {
 	dst = encoding.Int64ToBytes(dst, int64(bf.N()))
 	dst = encoding.EncodeUint64Block(dst, bf.Bits())
@@ -67,8 +72,23 @@ func releaseBloomFilter(bf *filter.BloomFilter) {
 
 var bloomFilterPool = pool.Register[*filter.BloomFilter]("stream-bloomFilter")
 
+func generateDictionaryFilter() *filter.DictionaryFilter {
+	v := dictionaryFilterPool.Get()
+	if v == nil {
+		return &filter.DictionaryFilter{}
+	}
+	return v
+}
+
+func releaseDictionaryFilter(df *filter.DictionaryFilter) {
+	df.Reset()
+	dictionaryFilterPool.Put(df)
+}
+
+var dictionaryFilterPool = pool.Register[*filter.DictionaryFilter]("stream-dictionaryFilter")
+
 type tagFilter struct {
-	filter *filter.BloomFilter
+	filter Filter
 	min    []byte
 	max    []byte
 }
@@ -88,7 +108,14 @@ func generateTagFilter() *tagFilter {
 }
 
 func releaseTagFilter(tf *tagFilter) {
-	releaseBloomFilter(tf.filter)
+	if tf.filter != nil {
+		switch f := tf.filter.(type) {
+		case *filter.BloomFilter:
+			releaseBloomFilter(f)
+		case *filter.DictionaryFilter:
+			releaseDictionaryFilter(f)
+		}
+	}
 	tf.reset()
 	tagFilterPool.Put(tf)
 }
@@ -101,7 +128,7 @@ func (tff *tagFamilyFilter) reset() {
 	clear(*tff)
 }
 
-func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader) {
+func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader, tagValueReader fs.Reader) {
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tagFamilyMetadataBlock.size))
@@ -113,18 +140,33 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
 	for _, tm := range tfm.tagMetadata {
-		if tm.filterBlock.size == 0 {
-			continue
-		}
-		bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
-		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
-		bf := generateBloomFilter()
-		bf = decodeBloomFilter(bb.Buf, bf)
 		tf := generateTagFilter()
-		tf.filter = bf
 		if tm.valueType == pbv1.ValueTypeInt64 {
 			tf.min = tm.min
 			tf.max = tm.max
+		}
+		if tm.filterBlock.size > 0 {
+			bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
+			fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
+			bf := generateBloomFilter()
+			bf = decodeBloomFilter(bb.Buf, bf)
+			tf.filter = bf
+		} else {
+			encodeTypeBuf := make([]byte, 1)
+			fs.MustReadData(tagValueReader, int64(tm.offset), encodeTypeBuf)
+			encodeType := encoding.EncodeType(encodeTypeBuf[0])
+			if encodeType == encoding.EncodeTypeDictionary {
+				bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.size))
+				fs.MustReadData(tagValueReader, int64(tm.offset), bb.Buf)
+				dictValues, err := encoding.DecodeDictionaryValues(bb.Buf[1:])
+				if err != nil {
+					logger.Panicf("failed to extract dictionary values: %v", err)
+				}
+				df := generateDictionaryFilter()
+				df.SetValues(dictValues)
+				df.SetValueType(tm.valueType)
+				tf.filter = df
+			}
 		}
 		tff[tm.name] = tf
 	}
@@ -156,10 +198,10 @@ func (tfs *tagFamilyFilters) reset() {
 	tfs.tagFamilyFilters = tfs.tagFamilyFilters[:0]
 }
 
-func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaReader, filterReader map[string]fs.Reader) {
+func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaReader, filterReader, tagValueReader map[string]fs.Reader) {
 	for tf := range tagFamilies {
 		tff := generateTagFamilyFilter()
-		tff.unmarshal(tagFamilies[tf], metaReader[tf], filterReader[tf])
+		tff.unmarshal(tagFamilies[tf], metaReader[tf], filterReader[tf], tagValueReader[tf])
 		tfs.tagFamilyFilters = append(tfs.tagFamilyFilters, tff)
 	}
 }
