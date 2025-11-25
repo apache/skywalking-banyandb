@@ -226,10 +226,34 @@ export class QueryGenerator {
     const timeClause = this.buildTimeClause(description);
 
     // Build ORDER BY clause
-    const orderByClause = this.buildOrderByClause(description);
+    let orderByClause = this.buildOrderByClause(description);
 
     // Build AGGREGATE BY clause
     const aggregateByClause = this.buildAggregateByClause(description);
+
+    // Build LIMIT clause (must come after ORDER BY)
+    const limitClause = this.buildLimitClause(description);
+
+    // If LIMIT is present but ORDER BY is not, add default ORDER BY for meaningful results
+    // "last N" typically means "most recent N", so order by time DESC
+    if (limitClause && !orderByClause) {
+      // Determine appropriate time field based on resource type
+      let timeField = 'timestamp_millis'; // default for TRACE
+      if (resourceType === 'stream') {
+        timeField = 'timestamp';
+      } else if (resourceType === 'measure') {
+        timeField = 'timestamp';
+      }
+
+      // Check if description says "first N" (ascending) vs "last N" (descending)
+      const lowerDescription = description.toLowerCase();
+      if (lowerDescription.includes('first')) {
+        orderByClause = `ORDER BY ${timeField} ASC`;
+      } else {
+        // Default to DESC for "last N" patterns
+        orderByClause = `ORDER BY ${timeField} DESC`;
+      }
+    }
 
     // Build SELECT clause
     const selectClause = this.buildSelectClause(description, resourceType);
@@ -245,6 +269,9 @@ export class QueryGenerator {
     }
     if (orderByClause) {
       query += ` ${orderByClause}`;
+    }
+    if (limitClause) {
+      query += ` ${limitClause}`;
     }
 
     return {
@@ -477,6 +504,14 @@ export class QueryGenerator {
     }
 
     const lowerDescription = description.toLowerCase();
+
+    // CRITICAL: Avoid matching "last N [resource]" as time range - this should be LIMIT, not TIME
+    const lastNResourcePattern =
+      /\blast\s+(\d+)\s+(?:zipkin_span|span|spans|trace|traces|log|logs|metric|metrics|measure|measures|item|items|record|records|data\s+point|data\s+points|result|results)(?!\s+(?:hour|hours|day|days|week|weeks|minute|minutes|h|d|w|m))\b/i;
+    if (lastNResourcePattern.test(description)) {
+      // This is a LIMIT pattern, not a TIME pattern - return empty to let buildLimitClause handle it
+      return '';
+    }
 
     // Check for "from last X" pattern first (should use TIME >)
     const fromLastMatch = lowerDescription.match(
@@ -755,6 +790,75 @@ export class QueryGenerator {
     for (const { pattern, func } of aggregatePatterns) {
       if (pattern.test(lowerDescription)) {
         return `AGGREGATE BY ${func}`;
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * Build a LIMIT clause from the description.
+   * Understands semantic meaning: "last N [resource]" means LIMIT N, not TIME.
+   */
+  private buildLimitClause(description: string): string {
+    const lowerDescription = description.toLowerCase();
+
+    // Pattern to match "last N [resource_name]" or "N [resource_name]" where N is a number
+    // This should be interpreted as LIMIT N, not TIME
+    // Examples: "last 30 zipkin_span", "30 zipkin_span", "last 10 logs", "first 5 metrics"
+
+    // Pattern 1: "last N [resource]" or "last N [items/records/data points]"
+    const lastNPattern =
+      /\blast\s+(\d+)\s+(?:zipkin_span|span|spans|trace|traces|log|logs|metric|metrics|measure|measures|item|items|record|records|data\s+point|data\s+points|result|results)\b/i;
+    const lastNMatch = description.match(lastNPattern);
+    if (lastNMatch && lastNMatch[1]) {
+      const limit = parseInt(lastNMatch[1], 10);
+      if (limit > 0) {
+        return `LIMIT ${limit}`;
+      }
+    }
+
+    // Pattern 2: "first N [resource]" or "first N [items/records]"
+    const firstNPattern =
+      /\bfirst\s+(\d+)\s+(?:zipkin_span|span|spans|trace|traces|log|logs|metric|metrics|measure|measures|item|items|record|records|data\s+point|data\s+points|result|results)\b/i;
+    const firstNMatch = description.match(firstNPattern);
+    if (firstNMatch && firstNMatch[1]) {
+      const limit = parseInt(firstNMatch[1], 10);
+      if (limit > 0) {
+        return `LIMIT ${limit}`;
+      }
+    }
+
+    // Pattern 3: "N [resource]" where N appears directly before resource name (e.g., "30 zipkin_span")
+    // But exclude if it's followed by a time unit (e.g., "30 hours", "30 days")
+    const directNPattern =
+      /\b(\d+)\s+(?:zipkin_span|span|spans|trace|traces|log|logs|metric|metrics|measure|measures|item|items|record|records|data\s+point|data\s+points|result|results)(?!\s+(?:hour|hours|day|days|week|weeks|minute|minutes|h|d|w|m))\b/i;
+    const directNMatch = description.match(directNPattern);
+    if (directNMatch && directNMatch[1]) {
+      const limit = parseInt(directNMatch[1], 10);
+      if (limit > 0) {
+        return `LIMIT ${limit}`;
+      }
+    }
+
+    // Pattern 4: "show/get/list N items/records/results"
+    const showNPattern =
+      /\b(?:show|get|list|display|fetch)\s+(\d+)\s+(?:item|items|record|records|result|results|data\s+point|data\s+points)\b/i;
+    const showNMatch = description.match(showNPattern);
+    if (showNMatch && showNMatch[1]) {
+      const limit = parseInt(showNMatch[1], 10);
+      if (limit > 0) {
+        return `LIMIT ${limit}`;
+      }
+    }
+
+    // Pattern 5: Explicit LIMIT clause in description
+    const explicitLimitPattern = /\bLIMIT\s+(\d+)\b/i;
+    const explicitLimitMatch = description.match(explicitLimitPattern);
+    if (explicitLimitMatch && explicitLimitMatch[1]) {
+      const limit = parseInt(explicitLimitMatch[1], 10);
+      if (limit > 0) {
+        return `LIMIT ${limit}`;
       }
     }
 
