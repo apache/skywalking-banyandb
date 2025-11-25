@@ -68,7 +68,7 @@ jobs:
           make docker.build || make docker.build
           BINARYTYPE=slim make -C banyand docker || BINARYTYPE=slim make -C banyand docker
           make -C test/docker build || make -C test/docker build
-          make -C mcp docker || make -C mcp docker
+          make -C mcp docker || make -C mcp docker 
           docker image ls
       - name: Log in to the Container registry
         uses: docker/login-action@v1.10.0
