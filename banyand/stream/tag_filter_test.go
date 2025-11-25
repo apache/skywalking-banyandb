@@ -462,7 +462,7 @@ func BenchmarkTagFamilyFiltersUnmarshal(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				tfs := generateTagFamilyFilters()
-				tfs.unmarshal(tagFamilies, metaReaders, filterReaders)
+				tfs.unmarshal(tagFamilies, metaReaders, filterReaders, metaReaders)
 				releaseTagFamilyFilters(tfs)
 			}
 		})
