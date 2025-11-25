@@ -36,13 +36,28 @@ BydbQL Syntax:
 - Use TIME > for "from last X" (e.g., "from last day" = TIME > '-1d'), TIME >= for "since" or "in the last X"
 - For "from last day", use TIME > '-1d' (not TIME >=)
 
+Resource and Group Name Patterns:
+- The user description may express resource and group relationships in different ways:
+  - Standard pattern: "resource_name in group_name" (e.g., "service_cpm_minute in metricsMinute")
+  - Alternative pattern: "resource_name of group_name" (e.g., "service_cpm_minute of metricsMinute")
+  - Possessive pattern: "group_name's resource_name" (e.g., "metricsMinute's service_cpm_minute")
+- All these patterns should generate the same BydbQL format: SELECT ... FROM RESOURCE_TYPE resource_name IN group_name ...
+- The detected resource_name and group_name values are provided below - use them exactly as detected
+
 CRITICAL: Choose the correct query format based on the description:
 
-1. If the description contains "TOP" or similar words (e.g., "top 10", "top 5", "highest N", "show top N", "top N", "top-N", "topN") AND the resource type is MEASURE:
-   - Use: SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
-   - Example: SHOW TOP 10 FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
+1. TOPN Query (ONLY use when explicitly requested):
+   - Use TOPN format if the description contains ranking keywords (e.g., "top", "highest", "lowest", "best", "worst") followed by a NUMBER (e.g., "top 10", "top 5", "top-N", "topN", "show top 10", "highest 5", "lowest 3", "best 10")
+   - The word "show" alone does NOT indicate a TOPN query - it's just a common verb
+   - Examples that indicate TOPN: "top 10", "top 5", "show top 10", "highest 5", "lowest 3", "best 10", "top-N"
+   - Examples that do NOT indicate TOPN: "show", "show me", "display", "get", "fetch"
+   - If TOPN is indicated AND the resource type is MEASURE:
+     - Use: SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
+     - Example: SHOW TOP 10 FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
 
-2. If the description does NOT contain "TOP" or similar words, OR the resource type is not MEASURE:
+2. Common Query (DEFAULT for all other cases):
+   - Use SELECT format if the description does NOT contain ranking keywords ("top", "highest", "lowest", "best", "worst") followed by a number
+   - This includes descriptions with just "show", "get", "display", "fetch", etc. without ranking keywords + number
    - Use: SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]
    - Example: SELECT * FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
 
@@ -77,9 +92,11 @@ CRITICAL Preservation Rules:
 - If the user description contains a TIME clause, you MUST preserve it exactly as provided
 - If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ''}
 - If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ''}
-- CRITICAL FORMAT SELECTION: Check if the description contains "TOP" or similar words (e.g., "top 10", "top 5", "highest N", "show top N", "top N", "top-N", "topN")
-  - If YES and resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
-  - If NO or resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]"
+- CRITICAL FORMAT SELECTION: 
+  - Check if the description contains ranking keywords ("top", "highest", "lowest", "best", "worst") followed by a NUMBER (e.g., "top 10", "top 5", "top-N", "topN", "show top 10", "highest 5", "lowest 3", "best 10")
+  - IMPORTANT: The word "show" alone does NOT indicate TOPN - only ranking keywords + number (e.g., "top N", "highest N", "lowest N") indicate TOPN
+  - If YES (contains ranking keyword + number) AND resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
+  - If NO (no ranking keyword + number) OR resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]"
 
 Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 }

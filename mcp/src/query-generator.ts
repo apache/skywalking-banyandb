@@ -292,6 +292,7 @@ export class QueryGenerator {
       'select',
       'where',
       'data',
+      'list',
       'last',
       'past',
       'recent',
@@ -309,9 +310,12 @@ export class QueryGenerator {
     ]);
 
     // First, try to detect group name to exclude it from resource name detection
+    // Support patterns: "in groupName", "of groupName", "groupName's"
     const groupMatch =
-      description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i) ||
-      description.match(/\b(?:in|group)\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i);
+      description.match(/\b(?:in|group|of)\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i) ||
+      description.match(/\b(?:in|group|of)\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i) ||
+      description.match(/\b([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?'s\s+[a-zA-Z]/i) ||
+      description.match(/\b([a-zA-Z][a-zA-Z0-9_]+)['"]?'s\s+[a-zA-Z]/i);
     const groupName = groupMatch ? groupMatch[1] : null;
 
     const patterns = [
@@ -319,15 +323,19 @@ export class QueryGenerator {
       /\b([a-zA-Z][a-zA-Z0-9_]*_(?:cpm|rpm|apdex|sla|percentile)_(?:minute|hour|day))\b/i,
       // Pattern: resource name right before "in" keyword: "service_cpm_minute in sw_metric" (check early to catch this pattern)
       /\b([a-zA-Z][a-zA-Z0-9_-]+)\s+in\s+[a-zA-Z]/i,
+      // Pattern: resource name right before "of" keyword: "service_cpm_minute of metricsMinute"
+      /\b([a-zA-Z][a-zA-Z0-9_-]+)\s+of\s+[a-zA-Z]/i,
+      // Pattern: resource name after possessive: "metricsMinute's service_cpm_minute"
+      /\b[a-zA-Z][a-zA-Z0-9_-]+['"]?'s\s+([a-zA-Z][a-zA-Z0-9_-]+)\b/i,
       // Explicit resource type patterns: "from measure service_cpm_minute" or "from stream log"
-      /(?:from|in|of|query|get|show|fetch)\s+(?:the\s+)?(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
+      /(?:from|in|of|query|get|show|fetch|list)\s+(?:the\s+)?(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
       // Resource type followed by name: "measure service_cpm_minute" or "stream log"
       /(?:stream|measure|trace|property)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i,
       // Pattern for underscore-separated names (at least 1 underscore suggests a resource name)
       // But exclude group names
       /\b([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)\b/i,
       // Simple resource names like "log", "metrics", etc. (but not common words) - check last
-      /\b(?:query|get|show|fetch|from)\s+['"]?([a-zA-Z][a-zA-Z0-9_-]{1,})['"]?(?:\s+in|\s+from|$)/i,
+      /\b(?:query|get|show|fetch|list|from)\s+['"]?([a-zA-Z][a-zA-Z0-9_-]{1,})['"]?(?:\s+in|\s+from|\s+of|$)/i,
     ];
 
     for (let i = 0; i < patterns.length; i++) {
@@ -363,6 +371,14 @@ export class QueryGenerator {
       /\bfrom\s+group\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i,
       // Pattern: "from group sw_metric" - also match simple names
       /\bfrom\s+group\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "of metricsMinute" or "of sw_metric" - for "service_cpm_minute of metricsMinute"
+      /\bof\s+['"]?([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "of metricsMinute" - also match simple names
+      /\bof\s+['"]?([a-zA-Z][a-zA-Z0-9_]+)['"]?/i,
+      // Pattern: "metricsMinute's" - possessive form for "metricsMinute's service_cpm_minute"
+      /\b([a-zA-Z][a-zA-Z0-9_]*_[a-zA-Z0-9_]+)['"]?'s\b/i,
+      // Pattern: "metricsMinute's" - also match simple names
+      /\b([a-zA-Z][a-zA-Z0-9_]+)['"]?'s\b/i,
     ];
 
     for (let i = 0; i < patterns.length; i++) {
@@ -383,6 +399,25 @@ export class QueryGenerator {
           'property',
           'data',
           'the',
+          'last',
+          'past',
+          'recent',
+          'hour',
+          'hours',
+          'minute',
+          'minutes',
+          'day',
+          'days',
+          'week',
+          'weeks',
+          'today',
+          'yesterday',
+          'now',
+          'show',
+          'get',
+          'fetch',
+          'list',
+          'display',
         ]);
         if (!commonWords.has(groupName.toLowerCase())) {
           return groupName;
