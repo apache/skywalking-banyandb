@@ -20,17 +20,14 @@
 import OpenAI from 'openai';
 import { generateQueryPrompt } from './llm-prompt.js';
 
-
 export type QueryGeneratorResult = {
   description: string;
   resourceType: string;
   resourceName: string;
   group: string;
-  aggregateByClause: string | null;
-  orderByClause: string | null;
   query: string;
+  explanations?: string;
 };
-
 
 /**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
@@ -107,32 +104,14 @@ export class QueryGenerator {
   /**
    * Generate query using LLM (OpenAI).
    */
-  private async generateQueryWithLLM(description: string, args: Record<string, unknown>): Promise<QueryGeneratorResult> {
+  private async generateQueryWithLLM(
+    description: string,
+    args: Record<string, unknown>,
+  ): Promise<QueryGeneratorResult> {
     if (!this.openaiClient) {
       throw new Error('OpenAI client not initialized');
     }
-    const resourceType =
-      (typeof args.resource_type === 'string' ? args.resource_type : null) ||
-      this.detectResourceType(description, args) ||
-      'stream';
-    const resourceName =
-      (typeof args.resource_name === 'string' ? args.resource_name : null) ||
-      this.detectResourceName(description) ||
-      '';
-    const group = (typeof args.group === 'string' ? args.group : null) || this.detectGroup(description) || 'default';
-
-    // Extract existing clauses if present
-    const aggregateByClause = this.extractExistingAggregateByClause(description);
-    const orderByClause = this.extractExistingOrderByClause(description);
-
-    const prompt = generateQueryPrompt(
-      description,
-      resourceType,
-      resourceName,
-      group,
-      aggregateByClause,
-      orderByClause,
-    );
+    const prompt = generateQueryPrompt(description, args);
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({
@@ -140,13 +119,15 @@ export class QueryGenerator {
         messages: [
           {
             role: 'system',
-            content: 'You are a BydbQL query generator. Always return only the query, no explanations.',
+            content:
+              'You are a BydbQL query generator. Return a JSON object with the following fields: bydbql (the BydbQL query), group (group name), name (resource name), type (resource type), and explanations (brief explanation of the query).',
           },
           {
             role: 'user',
             content: prompt,
           },
         ],
+        response_format: { type: 'json_object' },
       }),
       new Promise<never>((_, reject) =>
         setTimeout(
@@ -156,26 +137,57 @@ export class QueryGenerator {
       ),
     ]);
 
-    const query = completion.choices[0]?.message?.content?.trim();
-    if (!query) {
+    const responseContent = completion.choices[0]?.message?.content?.trim();
+    if (!responseContent) {
       throw new Error('Empty response from LLM');
     }
 
-    // Clean up the response (remove markdown code blocks if present)
+    // Parse JSON response
+    let parsedResponse: {
+      bydbql?: string;
+      group?: string;
+      name?: string;
+      type?: string;
+      explanations?: string;
+    };
+
+    try {
+      parsedResponse = JSON.parse(responseContent);
+    } catch (error) {
+      // Fallback: try to extract query from plain text if JSON parsing fails
+      const cleanedQuery = responseContent
+        .replace(/^```(?:bydbql|sql|json)?\n?/i, '')
+        .replace(/\n?```$/i, '')
+        .trim();
+      return {
+        description,
+        resourceType: (args.resource_type as string) || 'stream',
+        resourceName: (args.resource_name as string) || '',
+        group: (args.group as string) || 'default',
+        query: cleanedQuery,
+      };
+    }
+
+    const query = parsedResponse.bydbql?.trim() || '';
+    const group = (args.group as string) || parsedResponse.group?.trim() || '';
+    const resourceName = (args.resource_name as string) || parsedResponse.name?.trim() || '';
+    const resourceType = (args.resource_type as string) || parsedResponse.type?.toLowerCase().trim() || '';
+    const explanations = parsedResponse.explanations?.trim() || '';
+
+    // Clean up the query (remove markdown code blocks if present)
     const cleanedQuery = query
       .replace(/^```(?:bydbql|sql)?\n?/i, '')
       .replace(/\n?```$/i, '')
       .trim();
 
-    // Return parameters used for query generation (lines 117-122)
+    // Return parameters used for query generation
     return {
       description,
       resourceType,
       resourceName,
       group,
-      aggregateByClause,
-      orderByClause,
-      query: cleanedQuery
+      query: cleanedQuery,
+      explanations: explanations || undefined,
     };
   }
 
@@ -240,8 +252,6 @@ export class QueryGenerator {
       resourceType,
       resourceName: resourceName || '',
       group,
-      aggregateByClause: aggregateByClause || null,
-      orderByClause: orderByClause || null,
       query,
     };
   }

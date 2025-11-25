@@ -241,7 +241,7 @@ async function main() {
       try {
         // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQueryResult.query);
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}\n\n=== Debug Information ===\nDescription: ${bydbqlQueryResult.description}\nResource Type: ${bydbqlQueryResult.resourceType}\nResource Name: ${bydbqlQueryResult.resourceName}\nGroup: ${bydbqlQueryResult.group}\nAggregate By: ${bydbqlQueryResult.aggregateByClause}\nOrder By: ${bydbqlQueryResult.orderByClause}`;
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}\n\n=== Debug Information ===\nDescription: ${bydbqlQueryResult.description}\nResource Type: ${bydbqlQueryResult.resourceType}\nResource Name: ${bydbqlQueryResult.resourceName}\nGroup: ${bydbqlQueryResult.group}${bydbqlQueryResult.explanations ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}` : ''}\n`;
 
         return {
           content: [
