@@ -82,5 +82,4 @@ jobs:
         run: |
           PLATFORMS=linux/amd64,linux/arm64,windows/amd64 make docker.push || PLATFROMS=linux/amd64,linux/arm64,windows/amd64 make docker.push
           PLATFORMS=linux/amd64,linux/arm64,windows/amd64 BINARYTYPE=slim make -C banyand docker.push || PLATFORMS=linux/amd64,linux/arm64,windows/amd64 BINARYTYPE=slim make -C banyand docker.push
-          PLATFORMS=linux/amd64,linux/arm64 make -C mcp docker.push || PLATFORMS=linux/amd64,linux/arm64 make -C mcp docker.push
           make -C test/docker push || make -C test/docker push
