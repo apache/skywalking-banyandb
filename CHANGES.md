@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.10.0
+
+### Features
+
+- Remove Bloom filter for dictionary-encoded tags.
+
 ## 0.9.0
 
 ### Features
