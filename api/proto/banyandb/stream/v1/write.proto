@@ -27,6 +27,14 @@ import "validate/validate.proto";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1";
 option java_package = "org.apache.skywalking.banyandb.stream.v1";
 
+// TagFamilySpec defines the specification of a tag family.
+message TagFamilySpec {
+  // name of the tag family
+  string name = 1;
+  // names of tags in the tag family
+  repeated string tag_names = 2;
+}
+
 message ElementValue {
   // element_id could be span_id of a Span or segment_id of a Segment in the context of stream
   string element_id = 1;
@@ -34,7 +42,7 @@ message ElementValue {
   // 1) either the start time of a Span/Segment,
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
-  // the order of tag_families' items match the stream schema
+  // the order of tag_families' items match TagFamilySpec if provided, otherwise match the stream schema
   repeated model.v1.TagFamilyForWrite tag_families = 3;
 }
 
@@ -45,6 +53,8 @@ message WriteRequest {
   ElementValue element = 2 [(validate.rules).message.required = true];
   // the message_id is required.
   uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
+  // the tag family specification.
+  repeated TagFamilySpec tag_family_spec = 4;
 }
 
 message WriteResponse {

@@ -26,11 +26,16 @@ import "validate/validate.proto";
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1";
 option java_package = "org.apache.skywalking.banyandb.trace.v1";
 
+message TagSpec {
+  repeated string tag_names = 1;
+}
+
 message WriteRequest {
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   repeated model.v1.TagValue tags = 2 [(validate.rules).repeated.min_items = 1];
   bytes span = 3;
   uint64 version = 4 [(validate.rules).uint64.gt = 0];
+  TagSpec tag_spec = 5;
 }
 
 message WriteResponse {
