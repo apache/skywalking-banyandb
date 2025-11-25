@@ -60,7 +60,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer) {
 	// Use shared encoding module
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
-	err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
+	_, err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
 	if err != nil {
 		logger.Panicf("failed to encode tag values: %v", err)
 	}
