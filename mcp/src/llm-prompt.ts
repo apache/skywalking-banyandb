@@ -31,10 +31,20 @@ export function generateQueryPrompt(
   return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
 
 BydbQL Syntax:
-- SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]
 - Resource types: STREAM, MEASURE, TRACE, PROPERTY
-- TIME clause examples: TIME >= '-1h', TIME > '-30m', TIME BETWEEN '-24h' AND '-1h'
-- Use TIME > for "after" or "more than", TIME >= for "from" or "since"
+- TIME clause examples: TIME >= '-1h', TIME > '-1d', TIME BETWEEN '-24h' AND '-1h'
+- Use TIME > for "from last X" (e.g., "from last day" = TIME > '-1d'), TIME >= for "since" or "in the last X"
+- For "from last day", use TIME > '-1d' (not TIME >=)
+
+CRITICAL: Choose the correct query format based on the description:
+
+1. If the description contains "TOP" or similar words (e.g., "top 10", "top 5", "highest N", "show top N", "top N", "top-N", "topN") AND the resource type is MEASURE:
+   - Use: SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
+   - Example: SHOW TOP 10 FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
+
+2. If the description does NOT contain "TOP" or similar words, OR the resource type is not MEASURE:
+   - Use: SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]
+   - Example: SELECT * FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
 
 AGGREGATE BY clause:
 - Syntax: AGGREGATE BY SUM | MEAN | COUNT | MAX | MIN
@@ -48,7 +58,8 @@ ORDER BY clause:
 - For TOPN queries: ORDER BY DESC (for highest values) or ORDER BY ASC (for lowest values) - field name is optional
 
 Top-N Query Syntax (for measures):
-- SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
+- Top N key (the field used for ranking) is NOT REQUIRED for measures. TOP N queries can work without specifying a key field.
+- ORDER BY clause is OPTIONAL for top N queries on measures. If not specified, the default ordering will be used.
 - Do NOT include LIMIT clause in TOPN queries. Use SHOW TOP N syntax instead.
 
 CRITICAL Clause Ordering Rules (applies to ALL query types):
@@ -66,6 +77,9 @@ CRITICAL Preservation Rules:
 - If the user description contains a TIME clause, you MUST preserve it exactly as provided
 - If the user description contains an AGGREGATE BY clause, you MUST preserve it in the generated query${aggregateByClause ? `. Use this EXACT AGGREGATE BY clause: ${aggregateByClause}` : ""}
 - If the user description contains an ORDER BY clause, you MUST preserve it in the generated query${orderByClause ? `. Use this EXACT ORDER BY clause: ${orderByClause}` : ""}
+- CRITICAL FORMAT SELECTION: Check if the description contains "TOP" or similar words (e.g., "top 10", "top 5", "highest N", "show top N", "top N", "top-N", "topN")
+  - If YES and resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
+  - If NO or resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause]"
 
 Generate ONLY the BydbQL query using these exact values. Do not change the resource name or group name. Do not include explanations or markdown formatting.`;
 }

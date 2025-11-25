@@ -51,6 +51,10 @@ export class QueryGenerator {
     /(last|past|recent)\s+(\d+)\s*(day|days|d)/i,
     /(last|past|recent)\s+(\d+)\s*(week|weeks|w)/i,
     /(today|yesterday|now)/i,
+    // Pattern for "from last day" (without number, implies 1 day)
+    /from\s+last\s+(day|days)/i,
+    // Pattern for "last day" (without number, implies 1 day)
+    /\blast\s+(day|days)\b/i,
   ];
 
   private resourcePatterns: Map<string, RegExp> = new Map([
@@ -438,6 +442,51 @@ export class QueryGenerator {
     }
 
     const lowerDescription = description.toLowerCase();
+    
+    // Check for "from last X" pattern first (should use TIME >)
+    const fromLastMatch = lowerDescription.match(/from\s+last\s+(\d+)?\s*(day|days|hour|hours|minute|minutes|week|weeks|h|hr|hrs|m|min|mins|d|w)/i);
+    if (fromLastMatch) {
+      const number = fromLastMatch[1] ? parseInt(fromLastMatch[1], 10) : 1;
+      const unit = fromLastMatch[2];
+      let duration: string;
+
+      switch (unit.toLowerCase()) {
+        case "h":
+        case "hour":
+        case "hours":
+        case "hr":
+        case "hrs":
+          duration = `-${number}h`;
+          break;
+        case "m":
+        case "minute":
+        case "minutes":
+        case "min":
+        case "mins":
+          duration = `-${number}m`;
+          break;
+        case "d":
+        case "day":
+        case "days":
+          duration = `-${number}d`;
+          break;
+        case "w":
+        case "week":
+        case "weeks":
+          duration = `-${number * 7}d`;
+          break;
+        default:
+          duration = "-1d";
+      }
+
+      return `TIME > '${duration}'`;
+    }
+
+    // Check for "last day" without number (implies 1 day, use TIME >)
+    if (lowerDescription.match(/\bfrom\s+last\s+(day|days)\b/i) || 
+        lowerDescription.match(/\blast\s+(day|days)\b/i)) {
+      return "TIME > '-1d'";
+    }
 
     // Check for relative time patterns
     for (const pattern of this.timePatterns) {
@@ -451,7 +500,7 @@ export class QueryGenerator {
         }
 
         // Extract number and unit
-        if (matches.length >= 3) {
+        if (matches.length >= 3 && matches[2]) {
           const unit = matches[matches.length - 1];
           const numberStr = matches[matches.length - 2];
           const number = parseInt(numberStr, 10);
