@@ -154,6 +154,7 @@ export class QueryGenerator {
     try {
       parsedResponse = JSON.parse(responseContent);
     } catch (error) {
+      console.error('JSON parsing failed:', error);
       // Fallback: try to extract query from plain text if JSON parsing fails
       const cleanedQuery = responseContent
         .replace(/^```(?:bydbql|sql|json)?\n?/i, '')
@@ -801,8 +802,6 @@ export class QueryGenerator {
    * Understands semantic meaning: "last N [resource]" means LIMIT N, not TIME.
    */
   private buildLimitClause(description: string): string {
-    const lowerDescription = description.toLowerCase();
-
     // Pattern to match "last N [resource_name]" or "N [resource_name]" where N is a number
     // This should be interpreted as LIMIT N, not TIME
     // Examples: "last 30 zipkin_span", "30 zipkin_span", "last 10 logs", "first 5 metrics"
