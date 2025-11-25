@@ -40,11 +40,9 @@ Create a configuration file for your MCP client. For example, for MCP Inspector,
 
 The MCP server is available as a Docker image for easy deployment.
 
-
 ```bash
 docker pull apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
-
 
 ### 2. Run the Container
 

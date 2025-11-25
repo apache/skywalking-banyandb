@@ -179,7 +179,7 @@ docker.build: PROJECTS:= banyand bydbctl mcp
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:= banyand bydbctl
+docker.push: PROJECTS:= banyand bydbctl mcp
 docker.push: default ## Push docker images
 
 default:
