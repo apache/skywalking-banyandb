@@ -8,6 +8,10 @@ Release Notes.
 
 - Remove Bloom filter for dictionary-encoded tags.
 
+### Bug Fixes
+
+- Fix the wrong retention setting of each measure/stream/trace.
+
 ## 0.9.0
 
 ### Features
