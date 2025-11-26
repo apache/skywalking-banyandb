@@ -63,7 +63,7 @@ message WriteRequest {
   DataPointValue data_point = 2 [(validate.rules).message.required = true];
   // the message_id is required.
   uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
-  // the data point specification. 
+  // the data point specification.
   // If this is not set with the indicated metadata, use the schema definition.
   // If this is not set, use the existing spec declaration from previous requests in the current gRPC stream.
   DataPointSpec data_point_spec = 4;
