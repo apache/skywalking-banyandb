@@ -517,7 +517,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			if st.Close {
 				segmentIdleTimeout = 5 * time.Minute
 			}
-			disableRetention = i+1 < len(ro.Stages)
+			disableRetention = i + 1 < len(ro.Stages)
 			break
 		}
 		if !foundMatched {
