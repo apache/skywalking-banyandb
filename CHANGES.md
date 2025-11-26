@@ -10,7 +10,7 @@ Release Notes.
 
 ### Bug Fixes
 
-- Fix the wrong detention setting of each measure/stream/trace.
+- Fix the wrong retention setting of each measure/stream/trace.
 
 ## 0.9.0
 
