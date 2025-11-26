@@ -53,12 +53,13 @@ const (
 )
 
 type measureDumpOptions struct {
-	shardPath      string
-	segmentPath    string
-	criteriaJSON   string
-	projectionTags string
-	verbose        bool
-	csvOutput      bool
+	shardPath        string
+	segmentPath      string
+	criteriaJSON     string
+	projectionTags   string
+	projectionFields string
+	verbose          bool
+	csvOutput        bool
 }
 
 func newMeasureCmd() *cobra.Command {
@@ -68,6 +69,7 @@ func newMeasureCmd() *cobra.Command {
 	var csvOutput bool
 	var criteriaJSON string
 	var projectionTags string
+	var projectionFields string
 
 	cmd := &cobra.Command{
 		Use:   "measure",
@@ -75,7 +77,7 @@ func newMeasureCmd() *cobra.Command {
 		Long: `Dump and display contents of a measure shard directory (containing multiple parts).
 Outputs measure data in human-readable format or CSV.
 
-Supports filtering by criteria and projecting specific tags.`,
+Supports filtering by criteria and projecting specific tags and fields.`,
 		Example: `  # Display measure data from shard in text format
   dump measure --shard-path /path/to/shard-0 --segment-path /path/to/segment
 
@@ -88,7 +90,11 @@ Supports filtering by criteria and projecting specific tags.`,
 
   # Project specific tags
   dump measure --shard-path /path/to/shard-0 --segment-path /path/to/segment \
-    --projection "tag1,tag2,tag3"
+    --projection-tags "tag1,tag2,tag3"
+
+  # Project specific fields
+  dump measure --shard-path /path/to/shard-0 --segment-path /path/to/segment \
+    --projection-fields "field1,field2"
 
   # Output as CSV
   dump measure --shard-path /path/to/shard-0 --segment-path /path/to/segment --csv
@@ -103,12 +109,13 @@ Supports filtering by criteria and projecting specific tags.`,
 				return fmt.Errorf("--segment-path flag is required")
 			}
 			return dumpMeasureShard(measureDumpOptions{
-				shardPath:      shardPath,
-				segmentPath:    segmentPath,
-				verbose:        verbose,
-				csvOutput:      csvOutput,
-				criteriaJSON:   criteriaJSON,
-				projectionTags: projectionTags,
+				shardPath:        shardPath,
+				segmentPath:      segmentPath,
+				verbose:          verbose,
+				csvOutput:        csvOutput,
+				criteriaJSON:     criteriaJSON,
+				projectionTags:   projectionTags,
+				projectionFields: projectionFields,
 			})
 		},
 	}
@@ -118,7 +125,8 @@ Supports filtering by criteria and projecting specific tags.`,
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output (show raw data)")
 	cmd.Flags().BoolVar(&csvOutput, "csv", false, "Output as CSV format")
 	cmd.Flags().StringVarP(&criteriaJSON, "criteria", "c", "", "Criteria filter as JSON string")
-	cmd.Flags().StringVarP(&projectionTags, "projection", "p", "", "Comma-separated list of tags to include as columns (e.g., tag1,tag2,tag3)")
+	cmd.Flags().StringVar(&projectionTags, "projection-tags", "", "Comma-separated list of tags to include as columns (e.g., tag1,tag2,tag3)")
+	cmd.Flags().StringVar(&projectionFields, "projection-fields", "", "Comma-separated list of fields to include as columns (e.g., field1,field2)")
 	_ = cmd.MarkFlagRequired("shard-path")
 	_ = cmd.MarkFlagRequired("segment-path")
 
@@ -215,16 +223,17 @@ type measureRowData struct {
 }
 
 type measureDumpContext struct {
-	tagFilter      logical.TagFilter
-	fileSystem     fs.FileSystem
-	seriesMap      map[common.SeriesID]string
-	writer         *csv.Writer
-	opts           measureDumpOptions
-	partIDs        []uint64
-	projectionTags []string
-	tagColumns     []string
-	fieldColumns   []string
-	rowNum         int
+	tagFilter        logical.TagFilter
+	fileSystem       fs.FileSystem
+	seriesMap        map[common.SeriesID]string
+	writer           *csv.Writer
+	opts             measureDumpOptions
+	partIDs          []uint64
+	projectionTags   []string
+	projectionFields []string
+	tagColumns       []string
+	fieldColumns     []string
+	rowNum           int
 }
 
 func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error) {
@@ -270,15 +279,36 @@ func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error)
 		fmt.Fprintf(os.Stderr, "Projection tags: %v\n", ctx.projectionTags)
 	}
 
+	if opts.projectionFields != "" {
+		ctx.projectionFields = parseMeasureProjectionTags(opts.projectionFields)
+		fmt.Fprintf(os.Stderr, "Projection fields: %v\n", ctx.projectionFields)
+	}
+
 	if opts.csvOutput {
+		// Discover or use projection for tags
 		if len(ctx.projectionTags) > 0 {
 			ctx.tagColumns = ctx.projectionTags
 		} else {
+			// Discover all tags if no projection specified
 			ctx.tagColumns, ctx.fieldColumns, err = discoverMeasureColumns(ctx.partIDs, opts.shardPath, ctx.fileSystem)
 			if err != nil {
 				return nil, fmt.Errorf("failed to discover columns: %w", err)
 			}
+			// If we discovered, we need to separate tags and fields
+			// But discoverMeasureColumns already returns them separately, so we're good
 		}
+
+		// Discover or use projection for fields
+		if len(ctx.projectionFields) > 0 {
+			ctx.fieldColumns = ctx.projectionFields
+		} else if len(ctx.projectionTags) > 0 {
+			// If tags were projected but fields weren't, we still need to discover fields
+			_, ctx.fieldColumns, err = discoverMeasureColumns(ctx.partIDs, opts.shardPath, ctx.fileSystem)
+			if err != nil {
+				return nil, fmt.Errorf("failed to discover fields: %w", err)
+			}
+		}
+		// If neither was projected, discoverMeasureColumns already set both
 	}
 
 	if err := ctx.initOutput(); err != nil {
@@ -497,7 +527,7 @@ func (ctx *measureDumpContext) writeRow(row measureRowData) error {
 			return err
 		}
 	} else {
-		writeMeasureRowAsText(row, ctx.rowNum+1, ctx.projectionTags, ctx.seriesMap)
+		writeMeasureRowAsText(row, ctx.rowNum+1, ctx.projectionTags, ctx.projectionFields, ctx.seriesMap)
 	}
 	ctx.rowNum++
 	return nil
@@ -1054,7 +1084,7 @@ func discoverMeasureColumns(partIDs []uint64, shardPath string, fileSystem fs.Fi
 	return tagResult, fieldResult, nil
 }
 
-func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []string, seriesMap map[common.SeriesID]string) {
+func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []string, projectionFields []string, seriesMap map[common.SeriesID]string) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  PartID: %d (0x%016x)\n", row.partID, row.partID)
 	fmt.Printf("  Timestamp: %s\n", formatTimestamp(row.timestamp))
@@ -1069,13 +1099,21 @@ func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []stri
 
 	if len(row.fields) > 0 {
 		fmt.Printf("  Fields:\n")
-		var fieldNames []string
-		for name := range row.fields {
-			fieldNames = append(fieldNames, name)
+		var fieldsToShow []string
+		if len(projectionFields) > 0 {
+			fieldsToShow = projectionFields
+		} else {
+			for name := range row.fields {
+				fieldsToShow = append(fieldsToShow, name)
+			}
+			sort.Strings(fieldsToShow)
 		}
-		sort.Strings(fieldNames)
-		for _, name := range fieldNames {
-			value := row.fields[name]
+
+		for _, name := range fieldsToShow {
+			value, exists := row.fields[name]
+			if !exists {
+				continue
+			}
 			valueType := row.fieldTypes[name]
 			if value == nil {
 				fmt.Printf("    %s: <nil>\n", name)
