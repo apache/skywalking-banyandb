@@ -58,7 +58,7 @@ message DataPointValue {
 // WriteRequest is the request contract for write
 message WriteRequest {
   // the metadata is required.
-  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  common.v1.Metadata metadata = 1;
   // the data_point is required.
   DataPointValue data_point = 2 [(validate.rules).message.required = true];
   // the message_id is required.

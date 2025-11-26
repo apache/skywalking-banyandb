@@ -48,7 +48,7 @@ message ElementValue {
 
 message WriteRequest {
   // the metadata is required.
-  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  common.v1.Metadata metadata = 1;
   // the element is required.
   ElementValue element = 2 [(validate.rules).message.required = true];
   // the message_id is required.

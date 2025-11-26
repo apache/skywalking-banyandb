@@ -31,7 +31,7 @@ message TagSpec {
 }
 
 message WriteRequest {
-  common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
+  common.v1.Metadata metadata = 1;
   repeated model.v1.TagValue tags = 2 [(validate.rules).repeated.min_items = 1];
   bytes span = 3;
   uint64 version = 4 [(validate.rules).uint64.gt = 0];
