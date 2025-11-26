@@ -279,7 +279,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}()
 
 	// Encode tag values using the encoding module
-	err := internalencoding.EncodeTagValues(bb, td.tmpBytes, td.valueType)
+	encodeType, err := internalencoding.EncodeTagValues(bb, td.tmpBytes, td.valueType)
 	if err != nil {
 		panic(fmt.Sprintf("failed to encode tag values: %v", err))
 	}
@@ -350,21 +350,22 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		addUnique(td.values[i].value)
 	}
 
-	bf := generateBloomFilter(len(uniqueValues))
-	for v := range uniqueValues {
-		bf.Add(convert.StringToBytes(v))
-	}
-
-	bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)
-	tm.filterBlock.offset = tfw.bytesWritten
-	tm.filterBlock.size = uint64(len(bb.Buf))
-	tfw.MustWrite(bb.Buf)
-	releaseBloomFilter(bf)
-
-	// Compute min/max for int64 tags during unique value iteration
 	if td.valueType == pbv1.ValueTypeInt64 && hasMinMax {
 		tm.min = encoding.Int64ToBytes(nil, minVal)
 		tm.max = encoding.Int64ToBytes(nil, maxVal)
+	}
+	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
+	if !isDictionaryEncoded {
+		bf := generateBloomFilter(len(uniqueValues))
+		for v := range uniqueValues {
+			bf.Add(convert.StringToBytes(v))
+		}
+
+		bb.Buf = encodeBloomFilter(bb.Buf[:0], bf)
+		tm.filterBlock.offset = tfw.bytesWritten
+		tm.filterBlock.size = uint64(len(bb.Buf))
+		tfw.MustWrite(bb.Buf)
+		releaseBloomFilter(bf)
 	}
 
 	// Marshal and write tag metadata
@@ -495,13 +496,16 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	}
 	if len(bi.tags) == 0 {
 		for _, t := range b.tags {
-			newTagData := tagData{name: t.name, valueType: t.valueType}
+			newTagData := generateTagData()
+			newTagData.reset()
+			newTagData.name = t.name
+			newTagData.valueType = t.valueType
 			for j := 0; j < existDataSize; j++ {
 				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
-			bi.tags[t.name] = &newTagData
+			bi.tags[t.name] = newTagData
 		}
 		return
 	}
@@ -511,13 +515,16 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
 		} else {
-			newTagData := tagData{name: t.name, valueType: t.valueType}
+			newTagData := generateTagData()
+			newTagData.reset()
+			newTagData.name = t.name
+			newTagData.valueType = t.valueType
 			for j := 0; j < existDataSize; j++ {
 				newTagData.values = append(newTagData.values, tagRow{})
 			}
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
 			newTagData.values = append(newTagData.values, t.values[b.idx:offset]...)
-			bi.tags[t.name] = &newTagData
+			bi.tags[t.name] = newTagData
 		}
 	}
 

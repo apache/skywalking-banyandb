@@ -27,8 +27,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -108,13 +108,18 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 		if !t.indexed {
 			continue
 		}
-		if tags[j].filter == nil {
-			filter := generateBloomFilter()
-			tags[j].filter = filter
+		if tags[j].uniqueValues == nil {
+			tags[j].uniqueValues = make(map[string]struct{})
 		}
-		tags[j].filter.SetN(elementsLen)
-		tags[j].filter.ResizeBits(filter.OptimalBitsSize(elementsLen))
-		tags[j].filter.Add(t.value)
+		if t.valueArr != nil {
+			for _, v := range t.valueArr {
+				if v != nil {
+					tags[j].uniqueValues[convert.BytesToString(v)] = struct{}{}
+				}
+			}
+		} else if t.value != nil {
+			tags[j].uniqueValues[convert.BytesToString(t.value)] = struct{}{}
+		}
 		if t.valueType == pbv1.ValueTypeInt64 {
 			if len(tags[j].min) == 0 {
 				tags[j].min = t.value
@@ -397,13 +402,6 @@ func generateBlock() *block {
 }
 
 func releaseBlock(b *block) {
-	for _, tf := range b.tagFamilies {
-		for _, t := range tf.tags {
-			if t.filter != nil {
-				releaseBloomFilter(t.filter)
-			}
-		}
-	}
 	b.reset()
 	blockPool.Put(b)
 }
