@@ -159,7 +159,7 @@ func TestDisableRetentionByStage(t *testing.T) {
 				"role": "cold",
 			},
 			wantDisabled: false,
-			description:  "When node is in middle stage of three stages, retention should be disabled",
+			description:  "When node is in last stage of three stages, retention should be enabled",
 		},
 		{
 			name:   "single stage - node in only stage",
