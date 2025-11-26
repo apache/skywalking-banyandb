@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl
+PROJECTS := ui banyand bydbctl mcp
 
 TEST_CI_OPTS ?=
 
@@ -117,6 +117,7 @@ format: default ## Run the linters on all projects
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
 	@$(MAKE) -C ui check-version
+	@$(MAKE) -C mcp check-version
 
 include scripts/build/vuln.mk
 
@@ -150,33 +151,35 @@ include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE)
 license-check: TARGET=license-check
-license-check: PROJECTS:=ui
+license-check: PROJECTS:=ui mcp
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
  
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui
+license-fix: PROJECTS:=ui mcp
 license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui
+license-dep: PROJECTS:=ui mcp
 license-dep: default ## Fix license header issues
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
+	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
+	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
 
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: PROJECTS:= banyand bydbctl
+docker.build: PROJECTS:= banyand bydbctl mcp
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:= banyand bydbctl
+docker.push: PROJECTS:= banyand bydbctl mcp
 docker.push: default ## Push docker images
 
 default:
@@ -206,6 +209,7 @@ release-source: ## Package source archive
 release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
+	${RELEASE_SCRIPTS} -k mcp
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Generate release package

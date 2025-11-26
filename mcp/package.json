@@ -1,0 +1,43 @@
+{
+  "name": "banyandb-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for BanyanDB to support querying data by user description",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts"
+  },
+  "keywords": [
+    "mcp",
+    "banyandb",
+    "query",
+    "observability"
+  ],
+  "author": "Apache Software Foundation",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "openai": "^4.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.47.0",
+    "@typescript-eslint/parser": "^8.47.0",
+    "eslint": "^9.39.1",
+    "jsonfile": "^6.1.0",
+    "prettier": "^3.6.2",
+    "semver": "^7.6.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.47.0"
+  },
+  "engines": {
+    "node": ">=20.12.2"
+  }
+}
