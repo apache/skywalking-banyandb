@@ -74,11 +74,16 @@ export class QueryGenerator {
   /**
    * Generate a BydbQL query from a natural language description.
    */
-  async generateQuery(description: string, args: Record<string, unknown>): Promise<QueryGeneratorResult> {
+  async generateQuery(
+    description: string,
+    args: Record<string, unknown>,
+    groups: string[] = [],
+    resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {},
+  ): Promise<QueryGeneratorResult> {
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
       try {
-        return await this.generateQueryWithLLM(description, args);
+        return await this.generateQueryWithLLM(description, args, groups, resourcesByGroup);
       } catch (error: unknown) {
         // Check for API key authentication errors
         const errorObj = error as { status?: number; message?: string };
@@ -107,11 +112,13 @@ export class QueryGenerator {
   private async generateQueryWithLLM(
     description: string,
     args: Record<string, unknown>,
+    groups: string[] = [],
+    resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {},
   ): Promise<QueryGeneratorResult> {
     if (!this.openaiClient) {
       throw new Error('OpenAI client not initialized');
     }
-    const prompt = generateQueryPrompt(description, args);
+    const prompt = generateQueryPrompt(description, args, groups, resourcesByGroup);
 
     const completion = await Promise.race([
       this.openaiClient.chat.completions.create({

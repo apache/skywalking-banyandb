@@ -20,8 +20,68 @@
 /**
  * Generate the LLM prompt for converting natural language to BydbQL queries.
  */
-export function generateQueryPrompt(description: string, args: Record<string, unknown>): string {
-  return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.
+export function generateQueryPrompt(
+  description: string,
+  args: Record<string, unknown>,
+  groups: string[] = [],
+  resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {},
+): string {
+  const groupsInfo = groups.length > 0 
+    ? `\n\nAvailable Groups in BanyanDB:\n${groups.map(g => `- ${g}`).join('\n')}\n\nWhen extracting group names from the description, prefer using one of these available groups. If the description mentions a group that doesn't exist in this list, you may still use it, but prefer matching available groups when possible.`
+    : '';
+
+  // Build resources information - organized as resource -> group mapping for easy lookup
+  let resourcesInfo = '';
+  const resourceToGroupMap: Record<string, { type: string; group: string }> = {};
+  const groupsWithResources = Object.keys(resourcesByGroup).filter(group => {
+    const resources = resourcesByGroup[group];
+    return resources.streams.length > 0 || resources.measures.length > 0 || 
+           resources.traces.length > 0 || resources.properties.length > 0;
+  });
+
+  // Build resource-to-group mapping
+  for (const group of groupsWithResources) {
+    const resources = resourcesByGroup[group];
+    for (const stream of resources.streams) {
+      if (stream) resourceToGroupMap[stream] = { type: 'STREAM', group };
+    }
+    for (const measure of resources.measures) {
+      if (measure) resourceToGroupMap[measure] = { type: 'MEASURE', group };
+    }
+    for (const trace of resources.traces) {
+      if (trace) resourceToGroupMap[trace] = { type: 'TRACE', group };
+    }
+    for (const property of resources.properties) {
+      if (property) resourceToGroupMap[property] = { type: 'PROPERTY', group };
+    }
+  }
+
+  if (Object.keys(resourceToGroupMap).length > 0) {
+    resourcesInfo = '\n\nAvailable Resources in BanyanDB (Resource -> Group Mapping):\n';
+    // Group by resource type for better readability
+    const resourcesByType: Record<string, Array<{ name: string; group: string }>> = {
+      STREAM: [],
+      MEASURE: [],
+      TRACE: [],
+      PROPERTY: [],
+    };
+    
+    for (const [resourceName, info] of Object.entries(resourceToGroupMap)) {
+      resourcesByType[info.type].push({ name: resourceName, group: info.group });
+    }
+
+    for (const [type, resources] of Object.entries(resourcesByType)) {
+      if (resources.length > 0) {
+        resourcesInfo += `\n${type}s:\n`;
+        for (const resource of resources) {
+          resourcesInfo += `  "${resource.name}" -> Group "${resource.group}"\n`;
+        }
+      }
+    }
+    resourcesInfo += '\nWhen extracting resource names from the description, prefer using one of these available resources. If no group name is found in the description, look up the resource name in this mapping to find its corresponding group. If the description mentions a resource that doesn\'t exist in this list, you may still use it, but prefer matching available resources when possible.';
+  }
+  
+  return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.${groupsInfo}${resourcesInfo}
 
 BydbQL Syntax:
 - Resource types: STREAM, MEASURE, TRACE, PROPERTY
@@ -81,7 +141,7 @@ CRITICAL Resource Name Extraction:
   - "in group_name" or "group group_name" → extract group_name
   - "of group_name" → extract group_name
   - "group_name's" → extract group_name
-- If no group name is found, use "default"
+- If no group name is found in the description, you MUST find it from the "Available Resources in BanyanDB (Resource -> Group Mapping)" section above. Look up the resource name mentioned in the description in that mapping to find its corresponding group. For example, if the description mentions "zipkin_span" and the mapping shows "zipkin_span" -> Group "default", use "default" as the group. Only use "default" if the resource cannot be found in the mapping.
 
 CRITICAL: Choose the correct query format based on the description:
 
@@ -158,7 +218,7 @@ CRITICAL Preservation Rules:
 - Analyze the description to extract ALL of the following (only if not explicitly provided):
   - Resource type (STREAM, MEASURE, TRACE, or PROPERTY) - detect from keywords like "log", "metric", "trace"
   - Resource name - follow CRITICAL Resource Name Extraction rules above (extract explicit names or use type keywords like "log", "metric" as resource names)
-  - Group name - follow group name extraction patterns above (look for "the group is group_name", "in group_name", etc., or use "default" if not found)
+  - Group name - follow group name extraction patterns above (look for "the group is group_name", "in group_name", etc.). If no group name is found in the description, look up the resource name in the "Available Resources in BanyanDB (Resource -> Group Mapping)" section to find its corresponding group. Only use "default" if the resource cannot be found in the mapping.
   - TIME clause - understand semantic meaning: distinguish "last N [time units]" (TIME clause) from "last N [data points]" (LIMIT clause)
   - LIMIT clause - extract when description requests specific number of results (e.g., "last 30 zipkin_span" means LIMIT 30, not TIME)
   - AGGREGATE BY clause (if mentioned in natural language or explicitly)
@@ -171,7 +231,7 @@ CRITICAL Preservation Rules:
   - IMPORTANT: The word "show" alone does NOT indicate TOPN - only ranking keywords + number (e.g., "top N", "highest N", "lowest N") indicate TOPN
   - Extract the resource type from the description (STREAM, MEASURE, TRACE, or PROPERTY)
   - Extract the resource name from the description (follow CRITICAL Resource Name Extraction rules - extract explicit names or use type keywords as resource names)
-  - Extract the group name from the description (follow group name extraction patterns - look for "the group is group_name", "in group_name", etc., or use "default" if not found)
+  - Extract the group name from the description (follow group name extraction patterns - look for "the group is group_name", "in group_name", etc.). If no group name is found in the description, look up the resource name in the "Available Resources in BanyanDB (Resource -> Group Mapping)" section to find its corresponding group. Only use "default" if the resource cannot be found in the mapping.
   - Extract TIME clause from natural language - CRITICAL: distinguish "last N [time units]" from "last N [data points]"
   - Extract LIMIT clause when description requests specific number of results (e.g., "last 30 zipkin_span" → LIMIT 30, not TIME)
   - Extract AGGREGATE BY clause from natural language or explicit clause in description

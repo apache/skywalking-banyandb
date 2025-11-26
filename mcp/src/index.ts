@@ -216,8 +216,42 @@ async function main() {
 
       let bydbqlQueryResult: QueryGeneratorResult;
       try {
+        // Fetch groups from BanyanDB before generating query
+        let groups: string[] = [];
+        try {
+          const groupsList = await banyandbClient.listGroups();
+          groups = groupsList.map((g) => g.metadata?.name || '').filter((n) => n !== '');
+        } catch (error) {
+          // Log but don't fail if groups can't be fetched
+          log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
+        }
+
+        // Fetch resources from all groups before generating query
+        const resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {};
+        for (const group of groups) {
+          try {
+            const [streams, measures, traces, properties] = await Promise.all([
+              banyandbClient.listStreams(group).catch(() => []),
+              banyandbClient.listMeasures(group).catch(() => []),
+              banyandbClient.listTraces(group).catch(() => []),
+              banyandbClient.listProperties(group).catch(() => []),
+            ]);
+
+            resourcesByGroup[group] = {
+              streams: streams.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              measures: measures.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+            };
+          } catch (error) {
+            // Log but continue if resources can't be fetched for a group
+            log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
+            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [] };
+          }
+        }
+
         // Generate BydbQL query from natural language description
-        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {});
+        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {}, groups, resourcesByGroup);
       } catch (error) {
         if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('Timeout'))) {
           return {
