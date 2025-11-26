@@ -667,7 +667,7 @@ MIT licenses
     ajv 8.17.1 MIT
     ajv-formats 3.0.1 MIT
     asynckit 0.4.0 MIT
-    body-parser 2.2.0 MIT
+    body-parser 2.2.1 MIT
     bytes 3.1.2 MIT
     call-bind-apply-helpers 1.0.2 MIT
     call-bound 1.0.4 MIT
@@ -714,7 +714,7 @@ MIT licenses
     http-errors 2.0.0 MIT
     http-errors/node_modules/statuses 2.0.1 MIT
     humanize-ms 1.2.1 MIT
-    iconv-lite 0.6.3 MIT
+    iconv-lite 0.7.0 MIT
     ipaddr.js 1.9.1 MIT
     is-promise 4.0.0 MIT
     json-schema-traverse 1.0.0 MIT
@@ -739,7 +739,6 @@ MIT licenses
     proxy-addr 2.0.7 MIT
     range-parser 1.2.1 MIT
     raw-body 3.0.1 MIT
-    raw-body/node_modules/iconv-lite 0.7.0 MIT
     require-from-string 2.0.2 MIT
     router 2.2.0 MIT
     safe-buffer 5.2.1 MIT
