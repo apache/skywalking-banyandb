@@ -42,18 +42,20 @@ message ElementValue {
   // 1) either the start time of a Span/Segment,
   // 2) or the timestamp of a log
   google.protobuf.Timestamp timestamp = 2;
-  // the order of tag_families' items match TagFamilySpec if provided, otherwise match the stream schema
+  // the order of tag_families' items match TagFamilySpec
   repeated model.v1.TagFamilyForWrite tag_families = 3;
 }
 
 message WriteRequest {
-  // the metadata is required.
+  // the metadata is required only for the first request of gRPC stream.
   common.v1.Metadata metadata = 1;
   // the element is required.
   ElementValue element = 2 [(validate.rules).message.required = true];
   // the message_id is required.
   uint64 message_id = 3 [(validate.rules).uint64.gt = 0];
   // the tag family specification.
+  // If this is not set with the indicated metadata, use the schema definition.
+  // If this is not set, use the existing spec declaration from previous requests in the current gRPC stream.
   repeated TagFamilySpec tag_family_spec = 4;
 }
 
