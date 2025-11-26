@@ -276,8 +276,10 @@
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
+    - [DataPointSpec](#banyandb-measure-v1-DataPointSpec)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
     - [InternalWriteRequest](#banyandb-measure-v1-InternalWriteRequest)
+    - [TagFamilySpec](#banyandb-measure-v1-TagFamilySpec)
     - [WriteRequest](#banyandb-measure-v1-WriteRequest)
     - [WriteResponse](#banyandb-measure-v1-WriteResponse)
   
@@ -316,6 +318,7 @@
 - [banyandb/stream/v1/write.proto](#banyandb_stream_v1_write-proto)
     - [ElementValue](#banyandb-stream-v1-ElementValue)
     - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
+    - [TagFamilySpec](#banyandb-stream-v1-TagFamilySpec)
     - [WriteRequest](#banyandb-stream-v1-WriteRequest)
     - [WriteResponse](#banyandb-stream-v1-WriteResponse)
   
@@ -327,6 +330,7 @@
   
 - [banyandb/trace/v1/write.proto](#banyandb_trace_v1_write-proto)
     - [InternalWriteRequest](#banyandb-trace-v1-InternalWriteRequest)
+    - [TagSpec](#banyandb-trace-v1-TagSpec)
     - [WriteRequest](#banyandb-trace-v1-WriteRequest)
     - [WriteResponse](#banyandb-trace-v1-WriteResponse)
   
@@ -4205,6 +4209,22 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-measure-v1-DataPointSpec"></a>
+
+### DataPointSpec
+DataPointSpec defines the specification of a data point.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_family_spec | [TagFamilySpec](#banyandb-measure-v1-TagFamilySpec) | repeated | the tag family specification |
+| field_names | [string](#string) | repeated | the field names |
+
+
+
+
+
+
 <a name="banyandb-measure-v1-DataPointValue"></a>
 
 ### DataPointValue
@@ -4214,8 +4234,8 @@ DataPointValue is the data point for writing. It only contains values.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. |
-| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the measure schema |
-| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match the measure schema |
+| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match DataPointSpec |
+| fields | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | the order of fields match DataPointSpec |
 | version | [int64](#int64) |  | the version of the data point |
 
 
@@ -4240,6 +4260,22 @@ DataPointValue is the data point for writing. It only contains values.
 
 
 
+<a name="banyandb-measure-v1-TagFamilySpec"></a>
+
+### TagFamilySpec
+TagFamilySpec defines the specification of a tag family.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name of the tag family |
+| tag_names | [string](#string) | repeated | names of tags in the tag family |
+
+
+
+
+
+
 <a name="banyandb-measure-v1-WriteRequest"></a>
 
 ### WriteRequest
@@ -4248,9 +4284,10 @@ WriteRequest is the request contract for write
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required only for the first request of gRPC stream. |
 | data_point | [DataPointValue](#banyandb-measure-v1-DataPointValue) |  | the data_point is required. |
 | message_id | [uint64](#uint64) |  | the message_id is required. |
+| data_point_spec | [DataPointSpec](#banyandb-measure-v1-DataPointSpec) |  | the data point specification. If this is not set with the indicated metadata, use the schema definition. If this is not set, use the existing spec declaration from previous requests in the current gRPC stream. |
 
 
 
@@ -4678,7 +4715,7 @@ WriteResponse is the response contract for write
 | ----- | ---- | ----- | ----------- |
 | element_id | [string](#string) |  | element_id could be span_id of a Span or segment_id of a Segment in the context of stream |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | timestamp is in the timeunit of milliseconds. It represents 1) either the start time of a Span/Segment, 2) or the timestamp of a log |
-| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match the stream schema |
+| tag_families | [banyandb.model.v1.TagFamilyForWrite](#banyandb-model-v1-TagFamilyForWrite) | repeated | the order of tag_families&#39; items match TagFamilySpec |
 
 
 
@@ -4702,6 +4739,22 @@ WriteResponse is the response contract for write
 
 
 
+<a name="banyandb-stream-v1-TagFamilySpec"></a>
+
+### TagFamilySpec
+TagFamilySpec defines the specification of a tag family.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name of the tag family |
+| tag_names | [string](#string) | repeated | names of tags in the tag family |
+
+
+
+
+
+
 <a name="banyandb-stream-v1-WriteRequest"></a>
 
 ### WriteRequest
@@ -4710,9 +4763,10 @@ WriteResponse is the response contract for write
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required. |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata is required only for the first request of gRPC stream. |
 | element | [ElementValue](#banyandb-stream-v1-ElementValue) |  | the element is required. |
 | message_id | [uint64](#uint64) |  | the message_id is required. |
+| tag_family_spec | [TagFamilySpec](#banyandb-stream-v1-TagFamilySpec) | repeated | the tag family specification. If this is not set with the indicated metadata, use the schema definition. If this is not set, use the existing spec declaration from previous requests in the current gRPC stream. |
 
 
 
@@ -4827,6 +4881,21 @@ WriteResponse is the response contract for write
 
 
 
+<a name="banyandb-trace-v1-TagSpec"></a>
+
+### TagSpec
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tag_names | [string](#string) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-trace-v1-WriteRequest"></a>
 
 ### WriteRequest
@@ -4839,6 +4908,7 @@ WriteResponse is the response contract for write
 | tags | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | span | [bytes](#bytes) |  |  |
 | version | [uint64](#uint64) |  |  |
+| tag_spec | [TagSpec](#banyandb-trace-v1-TagSpec) |  |  |
 
 
 
