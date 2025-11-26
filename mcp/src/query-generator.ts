@@ -22,10 +22,10 @@ import { generateQueryPrompt } from './llm-prompt.js';
 
 export type QueryGeneratorResult = {
   description: string;
-  resourceType: string;
-  resourceName: string;
-  group: string;
   query: string;
+  resourceType?: string;
+  resourceName?: string;
+  group?: string;
   explanations?: string;
 };
 
@@ -160,20 +160,24 @@ export class QueryGenerator {
         .replace(/^```(?:bydbql|sql|json)?\n?/i, '')
         .replace(/\n?```$/i, '')
         .trim();
-      return {
+      const result: QueryGeneratorResult = {
         description,
-        resourceType: (args.resource_type as string) || 'stream',
-        resourceName: (args.resource_name as string) || '',
-        group: (args.group as string) || 'default',
         query: cleanedQuery,
       };
+      const resourceType = (args.resource_type as string) || undefined;
+      const resourceName = (args.resource_name as string) || undefined;
+      const group = (args.group as string) || undefined;
+      if (resourceType) result.resourceType = resourceType;
+      if (resourceName) result.resourceName = resourceName;
+      if (group) result.group = group;
+      return result;
     }
 
     const query = parsedResponse.bydbql?.trim() || '';
-    const group = (args.group as string) || parsedResponse.group?.trim() || '';
-    const resourceName = (args.resource_name as string) || parsedResponse.name?.trim() || '';
-    const resourceType = (args.resource_type as string) || parsedResponse.type?.toLowerCase().trim() || '';
-    const explanations = parsedResponse.explanations?.trim() || '';
+    const group = (args.group as string) || parsedResponse.group?.trim() || undefined;
+    const resourceName = (args.resource_name as string) || parsedResponse.name?.trim() || undefined;
+    const resourceType = (args.resource_type as string) || parsedResponse.type?.toLowerCase().trim() || undefined;
+    const explanations = parsedResponse.explanations?.trim() || undefined;
 
     // Clean up the query (remove markdown code blocks if present)
     const cleanedQuery = query
@@ -181,15 +185,26 @@ export class QueryGenerator {
       .replace(/\n?```$/i, '')
       .trim();
 
-    // Return parameters used for query generation
-    return {
+    // Return parameters used for query generation - only include fields that are present
+    const result: QueryGeneratorResult = {
       description,
-      resourceType,
-      resourceName,
-      group,
       query: cleanedQuery,
-      explanations: explanations || undefined,
     };
+
+    if (resourceType) {
+      result.resourceType = resourceType;
+    }
+    if (resourceName) {
+      result.resourceName = resourceName;
+    }
+    if (group) {
+      result.group = group;
+    }
+    if (explanations) {
+      result.explanations = explanations;
+    }
+
+    return result;
   }
 
   /**
@@ -275,13 +290,22 @@ export class QueryGenerator {
       query += ` ${limitClause}`;
     }
 
-    return {
+    const result: QueryGeneratorResult = {
       description,
-      resourceType,
-      resourceName: resourceName || '',
-      group,
       query,
     };
+    
+    if (resourceType) {
+      result.resourceType = resourceType;
+    }
+    if (resourceName) {
+      result.resourceName = resourceName;
+    }
+    if (group) {
+      result.group = group;
+    }
+    
+    return result;
   }
 
   /**

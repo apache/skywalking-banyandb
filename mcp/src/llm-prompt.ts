@@ -40,7 +40,7 @@ CRITICAL Semantic Understanding - Understanding User Intent:
 - When a number appears directly before or after a resource name (e.g., "last 30 zipkin_span", "30 zipkin_span", "zipkin_span 30"), it typically refers to the NUMBER OF DATA POINTS, not a time unit
 - When a number appears with a time unit (e.g., "last 30 hours", "30 days ago", "past 2 weeks"), it refers to a TIME RANGE
 - Examples:
-  - "list the last 30 [resource_name] order by time" → SELECT * FROM TRACE [resource_name] IN default ORDER BY timestamp_millis DESC LIMIT 30
+  - "list the last 30 [resource_name] order by time" → SELECT * FROM TRACE [resource_name] IN default ORDER BY timestamp DESC LIMIT 30
   - "get last 10 [resource_name]" → SELECT * FROM STREAM [resource_name] IN default ORDER BY timestamp DESC LIMIT 10
   - "show last 5 [resource_name]" → SELECT * FROM MEASURE [resource_name] IN default ORDER BY timestamp DESC LIMIT 5
   - "list [resource_name] from last 30 hours" → SELECT * FROM STREAM [resource_name] IN default TIME >= '-30h'
@@ -179,21 +179,36 @@ CRITICAL Preservation Rules:
   - If YES (contains ranking keyword + number) AND resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
   - If NO (no ranking keyword + number) OR resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause] [LIMIT clause]"
 
-CRITICAL JSON Response Requirements - Use these EXACT values in your response:
-${typeof args.resource_type === 'string' && args.resource_type ? `- "type": MUST be "${args.resource_type.toUpperCase()}" (explicitly provided)` : '- "type": Extract from description (STREAM, MEASURE, TRACE, or PROPERTY) or default to STREAM'}
-${typeof args.resource_name === 'string' && args.resource_name ? `- "name": MUST be "${args.resource_name}" (explicitly provided)` : '- "name": Extract from description using CRITICAL Resource Name Extraction rules (extract explicit names or use type keywords like "log", "metric", "trace" as resource names when they appear in the description)'}
-${typeof args.group === 'string' && args.group ? `- "group": MUST be "${args.group}" (explicitly provided)` : '- "group": Extract from description using group name extraction patterns (look for "the group is group_name", "in group_name", etc.'}
-- "bydbql": Generate the complete BydbQL query using the type, name, and group values specified above along with TIME, LIMIT, AGGREGATE BY, and ORDER BY clauses extracted from description (understand semantic meaning, not just pattern matching)
-- "explanations": Brief explanation of what the query does and how values were determined (mention if values were explicitly provided or extracted)
+CRITICAL JSON Response Requirements - Conditional Parameter Inclusion:
+- Analyze the description to determine which parameters are needed or indicated
+- If the description indicates that no explanations or other parameters are needed, do NOT return those parameters
+- The same applies to other parameters - return the corresponding parameters according to what's indicated in the description
+- If there is no indication, all parameters will be returned by default
+- "bydbql": ALWAYS REQUIRED - Generate the complete BydbQL query using the type, name, and group values specified above along with TIME, LIMIT, AGGREGATE BY, and ORDER BY clauses extracted from description (understand semantic meaning, not just pattern matching)
+- "type": Include if explicitly provided or if needed for clarity. ${typeof args.resource_type === 'string' && args.resource_type ? `MUST be "${args.resource_type.toUpperCase()}" (explicitly provided)` : 'Extract from description (STREAM, MEASURE, TRACE, or PROPERTY) or default to STREAM if not indicated'}
+- "name": Include if explicitly provided or if needed for clarity. ${typeof args.resource_name === 'string' && args.resource_name ? `MUST be "${args.resource_name}" (explicitly provided)` : 'Extract from description using CRITICAL Resource Name Extraction rules (extract explicit names or use type keywords like "log", "metric", "trace" as resource names when they appear in the description) if not indicated'}
+- "group": Include if explicitly provided or if needed for clarity. ${typeof args.group === 'string' && args.group ? `MUST be "${args.group}" (explicitly provided)` : 'Extract from description using group name extraction patterns (look for "the group is group_name", "in group_name", etc.) if not indicated'}
+- "explanations": Include ONLY if the description indicates that explanations are needed or requested. If the description indicates no explanations are needed, omit this parameter entirely. If not indicated, include by default.
 
-Return a JSON object with the following structure:
+Return a JSON object with the following structure (include only parameters that are needed or indicated):
+- "bydbql": ALWAYS REQUIRED
+- "type": Include if explicitly provided above or if needed for clarity
+- "name": Include if explicitly provided above or if needed for clarity  
+- "group": Include if explicitly provided above or if needed for clarity
+- "explanations": Include ONLY if the description indicates explanations are needed. If the description indicates no explanations are needed, omit this parameter.
+
+Example (with all parameters, but omit any that are not needed):
 {
   "bydbql": "the complete BydbQL query using the values specified above",
-  "group": ${typeof args.group === 'string' && args.group ? `"${args.group}"` : '"extract from description"'},
-  "name": ${typeof args.resource_name === 'string' && args.resource_name ? `"${args.resource_name}"` : '"extract from description"'},
   "type": ${typeof args.resource_type === 'string' && args.resource_type ? `"${args.resource_type.toUpperCase()}"` : '"extract from description (STREAM/MEASURE/TRACE/PROPERTY)"'},
-  "explanations": "brief explanation"
+  "name": ${typeof args.resource_name === 'string' && args.resource_name ? `"${args.resource_name}"` : '"extract from description"'},
+  "group": ${typeof args.group === 'string' && args.group ? `"${args.group}"` : '"extract from description"'},
+  "explanations": "brief explanation (omit if not needed)"
 }
 
-IMPORTANT: If values are explicitly provided above, you MUST use those exact values in your JSON response. Do NOT extract different values from the description if values are explicitly provided. Return ONLY the JSON object, no markdown formatting or additional text.`;
+IMPORTANT: 
+- If values are explicitly provided above, you MUST use those exact values in your JSON response. Do NOT extract different values from the description if values are explicitly provided.
+- Only include parameters that are indicated as needed in the description. If the description indicates no explanations or other parameters are needed, omit them.
+- If there is no indication about which parameters to include, return all parameters by default.
+- Return ONLY the JSON object, no markdown formatting or additional text.`;
 }
