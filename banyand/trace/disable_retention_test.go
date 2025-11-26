@@ -37,11 +37,11 @@ func TestDisableRetentionByStage(t *testing.T) {
 	l := logger.GetLogger("test-trace")
 
 	tests := []struct {
-		name         string
-		stages       []*commonv1.LifecycleStage
 		nodeLabels   map[string]string
-		wantDisabled bool
+		name         string
 		description  string
+		stages       []*commonv1.LifecycleStage
+		wantDisabled bool
 	}{
 		{
 			name: "two stages - node in first stage",
