@@ -52,7 +52,7 @@ docker run -d \
   -e BANYANDB_ADDRESS=banyandb:17900 \
   -e LLM_API_KEY=sk-your-key-here \
   -e LLM_BASE_URL=your-llm-base-url \
-  apache/skywalking-banyandb-mcp:latest
+  ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
 
 ### 3. Configure MCP Client for Docker
@@ -72,7 +72,7 @@ When using Docker, configure your MCP client to connect to the container:
         "-e", "LLM_API_KEY=sk-your-key-here",
         "-e", "LLM_BASE_URL=your-llm-base-url",
         "--network", "host",
-        "apache/skywalking-banyandb-mcp:latest"
+        "ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}"
       ]
     }
   }
@@ -86,7 +86,7 @@ You can also use Docker Compose to run both BanyanDB and the MCP server together
 ```yaml
 services:
   banyandb:
-    image: ghcr.io/apache/skywalking-banyandb:latest
+    image: ghcr.io/apache/skywalking-banyandb:{COMMIT_ID}
     container_name: banyandb
     command: standalone
     ports:
@@ -96,7 +96,7 @@ services:
       - ./banyandb-data:/data
 
   mcp:
-    image: apache/skywalking-banyandb-mcp:latest
+    image: ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
     container_name: banyandb-mcp
     environment:
       - BANYANDB_ADDRESS=banyandb:17900
