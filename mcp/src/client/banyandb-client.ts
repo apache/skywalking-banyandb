@@ -18,6 +18,7 @@
  */
 
 import type { QueryRequest, QueryResponse, Group, ResourceMetadata } from './types.js';
+import { httpFetch } from '../utils/http.js';
 
 /**
  * BanyanDBClient wraps the BanyanDB HTTP client for executing queries.
@@ -56,50 +57,25 @@ export class BanyanDBClient {
     const queryDebugInfo = `Query: "${bydbqlQuery}"\nURL: ${url}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-        signal: controller.signal,
-      });
+        json: request,
+      }) as QueryResponse | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      // Read response text once
-      const responseText = await response.text();
-
-      if (!response.ok) {
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
         throw new Error(
-          `Query execution failed: ${response.status} ${response.statusText}\n\n${queryDebugInfo}\n\nResponse: ${responseText}`,
+          `Query execution failed: ${errorResponse.status} ${errorResponse.statusText}\n\n${queryDebugInfo}\n\nResponse: ${errorText}`,
         );
       }
 
       // Check if response has content
-      if (!responseText || responseText.trim().length === 0) {
-        throw new Error(
-          `Empty response body from BanyanDB\n\n${queryDebugInfo}\n\nHTTP Status: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      let data: QueryResponse;
-      try {
-        data = JSON.parse(responseText) as QueryResponse;
-      } catch (parseError) {
-        throw new Error(
-          `Invalid JSON response from BanyanDB: ${parseError instanceof Error ? parseError.message : String(parseError)}\n\n${queryDebugInfo}\n\nResponse text: ${responseText.substring(0, 500)}`,
-        );
-      }
-
-      const responseDebugInfo = `Raw response: ${JSON.stringify(data, null, 2)}`;
-
       if (!data) {
         throw new Error(
-          `Empty response from BanyanDB: response body is null or undefined\n\n${queryDebugInfo}\n\n${responseDebugInfo}`,
+          `Empty response body from BanyanDB\n\n${queryDebugInfo}`,
         );
       }
 
@@ -137,7 +113,7 @@ export class BanyanDBClient {
     } catch (error) {
       if (error instanceof Error) {
         // Check if it's a timeout error
-        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+        if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
             `Query timeout after ${timeoutMs}ms. ` +
               `BanyanDB may be slow or unresponsive. ` +
@@ -264,29 +240,23 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/group/schema/lists`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { group?: Group[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list groups: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list groups: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as { group?: Group[] };
-      return data.group || [];
+      return (data as { group?: Group[] }).group || [];
     } catch (error) {
       if (error instanceof Error) {
-        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+        if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
             `List groups timeout after ${timeoutMs}ms. ` +
               `BanyanDB may be slow or unresponsive. ` +
@@ -316,26 +286,20 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/stream/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { stream?: ResourceMetadata[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list streams: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list streams: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as { stream?: ResourceMetadata[] };
-      return data.stream || [];
+      return (data as { stream?: ResourceMetadata[] }).stream || [];
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -351,26 +315,20 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/measure/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { measure?: ResourceMetadata[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list measures: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list measures: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as { measure?: ResourceMetadata[] };
-      return data.measure || [];
+      return (data as { measure?: ResourceMetadata[] }).measure || [];
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -386,26 +344,20 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/trace/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { trace?: ResourceMetadata[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list traces: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list traces: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as { trace?: ResourceMetadata[] };
-      return data.trace || [];
+      return (data as { trace?: ResourceMetadata[] }).trace || [];
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -421,28 +373,20 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/property/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { properties?: ResourceMetadata[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list properties: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list properties: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as {
-        properties?: ResourceMetadata[];
-      };
-      return data.properties || [];
+      return (data as { properties?: ResourceMetadata[] }).properties || [];
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -458,31 +402,23 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/topn-agg/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
+        json: null,
+      }) as { topNAggregation?: ResourceMetadata[] } | { errors: Response };
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list topN aggregations: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list topN aggregations: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
-      const data = (await response.json()) as {
-        topNAggregation?: ResourceMetadata[];
-      };
-      return data.topNAggregation || [];
+      return (data as { topNAggregation?: ResourceMetadata[] }).topNAggregation || [];
     } catch (error) {
       if (error instanceof Error) {
-        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+        if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
             `List topN aggregations timeout after ${timeoutMs}ms. ` +
               `BanyanDB may be slow or unresponsive. ` +
@@ -515,17 +451,17 @@ export class BanyanDBClient {
       // Parse JSON string to object
       const group = JSON.parse(groupJson);
 
-      const response = await fetch(url, {
+      const data = await httpFetch({
+        url,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ group }),
-      });
+        json: { group },
+      }) as unknown | { errors: Response };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to create group: ${response.status} ${response.statusText} - ${errorText}`);
+      // Check if httpFetch returned an error
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to create group: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
       }
 
       return `Group "${group.metadata?.name || 'unknown'}" created successfully`;

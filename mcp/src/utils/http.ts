@@ -18,22 +18,13 @@
  */
 
 const Timeout = 2 * 60 * 1000;
+
 export let globalAbortController = new AbortController();
+
 export function abortRequestsAndUpdate() {
   globalAbortController.abort(`Request timeout ${Timeout}ms`);
   globalAbortController = new AbortController();
 }
-class HTTPError extends Error {
-  response;
-
-  constructor(response: Response, detailText = "") {
-    super(detailText || response.statusText);
-
-    this.name = "HTTPError";
-    this.response = response;
-  }
-}
-
 
 export async function httpFetch({
   url = "",
@@ -54,14 +45,13 @@ export async function httpFetch({
     method,
     headers: {
       "Content-Type": "application/json",
-      accept: "application/json",
       ...headers,
     },
     body: JSON.stringify(json),
     signal: globalAbortController.signal,
   })
     .catch((error) => {
-      throw new HTTPError(error);
+      throw new error;
     })
     .finally(() => {
       clearTimeout(timeoutId);
@@ -69,9 +59,9 @@ export async function httpFetch({
   if (response.ok) {
     return response.json();
   } else {
-    console.error(new HTTPError(response));
+    console.error(response);
     return {
-      errors: [new HTTPError(response)],
+      errors: response,
     };
   }
 }
