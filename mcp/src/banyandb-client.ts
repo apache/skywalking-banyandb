@@ -541,6 +541,60 @@ export class BanyanDBClient {
   }
 
   /**
+   * List topN aggregations in a group.
+   */
+  async listTopN(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+    const url = `${this.baseUrl}/v1/topn-agg/schema/lists/${encodeURIComponent(group)}`;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to list topN aggregations: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const data = (await response.json()) as {
+        topNAggregation?: ResourceMetadata[];
+      };
+      return data.topNAggregation || [];
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+          throw new Error(
+            `List topN aggregations timeout after ${timeoutMs}ms. ` +
+              `BanyanDB may be slow or unresponsive. ` +
+              `Check that BanyanDB is running and accessible at ${this.baseUrl}`,
+          );
+        }
+        if (
+          error.message.includes('fetch failed') ||
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('Failed to fetch') ||
+          error.name === 'TypeError'
+        ) {
+          throw new Error(
+            `Failed to connect to BanyanDB at ${this.baseUrl}. ` + `Please ensure BanyanDB is running and accessible.`,
+          );
+        }
+        throw error;
+      }
+      throw new Error(`Failed to list topN aggregations: ${String(error)}`);
+    }
+  }
+
+  /**
    * Create a group using JSON format.
    */
   async createGroup(groupJson: string): Promise<string> {

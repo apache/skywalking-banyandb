@@ -30,6 +30,22 @@ export type QueryGeneratorResult = {
 };
 
 /**
+ * Resources available in a group.
+ */
+export type GroupResources = {
+  streams: string[];
+  measures: string[];
+  traces: string[];
+  properties: string[];
+  topNItems: string[];
+};
+
+/**
+ * Mapping of group names to their resources.
+ */
+export type ResourcesByGroup = Record<string, GroupResources>;
+
+/**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
  * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
  */
@@ -78,7 +94,7 @@ export class QueryGenerator {
     description: string,
     args: Record<string, unknown>,
     groups: string[] = [],
-    resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {},
+    resourcesByGroup: ResourcesByGroup = {},
   ): Promise<QueryGeneratorResult> {
     // Use LLM if available, otherwise fall back to pattern matching
     if (this.openaiClient) {
@@ -113,7 +129,7 @@ export class QueryGenerator {
     description: string,
     args: Record<string, unknown>,
     groups: string[] = [],
-    resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {},
+    resourcesByGroup: ResourcesByGroup = {},
   ): Promise<QueryGeneratorResult> {
     if (!this.openaiClient) {
       throw new Error('OpenAI client not initialized');

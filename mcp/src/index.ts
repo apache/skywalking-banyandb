@@ -23,7 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BanyanDBClient, ResourceMetadata } from './banyandb-client.js';
-import { QueryGenerator, QueryGeneratorResult } from './query-generator.js';
+import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from './query-generator.js';
 import { log, setupGlobalErrorHandlers } from './logger.js';
 
 // Load environment variables first
@@ -227,14 +227,15 @@ async function main() {
         }
 
         // Fetch resources from all groups before generating query
-        const resourcesByGroup: Record<string, { streams: string[]; measures: string[]; traces: string[]; properties: string[] }> = {};
+        const resourcesByGroup: ResourcesByGroup = {};
         for (const group of groups) {
           try {
-            const [streams, measures, traces, properties] = await Promise.all([
+            const [streams, measures, traces, properties, topNItems] = await Promise.all([
               banyandbClient.listStreams(group).catch(() => []),
               banyandbClient.listMeasures(group).catch(() => []),
               banyandbClient.listTraces(group).catch(() => []),
               banyandbClient.listProperties(group).catch(() => []),
+              banyandbClient.listTopN(group).catch(() => []),
             ]);
 
             resourcesByGroup[group] = {
@@ -242,11 +243,12 @@ async function main() {
               measures: measures.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
             };
           } catch (error) {
             // Log but continue if resources can't be fetched for a group
             log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
-            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [] };
+            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [] };
           }
         }
 
