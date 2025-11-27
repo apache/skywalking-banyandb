@@ -262,6 +262,8 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		}
 	}()
 
+	log.Info().Int("segment_count", len(segments)).Str("db_location", d.location).
+		Msgf("taking file snapshot for %s", dst)
 	for _, seg := range segments {
 		segDir := filepath.Base(seg.location)
 		segPath := filepath.Join(dst, segDir)

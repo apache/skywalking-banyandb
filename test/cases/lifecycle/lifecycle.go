@@ -36,6 +36,7 @@ import (
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	streamTestData "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 	topNTestData "github.com/apache/skywalking-banyandb/test/cases/topn/data"
+	traceTestData "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
 
 // SharedContext is the shared context for the snapshot test cases.
@@ -53,6 +54,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			"--grpc-addr", SharedContext.DataAddr,
 			"--stream-root-path", SharedContext.SrcDir,
 			"--measure-root-path", SharedContext.SrcDir,
+			"--trace-root-path", SharedContext.SrcDir,
 			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
 			"--report-dir", rf,
@@ -97,6 +99,13 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			Duration: 25 * time.Minute,
 			Offset:   -20 * time.Minute,
 		})
+
+		// Verify trace data lifecycle stages
+		verifyLifecycleStages(sc, traceTestData.VerifyFn, helpers.Args{
+			Input:    "having_query_tag",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
 	})
 	ginkgo.It("should migrate data correctly with a scheduler", func() {
 		dir, err := os.MkdirTemp("", "lifecycle-restore-dest")
@@ -109,6 +118,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			"--grpc-addr", SharedContext.DataAddr,
 			"--stream-root-path", SharedContext.SrcDir,
 			"--measure-root-path", SharedContext.SrcDir,
+			"--trace-root-path", SharedContext.SrcDir,
 			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
 			"--report-dir", rf,
@@ -152,6 +162,13 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		// Verify topN data lifecycle stages
 		verifyLifecycleStages(sc, topNTestData.VerifyFn, helpers.Args{
 			Input:    "aggr_desc",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+		})
+
+		// Verify trace data lifecycle stages
+		verifyLifecycleStages(sc, traceTestData.VerifyFn, helpers.Args{
+			Input:    "having_query_tag",
 			Duration: 25 * time.Minute,
 			Offset:   -20 * time.Minute,
 		})
