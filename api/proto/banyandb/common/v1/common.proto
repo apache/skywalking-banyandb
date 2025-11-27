@@ -89,7 +89,59 @@ message LifecycleStage {
   // A value of 0 means no replicas, while a value of 1 means one primary shard and one replica.
   // Higher values indicate more replicas.
   uint32 replicas = 7;
+  // filter_rules defines filtering rules for specific tag families, tags, or fields.
+  // These rules are applied when data is migrated TO this stage.
+  // The TTL duration used for expiration check comes from this stage's ttl field.
+  // See FilterRule message for detailed matching logic.
+  repeated FilterRule filter_rules = 8;
 }
+
+// TagList represents a list of tag names within a tag family.
+message TagList {
+  repeated string tags = 1;
+}
+
+// FilterRule defines filtering rules for specific tag families, tags, or fields.
+// This allows fine-grained control over data retention at a more granular level than stage TTL.
+// These rules are scoped to the LifecycleStage that contains them.
+// The TTL duration used for expiration check comes from the parent LifecycleStage's ttl field.
+//
+// Matching Logic:
+// For a given column (Tag Family TF, Tag T or Field F) in a Subject S when migrating TO a stage:
+// 1. Get the filter_rules from the target LifecycleStage.
+// 2. Iterate through these rules in order.
+// 3. For each rule:
+//    - Check Subject: S must match subject_include (empty list matches ALL subjects) 
+//      and NOT match subject_exclude. subject_exclude takes precedence.
+//    - Check Tag Family: TF must be present in tag_family_include keys.
+//      - If present, check Tag T: T must be in the TagList value (empty list or "*" matches ALL tags).
+//      - Check Exclude: TF must NOT be in tag_family_exclude keys 
+//        (or if present, T must NOT be in its TagList value).
+//    - Check Field: F must match field_include (empty list matches NO fields, "*" matches ALL)
+//      and NOT match field_exclude.
+// 4. The first matching rule determines that the column should be filtered when migrating to that stage.
+// 5. If no rule matches, the column retains the default behavior (no filtering, full migration).
+// 6. The TTL duration used for expiration check comes from the parent LifecycleStage.ttl.
+message FilterRule {
+  // Subject filters (Stream/Measure/Trace names).
+  // If subject_include is empty, it matches ALL subjects in the Group.
+  // subject_exclude takes precedence over subject_include.
+  repeated string subject_include = 1;
+  repeated string subject_exclude = 2;
+
+  // Tag Family filters.
+  // The key is the tag family name. The value is a list of tags in the tag family.
+  // If the value list is empty, it matches ALL tags in the tag family.
+  // If the value list contains "*", it matches ALL tags in the tag family.
+  map<string, TagList> tag_family_include = 3;
+  map<string, TagList> tag_family_exclude = 4;
+
+  // Field filters.
+  // If field_include is empty, NO fields are matched (unless "*" is used).
+  repeated string field_include = 5;
+  repeated string field_exclude = 6;
+}
+
 
 message ResourceOpts {
   // shard_num is the number of shards
