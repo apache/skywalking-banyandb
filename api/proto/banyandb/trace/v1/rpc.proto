@@ -28,6 +28,15 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/tr
 option java_package = "org.apache.skywalking.banyandb.trace.v1";
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
 
+message DeleteExpiredSegmentsRequest {
+  string group = 1;
+  repeated string segment_suffixes = 2;
+}
+
+message DeleteExpiredSegmentsResponse {
+  int64 deleted = 1;
+}
+
 service TraceService {
   rpc Query(QueryRequest) returns (QueryResponse) {
     option (google.api.http) = {
@@ -37,4 +46,6 @@ service TraceService {
   }
 
   rpc Write(stream WriteRequest) returns (stream WriteResponse);
+
+  rpc DeleteExpiredSegments(DeleteExpiredSegmentsRequest) returns (DeleteExpiredSegmentsResponse);
 }

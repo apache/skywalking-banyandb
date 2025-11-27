@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -294,6 +295,7 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
 	g, loaded := sr.groupMap.LoadAndDelete(name)
+	log.Info().Str("group", name).Bool("loaded", loaded).Msg("deleting group")
 	if !loaded {
 		return nil
 	}

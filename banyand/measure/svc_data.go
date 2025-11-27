@@ -453,6 +453,15 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 	var gg []resourceSchema.Group
 	if len(groups) == 0 {
 		gg = d.s.schemaRepo.LoadAllGroups()
+		n := ""
+		for _, g := range gg {
+			if n != "" {
+				n += ","
+			}
+			n += g.GetSchema().Metadata.Name
+		}
+
+		log.Info().Msgf("loaded all snapshots: %s", n)
 	} else {
 		for _, g := range groups {
 			if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
@@ -464,6 +473,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 			}
 			gg = append(gg, group)
 		}
+		log.Info().Msgf("loaded groups: %s", gg)
 	}
 	if len(gg) == 0 {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
@@ -489,6 +499,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 		Name:    sn,
 		Catalog: commonv1.Catalog_CATALOG_MEASURE,
 	}
+	log.Info().Msgf("snapshot %s created", sn)
 	if err != nil {
 		snp.Error = err.Error()
 	}

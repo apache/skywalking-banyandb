@@ -58,6 +58,15 @@ var TracePartSyncKindVersion = common.KindVersion{
 // TopicTracePartSync is the part sync topic.
 var TopicTracePartSync = bus.BiTopic(TracePartSyncKindVersion.String())
 
+// TraceSeriesSyncKindVersion is the version tag of series sync kind.
+var TraceSeriesSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "trace-series-sync",
+}
+
+// TopicTraceSeriesSync is the series sync topic.
+var TopicTraceSeriesSync = bus.BiTopic(TraceSeriesSyncKindVersion.String())
+
 // TraceSidxSeriesWriteKindVersion is the version tag of trace sidx series write kind.
 var TraceSidxSeriesWriteKindVersion = common.KindVersion{
 	Version: "v1",
