@@ -1,5 +1,12 @@
 # Benchmark
 
+## Version Information
+
+- **BanyanDB Version**: 0.9.0
+- **Commit**: a2479b1c7dd805b74bffbc5f9317da9df6ac95a5
+
+## Test Environment
+
 This benchmark was conducted on a Kubernetes cluster with a single node (16 cores, 64GB RAM), deploying a complete BanyanDB cluster with lifecycle support using the [skywalking-banyandb-helm chart](https://github.com/apache/skywalking-banyandb-helm).
 Each BanyanDB Pod is configured with resource limits of 2 cores and 4GB memory. The benchmark represents 3 days of continuous data ingestion, with all resource usage and query performance metrics captured after this period. The specific cluster configuration is as follows:
 
