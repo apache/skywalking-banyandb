@@ -91,7 +91,7 @@ func NewBackupCommand() *cobra.Command {
 			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", backupOpts.dest, backupOpts.schedule)
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
-			err := sch.Register("backup", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor, backupOpts.schedule, func(_ time.Time, l *logger.Logger) bool {
+			err := sch.Register("backup", cron.Descriptor, backupOpts.schedule, func(_ time.Time, l *logger.Logger) bool {
 				err := backupAction(backupOpts)
 				if err != nil {
 					l.Error().Err(err).Msg("backup failed")

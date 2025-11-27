@@ -538,27 +538,25 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 		l.l.Error().Err(err).Msg("failed to list groups")
 		return nil, err
 	}
-	groupNames := getGroupNames(gg)
-	l.l.Info().Msgf("loading groups for getting all groups: %v", groupNames)
+	allGroupNames := getGroupNames(gg)
 
 	groups := make([]*commonv1.Group, 0, len(gg))
 	for _, g := range gg {
 		if g.ResourceOpts == nil {
-			l.l.Info().Msgf("skipping group %s because resource opts is nil", g.Metadata.Name)
+			l.l.Debug().Msgf("skipping group %s because resource opts is nil", g.Metadata.Name)
 			continue
 		}
 		if len(g.ResourceOpts.Stages) == 0 {
-			l.l.Info().Msgf("skipping group %s because stages is empty", g.Metadata.Name)
+			l.l.Debug().Msgf("skipping group %s because stages is empty", g.Metadata.Name)
 			continue
 		}
 		if progress.IsGroupCompleted(g.Metadata.Name) {
 			l.l.Debug().Msgf("skipping already completed group: %s", g.Metadata.Name)
-			l.l.Info().Msgf("group %s is already completed", g.Metadata.Name)
 			continue
 		}
 		groups = append(groups, g)
 	}
-	l.l.Info().Msgf("found groups needs to do lifecycle processing: %v", getGroupNames(groups))
+	l.l.Info().Msgf("found groups needs to do lifecycle processing: %v, all groups: %v", getGroupNames(groups), allGroupNames)
 
 	return groups, nil
 }

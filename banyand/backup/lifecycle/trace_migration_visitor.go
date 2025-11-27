@@ -371,7 +371,7 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 			partData.MinTimestamp = segmentTR.Start.UnixNano()
 			partData.MaxTimestamp = segmentTR.End.UnixNano()
 
-			mv.logger.Info().
+			mv.logger.Debug().
 				Str("index_name", indexName).
 				Uint64("part_id", partID).
 				Uint32("source_shard", uint32(sourceShardID)).
