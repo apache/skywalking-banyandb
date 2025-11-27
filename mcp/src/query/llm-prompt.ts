@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import type { ResourcesByGroup } from './query-generator.js';
+import type { ResourcesByGroup } from './types.js';
 
 /**
  * Generate the LLM prompt for converting natural language to BydbQL queries.
@@ -179,3 +179,4 @@ Example:
 
 Return ONLY the JSON object, no markdown formatting or additional text.`;
 }
+

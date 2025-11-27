@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "MCP server for BanyanDB to support querying data by user description",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/server/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/server/index.ts",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts"

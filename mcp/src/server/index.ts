@@ -22,9 +22,9 @@ import dotenv from 'dotenv';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BanyanDBClient, ResourceMetadata } from './banyandb-client.js';
-import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from './query-generator.js';
-import { log, setupGlobalErrorHandlers } from './logger.js';
+import { BanyanDBClient, ResourceMetadata } from '../client/banyandb-client.js';
+import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from '../query/query-generator.js';
+import { log, setupGlobalErrorHandlers } from '../utils/logger.js';
 
 // Load environment variables first
 dotenv.config();
@@ -222,7 +222,6 @@ async function main() {
           const groupsList = await banyandbClient.listGroups();
           groups = groupsList.map((g) => g.metadata?.name || '').filter((n) => n !== '');
         } catch (error) {
-          // Log but don't fail if groups can't be fetched
           log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
         }
 
@@ -246,7 +245,6 @@ async function main() {
               topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
             };
           } catch (error) {
-            // Log but continue if resources can't be fetched for a group
             log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
             resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [] };
           }
@@ -373,3 +371,4 @@ main().catch((error) => {
   }
   process.exit(1);
 });
+

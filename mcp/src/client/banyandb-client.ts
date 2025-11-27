@@ -17,96 +17,7 @@
  * under the License.
  */
 
-interface QueryRequest {
-  query: string;
-}
-
-interface TagValue {
-  str?: { value: string };
-  int?: { value: number };
-  float?: { value: number };
-  binaryData?: unknown;
-}
-
-interface Tag {
-  key: string;
-  value: TagValue;
-}
-
-interface TagFamily {
-  tags?: Tag[];
-}
-
-interface FieldValue {
-  int?: { value: number };
-  float?: { value: number };
-  str?: { value: string };
-  binaryData?: unknown;
-}
-
-interface Field {
-  name: string;
-  value: FieldValue;
-}
-
-interface DataPoint {
-  timestamp?: string | number;
-  sid?: string;
-  version?: string | number;
-  tagFamilies?: TagFamily[];
-  fields?: Field[];
-}
-
-interface StreamResult {
-  elements?: unknown[];
-}
-
-interface MeasureResult {
-  dataPoints?: DataPoint[];
-  data_points?: DataPoint[];
-}
-
-interface TraceResult {
-  elements?: unknown[];
-}
-
-interface PropertyResult {
-  items?: unknown[];
-}
-
-interface TopNResult {
-  lists?: unknown[];
-}
-
-interface QueryResponse {
-  // Response can be either wrapped in result or direct
-  result?: {
-    streamResult?: StreamResult;
-    measureResult?: MeasureResult;
-    traceResult?: TraceResult;
-    propertyResult?: PropertyResult;
-    topnResult?: TopNResult;
-  };
-  // Or directly at top level
-  streamResult?: StreamResult;
-  measureResult?: MeasureResult;
-  traceResult?: TraceResult;
-  propertyResult?: PropertyResult;
-  topnResult?: TopNResult;
-}
-
-interface Group {
-  metadata?: {
-    name?: string;
-  };
-}
-
-export interface ResourceMetadata {
-  metadata?: {
-    name?: string;
-    group?: string;
-  };
-}
+import type { QueryRequest, QueryResponse, Group, ResourceMetadata } from './types.js';
 
 /**
  * BanyanDBClient wraps the BanyanDB HTTP client for executing queries.
@@ -629,3 +540,7 @@ export class BanyanDBClient {
     }
   }
 }
+
+// Re-export types for convenience
+export type { ResourceMetadata } from './types.js';
+

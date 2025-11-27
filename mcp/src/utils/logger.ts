@@ -52,3 +52,4 @@ export function setupGlobalErrorHandlers(): void {
     process.exit(1);
   });
 }
+
