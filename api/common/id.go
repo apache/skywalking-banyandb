@@ -16,6 +16,8 @@
 // under the License.
 
 //revive:disable:var-naming // "common" is a valid package name for shared API types
+
+// Package common defines reusable objects for APIs.
 package common
 
 import (

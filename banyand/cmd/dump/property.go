@@ -121,11 +121,11 @@ func dumpPropertyShard(opts propertyDumpOptions) error {
 }
 
 type propertyRowData struct {
-	id         []byte
 	property   *propertyv1.Property
+	id         []byte
+	seriesID   common.SeriesID
 	timestamp  int64
 	deleteTime int64
-	seriesID   common.SeriesID
 }
 
 type propertyDumpContext struct {
