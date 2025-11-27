@@ -229,12 +229,13 @@ async function main() {
         const resourcesByGroup: ResourcesByGroup = {};
         for (const group of groups) {
           try {
-            const [streams, measures, traces, properties, topNItems] = await Promise.all([
+            const [streams, measures, traces, properties, topNItems, indexRule] = await Promise.all([
               banyandbClient.listStreams(group).catch(() => []),
               banyandbClient.listMeasures(group).catch(() => []),
               banyandbClient.listTraces(group).catch(() => []),
               banyandbClient.listProperties(group).catch(() => []),
               banyandbClient.listTopN(group).catch(() => []),
+              banyandbClient.listIndexRule(group).catch(() => []),
             ]);
 
             resourcesByGroup[group] = {
@@ -243,10 +244,11 @@ async function main() {
               traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              indexRule: indexRule.filter((r) => !r.noSort && r.metadata?.name).map((r) => r.metadata?.name || '')
             };
           } catch (error) {
             log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
-            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [] };
+            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [], indexRule: [] };
           }
         }
 

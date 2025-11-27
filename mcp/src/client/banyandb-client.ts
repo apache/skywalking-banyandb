@@ -442,6 +442,51 @@ export class BanyanDBClient {
   }
 
   /**
+   * List index rules in a group.
+   */
+  async listIndexRule(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+    const url = `${this.baseUrl}/v1/index-rule/schema/lists/${encodeURIComponent(group)}`;
+
+    try {
+      const data = await httpFetch({
+        url,
+        method: 'GET',
+        json: null,
+      }) as { indexRule?: ResourceMetadata[] } | { errors: Response };
+
+      if (data && typeof data === 'object' && 'errors' in data) {
+        const errorResponse = (data as { errors: Response }).errors;
+        const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
+        throw new Error(`Failed to list index rules: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
+      }
+
+      return (data as { indexRule?: ResourceMetadata[] }).indexRule || [];
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
+          throw new Error(
+            `List index rules timeout after ${timeoutMs}ms. ` +
+              `BanyanDB may be slow or unresponsive. ` +
+              `Check that BanyanDB is running and accessible at ${this.baseUrl}`,
+          );
+        }
+        if (
+          error.message.includes('fetch failed') ||
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('Failed to fetch') ||
+          error.name === 'TypeError'
+        ) {
+          throw new Error(
+            `Failed to connect to BanyanDB at ${this.baseUrl}. ` + `Please ensure BanyanDB is running and accessible.`,
+          );
+        }
+        throw error;
+      }
+      throw new Error(`Failed to list index rules: ${String(error)}`);
+    }
+  }
+
+  /**
    * Create a group using JSON format.
    */
   async createGroup(groupJson: string): Promise<string> {

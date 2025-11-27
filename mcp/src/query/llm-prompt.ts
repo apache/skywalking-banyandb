@@ -38,7 +38,7 @@ export function generateQueryPrompt(
   const groupsWithResources = Object.keys(resourcesByGroup).filter(group => {
     const resources = resourcesByGroup[group];
     return resources.streams.length > 0 || resources.measures.length > 0 || 
-           resources.traces.length > 0 || resources.properties.length > 0 || resources.topNItems.length > 0;
+           resources.traces.length > 0 || resources.properties.length > 0 || resources.topNItems.length > 0 || resources.indexRule.length > 0;
   });
 
   // Build resource-to-group mapping
@@ -86,8 +86,31 @@ export function generateQueryPrompt(
     }
     resourcesInfo += '\nWhen extracting resource names from the description, prefer using one of these available resources. CRITICAL: If no resource type is found in the description, look up the resource name in this mapping to find its corresponding resource type (STREAM, MEASURE, TRACE, PROPERTY, or TOPN). If no group name is found in the description, look up the resource name in this mapping to find its corresponding group. If the description mentions a resource that doesn\'t exist in this list, you may still use it, but prefer matching available resources when possible.';
   }
+
+  // Build index rules information
+  let indexRulesInfo = '';
+  const groupsWithIndexRules = Object.keys(resourcesByGroup).filter(group => {
+    const resources = resourcesByGroup[group];
+    return resources.indexRule.length > 0;
+  });
+
+  if (groupsWithIndexRules.length > 0) {
+    indexRulesInfo = '\n\nAvailable Index Rules in BanyanDB (Index Rule -> Group Mapping):\n';
+    for (const group of groupsWithIndexRules) {
+      const indexRules = resourcesByGroup[group].indexRule;
+      if (indexRules.length > 0) {
+        indexRulesInfo += `\nGroup "${group}":\n`;
+        for (const indexRule of indexRules) {
+          if (indexRule) {
+            indexRulesInfo += `  - "${indexRule}"\n`;
+          }
+        }
+      }
+    }
+    indexRulesInfo += '\nIndex Rules define which tags are indexed for efficient querying. This information can help understand the available indexing configuration, but Index Rules themselves are not directly queryable resources.';
+  }
   
-  return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.${groupsInfo}${resourcesInfo}
+  return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.${groupsInfo}${resourcesInfo}${indexRulesInfo}
 
 BydbQL Syntax:
 - Resource types: STREAM, MEASURE, TRACE, PROPERTY, TOPN

@@ -35,6 +35,7 @@ export type GroupResources = {
   traces: string[];
   properties: string[];
   topNItems: string[];
+  indexRule: string[];
 };
 
 /**
