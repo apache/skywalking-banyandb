@@ -83,6 +83,10 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 	defer ms.handleWriteCleanup(publisher, &succeedSent, measure, start)
 
+	var currentMetadata *commonv1.Metadata
+	var currentDataPointSpec *measurev1.DataPointSpec
+	isFirstRequest := true
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,6 +103,24 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 				ms.l.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
 			}
 			return err
+		}
+
+		switch {
+		case writeRequest.GetMetadata() != nil:
+			currentMetadata = writeRequest.GetMetadata()
+		case isFirstRequest:
+			ms.l.Error().Msg("metadata is required for the first request of gRPC stream")
+			ms.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeRequest.GetMessageId(), measure)
+			return errors.New("metadata is required for the first request of gRPC stream")
+		default:
+			writeRequest.Metadata = currentMetadata
+		}
+		isFirstRequest = false
+
+		if writeRequest.GetDataPointSpec() != nil {
+			currentDataPointSpec = writeRequest.GetDataPointSpec()
+		} else if currentDataPointSpec != nil {
+			writeRequest.DataPointSpec = currentDataPointSpec
 		}
 
 		ms.metrics.totalStreamMsgReceived.Inc(1, writeRequest.Metadata.Group, "measure", "write")
@@ -145,11 +167,16 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 	var shardID common.ShardID
 	var err error
 
+	tagFamiliesForNavigate := writeRequest.GetDataPoint().GetTagFamilies()
+	if spec := writeRequest.GetDataPointSpec(); spec != nil {
+		tagFamiliesForNavigate = ms.remapTagFamiliesForNavigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies(), spec)
+	}
+
 	if ms.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+			tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), tagFamiliesForNavigate)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
 				break
 			}
@@ -162,7 +189,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 			}
 		}
 	} else {
-		tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+		tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), tagFamiliesForNavigate)
 	}
 
 	if err != nil {
@@ -226,6 +253,51 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 		return nil, errWritePub
 	}
 	return []string{nodeID}, nil
+}
+
+func (ms *measureService) remapTagFamiliesForNavigate(metadata *commonv1.Metadata,
+	srcTagFamilies []*modelv1.TagFamilyForWrite, spec *measurev1.DataPointSpec,
+) []*modelv1.TagFamilyForWrite {
+	id := getID(metadata)
+	measure, ok := ms.entityRepo.getMeasure(id)
+	if !ok {
+		return srcTagFamilies
+	}
+
+	specFamilyMap := make(map[string]int)
+	specTagMaps := make(map[string]map[string]int)
+	for i, specFamily := range spec.GetTagFamilySpec() {
+		specFamilyMap[specFamily.GetName()] = i
+		tagMap := make(map[string]int)
+		for j, tagName := range specFamily.GetTagNames() {
+			tagMap[tagName] = j
+		}
+		specTagMaps[specFamily.GetName()] = tagMap
+	}
+
+	result := make([]*modelv1.TagFamilyForWrite, len(measure.GetTagFamilies()))
+	for i, schemaFamily := range measure.GetTagFamilies() {
+		newFamily := &modelv1.TagFamilyForWrite{
+			Tags: make([]*modelv1.TagValue, len(schemaFamily.GetTags())),
+		}
+		var srcFamily *modelv1.TagFamilyForWrite
+		if specIdx, ok := specFamilyMap[schemaFamily.GetName()]; ok && specIdx < len(srcTagFamilies) {
+			srcFamily = srcTagFamilies[specIdx]
+		}
+		specTagMap := specTagMaps[schemaFamily.GetName()]
+		for j, schemaTag := range schemaFamily.GetTags() {
+			if srcFamily != nil && specTagMap != nil {
+				if srcIdx, ok := specTagMap[schemaTag.GetName()]; ok && srcIdx < len(srcFamily.GetTags()) {
+					newFamily.Tags[j] = srcFamily.Tags[srcIdx]
+					continue
+				}
+			}
+			newFamily.Tags[j] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+		}
+		result[i] = newFamily
+	}
+
+	return result
 }
 
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {

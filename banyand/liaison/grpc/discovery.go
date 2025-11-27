@@ -335,6 +335,13 @@ func (e *entityRepo) getTraceIDIndex(id identity) (int, bool) {
 	return index, true
 }
 
+func (e *entityRepo) getMeasure(id identity) (*databasev1.Measure, bool) {
+	e.RWMutex.RLock()
+	defer e.RWMutex.RUnlock()
+	m, ok := e.measureMap[id]
+	return m, ok
+}
+
 var _ schema.EventHandler = (*shardingKeyRepo)(nil)
 
 type shardingKeyRepo struct {
