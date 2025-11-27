@@ -120,7 +120,6 @@ Resource Type Detection:
   - PROPERTY: for properties, metadata, configuration (keywords: property, properties, metadata, config)
 - CRITICAL: If no resource type can be detected from the description keywords, look up the resource name in the "Available Resources in BanyanDB (Resource -> Group Mapping)" section above to find its corresponding resource type. The mapping shows resources organized by type (STREAMs, MEASUREs, TRACEs, PROPERTYs, TOPNs), so you can determine the type by finding which section contains the resource name.
 
-
 Resource and Group Name Patterns:
 - The user description may express resource and group relationships in different ways:
   - Standard pattern: "resource_name in group_name" (e.g., "service_cpm_minute in metricsMinute")
@@ -158,9 +157,10 @@ CRITICAL: Choose the correct query format based on the description:
    - The word "show" alone does NOT indicate a TOPN query - it's just a common verb
    - Examples that indicate TOPN: "top 10", "top 5", "show top 10", "highest 5", "lowest 3", "best 10", "top-N"
    - Examples that do NOT indicate TOPN: "show", "show me", "display", "get", "fetch"
-   - If TOPN is indicated AND the resource type is MEASURE:
-     - Use: SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]
-     - Example: SHOW TOP 10 FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY SUM ORDER BY value DESC
+  - If TOPN is indicated AND the resource type is MEASURE:
+    - Use: SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY DESC|ASC]
+    - CRITICAL: For TOPN queries, ORDER BY must NOT include a field name. Use only "ORDER BY DESC" or "ORDER BY ASC" (without any field name like "value").
+    - Example: SHOW TOP 10 FROM MEASURE cpu_usage IN default TIME > '-1h' AGGREGATE BY MAX ORDER BY DESC
 
 2. Common Query (DEFAULT for all other cases):
    - Use SELECT format if the description does NOT contain ranking keywords ("top", "highest", "lowest", "best", "worst") followed by a number
@@ -190,11 +190,12 @@ ORDER BY clause Detection:
   - "lowest", "smallest", "shortest", "fastest", "bottom" → ORDER BY field ASC
   - If the description contains an explicit "ORDER BY" clause, preserve it exactly as provided
 - Examples: ORDER BY latency DESC, ORDER BY start_time ASC, ORDER BY TIME DESC
-- For TOPN queries: ORDER BY DESC (for highest values) or ORDER BY ASC (for lowest values) - field name is optional
+- CRITICAL: For TOPN queries (SHOW TOP N FROM MEASURE), ORDER BY must NOT include a field name. Use only "ORDER BY DESC" (for highest values) or "ORDER BY ASC" (for lowest values). Do NOT use "ORDER BY value DESC" or any other field name in TOPN queries.
 
 Top-N Query Syntax (for measures):
 - Top N key (the field used for ranking) is NOT REQUIRED for measures. TOP N queries can work without specifying a key field.
 - ORDER BY clause is OPTIONAL for top N queries on measures. If not specified, the default ordering will be used.
+- CRITICAL: When ORDER BY is used in TOPN queries, it must NOT include a field name. Use only "ORDER BY DESC" or "ORDER BY ASC" (without any field name). Do NOT use "ORDER BY value DESC" or any field name.
 - Do NOT include LIMIT clause in TOPN queries. Use SHOW TOP N syntax instead.
 
 LIMIT clause Detection:
@@ -244,7 +245,9 @@ CRITICAL Preservation Rules:
   - Extract LIMIT clause when description requests specific number of results (e.g., "last 30 zipkin_span" → LIMIT 30, not TIME)
   - Extract AGGREGATE BY clause from natural language or explicit clause in description
   - Extract ORDER BY clause from natural language or explicit clause in description - when LIMIT is present, ORDER BY is typically needed
-  - If YES (contains ranking keyword + number) AND resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY [value] [ASC|DESC]]"
+  - If YES (contains ranking keyword + number) AND resource type is MEASURE: Use "SHOW TOP N FROM MEASURE measure_name IN group_name TIME time_condition [AGGREGATE BY agg_function] [ORDER BY DESC|ASC]"
+    - CRITICAL: For ORDER BY in TOPN queries, use only "ORDER BY DESC" or "ORDER BY ASC" without any field name. Do NOT use "ORDER BY value DESC" or any field name.
+    - CRITICAL: For ORDER BY in TOPN queries, use only "ORDER BY DESC" or "ORDER BY ASC" without any field name. Do NOT use "ORDER BY value DESC" or any field name.
   - If NO (no ranking keyword + number) OR resource type is not MEASURE: Use "SELECT fields FROM RESOURCE_TYPE resource_name IN group_name [TIME clause] [AGGREGATE BY clause] [ORDER BY clause] [LIMIT clause]"
 
 CRITICAL JSON Response Requirements - Conditional Parameter Inclusion:
