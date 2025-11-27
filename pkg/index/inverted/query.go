@@ -69,15 +69,6 @@ func (q *queryNode) String() string {
 	return q.node.String()
 }
 
-type searchRequestQuery struct {
-	req bluge.SearchRequest
-	node
-}
-
-func (s *searchRequestQuery) String() string {
-	return s.node.String()
-}
-
 // BuildQuery returns blugeQuery for local indices.
 func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,
@@ -477,37 +468,6 @@ func (m *matchAllNode) String() string {
 	return "matchAll"
 }
 
-type topNNode struct {
-	subNode   node
-	orderName string
-	orderSort modelv1.Sort
-}
-
-func newTopNNode() *topNNode {
-	return &topNNode{}
-}
-
-func (m *topNNode) SetSubNode(subNode node) {
-	m.subNode = subNode
-}
-
-func (m *topNNode) SetOrder(name string, sort modelv1.Sort) {
-	m.orderName = name
-	m.orderSort = sort
-}
-
-func (m *topNNode) MarshalJSON() ([]byte, error) {
-	data := make(map[string]interface{}, 1)
-	data["query"] = m.subNode
-	data["order_name"] = m.orderName
-	data["order_sort"] = m.orderSort
-	return json.Marshal(data)
-}
-
-func (m *topNNode) String() string {
-	return convert.JSONToString(m)
-}
-
 type termRangeInclusiveNode struct {
 	indexRule        *databasev1.IndexRule
 	min              string
@@ -674,8 +634,29 @@ func (t *timeRangeNode) String() string {
 	return convert.JSONToString(t)
 }
 
+// PropertyQuery support query property with order.
+type PropertyQuery struct {
+	Query      index.Query
+	Order      *index.OrderBy
+	orderField string
+}
+
+func (p *PropertyQuery) String() string {
+	data := make(map[string]interface{}, 1)
+	data["query"] = p.Query.String()
+	if p.Order != nil {
+		data["order_field"] = p.orderField
+		data["order_sort"] = p.Order.Sort
+	}
+	marshal, err := json.Marshal(data)
+	if err != nil {
+		return p.Query.String()
+	}
+	return string(marshal)
+}
+
 // BuildPropertyQuery returns blugeQuery for property query.
-func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (index.Query, error) {
+func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (*PropertyQuery, error) {
 	iq, err := BuildIndexModeQuery(req.Name, req.Criteria, schemaInstance)
 	if err != nil {
 		return nil, err
@@ -718,36 +699,33 @@ func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string
 		bn.Append(in)
 	}
 
-	// If the request contains the order by, then wrapper the request as TopN Search
+	var order *index.OrderBy
+	var orderField string
+	// If the request contains the order by, then adapt to the index.OrderBy object
 	if req.OrderBy != nil {
-		nNode := newTopNNode()
-		nNode.SetSubNode(bn)
-		nNode.SetOrder(req.OrderBy.TagName, req.OrderBy.Sort)
-		return &searchRequestQuery{
-			req: bluge.NewTopNSearch(int(req.Limit), bq).
-				SortBy(generatePropertySortByKey(req.OrderBy)),
-			node: nNode,
-		}, nil
+		order = &index.OrderBy{
+			Index: &databasev1.IndexRule{
+				Metadata: &commonv1.Metadata{
+					Id: uint32(convert.HashStr(req.OrderBy.TagName)),
+				},
+			},
+			Sort: req.OrderBy.Sort,
+			Type: index.OrderByTypeIndex,
+		}
+		orderField = req.OrderBy.TagName
 	}
-	return &queryNode{
-		query: bq,
-		node:  bn,
+	return &PropertyQuery{
+		Query: &queryNode{
+			query: bq,
+			node:  bn,
+		},
+		Order:      order,
+		orderField: orderField,
 	}, nil
 }
 
-func generatePropertySortByKey(s *propertyv1.QueryOrder) []string {
-	prefix := ""
-	if s.Sort == modelv1.Sort_SORT_DESC {
-		prefix = "-"
-	}
-	tagMarshal := index.FieldKey{IndexRuleID: uint32(convert.HashStr(s.TagName))}.Marshal()
-	return []string{
-		fmt.Sprintf("%s%s", prefix, tagMarshal),
-	}
-}
-
 // BuildPropertyQueryFromEntity builds a property query from entity information.
-func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entityID string) (index.Query, error) {
+func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entityID string) (*PropertyQuery, error) {
 	if group == "" || name == "" || entityID == "" {
 		return nil, errors.New("group, name and entityID are mandatory for property query")
 	}
@@ -759,9 +737,11 @@ func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entity
 	bn.Append(newTermNode(name, nil))
 	bq.AddMust(bluge.NewTermQuery(entityID).SetField(entityIDField))
 	bn.Append(newTermNode(entityID, nil))
-	return &queryNode{
-		query: bq,
-		node:  bn,
+	return &PropertyQuery{
+		Query: &queryNode{
+			query: bq,
+			node:  bn,
+		},
 	}, nil
 }
 
