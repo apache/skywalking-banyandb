@@ -21,7 +21,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -215,6 +218,117 @@ func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
 	return nil
 }
 
+// collectSegDirs walks a directory tree and collects all seg-* directory paths.
+// It only collects directories matching the "seg-*" pattern and ignores all files.
+// Returns a map of relative paths to seg-* directories.
+func collectSegDirs(rootDir string) (map[string]bool, error) {
+	segDirs := make(map[string]bool)
+
+	walkErr := filepath.Walk(rootDir, func(currentPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			// If we can't read a directory, log but continue
+			return nil
+		}
+
+		// Skip files, only process directories
+		if !info.IsDir() {
+			return nil
+		}
+
+		// Get the directory name
+		dirName := filepath.Base(currentPath)
+
+		// Check if this is a seg-* directory
+		if strings.HasPrefix(dirName, "seg-") {
+			// Get relative path from root
+			relPath, relErr := filepath.Rel(rootDir, currentPath)
+			if relErr != nil {
+				return fmt.Errorf("failed to get relative path for %s: %w", currentPath, relErr)
+			}
+
+			// Add to our collection
+			segDirs[relPath] = true
+
+			// Don't recurse into seg-* directories
+			return filepath.SkipDir
+		}
+
+		return nil
+	})
+
+	if walkErr != nil {
+		return nil, fmt.Errorf("failed to walk directory %s: %w", rootDir, walkErr)
+	}
+
+	return segDirs, nil
+}
+
+// compareSegDirs compares two sets of seg-* directories and returns three slices:
+// matched (in both), onlyInSnapshot (only in snapshot), onlyInData (only in data).
+func compareSegDirs(snapshotDirs, dataDirs map[string]bool) (matched, onlyInSnapshot, onlyInData []string) {
+	// Find directories in both sets (matched)
+	for dir := range snapshotDirs {
+		if dataDirs[dir] {
+			matched = append(matched, dir)
+		} else {
+			onlyInSnapshot = append(onlyInSnapshot, dir)
+		}
+	}
+
+	// Find directories only in data
+	for dir := range dataDirs {
+		if !snapshotDirs[dir] {
+			onlyInData = append(onlyInData, dir)
+		}
+	}
+
+	// Sort for consistent output
+	sort.Strings(matched)
+	sort.Strings(onlyInSnapshot)
+	sort.Strings(onlyInData)
+
+	return matched, onlyInSnapshot, onlyInData
+}
+
+// compareSnapshotWithData compares the snapshot directory with the data directory
+// to verify that seg-* directories are consistent. Only logs differences, does not return errors.
+func (s *snapshotListener) compareSnapshotWithData(snapshotDir, dataDir, groupName string) {
+	// Collect seg-* directories from snapshot
+	snapshotDirs, snapshotErr := collectSegDirs(snapshotDir)
+	if snapshotErr != nil {
+		s.s.l.Warn().Err(snapshotErr).
+			Str("group", groupName).
+			Str("snapshotDir", snapshotDir).
+			Msg("failed to collect seg-* directories from snapshot, skipping comparison")
+		return
+	}
+
+	// Collect seg-* directories from data
+	dataDirs, dataErr := collectSegDirs(dataDir)
+	if dataErr != nil {
+		s.s.l.Warn().Err(dataErr).
+			Str("group", groupName).
+			Str("dataDir", dataDir).
+			Msg("failed to collect seg-* directories from data, skipping comparison")
+		return
+	}
+
+	// Compare the directories
+	matched, onlyInSnapshot, onlyInData := compareSegDirs(snapshotDirs, dataDirs)
+
+	// Log consolidated comparison results at Info level
+	s.s.l.Info().
+		Str("group", groupName).
+		Int("matched", len(matched)).
+		Int("onlyInSnapshot", len(onlyInSnapshot)).
+		Int("onlyInData", len(onlyInData)).
+		Strs("matchedDirs", matched).
+		Strs("onlyInSnapshotDirs", onlyInSnapshot).
+		Strs("onlyInDataDirs", onlyInData).
+		Msgf("snapshot comparison for group %s, data dir: %s, snapshot dir: %s",
+			groupName, dataDir, snapshotDir)
+}
+
 type snapshotListener struct {
 	*bus.UnImplementedHealthyListener
 	s           *standalone
@@ -254,11 +368,17 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
-			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+		groupName := g.GetSchema().Metadata.Name
+		snapshotPath := filepath.Join(s.s.snapshotDir, sn, groupName)
+		if errGroup := s.s.takeGroupSnapshot(snapshotPath, groupName); errGroup != nil {
+			s.s.l.Error().Err(errGroup).Str("group", groupName).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue
 		}
+
+		// Compare snapshot with data directory to verify consistency
+		dataPath := filepath.Join(s.s.dataPath, groupName)
+		s.compareSnapshotWithData(snapshotPath, dataPath, groupName)
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,
