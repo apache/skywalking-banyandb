@@ -221,9 +221,7 @@ export class QueryGenerator {
 
     // Extract group
     const group =
-      (typeof args.group === 'string' ? args.group : null) ||
-      this.patternMatcher.detectGroup(description) ||
-      'default';
+      (typeof args.group === 'string' ? args.group : null) || this.patternMatcher.detectGroup(description) || 'default';
 
     // Build time clause
     const timeClause = this.patternMatcher.buildTimeClause(description);
@@ -298,4 +296,3 @@ export class QueryGenerator {
 
 // Re-export types for convenience
 export type { QueryGeneratorResult, ResourcesByGroup } from './types.js';
-

@@ -106,6 +106,5 @@ export interface ResourceMetadata {
     name?: string;
     group?: string;
   };
-  noSort: boolean
+  noSort: boolean;
 }
-

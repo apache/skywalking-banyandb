@@ -620,4 +620,3 @@ export class PatternMatcher {
     return '';
   }
 }
-

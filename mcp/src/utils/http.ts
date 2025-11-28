@@ -27,8 +27,8 @@ export function abortRequestsAndUpdate() {
 }
 
 export async function httpFetch({
-  url = "",
-  method = "GET",
+  url = '',
+  method = 'GET',
   json,
   headers = {},
 }: {
@@ -42,10 +42,10 @@ export async function httpFetch({
   }, Timeout);
 
   // Only include body and Content-Type for requests that have a body
-  const hasBody = json !== null && json !== undefined && method !== "GET" && method !== "HEAD";
+  const hasBody = json !== null && json !== undefined && method !== 'GET' && method !== 'HEAD';
   const requestHeaders: Record<string, string> = { ...headers };
   if (hasBody) {
-    requestHeaders["Content-Type"] = "application/json";
+    requestHeaders['Content-Type'] = 'application/json';
   }
 
   const response: Response = await fetch(url, {
@@ -69,4 +69,3 @@ export async function httpFetch({
     };
   }
 }
-

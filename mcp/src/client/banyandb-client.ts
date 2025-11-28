@@ -57,11 +57,11 @@ export class BanyanDBClient {
     const queryDebugInfo = `Query: "${bydbqlQuery}"\nURL: ${url}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'POST',
         json: request,
-      }) as QueryResponse | { errors: Response };
+      })) as QueryResponse | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -74,9 +74,7 @@ export class BanyanDBClient {
 
       // Check if response has content
       if (!data) {
-        throw new Error(
-          `Empty response body from BanyanDB\n\n${queryDebugInfo}`,
-        );
+        throw new Error(`Empty response body from BanyanDB\n\n${queryDebugInfo}`);
       }
 
       // Check for result types both at top level and inside result wrapper
@@ -240,11 +238,11 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/group/schema/lists`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { group?: Group[] } | { errors: Response };
+      })) as { group?: Group[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -286,11 +284,11 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/stream/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { stream?: ResourceMetadata[] } | { errors: Response };
+      })) as { stream?: ResourceMetadata[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -315,11 +313,11 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/measure/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { measure?: ResourceMetadata[] } | { errors: Response };
+      })) as { measure?: ResourceMetadata[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -344,11 +342,11 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/trace/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { trace?: ResourceMetadata[] } | { errors: Response };
+      })) as { trace?: ResourceMetadata[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -373,17 +371,19 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/property/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { properties?: ResourceMetadata[] } | { errors: Response };
+      })) as { properties?: ResourceMetadata[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
         const errorResponse = (data as { errors: Response }).errors;
         const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
-        throw new Error(`Failed to list properties: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
+        throw new Error(
+          `Failed to list properties: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`,
+        );
       }
 
       return (data as { properties?: ResourceMetadata[] }).properties || [];
@@ -402,17 +402,19 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/topn-agg/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { topNAggregation?: ResourceMetadata[] } | { errors: Response };
+      })) as { topNAggregation?: ResourceMetadata[] } | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
         const errorResponse = (data as { errors: Response }).errors;
         const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
-        throw new Error(`Failed to list topN aggregations: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
+        throw new Error(
+          `Failed to list topN aggregations: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`,
+        );
       }
 
       return (data as { topNAggregation?: ResourceMetadata[] }).topNAggregation || [];
@@ -448,16 +450,18 @@ export class BanyanDBClient {
     const url = `${this.baseUrl}/v1/index-rule/schema/lists/${encodeURIComponent(group)}`;
 
     try {
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'GET',
         json: null,
-      }) as { indexRule?: ResourceMetadata[] } | { errors: Response };
+      })) as { indexRule?: ResourceMetadata[] } | { errors: Response };
 
       if (data && typeof data === 'object' && 'errors' in data) {
         const errorResponse = (data as { errors: Response }).errors;
         const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
-        throw new Error(`Failed to list index rules: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`);
+        throw new Error(
+          `Failed to list index rules: ${errorResponse.status} ${errorResponse.statusText} - ${errorText}`,
+        );
       }
 
       return (data as { indexRule?: ResourceMetadata[] }).indexRule || [];
@@ -496,11 +500,11 @@ export class BanyanDBClient {
       // Parse JSON string to object
       const group = JSON.parse(groupJson);
 
-      const data = await httpFetch({
+      const data = (await httpFetch({
         url,
         method: 'POST',
         json: { group },
-      }) as unknown | { errors: Response };
+      })) as unknown | { errors: Response };
 
       // Check if httpFetch returned an error
       if (data && typeof data === 'object' && 'errors' in data) {
@@ -524,4 +528,3 @@ export class BanyanDBClient {
 
 // Re-export types for convenience
 export type { ResourceMetadata } from './types.js';
-

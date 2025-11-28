@@ -42,4 +42,3 @@ export type GroupResources = {
  * Mapping of group names to their resources.
  */
 export type ResourcesByGroup = Record<string, GroupResources>;
-

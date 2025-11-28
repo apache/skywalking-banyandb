@@ -28,17 +28,24 @@ export function generateQueryPrompt(
   groups: string[] = [],
   resourcesByGroup: ResourcesByGroup = {},
 ): string {
-  const groupsInfo = groups.length > 0 
-    ? `\n\nAvailable Groups in BanyanDB:\n${groups.map(g => `- ${g}`).join('\n')}\n\nWhen extracting group names from the description, prefer using one of these available groups. If the description mentions a group that doesn't exist in this list, you may still use it, but prefer matching available groups when possible.`
-    : '';
+  const groupsInfo =
+    groups.length > 0
+      ? `\n\nAvailable Groups in BanyanDB:\n${groups.map((g) => `- ${g}`).join('\n')}\n\nWhen extracting group names from the description, prefer using one of these available groups. If the description mentions a group that doesn't exist in this list, you may still use it, but prefer matching available groups when possible.`
+      : '';
 
   // Build resources information - organized as resource -> group mapping for easy lookup
   let resourcesInfo = '';
   const resourceToGroupMap: Record<string, { type: string; group: string }> = {};
-  const groupsWithResources = Object.keys(resourcesByGroup).filter(group => {
+  const groupsWithResources = Object.keys(resourcesByGroup).filter((group) => {
     const resources = resourcesByGroup[group];
-    return resources.streams.length > 0 || resources.measures.length > 0 || 
-           resources.traces.length > 0 || resources.properties.length > 0 || resources.topNItems.length > 0 || resources.indexRule.length > 0;
+    return (
+      resources.streams.length > 0 ||
+      resources.measures.length > 0 ||
+      resources.traces.length > 0 ||
+      resources.properties.length > 0 ||
+      resources.topNItems.length > 0 ||
+      resources.indexRule.length > 0
+    );
   });
 
   // Build resource-to-group mapping
@@ -71,7 +78,7 @@ export function generateQueryPrompt(
       PROPERTY: [],
       TOPN: [],
     };
-    
+
     for (const [resourceName, info] of Object.entries(resourceToGroupMap)) {
       resourcesByType[info.type].push({ name: resourceName, group: info.group });
     }
@@ -84,14 +91,15 @@ export function generateQueryPrompt(
         }
       }
     }
-    resourcesInfo += '\nWhen extracting resource names from the description, prefer using one of these available resources. CRITICAL: If no resource type is found in the description, look up the resource name in this mapping to find its corresponding resource type (STREAM, MEASURE, TRACE, PROPERTY, or TOPN). If no group name is found in the description, look up the resource name in this mapping to find its corresponding group. If the description mentions a resource that doesn\'t exist in this list, you may still use it, but prefer matching available resources when possible.';
+    resourcesInfo +=
+      "\nWhen extracting resource names from the description, prefer using one of these available resources. CRITICAL: If no resource type is found in the description, look up the resource name in this mapping to find its corresponding resource type (STREAM, MEASURE, TRACE, PROPERTY, or TOPN). If no group name is found in the description, look up the resource name in this mapping to find its corresponding group. If the description mentions a resource that doesn't exist in this list, you may still use it, but prefer matching available resources when possible.";
   }
-  
+
   // Build index rules information - collect all indexed fields for ORDER BY validation
   let indexRulesInfo = '';
   const allIndexedFields: string[] = [];
   const indexedFieldsByGroup: Record<string, string[]> = {};
-  const groupsWithIndexRules = Object.keys(resourcesByGroup).filter(group => {
+  const groupsWithIndexRules = Object.keys(resourcesByGroup).filter((group) => {
     const resources = resourcesByGroup[group];
     return resources.indexRule.length > 0;
   });
@@ -122,10 +130,11 @@ export function generateQueryPrompt(
         }
       }
     }
-    indexRulesInfo += `\nAll Indexed Fields (across all groups): ${allIndexedFields.map(f => `"${f}"`).join(', ')}\n`;
-    indexRulesInfo += '\nIndex Rules define which tags/fields are indexed and can be used efficiently in ORDER BY clauses.';
+    indexRulesInfo += `\nAll Indexed Fields (across all groups): ${allIndexedFields.map((f) => `"${f}"`).join(', ')}\n`;
+    indexRulesInfo +=
+      '\nIndex Rules define which tags/fields are indexed and can be used efficiently in ORDER BY clauses.';
   }
-  
+
   return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.${groupsInfo}${resourcesInfo}${indexRulesInfo}
 
 BydbQL Syntax:
