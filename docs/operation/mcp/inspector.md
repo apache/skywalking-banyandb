@@ -336,7 +336,7 @@ Description: "list service_cpm from last hour"
 The LLM will use the first group it finds in the resource mapping. To ensure a specific group is used, explicitly mention it:
 
 ```
-Description: "list service_cpm_minute in metricsHour from last hour"
+Description: "list service_cpm in metricsHour from last hour"
 ```
 
 **Scenario 2: Similarity Matching**
