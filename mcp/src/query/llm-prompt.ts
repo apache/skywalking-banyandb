@@ -146,11 +146,12 @@ BydbQL Syntax:
 - Clause order: TIME → AGGREGATE BY → ORDER BY → LIMIT
 
 Semantic Understanding:
-- Distinguish "last N [time units]" (TIME clause) from "last N [data points]" (LIMIT clause):
-  - "last 30 hours/days" → TIME clause
-  - "last 30 zipkin_span/items/data points" → LIMIT clause
+- CRITICAL: Distinguish "last N [time units]" (TIME clause) from "last N [data points]" (LIMIT clause):
+  - "last 3 days", "last 30 hours", "last week" → TIME clause ONLY (do NOT add ORDER BY or LIMIT)
+  - "last 30 zipkin_span", "last 10 items", "first 5 data points" → LIMIT clause (requires ORDER BY)
   - When a number appears directly before/after a resource name → LIMIT (data points)
-  - When a number appears with a time unit → TIME (time range)
+  - When a number appears with a time unit (days, hours, minutes, etc.) → TIME (time range) ONLY
+  - IMPORTANT: If the description only mentions a time range (e.g., "list the last 3 days"), do NOT add ORDER BY or LIMIT clauses
 
 Resource Type Detection:
 - Detect from keywords: STREAM (log, logs, stream, event), MEASURE (metric, measure, stat), TRACE (trace, span), PROPERTY (property, metadata, config)
@@ -187,10 +188,14 @@ AGGREGATE BY:
 - Preserve explicit clauses exactly as provided
 
 ORDER BY:
+- CRITICAL: Only add ORDER BY clause when explicitly requested in the description
+- Do NOT add ORDER BY for time range queries (e.g., "list the last 3 days" should NOT have ORDER BY)
 - Syntax: ORDER BY field [ASC|DESC] or ORDER BY TIME [ASC|DESC]
 - Keywords: "highest"/"largest" → DESC, "lowest"/"smallest" → ASC
 - For TOPN queries: Use only "ORDER BY DESC" or "ORDER BY ASC" (no field name)
 - CRITICAL: Field Validation for ORDER BY:
+  - ORDER BY can ONLY use fields that exist in the "Available Indexed Fields" list above
+  - If no indexed fields are available, DO NOT add ORDER BY clause (the query will fail otherwise)
   - When extracting an ORDER BY field from the user description, you MUST check if that field exists in the "Available Indexed Fields" list above
   - Extract the field name (excluding ASC/DESC keywords) and compare it against the indexed fields
   - If the field exists in the indexed fields list → use it as-is
@@ -199,14 +204,20 @@ ORDER BY:
     * Share common prefixes/suffixes (e.g., "timestamp" vs "timestamp_millis")
     * Have similar names (e.g., "time" vs "timestamp", "id" vs "trace_id")
     * Match partial words (e.g., "millis" matches "timestamp_millis")
+  - If no similar field is found in the indexed fields list → DO NOT add ORDER BY clause
   - Always preserve the ASC/DESC direction from the original description
   - Example: If user says "ORDER BY time DESC" but only "timestamp_millis" is indexed → use "ORDER BY timestamp_millis DESC"
+  - Example: If user says "ORDER BY start_time DESC" but "start_time" is not indexed and no similar field exists → DO NOT add ORDER BY clause
 - Preserve explicit clauses exactly as provided, but validate the field name against indexed fields
 
 LIMIT:
-- Use when requesting specific number of results: "last N [resource]", "first N [resource]", "N [resource]"
-- Must come AFTER ORDER BY clause
-- Typically pair with ORDER BY: "last N" → ORDER BY timestamp DESC LIMIT N
+- CRITICAL: Only add LIMIT clause when explicitly requesting a specific number of data points/results
+- Do NOT add LIMIT for time range queries (e.g., "list the last 3 days" should NOT have LIMIT)
+- Use when requesting specific number of results: "last N [resource]", "first N [resource]", "N [resource]" (where N is a count of data points, not time units)
+- Must come AFTER ORDER BY clause (if ORDER BY is present)
+- If LIMIT is requested, ORDER BY is typically required for meaningful results
+- Typically pair with ORDER BY: "last N items" → ORDER BY timestamp DESC LIMIT N
+- IMPORTANT: "last 3 days" is a TIME clause, NOT a LIMIT clause. Do NOT add LIMIT 3 for time ranges.
 
 User description: "${description}"${typeof args.resource_type === 'string' && args.resource_type ? `\n\nIMPORTANT: Resource type is explicitly provided: ${args.resource_type.toUpperCase()}. Use this value instead of extracting from description.` : ''}${typeof args.resource_name === 'string' && args.resource_name ? `\n\nIMPORTANT: Resource name is explicitly provided: ${args.resource_name}. Use this value instead of extracting from description.` : ''}${typeof args.group === 'string' && args.group ? `\n\nIMPORTANT: Group name is explicitly provided: ${args.group}. Use this value instead of extracting from description.` : ''}
 
@@ -217,11 +228,16 @@ Processing Rules:
   - Resource name: Extract explicit names or use type keywords
   - Group name: Extract using patterns or lookup in mapping
   - TIME clause: Distinguish time range from data points
-  - LIMIT clause: Extract when requesting number of results
+  - LIMIT clause: Extract ONLY when requesting number of data points/results (NOT time ranges)
   - AGGREGATE BY: Extract from keywords or preserve explicit clauses
-  - ORDER BY: Extract from keywords or preserve explicit clauses, BUT MUST validate field name against indexed fields list and use similar field if exact match not found
+  - ORDER BY: Extract ONLY when explicitly requested, BUT MUST validate field name against indexed fields list
+- CRITICAL Rules:
+  - Do NOT add ORDER BY or LIMIT unless explicitly requested in the description
+  - If description only mentions a time range (e.g., "list the last 3 days"), use ONLY TIME clause, no ORDER BY, no LIMIT
+  - If ORDER BY is needed but no indexed fields are available, DO NOT add ORDER BY clause
+  - If LIMIT is requested but ORDER BY field is not indexed, DO NOT add ORDER BY (query will fail)
 - Preserve explicit TIME, AGGREGATE BY clauses exactly as provided
-- For ORDER BY: Preserve ASC/DESC direction but validate and correct field name against indexed fields
+- For ORDER BY: Preserve ASC/DESC direction but validate and correct field name against indexed fields, or omit if no valid field exists
 
 JSON Response:
 - "bydbql": ALWAYS REQUIRED
@@ -230,13 +246,27 @@ JSON Response:
 - "group": Include ONLY if description indicates debug information are needed. ${typeof args.group === 'string' && args.group ? `MUST be "${args.group}"` : 'Extract from description'}
 - "explanations": Include ONLY if description indicates explanations are needed, if not, this parameter will not be returned.
 
-Example:
-{
-  "bydbql": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30",
-  "type": ${typeof args.resource_type === 'string' && args.resource_type ? `"${args.resource_type.toUpperCase()}"` : '"TRACE"'},
-  "name": ${typeof args.resource_name === 'string' && args.resource_name ? `"${args.resource_name}"` : '"zipkin_span"'},
-  "group": ${typeof args.group === 'string' && args.group ? `"${args.group}"` : '"default"'}
-}
+Examples:
+1. Time range query (NO ORDER BY, NO LIMIT):
+   Description: "list the last 3 days service_cpm_minute"
+   Response: {
+     "bydbql": "SELECT * FROM MEASURE service_cpm_minute IN metricsMinute TIME > '-3d'"
+   }
+
+2. Data points query (with ORDER BY and LIMIT):
+   Description: "show the last 30 zipkin spans"
+   Response: {
+     "bydbql": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30"
+   }
+
+3. Default example:
+   Description: "show the last 30 zipkin spans order by time"
+   Response: {
+     "bydbql": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30",
+     "type": ${typeof args.resource_type === 'string' && args.resource_type ? `"${args.resource_type.toUpperCase()}"` : '"TRACE"'},
+     "name": ${typeof args.resource_name === 'string' && args.resource_name ? `"${args.resource_name}"` : '"zipkin_span"'},
+     "group": ${typeof args.group === 'string' && args.group ? `"${args.group}"` : '"default"'}
+   }
 
 Return ONLY the JSON object, no markdown formatting or additional text.`;
 }

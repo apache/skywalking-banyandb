@@ -101,7 +101,7 @@ async function main() {
               description: {
                 type: 'string',
                 description:
-                  "Natural language description of the query (e.g., 'Show me all error logs from the last hour', 'Get CPU metrics for service webapp')",
+                  "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans, order by time')",
               },
               resource_type: {
                 type: 'string',
