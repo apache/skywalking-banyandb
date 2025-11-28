@@ -278,7 +278,7 @@ async function main() {
         // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQueryResult.query);
         
-        // Build debug information section with only parameters that are present
+        // Build debug information section with only parameters that are present (excluding explanations)
         const debugParts: string[] = [];
         
         if (bydbqlQueryResult.resourceType) {
@@ -290,16 +290,15 @@ async function main() {
         if (bydbqlQueryResult.group) {
           debugParts.push(`Group: ${bydbqlQueryResult.group}`);
         }
-        if (bydbqlQueryResult.explanations) {
-          debugParts.push(`\n=== Explanations ===\n${bydbqlQueryResult.explanations}`);
-        }
-        
-        // Only include debug section if there are parameters to show
+
         const debugInfo = debugParts.length > 0 
           ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}\n`
           : '';
+        const explanations = bydbqlQueryResult.explanations
+          ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}\n`
+          : '';
         
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}`;
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}${explanations}`;
 
         return {
           content: [
