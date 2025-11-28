@@ -17,41 +17,10 @@
  * under the License.
  */
 
-import OpenAI from 'openai';
-import { generateQueryPrompt } from './llm-prompt.js';
-
-export type QueryGeneratorResult = {
-  description: string;
-  resourceType: string;
-  resourceName: string;
-  group: string;
-  query: string;
-  explanations?: string;
-};
-
 /**
- * QueryGenerator converts natural language descriptions to BydbQL queries.
- * Supports both LLM-based generation (when API key is provided) and pattern-based fallback.
+ * Pattern matcher utilities for extracting query components from natural language descriptions.
  */
-export class QueryGenerator {
-  private static readonly OPENAI_API_TIMEOUT_MS = 20000; // 20 seconds timeout for LLM API calls
-
-  private openaiClient: OpenAI | null = null;
-
-  constructor(apiKey?: string, baseURL?: string) {
-    // Validate API key format before creating client
-    if (apiKey && apiKey.trim().length > 0) {
-      const trimmedKey = apiKey.trim();
-      if (trimmedKey.length < 10) {
-        console.error('[QueryGenerator] Warning: API key appears to be too short. LLM query generation may fail.');
-      }
-      this.openaiClient = new OpenAI({
-        apiKey: trimmedKey,
-        ...(baseURL && { baseURL }),
-      });
-    }
-  }
-
+export class PatternMatcher {
   private timePatterns: RegExp[] = [
     /(last|past|recent)\s+(\d+)\s*(hour|hours|hr|hrs|h)/i,
     /(last|past|recent)\s+(\d+)\s*(minute|minutes|min|mins|m)/i,
@@ -72,222 +41,9 @@ export class QueryGenerator {
   ]);
 
   /**
-   * Generate a BydbQL query from a natural language description.
-   */
-  async generateQuery(description: string, args: Record<string, unknown>): Promise<QueryGeneratorResult> {
-    // Use LLM if available, otherwise fall back to pattern matching
-    if (this.openaiClient) {
-      try {
-        return await this.generateQueryWithLLM(description, args);
-      } catch (error: unknown) {
-        // Check for API key authentication errors
-        const errorObj = error as { status?: number; message?: string };
-        if (
-          errorObj?.status === 401 ||
-          errorObj?.message?.includes('401') ||
-          errorObj?.message?.includes('Invalid API key')
-        ) {
-          console.error('[QueryGenerator] API key authentication failed. Falling back to pattern-based generation.');
-          console.error('[QueryGenerator] Error details:', errorObj.message || String(error));
-          // Disable LLM client to prevent repeated failures
-          this.openaiClient = null;
-        } else {
-          // For other errors (timeout, network, etc.), log but don't disable
-          console.error('[QueryGenerator] Error generating query with LLM:', errorObj.message || String(error));
-        }
-        // Fall through to pattern-based generation
-      }
-    }
-    return this.generateQueryWithPatterns(description, args);
-  }
-
-  /**
-   * Generate query using LLM (OpenAI).
-   */
-  private async generateQueryWithLLM(
-    description: string,
-    args: Record<string, unknown>,
-  ): Promise<QueryGeneratorResult> {
-    if (!this.openaiClient) {
-      throw new Error('OpenAI client not initialized');
-    }
-    const prompt = generateQueryPrompt(description, args);
-
-    const completion = await Promise.race([
-      this.openaiClient.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a BydbQL query generator. Return a JSON object with the following fields: bydbql (the BydbQL query), group (group name), name (resource name), type (resource type), and explanations (brief explanation of the query).',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        response_format: { type: 'json_object' },
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`LLM API timeout after ${QueryGenerator.OPENAI_API_TIMEOUT_MS / 1000} seconds`)),
-          QueryGenerator.OPENAI_API_TIMEOUT_MS,
-        ),
-      ),
-    ]);
-
-    const responseContent = completion.choices[0]?.message?.content?.trim();
-    if (!responseContent) {
-      throw new Error('Empty response from LLM');
-    }
-
-    // Parse JSON response
-    let parsedResponse: {
-      bydbql?: string;
-      group?: string;
-      name?: string;
-      type?: string;
-      explanations?: string;
-    };
-
-    try {
-      parsedResponse = JSON.parse(responseContent);
-    } catch (error) {
-      console.error('JSON parsing failed:', error);
-      // Fallback: try to extract query from plain text if JSON parsing fails
-      const cleanedQuery = responseContent
-        .replace(/^```(?:bydbql|sql|json)?\n?/i, '')
-        .replace(/\n?```$/i, '')
-        .trim();
-      return {
-        description,
-        resourceType: (args.resource_type as string) || 'stream',
-        resourceName: (args.resource_name as string) || '',
-        group: (args.group as string) || 'default',
-        query: cleanedQuery,
-      };
-    }
-
-    const query = parsedResponse.bydbql?.trim() || '';
-    const group = (args.group as string) || parsedResponse.group?.trim() || '';
-    const resourceName = (args.resource_name as string) || parsedResponse.name?.trim() || '';
-    const resourceType = (args.resource_type as string) || parsedResponse.type?.toLowerCase().trim() || '';
-    const explanations = parsedResponse.explanations?.trim() || '';
-
-    // Clean up the query (remove markdown code blocks if present)
-    const cleanedQuery = query
-      .replace(/^```(?:bydbql|sql)?\n?/i, '')
-      .replace(/\n?```$/i, '')
-      .trim();
-
-    // Return parameters used for query generation
-    return {
-      description,
-      resourceType,
-      resourceName,
-      group,
-      query: cleanedQuery,
-      explanations: explanations || undefined,
-    };
-  }
-
-  /**
-   * Generate query using pattern matching (fallback method).
-   */
-  private generateQueryWithPatterns(description: string, args: Record<string, unknown>): QueryGeneratorResult {
-    // Determine resource type
-    const resourceType = this.detectResourceType(description, args) || 'stream';
-
-    // Extract resource name if provided
-    let resourceName =
-      (typeof args.resource_name === 'string' ? args.resource_name : null) || this.detectResourceName(description);
-    if (!resourceName) {
-      // Use common defaults
-      switch (resourceType) {
-        case 'stream':
-          resourceName = 'sw';
-          break;
-        case 'measure':
-          resourceName = 'service_cpm';
-          break;
-        case 'trace':
-          resourceName = 'sw';
-          break;
-        case 'property':
-          resourceName = 'sw';
-          break;
-      }
-    }
-
-    // Extract group
-    const group = (typeof args.group === 'string' ? args.group : null) || this.detectGroup(description) || 'default';
-
-    // Build time clause
-    const timeClause = this.buildTimeClause(description);
-
-    // Build ORDER BY clause
-    let orderByClause = this.buildOrderByClause(description);
-
-    // Build AGGREGATE BY clause
-    const aggregateByClause = this.buildAggregateByClause(description);
-
-    // Build LIMIT clause (must come after ORDER BY)
-    const limitClause = this.buildLimitClause(description);
-
-    // If LIMIT is present but ORDER BY is not, add default ORDER BY for meaningful results
-    // "last N" typically means "most recent N", so order by time DESC
-    if (limitClause && !orderByClause) {
-      // Determine appropriate time field based on resource type
-      let timeField = 'timestamp_millis'; // default for TRACE
-      if (resourceType === 'stream') {
-        timeField = 'timestamp';
-      } else if (resourceType === 'measure') {
-        timeField = 'timestamp';
-      }
-
-      // Check if description says "first N" (ascending) vs "last N" (descending)
-      const lowerDescription = description.toLowerCase();
-      if (lowerDescription.includes('first')) {
-        orderByClause = `ORDER BY ${timeField} ASC`;
-      } else {
-        // Default to DESC for "last N" patterns
-        orderByClause = `ORDER BY ${timeField} DESC`;
-      }
-    }
-
-    // Build SELECT clause
-    const selectClause = this.buildSelectClause(description, resourceType);
-
-    // Construct the query
-    let query = `SELECT ${selectClause} FROM ${resourceType.toUpperCase()} ${resourceName} IN ${group}`;
-
-    if (timeClause) {
-      query += ` ${timeClause}`;
-    }
-    if (aggregateByClause) {
-      query += ` ${aggregateByClause}`;
-    }
-    if (orderByClause) {
-      query += ` ${orderByClause}`;
-    }
-    if (limitClause) {
-      query += ` ${limitClause}`;
-    }
-
-    return {
-      description,
-      resourceType,
-      resourceName: resourceName || '',
-      group,
-      query,
-    };
-  }
-
-  /**
    * Detect the resource type from the description or args.
    */
-  private detectResourceType(description: string, args: Record<string, unknown>): string | null {
+  detectResourceType(description: string, args: Record<string, unknown>): string | null {
     // Check args first
     if (args.resource_type && typeof args.resource_type === 'string') {
       return args.resource_type.toLowerCase();
@@ -307,7 +63,7 @@ export class QueryGenerator {
   /**
    * Try to detect resource name from description.
    */
-  private detectResourceName(description: string): string | null {
+  detectResourceName(description: string): string | null {
     // Common words that shouldn't be treated as resource names
     const commonWords = new Set([
       'service',
@@ -398,7 +154,7 @@ export class QueryGenerator {
   /**
    * Try to detect group name from description.
    */
-  private detectGroup(description: string): string | null {
+  detectGroup(description: string): string | null {
     const patterns = [
       // Pattern: "in sw_metric" or "group sw_metric" - most specific, check first
       // Match group names with underscores: sw_metric, sw_recordsLog, etc.
@@ -469,7 +225,7 @@ export class QueryGenerator {
   /**
    * Extract existing TIME clause from the description if present.
    */
-  private extractExistingTimeClause(description: string): string | null {
+  extractExistingTimeClause(description: string): string | null {
     // Pattern to match TIME clauses: TIME [operator] '[value]' or TIME BETWEEN '[value1]' AND '[value2]'
     // Match patterns like: TIME > '-24h', TIME >= '-1h', TIME BETWEEN '-24h' AND '-1h'
     const timeClausePatterns = [
@@ -497,7 +253,7 @@ export class QueryGenerator {
   /**
    * Build a TIME clause from the description.
    */
-  private buildTimeClause(description: string): string {
+  buildTimeClause(description: string): string {
     // First, check if there's already a TIME clause in the input
     const existingTimeClause = this.extractExistingTimeClause(description);
     if (existingTimeClause) {
@@ -619,7 +375,7 @@ export class QueryGenerator {
   /**
    * Build a SELECT clause from the description.
    */
-  private buildSelectClause(description: string, resourceType: string): string {
+  buildSelectClause(description: string, resourceType: string): string {
     const lowerDescription = description.toLowerCase();
 
     // Check for specific field requests
@@ -634,9 +390,47 @@ export class QueryGenerator {
   }
 
   /**
+   * Extract existing ORDER BY clause from the description if present.
+   */
+  extractExistingOrderByClause(description: string): string | null {
+    // Pattern to match ORDER BY clauses: ORDER BY [field] [ASC|DESC]
+    // Match patterns like: ORDER BY value DESC, ORDER BY latency ASC, ORDER BY DESC, etc.
+    const orderByPatterns = [
+      // ORDER BY field DESC/ASC (check this first to avoid matching field names as direction)
+      /\bORDER\s+BY\s+(\w+)\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
+      // ORDER BY DESC/ASC (for TOPN queries - preserve as-is without field name)
+      /\bORDER\s+BY\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
+    ];
+
+    for (const pattern of orderByPatterns) {
+      const match = description.match(pattern);
+      if (match) {
+        if (match[2]) {
+          // Has field name (first pattern matched)
+          const field = match[1];
+          const direction = match[2].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
+          return `ORDER BY ${field} ${direction}`;
+        } else if (
+          match[1] &&
+          (match[1].toUpperCase() === 'DESC' ||
+            match[1].toUpperCase() === 'ASC' ||
+            match[1].toUpperCase() === 'DESCENDING' ||
+            match[1].toUpperCase() === 'ASCENDING')
+        ) {
+          // Only direction (for TOPN queries) - preserve as "ORDER BY DESC" or "ORDER BY ASC"
+          const direction = match[1].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
+          return `ORDER BY ${direction}`;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Build an ORDER BY clause from the description.
    */
-  private buildOrderByClause(description: string): string {
+  buildOrderByClause(description: string): string {
     // First, check if there's already an ORDER BY clause in the input
     const existingOrderBy = this.extractExistingOrderByClause(description);
     if (existingOrderBy) {
@@ -702,47 +496,9 @@ export class QueryGenerator {
   }
 
   /**
-   * Extract existing ORDER BY clause from the description if present.
-   */
-  private extractExistingOrderByClause(description: string): string | null {
-    // Pattern to match ORDER BY clauses: ORDER BY [field] [ASC|DESC]
-    // Match patterns like: ORDER BY value DESC, ORDER BY latency ASC, ORDER BY DESC, etc.
-    const orderByPatterns = [
-      // ORDER BY field DESC/ASC (check this first to avoid matching field names as direction)
-      /\bORDER\s+BY\s+(\w+)\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
-      // ORDER BY DESC/ASC (for TOPN queries - preserve as-is without field name)
-      /\bORDER\s+BY\s+(DESC|ASC|DESCENDING|ASCENDING)\b/i,
-    ];
-
-    for (const pattern of orderByPatterns) {
-      const match = description.match(pattern);
-      if (match) {
-        if (match[2]) {
-          // Has field name (first pattern matched)
-          const field = match[1];
-          const direction = match[2].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
-          return `ORDER BY ${field} ${direction}`;
-        } else if (
-          match[1] &&
-          (match[1].toUpperCase() === 'DESC' ||
-            match[1].toUpperCase() === 'ASC' ||
-            match[1].toUpperCase() === 'DESCENDING' ||
-            match[1].toUpperCase() === 'ASCENDING')
-        ) {
-          // Only direction (for TOPN queries) - preserve as "ORDER BY DESC" or "ORDER BY ASC"
-          const direction = match[1].toUpperCase().startsWith('DESC') ? 'DESC' : 'ASC';
-          return `ORDER BY ${direction}`;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
    * Extract existing AGGREGATE BY clause from the description if present.
    */
-  private extractExistingAggregateByClause(description: string): string | null {
+  extractExistingAggregateByClause(description: string): string | null {
     // Pattern to match AGGREGATE BY clauses: AGGREGATE BY [FUNCTION]
     // Match patterns like: AGGREGATE BY SUM, AGGREGATE BY MAX, AGGREGATE BY MEAN, etc.
     const aggregateByPattern = /\bAGGREGATE\s+BY\s+(SUM|MEAN|COUNT|MAX|MIN|AVG)\b/i;
@@ -761,7 +517,7 @@ export class QueryGenerator {
   /**
    * Build an AGGREGATE BY clause from the description.
    */
-  private buildAggregateByClause(description: string): string {
+  buildAggregateByClause(description: string): string {
     // First, check if there's already an AGGREGATE BY clause in the input
     const existingAggregateBy = this.extractExistingAggregateByClause(description);
     if (existingAggregateBy) {
@@ -801,7 +557,7 @@ export class QueryGenerator {
    * Build a LIMIT clause from the description.
    * Understands semantic meaning: "last N [resource]" means LIMIT N, not TIME.
    */
-  private buildLimitClause(description: string): string {
+  buildLimitClause(description: string): string {
     // Pattern to match "last N [resource_name]" or "N [resource_name]" where N is a number
     // This should be interpreted as LIMIT N, not TIME
     // Examples: "last 30 zipkin_span", "30 zipkin_span", "last 10 logs", "first 5 metrics"
