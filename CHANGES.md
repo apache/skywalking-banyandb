@@ -7,6 +7,15 @@ Release Notes.
 ### Features
 
 - Remove Bloom filter for dictionary-encoded tags.
+- Add sorted query support for the Property.
+- Update bydbQL to add sorted query support for the Property.
+
+### Bug Fixes
+
+
+### Document
+
+
 
 ### Bug Fixes
 

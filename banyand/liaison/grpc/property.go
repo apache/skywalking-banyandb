@@ -18,9 +18,11 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -459,7 +461,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if len(res) == 0 {
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
-	properties := make([]*propertyv1.Property, 0, len(res))
+	properties := make([]*propertyWithMetadata, 0, len(res))
 	for entity, p := range res {
 		if err := ps.repairPropertyIfNeed(entity, p, groups); err != nil {
 			ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
@@ -481,12 +483,24 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 			p.Tags = tags
 		}
-		properties = append(properties, p.Property)
-		if len(properties) >= int(req.Limit) {
-			break
-		}
+		properties = append(properties, p.propertyWithMetadata)
 	}
-	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
+
+	// Sort if order_by is specified
+	if req.OrderBy != nil && req.OrderBy.TagName != "" {
+		properties = sortPropertiesWithSortedValues(properties, req.OrderBy)
+	}
+
+	// Apply limit after sorting
+	if len(properties) > int(req.Limit) {
+		properties = properties[:req.Limit]
+	}
+
+	result := make([]*propertyv1.Property, 0, len(properties))
+	for _, property := range properties {
+		result = append(result, property.Property)
+	}
+	return &propertyv1.QueryResponse{Properties: result, Trace: trace}, nil
 }
 
 func (ps *propertyServer) repairPropertyIfNeed(entity string, p *propertyWithCount, groups map[string]*commonv1.Group) error {
@@ -576,15 +590,22 @@ func (ps *propertyServer) queryProperties(
 				for i, s := range v.Sources {
 					var p propertyv1.Property
 					var deleteTime int64
-					err = protojson.Unmarshal(s, &p)
-					if err != nil {
-						return nil, groups, trace, err
+					unmarshalErr := protojson.Unmarshal(s, &p)
+					if unmarshalErr != nil {
+						return nil, groups, trace, unmarshalErr
 					}
 					if i < len(v.Deletes) {
 						deleteTime = v.Deletes[i]
 					}
+
+					var sortedValue []byte
+					if i < len(v.SortedValues) {
+						sortedValue = v.SortedValues[i]
+					}
+
 					property := &propertyWithMetadata{
 						Property:    &p,
+						sortedValue: sortedValue,
 						deletedTime: deleteTime,
 					}
 					nodeWithProperties = append(nodeWithProperties, property)
@@ -629,6 +650,7 @@ func (ps *propertyServer) startRepairQueue(stop chan struct{}) {
 
 type propertyWithMetadata struct {
 	*propertyv1.Property
+	sortedValue []byte
 	deletedTime int64
 }
 
@@ -761,4 +783,39 @@ type repairTask struct {
 type repairInProcessKey struct {
 	entity  string
 	modTime int64
+}
+
+// sortPropertiesWithSortedValues sorts properties using pre-extracted sortedValue bytes.
+func sortPropertiesWithSortedValues(
+	properties []*propertyWithMetadata,
+	orderBy *propertyv1.QueryOrder,
+) []*propertyWithMetadata {
+	if len(properties) == 0 || orderBy == nil {
+		return properties
+	}
+
+	isDesc := orderBy.Sort == modelv1.Sort_SORT_DESC
+
+	sort.Slice(properties, func(i, j int) bool {
+		sortedValueI := properties[i].sortedValue
+		sortedValueJ := properties[j].sortedValue
+
+		// nil values are always sorted last
+		if len(sortedValueI) == 0 {
+			return false
+		}
+		if len(sortedValueJ) == 0 {
+			return true
+		}
+
+		// Direct byte comparison
+		cmp := bytes.Compare(sortedValueI, sortedValueJ)
+
+		if isDesc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+
+	return properties
 }

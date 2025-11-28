@@ -276,8 +276,9 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
-	id         []byte
-	source     []byte
-	timestamp  int64
-	deleteTime int64
+	id          []byte
+	source      []byte
+	sortedValue []byte
+	timestamp   int64
+	deleteTime  int64
 }
