@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -167,16 +169,11 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 	var shardID common.ShardID
 	var err error
 
-	tagFamiliesForNavigate := writeRequest.GetDataPoint().GetTagFamilies()
-	if spec := writeRequest.GetDataPointSpec(); spec != nil {
-		tagFamiliesForNavigate = ms.remapTagFamiliesForNavigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies(), spec)
-	}
-
 	if ms.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), tagFamiliesForNavigate)
+			tagValues, shardID, err = ms.navigate(writeRequest)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
 				break
 			}
@@ -189,7 +186,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 			}
 		}
 	} else {
-		tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), tagFamiliesForNavigate)
+		tagValues, shardID, err = ms.navigate(writeRequest)
 	}
 
 	if err != nil {
@@ -255,15 +252,78 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 	return []string{nodeID}, nil
 }
 
-func (ms *measureService) remapTagFamiliesForNavigate(metadata *commonv1.Metadata,
-	srcTagFamilies []*modelv1.TagFamilyForWrite, spec *measurev1.DataPointSpec,
-) []*modelv1.TagFamilyForWrite {
+func (ms *measureService) navigate(writeRequest *measurev1.WriteRequest) (pbv1.EntityValues, common.ShardID, error) {
+	metadata := writeRequest.GetMetadata()
+	spec := writeRequest.GetDataPointSpec()
+	tagFamilies := writeRequest.GetDataPoint().GetTagFamilies()
+	if spec == nil {
+		return ms.navigateByLocator(metadata, tagFamilies)
+	}
+	return ms.navigateByTagSpec(metadata, spec, tagFamilies)
+}
+
+func (ms *measureService) navigateByTagSpec(
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, tagFamilies []*modelv1.TagFamilyForWrite,
+) (pbv1.EntityValues, common.ShardID, error) {
+	shardNum, existed := ms.groupRepo.shardNum(metadata.Group)
+	if !existed {
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
+	}
 	id := getID(metadata)
 	measure, ok := ms.entityRepo.getMeasure(id)
 	if !ok {
-		return srcTagFamilies
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding measure schema by: %v", metadata)
+	}
+	specFamilyMap, specTagMaps := ms.buildSpecMaps(spec)
+
+	entityValues, err := ms.findTagValuesByNames(
+		metadata.Name,
+		measure.GetTagFamilies(),
+		tagFamilies,
+		measure.GetEntity().GetTagNames(),
+		specFamilyMap,
+		specTagMaps,
+	)
+	if err != nil {
+		return nil, common.ShardID(0), err
+	}
+	entity, err := entityValues.ToEntity()
+	if err != nil {
+		return nil, common.ShardID(0), err
 	}
 
+	shardingKey := measure.GetShardingKey()
+	if shardingKey != nil && len(shardingKey.GetTagNames()) > 0 {
+		shardingKeyValues, err := ms.findTagValuesByNames(
+			metadata.Name,
+			measure.GetTagFamilies(),
+			tagFamilies,
+			shardingKey.GetTagNames(),
+			specFamilyMap,
+			specTagMaps,
+		)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+		shardingEntity, err := shardingKeyValues.ToEntity()
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+		shardID, err := partition.ShardID(shardingEntity.Marshal(), shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+		return entityValues, common.ShardID(shardID), nil
+	}
+
+	shardID, err := partition.ShardID(entity.Marshal(), shardNum)
+	if err != nil {
+		return nil, common.ShardID(0), err
+	}
+	return entityValues, common.ShardID(shardID), nil
+}
+
+func (ms *measureService) buildSpecMaps(spec *measurev1.DataPointSpec) (map[string]int, map[string]map[string]int) {
 	specFamilyMap := make(map[string]int)
 	specTagMaps := make(map[string]map[string]int)
 	for i, specFamily := range spec.GetTagFamilySpec() {
@@ -274,30 +334,58 @@ func (ms *measureService) remapTagFamiliesForNavigate(metadata *commonv1.Metadat
 		}
 		specTagMaps[specFamily.GetName()] = tagMap
 	}
+	return specFamilyMap, specTagMaps
+}
 
-	result := make([]*modelv1.TagFamilyForWrite, len(measure.GetTagFamilies()))
-	for i, schemaFamily := range measure.GetTagFamilies() {
-		newFamily := &modelv1.TagFamilyForWrite{
-			Tags: make([]*modelv1.TagValue, len(schemaFamily.GetTags())),
+func (ms *measureService) findTagValuesByNames(
+	subject string,
+	schemaFamilies []*databasev1.TagFamilySpec,
+	srcTagFamilies []*modelv1.TagFamilyForWrite,
+	tagNames []string,
+	specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) (pbv1.EntityValues, error) {
+	entityValues := make(pbv1.EntityValues, len(tagNames)+1)
+	entityValues[0] = pbv1.EntityStrValue(subject)
+	for i, tagName := range tagNames {
+		tagValue := ms.findTagValueByName(schemaFamilies, srcTagFamilies, tagName, specFamilyMap, specTagMaps)
+		if tagValue == nil {
+			entityValues[i+1] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+		} else {
+			entityValues[i+1] = tagValue
 		}
-		var srcFamily *modelv1.TagFamilyForWrite
-		if specIdx, ok := specFamilyMap[schemaFamily.GetName()]; ok && specIdx < len(srcTagFamilies) {
-			srcFamily = srcTagFamilies[specIdx]
-		}
-		specTagMap := specTagMaps[schemaFamily.GetName()]
-		for j, schemaTag := range schemaFamily.GetTags() {
-			if srcFamily != nil && specTagMap != nil {
-				if srcIdx, ok := specTagMap[schemaTag.GetName()]; ok && srcIdx < len(srcFamily.GetTags()) {
-					newFamily.Tags[j] = srcFamily.Tags[srcIdx]
-					continue
-				}
-			}
-			newFamily.Tags[j] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-		}
-		result[i] = newFamily
 	}
+	return entityValues, nil
+}
 
-	return result
+func (ms *measureService) findTagValueByName(
+	schemaFamilies []*databasev1.TagFamilySpec,
+	srcTagFamilies []*modelv1.TagFamilyForWrite,
+	tagName string,
+	specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) *modelv1.TagValue {
+	for _, schemaFamily := range schemaFamilies {
+		for _, schemaTag := range schemaFamily.GetTags() {
+			if schemaTag.GetName() != tagName {
+				continue
+			}
+			familyIdx, ok := specFamilyMap[schemaFamily.GetName()]
+			if !ok || familyIdx >= len(srcTagFamilies) {
+				return nil
+			}
+			tagMap := specTagMaps[schemaFamily.GetName()]
+			if tagMap == nil {
+				return nil
+			}
+			tagIdx, ok := tagMap[tagName]
+			if !ok || tagIdx >= len(srcTagFamilies[familyIdx].GetTags()) {
+				return nil
+			}
+			return srcTagFamilies[familyIdx].GetTags()[tagIdx]
+		}
+	}
+	return nil
 }
 
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {

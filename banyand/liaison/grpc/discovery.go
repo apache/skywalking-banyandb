@@ -83,7 +83,7 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.shardingKeyRepo.log = log
 }
 
-func (ds *discoveryService) navigate(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.EntityValues, common.ShardID, error) {
+func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.EntityValues, common.ShardID, error) {
 	shardNum, existed := ds.groupRepo.shardNum(metadata.Group)
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
