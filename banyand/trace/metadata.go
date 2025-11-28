@@ -322,9 +322,11 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
 	segmentIdleTimeout := time.Duration(0)
+	disableRetention := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
-		for _, st := range ro.Stages {
+		foundMatched := false
+		for i, st := range ro.Stages {
 			if st.Ttl.Unit != ro.Ttl.Unit {
 				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
 			}
@@ -336,13 +338,18 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			if !selector.Matches(s.nodeLabels) {
 				continue
 			}
+			foundMatched = true
 			ttl.Num += ttlNum
 			shardNum = st.ShardNum
 			segInterval = st.SegmentInterval
 			if st.Close {
 				segmentIdleTimeout = 5 * time.Minute
 			}
+			disableRetention = i+1 < len(ro.Stages)
 			break
+		}
+		if !foundMatched {
+			disableRetention = true
 		}
 	}
 	group := groupSchema.Metadata.Name
@@ -358,6 +365,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(traceScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
 		SegmentIdleTimeout:             segmentIdleTimeout,
+		DisableRetention:               disableRetention,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(

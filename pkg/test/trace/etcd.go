@@ -34,6 +34,7 @@ import (
 
 const (
 	groupDir            = "testdata/groups"
+	groupStagesDir      = "testdata/groups_stages"
 	traceDir            = "testdata/traces"
 	indexRuleDir        = "testdata/index_rules"
 	indexRuleBindingDir = "testdata/index_rule_bindings"
@@ -44,14 +45,19 @@ var store embed.FS
 
 // PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(ctx context.Context, e schema.Registry) error {
-	return loadAllSchemas(ctx, e)
+	return loadAllSchemas(ctx, e, groupDir)
+}
+
+// PreloadSchemaWithStages loads group schemas with stages from files in the booting process.
+func PreloadSchemaWithStages(ctx context.Context, e schema.Registry) error {
+	return loadAllSchemas(ctx, e, groupStagesDir)
 }
 
 // loadAllSchemas loads all trace-related schemas from the testdata directory.
-func loadAllSchemas(ctx context.Context, e schema.Registry) error {
+func loadAllSchemas(ctx context.Context, e schema.Registry, group string) error {
 	return preloadSchemaWithFuncs(ctx, e,
 		func(ctx context.Context, e schema.Registry) error {
-			return loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
+			return loadSchema(group, &commonv1.Group{}, func(group *commonv1.Group) error {
 				return e.CreateGroup(ctx, group)
 			})
 		},

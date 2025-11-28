@@ -9,6 +9,14 @@ Release Notes.
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement BanyanDB MCP.
 
+### Bug Fixes
+
+- Fix the wrong retention setting of each measure/stream/trace.
+
+### Document
+
+- Add read write benchmark document for 0.9.0 release.
+
 ## 0.9.0
 
 ### Features

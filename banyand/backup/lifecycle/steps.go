@@ -38,10 +38,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
-func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, err error) {
+func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, traceDir string, err error) {
 	// If we already have snapshot dirs in Progress, reuse them
-	if p.SnapshotStreamDir != "" || p.SnapshotMeasureDir != "" {
-		return p.SnapshotStreamDir, p.SnapshotMeasureDir, nil
+	if p.SnapshotStreamDir != "" || p.SnapshotMeasureDir != "" || p.SnapshotTraceDir != "" {
+		return p.SnapshotStreamDir, p.SnapshotMeasureDir, p.SnapshotTraceDir, nil
 	}
 
 	snapshotGroups := make([]*databasev1.SnapshotRequest_Group, 0, len(groups))
@@ -53,10 +53,10 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 	}
 	snn, err := snapshot.Get(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, snapshotGroups...)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	for _, snp := range snn {
-		snapshotDir, errDir := snapshot.Dir(snp, l.streamRoot, l.measureRoot, "", "")
+		snapshotDir, errDir := snapshot.Dir(snp, l.streamRoot, l.measureRoot, "", l.traceRoot)
 		if errDir != nil {
 			l.l.Error().Err(errDir).Msgf("Failed to get snapshot directory for %s", snp.Name)
 			continue
@@ -71,11 +71,15 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 		if snp.Catalog == commonv1.Catalog_CATALOG_MEASURE {
 			measureDir = snapshotDir
 		}
+		if snp.Catalog == commonv1.Catalog_CATALOG_TRACE {
+			traceDir = snapshotDir
+		}
 	}
 	// Save the new snapshot paths into Progress
 	p.SnapshotStreamDir = streamDir
 	p.SnapshotMeasureDir = measureDir
-	return streamDir, measureDir, nil
+	p.SnapshotTraceDir = traceDir
+	return streamDir, measureDir, traceDir, nil
 }
 
 // GroupConfig encapsulates the parsed lifecycle configuration for a Group.

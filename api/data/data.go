@@ -52,6 +52,7 @@ var (
 		TopicTraceWrite.String():               TopicTraceWrite,
 		TopicTraceQuery.String():               TopicTraceQuery,
 		TopicTracePartSync.String():            TopicTracePartSync,
+		TopicTraceSeriesSync.String():          TopicTraceSeriesSync,
 		TopicTraceSidxSeriesWrite.String():     TopicTraceSidxSeriesWrite,
 	}
 
@@ -119,6 +120,9 @@ var (
 			return &tracev1.QueryRequest{}
 		},
 		TopicTracePartSync: func() proto.Message {
+			return nil
+		},
+		TopicTraceSeriesSync: func() proto.Message {
 			return nil
 		},
 		TopicTraceSidxSeriesWrite: func() proto.Message {
