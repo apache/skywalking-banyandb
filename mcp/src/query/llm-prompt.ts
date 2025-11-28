@@ -86,28 +86,44 @@ export function generateQueryPrompt(
     }
     resourcesInfo += '\nWhen extracting resource names from the description, prefer using one of these available resources. CRITICAL: If no resource type is found in the description, look up the resource name in this mapping to find its corresponding resource type (STREAM, MEASURE, TRACE, PROPERTY, or TOPN). If no group name is found in the description, look up the resource name in this mapping to find its corresponding group. If the description mentions a resource that doesn\'t exist in this list, you may still use it, but prefer matching available resources when possible.';
   }
-
-  // Build index rules information
+  
+  // Build index rules information - collect all indexed fields for ORDER BY validation
   let indexRulesInfo = '';
+  const allIndexedFields: string[] = [];
+  const indexedFieldsByGroup: Record<string, string[]> = {};
   const groupsWithIndexRules = Object.keys(resourcesByGroup).filter(group => {
     const resources = resourcesByGroup[group];
     return resources.indexRule.length > 0;
   });
 
   if (groupsWithIndexRules.length > 0) {
-    indexRulesInfo = '\n\nAvailable Index Rules in BanyanDB (Index Rule -> Group Mapping):\n';
+    // Collect all indexed fields
     for (const group of groupsWithIndexRules) {
       const indexRules = resourcesByGroup[group].indexRule;
-      if (indexRules.length > 0) {
+      const fields: string[] = [];
+      for (const indexRule of indexRules) {
+        if (indexRule) {
+          allIndexedFields.push(indexRule);
+          fields.push(indexRule);
+        }
+      }
+      if (fields.length > 0) {
+        indexedFieldsByGroup[group] = fields;
+      }
+    }
+
+    indexRulesInfo = '\n\nAvailable Indexed Fields for ORDER BY (by Group):\n';
+    for (const group of groupsWithIndexRules) {
+      const fields = indexedFieldsByGroup[group];
+      if (fields && fields.length > 0) {
         indexRulesInfo += `\nGroup "${group}":\n`;
-        for (const indexRule of indexRules) {
-          if (indexRule) {
-            indexRulesInfo += `  - "${indexRule}"\n`;
-          }
+        for (const field of fields) {
+          indexRulesInfo += `  - "${field}"\n`;
         }
       }
     }
-    indexRulesInfo += '\nIndex Rules define which tags are indexed for efficient querying. This information can help understand the available indexing configuration, but Index Rules themselves are not directly queryable resources.';
+    indexRulesInfo += `\nAll Indexed Fields (across all groups): ${allIndexedFields.map(f => `"${f}"`).join(', ')}\n`;
+    indexRulesInfo += '\nIndex Rules define which tags/fields are indexed and can be used efficiently in ORDER BY clauses.';
   }
   
   return `You are a BydbQL query generator. Convert the following natural language description into a valid BydbQL query.${groupsInfo}${resourcesInfo}${indexRulesInfo}
@@ -165,7 +181,18 @@ ORDER BY:
 - Syntax: ORDER BY field [ASC|DESC] or ORDER BY TIME [ASC|DESC]
 - Keywords: "highest"/"largest" → DESC, "lowest"/"smallest" → ASC
 - For TOPN queries: Use only "ORDER BY DESC" or "ORDER BY ASC" (no field name)
-- Preserve explicit clauses exactly as provided
+- CRITICAL: Field Validation for ORDER BY:
+  - When extracting an ORDER BY field from the user description, you MUST check if that field exists in the "Available Indexed Fields" list above
+  - Extract the field name (excluding ASC/DESC keywords) and compare it against the indexed fields
+  - If the field exists in the indexed fields list → use it as-is
+  - If the field does NOT exist in the indexed fields list → find the most similar field from the indexed fields list and use that instead
+  - Similarity matching: Look for fields that:
+    * Share common prefixes/suffixes (e.g., "timestamp" vs "timestamp_millis")
+    * Have similar names (e.g., "time" vs "timestamp", "id" vs "trace_id")
+    * Match partial words (e.g., "millis" matches "timestamp_millis")
+  - Always preserve the ASC/DESC direction from the original description
+  - Example: If user says "ORDER BY time DESC" but only "timestamp_millis" is indexed → use "ORDER BY timestamp_millis DESC"
+- Preserve explicit clauses exactly as provided, but validate the field name against indexed fields
 
 LIMIT:
 - Use when requesting specific number of results: "last N [resource]", "first N [resource]", "N [resource]"
@@ -182,8 +209,10 @@ Processing Rules:
   - Group name: Extract using patterns or lookup in mapping
   - TIME clause: Distinguish time range from data points
   - LIMIT clause: Extract when requesting number of results
-  - AGGREGATE BY/ORDER BY: Extract from keywords or preserve explicit clauses
-- Preserve explicit TIME, AGGREGATE BY, ORDER BY clauses exactly as provided
+  - AGGREGATE BY: Extract from keywords or preserve explicit clauses
+  - ORDER BY: Extract from keywords or preserve explicit clauses, BUT MUST validate field name against indexed fields list and use similar field if exact match not found
+- Preserve explicit TIME, AGGREGATE BY clauses exactly as provided
+- For ORDER BY: Preserve ASC/DESC direction but validate and correct field name against indexed fields
 
 JSON Response:
 - "bydbql": ALWAYS REQUIRED
