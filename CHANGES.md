@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Remove Bloom filter for dictionary-encoded tags.
+- Implement BanyanDB MCP.
 
 ## 0.9.0
 
