@@ -22,9 +22,9 @@ import dotenv from 'dotenv';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BanyanDBClient, ResourceMetadata } from '../client/banyandb-client.js';
-import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from '../query/query-generator.js';
-import { log, setupGlobalErrorHandlers } from '../utils/logger.js';
+import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
+import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from './query/query-generator.js';
+import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
 // Load environment variables first
 dotenv.config();
@@ -373,4 +373,5 @@ main().catch((error) => {
   }
   process.exit(1);
 });
+
 
