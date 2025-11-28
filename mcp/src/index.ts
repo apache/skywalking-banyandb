@@ -22,9 +22,9 @@ import dotenv from 'dotenv';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BanyanDBClient, ResourceMetadata } from './banyandb-client.js';
-import { QueryGenerator, QueryGeneratorResult } from './query-generator.js';
-import { log, setupGlobalErrorHandlers } from './logger.js';
+import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
+import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from './query/query-generator.js';
+import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
 // Load environment variables first
 dotenv.config();
@@ -101,7 +101,7 @@ async function main() {
               description: {
                 type: 'string',
                 description:
-                  "Natural language description of the query (e.g., 'Show me all error logs from the last hour', 'Get CPU metrics for service webapp')",
+                  "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans, order by time')",
               },
               resource_type: {
                 type: 'string',
@@ -216,8 +216,44 @@ async function main() {
 
       let bydbqlQueryResult: QueryGeneratorResult;
       try {
+        // Fetch groups from BanyanDB before generating query
+        let groups: string[] = [];
+        try {
+          const groupsList = await banyandbClient.listGroups();
+          groups = groupsList.map((g) => g.metadata?.name || '').filter((n) => n !== '');
+        } catch (error) {
+          log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
+        }
+
+        // Fetch resources from all groups before generating query
+        const resourcesByGroup: ResourcesByGroup = {};
+        for (const group of groups) {
+          try {
+            const [streams, measures, traces, properties, topNItems, indexRule] = await Promise.all([
+              banyandbClient.listStreams(group).catch(() => []),
+              banyandbClient.listMeasures(group).catch(() => []),
+              banyandbClient.listTraces(group).catch(() => []),
+              banyandbClient.listProperties(group).catch(() => []),
+              banyandbClient.listTopN(group).catch(() => []),
+              banyandbClient.listIndexRule(group).catch(() => []),
+            ]);
+
+            resourcesByGroup[group] = {
+              streams: streams.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              measures: measures.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
+              indexRule: indexRule.filter((r) => !r.noSort && r.metadata?.name).map((r) => r.metadata?.name || ''),
+            };
+          } catch (error) {
+            log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
+            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [], indexRule: [] };
+          }
+        }
+
         // Generate BydbQL query from natural language description
-        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {});
+        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {}, groups, resourcesByGroup);
       } catch (error) {
         if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('Timeout'))) {
           return {
@@ -241,7 +277,28 @@ async function main() {
       try {
         // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQueryResult.query);
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}\n\n=== Debug Information ===\nDescription: ${bydbqlQueryResult.description}\nResource Type: ${bydbqlQueryResult.resourceType}\nResource Name: ${bydbqlQueryResult.resourceName}\nGroup: ${bydbqlQueryResult.group}${bydbqlQueryResult.explanations ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}` : ''}\n`;
+        
+        // Build debug information section with only parameters that are present (excluding explanations)
+        const debugParts: string[] = [];
+        
+        if (bydbqlQueryResult.resourceType) {
+          debugParts.push(`Resource Type: ${bydbqlQueryResult.resourceType}`);
+        }
+        if (bydbqlQueryResult.resourceName) {
+          debugParts.push(`Resource Name: ${bydbqlQueryResult.resourceName}`);
+        }
+        if (bydbqlQueryResult.group) {
+          debugParts.push(`Group: ${bydbqlQueryResult.group}`);
+        }
+
+        const debugInfo = debugParts.length > 0 
+          ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}\n`
+          : '';
+        const explanations = bydbqlQueryResult.explanations
+          ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}\n`
+          : '';
+        
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}${explanations}`;
 
         return {
           content: [
