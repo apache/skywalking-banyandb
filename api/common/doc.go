@@ -15,6 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package common defines reusable objects for APIs.
-// revive:disable:var-naming
+//revive:disable:var-naming // "common" is a valid package name for shared API types
 package common
