@@ -41,17 +41,21 @@ export async function httpFetch({
     abortRequestsAndUpdate();
   }, Timeout);
 
+  // Only include body and Content-Type for requests that have a body
+  const hasBody = json !== null && json !== undefined && method !== "GET" && method !== "HEAD";
+  const requestHeaders: Record<string, string> = { ...headers };
+  if (hasBody) {
+    requestHeaders["Content-Type"] = "application/json";
+  }
+
   const response: Response = await fetch(url, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: JSON.stringify(json),
+    headers: requestHeaders,
+    body: hasBody ? JSON.stringify(json) : undefined,
     signal: globalAbortController.signal,
   })
     .catch((error) => {
-      throw new error;
+      throw error;
     })
     .finally(() => {
       clearTimeout(timeoutId);
