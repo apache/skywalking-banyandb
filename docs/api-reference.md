@@ -2302,6 +2302,7 @@ FieldSpec is the specification of field
 | field_type | [FieldType](#banyandb-database-v1-FieldType) |  | field_type denotes the type of field value |
 | encoding_method | [EncodingMethod](#banyandb-database-v1-EncodingMethod) |  | encoding_method indicates how to encode data during writing |
 | compression_method | [CompressionMethod](#banyandb-database-v1-CompressionMethod) |  | compression_method indicates how to compress data during writing |
+| stage_names | [string](#string) | repeated | stage_names defines which lifecycle stages this field is retained in. If empty, the field is retained in all stages. Each value must match the name of a LifecycleStage in the parent Group&#39;s ResourceOpts. |
 
 
 
@@ -2449,6 +2450,7 @@ Subject defines which stream or measure would generate indices
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | tags | [TagSpec](#banyandb-database-v1-TagSpec) | repeated | tags defines accepted tags |
+| stage_names | [string](#string) | repeated | stage_names defines which lifecycle stages this tag family is retained in. If empty, the tag family is retained in all stages. Each value must match the name of a LifecycleStage in the parent Group&#39;s ResourceOpts. |
 
 
 
@@ -2465,6 +2467,7 @@ Subject defines which stream or measure would generate indices
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | type | [TagType](#banyandb-database-v1-TagType) |  |  |
+| stage_names | [string](#string) | repeated | stage_names defines which lifecycle stages this tag is retained in. Semantics with TagFamilySpec.stage_names: - If TagFamilySpec.stage_names is empty and TagSpec.stage_names is empty, the tag is retained in all stages. - If TagFamilySpec.stage_names is non-empty and TagSpec.stage_names is empty, the tag is retained in all stages listed in TagFamilySpec.stage_names. - If TagSpec.stage_names is non-empty, the tag is retained only in the intersection of TagFamilySpec.stage_names (or all stages if that is empty) and TagSpec.stage_names. - Implementations SHOULD validate that TagSpec.stage_names does not contain stages outside TagFamilySpec.stage_names when the latter is non-empty and reject such schemas as invalid. Each value must match the name of a LifecycleStage in the parent Group&#39;s ResourceOpts. |
 
 
 
@@ -2527,6 +2530,7 @@ TraceTagSpec defines the specification of a tag in a trace.
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  | name is the name of the tag. |
 | type | [TagType](#banyandb-database-v1-TagType) |  | type is the type of the tag. |
+| stage_names | [string](#string) | repeated | stage_names defines which lifecycle stages this trace tag is retained in. If empty, the trace tag is retained in all stages. Each value must match the name of a LifecycleStage in the parent Group&#39;s ResourceOpts. |
 
 
 
