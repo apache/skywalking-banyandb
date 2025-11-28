@@ -54,10 +54,9 @@ export async function httpFetch({
     headers: requestHeaders,
     body: hasBody ? JSON.stringify(json) : undefined,
     signal: globalAbortController.signal,
-  })
-    .finally(() => {
-      clearTimeout(timeoutId);
-    });
+  }).finally(() => {
+    clearTimeout(timeoutId);
+  });
   if (response.ok) {
     return response.json();
   } else {
