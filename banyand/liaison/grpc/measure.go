@@ -276,7 +276,7 @@ func (ms *measureService) navigateByTagSpec(
 	}
 	specFamilyMap, specTagMaps := ms.buildSpecMaps(spec)
 
-	entityValues, err := ms.findTagValuesByNames(
+	entityValues := ms.findTagValuesByNames(
 		metadata.Name,
 		measure.GetTagFamilies(),
 		tagFamilies,
@@ -284,9 +284,6 @@ func (ms *measureService) navigateByTagSpec(
 		specFamilyMap,
 		specTagMaps,
 	)
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
 	entity, err := entityValues.ToEntity()
 	if err != nil {
 		return nil, common.ShardID(0), err
@@ -294,7 +291,7 @@ func (ms *measureService) navigateByTagSpec(
 
 	shardingKey := measure.GetShardingKey()
 	if shardingKey != nil && len(shardingKey.GetTagNames()) > 0 {
-		shardingKeyValues, err := ms.findTagValuesByNames(
+		shardingKeyValues := ms.findTagValuesByNames(
 			metadata.Name,
 			measure.GetTagFamilies(),
 			tagFamilies,
@@ -302,16 +299,13 @@ func (ms *measureService) navigateByTagSpec(
 			specFamilyMap,
 			specTagMaps,
 		)
-		if err != nil {
-			return nil, common.ShardID(0), err
+		shardingEntity, shardingErr := shardingKeyValues.ToEntity()
+		if shardingErr != nil {
+			return nil, common.ShardID(0), shardingErr
 		}
-		shardingEntity, err := shardingKeyValues.ToEntity()
-		if err != nil {
-			return nil, common.ShardID(0), err
-		}
-		shardID, err := partition.ShardID(shardingEntity.Marshal(), shardNum)
-		if err != nil {
-			return nil, common.ShardID(0), err
+		shardID, shardingErr := partition.ShardID(shardingEntity.Marshal(), shardNum)
+		if shardingErr != nil {
+			return nil, common.ShardID(0), shardingErr
 		}
 		return entityValues, common.ShardID(shardID), nil
 	}
@@ -344,7 +338,7 @@ func (ms *measureService) findTagValuesByNames(
 	tagNames []string,
 	specFamilyMap map[string]int,
 	specTagMaps map[string]map[string]int,
-) (pbv1.EntityValues, error) {
+) pbv1.EntityValues {
 	entityValues := make(pbv1.EntityValues, len(tagNames)+1)
 	entityValues[0] = pbv1.EntityStrValue(subject)
 	for i, tagName := range tagNames {
@@ -355,7 +349,7 @@ func (ms *measureService) findTagValuesByNames(
 			entityValues[i+1] = tagValue
 		}
 	}
-	return entityValues, nil
+	return entityValues
 }
 
 func (ms *measureService) findTagValueByName(
