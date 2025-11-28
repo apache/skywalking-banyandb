@@ -54,9 +54,6 @@ export async function httpFetch({
     body: hasBody ? JSON.stringify(json) : undefined,
     signal: globalAbortController.signal,
   })
-    .catch((error) => {
-      throw error;
-    })
     .finally(() => {
       clearTimeout(timeoutId);
     });
