@@ -515,9 +515,9 @@ var _ = Describe("Property Cluster Operation", func() {
 			Groups: []string{propertyGroup},
 		}, "_group", "_entity_id")
 		Expect(err).NotTo(HaveOccurred())
-		node1Search, err := store1.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+		node1Search, err := store1.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query.Query, 10)
 		Expect(err).NotTo(HaveOccurred())
-		node2Search, err := store2.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+		node2Search, err := store2.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query.Query, 10)
 		Expect(err).NotTo(HaveOccurred())
 
 		totalProperties := append(node1Search, node2Search...)
@@ -889,7 +889,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 					allNodesConsistent = false
 					continue
 				}
-				searchResult, err := store.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+				searchResult, err := store.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query.Query, 10)
 				if err != nil {
 					GinkgoWriter.Printf("Node %d search error: %v\n", i, err)
 					allNodesConsistent = false

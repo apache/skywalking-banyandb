@@ -18,6 +18,7 @@
 package property
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -153,7 +154,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		}
 		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(t.Key))}, tv)
 		tagField.Index = true
-		tagField.NoSort = true
+		tagField.NoSort = false
 		doc.Fields = append(doc.Fields, tagField)
 	}
 
@@ -308,11 +309,18 @@ func (s *shard) search(ctx context.Context, q *inverted.PropertyQuery, limit int
 		if val.Values[deleteField] != nil {
 			deleteTime = convert.BytesToInt64(val.Values[deleteField])
 		}
+
+		var sortedValue []byte
+		if len(val.SortedValue) > 0 {
+			sortedValue = bytes.Clone(val.SortedValue)
+		}
+
 		data = append(data, &queryProperty{
-			id:         val.EntityValues,
-			timestamp:  val.Timestamp,
-			source:     val.Values[sourceField],
-			deleteTime: deleteTime,
+			id:          val.EntityValues,
+			timestamp:   val.Timestamp,
+			source:      val.Values[sourceField],
+			sortedValue: sortedValue,
+			deleteTime:  deleteTime,
 		})
 	}
 	return data, nil

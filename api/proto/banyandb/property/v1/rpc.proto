@@ -135,6 +135,9 @@ message InternalQueryResponse {
   // it's mapping to the sources in the same order
   // if the value is 0, it means the property is not deleted
   repeated int64 deletes = 3;
+  // sorted_values contains pre-extracted sort values from shard searches,
+  // mapping to sources in the same order for optimized sorting at liaison layer
+  repeated bytes sorted_values = 4;
 }
 
 message InternalRepairRequest {

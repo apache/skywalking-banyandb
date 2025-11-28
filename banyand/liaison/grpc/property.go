@@ -461,7 +461,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if len(res) == 0 {
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
-	properties := make([]*propertyv1.Property, 0, len(res))
+	properties := make([]*propertyWithMetadata, 0, len(res))
 	for entity, p := range res {
 		if err := ps.repairPropertyIfNeed(entity, p, groups); err != nil {
 			ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
@@ -483,12 +483,12 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 			p.Tags = tags
 		}
-		properties = append(properties, p.Property)
+		properties = append(properties, p.propertyWithMetadata)
 	}
 
 	// Sort if order_by is specified
 	if req.OrderBy != nil && req.OrderBy.TagName != "" {
-		properties = sortProperties(properties, req.OrderBy)
+		properties = sortPropertiesWithSortedValues(properties, req.OrderBy)
 	}
 
 	// Apply limit after sorting
@@ -496,7 +496,11 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		properties = properties[:req.Limit]
 	}
 
-	return &propertyv1.QueryResponse{Properties: properties, Trace: trace}, nil
+	result := make([]*propertyv1.Property, 0, len(properties))
+	for _, property := range properties {
+		result = append(result, property.Property)
+	}
+	return &propertyv1.QueryResponse{Properties: result, Trace: trace}, nil
 }
 
 func (ps *propertyServer) repairPropertyIfNeed(entity string, p *propertyWithCount, groups map[string]*commonv1.Group) error {
@@ -586,15 +590,22 @@ func (ps *propertyServer) queryProperties(
 				for i, s := range v.Sources {
 					var p propertyv1.Property
 					var deleteTime int64
-					err = protojson.Unmarshal(s, &p)
-					if err != nil {
-						return nil, groups, trace, err
+					unmarshalErr := protojson.Unmarshal(s, &p)
+					if unmarshalErr != nil {
+						return nil, groups, trace, unmarshalErr
 					}
 					if i < len(v.Deletes) {
 						deleteTime = v.Deletes[i]
 					}
+
+					var sortedValue []byte
+					if i < len(v.SortedValues) {
+						sortedValue = v.SortedValues[i]
+					}
+
 					property := &propertyWithMetadata{
 						Property:    &p,
+						sortedValue: sortedValue,
 						deletedTime: deleteTime,
 					}
 					nodeWithProperties = append(nodeWithProperties, property)
@@ -639,6 +650,7 @@ func (ps *propertyServer) startRepairQueue(stop chan struct{}) {
 
 type propertyWithMetadata struct {
 	*propertyv1.Property
+	sortedValue []byte
 	deletedTime int64
 }
 
@@ -773,29 +785,31 @@ type repairInProcessKey struct {
 	modTime int64
 }
 
-// sortProperties sorts properties based on the specified order_by field.
-func sortProperties(properties []*propertyv1.Property, orderBy *propertyv1.QueryOrder) []*propertyv1.Property {
-	if len(properties) == 0 || orderBy == nil || orderBy.TagName == "" {
+// sortPropertiesWithSortedValues sorts properties using pre-extracted sortedValue bytes.
+func sortPropertiesWithSortedValues(
+	properties []*propertyWithMetadata,
+	orderBy *propertyv1.QueryOrder,
+) []*propertyWithMetadata {
+	if len(properties) == 0 || orderBy == nil {
 		return properties
 	}
 
 	isDesc := orderBy.Sort == modelv1.Sort_SORT_DESC
 
 	sort.Slice(properties, func(i, j int) bool {
-		// Extract tag values
-		valI := getPropertyTagValue(properties[i], orderBy.TagName)
-		valJ := getPropertyTagValue(properties[j], orderBy.TagName)
+		sortedValueI := properties[i].sortedValue
+		sortedValueJ := properties[j].sortedValue
 
-		// Handle nil values - put them at the end
-		if valI == nil {
+		// nil values are always sorted last
+		if len(sortedValueI) == 0 {
 			return false
 		}
-		if valJ == nil {
+		if len(sortedValueJ) == 0 {
 			return true
 		}
 
-		// Compare values
-		cmp := comparePropertyTagValues(valI, valJ)
+		// Direct byte comparison
+		cmp := bytes.Compare(sortedValueI, sortedValueJ)
 
 		if isDesc {
 			return cmp > 0
@@ -804,83 +818,4 @@ func sortProperties(properties []*propertyv1.Property, orderBy *propertyv1.Query
 	})
 
 	return properties
-}
-
-// getPropertyTagValue retrieves a tag value by name from a property.
-func getPropertyTagValue(prop *propertyv1.Property, tagName string) *modelv1.TagValue {
-	for _, tag := range prop.Tags {
-		if tag.Key == tagName {
-			return tag.Value
-		}
-	}
-	return nil
-}
-
-// comparePropertyTagValues compares two tag values.
-// Returns: -1 if a < b, 0 if a == b, 1 if a > b.
-func comparePropertyTagValues(a, b *modelv1.TagValue) int {
-	// String values
-	if a.GetStr() != nil && b.GetStr() != nil {
-		return bytes.Compare([]byte(a.GetStr().Value), []byte(b.GetStr().Value))
-	}
-
-	// Integer values
-	if a.GetInt() != nil && b.GetInt() != nil {
-		aVal := a.GetInt().Value
-		bVal := b.GetInt().Value
-		if aVal < bVal {
-			return -1
-		} else if aVal > bVal {
-			return 1
-		}
-		return 0
-	}
-
-	// String array values
-	if a.GetStrArray() != nil && b.GetStrArray() != nil {
-		aArr := a.GetStrArray().Value
-		bArr := b.GetStrArray().Value
-		minLen := len(aArr)
-		if len(bArr) < minLen {
-			minLen = len(bArr)
-		}
-		for i := 0; i < minLen; i++ {
-			cmp := bytes.Compare([]byte(aArr[i]), []byte(bArr[i]))
-			if cmp != 0 {
-				return cmp
-			}
-		}
-		if len(aArr) < len(bArr) {
-			return -1
-		} else if len(aArr) > len(bArr) {
-			return 1
-		}
-		return 0
-	}
-
-	// Integer array values
-	if a.GetIntArray() != nil && b.GetIntArray() != nil {
-		aArr := a.GetIntArray().Value
-		bArr := b.GetIntArray().Value
-		minLen := len(aArr)
-		if len(bArr) < minLen {
-			minLen = len(bArr)
-		}
-		for i := 0; i < minLen; i++ {
-			if aArr[i] < bArr[i] {
-				return -1
-			} else if aArr[i] > bArr[i] {
-				return 1
-			}
-		}
-		if len(aArr) < len(bArr) {
-			return -1
-		} else if len(aArr) > len(bArr) {
-			return 1
-		}
-		return 0
-	}
-
-	// For other types or mixed types, use 0 as fallback
-	return 0
 }
