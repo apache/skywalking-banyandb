@@ -280,7 +280,7 @@ export class BanyanDBClient {
   /**
    * List streams in a group.
    */
-  async listStreams(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listStreams(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/stream/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -309,7 +309,7 @@ export class BanyanDBClient {
   /**
    * List measures in a group.
    */
-  async listMeasures(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listMeasures(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/measure/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -338,7 +338,7 @@ export class BanyanDBClient {
   /**
    * List traces in a group.
    */
-  async listTraces(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listTraces(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/trace/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -367,7 +367,7 @@ export class BanyanDBClient {
   /**
    * List properties in a group.
    */
-  async listProperties(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listProperties(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/property/schema/lists/${encodeURIComponent(group)}`;
 
     try {
