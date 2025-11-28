@@ -21,6 +21,7 @@ import OpenAI from 'openai';
 import { generateQueryPrompt } from './llm-prompt.js';
 import { PatternMatcher } from './pattern-matcher.js';
 import type { QueryGeneratorResult, ResourcesByGroup } from './types.js';
+import { log } from '../utils/logger.js';
 
 /**
  * QueryGenerator converts natural language descriptions to BydbQL queries.
@@ -137,7 +138,7 @@ export class QueryGenerator {
     try {
       parsedResponse = JSON.parse(responseContent);
     } catch (error) {
-      console.error('JSON parsing failed:', error);
+      log.error('JSON parsing failed:', error);
       // Fallback: try to extract query from plain text if JSON parsing fails
       const cleanedQuery = responseContent
         .replace(/^```(?:bydbql|sql|json)?\n?/i, '')

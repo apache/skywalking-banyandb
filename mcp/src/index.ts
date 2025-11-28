@@ -244,7 +244,7 @@ async function main() {
               traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
               topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              indexRule: indexRule.filter((r) => !r.noSort && r.metadata?.name).map((r) => r.metadata?.name || '')
+              indexRule: indexRule.filter((r) => !r.noSort && r.metadata?.name).map((r) => r.metadata?.name || ''),
             };
           } catch (error) {
             log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));

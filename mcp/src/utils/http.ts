@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import { log } from './logger.js';
 
 const Timeout = 2 * 60 * 1000;
 
@@ -63,7 +64,7 @@ export async function httpFetch({
   if (response.ok) {
     return response.json();
   } else {
-    console.error(response);
+    log.error('HTTP fetch failed:', response);
     return {
       errors: response,
     };
