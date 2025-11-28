@@ -86,7 +86,7 @@ You can also use Docker Compose to run both BanyanDB and the MCP server together
 ```yaml
 services:
   banyandb:
-    image: ghcr.io/apache/skywalking-banyandb:{COMMIT_ID}
+    image: ghcr.io/apache/skywalking-banyandb:{COMMIT_ID} # apache/skywalking-banyandb:{COMMIT_ID}
     container_name: banyandb
     command: standalone
     ports:
@@ -96,7 +96,7 @@ services:
       - ./banyandb-data:/data
 
   mcp:
-    image: ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
+    image: ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID} # apache/skywalking-banyandb-mcp:{COMMIT_ID}
     container_name: banyandb-mcp
     environment:
       - BANYANDB_ADDRESS=banyandb:17900

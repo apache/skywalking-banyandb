@@ -126,7 +126,7 @@ Resource Name: service_cpm_minute
 Group: metricsMinute
 
 === Explanations ===
-This query selects all data from the resource 'service_cpm_minute' of type MEASURE in the group 'metricsMinute' for the last day, as specified in the description.
+This query selects all data from the resource 'service_cpm_minute' of type MEASURE in the group 'metricsMinute' for the last 30 minutes, as specified in the description.
 ```
 
 ### Example 2: Querying a Stream
@@ -310,6 +310,51 @@ Group: metricsMinute
 === Explanations ===
 This query fetches the top 3 maximum values of the measure 'endpoint_2xx' from the group 'metricsMinute' over the last 30 minutes. The values were explicitly provided for resource name, group name, and aggregate function, while the time condition is derived from the description.
 ```
+
+## Resource Lookup Behavior
+
+The MCP server uses intelligent resource lookup when generating queries from natural language descriptions. Understanding this behavior helps you write more effective queries.
+
+### Resource Name Lookup Across Groups
+
+When the same resource name exists in multiple groups, the LLM will use the **first group it can look up** from the available resource mappings. The lookup process follows this order:
+
+1. **Exact Match**: The LLM first attempts to find an exact match for the resource name
+2. **First Available Group**: If the resource name appears in multiple groups, the LLM will use the first group it encounters during lookup
+3. **Similarity Matching**: If an exact match cannot be found, the LLM will match the most similar resource name from the available resources
+
+### Example Scenarios
+
+**Scenario 1: Same Resource Name in Multiple Groups**
+
+If you have a resource named `service_cpm` in both `metricsMinute` and `metricsHour` groups:
+
+```
+Description: "list service_cpm from last hour"
+```
+
+The LLM will use the first group it finds in the resource mapping. To ensure a specific group is used, explicitly mention it:
+
+```
+Description: "list service_cpm_minute in metricsHour from last hour"
+```
+
+**Scenario 2: Similarity Matching**
+
+If you request a resource that doesn't exist exactly, the LLM will find the most similar match:
+
+```
+Description: "list service_cpm from last hour"
+Available resources: service_cpm_minute, service_cpm_hour
+```
+
+The LLM will match `service_cpm_minute` or `service_cpm_hour` based on similarity, preferring the closest match.
+
+### Best Practices
+
+- **Be Explicit**: When you know the exact group name, include it in your description (e.g., "in metricsMinute")
+- **Use Specific Names**: Use the exact resource names from your BanyanDB schema when possible
+- **Check Available Resources**: Use the `list_resources_bydbql` tool to see available resources and their groups before querying
 
 ## Troubleshooting
 
