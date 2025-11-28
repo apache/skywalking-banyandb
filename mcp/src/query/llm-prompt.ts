@@ -216,10 +216,10 @@ Processing Rules:
 
 JSON Response:
 - "bydbql": ALWAYS REQUIRED
-- "type": Include if explicitly provided or needed for clarity. ${typeof args.resource_type === 'string' && args.resource_type ? `MUST be "${args.resource_type.toUpperCase()}"` : 'Extract from description'}
-- "name": Include if explicitly provided or needed for clarity. ${typeof args.resource_name === 'string' && args.resource_name ? `MUST be "${args.resource_name}"` : 'Extract from description'}
-- "group": Include if explicitly provided or needed for clarity. ${typeof args.group === 'string' && args.group ? `MUST be "${args.group}"` : 'Extract from description'}
-- "explanations": Include ONLY if description indicates explanations are needed
+- "type": Include ONLY if description indicates debug information are needed. ${typeof args.resource_type === 'string' && args.resource_type ? `MUST be "${args.resource_type.toUpperCase()}"` : 'Extract from description'}
+- "name": Include ONLY if description indicates debug information are needed. ${typeof args.resource_name === 'string' && args.resource_name ? `MUST be "${args.resource_name}"` : 'Extract from description'}
+- "group": Include ONLY if description indicates debug information are needed. ${typeof args.group === 'string' && args.group ? `MUST be "${args.group}"` : 'Extract from description'}
+- "explanations": Include ONLY if description indicates explanations are needed, if not, this parameter will not be returned.
 
 Example:
 {
@@ -231,4 +231,3 @@ Example:
 
 Return ONLY the JSON object, no markdown formatting or additional text.`;
 }
-

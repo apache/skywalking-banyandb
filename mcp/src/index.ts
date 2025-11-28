@@ -279,22 +279,27 @@ async function main() {
         const result = await banyandbClient.query(bydbqlQueryResult.query);
         
         // Build debug information section with only parameters that are present
-        let debugInfo = `=== Debug Information ===\nDescription: ${bydbqlQueryResult.description}`;
+        const debugParts: string[] = [];
         
         if (bydbqlQueryResult.resourceType) {
-          debugInfo += `\nResource Type: ${bydbqlQueryResult.resourceType}`;
+          debugParts.push(`Resource Type: ${bydbqlQueryResult.resourceType}`);
         }
         if (bydbqlQueryResult.resourceName) {
-          debugInfo += `\nResource Name: ${bydbqlQueryResult.resourceName}`;
+          debugParts.push(`Resource Name: ${bydbqlQueryResult.resourceName}`);
         }
         if (bydbqlQueryResult.group) {
-          debugInfo += `\nGroup: ${bydbqlQueryResult.group}`;
+          debugParts.push(`Group: ${bydbqlQueryResult.group}`);
         }
         if (bydbqlQueryResult.explanations) {
-          debugInfo += `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}`;
+          debugParts.push(`\n=== Explanations ===\n${bydbqlQueryResult.explanations}`);
         }
         
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}\n\n${debugInfo}\n`;
+        // Only include debug section if there are parameters to show
+        const debugInfo = debugParts.length > 0 
+          ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}\n`
+          : '';
+        
+        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}`;
 
         return {
           content: [
