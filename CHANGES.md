@@ -8,6 +8,7 @@ Release Notes.
 
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement BanyanDB MCP.
+- Support deleting non-entity tags when updating the schema.
 
 ### Bug Fixes
 
