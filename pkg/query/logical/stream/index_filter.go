@@ -49,6 +49,11 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if parsedEntity != nil {
 			return nil, parsedEntity, nil
 		}
+		if _, isEntity := entityDict[cond.Name]; !isEntity {
+			if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
+				return nil, nil, errors.WithMessagef(logical.ErrTagNotFound, "tag %q does not exist in the current schema", cond.Name)
+			}
+		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
 			return parseConditionToFilter(cond, indexRule, expr, entity, schema)
 		}

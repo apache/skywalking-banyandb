@@ -94,22 +94,45 @@ func validateEqualExceptAppendTags(prevStream, newStream *databasev1.Stream) err
 	if prevStream.GetEntity().String() != newStream.GetEntity().String() {
 		return fmt.Errorf("entity is different: %s != %s", prevStream.GetEntity().String(), newStream.GetEntity().String())
 	}
-	if len(prevStream.GetTagFamilies()) > len(newStream.GetTagFamilies()) {
-		return fmt.Errorf("number of tag families is less in the new stream")
+
+	entityTagSet := make(map[string]struct{})
+	for _, tagName := range newStream.GetEntity().GetTagNames() {
+		entityTagSet[tagName] = struct{}{}
 	}
-	for i, tagFamily := range prevStream.GetTagFamilies() {
-		if tagFamily.Name != newStream.GetTagFamilies()[i].Name {
-			return fmt.Errorf("tag family name is different: %s != %s", tagFamily.Name, newStream.GetTagFamilies()[i].Name)
+	newTagFamilyMap := make(map[string]map[string]*databasev1.TagSpec)
+	for _, tf := range newStream.GetTagFamilies() {
+		tagMap := make(map[string]*databasev1.TagSpec)
+		for _, tag := range tf.GetTags() {
+			tagMap[tag.GetName()] = tag
 		}
-		if len(tagFamily.Tags) > len(newStream.GetTagFamilies()[i].Tags) {
-			return fmt.Errorf("number of tags in tag family %s is less in the new stream", tagFamily.Name)
+		newTagFamilyMap[tf.GetName()] = tagMap
+	}
+
+	for _, prevTagFamily := range prevStream.GetTagFamilies() {
+		newTagMap, familyExists := newTagFamilyMap[prevTagFamily.GetName()]
+		if !familyExists {
+			for _, tag := range prevTagFamily.GetTags() {
+				if _, isEntity := entityTagSet[tag.GetName()]; isEntity {
+					return fmt.Errorf("cannot delete tag family %s: it contains entity tag %s", prevTagFamily.GetName(), tag.GetName())
+				}
+			}
+			continue
 		}
-		for j, tag := range tagFamily.Tags {
-			if tag.String() != newStream.GetTagFamilies()[i].Tags[j].String() {
-				return fmt.Errorf("tag %s in tag family %s is different: %s != %s", tag.Name, tagFamily.Name, tag.String(), newStream.GetTagFamilies()[i].Tags[j].String())
+		for _, prevTag := range prevTagFamily.GetTags() {
+			newTag, tagExists := newTagMap[prevTag.GetName()]
+			if !tagExists {
+				if _, isEntity := entityTagSet[prevTag.GetName()]; isEntity {
+					return fmt.Errorf("cannot delete entity tag %s in tag family %s", prevTag.GetName(), prevTagFamily.GetName())
+				}
+				continue
+			}
+			if prevTag.String() != newTag.String() {
+				return fmt.Errorf("tag %s in tag family %s is different: %s != %s",
+					prevTag.GetName(), prevTagFamily.GetName(), prevTag.String(), newTag.String())
 			}
 		}
 	}
+
 	return nil
 }
 
