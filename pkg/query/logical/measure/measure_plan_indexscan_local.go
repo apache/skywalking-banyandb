@@ -53,16 +53,24 @@ type unresolvedIndexScan struct {
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	projTags := make([]model.TagProjection, len(uis.projectionTags))
+	projectedTagNames := make(map[string]struct{})
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
 				projTags[i].Family = tag.GetFamilyName()
 				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
+				projectedTagNames[tag.GetTagName()] = struct{}{}
 			}
 		}
+	}
+	tagRefInput := make([][]*logical.Tag, 0, len(uis.projectionTags))
+	tagRefInput = append(tagRefInput, uis.projectionTags...)
+
+	// Create tag refs for projection tags before any early returns
+	if len(tagRefInput) > 0 {
 		var err error
-		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
+		projTagsRefs, err = s.CreateTagRef(tagRefInput...)
 		if err != nil {
 			return nil, err
 		}
@@ -111,6 +119,16 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		entityMap[e] = idx
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
+	}
+	extraTags := collectHiddenCriteriaTags(uis.criteria, projectedTagNames, entityMap, s)
+	if len(extraTags) > 0 {
+		tagRefInput = append(tagRefInput, extraTags...)
+		// Recreate tag refs with both projection tags and hidden criteria tags
+		var err error
+		projTagsRefs, err = s.CreateTagRef(tagRefInput...)
+		if err != nil {
+			return nil, err
+		}
 	}
 	query, entities, _, err := inverted.BuildQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
@@ -210,10 +228,16 @@ func (i *localIndexScan) Children() []logical.Plan {
 }
 
 func (i *localIndexScan) Schema() logical.Schema {
-	if len(i.projectionTagsRefs) == 0 {
-		return i.schema
+	schema := i.schema
+	if len(i.projectionTagsRefs) > 0 {
+		if projected := schema.ProjTags(i.projectionTagsRefs...); projected != nil {
+			schema = projected
+		}
 	}
-	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
+	if len(i.projectionFieldsRefs) > 0 {
+		schema = schema.ProjFields(i.projectionFieldsRefs...)
+	}
+	return schema
 }
 
 func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projectionTags [][]*logical.Tag,
@@ -326,4 +350,55 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 		}
 		span.Stop()
 	}
+}
+
+func collectHiddenCriteriaTags(criteria *modelv1.Criteria, projected map[string]struct{}, entities map[string]int, s logical.Schema) [][]*logical.Tag {
+	if criteria == nil {
+		return nil
+	}
+	tagNames := make(map[string]struct{})
+	logical.CollectCriteriaTagNames(criteria, tagNames)
+
+	// Group tags by family
+	familyTags := make(map[string][]*logical.Tag)
+	var familyOrder []string
+
+	ms := s.(*schema)
+	tagFamilies := ms.measure.GetTagFamilies()
+
+	for tagName := range tagNames {
+		if _, ok := projected[tagName]; ok {
+			continue
+		}
+		if _, isEntity := entities[tagName]; isEntity {
+			continue
+		}
+		tagSpec := s.FindTagSpecByName(tagName)
+		if tagSpec == nil {
+			continue
+		}
+
+		// Get the actual family name from the schema
+		if tagSpec.TagFamilyIdx < 0 || tagSpec.TagFamilyIdx >= len(tagFamilies) {
+			continue
+		}
+		familyName := tagFamilies[tagSpec.TagFamilyIdx].GetName()
+
+		// Group tags by family
+		if _, exists := familyTags[familyName]; !exists {
+			familyOrder = append(familyOrder, familyName)
+			familyTags[familyName] = make([]*logical.Tag, 0)
+		}
+		familyTags[familyName] = append(familyTags[familyName], logical.NewTag(familyName, tagName))
+	}
+
+	// Convert to [][]*logical.Tag maintaining family grouping
+	if len(familyOrder) == 0 {
+		return nil
+	}
+	extras := make([][]*logical.Tag, 0, len(familyOrder))
+	for _, family := range familyOrder {
+		extras = append(extras, familyTags[family])
+	}
+	return extras
 }
