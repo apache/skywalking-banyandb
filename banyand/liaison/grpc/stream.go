@@ -100,7 +100,7 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (t
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+			tagValues, shardID, err = s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
 				return
 			}
@@ -111,7 +111,7 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (t
 			}
 		}
 	}
-	return s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+	return s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 }
 
 func (s *streamService) publishMessages(

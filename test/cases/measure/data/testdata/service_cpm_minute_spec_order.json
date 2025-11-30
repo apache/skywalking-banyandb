@@ -1,0 +1,33 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "entity_spec_2"
+            }
+          },
+          {
+            "str": {
+              "value": "id_spec_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 200
+        }
+      },
+      {
+        "int": {
+          "value": 20
+        }
+      }
+    ]
+  }
+]
+

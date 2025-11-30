@@ -85,4 +85,6 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("query by id in index mode", helpers.Args{Input: "index_mode_by_id", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("multi groups: unchanged", helpers.Args{Input: "multi_group_unchanged", Duration: 35 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("multi groups: new tag and fields", helpers.Args{Input: "multi_group_new_tag_field", Duration: 35 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("write spec", helpers.Args{Input: "write_spec", Duration: 15 * time.Minute, Offset: 15 * time.Minute}),
+	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 15 * time.Minute, Offset: 25 * time.Minute, DisOrder: true}),
 )
