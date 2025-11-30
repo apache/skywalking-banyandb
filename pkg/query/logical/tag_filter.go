@@ -90,6 +90,11 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
+		if schema != nil {
+			if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
+				return nil, errors.WithMessagef(ErrTagNotFound, "tag %q does not exist in the current schema", cond.Name)
+			}
+		}
 		var expr ComparableExpr
 		var err error
 		_, indexRule := indexChecker.IndexRuleDefined(cond.Name)
@@ -137,11 +142,6 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 }
 
 func parseFilter(cond *modelv1.Condition, expr ComparableExpr, schema Schema, indexChecker IndexChecker) (TagFilter, error) {
-	if schema != nil {
-		if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
-			return nil, errors.WithMessagef(ErrTagNotFound, "tag %q does not exist in the current schema", cond.Name)
-		}
-	}
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
 		return newRangeTag(cond.Name, rangeOpts{

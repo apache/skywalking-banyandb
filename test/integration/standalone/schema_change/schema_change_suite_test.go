@@ -132,7 +132,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 	})
 
 	Context("Stream schema with deleted tag", func() {
-		It("should query data across schema change when a tag is deleted", func() {
+		It("querying data should succeed after a tag is deleted", func() {
 			ctx := context.Background()
 			streamName := "schema_change_deleted_tag"
 			streamClient := databasev1.NewStreamRegistryServiceClient(connection)
@@ -234,7 +234,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 	})
 
 	Context("Stream schema with added tag", func() {
-		It("should query data across schema change when a new tag is added", func() {
+		It("querying data should succeed after a new tag is added", func() {
 			ctx := context.Background()
 			streamName := "schema_change_added_tag"
 			streamClient := databasev1.NewStreamRegistryServiceClient(connection)
@@ -307,7 +307,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 					},
 				})
 				innerGm.Expect(queryErr).NotTo(HaveOccurred())
-				innerGm.Expect(queryResp.Elements).To(HaveLen(8)) // 5 old + 3 new
+				innerGm.Expect(queryResp.Elements).To(HaveLen(8))
 
 				oldDataCount := 0
 				newDataCount := 0
@@ -341,7 +341,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 	})
 
 	Context("Stream schema with filter on deleted tag", func() {
-		It("should filter data correctly after tag is deleted", func() {
+		It("querying data should fail if the condition includes a deleted tag", func() {
 			ctx := context.Background()
 			streamName := "schema_change_filter_deleted"
 			streamClient := databasev1.NewStreamRegistryServiceClient(connection)
@@ -430,11 +430,8 @@ var _ = Describe("Schema Change in Same Group", func() {
 						},
 					},
 				})
-				if queryErr != nil {
-					return
-				}
-				innerGm.Expect(queryResp.Elements).To(BeEmpty(),
-					"filtering by deleted tag should return no results")
+				innerGm.Expect(queryResp).To(BeNil())
+				innerGm.Expect(queryErr).To(HaveOccurred())
 			}, flags.EventuallyTimeout).Should(Succeed())
 
 			_, err = streamClient.Delete(ctx, &databasev1.StreamRegistryServiceDeleteRequest{

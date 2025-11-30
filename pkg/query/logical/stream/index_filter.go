@@ -42,6 +42,11 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
+		if schema != nil {
+			if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
+				return nil, nil, errors.WithMessagef(logical.ErrTagNotFound, "tag %q does not exist in the current schema", cond.Name)
+			}
+		}
 		expr, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 		if err != nil {
 			return nil, nil, err
@@ -49,13 +54,10 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if parsedEntity != nil {
 			return nil, parsedEntity, nil
 		}
-		if _, isEntity := entityDict[cond.Name]; !isEntity {
-			if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
-				return nil, nil, errors.WithMessagef(logical.ErrTagNotFound, "tag %q does not exist in the current schema", cond.Name)
+		if schema != nil {
+			if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
+				return parseConditionToFilter(cond, indexRule, expr, entity, schema)
 			}
-		}
-		if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
-			return parseConditionToFilter(cond, indexRule, expr, entity, schema)
 		}
 		return ENode, [][]*modelv1.TagValue{entity}, nil
 	case *modelv1.Criteria_Le:

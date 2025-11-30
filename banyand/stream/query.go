@@ -116,7 +116,6 @@ func (s *stream) filterTagProjection(tagProjection []model.TagProjection) []mode
 	for _, tp := range tagProjection {
 		schemaTags, familyExists := schemaTagFamilies[tp.Family]
 		if !familyExists {
-			// Tag family doesn't exist in schema, skip it
 			continue
 		}
 
