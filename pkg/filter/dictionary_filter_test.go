@@ -19,6 +19,7 @@ package filter
 
 import (
 	stdbytes "bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,4 +130,188 @@ func TestDictionaryFilterStrArr(t *testing.T) {
 	for i := 3; i < 5; i++ {
 		assert.False(df.MightContain(items[i]))
 	}
+}
+
+// generateDictionaryValues creates test data with n unique values.
+func generateDictionaryValues(n int) [][]byte {
+	values := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		values[i] = []byte(fmt.Sprintf("value_%d", i))
+	}
+	return values
+}
+
+// BenchmarkDictionaryFilterMightContain_Small benchmarks with 16 values (small dictionary).
+func BenchmarkDictionaryFilterMightContain_Small(b *testing.B) {
+	values := generateDictionaryValues(16)
+	df := NewDictionaryFilter(values)
+
+	// Test item that exists (middle of list)
+	existingItem := values[8]
+	// Test item that doesn't exist
+	nonExistingItem := []byte("not_found")
+
+	b.Run("Existing", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(existingItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(nonExistingItem)
+		}
+	})
+}
+
+// BenchmarkDictionaryFilterMightContain_Medium benchmarks with 128 values.
+func BenchmarkDictionaryFilterMightContain_Medium(b *testing.B) {
+	values := generateDictionaryValues(128)
+	df := NewDictionaryFilter(values)
+
+	// Test item that exists (middle of list)
+	existingItem := values[64]
+	// Test item that doesn't exist
+	nonExistingItem := []byte("not_found")
+
+	b.Run("Existing", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(existingItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(nonExistingItem)
+		}
+	})
+}
+
+// BenchmarkDictionaryFilterMightContain_Max benchmarks with 256 values (max dictionary size).
+func BenchmarkDictionaryFilterMightContain_Max(b *testing.B) {
+	values := generateDictionaryValues(256)
+	df := NewDictionaryFilter(values)
+
+	// Test item at the end (worst case for linear search)
+	lastItem := values[255]
+	// Test item that doesn't exist
+	nonExistingItem := []byte("not_found")
+
+	b.Run("ExistingLast", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(lastItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(nonExistingItem)
+		}
+	})
+}
+
+// BenchmarkDictionaryFilterMightContain_Int64Arr benchmarks array type lookups.
+func BenchmarkDictionaryFilterMightContain_Int64Arr(b *testing.B) {
+	// Create multiple int64 arrays
+	arrays := make([][]byte, 10)
+	for i := 0; i < 10; i++ {
+		arr := make([]byte, 0, 24)
+		for j := 0; j < 3; j++ {
+			arr = append(arr, convert.Int64ToBytes(int64(i*3+j))...)
+		}
+		arrays[i] = arr
+	}
+
+	df := NewDictionaryFilter(arrays)
+	df.SetValueType(pbv1.ValueTypeInt64Arr)
+
+	existingItem := convert.Int64ToBytes(15) // exists in arrays[5]
+	nonExistingItem := convert.Int64ToBytes(999)
+
+	b.Run("Existing", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(existingItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(nonExistingItem)
+		}
+	})
+}
+
+// BenchmarkDictionaryFilterMightContain_StrArr benchmarks string array type lookups.
+func BenchmarkDictionaryFilterMightContain_StrArr(b *testing.B) {
+	// Create multiple string arrays
+	arrays := make([][]byte, 10)
+	for i := 0; i < 10; i++ {
+		dst := make([]byte, 0)
+		for j := 0; j < 3; j++ {
+			dst = marshalVarArray(dst, []byte(fmt.Sprintf("element_%d_%d", i, j)))
+		}
+		arrays[i] = dst
+	}
+
+	df := NewDictionaryFilter(arrays)
+	df.SetValueType(pbv1.ValueTypeStrArr)
+
+	existingItem := []byte("element_5_1")
+	nonExistingItem := []byte("not_found")
+
+	b.Run("Existing", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(existingItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			df.MightContain(nonExistingItem)
+		}
+	})
+}
+
+// linearSearchMightContain is the old O(n) implementation for comparison.
+func linearSearchMightContain(values [][]byte, item []byte) bool {
+	for _, v := range values {
+		if stdbytes.Equal(v, item) {
+			return true
+		}
+	}
+	return false
+}
+
+// BenchmarkLinearSearch benchmarks the old linear search implementation for comparison.
+func BenchmarkLinearSearch_Max(b *testing.B) {
+	values := generateDictionaryValues(256)
+
+	lastItem := values[255]
+	nonExistingItem := []byte("not_found")
+
+	var result bool
+	b.Run("ExistingLast", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			result = linearSearchMightContain(values, lastItem)
+		}
+	})
+
+	b.Run("NonExisting", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			result = linearSearchMightContain(values, nonExistingItem)
+		}
+	})
+	_ = result // Prevent compiler optimization
 }
