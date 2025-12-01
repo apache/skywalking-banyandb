@@ -214,3 +214,64 @@ func Test_Stream_Update_DeleteNonEntityTag_ShouldSucceed(t *testing.T) {
 	req.Equal("service_id", resultStream.TagFamilies[0].Tags[0].Name)
 	req.Equal("trace_id", resultStream.TagFamilies[0].Tags[1].Name)
 }
+
+func Test_Stream_Update_CleanupIndexRule_ShouldSucceed(t *testing.T) {
+	registry, closer := initServerAndRegister(t)
+	defer closer()
+
+	req := require.New(t)
+	createTestGroup(t, registry)
+
+	stream := createBaseStream()
+	_, err := registry.CreateStream(context.Background(), stream)
+	req.NoError(err)
+
+	indexRule := &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{
+			Name:  "duration_index",
+			Group: testUpdateGroup,
+		},
+		Tags: []string{"duration"},
+		Type: databasev1.IndexRule_TYPE_INVERTED,
+	}
+	err = registry.CreateIndexRule(context.Background(), indexRule)
+	req.NoError(err)
+
+	binding := &databasev1.IndexRuleBinding{
+		Metadata: &commonv1.Metadata{
+			Name:  "stream_binding",
+			Group: testUpdateGroup,
+		},
+		Rules: []string{"duration_index"},
+		Subject: &databasev1.Subject{
+			Catalog: commonv1.Catalog_CATALOG_STREAM,
+			Name:    testUpdateStream,
+		},
+	}
+	err = registry.CreateIndexRuleBinding(context.Background(), binding)
+	req.NoError(err)
+
+	indexRules, err := registry.ListIndexRule(context.Background(), schema.ListOpt{Group: testUpdateGroup})
+	req.NoError(err)
+	req.Len(indexRules, 1)
+
+	createdStream, err := registry.GetStream(context.Background(), stream.Metadata)
+	req.NoError(err)
+
+	updatedStream := createBaseStream()
+	updatedStream.Metadata.ModRevision = createdStream.Metadata.ModRevision
+	updatedStream.TagFamilies[0].Tags = []*databasev1.TagSpec{
+		{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+		{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+	}
+	_, err = registry.UpdateStream(context.Background(), updatedStream)
+	req.NoError(err)
+
+	indexRules, err = registry.ListIndexRule(context.Background(), schema.ListOpt{Group: testUpdateGroup})
+	req.NoError(err)
+	req.Len(indexRules, 0)
+
+	bindings, err := registry.ListIndexRuleBinding(context.Background(), schema.ListOpt{Group: testUpdateGroup})
+	req.NoError(err)
+	req.Len(bindings, 0)
+}
