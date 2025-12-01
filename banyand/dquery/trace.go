@@ -20,7 +20,6 @@ package dquery
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -177,19 +177,27 @@ func BuildTracesFromResult(resultIterator iter.Iterator[model.TraceResult], quer
 			Spans:   make([]*tracev1.Span, 0),
 		}
 		traces = append(traces, trace)
+
+		tagMap := make(map[string]*model.Tag)
+		for idx := range result.Tags {
+			tagMap[result.Tags[idx].Name] = &result.Tags[idx]
+		}
+
 		for i, spanBytes := range result.Spans {
 			var traceTags []*modelv1.Tag
-			if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
-				for _, tag := range result.Tags {
-					if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
-						continue
+			if len(queryCriteria.TagProjection) > 0 {
+				for _, tagName := range queryCriteria.TagProjection {
+					var tagValue *modelv1.TagValue
+					if tag, exists := tagMap[tagName]; exists && i < len(tag.Values) {
+						tagValue = tag.Values[i]
 					}
-					if i < len(tag.Values) {
-						traceTags = append(traceTags, &modelv1.Tag{
-							Key:   tag.Name,
-							Value: tag.Values[i],
-						})
+					if tagValue == nil {
+						tagValue = pbv1.NullTagValue
 					}
+					traceTags = append(traceTags, &modelv1.Tag{
+						Key:   tagName,
+						Value: tagValue,
+					})
 				}
 			}
 			span := &tracev1.Span{

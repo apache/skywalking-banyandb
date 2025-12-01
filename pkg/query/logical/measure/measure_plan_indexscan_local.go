@@ -195,7 +195,9 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &resultMIterator{
-		result: result,
+		result:           result,
+		projectionTags:   i.projectionTags,
+		projectionFields: i.projectionFields,
 	}, nil
 }
 
@@ -232,10 +234,12 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	result  model.MeasureQueryResult
-	err     error
-	current []*measurev1.DataPoint
-	i       int
+	result           model.MeasureQueryResult
+	err              error
+	current          []*measurev1.DataPoint
+	projectionTags   []model.TagProjection
+	projectionFields []string
+	i                int
 }
 
 func (ei *resultMIterator) Next() bool {
@@ -264,23 +268,57 @@ func (ei *resultMIterator) Next() bool {
 			Version:   r.Versions[i],
 		}
 
-		for _, tf := range r.TagFamilies {
+		for _, proj := range ei.projectionTags {
 			tagFamily := &modelv1.TagFamily{
-				Name: tf.Name,
+				Name: proj.Family,
 			}
 			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
-			for _, t := range tf.Tags {
+			var resultTagFamily *model.TagFamily
+			for idx := range r.TagFamilies {
+				if r.TagFamilies[idx].Name == proj.Family {
+					resultTagFamily = &r.TagFamilies[idx]
+					break
+				}
+			}
+			for _, tagName := range proj.Names {
+				var tagValue *modelv1.TagValue
+				if resultTagFamily != nil {
+					for _, t := range resultTagFamily.Tags {
+						if t.Name == tagName {
+							tagValue = t.Values[i]
+							break
+						}
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   t.Name,
-					Value: t.Values[i],
+					Key:   tagName,
+					Value: tagValue,
 				})
 			}
 		}
-		for _, f := range r.Fields {
-			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name:  f.Name,
-				Value: f.Values[i],
-			})
+
+		for _, pf := range ei.projectionFields {
+			foundIdx := -1
+			for idx := range r.Fields {
+				if r.Fields[idx].Name == pf {
+					foundIdx = idx
+					break
+				}
+			}
+			if foundIdx != -1 {
+				dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+					Name:  r.Fields[foundIdx].Name,
+					Value: r.Fields[foundIdx].Values[i],
+				})
+			} else {
+				dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+					Name:  pf,
+					Value: pbv1.NullFieldValue,
+				})
+			}
 		}
 		ei.current = append(ei.current, dp)
 	}

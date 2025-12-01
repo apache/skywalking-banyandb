@@ -198,7 +198,9 @@ func formatIndexRuleBindingKey(metadata *commonv1.Metadata) string {
 	return formatKey(indexRuleBindingKeyPrefix, metadata)
 }
 
-func (e *etcdSchemaRegistry) cleanupIndexRulesForDeletedTags(ctx context.Context, group, subjectName string, catalog commonv1.Catalog, deletedTags map[string]struct{}) error {
+func (e *etcdSchemaRegistry) cleanupIndexRulesForDeletedTags(ctx context.Context,
+	group, subjectName string, catalog commonv1.Catalog, deletedTags map[string]struct{},
+) error {
 	if len(deletedTags) == 0 {
 		return nil
 	}
@@ -217,11 +219,11 @@ func (e *etcdSchemaRegistry) cleanupIndexRulesForDeletedTags(ctx context.Context
 		}
 	}
 	for ruleName := range rulesToDelete {
-		if _, err := e.DeleteIndexRule(ctx, &commonv1.Metadata{
+		if _, deleteErr := e.DeleteIndexRule(ctx, &commonv1.Metadata{
 			Group: group,
 			Name:  ruleName,
-		}); err != nil {
-			return err
+		}); deleteErr != nil {
+			return deleteErr
 		}
 	}
 
