@@ -79,6 +79,10 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if err := validateStreamUpdate(prev, stream); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
+	deletedTags := findDeletedTagsForStream(prev, stream)
+	if err := e.cleanupIndexRulesForDeletedTags(ctx, group, stream.GetMetadata().GetName(), commonv1.Catalog_CATALOG_STREAM, deletedTags); err != nil {
+		return 0, errors.Wrap(err, "failed to cleanup index rules for deleted tags")
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindStream,
@@ -173,4 +177,23 @@ func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv
 
 func formatStreamKey(metadata *commonv1.Metadata) string {
 	return formatKey(streamKeyPrefix, metadata)
+}
+
+func findDeletedTagsForStream(prevStream, newStream *databasev1.Stream) map[string]struct{} {
+	newTagSet := make(map[string]struct{})
+	for _, tf := range newStream.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			newTagSet[tag.GetName()] = struct{}{}
+		}
+	}
+
+	deletedTags := make(map[string]struct{})
+	for _, tf := range prevStream.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			if _, exists := newTagSet[tag.GetName()]; !exists {
+				deletedTags[tag.GetName()] = struct{}{}
+			}
+		}
+	}
+	return deletedTags
 }

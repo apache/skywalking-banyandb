@@ -118,6 +118,10 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if err := validateMeasureUpdate(prev, measure); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
+	deletedTags := findDeletedTagsForMeasure(prev, measure)
+	if err := e.cleanupIndexRulesForDeletedTags(ctx, group, measure.GetMetadata().GetName(), commonv1.Catalog_CATALOG_MEASURE, deletedTags); err != nil {
+		return 0, errors.Wrap(err, "failed to cleanup index rules for deleted tags")
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindMeasure,
@@ -225,4 +229,23 @@ func (e *etcdSchemaRegistry) TopNAggregations(ctx context.Context, metadata *com
 
 func formatMeasureKey(metadata *commonv1.Metadata) string {
 	return formatKey(measureKeyPrefix, metadata)
+}
+
+func findDeletedTagsForMeasure(prevMeasure, newMeasure *databasev1.Measure) map[string]struct{} {
+	newTagSet := make(map[string]struct{})
+	for _, tf := range newMeasure.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			newTagSet[tag.GetName()] = struct{}{}
+		}
+	}
+
+	deletedTags := make(map[string]struct{})
+	for _, tf := range prevMeasure.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			if _, exists := newTagSet[tag.GetName()]; !exists {
+				deletedTags[tag.GetName()] = struct{}{}
+			}
+		}
+	}
+	return deletedTags
 }

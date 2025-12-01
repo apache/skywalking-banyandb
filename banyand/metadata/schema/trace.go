@@ -101,6 +101,10 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 	if err := validateTraceUpdate(prev, trace); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
+	deletedTags := findDeletedTagsForTrace(prev, trace)
+	if err := e.cleanupIndexRulesForDeletedTags(ctx, group, trace.GetMetadata().GetName(), commonv1.Catalog_CATALOG_TRACE, deletedTags); err != nil {
+		return 0, errors.Wrap(err, "failed to cleanup index rules for deleted tags")
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindTrace,
@@ -144,4 +148,19 @@ func validateTraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
 
 func formatTraceKey(metadata *commonv1.Metadata) string {
 	return formatKey(traceKeyPrefix, metadata)
+}
+
+func findDeletedTagsForTrace(prevTrace, newTrace *databasev1.Trace) map[string]struct{} {
+	newTagSet := make(map[string]struct{})
+	for _, tag := range newTrace.GetTags() {
+		newTagSet[tag.GetName()] = struct{}{}
+	}
+
+	deletedTags := make(map[string]struct{})
+	for _, tag := range prevTrace.GetTags() {
+		if _, exists := newTagSet[tag.GetName()]; !exists {
+			deletedTags[tag.GetName()] = struct{}{}
+		}
+	}
+	return deletedTags
 }
