@@ -44,6 +44,11 @@ func buildFilter(criteria *modelv1.Criteria, schema logical.Schema, tagNames map
 
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
+		if schema != nil {
+			if tagSpec := schema.FindTagSpecByName(criteria.GetCondition().Name); tagSpec == nil {
+				return nil, nil, nil, nil, math.MinInt64, math.MaxInt64, errors.WithMessagef(logical.ErrTagNotFound, "tag %q does not exist in the current schema", criteria.GetCondition().Name)
+			}
+		}
 		return buildFilterFromCondition(criteria.GetCondition(), schema, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)
 	case *modelv1.Criteria_Le:
 		return buildFilterFromLogicalExpression(criteria.GetLe(), schema, tagNames, entityDict, entity, traceIDTagName, spanIDTagName, orderByTag)

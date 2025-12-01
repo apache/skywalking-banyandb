@@ -76,7 +76,7 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "stream %s not found", stream.GetMetadata().GetName())
 	}
-	if err := validateEqualExceptAppendTags(prev, stream); err != nil {
+	if err := validateStreamUpdate(prev, stream); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
 	return e.update(ctx, Metadata{
@@ -90,7 +90,7 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 	})
 }
 
-func validateEqualExceptAppendTags(prevStream, newStream *databasev1.Stream) error {
+func validateStreamUpdate(prevStream, newStream *databasev1.Stream) error {
 	if prevStream.GetEntity().String() != newStream.GetEntity().String() {
 		return fmt.Errorf("entity is different: %s != %s", prevStream.GetEntity().String(), newStream.GetEntity().String())
 	}

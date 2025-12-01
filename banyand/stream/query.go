@@ -43,13 +43,9 @@ import (
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
+	sqo.TagProjection = s.filterTagProjection(sqo.TagProjection)
 	if err = validateQueryInput(sqo); err != nil {
 		return nil, err
-	}
-
-	sqo.TagProjection = s.filterTagProjection(sqo.TagProjection)
-	if len(sqo.TagProjection) == 0 {
-		return bypassQueryResultInstance, nil
 	}
 
 	tsdb, err := s.getTSDB()
@@ -102,7 +98,6 @@ func (s *stream) filterTagProjection(tagProjection []model.TagProjection) []mode
 		return tagProjection
 	}
 
-	// Build a map of tag families in the current schema
 	schemaTagFamilies := make(map[string]map[string]struct{})
 	for _, tf := range s.schema.GetTagFamilies() {
 		tagNames := make(map[string]struct{})

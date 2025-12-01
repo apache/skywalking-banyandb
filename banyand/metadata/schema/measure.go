@@ -115,7 +115,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", measure.GetMetadata().GetName())
 	}
-	if err := validateEqualExceptAppendTagsAndFields(prev, measure); err != nil {
+	if err := validateMeasureUpdate(prev, measure); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
 	return e.update(ctx, Metadata{
@@ -129,7 +129,7 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 	})
 }
 
-func validateEqualExceptAppendTagsAndFields(prevMeasure, newMeasure *databasev1.Measure) error {
+func validateMeasureUpdate(prevMeasure, newMeasure *databasev1.Measure) error {
 	if prevMeasure.GetInterval() != newMeasure.GetInterval() {
 		return fmt.Errorf("interval is different: %s != %s", prevMeasure.GetInterval(), newMeasure.GetInterval())
 	}
@@ -139,30 +139,60 @@ func validateEqualExceptAppendTagsAndFields(prevMeasure, newMeasure *databasev1.
 	if prevMeasure.GetIndexMode() != newMeasure.GetIndexMode() {
 		return fmt.Errorf("index mode is different: %v != %v", prevMeasure.GetIndexMode(), newMeasure.GetIndexMode())
 	}
-	if len(prevMeasure.GetTagFamilies()) > len(newMeasure.GetTagFamilies()) {
-		return fmt.Errorf("number of tag families is less in the new measure")
+
+	entityTagSet := make(map[string]struct{})
+	for _, tagName := range newMeasure.GetEntity().GetTagNames() {
+		entityTagSet[tagName] = struct{}{}
 	}
-	if len(prevMeasure.GetFields()) > len(newMeasure.GetFields()) {
-		return fmt.Errorf("number of fields is less in the new measure")
+	newTagFamilyMap := make(map[string]map[string]*databasev1.TagSpec)
+	for _, tf := range newMeasure.GetTagFamilies() {
+		tagMap := make(map[string]*databasev1.TagSpec)
+		for _, tag := range tf.GetTags() {
+			tagMap[tag.GetName()] = tag
+		}
+		newTagFamilyMap[tf.GetName()] = tagMap
 	}
-	for i, tagFamily := range prevMeasure.GetTagFamilies() {
-		if tagFamily.Name != newMeasure.GetTagFamilies()[i].Name {
-			return fmt.Errorf("tag family name is different: %s != %s", tagFamily.Name, newMeasure.GetTagFamilies()[i].Name)
+
+	for _, prevTagFamily := range prevMeasure.GetTagFamilies() {
+		newTagMap, familyExists := newTagFamilyMap[prevTagFamily.GetName()]
+		if !familyExists {
+			for _, tag := range prevTagFamily.GetTags() {
+				if _, isEntity := entityTagSet[tag.GetName()]; isEntity {
+					return fmt.Errorf("cannot delete tag family %s: it contains entity tag %s", prevTagFamily.GetName(), tag.GetName())
+				}
+			}
+			continue
 		}
-		if len(tagFamily.Tags) > len(newMeasure.GetTagFamilies()[i].Tags) {
-			return fmt.Errorf("number of tags in tag family %s is less in the new measure", tagFamily.Name)
-		}
-		for j, tag := range tagFamily.Tags {
-			if tag.String() != newMeasure.GetTagFamilies()[i].Tags[j].String() {
-				return fmt.Errorf("tag %s in tag family %s is different: %s != %s", tag.Name, tagFamily.Name, tag.String(), newMeasure.GetTagFamilies()[i].Tags[j].String())
+		for _, prevTag := range prevTagFamily.GetTags() {
+			newTag, tagExists := newTagMap[prevTag.GetName()]
+			if !tagExists {
+				if _, isEntity := entityTagSet[prevTag.GetName()]; isEntity {
+					return fmt.Errorf("cannot delete entity tag %s in tag family %s", prevTag.GetName(), prevTagFamily.GetName())
+				}
+				continue
+			}
+			if prevTag.String() != newTag.String() {
+				return fmt.Errorf("tag %s in tag family %s is different: %s != %s",
+					prevTag.GetName(), prevTagFamily.GetName(), prevTag.String(), newTag.String())
 			}
 		}
 	}
-	for i, field := range prevMeasure.GetFields() {
-		if field.String() != newMeasure.GetFields()[i].String() {
-			return fmt.Errorf("field is different: %s != %s", field.String(), newMeasure.GetFields()[i].String())
+
+	newFieldMap := make(map[string]*databasev1.FieldSpec)
+	for _, field := range newMeasure.GetFields() {
+		newFieldMap[field.GetName()] = field
+	}
+
+	for _, prevField := range prevMeasure.GetFields() {
+		newField, fieldExists := newFieldMap[prevField.GetName()]
+		if !fieldExists {
+			continue
+		}
+		if prevField.String() != newField.String() {
+			return fmt.Errorf("field %s is different: %s != %s", prevField.GetName(), prevField.String(), newField.String())
 		}
 	}
+
 	return nil
 }
 
