@@ -25,8 +25,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -464,6 +466,258 @@ func BenchmarkTagFamilyFiltersUnmarshal(b *testing.B) {
 				tfs := generateTagFamilyFilters()
 				tfs.unmarshal(tagFamilies, metaReaders, filterReaders, metaReaders)
 				releaseTagFamilyFilters(tfs)
+			}
+		})
+	}
+}
+
+func generateMetaAndFilterWithScenarios(scenarios []struct {
+	name       string
+	valueType  pbv1.ValueType
+	hasFilter  bool
+	hasMinMax  bool
+	encodeType encoding.EncodeType
+},
+) ([]byte, []byte, []byte) {
+	tfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(tfm)
+	filterBuf := bytes.Buffer{}
+	tagValueBuf := bytes.Buffer{}
+
+	for _, scenario := range scenarios {
+		tm := &tagMetadata{
+			name:      scenario.name,
+			valueType: scenario.valueType,
+		}
+
+		if scenario.hasMinMax && scenario.valueType == pbv1.ValueTypeInt64 {
+			tm.min = make([]byte, 8)
+			tm.max = make([]byte, 8)
+			binary.BigEndian.PutUint64(tm.min, 100)
+			binary.BigEndian.PutUint64(tm.max, 200)
+		}
+
+		if scenario.hasFilter {
+			// Create bloom filter
+			bf := filter.NewBloomFilter(10)
+			bf.Add([]byte("test-value"))
+			buf := make([]byte, 0)
+			buf = encodeBloomFilter(buf, bf)
+			tm.filterBlock.offset = uint64(filterBuf.Len())
+			tm.filterBlock.size = uint64(len(buf))
+			filterBuf.Write(buf)
+		} else {
+			// Set up tag value data with encode type
+			tm.offset = uint64(tagValueBuf.Len())
+			encodeTypeByte := byte(scenario.encodeType)
+			tagValueBuf.WriteByte(encodeTypeByte)
+			if scenario.encodeType == encoding.EncodeTypeDictionary {
+				// Write dictionary data: encode type byte + dictionary values
+				// Dictionary format: VarUint64(count) + EncodeBytesBlock(values)
+				dictValues := [][]byte{
+					[]byte("dict-value-1"),
+					[]byte("dict-value-2"),
+				}
+				dictBuf := encoding.VarUint64ToBytes(nil, uint64(len(dictValues)))
+				dictBuf = encoding.EncodeBytesBlock(dictBuf, dictValues)
+				tagValueBuf.Write(dictBuf)
+				tm.size = uint64(1 + len(dictBuf))
+			} else {
+				// Non-dictionary encoding, just the encode type byte
+				tm.size = 1
+			}
+		}
+
+		tfm.tagMetadata = append(tfm.tagMetadata, *tm)
+	}
+
+	metaBuf := make([]byte, 0)
+	metaBuf = tfm.marshal(metaBuf)
+	return metaBuf, filterBuf.Bytes(), tagValueBuf.Bytes()
+}
+
+func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
+	// Test all scenarios together to verify NPE fix and unmarshal behavior
+	scenarios := []struct {
+		name       string
+		valueType  pbv1.ValueType
+		hasFilter  bool
+		hasMinMax  bool
+		encodeType encoding.EncodeType
+	}{
+		{
+			name:       "bloom-tag",
+			valueType:  pbv1.ValueTypeStr,
+			hasFilter:  true,
+			hasMinMax:  false,
+			encodeType: encoding.EncodeTypePlain,
+		},
+		{
+			name:       "dict-tag",
+			valueType:  pbv1.ValueTypeStr,
+			hasFilter:  false,
+			hasMinMax:  false,
+			encodeType: encoding.EncodeTypeDictionary,
+		},
+		{
+			name:       "numeric-tag",
+			valueType:  pbv1.ValueTypeInt64,
+			hasFilter:  false,
+			hasMinMax:  true,
+			encodeType: encoding.EncodeTypePlain,
+		},
+		{
+			name:       "useless-tag",
+			valueType:  pbv1.ValueTypeStr,
+			hasFilter:  false,
+			hasMinMax:  false,
+			encodeType: encoding.EncodeTypePlain,
+		},
+	}
+
+	metaBuf, filterBuf, tagValueBuf := generateMetaAndFilterWithScenarios(scenarios)
+
+	tagFamilies := map[string]*dataBlock{
+		"default": {
+			offset: 0,
+			size:   uint64(len(metaBuf)),
+		},
+	}
+	metaReaders := map[string]fs.Reader{
+		"default": &mockReader{data: metaBuf},
+	}
+	filterReaders := map[string]fs.Reader{
+		"default": &mockReader{data: filterBuf},
+	}
+	tagValueReaders := map[string]fs.Reader{
+		"default": &mockReader{data: tagValueBuf},
+	}
+
+	tfs := generateTagFamilyFilters()
+	defer releaseTagFamilyFilters(tfs)
+	tfs.unmarshal(tagFamilies, metaReaders, filterReaders, tagValueReaders)
+
+	tff := tfs.tagFamilyFilters[0]
+	assert.NotNil(t, tff)
+
+	tests := []struct {
+		rangeOpts     *index.RangeOpts
+		name          string
+		tagName       string
+		eqValue       string
+		eqDescription string
+		shouldBeInMap bool
+		hasFilter     bool
+		hasMinMax     bool
+		eqExpected    bool
+		testRange     bool
+		rangeExpected bool
+		rangeErr      bool
+	}{
+		{
+			name:          "bloom filter tag",
+			tagName:       "bloom-tag",
+			shouldBeInMap: true,
+			hasFilter:     true,
+			hasMinMax:     false,
+			eqValue:       "test-value",
+			eqExpected:    true,
+			eqDescription: "Eq should return true when value is in bloom filter",
+		},
+		{
+			name:          "bloom filter tag - not found",
+			tagName:       "bloom-tag",
+			shouldBeInMap: true,
+			hasFilter:     true,
+			eqValue:       "definitely-not-there",
+			eqExpected:    false,
+			eqDescription: "Eq should return false when value is not in bloom filter",
+		},
+		{
+			name:          "dictionary filter tag",
+			tagName:       "dict-tag",
+			shouldBeInMap: true,
+			hasFilter:     true,
+			hasMinMax:     false,
+			eqValue:       "dict-value-1",
+			eqExpected:    true,
+			eqDescription: "Eq should return true when value is in dictionary",
+		},
+		{
+			name:          "dictionary filter tag - not found",
+			tagName:       "dict-tag",
+			shouldBeInMap: true,
+			hasFilter:     true,
+			eqValue:       "not-in-dict",
+			eqExpected:    false,
+			eqDescription: "Eq should return false when value is not in dictionary",
+		},
+		{
+			name:          "numeric tag with min/max",
+			tagName:       "numeric-tag",
+			shouldBeInMap: true,
+			hasFilter:     false,
+			hasMinMax:     true,
+			eqValue:       "any-value",
+			eqExpected:    true,
+			eqDescription: "Eq should return true (conservative) when filter is nil",
+			testRange:     true,
+			rangeOpts: &index.RangeOpts{
+				Lower:         &index.FloatTermValue{Value: 150.0},
+				Upper:         &index.FloatTermValue{Value: 180.0},
+				IncludesLower: true,
+				IncludesUpper: true,
+			},
+			rangeExpected: false, // should not skip (value is within range)
+			rangeErr:      false,
+		},
+		{
+			name:          "useless tag (no filter, no min/max)",
+			tagName:       "useless-tag",
+			shouldBeInMap: false,
+			hasFilter:     false,
+			hasMinMax:     false,
+			eqValue:       "any-value",
+			eqExpected:    true,
+			eqDescription: "Eq should return true (conservative) when tag is not in map",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			// Verify tag presence in map
+			tf, ok := (*tff)[tt.tagName]
+			if tt.shouldBeInMap {
+				assert.True(ok, "tag %s should be in map", tt.tagName)
+				assert.NotNil(tf, "tag filter should not be nil")
+				if tt.hasFilter {
+					assert.NotNil(tf.filter, "tag should have filter")
+				} else {
+					assert.Nil(tf.filter, "tag should not have filter")
+				}
+				if tt.hasMinMax {
+					assert.NotEmpty(tf.min, "tag should have min value")
+					assert.NotEmpty(tf.max, "tag should have max value")
+				}
+			} else {
+				assert.False(ok, "tag %s should NOT be in map", tt.tagName)
+			}
+
+			// Test Eq - should not panic
+			result := tfs.Eq(tt.tagName, tt.eqValue)
+			assert.Equal(tt.eqExpected, result, tt.eqDescription)
+
+			// Test Range if applicable
+			if tt.testRange && tt.shouldBeInMap {
+				shouldSkip, err := tfs.Range(tt.tagName, *tt.rangeOpts)
+				if tt.rangeErr {
+					assert.Error(err)
+				} else {
+					assert.NoError(err)
+					assert.Equal(tt.rangeExpected, shouldSkip, "Range should return expected value")
+				}
 			}
 		})
 	}
