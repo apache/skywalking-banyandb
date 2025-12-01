@@ -29,7 +29,7 @@ echo "$MESSAGE" > "$DEATH_RATTLE_FILE"
 
 echo "Death rattle file created. FODC should detect this."
 echo "To test, run FODC in another terminal:"
-echo "  ./build/bin/fodc --death-rattle-path=$DEATH_RATTLE_FILE"
+echo "  ./build/bin/dev/fodc-cli --death-rattle-path=$DEATH_RATTLE_FILE"
 
 # Wait a bit, then remove the file
 sleep 5
