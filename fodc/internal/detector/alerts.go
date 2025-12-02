@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/fodc/internal/metric"
 	"github.com/apache/skywalking-banyandb/fodc/internal/poller"
 )
 
@@ -25,76 +26,44 @@ func NewAlertManager(errorRateThreshold float64) *AlertManager {
 	}
 }
 
+// findMetricByLabel finds a metric by name and label value, summing all matching metrics
+func findMetricByLabel(metrics []metric.RawMetric, name, labelName, labelValue string) (float64, bool) {
+	var sum float64
+	found := false
+	for _, m := range metrics {
+		if m.Name == name {
+			if labelValue == "" || m.Find(labelName) == labelValue {
+				sum += m.Value
+				found = true
+			}
+		}
+	}
+	return sum, found
+}
+
+// findMetricByName finds a metric by name, summing all matching metrics (ignoring labels)
+func findMetricByName(metrics []metric.RawMetric, name string) (float64, bool) {
+	var sum float64
+	found := false
+	for _, m := range metrics {
+		if m.Name == name {
+			sum += m.Value
+			found = true
+		}
+	}
+	return sum, found
+}
+
 func (a *AlertManager) AnalyzeMetrics(snapshot poller.MetricsSnapshot) []string {
 	var alerts []string
 
-	// Build a map of metrics by name for easier lookup
-	metricsMap := make(map[string]float64)
-	for _, m := range snapshot.RawMetrics {
-		// Use metric name as key (could also use full key with labels)
-		metricsMap[m.Name] = m.Value
-	}
-
 	// Check for high error rates
-	if errRate, ok := metricsMap["banyandb_liaison_grpc_total_failed"]; ok {
-		if total, ok := metricsMap["banyandb_liaison_grpc_total_started"]; ok && total > 0 {
-			rate := errRate / total
-			if rate > a.errorRateThreshold {
-				msg := fmt.Sprintf("High error rate detected: %.2f%% (threshold: %.2f%%)", rate*100, a.errorRateThreshold*100)
-				alerts = append(alerts, msg)
-				a.alerts = append(a.alerts, Alert{
-					Message:   msg,
-					Timestamp: snapshot.Timestamp,
-					Severity:  "critical",
-				})
-			}
-		}
-	}
-
-	// Check memory usage
-	if memUsed, ok := metricsMap["banyandb_system_memory_state"]; ok {
-		if memTotal, ok := metricsMap["banyandb_system_memory_total"]; ok && memTotal > 0 {
-			usage := memUsed / memTotal
-			if usage > 0.9 {
-				msg := fmt.Sprintf("High memory usage: %.2f%%", usage*100)
-				alerts = append(alerts, msg)
-				a.alerts = append(a.alerts, Alert{
-					Message:   msg,
-					Timestamp: snapshot.Timestamp,
-					Severity:  "warning",
-				})
-			}
-		}
-	}
-
-	// Check disk usage
-	if diskUsed, ok := metricsMap["banyandb_system_disk"]; ok {
-		if diskTotal, ok := metricsMap["banyandb_system_disk_total"]; ok && diskTotal > 0 {
-			usage := diskUsed / diskTotal
-			if usage > 0.8 {
-				msg := fmt.Sprintf("High disk usage: %.2f%%", usage*100)
-				alerts = append(alerts, msg)
-				a.alerts = append(a.alerts, Alert{
-					Message:   msg,
-					Timestamp: snapshot.Timestamp,
-					Severity:  "warning",
-				})
-			}
-		}
-	}
-
-	// Check for zero write rate (might indicate failure)
-	if writeRate, ok := metricsMap["banyandb_measure_total_written"]; ok {
-		if writeRate == 0 {
-			// Check if this is consistently zero (would need historical data)
-			// For now, just log if we see it
-		}
-	}
-
-	// Check for connection failures
-	if connFailures, ok := metricsMap["banyandb_connection_failures_total"]; ok {
-		if connFailures > 10 {
-			msg := fmt.Sprintf("High connection failure count: %.0f", connFailures)
+	errRate, errRateFound := findMetricByName(snapshot.RawMetrics, "banyandb_liaison_grpc_total_err")
+	totalStarted, totalFound := findMetricByName(snapshot.RawMetrics, "banyandb_liaison_grpc_total_started")
+	if errRateFound && totalFound && totalStarted > 0 {
+		rate := errRate / totalStarted
+		if rate > a.errorRateThreshold {
+			msg := fmt.Sprintf("High error rate detected: %.2f%% (threshold: %.2f%%)", rate*100, a.errorRateThreshold*100)
 			alerts = append(alerts, msg)
 			a.alerts = append(a.alerts, Alert{
 				Message:   msg,
@@ -103,6 +72,51 @@ func (a *AlertManager) AnalyzeMetrics(snapshot poller.MetricsSnapshot) []string 
 			})
 		}
 	}
+
+	// Check memory usage
+	// banyandb_system_memory_state has labels: kind="used", kind="total", kind="used_percent"
+	memUsed, memUsedFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_memory_state", "kind", "used")
+	memTotal, memTotalFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_memory_state", "kind", "total")
+	if memUsedFound && memTotalFound && memTotal > 0 {
+		usage := memUsed / memTotal
+		if usage > 0.9 {
+			msg := fmt.Sprintf("High memory usage: %.2f%%", usage*100)
+			alerts = append(alerts, msg)
+			a.alerts = append(a.alerts, Alert{
+				Message:   msg,
+				Timestamp: snapshot.Timestamp,
+				Severity:  "warning",
+			})
+		}
+	}
+
+	// Check disk usage
+	// banyandb_system_disk has labels: path="...", kind="used", kind="total", kind="used_percent"
+	// Sum across all paths
+	diskUsed, diskUsedFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_disk", "kind", "used")
+	diskTotal, diskTotalFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_disk", "kind", "total")
+	if diskUsedFound && diskTotalFound && diskTotal > 0 {
+		usage := diskUsed / diskTotal
+		if usage > 0.8 {
+			msg := fmt.Sprintf("High disk usage: %.2f%%", usage*100)
+			alerts = append(alerts, msg)
+			a.alerts = append(a.alerts, Alert{
+				Message:   msg,
+				Timestamp: snapshot.Timestamp,
+				Severity:  "warning",
+			})
+		}
+	}
+
+	// Check for zero write rate (might indicate failure)
+	writeRate, writeRateFound := findMetricByName(snapshot.RawMetrics, "banyandb_measure_total_written")
+	if writeRateFound && writeRate == 0 {
+		// Check if this is consistently zero (would need historical data)
+		// For now, just log if we see it
+	}
+
+	// Note: banyandb_connection_failures_total metric doesn't exist in the codebase
+	// Removed this check as it would never trigger
 
 	// Check for any errors in the snapshot
 	if len(snapshot.Errors) > 0 {
@@ -139,4 +153,3 @@ func (a *AlertManager) GetRecentAlerts(duration time.Duration) []Alert {
 	}
 	return recent
 }
-
