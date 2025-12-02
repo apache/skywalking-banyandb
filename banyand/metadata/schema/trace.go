@@ -97,9 +97,6 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
 	}
-	if err := validateTraceUpdate(prev, trace); err != nil {
-		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
-	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindTrace,
@@ -119,22 +116,6 @@ func (e *etcdSchemaRegistry) DeleteTrace(ctx context.Context, metadata *commonv1
 			Name:  metadata.GetName(),
 		},
 	})
-}
-
-func validateTraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
-	newTagMap := make(map[string]*databasev1.TraceTagSpec)
-	for _, tag := range newTrace.GetTags() {
-		newTagMap[tag.GetName()] = tag
-	}
-
-	for _, prevTag := range prevTrace.GetTags() {
-		_, tagExists := newTagMap[prevTag.GetName()]
-		if !tagExists {
-			continue
-		}
-	}
-
-	return nil
 }
 
 func formatTraceKey(metadata *commonv1.Metadata) string {

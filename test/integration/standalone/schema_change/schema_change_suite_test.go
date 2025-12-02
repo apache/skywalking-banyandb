@@ -598,6 +598,7 @@ func doWriteStreamData(ctx context.Context, name, group string, baseTime time.Ti
 		case statusCodeString:
 			searchableTags = append(searchableTags,
 				&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "status_" + strconv.Itoa(i)}}})
+		case statusCodeNone:
 		}
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),

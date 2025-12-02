@@ -65,10 +65,10 @@ type Measure interface {
 var _ Measure = (*measure)(nil)
 
 type queryOptions struct {
-	model.MeasureQueryOptions
 	schemaTagTypes map[string]pbv1.ValueType
-	minTimestamp   int64
-	maxTimestamp   int64
+	model.MeasureQueryOptions
+	minTimestamp int64
+	maxTimestamp int64
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
