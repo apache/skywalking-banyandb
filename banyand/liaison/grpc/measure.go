@@ -95,7 +95,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return nil
 		}
 		if err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			if status.Code(err) != codes.Canceled && status.Code(err) != codes.DeadlineExceeded {
 				ms.l.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
 			}
 			return err

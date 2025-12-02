@@ -53,16 +53,24 @@ type unresolvedIndexScan struct {
 
 func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) {
 	projTags := make([]model.TagProjection, len(uis.projectionTags))
+	projectedTagNames := make(map[string]struct{})
 	var projTagsRefs [][]*logical.TagRef
 	if len(uis.projectionTags) > 0 {
 		for i := range uis.projectionTags {
 			for _, tag := range uis.projectionTags[i] {
 				projTags[i].Family = tag.GetFamilyName()
 				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
+				projectedTagNames[tag.GetTagName()] = struct{}{}
 			}
 		}
+	}
+	tagRefInput := make([][]*logical.Tag, 0, len(uis.projectionTags))
+	tagRefInput = append(tagRefInput, uis.projectionTags...)
+
+	// Create tag refs for projection tags before any early returns
+	if len(tagRefInput) > 0 {
 		var err error
-		projTagsRefs, err = s.CreateTagRef(uis.projectionTags...)
+		projTagsRefs, err = s.CreateTagRef(tagRefInput...)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +120,31 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
+
+	// Collect hidden criteria tags using shared utility
+	tagFamilies := ms.measure.GetTagFamilies()
+	hiddenTags, extraTags := logical.CollectHiddenCriteriaTags(
+		uis.criteria,
+		projectedTagNames,
+		entityMap,
+		s,
+		func() []string {
+			names := make([]string, len(tagFamilies))
+			for i, tf := range tagFamilies {
+				names[i] = tf.GetName()
+			}
+			return names
+		},
+	)
+	if len(extraTags) > 0 {
+		tagRefInput = append(tagRefInput, extraTags...)
+		// Recreate tag refs with both projection tags and hidden criteria tags
+		var err error
+		projTagsRefs, err = s.CreateTagRef(tagRefInput...)
+		if err != nil {
+			return nil, err
+		}
+	}
 	query, entities, _, err := inverted.BuildQuery(uis.criteria, s, entityMap, entity)
 	if err != nil {
 		return nil, err
@@ -128,6 +161,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		query:                query,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		hiddenTags:           hiddenTags,
 		uis:                  uis,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 		ec:                   uis.ec,
@@ -147,6 +181,7 @@ type localIndexScan struct {
 	order                *logical.OrderBy
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
+	hiddenTags           logical.HiddenTagSet
 	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
@@ -198,6 +233,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		result:           result,
 		projectionTags:   i.projectionTags,
 		projectionFields: i.projectionFields,
+		hiddenTags:       i.hiddenTags,
 	}, nil
 }
 
@@ -212,10 +248,16 @@ func (i *localIndexScan) Children() []logical.Plan {
 }
 
 func (i *localIndexScan) Schema() logical.Schema {
-	if len(i.projectionTagsRefs) == 0 {
-		return i.schema
+	schema := i.schema
+	if len(i.projectionTagsRefs) > 0 {
+		if projected := schema.ProjTags(i.projectionTagsRefs...); projected != nil {
+			schema = projected
+		}
 	}
-	return i.schema.ProjTags(i.projectionTagsRefs...).ProjFields(i.projectionFieldsRefs...)
+	if len(i.projectionFieldsRefs) > 0 {
+		schema = schema.ProjFields(i.projectionFieldsRefs...)
+	}
+	return schema
 }
 
 func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projectionTags [][]*logical.Tag,
@@ -235,6 +277,7 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 
 type resultMIterator struct {
 	result           model.MeasureQueryResult
+	hiddenTags       logical.HiddenTagSet
 	err              error
 	current          []*measurev1.DataPoint
 	projectionTags   []model.TagProjection
@@ -299,6 +342,9 @@ func (ei *resultMIterator) Next() bool {
 				})
 			}
 		}
+
+		// Strip hidden tags from the result
+		dp.TagFamilies = ei.hiddenTags.StripHiddenTags(dp.TagFamilies)
 
 		for _, pf := range ei.projectionFields {
 			foundIdx := -1
