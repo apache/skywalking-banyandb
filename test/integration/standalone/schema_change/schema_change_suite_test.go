@@ -93,7 +93,7 @@ var _ = ReportAfterSuite("Integration Schema Change Suite", func(report Report) 
 	}
 })
 
-var _ = Describe("Schema Change in Same Group", func() {
+var _ = Describe("Schema Change", func() {
 	var groupName string
 	var groupCounter int
 
@@ -167,7 +167,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, true)
+			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, statusCodeInt)
 
 			getResp, err := streamClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
 				Metadata: &commonv1.Metadata{
@@ -188,7 +188,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			time.Sleep(2 * time.Second)
-			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, false)
+			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, statusCodeNone)
 
 			Eventually(func(innerGm Gomega) {
 				queryClient := streamv1.NewStreamServiceClient(connection)
@@ -268,7 +268,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, false)
+			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, statusCodeNone)
 
 			getResp, err := streamClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
 				Metadata: &commonv1.Metadata{
@@ -286,7 +286,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			time.Sleep(2 * time.Second)
-			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, true)
+			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, statusCodeInt)
 
 			Eventually(func(innerGm Gomega) {
 				queryClient := streamv1.NewStreamServiceClient(connection)
@@ -340,7 +340,120 @@ var _ = Describe("Schema Change in Same Group", func() {
 		})
 	})
 
-	Context("Stream schema with filter on deleted tag", func() {
+	Context("Stream schema with changed tag type", func() {
+		It("querying data should return null for type-mismatched tags", func() {
+			ctx := context.Background()
+			streamName := "schema_change_tag_type"
+			streamClient := databasev1.NewStreamRegistryServiceClient(connection)
+			initialStream := &databasev1.Stream{
+				Metadata: &commonv1.Metadata{
+					Name:  streamName,
+					Group: groupName,
+				},
+				TagFamilies: []*databasev1.TagFamilySpec{
+					{
+						Name: "data",
+						Tags: []*databasev1.TagSpec{
+							{Name: "data_binary", Type: databasev1.TagType_TAG_TYPE_DATA_BINARY},
+						},
+					},
+					{
+						Name: "searchable",
+						Tags: []*databasev1.TagSpec{
+							{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+							{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+							{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+							{Name: "status_code", Type: databasev1.TagType_TAG_TYPE_INT},
+						},
+					},
+				},
+				Entity: &databasev1.Entity{
+					TagNames: []string{"service_id"},
+				},
+			}
+			_, err := streamClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
+				Stream: initialStream,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, statusCodeInt)
+
+			getResp, err := streamClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
+				Metadata: &commonv1.Metadata{
+					Name:  streamName,
+					Group: groupName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			updatedStream := getResp.GetStream()
+			updatedStream.TagFamilies[1].Tags = []*databasev1.TagSpec{
+				{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+				{Name: "status_code", Type: databasev1.TagType_TAG_TYPE_STRING},
+			}
+			_, err = streamClient.Update(ctx, &databasev1.StreamRegistryServiceUpdateRequest{
+				Stream: updatedStream,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			time.Sleep(2 * time.Second)
+			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, statusCodeString)
+
+			Eventually(func(innerGm Gomega) {
+				queryClient := streamv1.NewStreamServiceClient(connection)
+				queryResp, queryErr := queryClient.Query(ctx, &streamv1.QueryRequest{
+					Groups: []string{groupName},
+					Name:   streamName,
+					TimeRange: &modelv1.TimeRange{
+						Begin: timestamppb.New(now.Add(-3 * time.Hour)),
+						End:   timestamppb.New(now),
+					},
+					Projection: &modelv1.TagProjection{
+						TagFamilies: []*modelv1.TagProjection_TagFamily{
+							{
+								Name: "searchable",
+								Tags: []string{"trace_id", "service_id", "duration", "status_code"},
+							},
+						},
+					},
+				})
+				innerGm.Expect(queryErr).NotTo(HaveOccurred())
+				innerGm.Expect(queryResp.Elements).To(HaveLen(8))
+
+				nullCount := 0
+				stringCount := 0
+				for _, elem := range queryResp.Elements {
+					for _, tf := range elem.TagFamilies {
+						if tf.Name == "searchable" {
+							for _, tag := range tf.Tags {
+								if tag.Key == "status_code" {
+									switch tag.Value.GetValue().(type) {
+									case *modelv1.TagValue_Null:
+										nullCount++
+									case *modelv1.TagValue_Str:
+										stringCount++
+									}
+								}
+							}
+						}
+					}
+				}
+				innerGm.Expect(nullCount).To(Equal(5), "old data with INT type should return null after schema changed to STRING")
+				innerGm.Expect(stringCount).To(Equal(3), "new data should have STRING status_code values")
+			}, flags.EventuallyTimeout).Should(Succeed())
+
+			_, err = streamClient.Delete(ctx, &databasev1.StreamRegistryServiceDeleteRequest{
+				Metadata: &commonv1.Metadata{
+					Name:  streamName,
+					Group: groupName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("Stream schema with condition on deleted tag", func() {
 		It("querying data should fail if the condition includes a deleted tag", func() {
 			ctx := context.Background()
 			streamName := "schema_change_filter_deleted"
@@ -376,7 +489,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, true)
+			writeStreamData(ctx, streamName, groupName, now.Add(-2*time.Hour), 5, statusCodeInt)
 
 			getResp, err := streamClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
 				Metadata: &commonv1.Metadata{
@@ -397,7 +510,7 @@ var _ = Describe("Schema Change in Same Group", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			time.Sleep(2 * time.Second)
-			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, false)
+			writeStreamData(ctx, streamName, groupName, now.Add(-1*time.Hour), 3, statusCodeNone)
 
 			Eventually(func(innerGm Gomega) {
 				queryClient := streamv1.NewStreamServiceClient(connection)
@@ -445,13 +558,21 @@ var _ = Describe("Schema Change in Same Group", func() {
 	})
 })
 
-func writeStreamData(ctx context.Context, name, group string, baseTime time.Time, count int, includeOptionalTag bool) {
+type statusCodeType int
+
+const (
+	statusCodeNone statusCodeType = iota
+	statusCodeInt
+	statusCodeString
+)
+
+func writeStreamData(ctx context.Context, name, group string, baseTime time.Time, count int, statusCodeType statusCodeType) {
 	Eventually(func() error {
-		return doWriteStreamData(ctx, name, group, baseTime, count, includeOptionalTag)
+		return doWriteStreamData(ctx, name, group, baseTime, count, statusCodeType)
 	}, flags.EventuallyTimeout).Should(Succeed())
 }
 
-func doWriteStreamData(ctx context.Context, name, group string, baseTime time.Time, count int, includeOptionalTag bool) error {
+func doWriteStreamData(ctx context.Context, name, group string, baseTime time.Time, count int, statusCodeType statusCodeType) error {
 	c := streamv1.NewStreamServiceClient(connection)
 	writeClient, err := c.Write(ctx)
 	if err != nil {
@@ -461,14 +582,22 @@ func doWriteStreamData(ctx context.Context, name, group string, baseTime time.Ti
 	interval := 500 * time.Millisecond
 
 	for i := 0; i < count; i++ {
+		traceIDPrefix := "trace_"
+		if statusCodeType == statusCodeString {
+			traceIDPrefix = "trace_new_"
+		}
 		searchableTags := []*modelv1.TagValue{
-			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "trace_" + strconv.Itoa(i)}}},
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: traceIDPrefix + strconv.Itoa(i)}}},
 			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "service_1"}}},
 			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(100 * (i + 1))}}},
 		}
-		if includeOptionalTag {
+		switch statusCodeType {
+		case statusCodeInt:
 			searchableTags = append(searchableTags,
 				&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(200 + i)}}})
+		case statusCodeString:
+			searchableTags = append(searchableTags,
+				&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "status_" + strconv.Itoa(i)}}})
 		}
 		e := &streamv1.ElementValue{
 			ElementId: strconv.Itoa(i),
