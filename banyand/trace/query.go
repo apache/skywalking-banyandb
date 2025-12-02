@@ -46,6 +46,7 @@ var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
+	schemaTagTypes map[string]pbv1.ValueType
 	traceIDs       []string
 	model.TraceQueryOptions
 }
@@ -83,9 +84,20 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	sort.Strings(tqo.TraceIDs)
 
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	if is := t.indexSchema.Load(); is != nil {
+		for name, spec := range is.(indexSchema).tagMap {
+			vt := pbv1.TagValueSpecToValueType(spec.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[name] = vt
+			}
+		}
+	}
+
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
 		traceIDs:          tqo.TraceIDs,
+		schemaTagTypes:    schemaTagTypes,
 	}
 
 	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {

@@ -66,8 +66,9 @@ var _ Measure = (*measure)(nil)
 
 type queryOptions struct {
 	model.MeasureQueryOptions
-	minTimestamp int64
-	maxTimestamp int64
+	schemaTagTypes map[string]pbv1.ValueType
+	minTimestamp   int64
+	maxTimestamp   int64
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
@@ -138,9 +139,21 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}()
 	mqo.TagProjection = newTagProjection
+
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	for _, tf := range m.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[tag.GetName()] = vt
+			}
+		}
+	}
+
 	var parts []*part
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
+		schemaTagTypes:      schemaTagTypes,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}

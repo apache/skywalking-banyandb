@@ -19,7 +19,6 @@ package schema
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -129,13 +128,9 @@ func validateTraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
 	}
 
 	for _, prevTag := range prevTrace.GetTags() {
-		newTag, tagExists := newTagMap[prevTag.GetName()]
+		_, tagExists := newTagMap[prevTag.GetName()]
 		if !tagExists {
 			continue
-		}
-		if prevTag.String() != newTag.String() {
-			return fmt.Errorf("tag %s is different: %s != %s",
-				prevTag.GetName(), prevTag.String(), newTag.String())
 		}
 	}
 

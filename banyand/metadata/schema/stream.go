@@ -119,16 +119,12 @@ func validateStreamUpdate(prevStream, newStream *databasev1.Stream) error {
 			continue
 		}
 		for _, prevTag := range prevTagFamily.GetTags() {
-			newTag, tagExists := newTagMap[prevTag.GetName()]
+			_, tagExists := newTagMap[prevTag.GetName()]
 			if !tagExists {
 				if _, isEntity := entityTagSet[prevTag.GetName()]; isEntity {
 					return fmt.Errorf("cannot delete entity tag %s in tag family %s", prevTag.GetName(), prevTagFamily.GetName())
 				}
 				continue
-			}
-			if prevTag.String() != newTag.String() {
-				return fmt.Errorf("tag %s in tag family %s is different: %s != %s",
-					prevTag.GetName(), prevTagFamily.GetName(), prevTag.String(), newTag.String())
 			}
 		}
 	}
