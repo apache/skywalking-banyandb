@@ -70,7 +70,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 	criteriaTagNames := make(map[string]struct{})
 	logical.CollectCriteriaTagNames(uis.criteria, criteriaTagNames)
 
-	var hiddenTags map[string]struct{}
+	hiddenTags := logical.NewHiddenTagSet()
 	var tagFilter logical.TagFilter
 	if uis.criteria != nil {
 		var errFilter error
@@ -79,7 +79,6 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 			return nil, errFilter
 		}
 		if tagFilter != logical.DummyFilter {
-			hiddenTags = make(map[string]struct{})
 			for tagName := range criteriaTagNames {
 				if _, isEntity := entityDict[tagName]; isEntity {
 					continue
@@ -89,7 +88,7 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 					return nil, errAdd
 				}
 				if added {
-					hiddenTags[tagName] = struct{}{}
+					hiddenTags.Add(tagName)
 				}
 			}
 		}
@@ -166,22 +165,22 @@ var (
 )
 
 type tagFilterPlan struct {
-	s         logical.Schema
-	parent    logical.Plan
-	tagFilter logical.TagFilter
-	hidden    map[string]struct{}
+	s          logical.Schema
+	parent     logical.Plan
+	tagFilter  logical.TagFilter
+	hiddenTags logical.HiddenTagSet
 }
 
 func (t *tagFilterPlan) Close() {
 	t.parent.(executor.StreamExecutable).Close()
 }
 
-func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, hidden map[string]struct{}) logical.Plan {
+func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet) logical.Plan {
 	return &tagFilterPlan{
-		s:         s,
-		parent:    parent,
-		tagFilter: tagFilter,
-		hidden:    hidden,
+		s:          s,
+		parent:     parent,
+		tagFilter:  tagFilter,
+		hiddenTags: hiddenTags,
 	}
 }
 
@@ -202,7 +201,8 @@ func (t *tagFilterPlan) Execute(ec context.Context) ([]*streamv1.Element, error)
 				return nil, err
 			}
 			if ok {
-				t.stripHiddenTags(e)
+				// Strip hidden tags using shared utility
+				e.TagFamilies = t.hiddenTags.StripHiddenTags(e.TagFamilies)
 				filteredElements = append(filteredElements, e)
 			}
 		}
@@ -226,38 +226,10 @@ func (t *tagFilterPlan) Schema() logical.Schema {
 	return t.s
 }
 
-func (t *tagFilterPlan) stripHiddenTags(element *streamv1.Element) {
-	if len(t.hidden) == 0 || element == nil {
-		return
-	}
-	families := element.TagFamilies[:0]
-	for _, tf := range element.TagFamilies {
-		if tf == nil {
-			continue
-		}
-		tags := tf.Tags[:0]
-		for _, tag := range tf.Tags {
-			if tag == nil {
-				continue
-			}
-			if _, hidden := t.hidden[tag.GetKey()]; hidden {
-				continue
-			}
-			tags = append(tags, tag)
-		}
-		if len(tags) == 0 {
-			continue
-		}
-		tf.Tags = tags
-		families = append(families, tf)
-	}
-	element.TagFamilies = families
-}
-
 type projectionBuilder struct {
-	familyOrder []string
 	familyTags  map[string][]string
 	tagSet      map[string]struct{}
+	familyOrder []string
 }
 
 func newProjectionBuilder(existing [][]*logical.Tag) *projectionBuilder {

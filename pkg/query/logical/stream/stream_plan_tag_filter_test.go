@@ -48,7 +48,7 @@ func TestAnalyzeAddsHiddenCriteriaTags(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tagFilterPlan, got %T", resolved)
 	}
-	if _, exists := tfPlan.hidden["filter_tag"]; !exists {
+	if !tfPlan.hiddenTags.Contains("filter_tag") {
 		t.Fatalf("expected filter_tag to be tracked as hidden")
 	}
 
@@ -71,11 +71,9 @@ func TestAnalyzeAddsHiddenCriteriaTags(t *testing.T) {
 }
 
 func TestStripHiddenTagsRemovesSensitiveValues(t *testing.T) {
-	tfPlan := &tagFilterPlan{
-		hidden: map[string]struct{}{
-			"hidden": {},
-		},
-	}
+	hiddenTags := logical.NewHiddenTagSet()
+	hiddenTags.Add("hidden")
+
 	element := &streamv1.Element{
 		TagFamilies: []*modelv1.TagFamily{
 			{
@@ -94,7 +92,8 @@ func TestStripHiddenTagsRemovesSensitiveValues(t *testing.T) {
 		},
 	}
 
-	tfPlan.stripHiddenTags(element)
+	// Use the shared utility to strip hidden tags
+	element.TagFamilies = hiddenTags.StripHiddenTags(element.TagFamilies)
 
 	if len(element.GetTagFamilies()) != 1 {
 		t.Fatalf("expected only one tag family after stripping, got %d", len(element.GetTagFamilies()))

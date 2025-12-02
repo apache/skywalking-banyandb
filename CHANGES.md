@@ -8,6 +8,7 @@ Release Notes.
 
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement BanyanDB MCP.
+- Remove check requiring tags in criteria to be present in projection
 
 ### Bug Fixes
 

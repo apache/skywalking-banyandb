@@ -120,7 +120,22 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		// fill AnyEntry by default
 		entity[idx] = pbv1.AnyTagValue
 	}
-	extraTags := collectHiddenCriteriaTags(uis.criteria, projectedTagNames, entityMap, s)
+
+	// Collect hidden criteria tags using shared utility
+	tagFamilies := ms.measure.GetTagFamilies()
+	hiddenTags, extraTags := logical.CollectHiddenCriteriaTags(
+		uis.criteria,
+		projectedTagNames,
+		entityMap,
+		s,
+		func() []string {
+			names := make([]string, len(tagFamilies))
+			for i, tf := range tagFamilies {
+				names[i] = tf.GetName()
+			}
+			return names
+		},
+	)
 	if len(extraTags) > 0 {
 		tagRefInput = append(tagRefInput, extraTags...)
 		// Recreate tag refs with both projection tags and hidden criteria tags
@@ -146,6 +161,7 @@ func (uis *unresolvedIndexScan) Analyze(s logical.Schema) (logical.Plan, error) 
 		query:                query,
 		entities:             entities,
 		groupByEntity:        uis.groupByEntity,
+		hiddenTags:           hiddenTags,
 		uis:                  uis,
 		l:                    logger.GetLogger("query", "measure", uis.metadata.Group, uis.metadata.Name, "local-index"),
 		ec:                   uis.ec,
@@ -165,6 +181,7 @@ type localIndexScan struct {
 	order                *logical.OrderBy
 	metadata             *commonv1.Metadata
 	l                    *logger.Logger
+	hiddenTags           logical.HiddenTagSet
 	timeRange            timestamp.TimeRange
 	projectionTagsRefs   [][]*logical.TagRef
 	projectionFieldsRefs []*logical.FieldRef
@@ -213,7 +230,8 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &resultMIterator{
-		result: result,
+		result:     result,
+		hiddenTags: i.hiddenTags,
 	}, nil
 }
 
@@ -256,10 +274,11 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	result  model.MeasureQueryResult
-	err     error
-	current []*measurev1.DataPoint
-	i       int
+	result     model.MeasureQueryResult
+	hiddenTags logical.HiddenTagSet
+	err        error
+	current    []*measurev1.DataPoint
+	i          int
 }
 
 func (ei *resultMIterator) Next() bool {
@@ -300,6 +319,9 @@ func (ei *resultMIterator) Next() bool {
 				})
 			}
 		}
+		// Strip hidden tags from the result
+		dp.TagFamilies = ei.hiddenTags.StripHiddenTags(dp.TagFamilies)
+
 		for _, f := range r.Fields {
 			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
 				Name:  f.Name,
@@ -350,55 +372,4 @@ func (i *localIndexScan) startSpan(ctx context.Context, tracer *query.Tracer, or
 		}
 		span.Stop()
 	}
-}
-
-func collectHiddenCriteriaTags(criteria *modelv1.Criteria, projected map[string]struct{}, entities map[string]int, s logical.Schema) [][]*logical.Tag {
-	if criteria == nil {
-		return nil
-	}
-	tagNames := make(map[string]struct{})
-	logical.CollectCriteriaTagNames(criteria, tagNames)
-
-	// Group tags by family
-	familyTags := make(map[string][]*logical.Tag)
-	var familyOrder []string
-
-	ms := s.(*schema)
-	tagFamilies := ms.measure.GetTagFamilies()
-
-	for tagName := range tagNames {
-		if _, ok := projected[tagName]; ok {
-			continue
-		}
-		if _, isEntity := entities[tagName]; isEntity {
-			continue
-		}
-		tagSpec := s.FindTagSpecByName(tagName)
-		if tagSpec == nil {
-			continue
-		}
-
-		// Get the actual family name from the schema
-		if tagSpec.TagFamilyIdx < 0 || tagSpec.TagFamilyIdx >= len(tagFamilies) {
-			continue
-		}
-		familyName := tagFamilies[tagSpec.TagFamilyIdx].GetName()
-
-		// Group tags by family
-		if _, exists := familyTags[familyName]; !exists {
-			familyOrder = append(familyOrder, familyName)
-			familyTags[familyName] = make([]*logical.Tag, 0)
-		}
-		familyTags[familyName] = append(familyTags[familyName], logical.NewTag(familyName, tagName))
-	}
-
-	// Convert to [][]*logical.Tag maintaining family grouping
-	if len(familyOrder) == 0 {
-		return nil
-	}
-	extras := make([][]*logical.Tag, 0, len(familyOrder))
-	for _, family := range familyOrder {
-		extras = append(extras, familyTags[family])
-	}
-	return extras
 }
