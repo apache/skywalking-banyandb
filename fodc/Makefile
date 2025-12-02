@@ -17,7 +17,7 @@
 #
 
 NAME := fodc
-BINARIES := $(NAME)-cli
+BINARIES := $(NAME)-cli $(NAME)-view
 
 IMG_NAME := skywalking-fodc
 
