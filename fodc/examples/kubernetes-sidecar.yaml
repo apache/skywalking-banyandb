@@ -1,0 +1,232 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+# either express or implied.  See the License for the specific
+# language governing permissions and limitations under the License.
+
+# Kubernetes deployment example showing FODC running as a sidecar alongside BanyanDB
+# This demonstrates the sidecar pattern where FODC monitors and collects
+# diagnostic data from the BanyanDB instance in the same pod.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banyandb
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banyandb-config
+  namespace: banyandb
+data:
+  standalone.yaml: |
+    # BanyanDB standalone configuration
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: banyandb-data
+  namespace: banyandb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banyandb-with-fodc
+  namespace: banyandb
+  labels:
+    app: banyandb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb
+  template:
+    metadata:
+      labels:
+        app: banyandb
+    spec:
+      # Main BanyanDB container
+      containers:
+      - name: banyandb
+        image: apache/skywalking-banyandb:latest
+        imagePullPolicy: IfNotPresent
+        command: ["standalone"]
+        ports:
+        - name: grpc
+          containerPort: 17912
+        - name: http
+          containerPort: 17913
+        - name: metrics
+          containerPort: 2121
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: shared-tmp
+          mountPath: /tmp
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 17913
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/healthz
+            port: 17913
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+      # FODC Sidecar container - monitors BanyanDB in the same pod
+      - name: fodc-sidecar
+        image: apache/skywalking-fodc:latest  # Replace with your FODC image
+        imagePullPolicy: IfNotPresent
+        command:
+        - "/fodc-cli"
+        - "--sidecar"
+        - "--poll-interval=5s"
+        - "--health-interval=10s"
+        - "--death-rattle-path=/tmp/death-rattle"
+        - "--container=banyandb"
+        - "--alert-threshold=0.8"
+        - "--flight-recorder-path=/data/fodc-flight-recorder.bin"
+        - "--flight-recorder-buffer=1000"
+        - "--health-port=17914"
+        env:
+        # Auto-discovery: FODC will discover BanyanDB on localhost (same pod network namespace)
+        - name: BANYANDB_HOST
+          value: "localhost"
+        - name: BANYANDB_METRICS_PORT
+          value: "2121"
+        - name: BANYANDB_HTTP_PORT
+          value: "17913"
+        # Kubernetes pod information for sidecar
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - name: health
+          containerPort: 17914
+        volumeMounts:
+        - name: data
+          mountPath: /data  # Shared volume for flight recorder data
+        - name: shared-tmp
+          mountPath: /tmp  # Shared volume for death rattle files
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 17914
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 17914
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: banyandb-data
+      - name: shared-tmp
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banyandb
+  namespace: banyandb
+spec:
+  selector:
+    app: banyandb
+  ports:
+  - name: grpc
+    port: 17912
+    targetPort: 17912
+  - name: http
+    port: 17913
+    targetPort: 17913
+  - name: metrics
+    port: 2121
+    targetPort: 2121
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fodc-sidecar
+  namespace: banyandb
+spec:
+  selector:
+    app: banyandb
+  ports:
+  - name: health
+    port: 17914
+    targetPort: 17914
+  type: ClusterIP
+
