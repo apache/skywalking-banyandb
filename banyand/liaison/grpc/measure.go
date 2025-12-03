@@ -86,7 +86,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	defer ms.handleWriteCleanup(publisher, &succeedSent, measure, start)
 
 	var currentMetadata *commonv1.Metadata
-	var currentDataPointSpec *measurev1.DataPointSpec
+	var spec *measurev1.DataPointSpec
 	isFirstRequest := true
 
 	for {
@@ -120,9 +120,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		isFirstRequest = false
 
 		if writeRequest.GetDataPointSpec() != nil {
-			currentDataPointSpec = writeRequest.GetDataPointSpec()
-		} else if currentDataPointSpec != nil {
-			writeRequest.DataPointSpec = currentDataPointSpec
+			spec = writeRequest.GetDataPointSpec()
 		}
 
 		ms.metrics.totalStreamMsgReceived.Inc(1, writeRequest.Metadata.Group, "measure", "write")
@@ -131,7 +129,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			continue
 		}
 
-		if err := ms.processAndPublishRequest(ctx, writeRequest, publisher, &succeedSent, measure); err != nil {
+		if err := ms.processAndPublishRequest(ctx, writeRequest, spec, publisher, &succeedSent, measure); err != nil {
 			continue
 		}
 	}
@@ -162,7 +160,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 }
 
 func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
-	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
+	spec *measurev1.DataPointSpec, publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
 ) error {
 	// Retry with backoff when encountering errNotExist
 	var tagValues pbv1.EntityValues
@@ -173,7 +171,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = ms.navigate(writeRequest)
+			tagValues, shardID, err = ms.navigate(writeRequest, spec)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
 				break
 			}
@@ -186,7 +184,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 			}
 		}
 	} else {
-		tagValues, shardID, err = ms.navigate(writeRequest)
+		tagValues, shardID, err = ms.navigate(writeRequest, spec)
 	}
 
 	if err != nil {
@@ -252,9 +250,8 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 	return []string{nodeID}, nil
 }
 
-func (ms *measureService) navigate(writeRequest *measurev1.WriteRequest) (pbv1.EntityValues, common.ShardID, error) {
+func (ms *measureService) navigate(writeRequest *measurev1.WriteRequest, spec *measurev1.DataPointSpec) (pbv1.EntityValues, common.ShardID, error) {
 	metadata := writeRequest.GetMetadata()
-	spec := writeRequest.GetDataPointSpec()
 	tagFamilies := writeRequest.GetDataPoint().GetTagFamilies()
 	if spec == nil {
 		return ms.navigateByLocator(metadata, tagFamilies)

@@ -71,7 +71,7 @@ func (w *writeCallback) CheckHealth() *common.Error {
 }
 
 func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, writeEvent *measurev1.InternalWriteRequest,
-	stm *measure, is indexSchema, ts int64,
+	stm *measure, is indexSchema, ts int64, spec *measurev1.DataPointSpec,
 ) (uint64, error) {
 	series := &pbv1.Series{
 		Subject:      req.Metadata.Name,
@@ -80,7 +80,6 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	if err := series.Marshal(); err != nil {
 		return 0, fmt.Errorf("cannot marshal series: %w", err)
 	}
-	spec := req.GetDataPointSpec()
 
 	if stm.schema.IndexMode {
 		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators, spec)
@@ -119,7 +118,8 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec,
+) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -193,7 +193,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -503,6 +503,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 	groups := make(map[string]*dataPointsInGroup)
+	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -518,8 +519,12 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetDataPointSpec() != nil {
+			spec = req.GetDataPointSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, spec); err != nil {
 			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInGroup)
 			continue

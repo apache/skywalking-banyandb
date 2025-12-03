@@ -81,6 +81,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*dataPointsInQueue)
+	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -96,8 +97,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetDataPointSpec() != nil {
+			spec = req.GetDataPointSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInQueue)
 			continue
@@ -154,7 +159,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	return
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInQueue, error) {
+func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec) (map[string]*dataPointsInQueue, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -213,7 +218,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEven
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, spec)
 	if err != nil {
 		return nil, err
 	}
