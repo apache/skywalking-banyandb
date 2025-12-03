@@ -1,0 +1,329 @@
+# FODC - Failure Observer and Death Rattle Detector
+
+FODC is a monitoring tool for BanyanDB containers that polls Prometheus metrics and detects "death rattles" - signals and file-based triggers that indicate an impending or current failure.
+
+**FODC can run as a Sidecar** alongside each BanyanDB instance, automatically discovering and monitoring the BanyanDB instance in the same pod/container group. This sidecar pattern ensures that diagnostic data collection is coordinated and always available.
+
+## Features
+
+- 🔍 **Metrics Polling**: Continuously polls Prometheus metrics from BanyanDB container
+- 💀 **Death Rattle Detection**: Detects file-based triggers, signals, and health check failures
+- 🚨 **Alert System**: Analyzes metrics for anomalies (error rates, memory pressure, disk usage)
+- 📊 **Real-time Monitoring**: Provides real-time alerts for detected failures
+- 🎯 **Flight Recorder**: Buffers metrics data in a circular buffer using memory-mapped files, ensuring data survives crashes
+- 🚀 **Sidecar Mode**: Automatic service discovery and coordination when running alongside BanyanDB instances
+- 🏥 **Health Endpoints**: Built-in health endpoints for Kubernetes liveness/readiness probes
+
+## Death Rattle Detection
+
+FODC monitors for several types of "death rattles":
+
+1. **File-based Triggers**: Watches for files that indicate container failure:
+   - `/tmp/death-rattle` (configurable)
+   - `/tmp/container-failing`
+   - `/dev/shm/death-rattle`
+   - `/tmp/banyandb-failing`
+
+2. **Signal Monitoring**: Detects termination signals (SIGTERM, SIGINT, SIGHUP)
+
+3. **Health Check Failures**: Monitors BanyanDB health endpoint for consecutive failures
+
+4. **Container Status**: Checks for OOM kills and container process issues
+
+## Installation
+
+```bash
+cd fodc
+make fodc-cli fodc-view
+```
+
+The binaries will be built at:
+- `build/bin/dev/fodc-cli` - Main monitoring tool
+- `build/bin/dev/fodc-view` - Flight recorder viewer tool
+
+## Usage
+
+### Basic Usage
+
+```bash
+./build/bin/dev/fodc-cli
+```
+
+### With Custom Configuration
+
+```bash
+./build/bin/dev/fodc-cli \
+  --metrics-url=http://localhost:2121/metrics \
+  --poll-interval=5s \
+  --health-url=http://localhost:17913/api/healthz \
+  --health-interval=10s \
+  --death-rattle-path=/tmp/death-rattle \
+  --container=banyandb \
+  --alert-threshold=0.8
+```
+
+### Sidecar Mode
+
+FODC can run in **sidecar mode** with automatic service discovery:
+
+```bash
+./build/bin/dev/fodc-cli --sidecar
+```
+
+In sidecar mode, FODC will:
+- Automatically discover BanyanDB endpoints using environment variables or defaults
+- Start a health endpoint server (default port: 17914)
+- Provide Kubernetes-compatible health endpoints (`/healthz`, `/ready`, `/live`)
+- Share the same network namespace as BanyanDB (in Kubernetes/Docker)
+
+**Environment Variables for Sidecar Mode:**
+- `BANYANDB_HOST`: BanyanDB hostname (default: `localhost`)
+- `BANYANDB_METRICS_PORT`: Metrics port (default: `2121`)
+- `BANYANDB_HTTP_PORT`: HTTP API port (default: `17913`)
+- `FODC_HEALTH_PORT`: FODC health endpoint port (default: `17914`)
+- `POD_NAME`: Kubernetes pod name (auto-injected)
+- `POD_NAMESPACE`: Kubernetes pod namespace (auto-injected)
+- `POD_IP`: Kubernetes pod IP (auto-injected)
+
+### Command Line Flags
+
+- `--sidecar`: Run in sidecar mode with auto-discovery (default: `false`)
+- `--metrics-url`: Prometheus metrics endpoint URL (auto-discovered in sidecar mode)
+- `--poll-interval`: Interval for polling metrics (default: `5s`)
+- `--health-url`: Health check endpoint URL (auto-discovered in sidecar mode)
+- `--health-interval`: Interval for health checks (default: `10s`)
+- `--death-rattle-path`: Path to watch for death rattle file triggers (default: `/tmp/death-rattle`)
+- `--container`: Container name to monitor (default: `banyandb`)
+- `--alert-threshold`: Alert threshold for error rate 0.0-1.0 (default: `0.8`)
+- `--flight-recorder-path`: Path to flight recorder memory-mapped file (default: `/tmp/fodc-flight-recorder.bin`)
+- `--flight-recorder-buffer`: Number of snapshots to buffer in flight recorder (default: `1000`)
+- `--health-port`: Port for sidecar health endpoint (default: `17914`)
+
+## Testing Death Rattle Detection
+
+You can test the death rattle detection by creating a trigger file:
+
+```bash
+# Create a death rattle file
+echo "Container is failing!" > /tmp/death-rattle
+
+# FODC will detect this and alert
+```
+
+## Sidecar Deployment
+
+### Docker Compose
+
+See `examples/docker-compose-sidecar.yml` for a complete example of FODC running as a sidecar alongside BanyanDB:
+
+```bash
+cd fodc/examples
+docker-compose -f docker-compose-sidecar.yml up
+```
+
+The sidecar will automatically discover BanyanDB on `localhost` (same network namespace) and start monitoring.
+
+### Kubernetes
+
+See `examples/kubernetes-sidecar.yaml` for a complete Kubernetes deployment example:
+
+```bash
+kubectl apply -f examples/kubernetes-sidecar.yaml
+```
+
+The deployment includes:
+- BanyanDB container as the main application
+- FODC sidecar container in the same pod
+- Shared volumes for flight recorder data and death rattle files
+- Health probes for both containers
+- Service discovery via environment variables
+
+**Key Features:**
+- Both containers share the same pod network namespace (use `localhost` to communicate)
+- Shared volumes allow FODC to access death rattle files and persist flight recorder data
+- Kubernetes environment variables (`POD_NAME`, `POD_IP`, etc.) are automatically injected
+- Health endpoints enable proper liveness/readiness probe configuration
+
+## Running in Docker
+
+To run FODC inside a Docker container monitoring BanyanDB:
+
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o fodc ./cmd/fodc
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+COPY --from=builder /app/fodc /usr/local/bin/fodc
+ENTRYPOINT ["fodc"]
+```
+
+Or use the provided Dockerfile:
+
+```bash
+cd fodc
+make docker-build
+```
+
+## Integration with BanyanDB
+
+FODC is designed to work with BanyanDB containers. Ensure that:
+
+1. BanyanDB metrics endpoint is exposed (port 2121)
+2. Health check endpoint is accessible (port 17913)
+3. FODC has access to the container filesystem for death rattle detection
+
+### Sidecar Pattern Benefits
+
+When running as a sidecar, FODC provides several advantages:
+
+1. **Automatic Discovery**: No manual configuration needed - FODC discovers BanyanDB automatically
+2. **Shared Network**: Uses the same network namespace, enabling efficient localhost communication
+3. **Coordinated Lifecycle**: Sidecar starts/stops with the BanyanDB instance
+4. **Shared Storage**: Can share volumes for death rattle files and flight recorder data
+5. **Health Monitoring**: Provides health endpoints for Kubernetes/Docker orchestration
+6. **Per-Instance Monitoring**: Each BanyanDB instance has its own dedicated FODC sidecar
+
+## Flight Recorder
+
+The Flight Recorder is a critical component that ensures metrics data survives crashes:
+
+- **Memory-Mapped Storage**: Uses memory-mapped files for efficient persistence
+- **Circular Buffer**: Implements a circular buffer to store the most recent N snapshots
+- **Crash Recovery**: Automatically recovers data on startup if the process crashed
+- **Independent Memory Space**: Operates in its own memory space, separate from the main process
+
+The flight recorder buffers metrics snapshots in a memory-mapped file. When FODC starts, it automatically attempts to recover any previously recorded data, allowing you to analyze metrics from before a crash.
+
+### Viewing Flight Recorder Data
+
+You can view the contents of a flight recorder file using the `fodc-view` command:
+
+#### View all snapshots (pretty format):
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin
+```
+
+#### View as JSON:
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --format=json
+```
+
+#### Save JSON to file (recommended for large datasets):
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --format=json --output=snapshots.json
+```
+
+#### Stream JSON output (JSONL format, one snapshot per line - best for large datasets):
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --format=json --stream --output=snapshots.jsonl
+```
+
+#### View only statistics:
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --format=stats
+```
+
+#### View recent snapshots:
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --recent --recent-n=10
+```
+
+#### Limit number of snapshots:
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --limit=5
+```
+
+**Command Options:**
+- `--path`: Path to flight recorder file (default: `/tmp/fodc-flight-recorder.bin`)
+- `--format`: Output format: `pretty`, `json`, or `stats` (default: `pretty`)
+- `--limit`: Limit number of snapshots to display (0 = all)
+- `--recent`: Show only recent snapshots
+- `--recent-n`: Number of recent snapshots to show when using `--recent` (default: 10)
+- `--output`: Output file path (default: stdout). **Recommended for large JSON outputs to avoid truncation**
+- `--stream`: Stream JSON output in JSONL format (one snapshot per line). **Best for large datasets** as it's more memory-efficient and avoids truncation issues
+
+### Recovering Data Programmatically
+
+You can also programmatically recover data from a flight recorder file:
+
+```go
+import "github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
+
+snapshots, err := flightrecorder.Recover("/tmp/fodc-flight-recorder.bin")
+if err != nil {
+    log.Fatal(err)
+}
+// Process recovered snapshots
+```
+
+## Health Endpoints (Sidecar Mode)
+
+When running in sidecar mode, FODC exposes health endpoints for monitoring and orchestration:
+
+- **`GET /health`** or **`GET /healthz`**: Full health status with JSON response
+  - Returns 200 OK if healthy, 503 Service Unavailable if BanyanDB is not connected
+  - Includes metrics collection status, BanyanDB connection status, and uptime
+  
+- **`GET /ready`**: Readiness probe endpoint
+  - Returns 200 OK when FODC is ready to monitor
+  - Returns 503 when BanyanDB is not connected
+  
+- **`GET /live`**: Liveness probe endpoint
+  - Returns 200 OK when FODC is alive
+  - Returns 503 when FODC has stopped
+
+**Example Health Response:**
+```json
+{
+  "status": "running",
+  "timestamp": "2024-01-01T12:00:00Z",
+  "version": "0.1.0",
+  "banyandb": {
+    "connected": true,
+    "last_check": "2024-01-01T12:00:00Z"
+  },
+  "metrics": {
+    "total_snapshots": 1000,
+    "last_snapshot_time": "2024-01-01T12:00:00Z",
+    "errors": 0
+  },
+  "uptime": "1h30m0s",
+  "metadata": {
+    "mode": "sidecar",
+    "banyandb_host": "localhost",
+    "pod_name": "banyandb-0"
+  }
+}
+```
+
+## Metrics Monitored
+
+FODC monitors key BanyanDB metrics:
+
+- Error rates (`banyandb_liaison_grpc_total_err` / `banyandb_liaison_grpc_total_started`)
+- Memory usage (`banyandb_system_memory_state` with `kind="used"` and `kind="total"` labels)
+- Disk usage (`banyandb_system_disk` with `kind="used"` and `kind="total"` labels)
+- Write rates (`banyandb_measure_total_written`)
+
+## License
+
+Licensed to Apache Software Foundation (ASF) under one or more contributor
+license agreements. See the NOTICE file distributed with
+this work for additional information regarding copyright
+ownership. Apache Software Foundation (ASF) licenses this file to you under
+the Apache License, Version 2.0 (the "License"); you may
+not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+

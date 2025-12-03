@@ -6,6 +6,7 @@ bin/
 *.dll
 *.so
 *.dylib
+cli
 
 # Test binary
 *.test
