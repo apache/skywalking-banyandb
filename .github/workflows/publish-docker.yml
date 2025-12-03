@@ -80,6 +80,6 @@ jobs:
       - name: Push docker image
         if: github.ref == 'refs/heads/main'
         run: |
-          PLATFORMS=linux/amd64,linux/arm64,windows/amd64 make docker.push || PLATFROMS=linux/amd64,linux/arm64,windows/amd64 make docker.push
+          PLATFORMS=linux/amd64,linux/arm64,windows/amd64 make docker.push || PLATFORMS=linux/amd64,linux/arm64,windows/amd64 make docker.push
           PLATFORMS=linux/amd64,linux/arm64,windows/amd64 BINARYTYPE=slim make -C banyand docker.push || PLATFORMS=linux/amd64,linux/arm64,windows/amd64 BINARYTYPE=slim make -C banyand docker.push
           make -C test/docker push || make -C test/docker push

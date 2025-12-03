@@ -8,10 +8,12 @@ Release Notes.
 
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement BanyanDB MCP.
+- Remove check requiring tags in criteria to be present in projection
 
 ### Bug Fixes
 
 - Fix the wrong retention setting of each measure/stream/trace.
+- Fix server got panic when create/update property with high dist usage.
 
 ### Document
 
