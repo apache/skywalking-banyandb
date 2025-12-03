@@ -24,20 +24,18 @@ tagProjection:
 fieldProjection:
   names: ["total", "value"]
 criteria:
-  le:
-    op: "LOGICAL_OP_OR"
-    left:
-      condition:
-        name: "id"
-        op: "BINARY_OP_EQ"
+  condition:
+    name: "id"
+    op: "BINARY_OP_IN"
+    value:
+      strArray:
         value:
-          str:
-            value: "id_schema_1"
-    right:
-      condition:
-        name: "id"
-        op: "BINARY_OP_EQ"
-        value:
-          str:
-            value: "id_spec_2"
+          [
+            "id_schema_1",
+            "id_schema_2",
+            "id_schema_3",
+            "id_spec_1",
+            "id_spec_2",
+            "id_spec_3",
+          ]
 

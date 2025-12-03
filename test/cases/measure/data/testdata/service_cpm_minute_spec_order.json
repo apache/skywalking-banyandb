@@ -5,6 +5,36 @@
         "tags": [
           {
             "str": {
+              "value": "entity_spec_1"
+            }
+          },
+          {
+            "str": {
+              "value": "id_spec_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      },
+      {
+        "int": {
+          "value": 10
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
               "value": "entity_spec_2"
             }
           },
@@ -25,6 +55,36 @@
       {
         "int": {
           "value": 20
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "entity_spec_3"
+            }
+          },
+          {
+            "str": {
+              "value": "id_spec_3"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 300
+        }
+      },
+      {
+        "int": {
+          "value": 30
         }
       }
     ]
