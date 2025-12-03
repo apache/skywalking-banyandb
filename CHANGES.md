@@ -11,6 +11,7 @@ Release Notes.
 ### Bug Fixes
 
 - Fix the wrong retention setting of each measure/stream/trace.
+- Fix server crash when create/update property with high dist usage.
 
 ## 0.9.0
 
