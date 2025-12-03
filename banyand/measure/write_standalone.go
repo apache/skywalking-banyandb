@@ -301,10 +301,8 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 				srcFamily = req.DataPoint.TagFamilies[specIdx]
 			}
 			specTagMap = specTagMaps[tagFamilySpec.Name]
-		} else {
-			if len(req.DataPoint.TagFamilies) > i {
-				srcFamily = req.DataPoint.TagFamilies[i]
-			}
+		} else if len(req.DataPoint.TagFamilies) > i {
+			srcFamily = req.DataPoint.TagFamilies[i]
 		}
 
 		tf := nameValues{
@@ -400,10 +398,8 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
 				srcFamily = req.DataPoint.TagFamilies[specIdx]
 			}
 			specTagMap = specTagMaps[tagFamilySpec.Name]
-		} else {
-			if len(req.DataPoint.TagFamilies) > i {
-				srcFamily = req.DataPoint.TagFamilies[i]
-			}
+		} else if len(req.DataPoint.TagFamilies) > i {
+			srcFamily = req.DataPoint.TagFamilies[i]
 		}
 
 		for j := range tagFamilySpec.Tags {

@@ -159,7 +159,9 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	return
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec) (map[string]*dataPointsInQueue, error) {
+func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
+	writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec,
+) (map[string]*dataPointsInQueue, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
