@@ -64,9 +64,10 @@ func (mk *MetricKey) String() string {
 
 // RawMetric represents a parsed Prometheus metric line
 type RawMetric struct {
-	Name   string
-	Labels []Label
-	Value  float64
+	Name        string
+	Labels      []Label
+	Value       float64
+	Description string // Description from HELP comment
 }
 
 // Find searches for a label by name
@@ -177,9 +178,10 @@ type Bin struct {
 
 // Histogram represents a Prometheus histogram metric
 type Histogram struct {
-	Name   string
-	Labels []Label
-	Bins   []Bin
+	Name        string
+	Labels      []Label
+	Bins        []Bin
+	Description string // Description from HELP comment
 }
 
 const (
@@ -189,7 +191,8 @@ const (
 )
 
 // ParseHistogram extracts histogram metrics from raw metrics
-func ParseHistogram(metrics []RawMetric) (map[string]Histogram, []RawMetric) {
+// descriptions map can be provided to associate descriptions with metrics
+func ParseHistogram(metrics []RawMetric, descriptions map[string]string) (map[string]Histogram, []RawMetric) {
 	type histogramMetrics struct {
 		buckets []RawMetric
 		count   *RawMetric
@@ -251,10 +254,16 @@ func ParseHistogram(metrics []RawMetric) (map[string]Histogram, []RawMetric) {
 		if len(hist.buckets) > 0 && hist.count != nil && hist.sum != nil {
 			bins, err := parseHistogramBins(hist.buckets)
 			if err == nil {
+				// Get description from base metric name (without histogram suffixes)
+				description := ""
+				if descriptions != nil {
+					description = descriptions[name]
+				}
 				out[k] = Histogram{
-					Name:   name,
-					Labels: labels,
-					Bins:   bins,
+					Name:        name,
+					Labels:      labels,
+					Bins:        bins,
+					Description: description,
 				}
 			} else {
 				release(&hist)
@@ -295,3 +304,54 @@ func trimHistogramSuffix(s string) string {
 	return s
 }
 
+// ParseHELPComment parses a Prometheus HELP comment line
+// Format: # HELP metric_name Description text
+func ParseHELPComment(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "# HELP ") {
+		return "", "", false
+	}
+
+	// Remove "# HELP " prefix
+	rest := strings.TrimSpace(line[7:])
+	if rest == "" {
+		return "", "", false
+	}
+
+	// Find the first space to separate metric name from description
+	firstSpace := strings.Index(rest, " ")
+	if firstSpace == -1 {
+		// No description, just metric name
+		return rest, "", true
+	}
+
+	metricName := rest[:firstSpace]
+	description := strings.TrimSpace(rest[firstSpace+1:])
+	return metricName, description, true
+}
+
+// ParseTYPEComment parses a Prometheus TYPE comment line
+// Format: # TYPE metric_name type
+func ParseTYPEComment(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "# TYPE ") {
+		return "", "", false
+	}
+
+	// Remove "# TYPE " prefix
+	rest := strings.TrimSpace(line[7:])
+	if rest == "" {
+		return "", "", false
+	}
+
+	// Find the first space to separate metric name from type
+	firstSpace := strings.Index(rest, " ")
+	if firstSpace == -1 {
+		// No type, just metric name
+		return rest, "", true
+	}
+
+	metricName := rest[:firstSpace]
+	metricType := strings.TrimSpace(rest[firstSpace+1:])
+	return metricName, metricType, true
+}

@@ -281,6 +281,30 @@ func (fr *FlightRecorder) Close() error {
 	return nil
 }
 
+// Clear resets the flight recorder, clearing all stored snapshots
+func (fr *FlightRecorder) Clear() error {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	
+	// Reset header
+	fr.header.WriteIndex = 0
+	fr.header.Count = 0
+	
+	// Clear all slots by zeroing them out
+	for i := uint32(0); i < fr.bufferSize; i++ {
+		slotOffset := HeaderSize + int64(i)*int64(fr.slotSize)
+		// Zero out the size field (first 4 bytes)
+		binary.LittleEndian.PutUint32(fr.data[slotOffset:], 0)
+	}
+	
+	// Sync header
+	if err := msync(fr.data[:HeaderSize]); err != nil {
+		return fmt.Errorf("failed to sync header: %w", err)
+	}
+	
+	return nil
+}
+
 // Recover attempts to recover data from a flight recorder file
 func Recover(path string) ([]poller.MetricsSnapshot, error) {
 	fr, err := NewFlightRecorder(path, DefaultBufferSize)

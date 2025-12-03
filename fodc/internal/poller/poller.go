@@ -30,10 +30,10 @@ import (
 )
 
 type MetricsSnapshot struct {
-	Timestamp   time.Time
-	RawMetrics  []metric.RawMetric
-	Histograms  map[string]metric.Histogram
-	Errors      []string
+	Timestamp  time.Time
+	RawMetrics []metric.RawMetric
+	Histograms map[string]metric.Histogram
+	Errors     []string
 }
 
 type MetricsPoller struct {
@@ -114,10 +114,25 @@ func (p *MetricsPoller) poll(ctx context.Context, outChan chan<- MetricsSnapshot
 func (p *MetricsPoller) parseMetrics(reader io.Reader, snapshot *MetricsSnapshot) error {
 	scanner := bufio.NewScanner(reader)
 	rawMetrics := make([]metric.RawMetric, 0, 100)
+	descriptions := make(map[string]string)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
+			continue
+		}
+
+		// Parse HELP comments to extract descriptions
+		if strings.HasPrefix(line, "# HELP ") {
+			metricName, description, ok := metric.ParseHELPComment(line)
+			if ok && description != "" {
+				descriptions[metricName] = description
+			}
+			continue
+		}
+
+		// Skip TYPE comments and other comment lines
+		if strings.HasPrefix(line, "#") {
 			continue
 		}
 
@@ -128,6 +143,11 @@ func (p *MetricsPoller) parseMetrics(reader io.Reader, snapshot *MetricsSnapshot
 			continue
 		}
 
+		// Associate description with metric if available
+		if desc, ok := descriptions[m.Name]; ok {
+			m.Description = desc
+		}
+
 		rawMetrics = append(rawMetrics, m)
 	}
 
@@ -135,8 +155,8 @@ func (p *MetricsPoller) parseMetrics(reader io.Reader, snapshot *MetricsSnapshot
 		return err
 	}
 
-	// Parse histograms from raw metrics
-	histograms, filteredMetrics := metric.ParseHistogram(rawMetrics)
+	// Parse histograms from raw metrics, passing descriptions map
+	histograms, filteredMetrics := metric.ParseHistogram(rawMetrics, descriptions)
 	snapshot.Histograms = histograms
 	snapshot.RawMetrics = filteredMetrics
 
@@ -148,4 +168,3 @@ func (p *MetricsPoller) GetLastSnapshot() *MetricsSnapshot {
 	defer p.mu.RUnlock()
 	return p.lastSnapshot
 }
-

@@ -42,6 +42,7 @@ const (
 	DefaultFlightRecorderPath       = "/tmp/fodc-flight-recorder.bin"
 	DefaultFlightRecorderBufferSize = 1000
 	DefaultHealthPort               = 17914
+	DefaultRotationInterval         = 0 // 0 means no rotation by default
 	Version                         = "0.1.0"
 )
 
@@ -58,6 +59,7 @@ func main() {
 		flightRecorderPath   = flag.String("flight-recorder-path", DefaultFlightRecorderPath, "Path to flight recorder memory-mapped file")
 		flightRecorderBuffer = flag.Uint("flight-recorder-buffer", DefaultFlightRecorderBufferSize, "Number of snapshots to buffer in flight recorder")
 		healthPort           = flag.Int("health-port", DefaultHealthPort, "Port for sidecar health endpoint")
+		rotationInterval     = flag.Duration("flight-recorder-rotation", DefaultRotationInterval, "Interval to clear/rotate flight recorder (0 = disabled, e.g., 24h, 1h30m)")
 	)
 	flag.Parse()
 
@@ -162,6 +164,9 @@ func main() {
 	log.Printf("Container: %s", *containerName)
 	log.Printf("Flight Recorder Path: %s", *flightRecorderPath)
 	log.Printf("Flight Recorder Buffer Size: %d", *flightRecorderBuffer)
+	if *rotationInterval > 0 {
+		log.Printf("Flight Recorder Rotation Interval: %v", *rotationInterval)
+	}
 
 	// Start metrics polling
 	metricsChan := make(chan poller.MetricsSnapshot, 10)
@@ -183,6 +188,29 @@ func main() {
 	var totalSnapshots int
 	var lastSnapshotTime time.Time
 	var metricsErrors int
+
+	// Start flight recorder rotation if enabled
+	if *rotationInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(*rotationInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					log.Printf("Rotating flight recorder (clearing old data)...")
+					if err := flightRecorder.Clear(); err != nil {
+						log.Printf("Error clearing flight recorder: %v", err)
+					} else {
+						log.Printf("Flight recorder cleared successfully")
+						totalSnapshots = 0 // Reset counter
+					}
+				}
+			}
+		}()
+	}
 
 	// Process events
 	go func() {

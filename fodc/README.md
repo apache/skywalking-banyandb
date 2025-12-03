@@ -97,6 +97,7 @@ In sidecar mode, FODC will:
 - `--alert-threshold`: Alert threshold for error rate 0.0-1.0 (default: `0.8`)
 - `--flight-recorder-path`: Path to flight recorder memory-mapped file (default: `/tmp/fodc-flight-recorder.bin`)
 - `--flight-recorder-buffer`: Number of snapshots to buffer in flight recorder (default: `1000`)
+- `--flight-recorder-rotation`: Interval to automatically clear/rotate flight recorder (default: `0` = disabled). Examples: `24h`, `1h30m`, `30m`
 - `--health-port`: Port for sidecar health endpoint (default: `17914`)
 
 ## Testing Death Rattle Detection
@@ -196,6 +197,36 @@ The Flight Recorder is a critical component that ensures metrics data survives c
 - **Independent Memory Space**: Operates in its own memory space, separate from the main process
 
 The flight recorder buffers metrics snapshots in a memory-mapped file. When FODC starts, it automatically attempts to recover any previously recorded data, allowing you to analyze metrics from before a crash.
+
+### Flight Recorder Rotation/Clearing
+
+The flight recorder uses a circular buffer, so old data is automatically overwritten when the buffer is full. However, you can also:
+
+**1. Automatic Rotation (Periodic Clearing):**
+
+Enable automatic clearing at regular intervals:
+
+```bash
+./build/bin/dev/fodc-cli --flight-recorder-rotation=24h
+```
+
+This will clear the flight recorder every 24 hours. Other examples:
+- `--flight-recorder-rotation=1h` - Clear every hour
+- `--flight-recorder-rotation=30m` - Clear every 30 minutes
+- `--flight-recorder-rotation=1h30m` - Clear every 1.5 hours
+
+**2. Manual Clearing:**
+
+Use the viewer tool to manually clear the flight recorder:
+
+```bash
+./build/bin/dev/fodc-view --path=/tmp/fodc-flight-recorder.bin --clear
+```
+
+**Note:** The circular buffer automatically overwrites old data when full, so rotation is mainly useful for:
+- Resetting the total count statistic
+- Starting fresh after incidents
+- Managing disk space if you want to archive data before clearing
 
 ### Viewing Flight Recorder Data
 
