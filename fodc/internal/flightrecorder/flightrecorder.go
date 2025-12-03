@@ -30,24 +30,21 @@ import (
 const (
 	// DefaultBufferSize is the default number of snapshots to store
 	DefaultBufferSize = 1000
-	
 	// HeaderSize is the size of the file header in bytes
 	HeaderSize = 64
-	
 	// MagicNumber identifies the flight recorder file format
 	MagicNumber = uint32(0x464C5243) // "FLRC"
-	
 	// Version is the file format version
 	Version = uint32(1)
 )
 
 // Header represents the file header
 type Header struct {
-	Magic      uint32  // Magic number
-	Version    uint32  // Format version
-	BufferSize uint32  // Number of slots in buffer
-	WriteIndex uint32  // Current write index (circular)
-	Count      uint32  // Total number of entries written
+	Magic      uint32   // Magic number
+	Version    uint32   // Format version
+	BufferSize uint32   // Number of slots in buffer
+	WriteIndex uint32   // Current write index (circular)
+	Count      uint32   // Total number of entries written
 	_          [40]byte // Padding to 64 bytes
 }
 
@@ -68,27 +65,25 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 	if bufferSize == 0 {
 		bufferSize = DefaultBufferSize
 	}
-	
+
 	// Calculate slot size: estimate max snapshot size (1MB per snapshot)
-	// This can be adjusted based on actual needs
 	slotSize := uint32(1024 * 1024) // 1MB per slot
-	
 	// Total file size: header + (bufferSize * slotSize)
 	fileSize := int64(HeaderSize) + int64(bufferSize)*int64(slotSize)
-	
+
 	// Open or create the file
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open flight recorder file: %w", err)
 	}
-	
+
 	// Get file info to check if it exists and has data
 	info, err := file.Stat()
 	if err != nil {
 		file.Close()
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
-	
+
 	// If file is new or smaller than expected, resize it
 	if info.Size() < fileSize {
 		if err := file.Truncate(fileSize); err != nil {
@@ -96,17 +91,17 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 			return nil, fmt.Errorf("failed to resize file: %w", err)
 		}
 	}
-	
+
 	// Memory map the file
 	data, err := mmapFile(file, int(fileSize))
 	if err != nil {
 		file.Close()
 		return nil, fmt.Errorf("failed to memory map file: %w", err)
 	}
-	
+
 	// Read or initialize header
 	header := (*Header)(unsafe.Pointer(&data[0]))
-	
+
 	if header.Magic != MagicNumber {
 		// Initialize new header
 		header.Magic = MagicNumber
@@ -125,7 +120,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 		file.Close()
 		return nil, fmt.Errorf("unsupported file format version: %d", header.Version)
 	}
-	
+
 	fr := &FlightRecorder{
 		file:       file,
 		header:     header,
@@ -134,7 +129,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 		slotSize:   slotSize,
 		path:       path,
 	}
-	
+
 	return fr, nil
 }
 
@@ -142,29 +137,29 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 func (fr *FlightRecorder) Record(snapshot poller.MetricsSnapshot) error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	
+
 	// Serialize snapshot to JSON
 	jsonData, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("failed to serialize snapshot: %w", err)
 	}
-	
+
 	// Check if data fits in slot
 	if uint32(len(jsonData)) > fr.slotSize-8 { // -8 for size header
 		return fmt.Errorf("snapshot too large: %d bytes (max %d)", len(jsonData), fr.slotSize-8)
 	}
-	
+
 	// Calculate slot offset
 	slotOffset := HeaderSize + int64(fr.header.WriteIndex)*int64(fr.slotSize)
-	
+
 	// Write size (4 bytes) + data
 	binary.LittleEndian.PutUint32(fr.data[slotOffset:], uint32(len(jsonData)))
 	copy(fr.data[slotOffset+4:], jsonData)
-	
+
 	// Update header
 	fr.header.WriteIndex = (fr.header.WriteIndex + 1) % fr.bufferSize
 	fr.header.Count++
-	
+
 	// Sync the slot and header
 	if err := msync(fr.data[slotOffset : slotOffset+int64(fr.slotSize)]); err != nil {
 		return fmt.Errorf("failed to sync slot: %w", err)
@@ -172,25 +167,25 @@ func (fr *FlightRecorder) Record(snapshot poller.MetricsSnapshot) error {
 	if err := msync(fr.data[:HeaderSize]); err != nil {
 		return fmt.Errorf("failed to sync header: %w", err)
 	}
-	
+
 	return nil
 }
 
-// ReadAll reads all available snapshots from the buffer
+// reads all available snapshots from the buffer
 func (fr *FlightRecorder) ReadAll() ([]poller.MetricsSnapshot, error) {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
-	
+
 	var snapshots []poller.MetricsSnapshot
-	
+
 	if fr.header.Count == 0 {
 		return snapshots, nil
 	}
-	
+
 	// Determine how many entries to read
 	var count uint32
 	var startIndex uint32
-	
+
 	if fr.header.Count < fr.bufferSize {
 		// Buffer not full, read from beginning
 		count = fr.header.Count
@@ -200,42 +195,42 @@ func (fr *FlightRecorder) ReadAll() ([]poller.MetricsSnapshot, error) {
 		count = fr.bufferSize
 		startIndex = fr.header.WriteIndex
 	}
-	
+
 	// Read entries in chronological order
 	for i := uint32(0); i < count; i++ {
 		index := (startIndex + i) % fr.bufferSize
 		slotOffset := HeaderSize + int64(index)*int64(fr.slotSize)
-		
+
 		// Read size
 		size := binary.LittleEndian.Uint32(fr.data[slotOffset:])
 		if size == 0 || size > fr.slotSize-4 {
 			continue // Skip empty or corrupted slots
 		}
-		
+
 		// Read and deserialize data
 		jsonData := fr.data[slotOffset+4 : slotOffset+4+int64(size)]
 		var snapshot poller.MetricsSnapshot
 		if err := json.Unmarshal(jsonData, &snapshot); err != nil {
 			continue // Skip corrupted entries
 		}
-		
+
 		snapshots = append(snapshots, snapshot)
 	}
-	
+
 	return snapshots, nil
 }
 
-// ReadRecent reads the N most recent snapshots
+// reads the N most recent snapshots
 func (fr *FlightRecorder) ReadRecent(n uint32) ([]poller.MetricsSnapshot, error) {
 	all, err := fr.ReadAll()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if uint32(len(all)) <= n {
 		return all, nil
 	}
-	
+
 	// Return last N entries
 	return all[len(all)-int(n):], nil
 }
@@ -244,15 +239,15 @@ func (fr *FlightRecorder) ReadRecent(n uint32) ([]poller.MetricsSnapshot, error)
 func (fr *FlightRecorder) GetStats() (totalCount uint32, bufferSize uint32, writeIndex uint32) {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
-	
+
 	return fr.header.Count, fr.bufferSize, fr.header.WriteIndex
 }
 
-// Close closes the flight recorder and unmaps memory
+// closes the flight recorder and unmaps memory
 func (fr *FlightRecorder) Close() error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	
+
 	if fr.data != nil {
 		// Sync all data to disk before unmapping
 		if err := msync(fr.data); err != nil {
@@ -265,7 +260,7 @@ func (fr *FlightRecorder) Close() error {
 		}
 		fr.data = nil
 	}
-	
+
 	if fr.file != nil {
 		// Sync file before closing to ensure data is persisted
 		if err := fr.file.Sync(); err != nil {
@@ -277,7 +272,7 @@ func (fr *FlightRecorder) Close() error {
 		}
 		fr.file = nil
 	}
-	
+
 	return nil
 }
 
@@ -285,34 +280,33 @@ func (fr *FlightRecorder) Close() error {
 func (fr *FlightRecorder) Clear() error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	
+
 	// Reset header
 	fr.header.WriteIndex = 0
 	fr.header.Count = 0
-	
+
 	// Clear all slots by zeroing them out
 	for i := uint32(0); i < fr.bufferSize; i++ {
 		slotOffset := HeaderSize + int64(i)*int64(fr.slotSize)
 		// Zero out the size field (first 4 bytes)
 		binary.LittleEndian.PutUint32(fr.data[slotOffset:], 0)
 	}
-	
+
 	// Sync header
 	if err := msync(fr.data[:HeaderSize]); err != nil {
 		return fmt.Errorf("failed to sync header: %w", err)
 	}
-	
+
 	return nil
 }
 
-// Recover attempts to recover data from a flight recorder file
+// attempts to recover data from a flight recorder file
 func Recover(path string) ([]poller.MetricsSnapshot, error) {
 	fr, err := NewFlightRecorder(path, DefaultBufferSize)
 	if err != nil {
 		return nil, err
 	}
 	defer fr.Close()
-	
+
 	return fr.ReadAll()
 }
-
