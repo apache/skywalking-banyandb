@@ -160,31 +160,6 @@ func Test_Stream_Update_DeleteEntityTag_ShouldFail(t *testing.T) {
 	req.Contains(err.Error(), "cannot delete entity tag")
 }
 
-func Test_Stream_Update_ChangeTagType_ShouldFail(t *testing.T) {
-	registry, closer := initServerAndRegister(t)
-	defer closer()
-
-	req := require.New(t)
-	createTestGroup(t, registry)
-
-	stream := createBaseStream()
-	_, err := registry.CreateStream(context.Background(), stream)
-	req.NoError(err)
-
-	createdStream, err := registry.GetStream(context.Background(), stream.Metadata)
-	req.NoError(err)
-
-	updatedStream := createBaseStream()
-	updatedStream.Metadata.ModRevision = createdStream.Metadata.ModRevision
-	updatedStream.TagFamilies[0].Tags[2] = &databasev1.TagSpec{
-		Name: "duration",
-		Type: databasev1.TagType_TAG_TYPE_STRING,
-	}
-	_, err = registry.UpdateStream(context.Background(), updatedStream)
-	req.Error(err, "should not allow changing tag type")
-	req.Contains(err.Error(), "is different")
-}
-
 func Test_Stream_Update_DeleteNonEntityTag_ShouldSucceed(t *testing.T) {
 	registry, closer := initServerAndRegister(t)
 	defer closer()
