@@ -40,6 +40,8 @@ var (
 )
 
 var _ = g.DescribeTable("Scanning Measures", verify,
+	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
+	g.Entry("index mode filter hidden tag projection", helpers.Args{Input: "index_mode_filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("all", helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("all only fields", helpers.Args{Input: "all_only_fields", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("the max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
