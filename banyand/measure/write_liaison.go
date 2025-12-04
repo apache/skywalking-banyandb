@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
@@ -81,6 +82,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*dataPointsInQueue)
+	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
@@ -98,11 +100,14 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			continue
 		}
 		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent, spec); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInQueue)
 			continue
@@ -160,7 +165,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 }
 
 func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
-	writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec,
+	writeEvent *measurev1.InternalWriteRequest, metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (map[string]*dataPointsInQueue, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
@@ -169,7 +174,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 	}
 	ts := t.UnixNano()
 
-	gn := req.Metadata.Group
+	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -192,16 +197,16 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 			break
 		}
 	}
-	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
+	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
+		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
+		return nil, fmt.Errorf("%s has no tag family", metadata)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return nil, fmt.Errorf("%s has more tag families than %s", metadata, stm.schema)
 	}
 	is := stm.indexSchema.Load().(indexSchema)
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
@@ -220,7 +225,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, spec)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
 	}

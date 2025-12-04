@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -71,10 +72,10 @@ func (w *writeCallback) CheckHealth() *common.Error {
 }
 
 func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, writeEvent *measurev1.InternalWriteRequest,
-	stm *measure, is indexSchema, ts int64, spec *measurev1.DataPointSpec,
+	stm *measure, is indexSchema, ts int64, metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (uint64, error) {
 	series := &pbv1.Series{
-		Subject:      req.Metadata.Name,
+		Subject:      metadata.Name,
 		EntityValues: writeEvent.EntityValues,
 	}
 	if err := series.Marshal(); err != nil {
@@ -118,7 +119,8 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest, spec *measurev1.DataPointSpec,
+func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
@@ -127,7 +129,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	ts := t.UnixNano()
 
-	gn := req.Metadata.Group
+	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -152,16 +154,16 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			break
 		}
 	}
-	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
+	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
+		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
+		return nil, fmt.Errorf("%s has no tag family", metadata)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return nil, fmt.Errorf("%s has more tag families than %s", metadata, stm.schema)
 	}
 	is := stm.indexSchema.Load().(indexSchema)
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
@@ -193,7 +195,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, spec)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +501,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 	groups := make(map[string]*dataPointsInGroup)
+	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
@@ -516,11 +519,14 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			continue
 		}
 		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent, spec); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInGroup)
 			continue
