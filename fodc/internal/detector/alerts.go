@@ -158,3 +158,8 @@ func (a *AlertManager) HandleDeathRattle(event DeathRattleEvent) {
 	}
 	a.alerts = append(a.alerts, alert)
 }
+
+// GetAlerts returns all stored alerts (for testing purposes)
+func (a *AlertManager) GetAlerts() []Alert {
+	return a.alerts
+}

@@ -1,0 +1,44 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cases:
+  # Test 1: Verify FODC sidecar health endpoint is accessible
+  - query: docker exec fodc-test-helper wget --quiet --tries=1 --spider http://fodc-sidecar:17914/healthz && echo "OK" || echo "FAIL"
+    expected: ../../../../../fodc/internal/detector/testdata/health-ok.yml
+
+  # Test 2: Verify FODC sidecar health endpoint returns JSON
+  - query: docker exec fodc-test-helper wget --quiet -O- http://fodc-sidecar:17914/healthz | head -1
+    expected: ../../../../../fodc/internal/detector/testdata/health-json.yml
+
+  # Test 3: Verify FODC sidecar metadata contains expected fields
+  - query: docker exec fodc-test-helper sh -c "wget --quiet -O- http://fodc-sidecar:17914/healthz | grep -q 'mode' && echo 'OK' || echo 'FAIL'"
+    expected: ../../../../../fodc/internal/detector/testdata/metadata-present.yml
+
+  # Test 4: Verify FODC sidecar can discover BanyanDB endpoints
+  - query: docker exec fodc-test-helper sh -c "wget --quiet -O- http://fodc-sidecar:17914/healthz | grep -q 'banyandb_host' && echo 'OK' || echo 'FAIL'"
+    expected: ../../../../../fodc/internal/detector/testdata/discovery-ok.yml
+
+  # Test 5: Verify death rattle file detection (after trigger script creates file)
+  - query: docker exec fodc-test-helper sh -c "echo 'test death rattle' > /tmp/death-rattle && sleep 5 && wget --quiet -O- http://fodc-sidecar:17914/healthz | grep -q 'death_rattle' && echo 'DETECTED' || echo 'NOT_DETECTED'"
+    expected: ../../../../../fodc/internal/detector/testdata/death-rattle-detected.yml
+
+  # Test 6: Verify FODC is polling metrics from BanyanDB
+  - query: docker exec fodc-test-helper sh -c "wget --quiet -O- http://fodc-sidecar:17914/healthz | grep -q 'total_snapshots' && echo 'OK' || echo 'FAIL'"
+    expected: ../../../../../fodc/internal/detector/testdata/metrics-polling-ok.yml
+
+  # Test 7: Verify flight recorder is working (snapshots should be recorded)
+  - query: docker exec fodc-sidecar ls -la /data/fodc-flight-recorder.bin 2>/dev/null && echo "EXISTS" || echo "NOT_EXISTS"
+    expected: ../../../../../fodc/internal/detector/testdata/flight-recorder-exists.yml
+
