@@ -45,5 +45,6 @@ var _ = g.DescribeTable("Scanning Properties", verify,
 	g.Entry("order by asc", helpers.Args{Input: "order_by_asc"}),
 	g.Entry("order by desc", helpers.Args{Input: "order_by_desc"}),
 	g.Entry("order by with limit", helpers.Args{Input: "order_by_with_limit"}),
+	g.Entry("order without projection", helpers.Args{Input: "order_without_projection"}),
 	g.Entry("query with order", helpers.Args{Input: "query_with_order"}),
 )

@@ -44,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	sortpkg "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -441,39 +442,33 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if err != nil {
 		return nil, err
 	}
-	res := make(map[string]*propertyWithCount)
-	for n, nodeWithProperties := range nodeProperties {
-		for _, propertyMetadata := range nodeWithProperties {
-			entity := propertypkg.GetEntity(propertyMetadata.Property)
-			cur, ok := res[entity]
-			if !ok {
-				res[entity] = newPropertyWithCounts(propertyMetadata, n)
-				continue
-			}
-			switch {
-			case cur.Metadata.ModRevision < propertyMetadata.Metadata.ModRevision: // newer revision
-				res[entity] = newPropertyWithCounts(propertyMetadata, n)
-			case cur.Metadata.ModRevision == propertyMetadata.Metadata.ModRevision: // same revision
-				cur.addExistNode(n)
-			}
-		}
-	}
-	if len(res) == 0 {
+	if len(nodeProperties) == 0 {
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
-	properties := make([]*propertyWithMetadata, 0, len(res))
-	for entity, p := range res {
-		if err := ps.repairPropertyIfNeed(entity, p, groups); err != nil {
+
+	var properties []*propertyWithCount
+
+	// Choose processing path based on whether ordering is requested
+	if req.OrderBy != nil && req.OrderBy.TagName != "" {
+		// Sorted query: Use unified k-way merge with binary search insertion
+		properties = ps.sortedQueryWithDedup(nodeProperties, req)
+	} else {
+		// No ordering: Simple dedup without sorting
+		properties = ps.simpleDedupWithoutSort(nodeProperties)
+	}
+
+	result := make([]*propertyv1.Property, 0, len(properties))
+	for _, property := range properties {
+		if err := ps.repairPropertyIfNeed(property.entity, property, groups); err != nil {
 			ps.log.Warn().Msgf("failed to repair properties when query: %v", err)
 		}
-
 		// ignore deleted property in the query
-		if p.deletedTime > 0 {
+		if property.deletedTime > 0 {
 			continue
 		}
 		if len(req.TagProjection) > 0 {
 			var tags []*modelv1.Tag
-			for _, tag := range p.Tags {
+			for _, tag := range property.Tags {
 				for _, tp := range req.TagProjection {
 					if tp == tag.Key {
 						tags = append(tags, tag)
@@ -481,26 +476,203 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 					}
 				}
 			}
-			p.Tags = tags
+			property.Tags = tags
 		}
-		properties = append(properties, p.propertyWithMetadata)
-	}
-
-	// Sort if order_by is specified
-	if req.OrderBy != nil && req.OrderBy.TagName != "" {
-		properties = sortPropertiesWithSortedValues(properties, req.OrderBy)
-	}
-
-	// Apply limit after sorting
-	if len(properties) > int(req.Limit) {
-		properties = properties[:req.Limit]
-	}
-
-	result := make([]*propertyv1.Property, 0, len(properties))
-	for _, property := range properties {
 		result = append(result, property.Property)
 	}
+
+	// Apply limit
+	if len(result) > int(req.Limit) {
+		result = result[:req.Limit]
+	}
 	return &propertyv1.QueryResponse{Properties: result, Trace: trace}, nil
+}
+
+// sortedQueryWithDedup implements unified sorted query handling for both single and multi-node scenarios.
+// It uses k-way merge with binary search insertion to maintain sorted order efficiently.
+func (ps *propertyServer) sortedQueryWithDedup(
+	nodeProperties map[string][]*propertyWithMetadata,
+	req *propertyv1.QueryRequest,
+) []*propertyWithCount {
+	// Initialize k-way merge iterators
+	iters := make([]sortpkg.Iterator[*propertyWithMetadata], 0, len(nodeProperties))
+	for _, props := range nodeProperties {
+		if len(props) > 0 {
+			iters = append(iters, newPropertyWithMetadataIterator(props))
+		}
+	}
+
+	if len(iters) == 0 {
+		return nil
+	}
+
+	// Create heap-based merge iterator
+	isDesc := req.OrderBy.Sort == modelv1.Sort_SORT_DESC
+	mergeIter := sortpkg.NewItemIter(iters, isDesc)
+	defer mergeIter.Close()
+
+	// Initialize deduplication state
+	// seenIDs tracks entity -> propertyWithCount for deduplication
+	seenIDs := make(map[string]*propertyWithCount)
+	// resultBuffer maintains sorted list of unique properties
+	resultBuffer := make([]*propertyWithCount, 0, req.Limit)
+
+	// Process items from k-way merge
+	for mergeIter.Next() {
+		p := mergeIter.Val()
+		entity := propertypkg.GetEntity(p.Property)
+
+		// Check if we've seen this entity before
+		if existingCount, seen := seenIDs[entity]; seen {
+			// Same modRevision - accumulate node
+			if p.Metadata.ModRevision == existingCount.Metadata.ModRevision {
+				existingCount.addExistNode(p.node)
+				continue
+			}
+
+			// Older modRevision - skip
+			if p.Metadata.ModRevision < existingCount.Metadata.ModRevision {
+				continue
+			}
+
+			// Newer modRevision - replace old entry
+			// Find and remove old entry from resultBuffer using binary search
+			oldIndex := ps.findPropertyInBuffer(resultBuffer, existingCount, isDesc)
+			if oldIndex >= 0 && oldIndex < len(resultBuffer) {
+				// Remove old entry
+				resultBuffer = append(resultBuffer[:oldIndex], resultBuffer[oldIndex+1:]...)
+			}
+
+			// Create new propertyWithCount for the newer revision
+			newCount := newPropertyWithCounts(p, entity, p.node)
+			seenIDs[entity] = newCount
+
+			// Insert new entry in sorted position using binary search
+			insertPos := ps.findInsertPosition(resultBuffer, newCount, isDesc)
+			resultBuffer = ps.insertAtPosition(resultBuffer, newCount, insertPos)
+
+			continue
+		}
+
+		// New entity - first time seeing this entity
+		// Create propertyWithCount and add to seenIDs
+		propCount := newPropertyWithCounts(p, entity, p.node)
+		seenIDs[entity] = propCount
+
+		// Insert into resultBuffer at correct sorted position
+		insertPos := ps.findInsertPosition(resultBuffer, propCount, isDesc)
+		resultBuffer = ps.insertAtPosition(resultBuffer, propCount, insertPos)
+	}
+
+	return resultBuffer
+}
+
+// findInsertPosition finds the correct position to insert a new property
+// in the sorted resultBuffer using binary search.
+func (ps *propertyServer) findInsertPosition(
+	buffer []*propertyWithCount,
+	newProp *propertyWithCount,
+	isDesc bool,
+) int {
+	return sort.Search(len(buffer), func(i int) bool {
+		cmp := bytes.Compare(buffer[i].sortedValue, newProp.sortedValue)
+		if isDesc {
+			return cmp <= 0 // For descending: insert before items <= new value
+		}
+		return cmp >= 0 // For ascending: insert before items >= new value
+	})
+}
+
+// insertAtPosition inserts a property at the specified position in the buffer.
+func (ps *propertyServer) insertAtPosition(
+	buffer []*propertyWithCount,
+	prop *propertyWithCount,
+	pos int,
+) []*propertyWithCount {
+	// Grow buffer by one
+	buffer = append(buffer, nil)
+	// Shift elements to the right
+	copy(buffer[pos+1:], buffer[pos:])
+	// Insert new element
+	buffer[pos] = prop
+	return buffer
+}
+
+// findPropertyInBuffer finds the index of a specific property in the buffer.
+// Returns -1 if not found.
+func (ps *propertyServer) findPropertyInBuffer(
+	buffer []*propertyWithCount,
+	target *propertyWithCount,
+	isDesc bool,
+) int {
+	// Use binary search to find approximate position
+	searchPos := sort.Search(len(buffer), func(i int) bool {
+		cmp := bytes.Compare(buffer[i].sortedValue, target.sortedValue)
+		if isDesc {
+			return cmp <= 0
+		}
+		return cmp >= 0
+	})
+
+	// Linear search around the found position to handle duplicate sortedValues
+	// (multiple properties might have same sortedValue)
+	for i := searchPos; i < len(buffer); i++ {
+		if bytes.Equal(buffer[i].sortedValue, target.sortedValue) {
+			// Check if it's the exact same property by comparing entity
+			if propertypkg.GetEntity(buffer[i].Property) == propertypkg.GetEntity(target.Property) {
+				return i
+			}
+		} else {
+			// Moved past matching sortedValues
+			break
+		}
+	}
+
+	// Also check backwards from searchPos (in case binary search landed after our target)
+	for i := searchPos - 1; i >= 0; i-- {
+		if bytes.Equal(buffer[i].sortedValue, target.sortedValue) {
+			if propertypkg.GetEntity(buffer[i].Property) == propertypkg.GetEntity(target.Property) {
+				return i
+			}
+		} else {
+			break
+		}
+	}
+
+	return -1 // Not found
+}
+
+// simpleDedupWithoutSort handles queries without ordering.
+func (ps *propertyServer) simpleDedupWithoutSort(
+	nodeProperties map[string][]*propertyWithMetadata,
+) []*propertyWithCount {
+	// Collect and deduplicate
+	seenIDs := make(map[string]*propertyWithCount)
+
+	for n, props := range nodeProperties {
+		for _, p := range props {
+			entity := propertypkg.GetEntity(p.Property)
+
+			if existing, seen := seenIDs[entity]; seen {
+				switch {
+				case existing.Metadata.ModRevision < p.Metadata.ModRevision:
+					seenIDs[entity] = newPropertyWithCounts(p, entity, n)
+				case existing.Metadata.ModRevision == p.Metadata.ModRevision:
+					existing.addExistNode(n)
+				}
+			} else {
+				seenIDs[entity] = newPropertyWithCounts(p, entity, n)
+			}
+		}
+	}
+
+	// Process and collect results
+	result := make([]*propertyWithCount, 0, len(seenIDs))
+	for _, p := range seenIDs {
+		result = append(result, p)
+	}
+
+	return result
 }
 
 func (ps *propertyServer) repairPropertyIfNeed(entity string, p *propertyWithCount, groups map[string]*commonv1.Group) error {
@@ -607,6 +779,7 @@ func (ps *propertyServer) queryProperties(
 						Property:    &p,
 						sortedValue: sortedValue,
 						deletedTime: deleteTime,
+						node:        m.Node(),
 					}
 					nodeWithProperties = append(nodeWithProperties, property)
 				}
@@ -650,18 +823,55 @@ func (ps *propertyServer) startRepairQueue(stop chan struct{}) {
 
 type propertyWithMetadata struct {
 	*propertyv1.Property
+	node        string
 	sortedValue []byte
 	deletedTime int64
 }
 
+// SortedField implements sortpkg.Comparable interface for k-way merge sorting.
+func (p *propertyWithMetadata) SortedField() []byte {
+	return p.sortedValue
+}
+
+// propertyWithMetadataIterator wraps a slice to implement sortpkg.Iterator interface.
+type propertyWithMetadataIterator struct {
+	data  []*propertyWithMetadata
+	index int
+}
+
+func newPropertyWithMetadataIterator(data []*propertyWithMetadata) *propertyWithMetadataIterator {
+	return &propertyWithMetadataIterator{
+		data:  data,
+		index: -1,
+	}
+}
+
+func (it *propertyWithMetadataIterator) Next() bool {
+	it.index++
+	return it.index < len(it.data)
+}
+
+func (it *propertyWithMetadataIterator) Val() *propertyWithMetadata {
+	if it.index < 0 || it.index >= len(it.data) {
+		return nil
+	}
+	return it.data[it.index]
+}
+
+func (it *propertyWithMetadataIterator) Close() error {
+	return nil
+}
+
 type propertyWithCount struct {
 	*propertyWithMetadata
+	entity     string
 	existNodes map[string]bool
 }
 
-func newPropertyWithCounts(p *propertyWithMetadata, existNode string) *propertyWithCount {
+func newPropertyWithCounts(p *propertyWithMetadata, entity, existNode string) *propertyWithCount {
 	res := &propertyWithCount{
 		propertyWithMetadata: p,
+		entity:               entity,
 	}
 	res.addExistNode(existNode)
 	return res
@@ -783,39 +993,4 @@ type repairTask struct {
 type repairInProcessKey struct {
 	entity  string
 	modTime int64
-}
-
-// sortPropertiesWithSortedValues sorts properties using pre-extracted sortedValue bytes.
-func sortPropertiesWithSortedValues(
-	properties []*propertyWithMetadata,
-	orderBy *propertyv1.QueryOrder,
-) []*propertyWithMetadata {
-	if len(properties) == 0 || orderBy == nil {
-		return properties
-	}
-
-	isDesc := orderBy.Sort == modelv1.Sort_SORT_DESC
-
-	sort.Slice(properties, func(i, j int) bool {
-		sortedValueI := properties[i].sortedValue
-		sortedValueJ := properties[j].sortedValue
-
-		// nil values are always sorted last
-		if len(sortedValueI) == 0 {
-			return false
-		}
-		if len(sortedValueJ) == 0 {
-			return true
-		}
-
-		// Direct byte comparison
-		cmp := bytes.Compare(sortedValueI, sortedValueJ)
-
-		if isDesc {
-			return cmp > 0
-		}
-		return cmp < 0
-	})
-
-	return properties
 }

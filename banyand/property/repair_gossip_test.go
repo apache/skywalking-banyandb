@@ -507,7 +507,7 @@ func queryPropertyWithVerify(db *database, p property) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	gomega.Eventually(func() *property {
-		dataList, err := s.search(context.Background(), query, 10)
+		dataList, err := s.search(context.Background(), query, nil, 10)
 		if err != nil {
 			return nil
 		}

@@ -374,7 +374,7 @@ func queryShard(ctx context.Context, t *testing.T, s *shard, id string) []*query
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := s.search(ctx, iq, 100)
+	resp, err := s.search(ctx, iq, nil, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

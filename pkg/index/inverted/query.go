@@ -634,29 +634,8 @@ func (t *timeRangeNode) String() string {
 	return convert.JSONToString(t)
 }
 
-// PropertyQuery support query property with order.
-type PropertyQuery struct {
-	Query      index.Query
-	Order      *index.OrderBy
-	orderField string
-}
-
-func (p *PropertyQuery) String() string {
-	data := make(map[string]interface{}, 1)
-	data["query"] = p.Query.String()
-	if p.Order != nil {
-		data["order_field"] = p.orderField
-		data["order_sort"] = p.Order.Sort
-	}
-	marshal, err := json.Marshal(data)
-	if err != nil {
-		return p.Query.String()
-	}
-	return string(marshal)
-}
-
 // BuildPropertyQuery returns blugeQuery for property query.
-func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (*PropertyQuery, error) {
+func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string) (index.Query, error) {
 	iq, err := BuildIndexModeQuery(req.Name, req.Criteria, schemaInstance)
 	if err != nil {
 		return nil, err
@@ -699,33 +678,14 @@ func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string
 		bn.Append(in)
 	}
 
-	var order *index.OrderBy
-	var orderField string
-	// If the request contains the order by, then adapt to the index.OrderBy object
-	if req.OrderBy != nil {
-		order = &index.OrderBy{
-			Index: &databasev1.IndexRule{
-				Metadata: &commonv1.Metadata{
-					Id: uint32(convert.HashStr(req.OrderBy.TagName)),
-				},
-			},
-			Sort: req.OrderBy.Sort,
-			Type: index.OrderByTypeIndex,
-		}
-		orderField = req.OrderBy.TagName
-	}
-	return &PropertyQuery{
-		Query: &queryNode{
-			query: bq,
-			node:  bn,
-		},
-		Order:      order,
-		orderField: orderField,
+	return &queryNode{
+		query: bq,
+		node:  bn,
 	}, nil
 }
 
 // BuildPropertyQueryFromEntity builds a property query from entity information.
-func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entityID string) (*PropertyQuery, error) {
+func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entityID string) (index.Query, error) {
 	if group == "" || name == "" || entityID == "" {
 		return nil, errors.New("group, name and entityID are mandatory for property query")
 	}
@@ -737,11 +697,9 @@ func BuildPropertyQueryFromEntity(groupField, group, name, entityIDField, entity
 	bn.Append(newTermNode(name, nil))
 	bq.AddMust(bluge.NewTermQuery(entityID).SetField(entityIDField))
 	bn.Append(newTermNode(entityID, nil))
-	return &PropertyQuery{
-		Query: &queryNode{
-			query: bq,
-			node:  bn,
-		},
+	return &queryNode{
+		query: bq,
+		node:  bn,
 	}, nil
 }
 

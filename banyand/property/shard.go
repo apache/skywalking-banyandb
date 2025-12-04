@@ -33,6 +33,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -204,7 +206,7 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 	if err != nil {
 		return nil, fmt.Errorf("build property query failure: %w", err)
 	}
-	exisingDocList, err := s.search(ctx, &inverted.PropertyQuery{Query: iq}, len(docID))
+	exisingDocList, err := s.search(ctx, iq, nil, len(docID))
 	if err != nil {
 		return nil, fmt.Errorf("search existing documents failure: %w", err)
 	}
@@ -252,13 +254,16 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	return nil
 }
 
-func (s *shard) search(ctx context.Context, q *inverted.PropertyQuery, limit int,
+func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.QueryOrder, limit int,
 ) (data []*queryProperty, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "property.search")
 		span.Tagf("query", "%s", q.String())
 		span.Tagf("shard", "%d", s.id)
+		if orderBy != nil {
+			span.Tagf("order", "%s(%s)", orderBy.TagName, orderBy.Sort)
+		}
 		defer func() {
 			if data != nil {
 				span.Tagf("matched", "%d", len(data))
@@ -269,8 +274,8 @@ func (s *shard) search(ctx context.Context, q *inverted.PropertyQuery, limit int
 			span.Stop()
 		}()
 	}
-	if q.Order == nil {
-		ss, searchErr := s.store.Search(ctx, projection, q.Query, limit)
+	if orderBy == nil {
+		ss, searchErr := s.store.Search(ctx, projection, q, limit)
 		if searchErr != nil {
 			return nil, searchErr
 		}
@@ -294,7 +299,16 @@ func (s *shard) search(ctx context.Context, q *inverted.PropertyQuery, limit int
 		}
 		return data, nil
 	}
-	iter, err := s.store.SeriesSort(ctx, q.Query, q.Order, limit, projection)
+	order := &index.OrderBy{
+		Index: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{
+				Id: uint32(convert.HashStr(orderBy.TagName)),
+			},
+		},
+		Sort: orderBy.Sort,
+		Type: index.OrderByTypeIndex,
+	}
+	iter, err := s.store.SeriesSort(ctx, q, order, limit, projection)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +349,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	if err != nil {
 		return false, nil, fmt.Errorf("build property query failure: %w", err)
 	}
-	olderProperties, err := s.search(ctx, iq, 100)
+	olderProperties, err := s.search(ctx, iq, nil, 100)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
 	}
