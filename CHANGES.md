@@ -9,6 +9,8 @@ Release Notes.
 - Remove Bloom filter for dictionary-encoded tags.
 - Implement BanyanDB MCP.
 - Remove check requiring tags in criteria to be present in projection
+- Add sorted query support for the Property.
+- Update bydbQL to add sorted query support for the Property.
 
 ### Bug Fixes
 
