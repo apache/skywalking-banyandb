@@ -18,51 +18,61 @@
 package filter
 
 import (
-	"bytes"
-
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // DictionaryFilter is a filter implementation backed by a dictionary.
+// It uses a map-based lookup for O(1) performance instead of O(n) linear search.
 type DictionaryFilter struct {
+	valueSet  map[string]struct{}
 	values    [][]byte
 	valueType pbv1.ValueType
 }
 
 // NewDictionaryFilter creates a new dictionary filter with the given values.
 func NewDictionaryFilter(values [][]byte) *DictionaryFilter {
-	return &DictionaryFilter{
+	df := &DictionaryFilter{
 		values: values,
 	}
+	df.buildValueSet()
+	return df
 }
 
 // MightContain checks if an item is in the dictionary.
+// For non-array types, it uses O(1) map lookup instead of O(n) linear search.
 func (df *DictionaryFilter) MightContain(item []byte) bool {
 	if df.valueType == pbv1.ValueTypeStrArr || df.valueType == pbv1.ValueTypeInt64Arr {
-		for _, serializedArray := range df.values {
-			if containElement(serializedArray, item, df.valueType) {
-				return true
-			}
+		// For array types, check if the item exists in the pre-computed element set
+		if df.valueSet != nil {
+			_, exists := df.valueSet[convert.BytesToString(item)]
+			return exists
 		}
 		return false
 	}
 
-	for _, v := range df.values {
-		if bytes.Equal(v, item) {
-			return true
-		}
+	// For non-array types, use O(1) map lookup
+	if df.valueSet != nil {
+		_, exists := df.valueSet[convert.BytesToString(item)]
+		return exists
 	}
 	return false
 }
 
-// SetValues sets the dictionary values.
+// SetValues sets the dictionary values and builds the lookup set.
 func (df *DictionaryFilter) SetValues(values [][]byte) {
 	df.values = values
+	df.buildValueSet()
 }
 
 // SetValueType sets the value type for the dictionary filter.
+// For array types, it rebuilds the lookup set by extracting elements from serialized arrays.
 func (df *DictionaryFilter) SetValueType(valueType pbv1.ValueType) {
 	df.valueType = valueType
+	// Rebuild the set for array types since elements need to be extracted
+	if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
+		df.buildValueSet()
+	}
 }
 
 // Reset resets the dictionary filter.
@@ -72,33 +82,43 @@ func (df *DictionaryFilter) Reset() {
 	}
 	df.values = df.values[:0]
 	df.valueType = pbv1.ValueTypeUnknown
+	clear(df.valueSet)
 }
 
-func containElement(serializedArray []byte, element []byte, valueType pbv1.ValueType) bool {
-	if len(serializedArray) == 0 {
-		return false
+// buildValueSet builds a map-based lookup set from the dictionary values.
+// For non-array types, values are added directly.
+// For array types, elements are extracted from serialized arrays.
+func (df *DictionaryFilter) buildValueSet() {
+	if df.valueSet == nil {
+		df.valueSet = make(map[string]struct{}, len(df.values))
 	}
-	if valueType == pbv1.ValueTypeInt64Arr {
-		if len(element) != 8 {
-			return false
-		}
-		for i := 0; i < len(serializedArray); i += 8 {
-			if i+8 > len(serializedArray) {
-				break
+
+	if df.valueType == pbv1.ValueTypeInt64Arr {
+		// Extract int64 elements from serialized arrays
+		for _, serializedArray := range df.values {
+			for i := 0; i+8 <= len(serializedArray); i += 8 {
+				df.valueSet[convert.BytesToString(serializedArray[i:i+8])] = struct{}{}
 			}
-			if bytes.Equal(serializedArray[i:i+8], element) {
-				return true
-			}
 		}
-		return false
+		return
 	}
-	if valueType == pbv1.ValueTypeStrArr {
-		return containString(serializedArray, element)
+
+	if df.valueType == pbv1.ValueTypeStrArr {
+		// Extract string elements from serialized arrays
+		for _, serializedArray := range df.values {
+			extractStrings(serializedArray, df.valueSet)
+		}
+		return
 	}
-	return false
+
+	// For non-array types, add values directly
+	for _, v := range df.values {
+		df.valueSet[convert.BytesToString(v)] = struct{}{}
+	}
 }
 
-func containString(serializedArray, element []byte) bool {
+// extractStrings extracts string elements from a serialized string array and adds them to the set.
+func extractStrings(serializedArray []byte, set map[string]struct{}) {
 	const (
 		entityDelimiter = '|'
 		escape          = '\\'
@@ -108,13 +128,9 @@ func containString(serializedArray, element []byte) bool {
 	var buf []byte
 	for len(src) > 0 {
 		buf = buf[:0]
-		if len(src) == 0 {
-			break
-		}
 		if src[0] == entityDelimiter {
-			if len(element) == 0 {
-				return true
-			}
+			// Empty string element
+			set[""] = struct{}{}
 			src = src[1:]
 			continue
 		}
@@ -122,23 +138,20 @@ func containString(serializedArray, element []byte) bool {
 			switch {
 			case src[0] == escape:
 				if len(src) < 2 {
-					return false
+					return
 				}
 				src = src[1:]
 				buf = append(buf, src[0])
 			case src[0] == entityDelimiter:
 				src = src[1:]
-				if bytes.Equal(buf, element) {
-					return true
-				}
+				set[string(buf)] = struct{}{}
 				goto nextElement
 			default:
 				buf = append(buf, src[0])
 			}
 			src = src[1:]
 		}
-		return false
+		return
 	nextElement:
 	}
-	return false
 }

@@ -12,18 +12,15 @@ Release Notes.
 
 ### Bug Fixes
 
-
-### Document
-
-
-
-### Bug Fixes
-
 - Fix the wrong retention setting of each measure/stream/trace.
+- Fix server got panic when create/update property with high dist usage.
 
 ### Document
 
+- Implement BanyanDB MCP.
+- Remove check requiring tags in criteria to be present in projection
 - Add read write benchmark document for 0.9.0 release.
+
 
 ## 0.9.0
 
