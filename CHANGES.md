@@ -10,6 +10,8 @@ Release Notes.
 - Implement BanyanDB MCP.
 - Support deleting non-entity tags when updating the schema.
 - Remove check requiring tags in criteria to be present in projection.
+- Add sorted query support for the Property.
+- Update bydbQL to add sorted query support for the Property.
 
 ### Bug Fixes
 

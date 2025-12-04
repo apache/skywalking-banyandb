@@ -90,9 +90,11 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 	want := &propertyv1.QueryResponse{}
 	helpers.UnmarshalYAML(w, want)
 	innerGm.Expect(resp.GetProperties()).To(gm.HaveLen(len(want.GetProperties())), query.String())
-	slices.SortFunc(want.GetProperties(), func(a, b *propertyv1.Property) int {
-		return strings.Compare(a.Id, b.Id)
-	})
+	if query.OrderBy == nil {
+		slices.SortFunc(want.GetProperties(), func(a, b *propertyv1.Property) int {
+			return strings.Compare(a.Id, b.Id)
+		})
+	}
 	success := innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&propertyv1.Property{}, "updated_at"),
