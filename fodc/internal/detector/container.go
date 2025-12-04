@@ -36,7 +36,7 @@ func NewContainerMonitor(containerName string) *ContainerMonitor {
 	}
 }
 
-// CheckContainerHealth checks if the container is running using docker ps
+// checks if the container is running using docker ps
 func (c *ContainerMonitor) CheckContainerHealth(ctx context.Context) (bool, error) {
 	cmd := exec.CommandContext(ctx, "docker", "ps", "--filter", fmt.Sprintf("name=%s", c.containerName), "--format", "{{.Status}}")
 	output, err := cmd.Output()
@@ -57,7 +57,7 @@ func (c *ContainerMonitor) CheckContainerHealth(ctx context.Context) (bool, erro
 	return false, fmt.Errorf("container status: %s", status)
 }
 
-// GetContainerPID gets the PID of the container's main process
+// gets the PID of the container's main process
 func (c *ContainerMonitor) GetContainerPID(ctx context.Context) (int, error) {
 	cmd := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", c.containerName)
 	output, err := cmd.Output()
@@ -113,7 +113,6 @@ func (c *ContainerMonitor) WatchContainerStatus(ctx context.Context, interval ti
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Check container health
 			healthy, err := c.CheckContainerHealth(ctx)
 			if err != nil || !healthy {
 				outChan <- DeathRattleEvent{
@@ -124,7 +123,6 @@ func (c *ContainerMonitor) WatchContainerStatus(ctx context.Context, interval ti
 				}
 			}
 
-			// Check for OOM kill
 			oomKilled, msg, err := c.CheckOOMKill(ctx)
 			if err == nil && oomKilled {
 				outChan <- DeathRattleEvent{
