@@ -62,15 +62,30 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "endpoint_traffic", "sw_metric", "endpoint_traffic.json", now, interval)
 	casesmeasuredata.Write(conn, "duplicated", "exception", "duplicated.json", now, 0)
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
-	casesmeasuredata.WriteWithSpec(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_spec_order.json", now.Add(20*time.Minute), interval,
-		&measurev1.DataPointSpec{
-			TagFamilySpec: []*measurev1.TagFamilySpec{
-				{
-					Name:     "default",
-					TagNames: []string{"entity_id", "id"},
+	casesmeasuredata.WriteWithSpec(conn, "service_cpm_minute", "sw_metric", now.Add(20*time.Minute), interval,
+		casesmeasuredata.SpecWithData{
+			Spec: &measurev1.DataPointSpec{
+				TagFamilySpec: []*measurev1.TagFamilySpec{
+					{
+						Name:     "default",
+						TagNames: []string{"entity_id", "id"},
+					},
 				},
+				FieldNames: []string{"value", "total"},
 			},
-			FieldNames: []string{"value", "total"},
+			DataFile: "service_cpm_minute_spec_order.json",
+		},
+		casesmeasuredata.SpecWithData{
+			Spec: &measurev1.DataPointSpec{
+				TagFamilySpec: []*measurev1.TagFamilySpec{
+					{
+						Name:     "default",
+						TagNames: []string{"id", "entity_id"},
+					},
+				},
+				FieldNames: []string{"total", "value"},
+			},
+			DataFile: "service_cpm_minute_spec_order2.json",
 		})
 	casesmeasuredata.WriteMixed(conn, "service_cpm_minute", "sw_metric",
 		"service_cpm_minute_schema_order.json", "service_cpm_minute_spec_order.json",

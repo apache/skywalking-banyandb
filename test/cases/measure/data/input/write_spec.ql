@@ -18,5 +18,5 @@
 
 SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_metric
 TIME > '-15m'
-WHERE id = 'id_spec_2'
+WHERE id IN ('id_spec_2', 'id_spec_5')
 

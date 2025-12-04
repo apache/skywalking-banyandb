@@ -19,15 +19,15 @@ name: "service_cpm_minute"
 groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
-  - name: "default"
-    tags: ["id", "entity_id"]
+    - name: "default"
+      tags: ["id", "entity_id"]
 fieldProjection:
   names: ["total", "value"]
 criteria:
   condition:
     name: "id"
-    op: "BINARY_OP_EQ"
+    op: "BINARY_OP_IN"
     value:
-      str:
-        value: "id_spec_2"
+      strArray:
+        value: ["id_spec_2", "id_spec_5"]
 

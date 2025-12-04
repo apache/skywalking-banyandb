@@ -16,23 +16,44 @@
 # under the License.
 
 dataPoints:
-- tagFamilies:
-  - name: default
-    tags:
-    - key: id
-      value:
-        str:
-          value: id_spec_2
-    - key: entity_id
-      value:
-        str:
-          value: entity_spec_2
-  fields:
-  - name: total
-    value:
-      int:
-        value: "20"
-  - name: value
-    value:
-      int:
-        value: "200"
+  - tagFamilies:
+      - name: default
+        tags:
+          - key: id
+            value:
+              str:
+                value: id_spec_2
+          - key: entity_id
+            value:
+              str:
+                value: entity_spec_2
+    fields:
+      - name: total
+        value:
+          int:
+            value: "20"
+      - name: value
+        value:
+          int:
+            value: "200"
+  - tagFamilies:
+      - name: default
+        tags:
+          - key: id
+            value:
+              str:
+                value: id_spec_5
+          - key: entity_id
+            value:
+              str:
+                value: entity_spec_5
+    fields:
+      - name: total
+        value:
+          int:
+            value: "50"
+      - name: value
+        value:
+          int:
+            value: "500"
+
