@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // ContainerMonitor provides utilities for monitoring container status
@@ -101,37 +100,4 @@ func (c *ContainerMonitor) CheckOOMKill(ctx context.Context) (bool, string, erro
 	}
 
 	return false, "", nil
-}
-
-// WatchContainerStatus continuously monitors container status
-func (c *ContainerMonitor) WatchContainerStatus(ctx context.Context, interval time.Duration, outChan chan<- DeathRattleEvent) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			healthy, err := c.CheckContainerHealth(ctx)
-			if err != nil || !healthy {
-				outChan <- DeathRattleEvent{
-					Type:      DeathRattleTypeContainer,
-					Message:   fmt.Sprintf("Container health check failed: %v", err),
-					Timestamp: time.Now(),
-					Severity:  "critical",
-				}
-			}
-
-			oomKilled, msg, err := c.CheckOOMKill(ctx)
-			if err == nil && oomKilled {
-				outChan <- DeathRattleEvent{
-					Type:      DeathRattleTypeContainer,
-					Message:   fmt.Sprintf("OOM kill detected: %s", msg),
-					Timestamp: time.Now(),
-					Severity:  "critical",
-				}
-			}
-		}
-	}
 }

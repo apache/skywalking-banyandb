@@ -106,9 +106,7 @@ func (a *AlertManager) AnalyzeMetrics(snapshot poller.MetricsSnapshot) []string 
 		}
 	}
 
-	// Check disk usage
 	// banyandb_system_disk has labels: path="...", kind="used", kind="total", kind="used_percent"
-	// Sum across all paths
 	diskUsed, diskUsedFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_disk", "kind", "used")
 	diskTotal, diskTotalFound := findMetricByLabel(snapshot.RawMetrics, "banyandb_system_disk", "kind", "total")
 	if diskUsedFound && diskTotalFound && diskTotal > 0 {
@@ -127,12 +125,14 @@ func (a *AlertManager) AnalyzeMetrics(snapshot poller.MetricsSnapshot) []string 
 	// Check for zero write rate (might indicate failure)
 	writeRate, writeRateFound := findMetricByName(snapshot.RawMetrics, "banyandb_measure_total_written")
 	if writeRateFound && writeRate == 0 {
-		// Check if this is consistently zero (would need historical data)
-		// For now, just log if we see it
+		msg := fmt.Sprintf("Zero write rate detected: %.2f", writeRate)
+		alerts = append(alerts, msg)
+		a.alerts = append(a.alerts, Alert{
+			Message:   msg,
+			Timestamp: snapshot.Timestamp,
+			Severity:  "warning",
+		})
 	}
-
-	// Note: banyandb_connection_failures_total metric doesn't exist in the codebase
-	// Removed this check as it would never trigger
 
 	// Check for any errors in the snapshot
 	if len(snapshot.Errors) > 0 {
@@ -157,15 +157,4 @@ func (a *AlertManager) HandleDeathRattle(event DeathRattleEvent) {
 		Severity:  event.Severity,
 	}
 	a.alerts = append(a.alerts, alert)
-}
-
-func (a *AlertManager) GetRecentAlerts(duration time.Duration) []Alert {
-	cutoff := time.Now().Add(-duration)
-	var recent []Alert
-	for _, alert := range a.alerts {
-		if alert.Timestamp.After(cutoff) {
-			recent = append(recent, alert)
-		}
-	}
-	return recent
 }

@@ -32,13 +32,13 @@ const (
 
 // HealthStatus represents the health status of the sidecar
 type HealthStatus struct {
-	Status      string                 `json:"status"`
-	Timestamp   time.Time              `json:"timestamp"`
-	Version     string                 `json:"version,omitempty"`
-	BanyanDB    *BanyanDBHealth        `json:"banyandb,omitempty"`
-	Metrics     *MetricsHealth         `json:"metrics,omitempty"`
-	Uptime      time.Duration          `json:"uptime"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Status    string                 `json:"status"`
+	Timestamp time.Time              `json:"timestamp"`
+	Version   string                 `json:"version,omitempty"`
+	BanyanDB  *BanyanDBHealth        `json:"banyandb,omitempty"`
+	Metrics   *MetricsHealth         `json:"metrics,omitempty"`
+	Uptime    time.Duration          `json:"uptime"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // BanyanDBHealth represents the health of the monitored BanyanDB instance
@@ -57,15 +57,15 @@ type MetricsHealth struct {
 
 // HealthServer provides HTTP health endpoints for the sidecar
 type HealthServer struct {
-	port     int
-	server   *http.Server
-	status   *HealthStatus
-	mu       sync.RWMutex
+	port      int
+	server    *http.Server
+	status    *HealthStatus
+	mu        sync.RWMutex
 	startTime time.Time
-	version  string
+	version   string
 }
 
-// NewHealthServer creates a new health server
+// creates a new health server
 func NewHealthServer(port int, version string) *HealthServer {
 	if port == 0 {
 		port = DefaultHealthPort
@@ -131,7 +131,7 @@ func (hs *HealthServer) UpdateBanyanDBHealth(connected bool, err error) {
 	}
 }
 
-// UpdateMetricsHealth updates the metrics collection health status
+// updates the metrics collection health status
 func (hs *HealthServer) UpdateMetricsHealth(totalSnapshots, errors int, lastSnapshotTime time.Time) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -143,7 +143,7 @@ func (hs *HealthServer) UpdateMetricsHealth(totalSnapshots, errors int, lastSnap
 	}
 }
 
-// SetMetadata sets metadata for the health status
+// sets metadata for the health status
 func (hs *HealthServer) SetMetadata(key string, value interface{}) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -162,7 +162,7 @@ func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	hs.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Determine HTTP status code based on health
 	httpStatus := http.StatusOK
 	if status.BanyanDB != nil && !status.BanyanDB.Connected {
@@ -216,4 +216,3 @@ func parseInt(s string) int {
 	fmt.Sscanf(s, "%d", &result)
 	return result
 }
-

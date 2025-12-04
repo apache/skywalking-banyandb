@@ -474,119 +474,410 @@ func (d *DeathRattleDetector) watchContainerStatus(ctx context.Context, outChan 
 	}
 }
 
-// checkProcessStatus checks the main process status via /proc filesystem
+// checks the main process status via /proc filesystem
 func (d *DeathRattleDetector) checkProcessStatus(ctx context.Context, outChan chan<- DeathRattleEvent, prevState *string, firstCheck bool) {
+	// Check context cancellation before proceeding
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	pidFile := "/proc/1/status"
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
-		// Only alert if this is not the first check (to avoid false positives on startup)
+		// avoid false positives on startup
 		if !firstCheck {
-			outChan <- DeathRattleEvent{
-				Type:      DeathRattleTypeContainer,
-				Message:   fmt.Sprintf("Cannot access main process status (PID 1): %v", err),
-				Timestamp: time.Now(),
-				Severity:  "critical",
+			// Check if process directory exists to distinguish between process gone vs permission error
+			if _, statErr := os.Stat("/proc/1"); statErr != nil {
+				outChan <- DeathRattleEvent{
+					Type:      DeathRattleTypeContainer,
+					Message:   "Main process (PID 1) no longer exists - container may have terminated",
+					Timestamp: time.Now(),
+					Severity:  "critical",
+				}
+			} else {
+				outChan <- DeathRattleEvent{
+					Type:      DeathRattleTypeContainer,
+					Message:   fmt.Sprintf("Cannot access main process status (PID 1): %v", err),
+					Timestamp: time.Now(),
+					Severity:  "warning",
+				}
 			}
 		}
 		return
 	}
 
-	// Extract process state
-	state := d.getProcessStateFromData(string(data))
+	statusData := string(data)
+
+	// Extract process state and additional information
+	state := d.getProcessStateFromData(statusData)
 	if state == "" {
 		return
 	}
 
+	// Extract additional process information for better diagnostics
+	ppid := d.extractFieldFromStatus(statusData, "PPid:")
+	threads := d.extractFieldFromStatus(statusData, "Threads:")
+	vmRSS := d.extractFieldFromStatus(statusData, "VmRSS:")
+
 	// Check for zombie state or other problematic states
 	if state == "Z" {
+		message := "Main process (PID 1) is in zombie state - container may be terminating"
+		if ppid != "" {
+			message = fmt.Sprintf("%s (parent PID: %s)", message, ppid)
+		}
 		outChan <- DeathRattleEvent{
 			Type:      DeathRattleTypeContainer,
-			Message:   "Main process (PID 1) is in zombie state - container may be terminating",
+			Message:   message,
 			Timestamp: time.Now(),
 			Severity:  "critical",
 		}
 	} else if state == "T" && *prevState != "T" {
 		// Process stopped (traced or stopped by signal)
+		message := "Main process (PID 1) is stopped (traced or stopped by signal)"
+		if threads != "" {
+			message = fmt.Sprintf("%s (threads: %s)", message, threads)
+		}
 		outChan <- DeathRattleEvent{
 			Type:      DeathRattleTypeContainer,
-			Message:   "Main process (PID 1) is stopped",
+			Message:   message,
 			Timestamp: time.Now(),
 			Severity:  "warning",
+		}
+	} else if state == "D" {
+		// Uninterruptible sleep (usually I/O wait) - can indicate I/O problems
+		if *prevState != "D" {
+			message := "Main process (PID 1) is in uninterruptible sleep (D state) - possible I/O issue"
+			if vmRSS != "" {
+				message = fmt.Sprintf("%s (RSS: %s)", message, vmRSS)
+			}
+			outChan <- DeathRattleEvent{
+				Type:      DeathRattleTypeContainer,
+				Message:   message,
+				Timestamp: time.Now(),
+				Severity:  "warning",
+			}
+		}
+	} else if state == "X" || state == "x" {
+		// Dead process (shouldn't normally see this)
+		outChan <- DeathRattleEvent{
+			Type:      DeathRattleTypeContainer,
+			Message:   "Main process (PID 1) is dead",
+			Timestamp: time.Now(),
+			Severity:  "critical",
 		}
 	}
 
 	*prevState = state
 }
 
-// checkOOMKillFilesystem checks for OOM kills using cgroup filesystem
+// checks for OOM kills using cgroup filesystem
 func (d *DeathRattleDetector) checkOOMKillFilesystem(ctx context.Context, outChan chan<- DeathRattleEvent, prevCount *uint64, firstCheck bool) {
-	// Try cgroup v1 path
-	oomKillPath := "/sys/fs/cgroup/memory/memory.oom_kill"
-	if data, err := os.ReadFile(oomKillPath); err == nil {
-		count, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
-		if err == nil {
+	// Check context cancellation before proceeding
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	// First, try to find the actual cgroup path dynamically
+	cgroupPaths := d.findCgroupPaths()
+
+	// Try cgroup v1 paths
+	for _, basePath := range cgroupPaths.v1 {
+		oomKillPath := filepath.Join(basePath, "memory.oom_kill")
+		if count, err := d.readOOMKillCountV1(oomKillPath); err == nil {
 			if count > *prevCount && !firstCheck {
+				newKills := count - *prevCount
 				outChan <- DeathRattleEvent{
 					Type:      DeathRattleTypeContainer,
-					Message:   fmt.Sprintf("OOM kill detected via cgroup v1 (total kills: %d)", count),
+					Message:   fmt.Sprintf("OOM kill detected via cgroup v1 (new kills: %d, total: %d, path: %s)", newKills, count, basePath),
 					Timestamp: time.Now(),
 					Severity:  "critical",
 				}
 			}
 			*prevCount = count
+
+			// Also check memory pressure and oom_control
+			d.checkMemoryPressureV1(outChan, basePath, firstCheck)
 			return
 		}
 	}
 
-	// Try cgroup v2 path
-	oomKillPathV2 := "/sys/fs/cgroup/memory.events"
-	if data, err := os.ReadFile(oomKillPathV2); err == nil {
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "oom_kill ") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					count, err := strconv.ParseUint(fields[1], 10, 64)
-					if err == nil {
-						if count > *prevCount && !firstCheck {
-							outChan <- DeathRattleEvent{
-								Type:      DeathRattleTypeContainer,
-								Message:   fmt.Sprintf("OOM kill detected via cgroup v2 (total kills: %d)", count),
-								Timestamp: time.Now(),
-								Severity:  "critical",
-							}
-						}
-						*prevCount = count
-					}
-					return
+	// Try cgroup v2 paths
+	for _, basePath := range cgroupPaths.v2 {
+		eventsPath := filepath.Join(basePath, "memory.events")
+		if count, err := d.readOOMKillCountV2(eventsPath); err == nil {
+			if count > *prevCount && !firstCheck {
+				newKills := count - *prevCount
+				outChan <- DeathRattleEvent{
+					Type:      DeathRattleTypeContainer,
+					Message:   fmt.Sprintf("OOM kill detected via cgroup v2 (new kills: %d, total: %d, path: %s)", newKills, count, basePath),
+					Timestamp: time.Now(),
+					Severity:  "critical",
 				}
+			}
+			*prevCount = count
+
+			// Also check memory pressure events
+			d.checkMemoryPressureV2(outChan, basePath, firstCheck)
+			return
+		}
+	}
+
+	// Fallback to default paths if dynamic discovery failed
+	if !firstCheck {
+		d.checkOOMKillFallback(outChan, prevCount, firstCheck)
+	}
+}
+
+// cgroupPaths holds discovered cgroup paths for v1 and v2
+type cgroupPaths struct {
+	v1 []string
+	v2 []string
+}
+
+// findCgroupPaths discovers cgroup paths by reading /proc/self/cgroup
+func (d *DeathRattleDetector) findCgroupPaths() cgroupPaths {
+	paths := cgroupPaths{
+		v1: []string{"/sys/fs/cgroup/memory"}, // Default fallback
+		v2: []string{"/sys/fs/cgroup"},        // Default fallback
+	}
+
+	// Read /proc/self/cgroup to find actual cgroup paths
+	cgroupData, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return paths
+	}
+
+	lines := strings.Split(string(cgroupData), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, ":")
+		if len(fields) < 3 {
+			continue
+		}
+
+		subsystems := fields[1]
+		cgroupPath := fields[2]
+
+		// For cgroup v2, subsystems field is empty
+		if subsystems == "" {
+			// cgroup v2
+			if cgroupPath != "/" {
+				fullPath := filepath.Join("/sys/fs/cgroup", cgroupPath)
+				paths.v2 = append(paths.v2, fullPath)
+			} else {
+				paths.v2 = append(paths.v2, "/sys/fs/cgroup")
+			}
+		} else if strings.Contains(subsystems, "memory") {
+			// cgroup v1 with memory subsystem
+			if cgroupPath != "/" {
+				fullPath := filepath.Join("/sys/fs/cgroup/memory", cgroupPath)
+				paths.v1 = append(paths.v1, fullPath)
+			} else {
+				paths.v1 = append(paths.v1, "/sys/fs/cgroup/memory")
 			}
 		}
 	}
 
-	// Check memory.oom_control for additional info
-	oomControlPath := "/sys/fs/cgroup/memory/memory.oom_control"
+	return paths
+}
+
+// reads OOM kill count from cgroup v1 memory.oom_kill file
+func (d *DeathRattleDetector) readOOMKillCountV1(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+}
+
+// reads OOM kill count from cgroup v2 memory.events file
+func (d *DeathRattleDetector) readOOMKillCountV2(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "oom_kill ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return strconv.ParseUint(fields[1], 10, 64)
+			}
+		}
+	}
+	return 0, fmt.Errorf("oom_kill field not found")
+}
+
+// checks memory pressure indicators in cgroup v1
+func (d *DeathRattleDetector) checkMemoryPressureV1(outChan chan<- DeathRattleEvent, basePath string, firstCheck bool) {
+	if firstCheck {
+		return
+	}
+
+	// Check memory.oom_control for OOM killer status
+	oomControlPath := filepath.Join(basePath, "memory.oom_control")
 	if data, err := os.ReadFile(oomControlPath); err == nil {
-		// Look for oom_kill_disable flag
-		if strings.Contains(string(data), "oom_kill_disable 1") {
-			// OOM killer is disabled, which might indicate issues
-			if !firstCheck {
-				outChan <- DeathRattleEvent{
-					Type:      DeathRattleTypeContainer,
-					Message:   "OOM killer is disabled in cgroup - memory issues may not be handled properly",
-					Timestamp: time.Now(),
-					Severity:  "warning",
+		content := string(data)
+		if strings.Contains(content, "oom_kill_disable 1") {
+			outChan <- DeathRattleEvent{
+				Type:      DeathRattleTypeContainer,
+				Message:   fmt.Sprintf("OOM killer is disabled in cgroup v1 (path: %s) - memory issues may not be handled properly", basePath),
+				Timestamp: time.Now(),
+				Severity:  "warning",
+			}
+		}
+	}
+
+	// Check memory.usage_in_bytes for high memory usage
+	usagePath := filepath.Join(basePath, "memory.usage_in_bytes")
+	if usageData, err := os.ReadFile(usagePath); err == nil {
+		usage, err := strconv.ParseUint(strings.TrimSpace(string(usageData)), 10, 64)
+		if err == nil {
+			limitPath := filepath.Join(basePath, "memory.limit_in_bytes")
+			if limitData, err := os.ReadFile(limitPath); err == nil {
+				limit, err := strconv.ParseUint(strings.TrimSpace(string(limitData)), 10, 64)
+				if err == nil && limit > 0 {
+					usagePercent := float64(usage) * 100 / float64(limit)
+					if usagePercent > 90 {
+						outChan <- DeathRattleEvent{
+							Type:      DeathRattleTypeContainer,
+							Message:   fmt.Sprintf("High memory usage detected: %.1f%% (usage: %d, limit: %d)", usagePercent, usage, limit),
+							Timestamp: time.Now(),
+							Severity:  "warning",
+						}
+					}
 				}
 			}
 		}
 	}
 }
 
-// getProcessStateFromData extracts process state from /proc/pid/status data
+// checks memory pressure indicators in cgroup v2
+func (d *DeathRattleDetector) checkMemoryPressureV2(outChan chan<- DeathRattleEvent, basePath string, firstCheck bool) {
+	if firstCheck {
+		return
+	}
+
+	// Check memory.events for pressure events
+	eventsPath := filepath.Join(basePath, "memory.events")
+	if data, err := os.ReadFile(eventsPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				eventName := fields[0]
+				count, err := strconv.ParseUint(fields[1], 10, 64)
+				if err == nil && count > 0 {
+					switch eventName {
+					case "high":
+						outChan <- DeathRattleEvent{
+							Type:      DeathRattleTypeContainer,
+							Message:   fmt.Sprintf("Memory pressure high event detected (count: %d)", count),
+							Timestamp: time.Now(),
+							Severity:  "warning",
+						}
+					case "critical":
+						outChan <- DeathRattleEvent{
+							Type:      DeathRattleTypeContainer,
+							Message:   fmt.Sprintf("Memory pressure critical event detected (count: %d)", count),
+							Timestamp: time.Now(),
+							Severity:  "critical",
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Check memory.current and memory.max for usage percentage
+	currentPath := filepath.Join(basePath, "memory.current")
+	maxPath := filepath.Join(basePath, "memory.max")
+	if currentData, err := os.ReadFile(currentPath); err == nil {
+		current, err := strconv.ParseUint(strings.TrimSpace(string(currentData)), 10, 64)
+		if err == nil {
+			if maxData, err := os.ReadFile(maxPath); err == nil {
+				maxStr := strings.TrimSpace(string(maxData))
+				if maxStr == "max" {
+					return // Unlimited memory
+				}
+				max, err := strconv.ParseUint(maxStr, 10, 64)
+				if err == nil && max > 0 {
+					usagePercent := float64(current) * 100 / float64(max)
+					if usagePercent > 90 {
+						outChan <- DeathRattleEvent{
+							Type:      DeathRattleTypeContainer,
+							Message:   fmt.Sprintf("High memory usage detected: %.1f%% (usage: %d, limit: %d)", usagePercent, current, max),
+							Timestamp: time.Now(),
+							Severity:  "warning",
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// uses default paths when dynamic discovery fails
+func (d *DeathRattleDetector) checkOOMKillFallback(outChan chan<- DeathRattleEvent, prevCount *uint64, firstCheck bool) {
+	// Try default cgroup v1 path
+	oomKillPath := "/sys/fs/cgroup/memory/memory.oom_kill"
+	if count, err := d.readOOMKillCountV1(oomKillPath); err == nil {
+		if count > *prevCount && !firstCheck {
+			newKills := count - *prevCount
+			outChan <- DeathRattleEvent{
+				Type:      DeathRattleTypeContainer,
+				Message:   fmt.Sprintf("OOM kill detected via cgroup v1 fallback (new kills: %d, total: %d)", newKills, count),
+				Timestamp: time.Now(),
+				Severity:  "critical",
+			}
+		}
+		*prevCount = count
+		return
+	}
+
+	// Try default cgroup v2 path
+	eventsPath := "/sys/fs/cgroup/memory.events"
+	if count, err := d.readOOMKillCountV2(eventsPath); err == nil {
+		if count > *prevCount && !firstCheck {
+			newKills := count - *prevCount
+			outChan <- DeathRattleEvent{
+				Type:      DeathRattleTypeContainer,
+				Message:   fmt.Sprintf("OOM kill detected via cgroup v2 fallback (new kills: %d, total: %d)", newKills, count),
+				Timestamp: time.Now(),
+				Severity:  "critical",
+			}
+		}
+		*prevCount = count
+		return
+	}
+}
+
+// extracts process state from /proc/pid/status data
 func (d *DeathRattleDetector) getProcessStateFromData(data string) string {
 	lines := strings.Split(data, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "State:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return fields[1]
+			}
+		}
+	}
+	return ""
+}
+
+// extracts a field value from /proc/pid/status data
+func (d *DeathRattleDetector) extractFieldFromStatus(data, fieldName string) string {
+	lines := strings.Split(data, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, fieldName) {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				return fields[1]
