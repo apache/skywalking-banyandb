@@ -30,6 +30,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -47,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
@@ -75,6 +77,7 @@ type pub struct {
 	writableProbe   map[string]map[string]struct{}
 	cbStates        map[string]*circuitState
 	caCertPath      string
+	caCertReloader  *pkgtls.Reloader
 	prefix          string
 	retryPolicy     string
 	allowedRoles    []databasev1.Role
@@ -110,6 +113,11 @@ func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
 }
 
 func (p *pub) GracefulStop() {
+	// Stop CA certificate reloader if enabled
+	if p.caCertReloader != nil {
+		p.caCertReloader.Stop()
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.evictable {
@@ -126,6 +134,32 @@ func (p *pub) GracefulStop() {
 
 // Serve implements run.Service.
 func (p *pub) Serve() run.StopNotify {
+	// Start CA certificate reloader if enabled
+	if p.caCertReloader != nil {
+		if err := p.caCertReloader.Start(); err != nil {
+			p.log.Error().Err(err).Msg("Failed to start CA certificate reloader")
+			stopCh := p.closer.CloseNotify()
+			return stopCh
+		}
+		p.log.Info().Str("caCertPath", p.caCertPath).Msg("Started CA certificate file monitoring")
+
+		// Listen for certificate update events
+		certUpdateCh := p.caCertReloader.GetUpdateChannel()
+		stopCh := p.closer.CloseNotify()
+		go func() {
+			for {
+				select {
+				case <-certUpdateCh:
+					p.log.Info().Msg("CA certificate updated, reconnecting clients")
+					p.reconnectAllClients()
+				case <-stopCh:
+					return
+				}
+			}
+		}()
+		return stopCh
+	}
+
 	return p.closer.CloseNotify()
 }
 
@@ -332,6 +366,17 @@ func (p *pub) PreRun(context.Context) error {
 	}
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
+
+	// Initialize CA certificate reloader if TLS is enabled and CA cert path is provided
+	if p.tlsEnabled && p.caCertPath != "" {
+		var err error
+		p.caCertReloader, err = pkgtls.NewClientCertReloader(p.caCertPath, p.log)
+		if err != nil {
+			return errors.Wrapf(err, "failed to initialize CA certificate reloader for %s", p.prefix)
+		}
+		p.log.Info().Str("caCertPath", p.caCertPath).Msg("Initialized CA certificate reloader")
+	}
+
 	return nil
 }
 
@@ -441,11 +486,98 @@ func isFailoverError(err error) bool {
 }
 
 func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
+	if !p.tlsEnabled {
+		return grpchelper.SecureOptions(nil, false, false, "")
+	}
+
+	// Use reloader if available (for dynamic reloading)
+	if p.caCertReloader != nil {
+		// Extract server name from the connection (we'll use a default for now)
+		// The actual server name will be validated by the TLS handshake
+		tlsConfig, err := p.caCertReloader.GetClientTLSConfig("")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get TLS config from reloader: %w", err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
+	}
+
+	// Fallback to static file reading if reloader is not available
 	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
 	return opts, nil
+}
+
+// reconnectAllClients reconnects all active clients when CA certificate is updated.
+func (p *pub) reconnectAllClients() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Collect all active nodes
+	nodesToReconnect := make([]*databasev1.Node, 0, len(p.active))
+	for name, client := range p.active {
+		if node := p.registered[name]; node != nil {
+			nodesToReconnect = append(nodesToReconnect, node)
+			// Close existing connection
+			_ = client.conn.Close()
+			delete(p.active, name)
+			p.deleteClient(client.md)
+		}
+	}
+
+	// Reconnect all nodes asynchronously
+	for _, node := range nodesToReconnect {
+		node := node // capture loop variable
+		if !p.closer.AddRunning() {
+			continue
+		}
+		go func() {
+			defer p.closer.Done()
+			// Wait a bit to ensure the old connection is fully closed
+			time.Sleep(200 * time.Millisecond)
+
+			credOpts, err := p.getClientTransportCredentials()
+			if err != nil {
+				p.log.Error().Err(err).Str("node", node.Metadata.GetName()).Msg("failed to load client TLS credentials during reconnect")
+				return
+			}
+
+			conn, err := grpc.NewClient(node.GrpcAddress, append(credOpts,
+				grpc.WithDefaultServiceConfig(p.retryPolicy),
+				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(32<<20)))...)
+			if err != nil {
+				p.log.Error().Err(err).Str("node", node.Metadata.GetName()).Msg("failed to reconnect to grpc server")
+				return
+			}
+
+			// Check health before adding back to active
+			if !p.healthCheck(node.String(), conn) {
+				_ = conn.Close()
+				p.log.Warn().Str("node", node.Metadata.GetName()).Msg("reconnected node is unhealthy")
+				return
+			}
+
+			// Add back to active
+			p.mu.Lock()
+			name := node.Metadata.GetName()
+			if _, exists := p.registered[name]; exists {
+				c := clusterv1.NewServiceClient(conn)
+				md := schema.Metadata{
+					TypeMeta: schema.TypeMeta{
+						Kind: schema.KindNode,
+					},
+					Spec: node,
+				}
+				p.active[name] = &client{conn: conn, client: c, md: md}
+				p.addClient(md)
+				p.recordSuccess(name)
+				p.log.Info().Str("node", name).Msg("successfully reconnected client after CA certificate update")
+			}
+			p.mu.Unlock()
+		}()
+	}
 }
 
 // NewChunkedSyncClient implements queue.Client.
