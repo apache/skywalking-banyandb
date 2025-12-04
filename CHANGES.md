@@ -13,6 +13,7 @@ Release Notes.
 ### Bug Fixes
 
 - Fix the wrong retention setting of each measure/stream/trace.
+- Fix server got panic when create/update property with high dist usage.
 
 ### Document
 
