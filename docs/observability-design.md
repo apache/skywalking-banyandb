@@ -14,7 +14,7 @@ Observability Agent (OA) is an optional, modular observability component for Apa
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐ │
 │  │   BanyanDB   │   │  Prometheus  │───│   Grafana    │ │
 │  └──────┬───────┘   └──────┬───────┘   └──────────────┘ │
-└─────────┼──────────────────┼─────────────────────────────┘
+└─────────┼──────────────────┼────────────────────────────┘
           │ Native Export    │ Scrape           Query
           ▼                  ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -138,10 +138,11 @@ Prefix: metrics are currently emitted under the `ebpf_` namespace to reflect the
 Semantics: all counters are monotonic; use Prometheus functions for rates/derivatives; no map clearing between scrapes.
 
 
-## Compatibility and Transition Notes
+## Naming and Transition Notes
 
-- Product name in this document: Observability Agent (OA). The current binary, env prefixes, and paths may still use `ebpf-sidecar` naming; a staged migration will provide backward compatibility.
-- Metric names starting with `ebpf_` remain stable; any unification under an OA-wide prefix would require an explicit migration plan and is out of scope here.
+- The component name used in this document is **Observability Agent (OA)**. All public identifiers (binary name, environment variable prefixes, module paths) will be aligned with this naming before any official release.
+- Earlier internal prototypes that used `ebpf_sidecar` (or similar) identifiers are considered experimental only and carry **no compatibility guarantees**. They do not represent the project’s intended naming direction.
+- Metric names beginning with `ebpf_` remain stable. The prefix reflects the data source (kernel eBPF signals), not the component name. Any future unification under an OA-wide prefix would require an explicit migration plan and is out of scope at this stage.
 
 ## Safety & Overhead Boundary
 
