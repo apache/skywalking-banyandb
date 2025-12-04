@@ -864,8 +864,8 @@ func (it *propertyWithMetadataIterator) Close() error {
 
 type propertyWithCount struct {
 	*propertyWithMetadata
-	entity     string
 	existNodes map[string]bool
+	entity     string
 }
 
 func newPropertyWithCounts(p *propertyWithMetadata, entity, existNode string) *propertyWithCount {
