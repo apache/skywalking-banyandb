@@ -397,6 +397,10 @@ func (ms *measureService) findTagValueByName(
 }
 
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {
+	if metadata == nil {
+		ms.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
+		return
+	}
 	if status != modelv1.Status_STATUS_SUCCEED {
 		ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
 	}

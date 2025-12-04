@@ -274,38 +274,13 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 	locator partition.IndexRuleLocator, spec *measurev1.DataPointSpec,
 ) ([]nameValues, []index.Field) {
 	tagFamilies := make([]nameValues, 0, len(schema.TagFamilies))
-
-	var specFamilyMap map[string]int
-	var specTagMaps map[string]map[string]int
-	if spec != nil {
-		specFamilyMap = make(map[string]int)
-		specTagMaps = make(map[string]map[string]int)
-		for i, specFamily := range spec.GetTagFamilySpec() {
-			specFamilyMap[specFamily.GetName()] = i
-			tagMap := make(map[string]int)
-			for j, tagName := range specFamily.GetTagNames() {
-				tagMap[tagName] = j
-			}
-			specTagMaps[specFamily.GetName()] = tagMap
-		}
-	}
+	specFamilyMap, specTagMaps := buildSpecMaps(spec)
 
 	var fields []index.Field
 	for i := range schema.GetTagFamilies() {
 		tagFamilySpec := schema.GetTagFamilies()[i]
 		tfr := locator.TagFamilyTRule[i]
-
-		var srcFamily *modelv1.TagFamilyForWrite
-		var specTagMap map[string]int
-		if spec != nil {
-			specIdx, ok := specFamilyMap[tagFamilySpec.Name]
-			if ok && specIdx < len(req.DataPoint.TagFamilies) {
-				srcFamily = req.DataPoint.TagFamilies[specIdx]
-			}
-			specTagMap = specTagMaps[tagFamilySpec.Name]
-		} else if len(req.DataPoint.TagFamilies) > i {
-			srcFamily = req.DataPoint.TagFamilies[i]
-		}
+		srcFamily, specTagMap := getSourceFamilyAndTagMap(spec, tagFamilySpec, req, i, specFamilyMap, specTagMaps)
 
 		tf := nameValues{
 			name: tagFamilySpec.Name,
@@ -372,37 +347,13 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
 	locator partition.IndexRuleLocator, spec *measurev1.DataPointSpec,
 ) []index.Field {
-	var specFamilyMap map[string]int
-	var specTagMaps map[string]map[string]int
-	if spec != nil {
-		specFamilyMap = make(map[string]int)
-		specTagMaps = make(map[string]map[string]int)
-		for i, specFamily := range spec.GetTagFamilySpec() {
-			specFamilyMap[specFamily.GetName()] = i
-			tagMap := make(map[string]int)
-			for j, tagName := range specFamily.GetTagNames() {
-				tagMap[tagName] = j
-			}
-			specTagMaps[specFamily.GetName()] = tagMap
-		}
-	}
+	specFamilyMap, specTagMaps := buildSpecMaps(spec)
 
 	var fields []index.Field
 	for i := range schema.GetTagFamilies() {
 		tagFamilySpec := schema.GetTagFamilies()[i]
 		tfr := locator.TagFamilyTRule[i]
-
-		var srcFamily *modelv1.TagFamilyForWrite
-		var specTagMap map[string]int
-		if spec != nil {
-			specIdx, ok := specFamilyMap[tagFamilySpec.Name]
-			if ok && specIdx < len(req.DataPoint.TagFamilies) {
-				srcFamily = req.DataPoint.TagFamilies[specIdx]
-			}
-			specTagMap = specTagMaps[tagFamilySpec.Name]
-		} else if len(req.DataPoint.TagFamilies) > i {
-			srcFamily = req.DataPoint.TagFamilies[i]
-		}
+		srcFamily, specTagMap := getSourceFamilyAndTagMap(spec, tagFamilySpec, req, i, specFamilyMap, specTagMaps)
 
 		for j := range tagFamilySpec.Tags {
 			t := tagFamilySpec.Tags[j]
@@ -588,6 +539,41 @@ func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *m
 		logger.Panicf("unsupported field value type: %T", fieldValue.GetValue())
 	}
 	return nv
+}
+
+func buildSpecMaps(spec *measurev1.DataPointSpec) (map[string]int, map[string]map[string]int) {
+	if spec == nil {
+		return nil, nil
+	}
+	specFamilyMap := make(map[string]int)
+	specTagMaps := make(map[string]map[string]int)
+	for i, specFamily := range spec.GetTagFamilySpec() {
+		specFamilyMap[specFamily.GetName()] = i
+		tagMap := make(map[string]int)
+		for j, tagName := range specFamily.GetTagNames() {
+			tagMap[tagName] = j
+		}
+		specTagMaps[specFamily.GetName()] = tagMap
+	}
+	return specFamilyMap, specTagMaps
+}
+
+func getSourceFamilyAndTagMap(spec *measurev1.DataPointSpec, tagFamilySpec *databasev1.TagFamilySpec,
+	req *measurev1.WriteRequest, i int, specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) (*modelv1.TagFamilyForWrite, map[string]int) {
+	var srcFamily *modelv1.TagFamilyForWrite
+	var specTagMap map[string]int
+	if spec != nil {
+		specIdx, ok := specFamilyMap[tagFamilySpec.Name]
+		if ok && specIdx < len(req.DataPoint.TagFamilies) {
+			srcFamily = req.DataPoint.TagFamilies[specIdx]
+		}
+		specTagMap = specTagMaps[tagFamilySpec.Name]
+	} else if len(req.DataPoint.TagFamilies) > i {
+		srcFamily = req.DataPoint.TagFamilies[i]
+	}
+	return srcFamily, specTagMap
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {
