@@ -677,7 +677,6 @@ func BuildPropertyQuery(req *propertyv1.QueryRequest, groupField, idField string
 		bq.AddMust(iq)
 		bn.Append(in)
 	}
-
 	return &queryNode{
 		query: bq,
 		node:  bn,

@@ -560,11 +560,19 @@ func (ps *propertyServer) sortedQueryWithDedup(
 		seenIDs[entity] = propCount
 
 		// Insert into resultBuffer at correct sorted position
-		insertPos := ps.findInsertPosition(resultBuffer, propCount, isDesc)
-		resultBuffer = ps.insertAtPosition(resultBuffer, propCount, insertPos)
+		resultBuffer = ps.sortInsertToBuffer(resultBuffer, propCount, isDesc)
 	}
 
 	return resultBuffer
+}
+
+// sortInsertToBuffer sort insert the property to the buffer.
+func (ps *propertyServer) sortInsertToBuffer(buffer []*propertyWithCount,
+	newProp *propertyWithCount,
+	isDesc bool,
+) []*propertyWithCount {
+	insertPos := ps.findInsertPosition(buffer, newProp, isDesc)
+	return ps.insertAtPosition(buffer, newProp, insertPos)
 }
 
 // findInsertPosition finds the correct position to insert a new property
