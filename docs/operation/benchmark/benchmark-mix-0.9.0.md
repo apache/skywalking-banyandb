@@ -1,14 +1,15 @@
-# Benchmark
+# Hybrid Scenario Benchmark
 
-The [previous article](./benchmark-single-each-0.9.0.md) introduced the read/write capabilities of each individual data structure.
-This article conduct a mixed read/write test on all data structures.
+The Hybrid Scenario Benchmark is designed for the SkyWalking OAP to evaluate typical full‑stack observability scenarios. 
+It generates metrics, logs, and traces in proportional ratios, and conducts performance tests under various cluster scales and sampling rates. 
+The goal is to simulate and reproduce real‑world production performance characteristics and resource consumption.
 
 ## Version Information
 
 - **BanyanDB Version**: 0.9.0
 - **Commit**: a2479b1c7dd805b74bffbc5f9317da9df6ac95a5
 
-## Small specification Test Environment
+## Minimal specification Test Environment
 
 This small specification benchmark was conducted on a Kubernetes cluster with a single node (16 cores, 64GB RAM), deploying a complete BanyanDB cluster with lifecycle support using the [skywalking-banyandb-helm chart](https://github.com/apache/skywalking-banyandb-helm).
 Each BanyanDB Pod is configured with resource limits of 2 cores and 4GB memory.
@@ -18,6 +19,7 @@ Each BanyanDB Pod is configured with resource limits of 2 cores and 4GB memory.
 The test involves 426 services, 2,820 instances, and 4,500 endpoints. These entities produce over 21,600 logs per minute,
 write 26640 spans per minute(max 4000 spans per second).
 1.178g disk volume in 2 hours for all telemetry data, 0.85g disk volume in 2 hours for trace.
+It should takes over ~100g dist volume in 7 days for all telemetry, and ~75g in 7 days for trace.
 
 The following graphs illustrate the resource usage during write operations, showing CPU and memory consumption across the BanyanDB cluster:
 
@@ -42,10 +44,10 @@ The graphs below show resource utilization during combined read and write operat
 ![Mix Read and Write Detail Usage](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/benchmark/small-mix-write-read-detail-usage.jpg)
 ![Mix Read and Write Index Usage](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/benchmark/small-mix-write-read-index-usage.jpg)
 
-## Large specification Test Environment
+## Standard specification Test Environment
 
-This large specification benchmark was conducted on a Kubernetes cluster with a single node (32 cores, 128GB RAM), deploying a complete BanyanDB cluster with lifecycle support using the [skywalking-banyandb-helm chart](https://github.com/apache/skywalking-banyandb-helm).
-Similar to the small specification configuration, except that in the large specification setup, **both the liaison and data nodes have been upgraded from 2 cores and 4GB memory to 4 cores and 8GB memory**.
+This Standard specification benchmark was conducted on a Kubernetes cluster with a single node (32 cores, 128GB RAM), deploying a complete BanyanDB cluster with lifecycle support using the [skywalking-banyandb-helm chart](https://github.com/apache/skywalking-banyandb-helm).
+Similar to the small specification configuration, except that in the standard specification setup, **both the liaison and data nodes have been upgraded from 2 cores and 4GB memory to 4 cores and 8GB memory**.
 
 ### Write
 
@@ -53,6 +55,7 @@ The test involves 426 services, 2,820 instances, and 4,500 endpoints. These enti
 write 599,400 spans per minute(max 8,000 spans per second).
 Note, ~23x more spans compared with small specification test.
 31.44g disk volume in 2 hours for all telemetry data, 31.2g disk volume in 2 hours for trace.
+It should takes over ~3pb dist volume in 7 days for all telemtry, and 2.8pb for trace,
 
 The following graphs illustrate the resource usage during write operations, showing CPU and memory consumption across the BanyanDB cluster:
 
