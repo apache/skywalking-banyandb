@@ -551,6 +551,8 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		return spec.GetName() == fieldName
 	})
 	if fieldIdx == -1 {
+		manager.l.Warn().Str("fieldName", fieldName).Str("measure", manager.m.Metadata.GetName()).
+			Msg("TopNAggregation references removed field which no longer exists in schema, ignoring this TopNAggregation")
 		return nil, fmt.Errorf("field %s is not found in %s schema", fieldName, manager.m.Metadata.GetName())
 	}
 	if len(groupByNames) == 0 {
@@ -577,9 +579,10 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			}
 		}, nil
 	}
-	groupLocator, err := newGroupLocator(manager.m, groupByNames)
-	if err != nil {
-		return nil, err
+	groupLocator, removedTags := newGroupLocator(manager.m, groupByNames)
+	for _, removedTag := range removedTags {
+		manager.l.Warn().Str("tagName", removedTag).Str("measure", manager.m.Metadata.GetName()).
+			Msg("TopNAggregation references removed tag which no longer exists in schema, ignoring this tag")
 	}
 	return func(_ context.Context, request any) any {
 		dpWithEvs := request.(*dataPointWithEntityValues)
@@ -604,19 +607,21 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 type groupTagsLocator []partition.TagLocator
 
 // newGroupLocator generates a groupTagsLocator which strictly preserve the order of groupByNames.
-func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLocator, error) {
+func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLocator, []string) {
 	groupTags := make([]partition.TagLocator, 0, len(groupByNames))
+	var removedTags []string
 	for _, groupByName := range groupByNames {
 		fIdx, tIdx, spec := pbv1.FindTagByName(m.GetTagFamilies(), groupByName)
 		if spec == nil {
-			return nil, fmt.Errorf("tag %s is not found", groupByName)
+			removedTags = append(removedTags, groupByName)
+			continue
 		}
 		groupTags = append(groupTags, partition.TagLocator{
 			FamilyOffset: fIdx,
 			TagOffset:    tIdx,
 		})
 	}
-	return groupTags, nil
+	return groupTags, removedTags
 }
 
 func extractTagValue(dpv *measurev1.DataPointValue, locator partition.TagLocator) *modelv1.TagValue {
