@@ -123,8 +123,8 @@ BanyanDB supports enabling TLS for the internal gRPC queue between liaison and d
 
 The following flags are used to configure internal TLS:
 
-- `--internal-tls` (or `--data-client-tls`): Enable TLS on the internal queue client inside Liaison; if false, the queue uses plain TCP.
-- `--internal-ca-cert <path>` (or `--data-client-ca-cert`): PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
+- `--data-client-tls`: Enable TLS on the internal queue client inside Liaison; if false, the queue uses plain TCP.
+- `--data-client-ca-cert`: PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
 
 Each Liaison/Data process still advertises its certificate with the public flags (`--tls`, `--cert-file`, `--key-file`). The same certificate/key pair can be reused for both external traffic and the internal queue.
 
