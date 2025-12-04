@@ -153,7 +153,9 @@ catalog:
         path: "/concept/property-repair"
       - name: "Benchmark"
         catalog:
-          - name: "v0.9.0"
+          - name: "v0.9.0 Each Catalog Scenario"
+            path: "/operation/benchmark/benchmark-0.9.0"
+          - name: "v0.9.0 Hybrid Scenario"
             path: "/operation/benchmark/benchmark-0.9.0"
   - name: "File Format"
     catalog:
