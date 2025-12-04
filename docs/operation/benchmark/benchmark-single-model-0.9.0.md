@@ -1,4 +1,4 @@
-# Benchmark
+Single‑Model Benchmark (Trace / Log / Measure / Property)
 
 ## Version Information
 
