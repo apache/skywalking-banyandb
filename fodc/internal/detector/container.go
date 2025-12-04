@@ -74,7 +74,7 @@ func (c *ContainerMonitor) GetContainerPID(ctx context.Context) (int, error) {
 	return pid, nil
 }
 
-// CheckOOMKill checks if the container was killed by OOM killer
+// checks if the container was killed by OOM killer
 func (c *ContainerMonitor) CheckOOMKill(ctx context.Context) (bool, string, error) {
 	pid, err := c.GetContainerPID(ctx)
 	if err != nil {
@@ -137,4 +137,3 @@ func (c *ContainerMonitor) WatchContainerStatus(ctx context.Context, interval ti
 		}
 	}
 }
-

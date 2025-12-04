@@ -211,7 +211,6 @@ func main() {
 			}
 		}()
 	}
-
 	// Process events
 	go func() {
 		for {

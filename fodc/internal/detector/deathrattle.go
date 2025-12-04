@@ -42,17 +42,17 @@ type DeathRattleEvent struct {
 }
 
 type DeathRattleDetector struct {
-	filePath      string
-	containerName string
-	healthURL     string
+	filePath       string
+	containerName  string
+	healthURL      string
 	healthInterval time.Duration
-	client        *http.Client
+	client         *http.Client
 }
 
 func NewDeathRattleDetector(filePath, containerName, healthURL string, healthInterval time.Duration) *DeathRattleDetector {
 	return &DeathRattleDetector{
 		filePath:       filePath,
-		containerName: containerName,
+		containerName:  containerName,
 		healthURL:      healthURL,
 		healthInterval: healthInterval,
 		client: &http.Client{
@@ -71,9 +71,8 @@ func (d *DeathRattleDetector) Start(ctx context.Context, outChan chan<- DeathRat
 	// Start health check watcher
 	go d.watchHealthCheck(ctx, outChan)
 
-	// Start container status watcher (if docker is available)
-	// Note: This requires docker CLI to be available
-	// go d.watchContainerStatus(ctx, outChan)
+	// Start container status watcher
+	go d.watchContainerStatus(ctx, outChan)
 
 	<-ctx.Done()
 	return nil
@@ -143,7 +142,7 @@ func (d *DeathRattleDetector) watchSignals(ctx context.Context, outChan chan<- D
 	// Note: Signal watching is handled by the main process
 	// This function monitors for signal-related death rattles via other means
 	// For example, checking if the container's main process has received signals
-	
+
 	// Check for signal-related files or indicators
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -237,7 +236,7 @@ func (d *DeathRattleDetector) watchContainerStatus(ctx context.Context, outChan 
 			return
 		case <-ticker.C:
 			// Check if container PID file exists (common pattern)
-			pidFile := fmt.Sprintf("/proc/1/status")
+			pidFile := "/proc/1/status"
 			if _, err := os.Stat(pidFile); err != nil {
 				// Try to read container status from /proc
 				if _, err := os.ReadFile(pidFile); err != nil {
@@ -277,4 +276,3 @@ func TriggerDeathRattle(filePath, message string) error {
 	}
 	return os.WriteFile(filePath, []byte(message), 0644)
 }
-
