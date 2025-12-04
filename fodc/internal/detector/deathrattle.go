@@ -22,6 +22,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +50,8 @@ type DeathRattleDetector struct {
 	healthURL      string
 	healthInterval time.Duration
 	client         *http.Client
+	wg             sync.WaitGroup
+	errChan        chan error
 }
 
 func NewDeathRattleDetector(filePath, containerName, healthURL string, healthInterval time.Duration) *DeathRattleDetector {
@@ -58,37 +63,113 @@ func NewDeathRattleDetector(filePath, containerName, healthURL string, healthInt
 		client: &http.Client{
 			Timeout: 3 * time.Second,
 		},
+		errChan: make(chan error, 4), // Buffer for 4 goroutines
 	}
 }
 
 func (d *DeathRattleDetector) Start(ctx context.Context, outChan chan<- DeathRattleEvent) error {
-	// Start file watcher
-	go d.watchFile(ctx, outChan)
+	// Start file watcher with error handling
+	if err := d.startFileWatcher(ctx, outChan); err != nil {
+		return fmt.Errorf("failed to start file watcher: %w", err)
+	}
 
-	// Start signal watcher
-	go d.watchSignals(ctx, outChan)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				d.errChan <- fmt.Errorf("watchSignals panicked: %v", r)
+			}
+		}()
+		d.watchSignals(ctx, outChan)
+	}()
 
-	// Start health check watcher
-	go d.watchHealthCheck(ctx, outChan)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				d.errChan <- fmt.Errorf("watchHealthCheck panicked: %v", r)
+			}
+		}()
+		d.watchHealthCheck(ctx, outChan)
+	}()
 
-	// Start container status watcher
-	go d.watchContainerStatus(ctx, outChan)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				d.errChan <- fmt.Errorf("watchContainerStatus panicked: %v", r)
+			}
+		}()
+		d.watchContainerStatus(ctx, outChan)
+	}()
 
+	// Monitor for goroutine errors
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-d.errChan:
+				if err != nil {
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeSignal,
+						Message:   fmt.Sprintf("Monitor error: %v", err),
+						Timestamp: time.Now(),
+						Severity:  "warning",
+					}
+				}
+			}
+		}
+	}()
+
+	// Wait for context cancellation
 	<-ctx.Done()
-	return nil
+
+	// Wait for all goroutines to finish cleanup
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+
+	// Wait with timeout to avoid hanging indefinitely
+	select {
+	case <-done:
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for goroutines to shutdown: %w", ctx.Err())
+	}
 }
 
-func (d *DeathRattleDetector) watchFile(ctx context.Context, outChan chan<- DeathRattleEvent) {
-	// Watch the death rattle file path
+// initializes the file watcher and returns any startup errors
+func (d *DeathRattleDetector) startFileWatcher(ctx context.Context, outChan chan<- DeathRattleEvent) error {
 	dir := filepath.Dir(d.filePath)
 	if dir == "" || dir == "." {
 		dir = "/tmp"
 	}
 
-	// Create directory if it doesn't exist
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
+
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				d.errChan <- fmt.Errorf("watchFile panicked: %v", r)
+			}
+		}()
+		d.watchFile(ctx, outChan)
+	}()
+
+	return nil
+}
+
+func (d *DeathRattleDetector) watchFile(ctx context.Context, outChan chan<- DeathRattleEvent) {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -139,24 +220,133 @@ func (d *DeathRattleDetector) watchFile(ctx context.Context, outChan chan<- Deat
 }
 
 func (d *DeathRattleDetector) watchSignals(ctx context.Context, outChan chan<- DeathRattleEvent) {
-	// Note: Signal watching is handled by the main process
-	// This function monitors for signal-related death rattles via other means
-	// For example, checking if the container's main process has received signals
-
-	// Check for signal-related files or indicators
+	// Monitor for signal-related death rattles by checking process status
+	// Since this runs as a sidecar, we can't directly catch signals sent to the main process
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	// Track previous signal counts to detect changes
+	prevSelfSigPnd := uint64(0)
+	prevSelfShdPnd := uint64(0)
+	prevPid1SigPnd := uint64(0)
+	prevPid1ShdPnd := uint64(0)
+
+	// Common signal-related file paths
+	signalFiles := []string{
+		"/tmp/sigterm-received",
+		"/tmp/sigkill-received",
+		"/dev/shm/signal-received",
+		"/tmp/termination-signal",
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Check for signal-related indicators in the container
-			// This could be extended to check Docker events or process status
-			// For now, we rely on file-based and health check detection
+			for _, path := range signalFiles {
+				if _, err := os.Stat(path); err == nil {
+					content, _ := os.ReadFile(path)
+					message := fmt.Sprintf("Signal-related file detected at %s", path)
+					if len(content) > 0 {
+						message = fmt.Sprintf("%s: %s", message, strings.TrimSpace(string(content)))
+					}
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeSignal,
+						Message:   message,
+						Timestamp: time.Now(),
+						Severity:  "critical",
+					}
+					_ = os.Remove(path)
+				}
+			}
+
+			// Check /proc/self/status for pending signals
+			if sigPnd, shdPnd, err := d.parseSignalStatus("/proc/self/status"); err == nil {
+				if (sigPnd > prevSelfSigPnd || shdPnd > prevSelfShdPnd) && (prevSelfSigPnd > 0 || prevSelfShdPnd > 0) {
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeSignal,
+						Message:   fmt.Sprintf("Pending signals detected in self process: SigPnd=%d, ShdPnd=%d", sigPnd, shdPnd),
+						Timestamp: time.Now(),
+						Severity:  "warning",
+					}
+				}
+				prevSelfSigPnd = sigPnd
+				prevSelfShdPnd = shdPnd
+			}
+
+			// Check /proc/1/status for main container process signals
+			if sigPnd, shdPnd, err := d.parseSignalStatus("/proc/1/status"); err == nil {
+				if (sigPnd > prevPid1SigPnd || shdPnd > prevPid1ShdPnd) && (prevPid1SigPnd > 0 || prevPid1ShdPnd > 0) {
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeSignal,
+						Message:   fmt.Sprintf("Pending signals detected in main process (PID 1): SigPnd=%d, ShdPnd=%d", sigPnd, shdPnd),
+						Timestamp: time.Now(),
+						Severity:  "critical",
+					}
+				}
+				// Check if process state indicates termination
+				if state, err := d.getProcessState("/proc/1/status"); err == nil {
+					if state == "Z" { // Zombie state
+						outChan <- DeathRattleEvent{
+							Type:      DeathRattleTypeSignal,
+							Message:   "Main process (PID 1) is in zombie state - likely terminated",
+							Timestamp: time.Now(),
+							Severity:  "critical",
+						}
+					}
+				}
+				prevPid1SigPnd = sigPnd
+				prevPid1ShdPnd = shdPnd
+			}
 		}
 	}
+}
+
+// extracts SigPnd and ShdPnd values from /proc/pid/status
+func (d *DeathRattleDetector) parseSignalStatus(statusPath string) (sigPnd, shdPnd uint64, err error) {
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "SigPnd:":
+			if val, err := strconv.ParseUint(fields[1], 16, 64); err == nil {
+				sigPnd = val
+			}
+		case "ShdPnd:":
+			if val, err := strconv.ParseUint(fields[1], 16, 64); err == nil {
+				shdPnd = val
+			}
+		}
+	}
+	return sigPnd, shdPnd, nil
+}
+
+// extracts the process state from /proc/pid/status
+func (d *DeathRattleDetector) getProcessState(statusPath string) (string, error) {
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		return "", err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "State:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return fields[1], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("state not found")
 }
 
 func (d *DeathRattleDetector) watchHealthCheck(ctx context.Context, outChan chan<- DeathRattleEvent) {
@@ -225,54 +415,183 @@ func (d *DeathRattleDetector) watchHealthCheck(ctx context.Context, outChan chan
 }
 
 func (d *DeathRattleDetector) watchContainerStatus(ctx context.Context, outChan chan<- DeathRattleEvent) {
-	// Check container status using Docker API or filesystem
-	// This is a simplified version - in production, you might use Docker API
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+
+	// Track previous OOM kill count to detect new kills
+	var prevOOMKillCount uint64
+	var prevProcessState string
+	firstCheck := true
+
+	// Use ContainerMonitor if container name is provided
+	var containerMonitor *ContainerMonitor
+	if d.containerName != "" {
+		containerMonitor = NewContainerMonitor(d.containerName)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Check if container PID file exists (common pattern)
-			pidFile := "/proc/1/status"
-			if _, err := os.Stat(pidFile); err != nil {
-				// Try to read container status from /proc
-				if _, err := os.ReadFile(pidFile); err != nil {
+			// Try Docker-based monitoring first if container name is available
+			if containerMonitor != nil {
+				healthy, err := containerMonitor.CheckContainerHealth(ctx)
+				if err != nil {
 					outChan <- DeathRattleEvent{
 						Type:      DeathRattleTypeContainer,
-						Message:   fmt.Sprintf("Cannot access container process status: %v", err),
+						Message:   fmt.Sprintf("Container health check failed: %v", err),
 						Timestamp: time.Now(),
-						Severity:  "warning",
+						Severity:  "critical",
+					}
+				} else if !healthy {
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeContainer,
+						Message:   "Container is not healthy or not running",
+						Timestamp: time.Now(),
+						Severity:  "critical",
+					}
+				}
+
+				// Check for OOM kill using ContainerMonitor
+				oomKilled, msg, err := containerMonitor.CheckOOMKill(ctx)
+				if err == nil && oomKilled {
+					outChan <- DeathRattleEvent{
+						Type:      DeathRattleTypeContainer,
+						Message:   fmt.Sprintf("OOM kill detected: %s", msg),
+						Timestamp: time.Now(),
+						Severity:  "critical",
 					}
 				}
 			}
 
-			// Check for OOM killer events
-			oomPath := "/sys/fs/cgroup/memory/memory.oom_control"
-			if _, err := os.Stat(oomPath); err == nil {
-				// Check if OOM kill happened
-				oomKillPath := "/sys/fs/cgroup/memory/memory.oom_kill"
-				if data, err := os.ReadFile(oomKillPath); err == nil {
-					if len(data) > 0 && string(data) != "0\n" {
-						outChan <- DeathRattleEvent{
-							Type:      DeathRattleTypeContainer,
-							Message:   fmt.Sprintf("OOM kill detected: %s", string(data)),
-							Timestamp: time.Now(),
-							Severity:  "critical",
+			// Fallback to filesystem-based checks
+			d.checkProcessStatus(ctx, outChan, &prevProcessState, firstCheck)
+			d.checkOOMKillFilesystem(ctx, outChan, &prevOOMKillCount, firstCheck)
+
+			firstCheck = false
+		}
+	}
+}
+
+// checkProcessStatus checks the main process status via /proc filesystem
+func (d *DeathRattleDetector) checkProcessStatus(ctx context.Context, outChan chan<- DeathRattleEvent, prevState *string, firstCheck bool) {
+	pidFile := "/proc/1/status"
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		// Only alert if this is not the first check (to avoid false positives on startup)
+		if !firstCheck {
+			outChan <- DeathRattleEvent{
+				Type:      DeathRattleTypeContainer,
+				Message:   fmt.Sprintf("Cannot access main process status (PID 1): %v", err),
+				Timestamp: time.Now(),
+				Severity:  "critical",
+			}
+		}
+		return
+	}
+
+	// Extract process state
+	state := d.getProcessStateFromData(string(data))
+	if state == "" {
+		return
+	}
+
+	// Check for zombie state or other problematic states
+	if state == "Z" {
+		outChan <- DeathRattleEvent{
+			Type:      DeathRattleTypeContainer,
+			Message:   "Main process (PID 1) is in zombie state - container may be terminating",
+			Timestamp: time.Now(),
+			Severity:  "critical",
+		}
+	} else if state == "T" && *prevState != "T" {
+		// Process stopped (traced or stopped by signal)
+		outChan <- DeathRattleEvent{
+			Type:      DeathRattleTypeContainer,
+			Message:   "Main process (PID 1) is stopped",
+			Timestamp: time.Now(),
+			Severity:  "warning",
+		}
+	}
+
+	*prevState = state
+}
+
+// checkOOMKillFilesystem checks for OOM kills using cgroup filesystem
+func (d *DeathRattleDetector) checkOOMKillFilesystem(ctx context.Context, outChan chan<- DeathRattleEvent, prevCount *uint64, firstCheck bool) {
+	// Try cgroup v1 path
+	oomKillPath := "/sys/fs/cgroup/memory/memory.oom_kill"
+	if data, err := os.ReadFile(oomKillPath); err == nil {
+		count, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+		if err == nil {
+			if count > *prevCount && !firstCheck {
+				outChan <- DeathRattleEvent{
+					Type:      DeathRattleTypeContainer,
+					Message:   fmt.Sprintf("OOM kill detected via cgroup v1 (total kills: %d)", count),
+					Timestamp: time.Now(),
+					Severity:  "critical",
+				}
+			}
+			*prevCount = count
+			return
+		}
+	}
+
+	// Try cgroup v2 path
+	oomKillPathV2 := "/sys/fs/cgroup/memory.events"
+	if data, err := os.ReadFile(oomKillPathV2); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "oom_kill ") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					count, err := strconv.ParseUint(fields[1], 10, 64)
+					if err == nil {
+						if count > *prevCount && !firstCheck {
+							outChan <- DeathRattleEvent{
+								Type:      DeathRattleTypeContainer,
+								Message:   fmt.Sprintf("OOM kill detected via cgroup v2 (total kills: %d)", count),
+								Timestamp: time.Now(),
+								Severity:  "critical",
+							}
 						}
+						*prevCount = count
 					}
+					return
+				}
+			}
+		}
+	}
+
+	// Check memory.oom_control for additional info
+	oomControlPath := "/sys/fs/cgroup/memory/memory.oom_control"
+	if data, err := os.ReadFile(oomControlPath); err == nil {
+		// Look for oom_kill_disable flag
+		if strings.Contains(string(data), "oom_kill_disable 1") {
+			// OOM killer is disabled, which might indicate issues
+			if !firstCheck {
+				outChan <- DeathRattleEvent{
+					Type:      DeathRattleTypeContainer,
+					Message:   "OOM killer is disabled in cgroup - memory issues may not be handled properly",
+					Timestamp: time.Now(),
+					Severity:  "warning",
 				}
 			}
 		}
 	}
 }
 
-// TriggerDeathRattle creates a death rattle file for testing
-func TriggerDeathRattle(filePath, message string) error {
-	if message == "" {
-		message = fmt.Sprintf("Death rattle triggered at %s", time.Now().Format(time.RFC3339))
+// getProcessStateFromData extracts process state from /proc/pid/status data
+func (d *DeathRattleDetector) getProcessStateFromData(data string) string {
+	lines := strings.Split(data, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "State:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return fields[1]
+			}
+		}
 	}
-	return os.WriteFile(filePath, []byte(message), 0644)
+	return ""
 }
