@@ -175,7 +175,12 @@ func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(httpStatus)
-	_ = json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		// If JSON encoding fails, write a simple error response
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(fmt.Sprintf("Error encoding health status: %v", err)))
+	}
 }
 
 func (hs *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {

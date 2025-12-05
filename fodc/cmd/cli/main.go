@@ -109,7 +109,8 @@ func main() {
 		go func() {
 			log.Printf("Starting sidecar health server on port %d", *healthPort)
 			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
-				log.Printf("Error starting health server: %v", err)
+				log.Printf("ERROR: Failed to start health server on port %d: %v", *healthPort, err)
+				log.Printf("ERROR: Health endpoint http://localhost:%d/healthz will not be available", *healthPort)
 			}
 		}()
 
@@ -148,7 +149,7 @@ func main() {
 		log.Printf("Recovered %d snapshots from flight recorder", len(recoveredSnapshots))
 	}
 
-	log.Println("Starting FODC (Failure Observer)")
+	log.Println("Starting FODC")
 	log.Printf("Metrics URL: %s", *metricsURL)
 	log.Printf("Health Check URL: %s", *healthCheckURL)
 	log.Printf("Flight Recorder Path: %s", *flightRecorderPath)
