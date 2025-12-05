@@ -20,10 +20,9 @@ RUN apk add --no-cache ca-certificates && update-ca-certificates
 FROM busybox:stable-glibc AS build-linux
 
 ARG TARGETARCH
-ARG BINARYTYPE
 
-COPY build/bin/linux/${TARGETARCH}/fodc-cli-${BINARYTYPE} /fodc-cli
-COPY build/bin/linux/${TARGETARCH}/fodc-view-${BINARYTYPE} /fodc-view
+COPY build/bin/linux/${TARGETARCH}/fodc-cli-static /fodc-cli
+COPY build/bin/linux/${TARGETARCH}/fodc-view-static /fodc-view
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
