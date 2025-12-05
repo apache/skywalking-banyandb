@@ -43,6 +43,8 @@ The banyand and bydbctl directory structure is as follows.
 │   ├── bydbctl-cli-static-linux-386
 │   ├── bydbctl-cli-static-linux-amd64
 │   ├── bydbctl-cli-static-linux-arm64
+│   ├── bydbctl-cli-static-windows-386
+│   ├── bydbctl-cli-static-windows-amd64
 │   ├── bydbctl-cli-static-darwin-amd64
 │   └── bydbctl-cli-static-darwin-arm64
 └── licenses
@@ -57,8 +59,12 @@ Users who want to build a binary from sources have to set up:
 * Go 1.23
 * Node 20.12
 * Git >= 2.30
-* Linux or macOS
+* Linux, macOS or Windows+WSL2
 * GNU make
+
+### Windows
+
+BanyanDB is built on Linux and macOS that introduced several platform-specific characters to the building system. Therefore, we highly recommend you use [WSL2+Ubuntu](https://ubuntu.com/desktop/wsl) to execute tasks of the Makefile.
 
 ### Build Binaries
 
@@ -105,10 +111,10 @@ The build system provides a series of binary options as well.
 
 ### Cross-compile Binaries
 
-The build system supports cross-compiling binaries for different platforms. For example, to build a Linux binary on a macOS machine, you can issue the following command:
+The build system supports cross-compiling binaries for different platforms. For example, to build a Windows binary on a Linux machine, you can issue the following command:
 
 ```shell
-TARGET_OS=linux PLATFORMS=linux/amd64 make release
+TARGET_OS=windows PLATFORMS=windows/amd64 make release
 ```
 
 The `PLATFORMS` variable is a list of platforms separated by commas. The `TARGET_OS` variable is the target operating system. You could specify several platforms at once:
@@ -125,9 +131,11 @@ darwin/amd64/banyand-server-static
 darwin/arm64/banyand-server-static
 linux/amd64/banyand-server-static
 linux/arm64/banyand-server-static
+windows/amd64/banyand-server-static
 
 darwin/amd64/bydbctl-cli-static
 darwin/arm64/bydbctl-cli-static
 linux/amd64/bydbctl-cli-static
 linux/arm64/bydbctl-cli-static
+windows/amd64/bydbctl-cli-static
 ```
