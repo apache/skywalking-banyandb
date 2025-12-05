@@ -250,6 +250,35 @@ func loadData(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClien
 	}
 }
 
+func loadDataWithSpec(md *commonv1.Metadata, measure measurev1.MeasureService_WriteClient,
+	dataFile string, baseTime time.Time, interval time.Duration, spec *measurev1.DataPointSpec,
+) {
+	var templates []interface{}
+	content, err := dataFS.ReadFile("testdata/" + dataFile)
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+	isFirst := true
+	for i, template := range templates {
+		rawDataPointValue, errMarshal := json.Marshal(template)
+		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+		dataPointValue := &measurev1.DataPointValue{}
+		gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
+		dataPointValue.Timestamp = timestamppb.New(baseTime.Add(-time.Duration(len(templates)-i-1) * interval))
+
+		req := &measurev1.WriteRequest{
+			DataPoint: dataPointValue,
+			MessageId: uint64(time.Now().UnixNano()),
+		}
+		if isFirst {
+			req.Metadata = md
+			req.DataPointSpec = spec
+			isFirst = false
+		}
+		gm.Expect(measure.Send(req)).Should(gm.Succeed())
+	}
+}
+
 // Write data into the server.
 func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration,
@@ -305,4 +334,99 @@ func WriteOnly(conn *grpclib.ClientConn, name, group, dataFile string,
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	loadData(metadata, writeClient, dataFile, baseTime, interval)
 	return writeClient
+}
+
+// SpecWithData pairs a DataPointSpec with a data file.
+type SpecWithData struct {
+	Spec     *measurev1.DataPointSpec
+	DataFile string
+}
+
+// WriteWithSpec writes data using multiple data_point_specs to specify tag and field names.
+func WriteWithSpec(conn *grpclib.ClientConn, name, group string,
+	baseTime time.Time, interval time.Duration, specDataPairs ...SpecWithData,
+) {
+	ctx := context.Background()
+	md := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
+	resp, err := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: md})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	md = resp.GetMeasure().GetMetadata()
+
+	c := measurev1.NewMeasureServiceClient(conn)
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	isFirstRequest := true
+	currentTime := baseTime
+	for _, pair := range specDataPairs {
+		var templates []interface{}
+		content, err := dataFS.ReadFile("testdata/" + pair.DataFile)
+		gm.Expect(err).ShouldNot(gm.HaveOccurred())
+		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+		isFirstForSpec := true
+		for i, template := range templates {
+			rawDataPointValue, errMarshal := json.Marshal(template)
+			gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+			dataPointValue := &measurev1.DataPointValue{}
+			gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
+			dataPointValue.Timestamp = timestamppb.New(currentTime.Add(time.Duration(i) * interval))
+			req := &measurev1.WriteRequest{
+				DataPoint: dataPointValue,
+				MessageId: uint64(time.Now().UnixNano()),
+			}
+			if isFirstRequest {
+				req.Metadata = md
+				isFirstRequest = false
+			}
+			if isFirstForSpec {
+				req.DataPointSpec = pair.Spec
+				isFirstForSpec = false
+			}
+			gm.Expect(writeClient.Send(req)).Should(gm.Succeed())
+		}
+		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+	}
+
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}
+
+// WriteMixed writes data in mixed mode: first following the schema order and then switching to spec mode.
+func WriteMixed(conn *grpclib.ClientConn, name, group string,
+	schemaDataFile, specDataFile string,
+	baseTime time.Time, interval time.Duration,
+	specStartOffset time.Duration, spec *measurev1.DataPointSpec,
+) {
+	ctx := context.Background()
+	metadata := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
+	resp, err := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	metadata = resp.GetMeasure().GetMetadata()
+
+	c := measurev1.NewMeasureServiceClient(conn)
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	loadData(metadata, writeClient, schemaDataFile, baseTime, interval)
+	loadDataWithSpec(nil, writeClient, specDataFile, baseTime.Add(specStartOffset), interval, spec)
+
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
