@@ -17,8 +17,8 @@ The BanyanDB images are hosted on GitHub Container Registry for development or t
 
 There are three types of images:
 
-- `ghcr.io/apache/skywalking-banyandb:<github-sha>` - The specific version of the BanyanDB. We pushed `linux/amd64`,  `linux/arm64` and `windows/amd64` for each type of image.
-- `ghcr.io/apache/skywalking-banyandb:<github-sha>-slim` - The slim version of the BanyanDB. It does not contain the Web UI. We pushed `linux/amd64`,  `linux/arm64` and `windows/amd64` for each type of image.
+- `ghcr.io/apache/skywalking-banyandb:<github-sha>` - The specific version of the BanyanDB. We pushed `linux/amd64` and `linux/arm64` for each type of image.
+- `ghcr.io/apache/skywalking-banyandb:<github-sha>-slim` - The slim version of the BanyanDB. It does not contain the Web UI. We pushed `linux/amd64` and `linux/arm64` for each type of image.
 - `ghcr.io/apache/skywalking-banyandb:<github-sha>-testing` - The testing version of the BanyanDB. It contains the Web UI and the `bydbctl`. We pushed `linux/amd64` and  `linux/arm64` for each type of image.
 
 ## Start a container in `standalone mode`
