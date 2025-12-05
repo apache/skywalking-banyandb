@@ -51,6 +51,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 const defaultRecvSize = 10 << 20
@@ -72,6 +73,7 @@ type server struct {
 	streamv1.UnimplementedStreamServiceServer
 	databasev1.UnimplementedSnapshotServiceServer
 	creds               credentials.TransportCredentials
+	tlsReloader         *pkgtls.Reloader
 	omr                 observability.MetricsRegistry
 	metrics             *metrics
 	ser                 *grpclib.Server
@@ -126,6 +128,17 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("server-queue-sub")
 	s.metrics = newMetrics(s.omr.With(queueSubScope))
+
+	// Initialize TLS reloader if TLS is enabled
+	if s.tls {
+		var err error
+		s.tlsReloader, err = pkgtls.NewReloader(s.certFile, s.keyFile, s.log)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize TLS reloader for queue server")
+		}
+		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Initialized TLS reloader for queue server")
+	}
+
 	return nil
 }
 
@@ -188,18 +201,37 @@ func (s *server) Validate() error {
 	if s.keyFile == "" {
 		return errServerKey
 	}
-	creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
-	if errTLS != nil {
-		return errors.Wrap(errTLS, "failed to load cert and key")
-	}
-	s.creds = creds
+	// TLS reloader will be initialized in PreRun, so we don't need to load credentials here
+	// The credentials will be loaded dynamically when the server starts
 	return nil
 }
 
 func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
-		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
+		// Start TLS reloader if enabled
+		if s.tlsReloader != nil {
+			if err := s.tlsReloader.Start(); err != nil {
+				s.log.Error().Err(err).Msg("Failed to start TLS reloader for queue server")
+				stopCh := make(chan struct{})
+				close(stopCh)
+				return stopCh
+			}
+			s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Started TLS file monitoring for queue server")
+			tlsConfig := s.tlsReloader.GetTLSConfig()
+			creds := credentials.NewTLS(tlsConfig)
+			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+		} else {
+			// Fallback to static loading if reloader is not available
+			creds, errTLS := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
+			if errTLS != nil {
+				s.log.Error().Err(errTLS).Msg("Failed to load TLS credentials")
+				stopCh := make(chan struct{})
+				close(stopCh)
+				return stopCh
+			}
+			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
+		}
 	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
@@ -290,6 +322,12 @@ func (s *server) Serve() run.StopNotify {
 
 func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
+
+	// Stop TLS reloader if enabled
+	if s.tlsReloader != nil {
+		s.tlsReloader.Stop()
+	}
+
 	stopped := make(chan struct{})
 	s.clientCloser()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

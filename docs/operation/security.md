@@ -123,19 +123,33 @@ BanyanDB supports enabling TLS for the internal gRPC queue between liaison and d
 
 The following flags are used to configure internal TLS:
 
-- `--internal-tls`: Enable TLS on the internal queue client inside Liaison; if false, the queue uses plain TCP.
-- `--internal-ca-cert <path>`: PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
+- `--data-client-tls`: Enable TLS on the internal queue client inside Liaison; if false, the queue uses plain TCP.
+- `--data-client-ca-cert`: PEM‑encoded CA (or bundle) that the queue client uses to verify Data‑Node server certificates.
 
 Each Liaison/Data process still advertises its certificate with the public flags (`--tls`, `--cert-file`, `--key-file`). The same certificate/key pair can be reused for both external traffic and the internal queue.
 
 **Example: Enable internal TLS between liaison and data nodes**
 
 ```shell
-banyand liaison --internal-tls=true --internal-ca-cert=ca.crt --tls=true --cert-file=server.crt --key-file=server.key
+banyand liaison --data-client-tls=true --data-client-ca-cert=ca.crt --tls=true --cert-file=server.crt --key-file=server.key
 banyand data --tls=true --cert-file=server.crt --key-file=server.key
 ```
 
-> Note: The `--internal-ca-cert` should point to the CA certificate used to sign the data node's server certificate.
+> Note: 
+> - The `--data-client-ca-cert` should point to the CA certificate used to sign the data node's server certificate.
+> - Data nodes act as servers and do not need a CA certificate to connect to liaison nodes (liaison nodes connect to data nodes, not vice versa).
+> - The flag names use the prefix "data" because liaison nodes connect to data nodes. The actual flag names are `--data-client-tls` and `--data-client-ca-cert`.
+
+**Dynamic Certificate Reloading**
+
+All certificates used for internal TLS can be reloaded automatically when they are updated:
+
+- **Liaison nodes**:
+  - CA certificate file (`--data-client-ca-cert`): Can be updated, and the server will automatically reload it and reconnect all clients to data nodes with the new certificate.
+  - Server certificate files (`--cert-file`, `--key-file`): Can be updated, and the server will automatically reload them. These certificates are used for both external client connections and can be reused for internal queue communication.
+- **Data nodes**: The server certificate files (`--cert-file`, `--key-file`) can be updated, and the server will automatically reload them without requiring a restart.
+
+You can update the files or recreate the files, and the servers will automatically reload them.
 
 ## Authorization
 
