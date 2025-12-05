@@ -103,7 +103,7 @@ func (p *pub) FlagSet() *run.FlagSet {
 func (p *pub) Validate() error {
 	// simple sanity‑check: if TLS is on, a CA bundle must be provided
 	if p.tlsEnabled && p.caCertPath == "" {
-		return fmt.Errorf("TLS is enabled (--internal-tls), but no CA certificate file was provided (--internal-ca-cert is required)")
+		return fmt.Errorf("TLS is enabled (--data-client-tls), but no CA certificate file was provided (--data-client-ca-cert is required)")
 	}
 	return nil
 }
@@ -512,182 +512,27 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 
 // reconnectAllClients reconnects all active clients when CA certificate is updated.
 func (p *pub) reconnectAllClients() {
+	// Collect nodes from p.register with lock
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Collect all active nodes
-	nodesToReconnect := make([]*databasev1.Node, 0, len(p.active))
-	for name, client := range p.active {
-		if node := p.registered[name]; node != nil {
-			nodesToReconnect = append(nodesToReconnect, node)
-			// Close existing connection
-			_ = client.conn.Close()
-			delete(p.active, name)
-			p.deleteClient(client.md)
+	nodesToReconnect := make([]schema.Metadata, 0, len(p.registered))
+	for _, node := range p.registered {
+		md := schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+			},
+			Spec: node,
 		}
+		nodesToReconnect = append(nodesToReconnect, md)
 	}
+	p.mu.Unlock()
 
-	// Reconnect all nodes asynchronously
-	for _, node := range nodesToReconnect {
-		node := node // capture loop variable
-		if !p.closer.AddRunning() {
-			continue
-		}
-		go func() {
-			defer p.closer.Done()
-			// Wait a bit to ensure the old connection is fully closed
-			time.Sleep(200 * time.Millisecond)
-
-			credOpts, err := p.getClientTransportCredentials()
-			if err != nil {
-				p.log.Error().Err(err).Str("node", node.Metadata.GetName()).Msg("failed to load client TLS credentials during reconnect")
-				// Move to evictable queue for retry
-				p.mu.Lock()
-				name := node.Metadata.GetName()
-				if _, exists := p.registered[name]; exists {
-					md := schema.Metadata{
-						TypeMeta: schema.TypeMeta{
-							Kind: schema.KindNode,
-						},
-						Spec: node,
-					}
-					p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
-					p.mu.Unlock()
-					p.startEvictRetry(name, node, md)
-				} else {
-					p.mu.Unlock()
-				}
-				return
-			}
-
-			conn, err := grpc.NewClient(node.GrpcAddress, append(credOpts,
-				grpc.WithDefaultServiceConfig(p.retryPolicy),
-				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(32<<20)))...)
-			if err != nil {
-				p.log.Error().Err(err).Str("node", node.Metadata.GetName()).Msg("failed to reconnect to grpc server")
-				// Move to evictable queue for retry
-				p.mu.Lock()
-				name := node.Metadata.GetName()
-				if _, exists := p.registered[name]; exists {
-					md := schema.Metadata{
-						TypeMeta: schema.TypeMeta{
-							Kind: schema.KindNode,
-						},
-						Spec: node,
-					}
-					p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
-					p.mu.Unlock()
-					p.startEvictRetry(name, node, md)
-				} else {
-					p.mu.Unlock()
-				}
-				return
-			}
-
-			// Check health before adding back to active
-			if !p.healthCheck(node.String(), conn) {
-				_ = conn.Close()
-				p.log.Warn().Str("node", node.Metadata.GetName()).Msg("reconnected node is unhealthy, will retry")
-				// Move to evictable queue for retry
-				p.mu.Lock()
-				name := node.Metadata.GetName()
-				if _, exists := p.registered[name]; exists {
-					md := schema.Metadata{
-						TypeMeta: schema.TypeMeta{
-							Kind: schema.KindNode,
-						},
-						Spec: node,
-					}
-					p.evictable[name] = evictNode{n: node, c: make(chan struct{})}
-					p.mu.Unlock()
-					p.startEvictRetry(name, node, md)
-				} else {
-					p.mu.Unlock()
-				}
-				return
-			}
-
-			// Add back to active
-			p.mu.Lock()
-			name := node.Metadata.GetName()
-			if _, exists := p.registered[name]; exists {
-				c := clusterv1.NewServiceClient(conn)
-				md := schema.Metadata{
-					TypeMeta: schema.TypeMeta{
-						Kind: schema.KindNode,
-					},
-					Spec: node,
-				}
-				p.active[name] = &client{conn: conn, client: c, md: md}
-				p.addClient(md)
-				p.recordSuccess(name)
-				p.log.Info().Str("node", name).Msg("successfully reconnected client after CA certificate update")
-			}
-			p.mu.Unlock()
-		}()
+	// Reconnect all nodes using OnDelete and OnAddOrUpdate
+	for _, md := range nodesToReconnect {
+		// Call OnDelete to properly clean up the old connection
+		p.OnDelete(md)
+		// Call OnAddOrUpdate to reconnect with new certificate
+		p.OnAddOrUpdate(md)
 	}
-}
-
-// startEvictRetry starts a retry goroutine for a node in evictable queue.
-// This is used when reconnection fails after CA certificate update.
-func (p *pub) startEvictRetry(name string, node *databasev1.Node, md schema.Metadata) {
-	if !p.closer.AddRunning() {
-		return
-	}
-	go func() {
-		defer p.closer.Done()
-		attempt := 0
-		// Get evictNode from evictable map (it should already be added before calling this function)
-		p.mu.RLock()
-		en, exists := p.evictable[name]
-		p.mu.RUnlock()
-		if !exists {
-			p.log.Warn().Str("node", name).Msg("node not found in evictable queue, skipping retry")
-			return
-		}
-		for {
-			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
-			select {
-			case <-time.After(backoff):
-				credOpts, errEvict := p.getClientTransportCredentials()
-				if errEvict != nil {
-					p.log.Error().Err(errEvict).Str("node", name).Msg("failed to load client TLS credentials (evict retry)")
-					return
-				}
-				connEvict, errEvict := grpc.NewClient(node.GrpcAddress, append(credOpts,
-					grpc.WithDefaultServiceConfig(p.retryPolicy),
-					grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
-				if errEvict == nil && p.healthCheck(node.String(), connEvict) {
-					func() {
-						p.mu.Lock()
-						defer p.mu.Unlock()
-						if _, ok := p.evictable[name]; !ok {
-							// The client has been removed from evict clients map, just return
-							return
-						}
-						c := clusterv1.NewServiceClient(connEvict)
-						p.active[name] = &client{conn: connEvict, client: c, md: md}
-						p.addClient(md)
-						delete(p.evictable, name)
-						// Reset circuit breaker state to closed
-						p.recordSuccess(name)
-						p.log.Info().Str("node", name).Msg("successfully reconnected client after CA certificate update (retry)")
-					}()
-					return
-				}
-				_ = connEvict.Close()
-				if _, ok := p.registered[name]; !ok {
-					return
-				}
-				p.log.Warn().Err(errEvict).Str("node", name).Dur("backoff", backoff).Msg("failed to re-connect to grpc server after CA cert update, will retry")
-			case <-en.c:
-				return
-			case <-p.closer.CloseNotify():
-				return
-			}
-			attempt++
-		}
-	}()
 }
 
 // NewChunkedSyncClient implements queue.Client.
