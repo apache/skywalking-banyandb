@@ -293,13 +293,3 @@ When running in sidecar mode, FODC exposes health endpoints for monitoring and o
   }
 }
 ```
-
-## Metrics Monitored
-
-FODC polls and records all Prometheus metrics exposed by BanyanDB, including:
-
-- Error rates (`banyandb_liaison_grpc_total_err` / `banyandb_liaison_grpc_total_started`)
-- Memory usage (`banyandb_system_memory_state` with `kind="used"` and `kind="total"` labels)
-- Disk usage (`banyandb_system_disk` with `kind="used"` and `kind="total"` labels)
-- Write rates (`banyandb_measure_total_written`)
-- And all other metrics exposed by BanyanDB
