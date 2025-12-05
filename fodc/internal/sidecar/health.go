@@ -37,14 +37,14 @@ const (
 )
 
 // HealthStatus represents the health status of the sidecar.
-type HealthStatus struct { //nolint:govet // fieldalignment: field order optimized for readability
+type HealthStatus struct {
 	BanyanDB  *BanyanDBHealth        `json:"banyandb,omitempty"`
 	Metrics   *MetricsHealth         `json:"metrics,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	Timestamp time.Time              `json:"timestamp"`
-	Uptime    time.Duration          `json:"uptime"`
 	Status    string                 `json:"status"`
 	Version   string                 `json:"version,omitempty"`
+	Uptime    time.Duration          `json:"uptime"`
 }
 
 // BanyanDBHealth represents the health of the monitored BanyanDB instance.
@@ -62,7 +62,9 @@ type MetricsHealth struct {
 }
 
 // HealthServer provides HTTP health endpoints for the sidecar.
-type HealthServer struct { //nolint:govet // fieldalignment: field order optimized for readability
+//
+//nolint:govet // fieldalignment: current order optimized for readability, target 48 pointer bytes requires different field order
+type HealthServer struct {
 	server    *http.Server
 	status    *HealthStatus
 	mu        sync.RWMutex

@@ -52,7 +52,7 @@ type Header struct {
 // FlightRecorder implements a circular buffer using memory-mapped files
 // to persist metrics data across crashes.
 //
-//nolint:govet // fieldalignment: optimized from 80 to 48 pointer bytes (40% improvement)
+//nolint:govet // fieldalignment: optimized from 80 to 48 pointer bytes
 type FlightRecorder struct {
 	data       []byte
 	file       *os.File

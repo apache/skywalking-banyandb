@@ -31,20 +31,20 @@ import (
 )
 
 // MetricsSnapshot represents a snapshot of metrics.
-type MetricsSnapshot struct { //nolint:govet // fieldalignment: field order optimized for readability
-	Timestamp  time.Time
+type MetricsSnapshot struct {
 	RawMetrics []metric.RawMetric
+	Timestamp  time.Time
 	Histograms map[string]metric.Histogram
 	Errors     []string
 }
 
 // MetricsPoller represents a metrics poller.
-type MetricsPoller struct { //nolint:govet // fieldalignment: field order optimized for readability
+type MetricsPoller struct {
 	client       *http.Client
 	lastSnapshot *MetricsSnapshot
+	url          string
 	mu           sync.RWMutex
 	interval     time.Duration
-	url          string
 }
 
 // NewMetricsPoller creates a new metrics poller.
