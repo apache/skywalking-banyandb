@@ -100,7 +100,7 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (t
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+			tagValues, shardID, err = s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
 				return
 			}
@@ -111,7 +111,7 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (t
 			}
 		}
 	}
-	return s.navigate(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+	return s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
 }
 
 func (s *streamService) publishMessages(
@@ -194,7 +194,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			return nil
 		}
 		if err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			if status.Code(err) != codes.Canceled && status.Code(err) != codes.DeadlineExceeded {
 				s.l.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
 			}
 			return err

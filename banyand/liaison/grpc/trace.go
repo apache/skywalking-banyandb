@@ -257,7 +257,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 			return nil
 		}
 		if err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			if status.Code(err) != codes.Canceled && status.Code(err) != codes.DeadlineExceeded {
 				s.l.Error().Stringer("written", writeEntity).Err(err).Msg("failed to receive message")
 			}
 			return err

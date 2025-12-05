@@ -141,9 +141,11 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	}
 	for _, tm := range tfm.tagMetadata {
 		tf := generateTagFilter()
+		hasMinMax := false
 		if tm.valueType == pbv1.ValueTypeInt64 {
 			tf.min = tm.min
 			tf.max = tm.max
+			hasMinMax = true
 		}
 		if tm.filterBlock.size > 0 {
 			bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
@@ -167,6 +169,11 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 				df.SetValueType(tm.valueType)
 				tf.filter = df
 			}
+		}
+		// Only add to map if it has useful data (filter or min/max for range queries)
+		if tf.filter == nil && !hasMinMax {
+			releaseTagFilter(tf)
+			continue
 		}
 		tff[tm.name] = tf
 	}
@@ -209,6 +216,10 @@ func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaRe
 func (tfs *tagFamilyFilters) Eq(tagName string, tagValue string) bool {
 	for _, tff := range tfs.tagFamilyFilters {
 		if tf, ok := (*tff)[tagName]; ok {
+			if tf.filter == nil {
+				// No filter available, conservatively return true (don't skip)
+				return true
+			}
 			return tf.filter.MightContain([]byte(tagValue))
 		}
 	}
