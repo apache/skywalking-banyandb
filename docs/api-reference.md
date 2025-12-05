@@ -1783,6 +1783,7 @@ Status is the response status for write
 | STATUS_DISK_FULL | 6 |  |
 | STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
 | STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
+| STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
 
 
  

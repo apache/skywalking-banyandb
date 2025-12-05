@@ -1,0 +1,93 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_spec_4"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_spec_4"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 40
+        }
+      },
+      {
+        "int": {
+          "value": 400
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_spec_5"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_spec_5"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 50
+        }
+      },
+      {
+        "int": {
+          "value": 500
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_spec_6"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_spec_6"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 60
+        }
+      },
+      {
+        "int": {
+          "value": 600
+        }
+      }
+    ]
+  }
+]
+
