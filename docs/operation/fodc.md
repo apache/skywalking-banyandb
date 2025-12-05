@@ -1,4 +1,4 @@
-# FODC - Failure Observer
+# FODC
 
 FODC is a monitoring tool for BanyanDB containers that polls Prometheus metrics and records them in a flight recorder for analysis.
 
@@ -57,10 +57,11 @@ In sidecar mode, FODC will:
 - `BANYANDB_HOST`: BanyanDB hostname (default: `localhost`)
 - `BANYANDB_METRICS_PORT`: Metrics port (default: `2121`)
 - `BANYANDB_HTTP_PORT`: HTTP API port (default: `17913`)
-- `FODC_HEALTH_PORT`: FODC health endpoint port (default: `17914`)
 - `POD_NAME`: Kubernetes pod name (auto-injected)
 - `POD_NAMESPACE`: Kubernetes pod namespace (auto-injected)
 - `POD_IP`: Kubernetes pod IP (auto-injected)
+
+**Note:** The FODC health endpoint port is controlled by the `--health-port` flag (default: `17914`), not an environment variable.
 
 ### Command Line Flags
 
@@ -236,6 +237,8 @@ You can view the contents of a flight recorder file using the `fodc-view` comman
 - `--recent-n`: Number of recent snapshots to show when using `--recent` (default: 10)
 - `--output`: Output file path (default: stdout). **Recommended for large JSON outputs to avoid truncation**
 - `--stream`: Stream JSON output in JSONL format (one snapshot per line). **Best for large datasets** as it's more memory-efficient and avoids truncation issues
+- `--verbose`: Show timing and performance information
+- `--clear`: Clear all snapshots from the flight recorder
 
 ### Recovering Data Programmatically
 
@@ -300,23 +303,3 @@ FODC polls and records all Prometheus metrics exposed by BanyanDB, including:
 - Disk usage (`banyandb_system_disk` with `kind="used"` and `kind="total"` labels)
 - Write rates (`banyandb_measure_total_written`)
 - And all other metrics exposed by BanyanDB
-
-## License
-
-Licensed to Apache Software Foundation (ASF) under one or more contributor
-license agreements. See the NOTICE file distributed with
-this work for additional information regarding copyright
-ownership. Apache Software Foundation (ASF) licenses this file to you under
-the Apache License, Version 2.0 (the "License"); you may
-not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-	http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing,
-software distributed under the License is distributed on an
-"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-KIND, either express or implied.  See the License for the
-specific language governing permissions and limitations
-under the License.
-

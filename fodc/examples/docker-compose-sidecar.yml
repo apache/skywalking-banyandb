@@ -53,9 +53,6 @@ services:
     command:
       - "--sidecar"
       - "--poll-interval=5s"
-      - "--health-interval=10s"
-      - "--container=banyandb"
-      - "--alert-threshold=0.8"
       - "--flight-recorder-path=/data/fodc-flight-recorder.bin"
       - "--flight-recorder-buffer=1000"
       - "--health-port=17914"
