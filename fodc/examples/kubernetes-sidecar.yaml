@@ -128,7 +128,6 @@ spec:
         - "--sidecar"
         - "--poll-interval=5s"
         - "--health-interval=10s"
-        - "--death-rattle-path=/tmp/death-rattle"
         - "--container=banyandb"
         - "--alert-threshold=0.8"
         - "--flight-recorder-path=/data/fodc-flight-recorder.bin"
