@@ -27,7 +27,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/detector"
 	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/internal/poller"
 	"github.com/apache/skywalking-banyandb/fodc/internal/sidecar"
@@ -37,8 +36,6 @@ const (
 	DefaultMetricsURL               = "http://localhost:2121/metrics"
 	DefaultPollInterval             = 5 * time.Second
 	DefaultHealthCheckURL           = "http://localhost:17913/api/healthz"
-	DefaultHealthInterval           = 10 * time.Second
-	DefaultDeathRattlePath          = "/tmp/death-rattle"
 	DefaultFlightRecorderPath       = "/tmp/fodc-flight-recorder.bin"
 	DefaultFlightRecorderBufferSize = 1000
 	DefaultHealthPort               = 17914
@@ -52,10 +49,6 @@ func main() {
 		metricsURL           = flag.String("metrics-url", "", "Prometheus metrics endpoint URL (auto-discovered in sidecar mode)")
 		pollInterval         = flag.Duration("poll-interval", DefaultPollInterval, "Interval for polling metrics")
 		healthCheckURL       = flag.String("health-url", "", "Health check endpoint URL (auto-discovered in sidecar mode)")
-		healthInterval       = flag.Duration("health-interval", DefaultHealthInterval, "Interval for health checks")
-		deathRattlePath      = flag.String("death-rattle-path", DefaultDeathRattlePath, "Path to watch for death rattle file triggers")
-		containerName        = flag.String("container", "banyandb", "Container name to monitor")
-		alertThreshold       = flag.Float64("alert-threshold", 0.8, "Alert threshold for error rate (0.0-1.0)")
 		flightRecorderPath   = flag.String("flight-recorder-path", DefaultFlightRecorderPath, "Path to flight recorder memory-mapped file")
 		flightRecorderBuffer = flag.Uint("flight-recorder-buffer", DefaultFlightRecorderBufferSize, "Number of snapshots to buffer in flight recorder")
 		healthPort           = flag.Int("health-port", DefaultHealthPort, "Port for sidecar health endpoint")
@@ -135,8 +128,6 @@ func main() {
 
 	// Initialize components
 	metricsPoller := poller.NewMetricsPoller(*metricsURL, *pollInterval)
-	deathRattleDetector := detector.NewDeathRattleDetector(*deathRattlePath, *containerName, *healthCheckURL, *healthInterval)
-	alertManager := detector.NewAlertManager(*alertThreshold)
 
 	// Initialize Flight Recorder
 	flightRecorder, err := flightrecorder.NewFlightRecorder(*flightRecorderPath, uint32(*flightRecorderBuffer))
@@ -157,11 +148,9 @@ func main() {
 		log.Printf("Recovered %d snapshots from flight recorder", len(recoveredSnapshots))
 	}
 
-	log.Println("Starting FODC (Failure Observer and Death Rattle Detector)")
+	log.Println("Starting FODC (Failure Observer)")
 	log.Printf("Metrics URL: %s", *metricsURL)
 	log.Printf("Health Check URL: %s", *healthCheckURL)
-	log.Printf("Death Rattle Path: %s", *deathRattlePath)
-	log.Printf("Container: %s", *containerName)
 	log.Printf("Flight Recorder Path: %s", *flightRecorderPath)
 	log.Printf("Flight Recorder Buffer Size: %d", *flightRecorderBuffer)
 	if *rotationInterval > 0 {
@@ -173,14 +162,6 @@ func main() {
 	go func() {
 		if err := metricsPoller.Start(ctx, metricsChan); err != nil {
 			log.Printf("Error polling metrics: %v", err)
-		}
-	}()
-
-	// Start death rattle detection
-	deathRattleChan := make(chan detector.DeathRattleEvent, 10)
-	go func() {
-		if err := deathRattleDetector.Start(ctx, deathRattleChan); err != nil {
-			log.Printf("Error detecting death rattles: %v", err)
 		}
 	}()
 
@@ -238,24 +219,6 @@ func main() {
 						err = fmt.Errorf("metrics polling errors: %v", snapshot.Errors)
 					}
 					healthServer.UpdateBanyanDBHealth(connected, err)
-				}
-
-				alerts := alertManager.AnalyzeMetrics(snapshot)
-				for _, alert := range alerts {
-					log.Printf("🚨 ALERT: %s", alert)
-				}
-			case event := <-deathRattleChan:
-				log.Printf("💀 DEATH RATTLE DETECTED: %s - %s", event.Type, event.Message)
-				alertManager.HandleDeathRattle(event)
-
-				// Update health server if in sidecar mode
-				if healthServer != nil {
-					healthServer.SetMetadata("last_death_rattle", map[string]interface{}{
-						"type":      event.Type,
-						"message":   event.Message,
-						"timestamp": event.Timestamp,
-						"severity":  event.Severity,
-					})
 				}
 			}
 		}

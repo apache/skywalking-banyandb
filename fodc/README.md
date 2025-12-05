@@ -1,34 +1,15 @@
-# FODC - Failure Observer and Death Rattle Detector
+# FODC - Failure Observer
 
-FODC is a monitoring tool for BanyanDB containers that polls Prometheus metrics and detects "death rattles" - signals and file-based triggers that indicate an impending or current failure.
+FODC is a monitoring tool for BanyanDB containers that polls Prometheus metrics and records them in a flight recorder for analysis.
 
 **FODC can run as a Sidecar** alongside each BanyanDB instance, automatically discovering and monitoring the BanyanDB instance in the same pod/container group. This sidecar pattern ensures that diagnostic data collection is coordinated and always available.
 
 ## Features
 
 - 🔍 **Metrics Polling**: Continuously polls Prometheus metrics from BanyanDB container
-- 💀 **Death Rattle Detection**: Detects file-based triggers, signals, and health check failures
-- 🚨 **Alert System**: Analyzes metrics for anomalies (error rates, memory pressure, disk usage)
-- 📊 **Real-time Monitoring**: Provides real-time alerts for detected failures
 - 🎯 **Flight Recorder**: Buffers metrics data in a circular buffer using memory-mapped files, ensuring data survives crashes
 - 🚀 **Sidecar Mode**: Automatic service discovery and coordination when running alongside BanyanDB instances
 - 🏥 **Health Endpoints**: Built-in health endpoints for Kubernetes liveness/readiness probes
-
-## Death Rattle Detection
-
-FODC monitors for several types of "death rattles":
-
-1. **File-based Triggers**: Watches for files that indicate container failure:
-   - `/tmp/death-rattle` (configurable)
-   - `/tmp/container-failing`
-   - `/dev/shm/death-rattle`
-   - `/tmp/banyandb-failing`
-
-2. **Signal Monitoring**: Detects termination signals (SIGTERM, SIGINT, SIGHUP)
-
-3. **Health Check Failures**: Monitors BanyanDB health endpoint for consecutive failures
-
-4. **Container Status**: Checks for OOM kills and container process issues
 
 ## Installation
 
@@ -55,11 +36,7 @@ The binaries will be built at:
 ./build/bin/dev/fodc-cli \
   --metrics-url=http://localhost:2121/metrics \
   --poll-interval=5s \
-  --health-url=http://localhost:17913/api/healthz \
-  --health-interval=10s \
-  --death-rattle-path=/tmp/death-rattle \
-  --container=banyandb \
-  --alert-threshold=0.8
+  --health-url=http://localhost:17913/api/healthz
 ```
 
 ### Sidecar Mode
@@ -91,25 +68,10 @@ In sidecar mode, FODC will:
 - `--metrics-url`: Prometheus metrics endpoint URL (auto-discovered in sidecar mode)
 - `--poll-interval`: Interval for polling metrics (default: `5s`)
 - `--health-url`: Health check endpoint URL (auto-discovered in sidecar mode)
-- `--health-interval`: Interval for health checks (default: `10s`)
-- `--death-rattle-path`: Path to watch for death rattle file triggers (default: `/tmp/death-rattle`)
-- `--container`: Container name to monitor (default: `banyandb`)
-- `--alert-threshold`: Alert threshold for error rate 0.0-1.0 (default: `0.8`)
 - `--flight-recorder-path`: Path to flight recorder memory-mapped file (default: `/tmp/fodc-flight-recorder.bin`)
 - `--flight-recorder-buffer`: Number of snapshots to buffer in flight recorder (default: `1000`)
 - `--flight-recorder-rotation`: Interval to automatically clear/rotate flight recorder (default: `0` = disabled). Examples: `24h`, `1h30m`, `30m`
 - `--health-port`: Port for sidecar health endpoint (default: `17914`)
-
-## Testing Death Rattle Detection
-
-You can test the death rattle detection by creating a trigger file:
-
-```bash
-# Create a death rattle file
-echo "Container is failing!" > /tmp/death-rattle
-
-# FODC will detect this and alert
-```
 
 ## Sidecar Deployment
 
@@ -135,13 +97,13 @@ kubectl apply -f examples/kubernetes-sidecar.yaml
 The deployment includes:
 - BanyanDB container as the main application
 - FODC sidecar container in the same pod
-- Shared volumes for flight recorder data and death rattle files
+- Shared volumes for flight recorder data
 - Health probes for both containers
 - Service discovery via environment variables
 
 **Key Features:**
 - Both containers share the same pod network namespace (use `localhost` to communicate)
-- Shared volumes allow FODC to access death rattle files and persist flight recorder data
+- Shared volumes allow FODC to persist flight recorder data
 - Kubernetes environment variables (`POD_NAME`, `POD_IP`, etc.) are automatically injected
 - Health endpoints enable proper liveness/readiness probe configuration
 
@@ -174,7 +136,6 @@ FODC is designed to work with BanyanDB containers. Ensure that:
 
 1. BanyanDB metrics endpoint is exposed (port 2121)
 2. Health check endpoint is accessible (port 17913)
-3. FODC has access to the container filesystem for death rattle detection
 
 ### Sidecar Pattern Benefits
 
@@ -183,7 +144,7 @@ When running as a sidecar, FODC provides several advantages:
 1. **Automatic Discovery**: No manual configuration needed - FODC discovers BanyanDB automatically
 2. **Shared Network**: Uses the same network namespace, enabling efficient localhost communication
 3. **Coordinated Lifecycle**: Sidecar starts/stops with the BanyanDB instance
-4. **Shared Storage**: Can share volumes for death rattle files and flight recorder data
+4. **Shared Storage**: Can share volumes for flight recorder data
 5. **Health Monitoring**: Provides health endpoints for Kubernetes/Docker orchestration
 6. **Per-Instance Monitoring**: Each BanyanDB instance has its own dedicated FODC sidecar
 
@@ -332,12 +293,13 @@ When running in sidecar mode, FODC exposes health endpoints for monitoring and o
 
 ## Metrics Monitored
 
-FODC monitors key BanyanDB metrics:
+FODC polls and records all Prometheus metrics exposed by BanyanDB, including:
 
 - Error rates (`banyandb_liaison_grpc_total_err` / `banyandb_liaison_grpc_total_started`)
 - Memory usage (`banyandb_system_memory_state` with `kind="used"` and `kind="total"` labels)
 - Disk usage (`banyandb_system_disk` with `kind="used"` and `kind="total"` labels)
 - Write rates (`banyandb_measure_total_written`)
+- And all other metrics exposed by BanyanDB
 
 ## License
 

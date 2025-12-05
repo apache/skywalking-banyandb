@@ -31,16 +31,16 @@ const (
 	DefaultHTTPPort    = 17913
 
 	// Environment variables for sidecar mode
-	EnvBanyanDBHost       = "BANYANDB_HOST"
+	EnvBanyanDBHost        = "BANYANDB_HOST"
 	EnvBanyanDBMetricsPort = "BANYANDB_METRICS_PORT"
-	EnvBanyanDBHTTPPort   = "BANYANDB_HTTP_PORT"
-	EnvPodName            = "POD_NAME"
-	EnvPodNamespace       = "POD_NAMESPACE"
-	EnvPodIP              = "POD_IP"
-	EnvHostIP             = "HOST_IP"
+	EnvBanyanDBHTTPPort    = "BANYANDB_HTTP_PORT"
+	EnvPodName             = "POD_NAME"
+	EnvPodNamespace        = "POD_NAMESPACE"
+	EnvPodIP               = "POD_IP"
+	EnvHostIP              = "HOST_IP"
 )
 
-// BanyanDBEndpoint represents discovered BanyanDB endpoints
+// represents discovered BanyanDB endpoints
 type BanyanDBEndpoint struct {
 	MetricsURL string
 	HealthURL  string
@@ -92,7 +92,7 @@ func DiscoverBanyanDB() (*BanyanDBEndpoint, error) {
 	return endpoint, nil
 }
 
-// VerifyEndpoint verifies that the discovered endpoint is accessible
+// verifies that the discovered endpoint is accessible
 func VerifyEndpoint(endpoint *BanyanDBEndpoint, timeout time.Duration) error {
 	client := &http.Client{
 		Timeout: timeout,
@@ -112,13 +112,13 @@ func VerifyEndpoint(endpoint *BanyanDBEndpoint, timeout time.Duration) error {
 	return nil
 }
 
-// IsKubernetes checks if running in Kubernetes environment
+// checks if running in Kubernetes environment
 func IsKubernetes() bool {
 	// Check for Kubernetes-specific environment variables
 	return os.Getenv(EnvPodName) != "" || os.Getenv(EnvPodNamespace) != ""
 }
 
-// IsDocker checks if running in Docker environment
+// checks if running in Docker environment
 func IsDocker() bool {
 	// Check for Docker-specific indicators
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -144,7 +144,7 @@ func containsMiddle(s, substr string) bool {
 	return false
 }
 
-// GetLocalIP gets the local IP address
+// gets the local IP address
 func GetLocalIP() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -155,4 +155,3 @@ func GetLocalIP() (string, error) {
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	return localAddr.IP.String(), nil
 }
-

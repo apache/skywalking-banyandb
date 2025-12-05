@@ -30,7 +30,7 @@ const (
 	EnvHealthPort     = "FODC_HEALTH_PORT"
 )
 
-// HealthStatus represents the health status of the sidecar
+// represents the health status of the sidecar
 type HealthStatus struct {
 	Status    string                 `json:"status"`
 	Timestamp time.Time              `json:"timestamp"`
@@ -41,21 +41,21 @@ type HealthStatus struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// BanyanDBHealth represents the health of the monitored BanyanDB instance
+// represents the health of the monitored BanyanDB instance
 type BanyanDBHealth struct {
 	Connected bool      `json:"connected"`
 	LastCheck time.Time `json:"last_check,omitempty"`
 	Error     string    `json:"error,omitempty"`
 }
 
-// MetricsHealth represents the health of metrics collection
+// represents the health of metrics collection
 type MetricsHealth struct {
 	TotalSnapshots   int       `json:"total_snapshots"`
 	LastSnapshotTime time.Time `json:"last_snapshot_time,omitempty"`
 	Errors           int       `json:"errors"`
 }
 
-// HealthServer provides HTTP health endpoints for the sidecar
+// provides HTTP health endpoints for the sidecar
 type HealthServer struct {
 	port      int
 	server    *http.Server
@@ -102,22 +102,22 @@ func NewHealthServer(port int, version string) *HealthServer {
 	return hs
 }
 
-// Start starts the health server
+// start the health server
 func (hs *HealthServer) Start() error {
 	hs.mu.Lock()
-	hs.status.Status = "running"
+	hs.status.Status = "SERVING"
 	hs.status.Timestamp = time.Now()
 	hs.mu.Unlock()
 
 	return hs.server.ListenAndServe()
 }
 
-// Stop stops the health server
+// stops the health server
 func (hs *HealthServer) Stop() error {
 	return hs.server.Close()
 }
 
-// UpdateBanyanDBHealth updates the BanyanDB health status
+// updates the BanyanDB health status
 func (hs *HealthServer) UpdateBanyanDBHealth(connected bool, err error) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -175,7 +175,7 @@ func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (hs *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	hs.mu.RLock()
-	ready := hs.status.Status == "running"
+	ready := hs.status.Status == "SERVING"
 	if hs.status.BanyanDB != nil {
 		ready = ready && hs.status.BanyanDB.Connected
 	}
@@ -192,7 +192,7 @@ func (hs *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (hs *HealthServer) handleLiveness(w http.ResponseWriter, r *http.Request) {
 	hs.mu.RLock()
-	alive := hs.status.Status != "stopped"
+	alive := hs.status.Status != "NOT_SERVING"
 	hs.mu.RUnlock()
 
 	if alive {
