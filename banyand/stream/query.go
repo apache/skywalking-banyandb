@@ -43,6 +43,7 @@ import (
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
+	sqo.TagProjection = s.filterTagProjection(sqo.TagProjection)
 	if err = validateQueryInput(sqo); err != nil {
 		return nil, err
 	}
@@ -67,7 +68,18 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	}()
 
 	series := prepareSeriesData(sqo)
-	qo := prepareQueryOptions(sqo)
+
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	if is := s.indexSchema.Load(); is != nil {
+		for name, spec := range is.(indexSchema).tagMap {
+			vt := pbv1.TagValueSpecToValueType(spec.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[name] = vt
+			}
+		}
+	}
+
+	qo := prepareQueryOptions(sqo, schemaTagTypes)
 	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
 
 	if sqo.Order == nil || sqo.Order.Index == nil {
@@ -85,6 +97,50 @@ func validateQueryInput(sqo model.StreamQueryOptions) error {
 		return errors.New("invalid query options: tagProjection is required")
 	}
 	return nil
+}
+
+func (s *stream) filterTagProjection(tagProjection []model.TagProjection) []model.TagProjection {
+	is := s.indexSchema.Load()
+	if is == nil {
+		return tagProjection
+	}
+	tagMap := is.(indexSchema).tagMap
+	if len(tagMap) == 0 {
+		return tagProjection
+	}
+
+	schemaTagFamilies := make(map[string]map[string]struct{})
+	for _, tf := range s.schema.GetTagFamilies() {
+		tagNames := make(map[string]struct{})
+		for _, tag := range tf.GetTags() {
+			tagNames[tag.GetName()] = struct{}{}
+		}
+		schemaTagFamilies[tf.GetName()] = tagNames
+	}
+
+	result := make([]model.TagProjection, 0, len(tagProjection))
+	for _, tp := range tagProjection {
+		schemaTags, familyExists := schemaTagFamilies[tp.Family]
+		if !familyExists {
+			continue
+		}
+
+		filteredNames := make([]string, 0, len(tp.Names))
+		for _, name := range tp.Names {
+			if _, tagExists := schemaTags[name]; tagExists {
+				filteredNames = append(filteredNames, name)
+			}
+		}
+
+		if len(filteredNames) > 0 {
+			result = append(result, model.TagProjection{
+				Family: tp.Family,
+				Names:  filteredNames,
+			})
+		}
+	}
+
+	return result
 }
 
 func (s *stream) getTSDB() (storage.TSDB[*tsTable, option], error) {
@@ -114,9 +170,10 @@ func prepareSeriesData(sqo model.StreamQueryOptions) []*pbv1.Series {
 	return series
 }
 
-func prepareQueryOptions(sqo model.StreamQueryOptions) queryOptions {
+func prepareQueryOptions(sqo model.StreamQueryOptions, schemaTagTypes map[string]pbv1.ValueType) queryOptions {
 	return queryOptions{
 		StreamQueryOptions: sqo,
+		schemaTagTypes:     schemaTagTypes,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
@@ -256,6 +313,7 @@ type queryOptions struct {
 	elementFilter  posting.List
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
 	sortedSids     []common.SeriesID
+	schemaTagTypes map[string]pbv1.ValueType
 	model.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -266,6 +324,7 @@ func (qo *queryOptions) reset() {
 	qo.elementFilter = nil
 	qo.seriesToEntity = nil
 	qo.sortedSids = nil
+	qo.schemaTagTypes = nil
 	qo.minTimestamp = 0
 	qo.maxTimestamp = 0
 }
@@ -275,6 +334,7 @@ func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.elementFilter = other.elementFilter
 	qo.seriesToEntity = other.seriesToEntity
 	qo.sortedSids = other.sortedSids
+	qo.schemaTagTypes = other.schemaTagTypes
 	qo.minTimestamp = other.minTimestamp
 	qo.maxTimestamp = other.maxTimestamp
 }
