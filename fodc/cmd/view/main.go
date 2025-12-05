@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package main provides the FODC view tool for viewing flight recorder data.
 package main
 
 import (
@@ -27,6 +28,119 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/internal/poller"
 )
+
+//
+//revive:disable:redefines-builtin-id
+func handleClear(fr *flightrecorder.FlightRecorder, path string, bufferSize uint32) {
+	if err := fr.Clear(); err != nil {
+		log.Printf("Failed to clear flight recorder: %v", err)
+		return
+	}
+	fmt.Printf("Flight recorder cleared successfully\n")
+	fmt.Printf("  Path: %s\n", path)
+	fmt.Printf("  Buffer size: %d\n", bufferSize)
+}
+
+func handleStats(fr *flightrecorder.FlightRecorder, totalCount, bufferSize, writeIndex uint32, path string) {
+	allSnapshots, err := fr.ReadAll()
+	if err == nil && len(allSnapshots) > 0 {
+		var earliestTime, latestTime time.Time
+		earliestTime = allSnapshots[0].Timestamp
+		latestTime = allSnapshots[0].Timestamp
+		for _, s := range allSnapshots {
+			if s.Timestamp.Before(earliestTime) {
+				earliestTime = s.Timestamp
+			}
+			if s.Timestamp.After(latestTime) {
+				latestTime = s.Timestamp
+			}
+		}
+		timeSpan := latestTime.Sub(earliestTime)
+		fmt.Printf("Flight Recorder Statistics:\n")
+		fmt.Printf("  Path: %s\n", path)
+		fmt.Printf("  Total snapshots recorded: %d\n", totalCount)
+		fmt.Printf("  Buffer size: %d\n", bufferSize)
+		fmt.Printf("  Current write index: %d\n", writeIndex)
+		fmt.Printf("  Time Range:\n")
+		fmt.Printf("    Earliest: %s\n", earliestTime.Format(time.RFC3339))
+		fmt.Printf("    Latest:   %s\n", latestTime.Format(time.RFC3339))
+		fmt.Printf("    Duration: %v\n", timeSpan.Round(time.Second))
+		if len(allSnapshots) > 1 {
+			avgInterval := timeSpan / time.Duration(len(allSnapshots)-1)
+			fmt.Printf("    Average interval: %v\n", avgInterval.Round(time.Second))
+		}
+	} else {
+		fmt.Printf("Flight Recorder Statistics:\n")
+		fmt.Printf("  Path: %s\n", path)
+		fmt.Printf("  Total snapshots recorded: %d\n", totalCount)
+		fmt.Printf("  Buffer size: %d\n", bufferSize)
+		fmt.Printf("  Current write index: %d\n", writeIndex)
+	}
+}
+
+func handleJSONOutput(outputWriter *os.File, snapshots []interface{}, stream, verbose bool, outputPath string) time.Duration {
+	encodeStartTime := time.Now()
+	if stream {
+		encoder := json.NewEncoder(outputWriter)
+		for _, snapshot := range snapshots {
+			if err := encoder.Encode(snapshot); err != nil {
+				log.Printf("Failed to encode snapshot: %v", err)
+				return time.Since(encodeStartTime)
+			}
+		}
+		encodeDuration := time.Since(encodeStartTime)
+		if verbose {
+			log.Printf("Performance: Streamed %d snapshots in %v (%.2f snapshots/sec)",
+				len(snapshots), encodeDuration, float64(len(snapshots))/encodeDuration.Seconds())
+		}
+		return encodeDuration
+	}
+	data, err := json.MarshalIndent(snapshots, "", "  ")
+	if err != nil {
+		log.Printf("Failed to encode JSON: %v", err)
+		return time.Since(encodeStartTime)
+	}
+	encodeDuration := time.Since(encodeStartTime)
+	writeStartTime := time.Now()
+	if _, err := outputWriter.Write(data); err != nil {
+		log.Printf("Failed to write JSON: %v", err)
+		return encodeDuration
+	}
+	fmt.Fprintln(outputWriter)
+	writeDuration := time.Since(writeStartTime)
+	if verbose {
+		fileInfo, _ := os.Stat(outputPath)
+		var fileSize int64
+		if fileInfo != nil {
+			fileSize = fileInfo.Size()
+		}
+		log.Printf("Performance: Encoded %d snapshots in %v (%.2f snapshots/sec)",
+			len(snapshots), encodeDuration, float64(len(snapshots))/encodeDuration.Seconds())
+		log.Printf("Performance: Wrote %d bytes in %v (%.2f MB/s)",
+			fileSize, writeDuration, float64(fileSize)/(1024*1024)/writeDuration.Seconds())
+	}
+	if err := outputWriter.Sync(); err != nil {
+		log.Printf("Warning: failed to sync output: %v", err)
+	}
+	return encodeDuration
+}
+
+func handlePrettyOutput(outputWriter *os.File, snapshots []interface{}) {
+	fmt.Fprintf(outputWriter, "Flight Recorder Contents (%d snapshots):\n\n", len(snapshots))
+	for i, snapshot := range snapshots {
+		data, err := json.MarshalIndent(snapshot, "", "  ")
+		if err != nil {
+			fmt.Fprintf(outputWriter, "Snapshot %d: [Error encoding: %v]\n", i+1, err)
+			continue
+		}
+		fmt.Fprintf(outputWriter, "=== Snapshot %d/%d ===\n", i+1, len(snapshots))
+		fmt.Fprintln(outputWriter, string(data))
+		fmt.Fprintln(outputWriter)
+	}
+	if err := outputWriter.Sync(); err != nil {
+		log.Printf("Warning: failed to sync output: %v", err)
+	}
+}
 
 func main() {
 	var (
@@ -56,53 +170,13 @@ func main() {
 
 	// If clear requested, clear and exit
 	if *clear {
-		if err := fr.Clear(); err != nil {
-			log.Fatalf("Failed to clear flight recorder: %v", err)
-		}
-		fmt.Printf("Flight recorder cleared successfully\n")
-		fmt.Printf("  Path: %s\n", *path)
-		fmt.Printf("  Buffer size: %d\n", bufferSize)
+		handleClear(fr, *path, bufferSize)
 		return
 	}
 
 	// If only stats requested, show and exit
 	if *format == "stats" {
-		// Read snapshots to get time range
-		allSnapshots, err := fr.ReadAll()
-		if err == nil && len(allSnapshots) > 0 {
-			var earliestTime, latestTime time.Time
-			earliestTime = allSnapshots[0].Timestamp
-			latestTime = allSnapshots[0].Timestamp
-			for _, s := range allSnapshots {
-				if s.Timestamp.Before(earliestTime) {
-					earliestTime = s.Timestamp
-				}
-				if s.Timestamp.After(latestTime) {
-					latestTime = s.Timestamp
-				}
-			}
-			timeSpan := latestTime.Sub(earliestTime)
-			
-			fmt.Printf("Flight Recorder Statistics:\n")
-			fmt.Printf("  Path: %s\n", *path)
-			fmt.Printf("  Total snapshots recorded: %d\n", totalCount)
-			fmt.Printf("  Buffer size: %d\n", bufferSize)
-			fmt.Printf("  Current write index: %d\n", writeIndex)
-			fmt.Printf("  Time Range:\n")
-			fmt.Printf("    Earliest: %s\n", earliestTime.Format(time.RFC3339))
-			fmt.Printf("    Latest:   %s\n", latestTime.Format(time.RFC3339))
-			fmt.Printf("    Duration: %v\n", timeSpan.Round(time.Second))
-			if len(allSnapshots) > 1 {
-				avgInterval := timeSpan / time.Duration(len(allSnapshots)-1)
-				fmt.Printf("    Average interval: %v\n", avgInterval.Round(time.Second))
-			}
-		} else {
-			fmt.Printf("Flight Recorder Statistics:\n")
-			fmt.Printf("  Path: %s\n", *path)
-			fmt.Printf("  Total snapshots recorded: %d\n", totalCount)
-			fmt.Printf("  Buffer size: %d\n", bufferSize)
-			fmt.Printf("  Current write index: %d\n", writeIndex)
-		}
+		handleStats(fr, totalCount, bufferSize, writeIndex, *path)
 		return
 	}
 
@@ -113,7 +187,8 @@ func main() {
 	if *recent {
 		recentSnapshots, err := fr.ReadRecent(uint32(*recentN))
 		if err != nil {
-			log.Fatalf("Failed to read recent snapshots: %v", err)
+			log.Printf("Failed to read recent snapshots: %v", err)
+			return
 		}
 		typedSnapshots = recentSnapshots
 		for _, s := range recentSnapshots {
@@ -122,7 +197,8 @@ func main() {
 	} else {
 		snapshots, err := fr.ReadAll()
 		if err != nil {
-			log.Fatalf("Failed to read snapshots: %v", err)
+			log.Printf("Failed to read snapshots: %v", err)
+			return
 		}
 		typedSnapshots = snapshots
 		for _, s := range snapshots {
@@ -131,7 +207,7 @@ func main() {
 	}
 	snapshots := allSnapshots
 	readDuration := time.Since(readStartTime)
-	
+
 	// Calculate time range
 	var earliestTime, latestTime time.Time
 	if len(typedSnapshots) > 0 {
@@ -152,17 +228,17 @@ func main() {
 		fmt.Printf("Total recorded: %d, Buffer size: %d\n", totalCount, bufferSize)
 		return
 	}
-	
+
 	// Print time range information before output
 	if len(typedSnapshots) > 0 {
 		timeSpan := latestTime.Sub(earliestTime)
-		fmt.Fprintf(os.Stderr, "Time Range: %s to %s (Duration: %v)\n", 
-			earliestTime.Format(time.RFC3339), 
+		fmt.Fprintf(os.Stderr, "Time Range: %s to %s (Duration: %v)\n",
+			earliestTime.Format(time.RFC3339),
 			latestTime.Format(time.RFC3339),
 			timeSpan.Round(time.Second))
 		if len(typedSnapshots) > 1 {
 			avgInterval := timeSpan / time.Duration(len(typedSnapshots)-1)
-			fmt.Fprintf(os.Stderr, "Average interval: %v (%d snapshots)\n", 
+			fmt.Fprintf(os.Stderr, "Average interval: %v (%d snapshots)\n",
 				avgInterval.Round(time.Second), len(typedSnapshots))
 		}
 	}
@@ -173,86 +249,27 @@ func main() {
 	}
 
 	// Determine output destination
-	var outputWriter *os.File = os.Stdout
+	outputWriter := os.Stdout
 	if *output != "" {
 		var err error
 		outputWriter, err = os.Create(*output)
 		if err != nil {
-			log.Fatalf("Failed to create output file: %v", err)
+			log.Printf("Failed to create output file: %v", err)
+			return
 		}
 		defer outputWriter.Close()
 	}
 
 	// Output based on format
-	encodeStartTime := time.Now()
 	var encodeDuration time.Duration
 	switch *format {
 	case "json":
-		if *stream {
-			// Stream JSON output: one snapshot per line (JSONL format)
-			encoder := json.NewEncoder(outputWriter)
-			for _, snapshot := range snapshots {
-				if err := encoder.Encode(snapshot); err != nil {
-					log.Fatalf("Failed to encode snapshot: %v", err)
-				}
-			}
-			encodeDuration = time.Since(encodeStartTime)
-			if *verbose {
-				log.Printf("Performance: Streamed %d snapshots in %v (%.2f snapshots/sec)",
-					len(snapshots), encodeDuration, float64(len(snapshots))/encodeDuration.Seconds())
-			}
-		} else {
-			// Use MarshalIndent for better control and ensure complete output
-			data, err := json.MarshalIndent(snapshots, "", "  ")
-			if err != nil {
-				log.Fatalf("Failed to encode JSON: %v", err)
-			}
-			encodeDuration = time.Since(encodeStartTime)
-
-			// Write directly to output and ensure it's flushed
-			writeStartTime := time.Now()
-			if _, err := outputWriter.Write(data); err != nil {
-				log.Fatalf("Failed to write JSON: %v", err)
-			}
-			// Add newline at the end
-			fmt.Fprintln(outputWriter)
-			writeDuration := time.Since(writeStartTime)
-
-			if *verbose {
-				fileInfo, _ := os.Stat(*output)
-				var fileSize int64
-				if fileInfo != nil {
-					fileSize = fileInfo.Size()
-				}
-				log.Printf("Performance: Encoded %d snapshots in %v (%.2f snapshots/sec)",
-					len(snapshots), encodeDuration, float64(len(snapshots))/encodeDuration.Seconds())
-				log.Printf("Performance: Wrote %d bytes in %v (%.2f MB/s)",
-					fileSize, writeDuration, float64(fileSize)/(1024*1024)/writeDuration.Seconds())
-			}
-		}
-		// Ensure output is flushed
-		if err := outputWriter.Sync(); err != nil {
-			log.Printf("Warning: failed to sync output: %v", err)
-		}
+		encodeDuration = handleJSONOutput(outputWriter, snapshots, *stream, *verbose, *output)
 	case "pretty":
-		fmt.Fprintf(outputWriter, "Flight Recorder Contents (%d snapshots):\n\n", len(snapshots))
-		for i, snapshot := range snapshots {
-			// Convert to JSON for pretty printing
-			data, err := json.MarshalIndent(snapshot, "", "  ")
-			if err != nil {
-				fmt.Fprintf(outputWriter, "Snapshot %d: [Error encoding: %v]\n", i+1, err)
-				continue
-			}
-			fmt.Fprintf(outputWriter, "=== Snapshot %d/%d ===\n", i+1, len(snapshots))
-			fmt.Fprintln(outputWriter, string(data))
-			fmt.Fprintln(outputWriter)
-		}
-		// Ensure output is flushed
-		if err := outputWriter.Sync(); err != nil {
-			log.Printf("Warning: failed to sync output: %v", err)
-		}
+		handlePrettyOutput(outputWriter, snapshots)
 	default:
-		log.Fatalf("Unknown format: %s (use: pretty, json, or stats)", *format)
+		log.Printf("Unknown format: %s (use: pretty, json, or stats)", *format)
+		return
 	}
 
 	// Print timing information

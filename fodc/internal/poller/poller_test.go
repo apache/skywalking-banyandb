@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_NewMetricsPoller tests the constructor
+// TestE2E_NewMetricsPoller tests the constructor.
 func TestE2E_NewMetricsPoller(t *testing.T) {
 	poller := NewMetricsPoller("http://localhost:9090/metrics", 5*time.Second)
 
@@ -41,7 +41,7 @@ func TestE2E_NewMetricsPoller(t *testing.T) {
 	assert.Equal(t, 5*time.Second, poller.client.Timeout)
 }
 
-// TestE2E_Poll_SuccessfulMetrics tests successful polling with valid metrics
+// TestE2E_Poll_SuccessfulMetrics tests successful polling with valid metrics.
 func TestE2E_Poll_SuccessfulMetrics(t *testing.T) {
 	metricsData := `# HELP http_requests_total Total number of HTTP requests
 # TYPE http_requests_total counter
@@ -102,7 +102,7 @@ memory_usage_bytes 1073741824
 	}
 }
 
-// TestE2E_Poll_HistogramMetrics tests polling with histogram metrics
+// TestE2E_Poll_HistogramMetrics tests polling with histogram metrics.
 func TestE2E_Poll_HistogramMetrics(t *testing.T) {
 	metricsData := `# HELP http_request_duration_seconds HTTP request duration
 # TYPE http_request_duration_seconds histogram
@@ -116,7 +116,7 @@ http_request_duration_seconds_count 100
 http_request_duration_seconds_sum 5.5
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))
@@ -151,9 +151,9 @@ http_request_duration_seconds_sum 5.5
 	}
 }
 
-// TestE2E_Poll_EmptyResponse tests polling with empty response
+// TestE2E_Poll_EmptyResponse tests polling with empty response.
 func TestE2E_Poll_EmptyResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(""))
 	}))
@@ -176,7 +176,7 @@ func TestE2E_Poll_EmptyResponse(t *testing.T) {
 	}
 }
 
-// TestE2E_Poll_Non200Status tests error handling for non-200 status codes
+// TestE2E_Poll_Non200Status tests error handling for non-200 status codes.
 func TestE2E_Poll_Non200Status(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -189,7 +189,7 @@ func TestE2E_Poll_Non200Status(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			}))
 			defer server.Close()
@@ -213,7 +213,7 @@ func TestE2E_Poll_Non200Status(t *testing.T) {
 	}
 }
 
-// TestE2E_Poll_InvalidURL tests error handling for invalid URL
+// TestE2E_Poll_InvalidURL tests error handling for invalid URL.
 func TestE2E_Poll_InvalidURL(t *testing.T) {
 	poller := NewMetricsPoller("http://invalid-host-that-does-not-exist:9999/metrics", 1*time.Second)
 	outChan := make(chan MetricsSnapshot, 1)
@@ -232,7 +232,7 @@ func TestE2E_Poll_InvalidURL(t *testing.T) {
 	}
 }
 
-// TestE2E_Poll_InvalidMetrics tests parsing with invalid metric lines
+// TestE2E_Poll_InvalidMetrics tests parsing with invalid metric lines.
 func TestE2E_Poll_InvalidMetrics(t *testing.T) {
 	metricsData := `# HELP valid_metric A valid metric
 valid_metric 123
@@ -242,7 +242,7 @@ another_invalid_line
 valid_metric{label="value"} 456
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))
@@ -265,12 +265,12 @@ valid_metric{label="value"} 456
 	}
 }
 
-// TestE2E_Start_ContextCancellation tests that Start stops when context is cancelled
+// TestE2E_Start_ContextCancellation tests that Start stops when context is canceled.
 func TestE2E_Start_ContextCancellation(t *testing.T) {
 	requestCount := 0
 	var mu sync.Mutex
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		requestCount++
 		mu.Unlock()
@@ -324,12 +324,12 @@ func TestE2E_Start_ContextCancellation(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestE2E_Start_MultiplePolls tests that Start polls multiple times
+// TestE2E_Start_MultiplePolls tests that Start polls multiple times.
 func TestE2E_Start_MultiplePolls(t *testing.T) {
 	requestCount := 0
 	var mu sync.Mutex
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		requestCount++
 		mu.Unlock()
@@ -377,9 +377,9 @@ func TestE2E_Start_MultiplePolls(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestE2E_GetLastSnapshot tests GetLastSnapshot functionality
+// TestE2E_GetLastSnapshot tests GetLastSnapshot functionality.
 func TestE2E_GetLastSnapshot(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("test_metric 42\n"))
 	}))
@@ -408,7 +408,7 @@ func TestE2E_GetLastSnapshot(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseMetrics_WithComments tests parsing metrics with various comments
+// TestE2E_ParseMetrics_WithComments tests parsing metrics with various comments.
 func TestE2E_ParseMetrics_WithComments(t *testing.T) {
 	metricsData := `# HELP metric1 Description for metric1
 # TYPE metric1 counter
@@ -420,7 +420,7 @@ metric2 200
 metric3 300
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))
@@ -455,7 +455,7 @@ metric3 300
 	}
 }
 
-// TestE2E_ParseMetrics_MixedMetrics tests parsing mixed metric types
+// TestE2E_ParseMetrics_MixedMetrics tests parsing mixed metric types.
 func TestE2E_ParseMetrics_MixedMetrics(t *testing.T) {
 	metricsData := `# Counter
 counter_metric_total 1000
@@ -470,7 +470,7 @@ histogram_metric_sum 1.5
 labeled_metric{env="prod",service="api"} 999
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))
@@ -502,7 +502,7 @@ labeled_metric{env="prod",service="api"} 999
 	}
 }
 
-// TestE2E_ParseMetrics_EmptyLines tests handling of empty lines and whitespace
+// TestE2E_ParseMetrics_EmptyLines tests handling of empty lines and whitespace.
 func TestE2E_ParseMetrics_EmptyLines(t *testing.T) {
 	metricsData := `
 
@@ -516,7 +516,7 @@ metric2 200
 
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))
@@ -538,11 +538,11 @@ metric2 200
 	}
 }
 
-// TestE2E_ParseMetrics_ScannerError tests handling of scanner errors
+// TestE2E_ParseMetrics_ScannerError tests handling of scanner errors.
 func TestE2E_ParseMetrics_ScannerError(t *testing.T) {
 	// Create a reader that will cause a scanner error
 	// We'll use a custom reader that returns an error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		// Write some data then close connection to simulate error
 		w.Write([]byte("metric1 100\n"))
@@ -568,9 +568,9 @@ func TestE2E_ParseMetrics_ScannerError(t *testing.T) {
 	}
 }
 
-// TestE2E_ConcurrentAccess tests concurrent access to GetLastSnapshot
+// TestE2E_ConcurrentAccess tests concurrent access to GetLastSnapshot.
 func TestE2E_ConcurrentAccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("test_metric 123\n"))
 	}))
@@ -600,7 +600,7 @@ func TestE2E_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// TestE2E_RealWorldPrometheusFormat tests with realistic Prometheus metrics format
+// TestE2E_RealWorldPrometheusFormat tests with realistic Prometheus metrics format.
 func TestE2E_RealWorldPrometheusFormat(t *testing.T) {
 	metricsData := `# HELP go_info Information about the Go environment.
 # TYPE go_info gauge
@@ -625,7 +625,7 @@ http_request_duration_seconds_count 100
 http_request_duration_seconds_sum 5.5
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(metricsData))
 	}))

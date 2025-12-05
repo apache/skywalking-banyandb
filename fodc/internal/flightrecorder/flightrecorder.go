@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package flightrecorder implements a circular buffer using memory-mapped files.
 package flightrecorder
 
 import (
@@ -28,17 +29,17 @@ import (
 )
 
 const (
-	// DefaultBufferSize is the default number of snapshots to store
+	// DefaultBufferSize is the default number of snapshots to store.
 	DefaultBufferSize = 1000
-	// HeaderSize is the size of the file header in bytes
+	// HeaderSize is the size of the file header in bytes.
 	HeaderSize = 64
-	// MagicNumber identifies the flight recorder file format
+	// MagicNumber identifies the flight recorder file format.
 	MagicNumber = uint32(0x464C5243) // "FLRC"
-	// Version is the file format version
+	// Version is the file format version.
 	Version = uint32(1)
 )
 
-// Header represents the file header
+// Header represents the file header.
 type Header struct {
 	Magic      uint32   // Magic number
 	Version    uint32   // Format version
@@ -49,19 +50,21 @@ type Header struct {
 }
 
 // FlightRecorder implements a circular buffer using memory-mapped files
-// to persist metrics data across crashes
+// to persist metrics data across crashes.
+//
+//nolint:govet // fieldalignment: optimized from 80 to 48 pointer bytes (40% improvement)
 type FlightRecorder struct {
+	data       []byte
 	file       *os.File
 	header     *Header
-	data       []byte
+	path       string
 	bufferSize uint32
 	slotSize   uint32
 	mu         sync.RWMutex
-	path       string
 }
 
 // safeCloseFile syncs and closes a file handle, ensuring data is persisted
-// before closing to prevent data loss
+// before closing to prevent data loss.
 func safeCloseFile(file *os.File) error {
 	if file == nil {
 		return nil
@@ -74,7 +77,7 @@ func safeCloseFile(file *os.File) error {
 	return file.Close()
 }
 
-// NewFlightRecorder creates a new FlightRecorder with the specified buffer size
+// NewFlightRecorder creates a new FlightRecorder with the specified buffer size.
 func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) {
 	if bufferSize == 0 {
 		bufferSize = DefaultBufferSize
@@ -86,7 +89,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 	fileSize := int64(HeaderSize) + int64(bufferSize)*int64(slotSize)
 
 	// Open or create the file
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open flight recorder file: %w", err)
 	}
@@ -100,7 +103,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 
 	// If file is new or smaller than expected, resize it
 	if info.Size() < fileSize {
-		if err := file.Truncate(fileSize); err != nil {
+		if err = file.Truncate(fileSize); err != nil {
 			_ = safeCloseFile(file)
 			return nil, fmt.Errorf("failed to resize file: %w", err)
 		}
@@ -125,12 +128,12 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 		header.Count = 0
 		// Sync header immediately
 		if err := msync(data[:HeaderSize]); err != nil {
-			munmap(data)
+			_ = munmap(data)
 			_ = safeCloseFile(file)
 			return nil, fmt.Errorf("failed to sync header: %w", err)
 		}
 	} else if header.Version != Version {
-		munmap(data)
+		_ = munmap(data)
 		_ = safeCloseFile(file)
 		return nil, fmt.Errorf("unsupported file format version: %d", header.Version)
 	}
@@ -147,7 +150,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 	return fr, nil
 }
 
-// Record stores a metrics snapshot in the circular buffer
+// Record stores a metrics snapshot in the circular buffer.
 func (fr *FlightRecorder) Record(snapshot poller.MetricsSnapshot) error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
@@ -185,7 +188,7 @@ func (fr *FlightRecorder) Record(snapshot poller.MetricsSnapshot) error {
 	return nil
 }
 
-// reads all available snapshots from the buffer
+// ReadAll reads all available snapshots from the buffer.
 func (fr *FlightRecorder) ReadAll() ([]poller.MetricsSnapshot, error) {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
@@ -234,7 +237,7 @@ func (fr *FlightRecorder) ReadAll() ([]poller.MetricsSnapshot, error) {
 	return snapshots, nil
 }
 
-// reads the N most recent snapshots
+// ReadRecent reads the N most recent snapshots.
 func (fr *FlightRecorder) ReadRecent(n uint32) ([]poller.MetricsSnapshot, error) {
 	all, err := fr.ReadAll()
 	if err != nil {
@@ -249,7 +252,7 @@ func (fr *FlightRecorder) ReadRecent(n uint32) ([]poller.MetricsSnapshot, error)
 	return all[len(all)-int(n):], nil
 }
 
-// GetStats returns statistics about the flight recorder
+// GetStats returns statistics about the flight recorder.
 func (fr *FlightRecorder) GetStats() (totalCount uint32, bufferSize uint32, writeIndex uint32) {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
@@ -257,7 +260,7 @@ func (fr *FlightRecorder) GetStats() (totalCount uint32, bufferSize uint32, writ
 	return fr.header.Count, fr.bufferSize, fr.header.WriteIndex
 }
 
-// closes the flight recorder and unmaps memory
+// Close closes the flight recorder and unmaps memory.
 func (fr *FlightRecorder) Close() error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
@@ -290,7 +293,9 @@ func (fr *FlightRecorder) Close() error {
 	return nil
 }
 
-// Clear resets the flight recorder, clearing all stored snapshots
+// Clear resets the flight recorder, clearing all stored snapshots.
+//
+//revive:disable:redefines-builtin-id
 func (fr *FlightRecorder) Clear() error {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
@@ -314,7 +319,7 @@ func (fr *FlightRecorder) Clear() error {
 	return nil
 }
 
-// attempts to recover data from a flight recorder file
+// Recover attempts to recover data from a flight recorder file.
 func Recover(path string) ([]poller.MetricsSnapshot, error) {
 	fr, err := NewFlightRecorder(path, DefaultBufferSize)
 	if err != nil {

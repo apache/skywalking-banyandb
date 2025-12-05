@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_Mmap_Windows_BasicFunctionality tests basic mmap functionality on Windows
+// TestE2E_Mmap_Windows_BasicFunctionality tests basic mmap functionality on Windows.
 func TestE2E_Mmap_Windows_BasicFunctionality(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_test.bin")
 	
@@ -61,7 +61,7 @@ func TestE2E_Mmap_Windows_BasicFunctionality(t *testing.T) {
 	assert.Equal(t, 42.0, snapshots[0].RawMetrics[0].Value)
 }
 
-// TestE2E_Mmap_Windows_Persistence tests that Windows file-backed approach persists data
+// TestE2E_Mmap_Windows_Persistence tests that Windows file-backed approach persists data.
 func TestE2E_Mmap_Windows_Persistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_persistence_test.bin")
 	
@@ -96,7 +96,7 @@ func TestE2E_Mmap_Windows_Persistence(t *testing.T) {
 	assert.Equal(t, 100.0, snapshots[0].RawMetrics[0].Value)
 }
 
-// TestE2E_Mmap_Windows_MultipleWrites tests multiple writes with sync
+// TestE2E_Mmap_Windows_MultipleWrites tests multiple writes with sync.
 func TestE2E_Mmap_Windows_MultipleWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_multiple_test.bin")
 	fr, err := NewFlightRecorder(path, 10)
@@ -123,7 +123,7 @@ func TestE2E_Mmap_Windows_MultipleWrites(t *testing.T) {
 	assert.Equal(t, 5, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_FileMapping tests Windows file mapping tracking
+// TestE2E_Mmap_Windows_FileMapping tests Windows file mapping tracking.
 func TestE2E_Mmap_Windows_FileMapping(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_mapping_test.bin")
 	
@@ -157,7 +157,7 @@ func TestE2E_Mmap_Windows_FileMapping(t *testing.T) {
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_ConcurrentAccess tests concurrent file-backed access
+// TestE2E_Mmap_Windows_ConcurrentAccess tests concurrent file-backed access.
 func TestE2E_Mmap_Windows_ConcurrentAccess(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_concurrent_test.bin")
 	fr, err := NewFlightRecorder(path, 100)
@@ -195,7 +195,7 @@ func TestE2E_Mmap_Windows_ConcurrentAccess(t *testing.T) {
 	assert.Equal(t, numGoroutines*snapshotsPerGoroutine, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_EmptyFile tests handling of empty file
+// TestE2E_Mmap_Windows_EmptyFile tests handling of empty file.
 func TestE2E_Mmap_Windows_EmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_empty_test.bin")
 	
@@ -225,7 +225,7 @@ func TestE2E_Mmap_Windows_EmptyFile(t *testing.T) {
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_LargeFile tests file-backed approach with large files
+// TestE2E_Mmap_Windows_LargeFile tests file-backed approach with large files.
 func TestE2E_Mmap_Windows_LargeFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_large_test.bin")
 	// Use larger buffer size
@@ -253,7 +253,7 @@ func TestE2E_Mmap_Windows_LargeFile(t *testing.T) {
 	assert.Equal(t, 50, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_Munmap tests munmap functionality (removes from map)
+// TestE2E_Mmap_Windows_Munmap tests munmap functionality (removes from map).
 func TestE2E_Mmap_Windows_Munmap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_munmap_test.bin")
 	
@@ -292,7 +292,7 @@ func TestE2E_Mmap_Windows_Munmap(t *testing.T) {
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_MultipleSyncs tests multiple sync calls
+// TestE2E_Mmap_Windows_MultipleSyncs tests multiple sync calls.
 func TestE2E_Mmap_Windows_MultipleSyncs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_multisync_test.bin")
 	fr, err := NewFlightRecorder(path, 10)
@@ -319,7 +319,7 @@ func TestE2E_Mmap_Windows_MultipleSyncs(t *testing.T) {
 	assert.Equal(t, 10, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_RealWorldScenario tests realistic usage scenario
+// TestE2E_Mmap_Windows_RealWorldScenario tests realistic usage scenario.
 func TestE2E_Mmap_Windows_RealWorldScenario(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_realworld_test.bin")
 	
@@ -369,7 +369,7 @@ func TestE2E_Mmap_Windows_RealWorldScenario(t *testing.T) {
 	}
 }
 
-// TestE2E_Mmap_Windows_FileResize tests file-backed approach with file resize
+// TestE2E_Mmap_Windows_FileResize tests file-backed approach with file resize.
 func TestE2E_Mmap_Windows_FileResize(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_resize_test.bin")
 	
@@ -401,7 +401,7 @@ func TestE2E_Mmap_Windows_FileResize(t *testing.T) {
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_Mmap_Windows_PartialRead tests handling of partial file reads
+// TestE2E_Mmap_Windows_PartialRead tests handling of partial file reads.
 func TestE2E_Mmap_Windows_PartialRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mmap_partial_test.bin")
 	

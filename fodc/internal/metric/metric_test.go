@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_ParseMetricLine_SimpleMetrics tests parsing simple metrics without labels
+// TestE2E_ParseMetricLine_SimpleMetrics tests parsing simple metrics without labels.
 func TestE2E_ParseMetricLine_SimpleMetrics(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -93,7 +93,7 @@ func TestE2E_ParseMetricLine_SimpleMetrics(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseMetricLine_WithLabels tests parsing metrics with labels
+// TestE2E_ParseMetricLine_WithLabels tests parsing metrics with labels.
 func TestE2E_ParseMetricLine_WithLabels(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -179,7 +179,7 @@ func TestE2E_ParseMetricLine_WithLabels(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseMetricLine_InvalidInputs tests error handling for invalid inputs
+// TestE2E_ParseMetricLine_InvalidInputs tests error handling for invalid inputs.
 func TestE2E_ParseMetricLine_InvalidInputs(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -231,7 +231,7 @@ func TestE2E_ParseMetricLine_InvalidInputs(t *testing.T) {
 	}
 }
 
-// TestE2E_RawMetric_Find tests the Find method on RawMetric
+// TestE2E_RawMetric_Find tests the Find method on RawMetric.
 func TestE2E_RawMetric_Find(t *testing.T) {
 	metric := RawMetric{
 		Name: "test_metric",
@@ -283,7 +283,7 @@ func TestE2E_RawMetric_Find(t *testing.T) {
 	}
 }
 
-// TestE2E_RawMetric_Remove tests the Remove method on RawMetric
+// TestE2E_RawMetric_Remove tests the Remove method on RawMetric.
 func TestE2E_RawMetric_Remove(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -380,16 +380,16 @@ func TestE2E_RawMetric_Remove(t *testing.T) {
 	}
 }
 
-// TestE2E_MetricKey_String tests the String method on MetricKey
-func TestE2E_MetricKey_String(t *testing.T) {
+// TestE2E_Key_String tests the String method on Key.
+func TestE2E_Key_String(t *testing.T) {
 	tests := []struct {
-		name     string
-		key      MetricKey
 		expected string
+		name     string
+		key      Key
 	}{
 		{
 			name: "metric without labels",
-			key: MetricKey{
+			key: Key{
 				Name:   "simple_metric",
 				Labels: []Label{},
 			},
@@ -397,7 +397,7 @@ func TestE2E_MetricKey_String(t *testing.T) {
 		},
 		{
 			name: "metric with single label",
-			key: MetricKey{
+			key: Key{
 				Name: "metric_name",
 				Labels: []Label{
 					{Name: "label1", Value: "value1"},
@@ -407,7 +407,7 @@ func TestE2E_MetricKey_String(t *testing.T) {
 		},
 		{
 			name: "metric with multiple labels",
-			key: MetricKey{
+			key: Key{
 				Name: "metric_name",
 				Labels: []Label{
 					{Name: "label1", Value: "value1"},
@@ -427,7 +427,7 @@ func TestE2E_MetricKey_String(t *testing.T) {
 	}
 }
 
-// TestE2E_Label_String tests the String method on Label
+// TestE2E_Label_String tests the String method on Label.
 func TestE2E_Label_String(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -459,7 +459,7 @@ func TestE2E_Label_String(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseHistogram_CompleteHistogram tests parsing a complete histogram
+// TestE2E_ParseHistogram_CompleteHistogram tests parsing a complete histogram.
 func TestE2E_ParseHistogram_CompleteHistogram(t *testing.T) {
 	metrics := []RawMetric{
 		// Buckets
@@ -520,7 +520,7 @@ func TestE2E_ParseHistogram_CompleteHistogram(t *testing.T) {
 	assert.Equal(t, "other_metric", filtered[0].Name)
 }
 
-// TestE2E_ParseHistogram_WithLabels tests parsing histogram with labels
+// TestE2E_ParseHistogram_WithLabels tests parsing histogram with labels.
 func TestE2E_ParseHistogram_WithLabels(t *testing.T) {
 	metrics := []RawMetric{
 		// Histogram with labels
@@ -545,7 +545,7 @@ func TestE2E_ParseHistogram_WithLabels(t *testing.T) {
 	assert.Equal(t, 2, len(hist.Bins))
 }
 
-// TestE2E_ParseHistogram_IncompleteHistogram tests incomplete histogram (missing parts)
+// TestE2E_ParseHistogram_IncompleteHistogram tests incomplete histogram (missing parts).
 func TestE2E_ParseHistogram_IncompleteHistogram(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -599,7 +599,7 @@ func TestE2E_ParseHistogram_IncompleteHistogram(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseHistogram_MultipleHistograms tests parsing multiple histograms
+// TestE2E_ParseHistogram_MultipleHistograms tests parsing multiple histograms.
 func TestE2E_ParseHistogram_MultipleHistograms(t *testing.T) {
 	metrics := []RawMetric{
 		// First histogram
@@ -635,7 +635,7 @@ func TestE2E_ParseHistogram_MultipleHistograms(t *testing.T) {
 	assert.Equal(t, 2, len(hist2.Bins))
 }
 
-// TestE2E_ParseHELPComment tests parsing HELP comments
+// TestE2E_ParseHELPComment tests parsing HELP comments.
 func TestE2E_ParseHELPComment(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -707,7 +707,7 @@ func TestE2E_ParseHELPComment(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseTYPEComment tests parsing TYPE comments
+// TestE2E_ParseTYPEComment tests parsing TYPE comments.
 func TestE2E_ParseTYPEComment(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -793,7 +793,7 @@ func TestE2E_ParseTYPEComment(t *testing.T) {
 	}
 }
 
-// TestE2E_RealWorldPrometheusMetrics tests parsing real-world Prometheus metrics format
+// TestE2E_RealWorldPrometheusMetrics tests parsing real-world Prometheus metrics format.
 func TestE2E_RealWorldPrometheusMetrics(t *testing.T) {
 	// Simulate a real Prometheus metrics output
 	metricsLines := []string{
@@ -885,7 +885,7 @@ func TestE2E_RealWorldPrometheusMetrics(t *testing.T) {
 	assert.True(t, gaugeFound)
 }
 
-// TestE2E_HistogramBinsParsing tests parsing histogram bins with various le values
+// TestE2E_HistogramBinsParsing tests parsing histogram bins with various le values.
 func TestE2E_HistogramBinsParsing(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -946,7 +946,7 @@ func TestE2E_HistogramBinsParsing(t *testing.T) {
 	}
 }
 
-// TestE2E_EdgeCases tests various edge cases
+// TestE2E_EdgeCases tests various edge cases.
 func TestE2E_EdgeCases(t *testing.T) {
 	t.Run("metric with only le label", func(t *testing.T) {
 		metric, err := ParseMetricLine(`metric_bucket{le="0.1"} 10`)

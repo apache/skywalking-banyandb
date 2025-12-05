@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package metric provides functionality for parsing and processing Prometheus metrics.
 package metric
 
 import (
@@ -24,9 +25,10 @@ import (
 	"strings"
 )
 
+// ErrInvalidMetricLine is returned when a metric line is invalid.
 var ErrInvalidMetricLine = errors.New("invalid metric line")
 
-// Label represents a Prometheus metric label
+// Label represents a Prometheus metric label.
 type Label struct {
 	Name  string
 	Value string
@@ -36,13 +38,13 @@ func (l *Label) String() string {
 	return fmt.Sprintf(`%s="%s"`, l.Name, l.Value)
 }
 
-// MetricKey uniquely identifies a metric by name and labels
-type MetricKey struct {
+// Key uniquely identifies a metric by name and labels.
+type Key struct {
 	Name   string
 	Labels []Label
 }
 
-func (mk *MetricKey) String() string {
+func (mk *Key) String() string {
 	if len(mk.Labels) == 0 {
 		return mk.Name
 	}
@@ -62,15 +64,15 @@ func (mk *MetricKey) String() string {
 	return sb.String()
 }
 
-// RawMetric represents a parsed Prometheus metric line
-type RawMetric struct {
-	Name        string
+// RawMetric represents a parsed Prometheus metric line.
+type RawMetric struct { //nolint:govet // fieldalignment: field order optimized for readability
 	Labels      []Label
 	Value       float64
+	Name        string
 	Description string // Description from HELP comment
 }
 
-// Find searches for a label by name
+// Find searches for a label by name.
 func (m *RawMetric) Find(name string) string {
 	for _, l := range m.Labels {
 		if l.Name == name {
@@ -80,7 +82,7 @@ func (m *RawMetric) Find(name string) string {
 	return ""
 }
 
-// Remove removes a label by name and returns the remaining labels
+// Remove removes a label by name and returns the remaining labels.
 func (m *RawMetric) Remove(name string) ([]Label, bool) {
 	if len(m.Labels) == 0 {
 		return nil, false
@@ -98,7 +100,7 @@ func (m *RawMetric) Remove(name string) ([]Label, bool) {
 	return labels, found
 }
 
-// ParseMetricLine parses a Prometheus metric line into a RawMetric
+// ParseMetricLine parses a Prometheus metric line into a RawMetric.
 func ParseMetricLine(line string) (RawMetric, error) {
 	name, labels, valueStr, err := splitMetricLine(line)
 	if err != nil {
@@ -170,18 +172,18 @@ func parseLabels(labelString string) []Label {
 	return labels
 }
 
-// Bin represents a histogram bin
+// Bin represents a histogram bin.
 type Bin struct {
 	Value float64
 	Count uint64
 }
 
-// Histogram represents a Prometheus histogram metric
+// Histogram represents a Prometheus histogram metric.
 type Histogram struct {
 	Name        string
+	Description string // Description from HELP comment
 	Labels      []Label
 	Bins        []Bin
-	Description string // Description from HELP comment
 }
 
 const (
@@ -190,13 +192,13 @@ const (
 	sumSuffix    = "_sum"
 )
 
-// ParseHistogram extracts histogram metrics from raw metrics
-// descriptions map can be provided to associate descriptions with metrics
+// ParseHistogram extracts histogram metrics from raw metrics.
+// descriptions map can be provided to associate descriptions with metrics.
 func ParseHistogram(metrics []RawMetric, descriptions map[string]string) (map[string]Histogram, []RawMetric) {
 	type histogramMetrics struct {
-		buckets []RawMetric
 		count   *RawMetric
 		sum     *RawMetric
+		buckets []RawMetric
 	}
 
 	filteredMetrics := make([]RawMetric, 0, len(metrics))
@@ -210,7 +212,7 @@ func ParseHistogram(metrics []RawMetric, descriptions map[string]string) (map[st
 				return labels[i].Name < labels[j].Name
 			})
 
-			mk := MetricKey{
+			mk := Key{
 				Name:   name,
 				Labels: labels,
 			}
@@ -304,8 +306,8 @@ func trimHistogramSuffix(s string) string {
 	return s
 }
 
-// ParseHELPComment parses a Prometheus HELP comment line
-// Format: # HELP metric_name Description text
+// ParseHELPComment parses a Prometheus HELP comment line.
+// Format: # HELP metric_name Description text.
 func ParseHELPComment(line string) (string, string, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "# HELP ") {
@@ -330,8 +332,8 @@ func ParseHELPComment(line string) (string, string, bool) {
 	return metricName, description, true
 }
 
-// ParseTYPEComment parses a Prometheus TYPE comment line
-// Format: # TYPE metric_name type
+// ParseTYPEComment parses a Prometheus TYPE comment line.
+// Format: # TYPE metric_name type.
 func ParseTYPEComment(line string) (string, string, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "# TYPE ") {

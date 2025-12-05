@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package poller provides functionality for polling Prometheus metrics from BanyanDB.
 package poller
 
 import (
@@ -29,21 +30,24 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/metric"
 )
 
-type MetricsSnapshot struct {
+// MetricsSnapshot represents a snapshot of metrics.
+type MetricsSnapshot struct { //nolint:govet // fieldalignment: field order optimized for readability
 	Timestamp  time.Time
 	RawMetrics []metric.RawMetric
 	Histograms map[string]metric.Histogram
 	Errors     []string
 }
 
-type MetricsPoller struct {
-	url          string
-	interval     time.Duration
+// MetricsPoller represents a metrics poller.
+type MetricsPoller struct { //nolint:govet // fieldalignment: field order optimized for readability
 	client       *http.Client
-	mu           sync.RWMutex
 	lastSnapshot *MetricsSnapshot
+	mu           sync.RWMutex
+	interval     time.Duration
+	url          string
 }
 
+// NewMetricsPoller creates a new metrics poller.
 func NewMetricsPoller(url string, interval time.Duration) *MetricsPoller {
 	return &MetricsPoller{
 		url:      url,
@@ -54,6 +58,7 @@ func NewMetricsPoller(url string, interval time.Duration) *MetricsPoller {
 	}
 }
 
+// Start starts the metrics poller.
 func (p *MetricsPoller) Start(ctx context.Context, outChan chan<- MetricsSnapshot) error {
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -79,7 +84,7 @@ func (p *MetricsPoller) poll(ctx context.Context, outChan chan<- MetricsSnapshot
 		Errors:     []string{},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", p.url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
 	if err != nil {
 		snapshot.Errors = append(snapshot.Errors, fmt.Sprintf("Failed to create request: %v", err))
 		outChan <- snapshot
@@ -163,6 +168,7 @@ func (p *MetricsPoller) parseMetrics(reader io.Reader, snapshot *MetricsSnapshot
 	return nil
 }
 
+// GetLastSnapshot returns the last snapshot polled by the poller.
 func (p *MetricsPoller) GetLastSnapshot() *MetricsSnapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

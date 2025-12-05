@@ -34,7 +34,7 @@ var (
 	pageSize     int
 )
 
-// getPageSize returns the system page size, detecting it once
+// getPageSize returns the system page size, detecting it once.
 func getPageSize() int {
 	pageSizeOnce.Do(func() {
 		// Try to get page size from syscall
@@ -69,23 +69,23 @@ func msync(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	
+
 	ps := getPageSize()
 	psUint := uintptr(ps)
-	
+
 	// Get the base address and length of the slice
 	baseAddr := uintptr(unsafe.Pointer(&data[0]))
 	length := uintptr(len(data))
-	
+
 	// Calculate page-aligned start address (round down to page boundary)
 	pageAlignedStart := baseAddr &^ (psUint - 1)
-	
+
 	// Calculate page-aligned end address (round up to page boundary)
 	pageAlignedEnd := (baseAddr + length + psUint - 1) &^ (psUint - 1)
-	
+
 	// Calculate the page-aligned length
 	pageAlignedLength := pageAlignedEnd - pageAlignedStart
-	
+
 	// Perform the msync syscall with page-aligned address and length
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_MSYNC,
@@ -98,4 +98,3 @@ func msync(data []byte) error {
 	}
 	return nil
 }
-

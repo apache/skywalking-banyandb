@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package sidecar provides sidecar mode functionality for FODC, including service discovery and health endpoints.
 package sidecar
 
 import (
@@ -26,49 +27,48 @@ import (
 	"time"
 )
 
+// Constants for default values.
 const (
 	DefaultHealthPort = 17914
 	EnvHealthPort     = "FODC_HEALTH_PORT"
-
-	// Health status constants
-	StatusStarting   = "STARTING"
-	StatusServing    = "SERVING"
-	StatusNotServing = "NOT_SERVING"
+	StatusStarting    = "STARTING"
+	StatusServing     = "SERVING"
+	StatusNotServing  = "NOT_SERVING"
 )
 
 // HealthStatus represents the health status of the sidecar.
-type HealthStatus struct {
-	Status    string                 `json:"status"`
-	Timestamp time.Time              `json:"timestamp"`
-	Version   string                 `json:"version,omitempty"`
+type HealthStatus struct { //nolint:govet // fieldalignment: field order optimized for readability
 	BanyanDB  *BanyanDBHealth        `json:"banyandb,omitempty"`
 	Metrics   *MetricsHealth         `json:"metrics,omitempty"`
-	Uptime    time.Duration          `json:"uptime"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
+	Uptime    time.Duration          `json:"uptime"`
+	Status    string                 `json:"status"`
+	Version   string                 `json:"version,omitempty"`
 }
 
 // BanyanDBHealth represents the health of the monitored BanyanDB instance.
 type BanyanDBHealth struct {
-	Connected bool      `json:"connected"`
 	LastCheck time.Time `json:"last_check,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	Connected bool      `json:"connected"`
 }
 
 // MetricsHealth represents the health of metrics collection.
 type MetricsHealth struct {
-	TotalSnapshots   int       `json:"total_snapshots"`
 	LastSnapshotTime time.Time `json:"last_snapshot_time,omitempty"`
+	TotalSnapshots   int       `json:"total_snapshots"`
 	Errors           int       `json:"errors"`
 }
 
 // HealthServer provides HTTP health endpoints for the sidecar.
-type HealthServer struct {
-	port      int
+type HealthServer struct { //nolint:govet // fieldalignment: field order optimized for readability
 	server    *http.Server
 	status    *HealthStatus
 	mu        sync.RWMutex
 	startTime time.Time
 	version   string
+	port      int
 }
 
 // NewHealthServer creates a new health server.
@@ -101,8 +101,9 @@ func NewHealthServer(port int, version string) *HealthServer {
 	mux.HandleFunc("/live", hs.handleLiveness)
 
 	hs.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	return hs
@@ -160,7 +161,7 @@ func (hs *HealthServer) SetMetadata(key string, value interface{}) {
 	hs.status.Metadata[key] = value
 }
 
-func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (hs *HealthServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	hs.mu.RLock()
 	status := *hs.status
 	status.Uptime = time.Since(hs.startTime)
@@ -183,7 +184,7 @@ func (hs *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (hs *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
+func (hs *HealthServer) handleReady(w http.ResponseWriter, _ *http.Request) {
 	hs.mu.RLock()
 	ready := hs.status.Status == StatusServing
 	if hs.status.BanyanDB != nil {
@@ -200,7 +201,7 @@ func (hs *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (hs *HealthServer) handleLiveness(w http.ResponseWriter, r *http.Request) {
+func (hs *HealthServer) handleLiveness(w http.ResponseWriter, _ *http.Request) {
 	hs.mu.RLock()
 	alive := hs.status.Status != StatusNotServing
 	hs.mu.RUnlock()

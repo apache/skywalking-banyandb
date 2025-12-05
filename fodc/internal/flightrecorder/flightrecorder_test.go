@@ -25,20 +25,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metric"
-	"github.com/apache/skywalking-banyandb/fodc/internal/poller"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/fodc/internal/metric"
+	"github.com/apache/skywalking-banyandb/fodc/internal/poller"
 )
 
-// createTempFile creates a temporary file for testing
+// createTempFile creates a temporary file for testing.
 func createTempFile(t *testing.T) string {
 	tmpDir := t.TempDir()
 	return filepath.Join(tmpDir, "flightrecorder_test.bin")
 }
 
-// createTestSnapshot creates a test metrics snapshot
-func createTestSnapshot(t *testing.T, id int) poller.MetricsSnapshot {
+// createTestSnapshot creates a test metrics snapshot.
+func createTestSnapshot(_ *testing.T, id int) poller.MetricsSnapshot {
 	return poller.MetricsSnapshot{
 		Timestamp: time.Now().Add(time.Duration(id) * time.Second),
 		RawMetrics: []metric.RawMetric{
@@ -53,11 +54,11 @@ func createTestSnapshot(t *testing.T, id int) poller.MetricsSnapshot {
 	}
 }
 
-// TestE2E_NewFlightRecorder_CreateNew tests creating a new flight recorder
+// TestE2E_NewFlightRecorder_CreateNew tests creating a new flight recorder.
 func TestE2E_NewFlightRecorder_CreateNew(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 100)
-	
+
 	require.NoError(t, err)
 	require.NotNil(t, fr)
 	defer fr.Close()
@@ -74,11 +75,11 @@ func TestE2E_NewFlightRecorder_CreateNew(t *testing.T) {
 	assert.Greater(t, info.Size(), int64(0))
 }
 
-// TestE2E_NewFlightRecorder_DefaultBufferSize tests default buffer size
+// TestE2E_NewFlightRecorder_DefaultBufferSize tests default buffer size.
 func TestE2E_NewFlightRecorder_DefaultBufferSize(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 0)
-	
+
 	require.NoError(t, err)
 	require.NotNil(t, fr)
 	defer fr.Close()
@@ -87,7 +88,7 @@ func TestE2E_NewFlightRecorder_DefaultBufferSize(t *testing.T) {
 	assert.Equal(t, uint32(DefaultBufferSize), bufferSize)
 }
 
-// TestE2E_Record_And_ReadAll tests recording and reading snapshots
+// TestE2E_Record_And_ReadAll tests recording and reading snapshots.
 func TestE2E_Record_And_ReadAll(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -98,7 +99,7 @@ func TestE2E_Record_And_ReadAll(t *testing.T) {
 	numSnapshots := 5
 	for i := 0; i < numSnapshots; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -119,7 +120,7 @@ func TestE2E_Record_And_ReadAll(t *testing.T) {
 	}
 }
 
-// TestE2E_Record_CircularBuffer tests circular buffer behavior
+// TestE2E_Record_CircularBuffer tests circular buffer behavior.
 func TestE2E_Record_CircularBuffer(t *testing.T) {
 	path := createTempFile(t)
 	bufferSize := uint32(5)
@@ -131,7 +132,7 @@ func TestE2E_Record_CircularBuffer(t *testing.T) {
 	numSnapshots := int(bufferSize) + 3
 	for i := 0; i < numSnapshots; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -155,7 +156,7 @@ func TestE2E_Record_CircularBuffer(t *testing.T) {
 	}
 }
 
-// TestE2E_ReadRecent tests reading recent snapshots
+// TestE2E_ReadRecent tests reading recent snapshots.
 func TestE2E_ReadRecent(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -165,7 +166,7 @@ func TestE2E_ReadRecent(t *testing.T) {
 	// Record 10 snapshots
 	for i := 0; i < 10; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -173,7 +174,7 @@ func TestE2E_ReadRecent(t *testing.T) {
 	recent, err := fr.ReadRecent(3)
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(recent))
-	
+
 	// Should be last 3 snapshots
 	assert.Equal(t, float64(7), recent[0].RawMetrics[0].Value)
 	assert.Equal(t, float64(8), recent[1].RawMetrics[0].Value)
@@ -185,10 +186,10 @@ func TestE2E_ReadRecent(t *testing.T) {
 	assert.Equal(t, 10, len(recent))
 }
 
-// TestE2E_Recovery tests recovery after close/reopen
+// TestE2E_Recovery tests recovery after close/reopen.
 func TestE2E_Recovery(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Create and record snapshots
 	fr1, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
@@ -196,7 +197,7 @@ func TestE2E_Recovery(t *testing.T) {
 	numSnapshots := 5
 	for i := 0; i < numSnapshots; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr1.Record(snapshot)
+		err = fr1.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -226,10 +227,10 @@ func TestE2E_Recovery(t *testing.T) {
 	}
 }
 
-// TestE2E_Recover_Function tests the Recover function
+// TestE2E_Recover_Function tests the Recover function.
 func TestE2E_Recover_Function(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Create and record snapshots
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
@@ -237,7 +238,7 @@ func TestE2E_Recover_Function(t *testing.T) {
 	numSnapshots := 3
 	for i := 0; i < numSnapshots; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -255,7 +256,7 @@ func TestE2E_Recover_Function(t *testing.T) {
 	}
 }
 
-// TestE2E_Clear tests clearing the flight recorder
+// TestE2E_Clear tests clearing the flight recorder.
 func TestE2E_Clear(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -265,7 +266,7 @@ func TestE2E_Clear(t *testing.T) {
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -298,7 +299,7 @@ func TestE2E_Clear(t *testing.T) {
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_Record_WithHistograms tests recording snapshots with histograms
+// TestE2E_Record_WithHistograms tests recording snapshots with histograms.
 func TestE2E_Record_WithHistograms(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -333,13 +334,13 @@ func TestE2E_Record_WithHistograms(t *testing.T) {
 	readSnapshot := snapshots[0]
 	assert.Equal(t, 1, len(readSnapshot.RawMetrics))
 	assert.Equal(t, 1, len(readSnapshot.Histograms))
-	
+
 	hist, exists := readSnapshot.Histograms["histogram_metric"]
 	require.True(t, exists)
 	assert.Equal(t, 2, len(hist.Bins))
 }
 
-// TestE2E_Record_WithErrors tests recording snapshots with errors
+// TestE2E_Record_WithErrors tests recording snapshots with errors.
 func TestE2E_Record_WithErrors(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -367,7 +368,7 @@ func TestE2E_Record_WithErrors(t *testing.T) {
 	assert.Equal(t, "Error 2", readSnapshot.Errors[1])
 }
 
-// TestE2E_ConcurrentRecord tests concurrent recording
+// TestE2E_ConcurrentRecord tests concurrent recording.
 func TestE2E_ConcurrentRecord(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 100)
@@ -401,7 +402,7 @@ func TestE2E_ConcurrentRecord(t *testing.T) {
 	assert.Equal(t, numGoroutines*snapshotsPerGoroutine, len(snapshots))
 }
 
-// TestE2E_ConcurrentRead tests concurrent reading
+// TestE2E_ConcurrentRead tests concurrent reading.
 func TestE2E_ConcurrentRead(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -411,7 +412,7 @@ func TestE2E_ConcurrentRead(t *testing.T) {
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -432,7 +433,7 @@ func TestE2E_ConcurrentRead(t *testing.T) {
 	wg.Wait()
 }
 
-// TestE2E_Record_LargeSnapshot tests recording large snapshots
+// TestE2E_Record_LargeSnapshot tests recording large snapshots.
 func TestE2E_Record_LargeSnapshot(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -466,7 +467,7 @@ func TestE2E_Record_LargeSnapshot(t *testing.T) {
 	assert.Equal(t, 1000, len(snapshots[0].RawMetrics))
 }
 
-// TestE2E_Record_TooLargeSnapshot tests error handling for too large snapshots
+// TestE2E_Record_TooLargeSnapshot tests error handling for too large snapshots.
 func TestE2E_Record_TooLargeSnapshot(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -485,10 +486,10 @@ func TestE2E_Record_TooLargeSnapshot(t *testing.T) {
 	snapshot := poller.MetricsSnapshot{
 		Timestamp:  time.Now(),
 		RawMetrics: make([]metric.RawMetric, 0, 100000),
-		Histograms:  make(map[string]metric.Histogram),
-		Errors:      []string{},
+		Histograms: make(map[string]metric.Histogram),
+		Errors:     []string{},
 	}
-	
+
 	// Add many metrics to exceed slot size
 	for i := 0; i < 200000; i++ {
 		snapshot.RawMetrics = append(snapshot.RawMetrics, metric.RawMetric{
@@ -503,10 +504,10 @@ func TestE2E_Record_TooLargeSnapshot(t *testing.T) {
 	assert.Contains(t, err.Error(), "snapshot too large")
 }
 
-// TestE2E_Recovery_AfterCrash tests recovery after simulated crash
+// TestE2E_Recovery_AfterCrash tests recovery after simulated crash.
 func TestE2E_Recovery_AfterCrash(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Simulate crash: create recorder, write data, but don't close properly
 	fr1, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
@@ -514,7 +515,7 @@ func TestE2E_Recovery_AfterCrash(t *testing.T) {
 	// Record snapshots
 	for i := 0; i < 7; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr1.Record(snapshot)
+		err = fr1.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -530,7 +531,7 @@ func TestE2E_Recovery_AfterCrash(t *testing.T) {
 	assert.Equal(t, 7, len(snapshots))
 }
 
-// TestE2E_GetStats tests GetStats functionality
+// TestE2E_GetStats tests GetStats functionality.
 func TestE2E_GetStats(t *testing.T) {
 	path := createTempFile(t)
 	bufferSize := uint32(20)
@@ -547,7 +548,7 @@ func TestE2E_GetStats(t *testing.T) {
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -560,7 +561,7 @@ func TestE2E_GetStats(t *testing.T) {
 	// Fill beyond buffer size
 	for i := 5; i < 25; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -571,10 +572,10 @@ func TestE2E_GetStats(t *testing.T) {
 	assert.Equal(t, uint32(5), writeIndex) // (25) % 20 = 5
 }
 
-// TestE2E_RealWorldScenario tests a realistic usage scenario
+// TestE2E_RealWorldScenario tests a realistic usage scenario.
 func TestE2E_RealWorldScenario(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Simulate a real-world scenario: record metrics over time, recover after restart
 	fr1, err := NewFlightRecorder(path, 100)
 	require.NoError(t, err)
@@ -598,7 +599,7 @@ func TestE2E_RealWorldScenario(t *testing.T) {
 			},
 			Errors: []string{},
 		}
-		err := fr1.Record(snapshot)
+		err = fr1.Record(snapshot)
 		require.NoError(t, err)
 	}
 
@@ -630,7 +631,7 @@ func TestE2E_RealWorldScenario(t *testing.T) {
 	assert.Equal(t, 0, len(all))
 }
 
-// TestE2E_ReadAll_EmptyBuffer tests reading from empty buffer
+// TestE2E_ReadAll_EmptyBuffer tests reading from empty buffer.
 func TestE2E_ReadAll_EmptyBuffer(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -642,7 +643,7 @@ func TestE2E_ReadAll_EmptyBuffer(t *testing.T) {
 	assert.Equal(t, 0, len(snapshots))
 }
 
-// TestE2E_ReadRecent_EmptyBuffer tests reading recent from empty buffer
+// TestE2E_ReadRecent_EmptyBuffer tests reading recent from empty buffer.
 func TestE2E_ReadRecent_EmptyBuffer(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -654,7 +655,7 @@ func TestE2E_ReadRecent_EmptyBuffer(t *testing.T) {
 	assert.Equal(t, 0, len(recent))
 }
 
-// TestE2E_MultipleClose tests closing multiple times
+// TestE2E_MultipleClose tests closing multiple times.
 func TestE2E_MultipleClose(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
@@ -673,66 +674,66 @@ func TestE2E_MultipleClose(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestE2E_FileFormatVersion tests file format version handling
+// TestE2E_FileFormatVersion tests file format version handling.
 // Note: Testing version incompatibility by manually corrupting files is unsafe
 // due to memory mapping. This test verifies normal version handling.
 func TestE2E_FileFormatVersion(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Create a recorder and write some data
 	fr1, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
-	
+
 	snapshot := createTestSnapshot(t, 0)
 	err = fr1.Record(snapshot)
 	require.NoError(t, err)
-	
+
 	err = fr1.Close()
 	require.NoError(t, err)
-	
+
 	// Reopen with same version - should work
 	fr2, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr2.Close()
-	
+
 	// Should be able to read the snapshot
 	snapshots, err := fr2.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_CorruptedSlots tests handling of corrupted slots
+// TestE2E_CorruptedSlots tests handling of corrupted slots.
 func TestE2E_CorruptedSlots(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Manually corrupt a slot by writing invalid size
-	file, err := os.OpenFile(path, os.O_RDWR, 0644)
+	file, err := os.OpenFile(path, os.O_RDWR, 0o644)
 	require.NoError(t, err)
-	
+
 	// Corrupt slot 2 (write invalid size > slotSize)
 	// Slot size is 1MB (1024 * 1024)
 	slotSize := uint32(1024 * 1024)
 	slotOffset := HeaderSize + int64(2)*int64(slotSize)
 	_, err = file.Seek(slotOffset, 0)
 	require.NoError(t, err)
-	
+
 	// Write invalid size (larger than slot size)
 	invalidSize := make([]byte, 4)
 	binary.LittleEndian.PutUint32(invalidSize, slotSize+1000)
 	_, err = file.Write(invalidSize)
 	require.NoError(t, err)
 	file.Close()
-	
+
 	// ReadAll should skip corrupted slot
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
@@ -740,104 +741,104 @@ func TestE2E_CorruptedSlots(t *testing.T) {
 	assert.LessOrEqual(t, len(snapshots), 5)
 }
 
-// TestE2E_MultipleRecordersSameFile tests multiple recorders on same file
+// TestE2E_MultipleRecordersSameFile tests multiple recorders on same file.
 func TestE2E_MultipleRecordersSameFile(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Create first recorder
 	fr1, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
-	
+
 	// Record with first recorder
 	snapshot1 := createTestSnapshot(t, 1)
 	err = fr1.Record(snapshot1)
 	require.NoError(t, err)
-	
+
 	// Create second recorder on same file (should work)
 	fr2, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
-	
+
 	// Record with second recorder
 	snapshot2 := createTestSnapshot(t, 2)
 	err = fr2.Record(snapshot2)
 	require.NoError(t, err)
-	
+
 	// Close first recorder
 	err = fr1.Close()
 	require.NoError(t, err)
-	
+
 	// Read from second recorder - should see both snapshots
 	snapshots, err := fr2.ReadAll()
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(snapshots), 2)
-	
+
 	err = fr2.Close()
 	require.NoError(t, err)
 }
 
-// TestE2E_BufferBoundaryEdgeCases tests edge cases around buffer boundaries
+// TestE2E_BufferBoundaryEdgeCases tests edge cases around buffer boundaries.
 func TestE2E_BufferBoundaryEdgeCases(t *testing.T) {
 	path := createTempFile(t)
 	bufferSize := uint32(3)
 	fr, err := NewFlightRecorder(path, bufferSize)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Fill exactly to buffer size
 	for i := 0; i < int(bufferSize); i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	totalCount, _, writeIndex := fr.GetStats()
 	assert.Equal(t, bufferSize, totalCount)
 	assert.Equal(t, uint32(0), writeIndex) // Should wrap to 0
-	
+
 	// Add one more to trigger wrap
 	snapshot := createTestSnapshot(t, int(bufferSize))
 	err = fr.Record(snapshot)
 	require.NoError(t, err)
-	
+
 	totalCount, _, writeIndex = fr.GetStats()
 	assert.Equal(t, bufferSize+1, totalCount)
 	assert.Equal(t, uint32(1), writeIndex) // Wrapped to 1
-	
+
 	// ReadAll should return bufferSize snapshots
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, int(bufferSize), len(snapshots))
-	
+
 	// Should contain snapshots starting from index 1 (oldest after wrap)
 	assert.Equal(t, float64(1), snapshots[0].RawMetrics[0].Value)
 }
 
-// TestE2E_StressTest_ManySnapshots tests stress test with many snapshots
+// TestE2E_StressTest_ManySnapshots tests stress test with many snapshots.
 func TestE2E_StressTest_ManySnapshots(t *testing.T) {
 	path := createTempFile(t)
 	bufferSize := uint32(100)
 	fr, err := NewFlightRecorder(path, bufferSize)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Record many snapshots (more than buffer size)
 	numSnapshots := int(bufferSize) * 3
 	for i := 0; i < numSnapshots; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Verify stats
 	totalCount, _, writeIndex := fr.GetStats()
 	assert.Equal(t, uint32(numSnapshots), totalCount)
 	assert.Equal(t, uint32(numSnapshots)%bufferSize, writeIndex)
-	
+
 	// ReadAll should return bufferSize snapshots
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, int(bufferSize), len(snapshots))
-	
+
 	// Verify they're the most recent ones
 	expectedStart := numSnapshots - int(bufferSize)
 	for i, snapshot := range snapshots {
@@ -846,71 +847,71 @@ func TestE2E_StressTest_ManySnapshots(t *testing.T) {
 	}
 }
 
-// TestE2E_ReadRecent_EdgeCases tests ReadRecent edge cases
+// TestE2E_ReadRecent_EdgeCases tests ReadRecent edge cases.
 func TestE2E_ReadRecent_EdgeCases(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Record 5 snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Read recent 0
 	recent, err := fr.ReadRecent(0)
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(recent))
-	
+
 	// Read recent 1
 	recent, err = fr.ReadRecent(1)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(recent))
 	assert.Equal(t, float64(4), recent[0].RawMetrics[0].Value)
-	
+
 	// Read recent exactly what we have
 	recent, err = fr.ReadRecent(5)
 	require.NoError(t, err)
 	assert.Equal(t, 5, len(recent))
-	
+
 	// Read recent more than we have
 	recent, err = fr.ReadRecent(100)
 	require.NoError(t, err)
 	assert.Equal(t, 5, len(recent))
 }
 
-// TestE2E_Recovery_CircularBufferWrap tests recovery after circular buffer wrap
+// TestE2E_Recovery_CircularBufferWrap tests recovery after circular buffer wrap.
 func TestE2E_Recovery_CircularBufferWrap(t *testing.T) {
 	path := createTempFile(t)
 	bufferSize := uint32(5)
-	
+
 	// Create recorder and fill beyond buffer size
 	fr1, err := NewFlightRecorder(path, bufferSize)
 	require.NoError(t, err)
-	
+
 	// Record more than buffer size
 	for i := 0; i < 8; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr1.Record(snapshot)
+		err = fr1.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	err = fr1.Close()
 	require.NoError(t, err)
-	
+
 	// Recover
 	fr2, err := NewFlightRecorder(path, bufferSize)
 	require.NoError(t, err)
 	defer fr2.Close()
-	
+
 	// Should recover bufferSize snapshots (oldest after wrap)
 	snapshots, err := fr2.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, int(bufferSize), len(snapshots))
-	
+
 	// Should start from index 3 (8 % 5 = 3)
 	expectedStart := 8 - int(bufferSize)
 	for i, snapshot := range snapshots {
@@ -919,23 +920,23 @@ func TestE2E_Recovery_CircularBufferWrap(t *testing.T) {
 	}
 }
 
-// TestE2E_Record_EmptySnapshot tests recording empty snapshots
+// TestE2E_Record_EmptySnapshot tests recording empty snapshots.
 func TestE2E_Record_EmptySnapshot(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	emptySnapshot := poller.MetricsSnapshot{
 		Timestamp:  time.Now(),
 		RawMetrics: []metric.RawMetric{},
 		Histograms: make(map[string]metric.Histogram),
 		Errors:     []string{},
 	}
-	
+
 	err = fr.Record(emptySnapshot)
 	require.NoError(t, err)
-	
+
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(snapshots))
@@ -944,56 +945,56 @@ func TestE2E_Record_EmptySnapshot(t *testing.T) {
 	assert.Equal(t, 0, len(snapshots[0].Errors))
 }
 
-// TestE2E_Clear_AndReuse tests clearing and reusing after clear
+// TestE2E_Clear_AndReuse tests clearing and reusing after clear.
 func TestE2E_Clear_AndReuse(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Clear
 	err = fr.Clear()
 	require.NoError(t, err)
-	
+
 	// Verify cleared
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(snapshots))
-	
+
 	// Record new snapshots
 	for i := 10; i < 15; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Verify new snapshots
 	snapshots, err = fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 5, len(snapshots))
-	
+
 	// Should start from 0 (fresh start after clear)
 	for i, snapshot := range snapshots {
 		assert.Equal(t, float64(10+i), snapshot.RawMetrics[0].Value)
 	}
 }
 
-// TestE2E_ConcurrentRecordAndRead tests concurrent record and read operations
+// TestE2E_ConcurrentRecordAndRead tests concurrent record and read operations.
 func TestE2E_ConcurrentRecordAndRead(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 100)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	var wg sync.WaitGroup
-	
+
 	// Concurrent writers
 	numWriters := 5
 	wg.Add(numWriters)
@@ -1006,7 +1007,7 @@ func TestE2E_ConcurrentRecordAndRead(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	// Concurrent readers
 	numReaders := 3
 	wg.Add(numReaders)
@@ -1020,25 +1021,25 @@ func TestE2E_ConcurrentRecordAndRead(t *testing.T) {
 			}
 		}()
 	}
-	
+
 	wg.Wait()
-	
+
 	// Verify final state
 	totalCount, _, _ := fr.GetStats()
 	assert.Equal(t, uint32(numWriters*10), totalCount)
-	
+
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Greater(t, len(snapshots), 0)
 }
 
-// TestE2E_RealWorld_MetricsWithAllFields tests realistic metrics with all fields populated
+// TestE2E_RealWorld_MetricsWithAllFields tests realistic metrics with all fields populated.
 func TestE2E_RealWorld_MetricsWithAllFields(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Create realistic snapshot with all fields
 	snapshot := poller.MetricsSnapshot{
 		Timestamp: time.Now(),
@@ -1050,8 +1051,8 @@ func TestE2E_RealWorld_MetricsWithAllFields(t *testing.T) {
 				Description: "Total HTTP requests",
 			},
 			{
-				Name:   "memory_usage_bytes",
-				Value:  1073741824.0,
+				Name:        "memory_usage_bytes",
+				Value:       1073741824.0,
 				Description: "Memory usage",
 			},
 		},
@@ -1068,20 +1069,20 @@ func TestE2E_RealWorld_MetricsWithAllFields(t *testing.T) {
 		},
 		Errors: []string{"Warning: High memory usage"},
 	}
-	
+
 	err = fr.Record(snapshot)
 	require.NoError(t, err)
-	
+
 	// Read back
 	snapshots, err := fr.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(snapshots))
-	
+
 	readSnapshot := snapshots[0]
 	assert.Equal(t, 2, len(readSnapshot.RawMetrics))
 	assert.Equal(t, 1, len(readSnapshot.Histograms))
 	assert.Equal(t, 1, len(readSnapshot.Errors))
-	
+
 	// Verify histogram
 	hist, exists := readSnapshot.Histograms["http_request_duration_seconds"]
 	require.True(t, exists)
@@ -1089,50 +1090,50 @@ func TestE2E_RealWorld_MetricsWithAllFields(t *testing.T) {
 	assert.Equal(t, 3, len(hist.Bins))
 }
 
-// TestE2E_FileResize_ExistingFile tests opening existing file with different buffer size
+// TestE2E_FileResize_ExistingFile tests opening existing file with different buffer size.
 func TestE2E_FileResize_ExistingFile(t *testing.T) {
 	path := createTempFile(t)
-	
+
 	// Create with buffer size 10
 	fr1, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
-	
+
 	snapshot := createTestSnapshot(t, 0)
 	err = fr1.Record(snapshot)
 	require.NoError(t, err)
-	
+
 	err = fr1.Close()
 	require.NoError(t, err)
-	
+
 	// Open with same buffer size - should work
 	fr2, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr2.Close()
-	
+
 	snapshots, err := fr2.ReadAll()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(snapshots))
 }
 
-// TestE2E_GetStats_ConcurrentAccess tests GetStats with concurrent access
+// TestE2E_GetStats_ConcurrentAccess tests GetStats with concurrent access.
 func TestE2E_GetStats_ConcurrentAccess(t *testing.T) {
 	path := createTempFile(t)
 	fr, err := NewFlightRecorder(path, 10)
 	require.NoError(t, err)
 	defer fr.Close()
-	
+
 	// Record some snapshots
 	for i := 0; i < 5; i++ {
 		snapshot := createTestSnapshot(t, i)
-		err := fr.Record(snapshot)
+		err = fr.Record(snapshot)
 		require.NoError(t, err)
 	}
-	
+
 	// Concurrent GetStats calls
 	var wg sync.WaitGroup
 	numGoroutines := 20
 	wg.Add(numGoroutines)
-	
+
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer wg.Done()
@@ -1144,7 +1145,6 @@ func TestE2E_GetStats_ConcurrentAccess(t *testing.T) {
 			}
 		}()
 	}
-	
+
 	wg.Wait()
 }
-

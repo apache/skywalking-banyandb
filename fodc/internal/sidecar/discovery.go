@@ -14,6 +14,7 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package sidecar provides sidecar mode functionality for FODC, including service discovery and health endpoints.
 package sidecar
 
 import (
@@ -25,12 +26,10 @@ import (
 	"time"
 )
 
+// Constants for default values.
 const (
-	// Default BanyanDB ports
-	DefaultMetricsPort = 2121
-	DefaultHTTPPort    = 17913
-
-	// Environment variables for sidecar mode
+	DefaultMetricsPort     = 2121
+	DefaultHTTPPort        = 17913
 	EnvBanyanDBHost        = "BANYANDB_HOST"
 	EnvBanyanDBMetricsPort = "BANYANDB_METRICS_PORT"
 	EnvBanyanDBHTTPPort    = "BANYANDB_HTTP_PORT"
@@ -40,7 +39,7 @@ const (
 	EnvHostIP              = "HOST_IP"
 )
 
-// represents discovered BanyanDB endpoints
+// BanyanDBEndpoint represents discovered BanyanDB endpoints.
 type BanyanDBEndpoint struct {
 	MetricsURL string
 	HealthURL  string
@@ -49,11 +48,11 @@ type BanyanDBEndpoint struct {
 	PodIP      string
 }
 
-// DiscoverBanyanDB discovers the BanyanDB instance to monitor
+// DiscoverBanyanDB discovers the BanyanDB instance to monitor.
 // Priority:
-// 1. Environment variables (BANYANDB_HOST, BANYANDB_METRICS_PORT, BANYANDB_HTTP_PORT)
-// 2. Kubernetes service discovery (localhost in same pod)
-// 3. Default localhost with standard ports
+// 1. Environment variables (BANYANDB_HOST, BANYANDB_METRICS_PORT, BANYANDB_HTTP_PORT).
+// 2. Kubernetes service discovery (localhost in same pod).
+// 3. Default localhost with standard ports.
 func DiscoverBanyanDB() (*BanyanDBEndpoint, error) {
 	endpoint := &BanyanDBEndpoint{}
 
@@ -92,7 +91,7 @@ func DiscoverBanyanDB() (*BanyanDBEndpoint, error) {
 	return endpoint, nil
 }
 
-// verifies that the discovered endpoint is accessible
+// VerifyEndpoint verifies that the discovered endpoint is accessible.
 func VerifyEndpoint(endpoint *BanyanDBEndpoint, timeout time.Duration) error {
 	client := &http.Client{
 		Timeout: timeout,
@@ -112,13 +111,13 @@ func VerifyEndpoint(endpoint *BanyanDBEndpoint, timeout time.Duration) error {
 	return nil
 }
 
-// checks if running in Kubernetes environment
+// IsKubernetes checks if running in Kubernetes environment.
 func IsKubernetes() bool {
 	// Check for Kubernetes-specific environment variables
 	return os.Getenv(EnvPodName) != "" || os.Getenv(EnvPodNamespace) != ""
 }
 
-// checks if running in Docker environment
+// IsDocker checks if running in Docker environment.
 func IsDocker() bool {
 	// Check for Docker-specific indicators
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -144,7 +143,7 @@ func containsMiddle(s, substr string) bool {
 	return false
 }
 
-// gets the local IP address
+// GetLocalIP gets the local IP address.
 func GetLocalIP() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {

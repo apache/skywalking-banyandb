@@ -14,10 +14,12 @@
 // either express or implied.  See the License for the specific
 // language governing permissions and limitations under the License.
 
+// Package main provides the FODC CLI tool for monitoring BanyanDB metrics.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -32,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/sidecar"
 )
 
+// Constants for default values.
 const (
 	DefaultMetricsURL               = "http://localhost:2121/metrics"
 	DefaultPollInterval             = 5 * time.Second
@@ -74,7 +77,8 @@ func main() {
 		var err error
 		endpoint, err = sidecar.DiscoverBanyanDB()
 		if err != nil {
-			log.Fatalf("Failed to discover BanyanDB endpoint: %v", err)
+			log.Printf("Failed to discover BanyanDB endpoint: %v", err)
+			return
 		}
 
 		log.Printf("Discovered BanyanDB endpoints:")
@@ -108,7 +112,7 @@ func main() {
 		// Start health server
 		go func() {
 			log.Printf("Starting sidecar health server on port %d", *healthPort)
-			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
+			if err := healthServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("ERROR: Failed to start health server on port %d: %v", *healthPort, err)
 				log.Printf("ERROR: Health endpoint http://localhost:%d/healthz will not be available", *healthPort)
 			}
@@ -133,10 +137,11 @@ func main() {
 	// Initialize Flight Recorder
 	flightRecorder, err := flightrecorder.NewFlightRecorder(*flightRecorderPath, uint32(*flightRecorderBuffer))
 	if err != nil {
-		log.Fatalf("Failed to initialize flight recorder: %v", err)
+		log.Printf("Failed to initialize flight recorder: %v", err)
+		return
 	}
 	defer func() {
-		if err := flightRecorder.Close(); err != nil {
+		if err = flightRecorder.Close(); err != nil {
 			log.Printf("Error closing flight recorder: %v", err)
 		}
 	}()
