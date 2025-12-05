@@ -14,20 +14,20 @@
 # limitations under the License.
 
 cases:
-  # Test sidecar health endpoint (/healthz)
-  # Note: fodc-sidecar shares network namespace with banyandb, so we use banyandb_host
+  # Test FODC health endpoint (/healthz)
+  # Note: fodc shares network namespace with banyandb, so we use banyandb_host
   - query: curl -s http://${banyandb_host}:17914/healthz | yq eval '.' -
     expected: expected/healthz-response.yml
   
-  # Test sidecar readiness endpoint (/ready)
+  # Test FODC readiness endpoint (/ready)
   - query: curl -s http://${banyandb_host}:17914/ready
     expected: expected/ready-response.yml
   
-  # Test sidecar liveness endpoint (/live)
+  # Test FODC liveness endpoint (/live)
   - query: curl -s http://${banyandb_host}:17914/live
     expected: expected/live-response.yml
   
-  # Test sidecar health endpoint JSON structure
+  # Test FODC health endpoint JSON structure
   - query: curl -s http://${banyandb_host}:17914/health | yq eval '.status' -
     expected: expected/health-status.yml
   

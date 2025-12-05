@@ -18,7 +18,7 @@ version: '2.1'
 services:
   banyandb:
     extends:
-      file: ../../../script/docker-compose/base-compose.yml
+      file: ../../script/docker-compose/base-compose.yml
       service: banyandb
     expose:
       - 17912  # gRPC port
@@ -37,11 +37,11 @@ services:
       timeout: 120s
       retries: 120
 
-  fodc-sidecar:
+  fodc:
     build:
       context: ../../../../fodc
       dockerfile: Dockerfile
-    container_name: fodc-sidecar
+    container_name: fodc
     command:
       - "/fodc-cli"
       - "--sidecar"
@@ -54,7 +54,7 @@ services:
       - BANYANDB_HOST=localhost
       - BANYANDB_METRICS_PORT=2121
       - BANYANDB_HTTP_PORT=17913
-    # Share network namespace with banyandb (true sidecar pattern)
+    # Share network namespace with banyandb (true sidecar pattern - FODC runs alongside BanyanDB)
     network_mode: "service:banyandb"
     volumes:
       - fodc-data:/data  # Shared volume for flight recorder data

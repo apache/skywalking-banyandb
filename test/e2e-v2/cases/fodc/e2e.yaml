@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# E2E test for FODC sidecar functionality
-# This test verifies that the FODC sidecar can:
+# E2E test for FODC functionality
+# This test verifies that FODC can:
 # - Discover BanyanDB endpoints automatically
 # - Start health endpoints (/healthz, /ready, /live)
 # - Poll metrics from BanyanDB
@@ -46,25 +46,25 @@ setup:
           echo "BanyanDB failed to become ready"
           exit 1
         fi
-    - name: wait for FODC sidecar to be ready
+    - name: wait for FODC to be ready
       command: |
         timeout=60
         elapsed=0
         while [ $elapsed -lt $timeout ]; do
           if curl -sf http://${banyandb_host}:17914/healthz > /dev/null 2>&1; then
-            echo "FODC sidecar is ready"
+            echo "FODC is ready"
             break
           fi
           sleep 2
           elapsed=$((elapsed + 2))
         done
         if [ $elapsed -ge $timeout ]; then
-          echo "FODC sidecar failed to become ready"
+          echo "FODC failed to become ready"
           exit 1
         fi
     - name: wait for metrics collection
       command: |
-        # Wait a bit for sidecar to collect some metrics
+        # Wait a bit for FODC to collect some metrics
         sleep 15
 
 verify:
@@ -76,5 +76,5 @@ verify:
     interval: 10s
   cases:
     - includes:
-      - sidecar-cases.yaml
+      - fodc-cases.yaml
 
