@@ -96,7 +96,7 @@ func NewHealthServer(port int, version string) *HealthServer {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", hs.handleHealth)
-	mux.HandleFunc("/healthz", hs.handleHealth) // Kubernetes-style endpoint
+	mux.HandleFunc("/healthz", hs.handleHealth)
 	mux.HandleFunc("/ready", hs.handleReady)
 	mux.HandleFunc("/live", hs.handleLiveness)
 
