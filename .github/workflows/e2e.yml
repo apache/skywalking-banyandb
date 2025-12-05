@@ -90,6 +90,10 @@ jobs:
         run: |
           docker load --input /tmp/banyandb-testing-image.tar.gz
           docker image ls
+      - name: Build FODC binaries
+        if: ${{ matrix.test.name == 'FODC' }}
+        run: |
+          TARGET_OS=linux PLATFORMS=linux/amd64 make -C fodc release
       - name: Generate data for lifecycle
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
