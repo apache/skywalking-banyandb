@@ -60,6 +60,20 @@ type FlightRecorder struct {
 	path       string
 }
 
+// safeCloseFile syncs and closes a file handle, ensuring data is persisted
+// before closing to prevent data loss
+func safeCloseFile(file *os.File) error {
+	if file == nil {
+		return nil
+	}
+	// Sync before closing to ensure any buffered data is written
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("failed to sync file before closing: %w", err)
+	}
+	return file.Close()
+}
+
 // NewFlightRecorder creates a new FlightRecorder with the specified buffer size
 func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) {
 	if bufferSize == 0 {
@@ -80,14 +94,14 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 	// Get file info to check if it exists and has data
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = safeCloseFile(file)
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	// If file is new or smaller than expected, resize it
 	if info.Size() < fileSize {
 		if err := file.Truncate(fileSize); err != nil {
-			file.Close()
+			_ = safeCloseFile(file)
 			return nil, fmt.Errorf("failed to resize file: %w", err)
 		}
 	}
@@ -95,7 +109,7 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 	// Memory map the file
 	data, err := mmapFile(file, int(fileSize))
 	if err != nil {
-		file.Close()
+		_ = safeCloseFile(file)
 		return nil, fmt.Errorf("failed to memory map file: %w", err)
 	}
 
@@ -112,12 +126,12 @@ func NewFlightRecorder(path string, bufferSize uint32) (*FlightRecorder, error) 
 		// Sync header immediately
 		if err := msync(data[:HeaderSize]); err != nil {
 			munmap(data)
-			file.Close()
+			_ = safeCloseFile(file)
 			return nil, fmt.Errorf("failed to sync header: %w", err)
 		}
 	} else if header.Version != Version {
 		munmap(data)
-		file.Close()
+		_ = safeCloseFile(file)
 		return nil, fmt.Errorf("unsupported file format version: %d", header.Version)
 	}
 
