@@ -65,12 +65,10 @@ func (mk *Key) String() string {
 }
 
 // RawMetric represents a parsed Prometheus metric line.
-//
-//nolint:govet // fieldalignment: optimized to 48 pointer bytes, target 40 requires different order
 type RawMetric struct {
-	Value       float64
 	Name        string
 	Description string
+	Value       float64
 	Labels      []Label
 }
 

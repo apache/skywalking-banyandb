@@ -17,13 +17,16 @@
 FROM alpine:edge AS certs
 RUN apk add --no-cache ca-certificates && update-ca-certificates
 
-FROM busybox:stable-glibc AS build-linux
+FROM alpine:latest AS build-linux
 
 ARG TARGETARCH
 
 COPY build/bin/linux/${TARGETARCH}/fodc-cli-static /fodc-cli
 COPY build/bin/linux/${TARGETARCH}/fodc-view-static /fodc-view
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
+
+# Install wget for health checks
+RUN apk add --no-cache wget
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
 
@@ -33,11 +36,6 @@ COPY build/bin/windows/${TARGETARCH}/fodc-cli-static "/fodc-cli"
 COPY build/bin/windows/${TARGETARCH}/fodc-view-static "/fodc-view"
 
 FROM build-${TARGETOS} AS final
-
-# Install wget for health checks (optional, can be removed if not needed)
-RUN if [ "${TARGETOS}" = "linux" ]; then \
-      apk add --no-cache wget; \
-    fi
 
 EXPOSE 17914
 
