@@ -272,24 +272,5 @@ When running in sidecar mode, FODC exposes health endpoints for monitoring and o
 
 **Example Health Response:**
 ```json
-{
-  "status": "running",
-  "timestamp": "2024-01-01T12:00:00Z",
-  "version": "0.1.0",
-  "banyandb": {
-    "connected": true,
-    "last_check": "2024-01-01T12:00:00Z"
-  },
-  "metrics": {
-    "total_snapshots": 1000,
-    "last_snapshot_time": "2024-01-01T12:00:00Z",
-    "errors": 0
-  },
-  "uptime": "1h30m0s",
-  "metadata": {
-    "mode": "sidecar",
-    "banyandb_host": "localhost",
-    "pod_name": "banyandb-0"
-  }
-}
+{"status":"SERVING","timestamp":"2025-12-05T13:08:36.409961+08:00","version":"0.1.0","banyandb":{"connected":true,"last_check":"2025-12-05T13:08:33.275279+08:00"},"metrics":{"total_snapshots":335,"last_snapshot_time":"2025-12-05T13:08:33.272491+08:00","errors":0},"uptime":1673248170167,"metadata":{"banyandb_host":"localhost","mode":"sidecar"}}
 ```
