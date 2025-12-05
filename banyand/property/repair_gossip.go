@@ -166,7 +166,7 @@ func (b *repairGossipBase) queryProperty(ctx context.Context, syncShard *shard, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build query from leaf node entity %s: %w", leafNodeEntity, err)
 	}
-	queriedProperties, err := syncShard.search(ctx, searchQuery, gossipShardQueryDatabaseSize)
+	queriedProperties, err := syncShard.search(ctx, searchQuery, nil, gossipShardQueryDatabaseSize)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to search properties for leaf node entity %s: %w", leafNodeEntity, err)
 	}

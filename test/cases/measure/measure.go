@@ -40,6 +40,8 @@ var (
 )
 
 var _ = g.DescribeTable("Scanning Measures", verify,
+	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
+	g.Entry("index mode filter hidden tag projection", helpers.Args{Input: "index_mode_filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("all", helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("all only fields", helpers.Args{Input: "all_only_fields", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("the max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
@@ -85,4 +87,6 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("query by id in index mode", helpers.Args{Input: "index_mode_by_id", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("multi groups: unchanged", helpers.Args{Input: "multi_group_unchanged", Duration: 35 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("multi groups: new tag and fields", helpers.Args{Input: "multi_group_new_tag_field", Duration: 35 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("write spec", helpers.Args{Input: "write_spec", Duration: 15 * time.Minute, Offset: 15 * time.Minute, DisOrder: true}),
+	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 15 * time.Minute, Offset: 25 * time.Minute, DisOrder: true}),
 )
