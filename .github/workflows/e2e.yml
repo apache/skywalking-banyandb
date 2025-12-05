@@ -94,6 +94,11 @@ jobs:
         if: ${{ matrix.test.name == 'FODC' }}
         run: |
           TARGET_OS=linux PLATFORMS=linux/amd64 make -C fodc release
+      - name: Build FODC Docker image
+        if: ${{ matrix.test.name == 'FODC' }}
+        run: |
+          cd test/e2e-v2/cases/fodc
+          docker compose build fodc
       - name: Generate data for lifecycle
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
