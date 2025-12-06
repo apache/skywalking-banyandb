@@ -30,7 +30,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
+	"github.com/apache/skywalking-banyandb/oa/internal/ebpf/generated"
 )
 
 // Loader handles loading and managing eBPF programs.
@@ -38,6 +38,9 @@ type Loader struct {
 	spec    *ebpf.CollectionSpec
 	objects *generated.IomonitorObjects
 	links   []link.Link
+	// Optional cgroup filter support
+	cgroupPath string
+	cgroupFD   *os.File
 }
 
 // NewLoader creates a new eBPF program loader.
@@ -52,6 +55,12 @@ func NewLoader() (*Loader, error) {
 	}, nil
 }
 
+// SetCgroupPath enables cgroup-based PID filtering using a cgroup v2 path.
+// An empty path disables the filter.
+func (l *Loader) SetCgroupPath(path string) {
+	l.cgroupPath = path
+}
+
 // LoadPrograms loads the eBPF programs.
 func (l *Loader) LoadPrograms() error {
 	var err error
@@ -64,7 +73,7 @@ func (l *Loader) LoadPrograms() error {
 
 	// Check if BTF is available
 	hasBTF := checkBTFSupport()
-	
+
 	// If BTF is not available, remove fentry/fexit programs from spec
 	if !hasBTF {
 		fmt.Fprintf(os.Stderr, "BTF not available, removing fentry/fexit programs\n")
@@ -77,6 +86,49 @@ func (l *Loader) LoadPrograms() error {
 		return fmt.Errorf("failed to load eBPF objects: %w", err)
 	}
 
+	// Configure cgroup filter if requested.
+	if err := l.applyCgroupFilter(); err != nil {
+		return fmt.Errorf("failed to apply cgroup filter: %w", err)
+	}
+
+	return nil
+}
+
+// applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
+func (l *Loader) applyCgroupFilter() error {
+	if l.objects == nil || l.objects.CgroupFilter == nil {
+		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+	}
+
+	path := l.cgroupPath
+	if path == "" {
+		var err error
+		path, err = detectBanyanDBCgroupPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: cgroup filter disabled (auto-detect failed): %v\n", err)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Auto-detected BanyanDB cgroup: %s\n", path)
+	}
+
+	resolved, err := resolveCgroupPath(path)
+	if err != nil {
+		return err
+	}
+
+	fd, err := openCgroupPath(resolved)
+	if err != nil {
+		return err
+	}
+
+	key := uint32(0)
+	val := uint32(fd.Fd())
+	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
+		_ = fd.Close()
+		return fmt.Errorf("failed to populate cgroup filter map: %w", err)
+	}
+
+	l.cgroupFD = fd
 	return nil
 }
 
@@ -89,7 +141,7 @@ func removeFentryPrograms(spec *ebpf.CollectionSpec) {
 		"fentry_filemap_get_read_batch",
 		"fentry_add_to_page_cache_lru",
 	}
-	
+
 	for _, progName := range programsToRemove {
 		delete(spec.Programs, progName)
 	}
@@ -225,6 +277,14 @@ func (l *Loader) Close() error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close eBPF objects: %v\n", err)
 		}
 		l.objects = nil
+	}
+
+	// Close cgroup FD if opened
+	if l.cgroupFD != nil {
+		if err := l.cgroupFD.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close cgroup fd: %v\n", err)
+		}
+		l.cgroupFD = nil
 	}
 
 	return nil

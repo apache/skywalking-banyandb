@@ -26,8 +26,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
+	"github.com/apache/skywalking-banyandb/oa/internal/config"
+	"github.com/apache/skywalking-banyandb/oa/internal/metrics"
 )
 
 // Collector manages eBPF program lifecycle and metrics collection.
@@ -62,7 +62,7 @@ func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 
 	// Initialize modules based on configuration
 	for _, moduleName := range cfg.Modules {
-		module, err := c.createModule(moduleName)
+		module, err := c.createModule(moduleName, cfg.EBPF)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create module %s: %w", moduleName, err)
 		}
@@ -73,11 +73,11 @@ func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 }
 
 // createModule creates a module instance by name.
-func (c *Collector) createModule(name string) (Module, error) {
+func (c *Collector) createModule(name string, ebpfCfg config.EBPFConfig) (Module, error) {
 	switch name {
 	case "iomonitor":
 		// Create the comprehensive I/O monitor module
-		module, err := NewIOMonitorModule(c.logger)
+		module, err := NewIOMonitorModule(c.logger, ebpfCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
 		}

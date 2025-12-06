@@ -19,6 +19,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+#include <stdbool.h>
 
 // POSIX_FADV_* constants (man 2 posix_fadvise)
 #define POSIX_FADV_NORMAL     0 /* No further special treatment.  */
@@ -64,8 +65,24 @@ struct {
     __type(value, struct fadvise_stats_t);
 } fadvise_stats_map SEC(".maps");
 
+// Cgroup filter map (index 0 holds target cgroup fd)
+struct {
+    __uint(type, BPF_MAP_TYPE_CGROUP_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} cgroup_filter SEC(".maps");
+
+static __always_inline bool is_cgroup_allowed() {
+    int ret = bpf_current_task_under_cgroup(&cgroup_filter, 0);
+    return ret == 1;
+}
+
 SEC("tracepoint/syscalls/sys_enter_fadvise64")
 int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     struct fadvise_args_t args = {};
 
@@ -114,6 +131,9 @@ int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
 
 SEC("tracepoint/syscalls/sys_exit_fadvise64")
 int trace_exit_fadvise64(struct trace_event_raw_sys_exit *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     __u32 pid = tid >> 32;
 
@@ -152,6 +172,9 @@ struct {
 
 SEC("tracepoint/vmscan/mm_vmscan_lru_shrink_inactive")
 int trace_lru_shrink_inactive(struct trace_event_raw_mm_vmscan_lru_shrink_inactive *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 key = 0;
     struct lru_shrink_info_t info = {};
 
@@ -180,6 +203,9 @@ struct trace_event_raw_mm_vmscan_direct_reclaim_begin;
 
 SEC("tracepoint/vmscan/mm_vmscan_direct_reclaim_begin")
 int trace_direct_reclaim_begin(struct trace_event_raw_mm_vmscan_direct_reclaim_begin *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct reclaim_info_t info = {};
     info.pid = pid;
@@ -224,6 +250,9 @@ struct {
 // This counts TOTAL read attempts (both hits and misses will trigger this)
 SEC("tracepoint/filemap/filemap_get_read_batch")
 int trace_filemap_get_read_batch(void *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};
@@ -253,6 +282,9 @@ int trace_filemap_get_read_batch(void *ctx) {
 // This is a definitive cache miss event
 SEC("tracepoint/filemap/mm_filemap_add_to_page_cache")
 int trace_mm_filemap_add_to_page_cache(void *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};
@@ -335,6 +367,9 @@ static __always_inline long get_return_value(struct pt_regs *ctx) {
 // Fentry for ksys_fadvise64_64 - modern kernels with BTF support
 SEC("fentry/ksys_fadvise64_64")
 int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     struct fadvise_args_t args = {};
 
@@ -382,6 +417,9 @@ int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int ad
 // Fexit for ksys_fadvise64_64 - capture return value
 SEC("fexit/ksys_fadvise64_64")
 int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice, long ret) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     __u32 pid = tid >> 32;
 
@@ -400,6 +438,9 @@ int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int adv
 // Fentry for filemap operations
 SEC("fentry/filemap_get_read_batch")
 int BPF_PROG(fentry_filemap_get_read_batch) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};
@@ -425,6 +466,9 @@ int BPF_PROG(fentry_filemap_get_read_batch) {
 // Fentry for page cache add
 SEC("fentry/add_to_page_cache_lru")
 int BPF_PROG(fentry_add_to_page_cache_lru) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};
@@ -453,6 +497,9 @@ int BPF_PROG(fentry_add_to_page_cache_lru) {
 // Kprobe fallback for fadvise64 entry
 SEC("kprobe/ksys_fadvise64_64")
 int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     struct fadvise_args_t args = {};
 
@@ -501,6 +548,9 @@ int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
 // Kretprobe fallback for fadvise64 exit
 SEC("kretprobe/ksys_fadvise64_64")
 int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u64 tid = bpf_get_current_pid_tgid();
     __u32 pid = tid >> 32;
     long ret = get_return_value(ctx);
@@ -520,6 +570,9 @@ int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
 // Kprobe fallback for filemap_get_read_batch
 SEC("kprobe/filemap_get_read_batch")
 int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};
@@ -546,6 +599,9 @@ int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
 // Kprobe fallback for add_to_page_cache_lru
 SEC("kprobe/add_to_page_cache_lru")
 int kprobe_add_to_page_cache_lru(struct pt_regs *ctx) {
+    if (!is_cgroup_allowed()) {
+        return 0;
+    }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     struct cache_stats_t new_stats = {};

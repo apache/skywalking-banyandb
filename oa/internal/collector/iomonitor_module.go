@@ -27,9 +27,10 @@ import (
 	"github.com/cilium/ebpf"
 	"go.uber.org/zap"
 
-	loader "github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
+	"github.com/apache/skywalking-banyandb/oa/internal/config"
+	loader "github.com/apache/skywalking-banyandb/oa/internal/ebpf"
+	"github.com/apache/skywalking-banyandb/oa/internal/ebpf/generated"
+	"github.com/apache/skywalking-banyandb/oa/internal/metrics"
 )
 
 // CleanupStrategy defines how to manage eBPF map memory.
@@ -55,12 +56,13 @@ type IOMonitorModule struct {
 	cleanupStrategy CleanupStrategy
 	cleanupInterval time.Duration
 	staleThreshold  time.Duration
+	cgroupPath      string
 	// Simple cumulative counter for debugging (not in struct)
 	debugCumulativeCacheMisses uint64
 }
 
 // NewIOMonitorModule creates a new I/O monitoring module with cleanup.
-func NewIOMonitorModule(logger *zap.Logger) (*IOMonitorModule, error) {
+func NewIOMonitorModule(logger *zap.Logger, ebpfCfg config.EBPFConfig) (*IOMonitorModule, error) {
 	ebpfLoader, err := loader.NewLoader()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
@@ -75,6 +77,7 @@ func NewIOMonitorModule(logger *zap.Logger) (*IOMonitorModule, error) {
 		lastCleanup:     time.Now(),
 		activePIDs:      make(map[uint32]time.Time),
 		staleThreshold:  5 * time.Minute,
+		cgroupPath:      ebpfCfg.CgroupPath,
 	}, nil
 }
 
@@ -95,6 +98,13 @@ func (m *IOMonitorModule) Name() string {
 // Start loads and attaches the eBPF programs.
 func (m *IOMonitorModule) Start() error {
 	m.logger.Info("Starting I/O monitor module")
+
+	// Configure cgroup filtering if requested.
+	if m.cgroupPath != "" {
+		m.logger.Info("Enabling cgroup filter for eBPF programs",
+			zap.String("cgroup_path", m.cgroupPath))
+		m.loader.SetCgroupPath(m.cgroupPath)
+	}
 
 	// Load eBPF programs
 	if err := m.loader.LoadPrograms(); err != nil {

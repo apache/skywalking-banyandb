@@ -29,9 +29,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/server"
+	"github.com/apache/skywalking-banyandb/oa/internal/collector"
+	"github.com/apache/skywalking-banyandb/oa/internal/config"
+	"github.com/apache/skywalking-banyandb/oa/internal/server"
 )
 
 var (

@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
+	"github.com/apache/skywalking-banyandb/oa/internal/metrics"
 )
 
 func TestBanyanDBExporter(t *testing.T) {

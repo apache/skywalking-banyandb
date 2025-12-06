@@ -74,7 +74,7 @@ Claude.md
 .claude/
 
 # eBPF generated files and binaries
-ebpf-sidecar/internal/ebpf/generated/
-ebpf-sidecar/sidecar
-ebpf-sidecar/build/
+oa/internal/ebpf/generated/
+oa/sidecar
+oa/build/
 

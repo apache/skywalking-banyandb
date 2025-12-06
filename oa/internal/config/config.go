@@ -60,14 +60,15 @@ type TLSConfig struct {
 // CollectorConfig defines the collector configuration.
 type CollectorConfig struct {
 	Modules  []string      `mapstructure:"modules"`
-	eBPF     eBPFConfig    `mapstructure:"ebpf"`
+	EBPF     EBPFConfig    `mapstructure:"ebpf"`
 	Interval time.Duration `mapstructure:"interval"`
 }
 
-// eBPFConfig defines eBPF-specific configuration.
-type eBPFConfig struct {
+// EBPFConfig defines eBPF-specific configuration.
+type EBPFConfig struct {
 	PinPath      string `mapstructure:"pin_path"`       // Path to pin eBPF maps
 	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
+	CgroupPath   string `mapstructure:"cgroup_path"`    // Optional cgroup v2 path to filter PIDs
 }
 
 // ExportConfig defines export configuration.
@@ -102,7 +103,7 @@ func DefaultConfig() *Config {
 		Collector: CollectorConfig{
 			Interval: 10 * time.Second,
 			Modules:  []string{"fadvise", "memory"},
-			eBPF: eBPFConfig{
+			EBPF: EBPFConfig{
 				PinPath:      "/sys/fs/bpf/ebpf-sidecar",
 				MapSizeLimit: 10240,
 			},

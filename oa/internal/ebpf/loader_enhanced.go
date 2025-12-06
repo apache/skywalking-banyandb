@@ -30,7 +30,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/ebpf/generated"
+	"github.com/apache/skywalking-banyandb/oa/internal/ebpf/generated"
 )
 
 // Attachment mode constants for tracking how programs are attached.
@@ -51,6 +51,8 @@ type EnhancedLoader struct {
 	logger          *zap.Logger
 	attachmentModes map[string]string
 	links           []link.Link
+	cgroupPath      string
+	cgroupFD        *os.File
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -84,6 +86,12 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 	}, nil
 }
 
+// SetCgroupPath enables cgroup-based PID filtering using a cgroup v2 path.
+// An empty path disables the filter.
+func (l *EnhancedLoader) SetCgroupPath(path string) {
+	l.cgroupPath = path
+}
+
 // LoadPrograms loads the eBPF programs.
 func (l *EnhancedLoader) LoadPrograms() error {
 	var err error
@@ -100,6 +108,54 @@ func (l *EnhancedLoader) LoadPrograms() error {
 		return fmt.Errorf("failed to load eBPF objects: %w", err)
 	}
 
+	// Configure cgroup filter if requested.
+	if err := l.applyCgroupFilter(); err != nil {
+		return fmt.Errorf("failed to apply cgroup filter: %w", err)
+	}
+
+	return nil
+}
+
+// applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
+func (l *EnhancedLoader) applyCgroupFilter() error {
+	if l.cgroupPath == "" {
+		return nil
+	}
+
+	if l.objects == nil || l.objects.CgroupFilter == nil {
+		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+	}
+
+	path := l.cgroupPath
+	if path == "" {
+		var err error
+		path, err = detectBanyanDBCgroupPath()
+		if err != nil {
+			l.logger.Warn("Cgroup filter disabled (auto-detect failed)", zap.Error(err))
+			return nil
+		}
+		l.logger.Info("Auto-detected BanyanDB cgroup", zap.String("cgroup_path", path))
+	}
+
+	resolved, err := resolveCgroupPath(path)
+	if err != nil {
+		return err
+	}
+
+	fd, err := openCgroupPath(resolved)
+	if err != nil {
+		return err
+	}
+
+	key := uint32(0)
+	val := uint32(fd.Fd())
+	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
+		_ = fd.Close()
+		return fmt.Errorf("failed to populate cgroup filter map: %w", err)
+	}
+
+	l.cgroupFD = fd
+	l.logger.Info("Enabled cgroup filter for eBPF programs", zap.String("cgroup_path", path))
 	return nil
 }
 
@@ -362,6 +418,14 @@ func (l *EnhancedLoader) Close() error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close eBPF objects: %v\n", err)
 		}
 		l.objects = nil
+	}
+
+	// Close cgroup FD if opened
+	if l.cgroupFD != nil {
+		if err := l.cgroupFD.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close cgroup fd: %v\n", err)
+		}
+		l.cgroupFD = nil
 	}
 
 	return nil

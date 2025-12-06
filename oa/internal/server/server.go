@@ -29,9 +29,9 @@ import (
 	"google.golang.org/grpc"
 
 	ebpfv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/ebpf/v1"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/config"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/export"
+	"github.com/apache/skywalking-banyandb/oa/internal/collector"
+	"github.com/apache/skywalking-banyandb/oa/internal/config"
+	"github.com/apache/skywalking-banyandb/oa/internal/export"
 )
 
 // Server manages gRPC and HTTP servers.

@@ -30,8 +30,8 @@ import (
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
 	ebpfv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/ebpf/v1"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/collector"
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
+	"github.com/apache/skywalking-banyandb/oa/internal/collector"
+	"github.com/apache/skywalking-banyandb/oa/internal/metrics"
 )
 
 // grpcServer implements the EBPFMetricsService.

@@ -27,6 +27,9 @@ collector:
   interval: 10s
   modules:
     - iomonitor
+  ebpf:
+    # Optional cgroup v2 path to filter PIDs (auto-detects BanyanDB if empty)
+    # cgroup_path: /sys/fs/cgroup/docker/<banyandb-container-id>
 
 export:
   type: banyandb

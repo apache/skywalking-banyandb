@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/apache/skywalking-banyandb/ebpf-sidecar/internal/metrics"
+	"github.com/apache/skywalking-banyandb/oa/internal/metrics"
 )
 
 // PrometheusExporter formats metrics in Prometheus text format.

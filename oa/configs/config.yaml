@@ -49,6 +49,8 @@ collector:
     pin_path: /sys/fs/bpf/ebpf-sidecar
     # Maximum map size
     map_size_limit: 10240
+    # Optional cgroup v2 path to filter PIDs (auto-detects BanyanDB if empty)
+    # cgroup_path: /sys/fs/cgroup/docker/<banyandb-container-id>
 
 # Export configuration
 export:
