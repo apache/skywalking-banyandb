@@ -277,8 +277,8 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 
 // SpecWithData pairs a TagFamilySpec with a data file.
 type SpecWithData struct {
-	Spec     []*streamv1.TagFamilySpec
 	DataFile string
+	Spec     []*streamv1.TagFamilySpec
 }
 
 // WriteWithSpec writes stream data using multiple tag_family_specs to specify tag names.

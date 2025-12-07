@@ -211,7 +211,9 @@ func (s *streamService) findTagValueByName(
 	return nil
 }
 
-func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
+func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, metadata *commonv1.Metadata,
+	spec []*streamv1.TagFamilySpec,
+) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
 	if s.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
@@ -267,7 +269,7 @@ func (s *streamService) publishMessages(
 	return []string{nodeID}, nil
 }
 
-func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer) {
+func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, stream streamv1.StreamService_WriteServer) {
 	if metadata == nil {
 		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
 		return
@@ -276,7 +278,7 @@ func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.St
 		s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
 	}
 	s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
-	if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
+	if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageID}); errResp != nil {
 		if dl := s.l.Debug(); dl.Enabled() {
 			dl.Err(errResp).Msg("failed to send stream write response")
 		}

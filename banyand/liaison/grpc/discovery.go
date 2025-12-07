@@ -267,6 +267,7 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	case schema.KindTrace:
 		trace := schemaMetadata.Spec.(*databasev1.Trace)
 		e.traceMap[id] = trace
+	default:
 	}
 }
 
