@@ -136,7 +136,7 @@ func Initialize(addr string, now time.Time) {
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
 	time.Sleep(5 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
-	casestrace.WriteWithSpec(conn, "sw", "test-trace-group-spec", now.Add(2*time.Minute), interval,
+	casestrace.WriteWithSpec(conn, "sw", "test-trace-spec", now.Add(2*time.Minute), interval,
 		casestrace.SpecWithData{
 			Spec: &tracev1.TagSpec{
 				TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "span_id", "timestamp"},

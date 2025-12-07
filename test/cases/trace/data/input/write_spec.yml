@@ -16,7 +16,7 @@
 # under the License.
 
 name: "sw"
-groups: ["test-trace-group-spec"]
+groups: ["test-trace-spec"]
 tag_projection: ["trace_id", "state", "duration", "span_id"]
 criteria:
   condition:

@@ -1,6 +1,6 @@
 {
     "metadata": {
-        "name": "test-trace-group-spec"
+        "name": "test-trace-spec"
     },
     "catalog": "CATALOG_TRACE",
     "resource_opts": {

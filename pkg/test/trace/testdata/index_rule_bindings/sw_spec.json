@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "sw-spec-index-rule-binding",
-    "group": "test-trace-group-spec"
+    "group": "test-trace-spec"
   },
   "rules": ["duration", "timestamp"],
   "subject": {

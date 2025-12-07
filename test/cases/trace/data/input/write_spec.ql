@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT trace_id, state, duration, span_id FROM TRACE sw IN test-trace-group-spec
+SELECT trace_id, state, duration, span_id FROM TRACE sw IN test-trace-spec
 TIME > '-15m'
 WHERE trace_id IN ('spec_trace_001', 'spec_trace_003')
