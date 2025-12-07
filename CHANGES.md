@@ -12,6 +12,7 @@ Release Notes.
 - Add sorted query support for the Property.
 - Update bydbQL to add sorted query support for the Property.
 - Remove the windows arch for binary and docker image.
+- Support writing data with specifications.
 
 ### Bug Fixes
 
