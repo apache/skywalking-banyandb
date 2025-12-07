@@ -118,7 +118,6 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return errors.New("metadata is required for the first request of gRPC stream")
 		}
 		isFirstRequest = false
-
 		if writeRequest.GetDataPointSpec() != nil {
 			spec = writeRequest.GetDataPointSpec()
 			nodeSpecSent = make(map[string]bool)
@@ -148,7 +147,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 	if metadata.ModRevision > 0 {
 		measureCache, existed := ms.entityRepo.getLocator(getID(metadata))
 		if !existed {
-			ms.l.Error().Stringer("written", writeRequest).Msg("failed to measure schema not found")
+			ms.l.Error().Stringer("written", writeRequest).Msg("measure schema not found")
 			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}

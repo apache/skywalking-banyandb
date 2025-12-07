@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	caseproperty "github.com/apache/skywalking-banyandb/test/cases/property/data"
@@ -43,6 +45,33 @@ func Initialize(addr string, now time.Time) {
 	casesstreamdata.Write(conn, "sw", now, interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
 	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
+	casesstreamdata.WriteWithSpec(conn, "sw", "default-spec", now.Add(2*time.Minute), interval,
+		casesstreamdata.SpecWithData{
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+				{
+					Name:     "searchable",
+					TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "start_time", "http.method", "status_code", "span_id"},
+				},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		casesstreamdata.SpecWithData{
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "searchable",
+					TagNames: []string{"span_id", "status_code", "http.method", "duration", "state", "endpoint_id", "service_instance_id", "start_time", "service_id", "trace_id"},
+				},
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
 	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
@@ -107,6 +136,19 @@ func Initialize(addr string, now time.Time) {
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
 	time.Sleep(5 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
+	casestrace.WriteWithSpec(conn, "sw", "test-trace-group-spec", now.Add(2*time.Minute), interval,
+		casestrace.SpecWithData{
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "span_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		casestrace.SpecWithData{
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"span_id", "duration", "endpoint_id", "service_instance_id", "service_id", "state", "trace_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
 	// property
 	caseproperty.Write(conn, "sw1")
 	caseproperty.Write(conn, "sw2")

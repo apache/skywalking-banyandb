@@ -59,4 +59,5 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	g.Entry("multi-groups: new tag", helpers.Args{Input: "multi_group_new_tag", Duration: 1 * time.Hour}),
 	g.Entry("multi-groups: tag type change", helpers.Args{Input: "multi_group_tag_type", Duration: 1 * time.Hour}),
 	g.Entry("multi-groups: sort by duration", helpers.Args{Input: "multi_group_sort_duration", Duration: 1 * time.Hour}),
+	g.Entry("write spec", helpers.Args{Input: "write_spec", Duration: 1 * time.Hour, DisOrder: true}),
 )

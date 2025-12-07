@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -74,33 +76,147 @@ func (s *streamService) activeQueryAccessLog(root string, sampled bool) (err err
 	return nil
 }
 
-func (s *streamService) validateTimestamp(writeEntity *streamv1.WriteRequest) error {
-	if err := timestamp.CheckPb(writeEntity.GetElement().Timestamp); err != nil {
-		s.l.Error().Stringer("written", writeEntity).Err(err).Msg("the element time is invalid")
-		return err
+func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
+	metadata *commonv1.Metadata, stream streamv1.StreamService_WriteServer,
+) modelv1.Status {
+	if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
+		s.l.Error().Err(errTime).Stringer("written", writeEntity).Msg("the element time is invalid")
+		s.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream)
+		return modelv1.Status_STATUS_INVALID_TIMESTAMP
 	}
-	return nil
-}
 
-func (s *streamService) validateMetadata(writeEntity *streamv1.WriteRequest) error {
-	if writeEntity.Metadata.ModRevision > 0 {
-		streamCache, existed := s.entityRepo.getLocator(getID(writeEntity.GetMetadata()))
+	if metadata.ModRevision > 0 {
+		streamCache, existed := s.entityRepo.getLocator(getID(metadata))
 		if !existed {
-			return errors.New("stream schema not found")
+			s.l.Error().Stringer("written", writeEntity).Msg("stream schema not found")
+			s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream)
+			return modelv1.Status_STATUS_NOT_FOUND
 		}
-		if writeEntity.Metadata.ModRevision != streamCache.ModRevision {
-			return errors.New("expired stream schema")
+		if metadata.ModRevision != streamCache.ModRevision {
+			s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream)
+			return modelv1.Status_STATUS_EXPIRED_SCHEMA
+		}
+	}
+
+	return modelv1.Status_STATUS_SUCCEED
+}
+
+func (s *streamService) navigate(metadata *commonv1.Metadata,
+	writeRequest *streamv1.WriteRequest, spec []*streamv1.TagFamilySpec,
+) (pbv1.EntityValues, common.ShardID, error) {
+	tagFamilies := writeRequest.GetElement().GetTagFamilies()
+	if spec == nil {
+		return s.navigateByLocator(metadata, tagFamilies)
+	}
+	return s.navigateByTagSpec(metadata, spec, tagFamilies)
+}
+
+func (s *streamService) navigateByTagSpec(
+	metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec, tagFamilies []*modelv1.TagFamilyForWrite,
+) (pbv1.EntityValues, common.ShardID, error) {
+	shardNum, existed := s.groupRepo.shardNum(metadata.Group)
+	if !existed {
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
+	}
+	id := getID(metadata)
+	stream, ok := s.entityRepo.getStream(id)
+	if !ok {
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding stream schema by: %v", metadata)
+	}
+	specFamilyMap, specTagMaps := s.buildSpecMaps(spec)
+
+	entityValues := s.findTagValuesByNames(
+		metadata.Name,
+		stream.GetTagFamilies(),
+		tagFamilies,
+		stream.GetEntity().GetTagNames(),
+		specFamilyMap,
+		specTagMaps,
+	)
+	entity, err := entityValues.ToEntity()
+	if err != nil {
+		return nil, common.ShardID(0), err
+	}
+
+	shardID, err := partition.ShardID(entity.Marshal(), shardNum)
+	if err != nil {
+		return nil, common.ShardID(0), err
+	}
+	return entityValues, common.ShardID(shardID), nil
+}
+
+func (s *streamService) buildSpecMaps(spec []*streamv1.TagFamilySpec) (map[string]int, map[string]map[string]int) {
+	specFamilyMap := make(map[string]int)
+	specTagMaps := make(map[string]map[string]int)
+	for i, specFamily := range spec {
+		specFamilyMap[specFamily.GetName()] = i
+		tagMap := make(map[string]int)
+		for j, tagName := range specFamily.GetTagNames() {
+			tagMap[tagName] = j
+		}
+		specTagMaps[specFamily.GetName()] = tagMap
+	}
+	return specFamilyMap, specTagMaps
+}
+
+func (s *streamService) findTagValuesByNames(
+	subject string,
+	schemaFamilies []*databasev1.TagFamilySpec,
+	srcTagFamilies []*modelv1.TagFamilyForWrite,
+	tagNames []string,
+	specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) pbv1.EntityValues {
+	entityValues := make(pbv1.EntityValues, len(tagNames)+1)
+	entityValues[0] = pbv1.EntityStrValue(subject)
+	for i, tagName := range tagNames {
+		tagValue := s.findTagValueByName(schemaFamilies, srcTagFamilies, tagName, specFamilyMap, specTagMaps)
+		if tagValue == nil {
+			entityValues[i+1] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+		} else {
+			entityValues[i+1] = tagValue
+		}
+	}
+	return entityValues
+}
+
+func (s *streamService) findTagValueByName(
+	schemaFamilies []*databasev1.TagFamilySpec,
+	srcTagFamilies []*modelv1.TagFamilyForWrite,
+	tagName string,
+	specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) *modelv1.TagValue {
+	for _, schemaFamily := range schemaFamilies {
+		for _, schemaTag := range schemaFamily.GetTags() {
+			if schemaTag.GetName() != tagName {
+				continue
+			}
+			familyIdx, ok := specFamilyMap[schemaFamily.GetName()]
+			if !ok || familyIdx >= len(srcTagFamilies) {
+				return nil
+			}
+			tagMap := specTagMaps[schemaFamily.GetName()]
+			if tagMap == nil {
+				return nil
+			}
+			tagIdx, ok := tagMap[tagName]
+			if !ok || tagIdx >= len(srcTagFamilies[familyIdx].GetTags()) {
+				return nil
+			}
+			return srcTagFamilies[familyIdx].GetTags()[tagIdx]
 		}
 	}
 	return nil
 }
 
-func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
+func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
 	if s.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+			tagValues, shardID, err = s.navigate(metadata, writeEntity, spec)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
 				return
 			}
@@ -111,24 +227,37 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest) (t
 			}
 		}
 	}
-	return s.navigateByLocator(writeEntity.GetMetadata(), writeEntity.GetElement().GetTagFamilies())
+	return s.navigate(metadata, writeEntity, spec)
 }
 
 func (s *streamService) publishMessages(
 	ctx context.Context,
 	publisher queue.BatchPublisher,
 	writeEntity *streamv1.WriteRequest,
+	metadata *commonv1.Metadata,
+	spec []*streamv1.TagFamilySpec,
 	shardID common.ShardID,
 	tagValues pbv1.EntityValues,
+	nodeMetadataSent map[string]bool,
+	nodeSpecSent map[string]bool,
 ) ([]string, error) {
 	iwr := &streamv1.InternalWriteRequest{
 		Request:      writeEntity,
 		ShardId:      uint32(shardID),
 		EntityValues: tagValues[1:].Encode(),
 	}
-	nodeID, err := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), 0)
+	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
 	if err != nil {
 		return nil, err
+	}
+
+	if !nodeMetadataSent[nodeID] {
+		iwr.Request.Metadata = metadata
+		nodeMetadataSent[nodeID] = true
+	}
+	if spec != nil && !nodeSpecSent[nodeID] {
+		iwr.Request.TagFamilySpec = spec
+		nodeSpecSent[nodeID] = true
 	}
 
 	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
@@ -138,20 +267,24 @@ func (s *streamService) publishMessages(
 	return []string{nodeID}, nil
 }
 
-func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
-	reply := func(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer, logger *logger.Logger) {
-		if status != modelv1.Status_STATUS_SUCCEED {
-			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
-		}
-		s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
-		if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
-			if dl := logger.Debug(); dl.Enabled() {
-				dl.Err(errResp).Msg("failed to send stream write response")
-			}
-			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
-		}
+func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageId uint64, stream streamv1.StreamService_WriteServer) {
+	if metadata == nil {
+		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
+		return
 	}
+	if status != modelv1.Status_STATUS_SUCCEED {
+		s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
+	}
+	s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
+	if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageId}); errResp != nil {
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to send stream write response")
+		}
+		s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
+	}
+}
 
+func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
@@ -169,7 +302,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 					}
 				}
 			}
-			reply(ssm.metadata, code, ssm.messageID, stream, s.l)
+			s.sendReply(ssm.metadata, code, ssm.messageID, stream)
 		}
 		if err != nil {
 			s.l.Error().Err(err).Msg("failed to close the publisher")
@@ -182,6 +315,13 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	}()
 
 	ctx := stream.Context()
+
+	var metadata *commonv1.Metadata
+	var spec []*streamv1.TagFamilySpec
+	isFirstRequest := true
+	nodeMetadataSent := make(map[string]bool)
+	nodeSpecSent := make(map[string]bool)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -200,30 +340,31 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			return err
 		}
 
+		if writeEntity.GetMetadata() != nil {
+			metadata = writeEntity.GetMetadata()
+			nodeMetadataSent = make(map[string]bool)
+		} else if isFirstRequest {
+			s.l.Error().Msg("metadata is required for the first request of gRPC stream")
+			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetMessageId(), stream)
+			return errors.New("metadata is required for the first request of gRPC stream")
+		}
+		isFirstRequest = false
+		if writeEntity.GetTagFamilySpec() != nil {
+			spec = writeEntity.GetTagFamilySpec()
+			nodeSpecSent = make(map[string]bool)
+		}
+
 		requestCount++
-		s.metrics.totalStreamMsgReceived.Inc(1, writeEntity.Metadata.Group, "stream", "write")
+		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
 
-		if err = s.validateTimestamp(writeEntity); err != nil {
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream, s.l)
+		if s.validateWriteRequest(writeEntity, metadata, stream) != modelv1.Status_STATUS_SUCCEED {
 			continue
 		}
 
-		if err = s.validateMetadata(writeEntity); err != nil {
-			status := modelv1.Status_STATUS_INTERNAL_ERROR
-			if errors.Is(err, errors.New("stream schema not found")) {
-				status = modelv1.Status_STATUS_NOT_FOUND
-			} else if errors.Is(err, errors.New("expired stream schema")) {
-				status = modelv1.Status_STATUS_EXPIRED_SCHEMA
-			}
-			s.l.Error().Err(err).Stringer("written", writeEntity).Msg("metadata validation failed")
-			reply(writeEntity.GetMetadata(), status, writeEntity.GetMessageId(), stream, s.l)
-			continue
-		}
-
-		tagValues, shardID, err := s.navigateWithRetry(writeEntity)
+		tagValues, shardID, err := s.navigateWithRetry(writeEntity, metadata, spec)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
 			continue
 		}
 
@@ -233,15 +374,15 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			}
 		}
 
-		nodes, err := s.publishMessages(ctx, publisher, writeEntity, shardID, tagValues)
+		nodes, err := s.publishMessages(ctx, publisher, writeEntity, metadata, spec, shardID, tagValues, nodeMetadataSent, nodeSpecSent)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream, s.l)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
 			continue
 		}
 
 		succeedSent = append(succeedSent, succeedSentMessage{
-			metadata:  writeEntity.GetMetadata(),
+			metadata:  metadata,
 			messageID: writeEntity.GetMessageId(),
 			nodes:     nodes,
 		})
