@@ -772,6 +772,9 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 	bw.Flush(mp.partMetadata)
 
 	// Update key range in part metadata
+	sort.Slice(es.userKeys, func(i, j int) bool {
+		return es.userKeys[i] < es.userKeys[j]
+	})
 	if len(es.userKeys) > 0 {
 		mp.partMetadata.MinKey = es.userKeys[0]
 		mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
