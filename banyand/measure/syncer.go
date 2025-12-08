@@ -160,6 +160,14 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		},
 	)
 
+	// Stream series metadata if available
+	if part.seriesMetadata != nil {
+		files = append(files, queue.FileInfo{
+			Name:   measureSeriesMetadataName,
+			Reader: part.seriesMetadata.SequentialRead(),
+		})
+	}
+
 	// Stream tag families data.
 	if part.tagFamilies != nil {
 		for name, reader := range part.tagFamilies {

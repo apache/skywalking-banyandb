@@ -107,8 +107,18 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(es.metadataDocs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = es.metadataDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				}
+			}
 			if es.tsTable != nil && es.dataPoints != nil {
-				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano())
+				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
 				releaseDataPoints(es.dataPoints)
 			}
 			nodes := g.queue.GetNodes(es.shardID)

@@ -285,10 +285,10 @@ func (tst *tsTable) Close() error {
 }
 
 func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
-	tst.mustAddDataPointsWithSegmentID(dps, 0)
+	tst.mustAddDataPointsWithSegmentID(dps, 0, nil)
 }
 
-func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID int64) {
+func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID int64, seriesMetadata []byte) {
 	if len(dps.seriesIDs) == 0 {
 		return
 	}
@@ -296,6 +296,11 @@ func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID in
 	mp := generateMemPart()
 	mp.mustInitFromDataPoints(dps)
 	mp.segmentID = segmentID
+	if len(seriesMetadata) > 0 {
+		// Copy series metadata to avoid sharing the underlying slice
+		mp.seriesMetadata = make([]byte, len(seriesMetadata))
+		copy(mp.seriesMetadata, seriesMetadata)
+	}
 	tst.mustAddMemPart(mp)
 }
 
