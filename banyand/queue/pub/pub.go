@@ -146,17 +146,20 @@ func (p *pub) Serve() run.StopNotify {
 		// Listen for certificate update events
 		certUpdateCh := p.caCertReloader.GetUpdateChannel()
 		stopCh := p.closer.CloseNotify()
-		go func() {
-			for {
-				select {
-				case <-certUpdateCh:
-					p.log.Info().Msg("CA certificate updated, reconnecting clients")
-					p.reconnectAllClients()
-				case <-stopCh:
-					return
+		if p.closer.AddRunning() {
+			go func() {
+				defer p.closer.Done()
+				for {
+					select {
+					case <-certUpdateCh:
+						p.log.Info().Msg("CA certificate updated, reconnecting clients")
+						p.reconnectAllClients()
+					case <-stopCh:
+						return
+					}
 				}
-			}
-		}()
+			}()
+		}
 		return stopCh
 	}
 
@@ -512,10 +515,21 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 
 // reconnectAllClients reconnects all active clients when CA certificate is updated.
 func (p *pub) reconnectAllClients() {
-	// Collect nodes from p.register with lock
+	// Collect nodes and close connections
 	p.mu.Lock()
 	nodesToReconnect := make([]schema.Metadata, 0, len(p.registered))
-	for _, node := range p.registered {
+	for name, node := range p.registered {
+		// Handle evictable nodes: close channel and remove from evictable
+		if en, ok := p.evictable[name]; ok {
+			close(en.c)
+			delete(p.evictable, name)
+		}
+		// Handle active nodes: close connection and remove from active
+		if client, ok := p.active[name]; ok {
+			_ = client.conn.Close()
+			delete(p.active, name)
+			p.deleteClient(client.md)
+		}
 		md := schema.Metadata{
 			TypeMeta: schema.TypeMeta{
 				Kind: schema.KindNode,
@@ -526,11 +540,8 @@ func (p *pub) reconnectAllClients() {
 	}
 	p.mu.Unlock()
 
-	// Reconnect all nodes using OnDelete and OnAddOrUpdate
+	// Reconnect with new credentials
 	for _, md := range nodesToReconnect {
-		// Call OnDelete to properly clean up the old connection
-		p.OnDelete(md)
-		// Call OnAddOrUpdate to reconnect with new certificate
 		p.OnAddOrUpdate(md)
 	}
 }
