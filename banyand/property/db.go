@@ -30,6 +30,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -37,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -169,15 +171,48 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if sLst == nil {
 		return nil, nil
 	}
-	var res []*queryProperty
-	for _, s := range *sLst {
-		r, err := s.search(ctx, iq, int(req.Limit))
-		if err != nil {
-			return nil, err
+
+	if req.OrderBy == nil {
+		var res []*queryProperty
+		for _, s := range *sLst {
+			r, searchErr := s.search(ctx, iq, nil, int(req.Limit))
+			if searchErr != nil {
+				return nil, searchErr
+			}
+			res = append(res, r...)
 		}
-		res = append(res, r...)
+		return res, nil
 	}
-	return res, nil
+
+	iters := make([]sort.Iterator[*queryProperty], 0, len(*sLst))
+	for _, s := range *sLst {
+		// Each shard returns pre-sorted results (via SeriesSort)
+		r, searchErr := s.search(ctx, iq, req.OrderBy, int(req.Limit))
+		if searchErr != nil {
+			return nil, searchErr
+		}
+		if len(r) > 0 {
+			// Wrap result slice as iterator and add to merge
+			iters = append(iters, newQueryPropertyIterator(r))
+		}
+	}
+
+	if len(iters) == 0 {
+		return nil, nil
+	}
+
+	// K-way merge
+	isDesc := req.OrderBy.Sort == modelv1.Sort_SORT_DESC
+	mergeIter := sort.NewItemIter(iters, isDesc)
+	defer mergeIter.Close()
+
+	// Collect merged results up to limit
+	result := make([]*queryProperty, 0, req.Limit)
+	for mergeIter.Next() {
+		result = append(result, mergeIter.Val())
+	}
+
+	return result, nil
 }
 
 func (db *database) loadShard(ctx context.Context, id common.ShardID) (*shard, error) {
@@ -276,8 +311,43 @@ func walkDir(root, prefix string, wf walkFn) error {
 }
 
 type queryProperty struct {
-	id         []byte
-	source     []byte
-	timestamp  int64
-	deleteTime int64
+	id          []byte
+	source      []byte
+	sortedValue []byte
+	timestamp   int64
+	deleteTime  int64
+}
+
+// SortedField implements sort.Comparable interface for k-way merge sorting.
+func (q *queryProperty) SortedField() []byte {
+	return q.sortedValue
+}
+
+// queryPropertyIterator wraps a slice of queryProperty to implement sort.Iterator interface.
+type queryPropertyIterator struct {
+	data  []*queryProperty
+	index int
+}
+
+func newQueryPropertyIterator(data []*queryProperty) *queryPropertyIterator {
+	return &queryPropertyIterator{
+		data:  data,
+		index: -1,
+	}
+}
+
+func (it *queryPropertyIterator) Next() bool {
+	it.index++
+	return it.index < len(it.data)
+}
+
+func (it *queryPropertyIterator) Val() *queryProperty {
+	if it.index < 0 || it.index >= len(it.data) {
+		return nil
+	}
+	return it.data[it.index]
+}
+
+func (it *queryPropertyIterator) Close() error {
+	return nil
 }
