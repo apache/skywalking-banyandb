@@ -26,110 +26,61 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-func TestParseIndexRuleLocators(t *testing.T) {
-	tests := []struct {
-		name       string
-		entity     *databasev1.Entity
-		families   []*databasev1.TagFamilySpec
-		indexRules []*databasev1.IndexRule
-		indexMode  bool
-		wantLen    int
-	}{
-		{
-			name: "normal case with all tags present",
-			entity: &databasev1.Entity{
-				TagNames: []string{"entity_tag"},
-			},
-			families: []*databasev1.TagFamilySpec{
-				{
-					Name: "family1",
-					Tags: []*databasev1.TagSpec{
-						{Name: "tag1", Type: databasev1.TagType_TAG_TYPE_STRING},
-						{Name: "tag2", Type: databasev1.TagType_TAG_TYPE_STRING},
-					},
-				},
-			},
-			indexRules: []*databasev1.IndexRule{
-				{
-					Metadata: &commonv1.Metadata{Name: "index1", Id: 1},
-					Tags:     []string{"tag1"},
-				},
-			},
-			indexMode: false,
-			wantLen:   1,
-		},
-		{
-			name: "removed tag case - index rule references non-existent tag",
-			entity: &databasev1.Entity{
-				TagNames: []string{"entity_tag"},
-			},
-			families: []*databasev1.TagFamilySpec{
-				{
-					Name: "family1",
-					Tags: []*databasev1.TagSpec{
-						{Name: "tag1", Type: databasev1.TagType_TAG_TYPE_STRING},
-					},
-				},
-			},
-			indexRules: []*databasev1.IndexRule{
-				{
-					Metadata: &commonv1.Metadata{Name: "index1", Id: 1},
-					Tags:     []string{"tag1", "removed_tag"},
-				},
-			},
-			indexMode: false,
-			wantLen:   1,
-		},
-		{
-			name: "all tags removed from index rule",
-			entity: &databasev1.Entity{
-				TagNames: []string{"entity_tag"},
-			},
-			families: []*databasev1.TagFamilySpec{
-				{
-					Name: "family1",
-					Tags: []*databasev1.TagSpec{
-						{Name: "new_tag", Type: databasev1.TagType_TAG_TYPE_STRING},
-					},
-				},
-			},
-			indexRules: []*databasev1.IndexRule{
-				{
-					Metadata: &commonv1.Metadata{Name: "index1", Id: 1},
-					Tags:     []string{"removed_tag1", "removed_tag2"},
-				},
-			},
-			indexMode: false,
-			wantLen:   1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			locators, fil := ParseIndexRuleLocators(tt.entity, tt.families, tt.indexRules, tt.indexMode)
-			assert.NotNil(t, locators.EntitySet)
-			assert.NotNil(t, fil)
-			assert.Len(t, locators.TagFamilyTRule, tt.wantLen)
-		})
-	}
-}
-
-func TestParseIndexRuleLocators_RemovedTagsIgnored(t *testing.T) {
+func TestParseIndexRuleLocators_Normal(t *testing.T) {
 	entity := &databasev1.Entity{
 		TagNames: []string{"entity_tag"},
 	}
 	families := []*databasev1.TagFamilySpec{
 		{
-			Name: "family1",
+			Name: "family",
 			Tags: []*databasev1.TagSpec{
-				{Name: "existing_tag", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "tag1", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "tag2", Type: databasev1.TagType_TAG_TYPE_STRING},
 			},
 		},
 	}
 	indexRules := []*databasev1.IndexRule{
 		{
-			Metadata: &commonv1.Metadata{Name: "index_with_removed_tag", Id: 1},
-			Tags:     []string{"existing_tag", "removed_tag"},
+			Metadata: &commonv1.Metadata{Name: "index", Id: 1},
+			Tags:     []string{"tag1"},
+		},
+	}
+
+	locators, fil := ParseIndexRuleLocators(entity, families, indexRules, false)
+
+	assert.NotNil(t, locators.EntitySet)
+	assert.NotNil(t, fil)
+	assert.Len(t, locators.TagFamilyTRule, 1)
+	assert.Len(t, locators.TagFamilyTRule[0], 1)
+	assert.NotNil(t, locators.TagFamilyTRule[0]["tag1"])
+	assert.Equal(t, "index", locators.TagFamilyTRule[0]["tag1"].GetMetadata().GetName())
+}
+
+func TestParseIndexRuleLocators_Invalid(t *testing.T) {
+	entity := &databasev1.Entity{
+		TagNames: []string{"entity_tag"},
+	}
+	families := []*databasev1.TagFamilySpec{
+		{
+			Name: "family",
+			Tags: []*databasev1.TagSpec{
+				{Name: "tag1", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "tag2", Type: databasev1.TagType_TAG_TYPE_STRING},
+			},
+		},
+	}
+	indexRules := []*databasev1.IndexRule{
+		{
+			Metadata: &commonv1.Metadata{Name: "valid_index", Id: 1},
+			Tags:     []string{"tag1"},
+		},
+		{
+			Metadata: &commonv1.Metadata{Name: "invalid_index1", Id: 2},
+			Tags:     []string{"non_existent_tag"},
+		},
+		{
+			Metadata: &commonv1.Metadata{Name: "invalid_index2", Id: 3},
+			Tags:     []string{"tag2", "removed_tag"},
 		},
 	}
 
@@ -137,7 +88,10 @@ func TestParseIndexRuleLocators_RemovedTagsIgnored(t *testing.T) {
 
 	assert.Len(t, locators.TagFamilyTRule, 1)
 	assert.Len(t, locators.TagFamilyTRule[0], 1)
-	assert.NotNil(t, locators.TagFamilyTRule[0]["existing_tag"])
-	_, hasRemovedTag := locators.TagFamilyTRule[0]["removed_tag"]
-	assert.False(t, hasRemovedTag, "removed tag should not be in locator")
+	assert.NotNil(t, locators.TagFamilyTRule[0]["tag1"])
+	assert.Equal(t, "valid_index", locators.TagFamilyTRule[0]["tag1"].GetMetadata().GetName())
+	_, hasNonExistentTag := locators.TagFamilyTRule[0]["non_existent_tag"]
+	assert.False(t, hasNonExistentTag)
+	_, hasTag2 := locators.TagFamilyTRule[0]["tag2"]
+	assert.False(t, hasTag2)
 }
