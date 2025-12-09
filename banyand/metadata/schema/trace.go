@@ -19,7 +19,6 @@ package schema
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -98,7 +97,7 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
 	}
-	if err := validateTraceUpdate(prev, trace); err != nil {
+	if err := validate.TraceUpdate(prev, trace); err != nil {
 		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
 	}
 	return e.update(ctx, Metadata{
@@ -124,24 +123,4 @@ func (e *etcdSchemaRegistry) DeleteTrace(ctx context.Context, metadata *commonv1
 
 func formatTraceKey(metadata *commonv1.Metadata) string {
 	return formatKey(traceKeyPrefix, metadata)
-}
-
-func validateTraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
-	reservedTags := map[string]struct{}{
-		newTrace.GetTraceIdTagName():   {},
-		newTrace.GetTimestampTagName(): {},
-		newTrace.GetSpanIdTagName():    {},
-	}
-	newTagSet := make(map[string]struct{})
-	for _, tag := range newTrace.GetTags() {
-		newTagSet[tag.GetName()] = struct{}{}
-	}
-	for _, prevTag := range prevTrace.GetTags() {
-		if _, exists := newTagSet[prevTag.GetName()]; !exists {
-			if _, isReserved := reservedTags[prevTag.GetName()]; isReserved {
-				return fmt.Errorf("cannot delete reserved tag %s", prevTag.GetName())
-			}
-		}
-	}
-	return nil
 }
