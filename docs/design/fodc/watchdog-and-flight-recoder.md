@@ -1,4 +1,4 @@
-# First Occurrence Data Collection (FODC) Development Design
+# Watchdog And Flight Recorder Development Design
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -71,14 +71,12 @@ BanyanDB Metrics Endpoint
 
 #### Core Types
 
-**`Watchdog` Interface**
+**`Watchdog`**
 ```go
-type Watchdog interface {
-    // Start begins polling metrics
-    Start(ctx context.Context) error
-    
-    // Stop stops polling metrics
-    Stop(ctx context.Context) error
+type Watchdog struct {
+	client       *http.Client
+	url          string
+	interval     time.Duration
 }
 ```
 
@@ -105,7 +103,7 @@ type Watchdog interface {
 
 **`--poll-interval`**
 - **Type**: `duration`
-- **Default**: `15s`
+- **Default**: `10s`
 - **Description**: Interval at which the Watchdog polls metrics from the BanyanDB container
 
 **`--metrics-endpoint`**
@@ -146,7 +144,6 @@ type RingBuffer struct {
 **`FlightRecorder`**
 ```go
 type FlightRecorder struct {
-   numSamples int                    // Number of samples per RingBuffer
    nextMetricID MetricID             // Next available metric ID
    index   map[string]MetricID       // Map from metric key string to MetricID
    metrics map[MetricID]*RingBuffer  // Map from MetricID to RingBuffer
@@ -165,8 +162,8 @@ type FlightRecorder struct {
 - Updates the next write position using modulo arithmetic
 - Increments the total count `n`
 
-**`FlightRecorder.NewFlightRecorder(numSamples int) *FlightRecorder`**
-- Creates a new FlightRecorder with specified number of samples per buffer
+**`FlightRecorder.NewFlightRecorder() *FlightRecorder`**
+- Creates a new FlightRecorder
 - Initializes maps for metrics, index, and histograms
 - Returns initialized FlightRecorder instance
 
@@ -183,12 +180,6 @@ type FlightRecorder struct {
 - Looks up MetricID in index map
 - Creates new MetricID and RingBuffer if metric doesn't exist
 - Returns the RingBuffer for the metric
-
-**`FlightRecorder.Samples(key metric.MetricKey, onSample func(float64)) int`**
-- Retrieves samples from a metric's RingBuffer
-- Calls `onSample` callback for each sample
-- Handles circular buffer reading logic
-- Returns total number of samples written
 
 **`FlightRecorder.UpdateHistograms(hs map[string]metric.Histogram)`**
 - Updates histogram metrics in the flight recorder
@@ -273,7 +264,6 @@ type Histogram struct {
    ↓
 4. Parse Metrics Using metrics.Parse()
    - Parse HELP lines for descriptions
-   - Parse TYPE lines for metric types
    - Parse metric lines with labels and values
    ↓
 5. Convert to RawMetric Structures
@@ -288,7 +278,7 @@ type Histogram struct {
    c. FlightRecorder.getMetric() looks up MetricID in index map
    d. If metric doesn't exist:
       - Generate new MetricID
-      - Create new RingBuffer with numSamples capacity
+      - Create new RingBuffer with fixed capacity
       - Store in metrics map and index map
    e. Call RingBuffer.Add() to write value
    f. RingBuffer handles circular overwrite automatically
@@ -303,7 +293,7 @@ type Histogram struct {
 
 **Metrics Package**
 - Test `Parse()` with various Prometheus formats
-- Test HELP and TYPE line parsing
+- Test HELP line parsing
 - Test label parsing (quoted values, special characters)
 - Test edge cases (empty labels, invalid formats, comments)
 - Test performance with large metrics outputs
@@ -311,7 +301,6 @@ type Histogram struct {
 **Flight Recorder Package**
 - Test RingBuffer.Add() write operations
 - Test FlightRecorder.Update() with new and existing metrics
-- Test FlightRecorder.Samples() reading operations
 - Test circular overwrite behavior
 - Test MetricID generation and index mapping
 - Test histogram storage and retrieval
@@ -327,7 +316,6 @@ type Histogram struct {
 
 ### Integration Testing
 
-**End-to-End Flow**
 - Test metrics collection → parsing → buffering
 - Test crash recovery scenario
 - Test buffer overflow handling
@@ -360,8 +348,6 @@ type Histogram struct {
 - Generate metrics
 - Verify metrics buffering through internal checks
 - Verify data persistence across restarts
-
-E2E tests are configured in `test/e2e-v2/cases/flight-recorder/e2e.yaml` with Docker Compose setup in `test/e2e-v2/cases/flight-recorder/docker-compose.yml`.
 
 ## Appendix
 
