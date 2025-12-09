@@ -20,7 +20,6 @@ package lifecycle
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -290,13 +289,6 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 	sourceShardID common.ShardID,
 	sidxPath string,
 ) ([]queue.StreamingPartData, []func(), error) {
-	// Check if sidx directory exists
-	if _, err := os.Stat(sidxPath); os.IsNotExist(err) {
-		mv.logger.Debug().
-			Str("path", sidxPath).
-			Msg("sidx directory does not exist, skipping")
-		return nil, nil, nil
-	}
 	// Sidx structure: sidx/{index-name}/{part-id}/files
 	// Find all index directories in the sidx directory
 	entries := mv.lfs.ReadDir(sidxPath)
