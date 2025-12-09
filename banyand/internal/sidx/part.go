@@ -770,12 +770,6 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 
 	// Flush the block writer to finalize metadata
 	bw.Flush(mp.partMetadata)
-
-	// Update key range in part metadata
-	if len(es.userKeys) > 0 {
-		mp.partMetadata.MinKey = es.userKeys[0]
-		mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
-	}
 }
 
 // mustFlush flushes the memory part to disk with tag-based file organization.
