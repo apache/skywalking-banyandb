@@ -760,7 +760,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "max(rate(process_cpu_seconds_total{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval]) / banyandb_system_cpu_num{job=~\"$job\", pod=~\"$pod\"}) by (job)",
+          "expr": "avg(rate(process_cpu_seconds_total{job=~\"$job\", pod=~\"$pod\"}[1m])) by (pod)",
           "instant": false,
           "interval": "",
           "legendFormat": "__auto",
@@ -776,7 +776,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The RSS memory usage is the percentage of resident memory used. If the memory usage is over 80%, it may indicate that the memory is almost full.",
+      "description": "The RSS memory usage is the size of resident memory used. ",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -806,6 +806,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
+            "showValues": false,
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -829,7 +830,7 @@
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "bits"
         },
         "overrides": []
       },
@@ -865,7 +866,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(max_over_time(process_resident_memory_bytes{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval]) / sum(banyandb_system_memory_state{job=~\"$job\", pod=~\"$pod\", kind=\"total\"}) by (job,pod)) by(job)",
+          "expr": "max by (pod) (max_over_time(process_resident_memory_bytes{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
