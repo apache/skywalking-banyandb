@@ -403,7 +403,7 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	defer e.closer.Done()
 	hasTrailingSlash := strings.HasSuffix(prefix, "/")
 	prefix = e.prependNamespace(prefix)
-	if hasTrailingSlash {
+	if hasTrailingSlash && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
 	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
