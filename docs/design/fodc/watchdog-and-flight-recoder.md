@@ -314,13 +314,6 @@ type Histogram struct {
 - Test error handling for connection failures
 - Test metrics forwarding to Flight Recorder
 
-### Integration Testing
-
-- Test metrics collection → parsing → buffering
-- Test crash recovery scenario
-- Test buffer overflow handling
-- Test concurrent metric writes
-
 ### E2E Testing
 
 **Test Case 1: Basic Metrics Buffering**
@@ -335,19 +328,6 @@ type Histogram struct {
 - Verify circular overwrite behavior
 - Verify newest metrics are preserved
 - Verify oldest metrics are overwritten correctly
-
-**Test Case 3: Crash Recovery**
-- Start BanyanDB
-- Generate metrics and wait for buffering
-- Forcefully terminate BanyanDB process
-- Restart BanyanDB
-- Verify metrics are still available through internal checks
-
-**Test Case 4: Crash Recovery Verification**
-- Start BanyanDB
-- Generate metrics
-- Verify metrics buffering through internal checks
-- Verify data persistence across restarts
 
 ## Appendix
 
