@@ -4,9 +4,8 @@
 1. [Overview](#overview)
 2. [Component Design](#component-design)
 3. [Data Flow](#data-flow)
-4. [API Design](#api-design)
-5. [Testing Strategy](#testing-strategy)
-6. [Appendix](#appendix)
+4. [Testing Strategy](#testing-strategy)
+5. [Appendix](#appendix)
 
 ## Overview
 
@@ -83,12 +82,6 @@ type Watchdog interface {
 }
 ```
 
-**`PollMetrics` Function**
-```go
-// PollMetrics retrieves and parses metrics from the metrics endpoint
-func (w *watchdog) PollMetrics(ctx context.Context) ([]metrics.Metric, error)
-```
-
 #### Key Functions
 
 **`Start(ctx context.Context) error`**
@@ -102,7 +95,7 @@ func (w *watchdog) PollMetrics(ctx context.Context) ([]metrics.Metric, error)
 - Closes HTTP connections
 - Ensures in-flight requests complete
 
-**`PollMetrics(ctx context.Context) ([]metrics.Metric, error)`**
+**`pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)`**
 - Fetches raw metrics text from endpoint
 - Uses metrics package to parse Prometheus text format
 - Returns parsed metrics or error
@@ -132,52 +125,74 @@ func (w *watchdog) PollMetrics(ctx context.Context) ([]metrics.Metric, error)
 
 #### Core Types
 
-**`FlightRecorder` Interface**
+**`MetricID`**
 ```go
-type FlightRecorder interface {
-    // Write adds metrics data to the buffer
-    Write(metrics []MetricEntry) error
-    
-    // Start initializes the flight recorder
-    Start(ctx context.Context) error
-    
-    // Stop stops the flight recorder
-    Stop(ctx context.Context) error
-}
+type MetricID uint32
 ```
-
-**`MetricEntry`**
-```go
-type MetricEntry struct {
-   Name        string
-   Description string
-   Labels      map[string]string
-   Value       float64
-}
-```
+- Unique identifier for each metric stored in the FlightRecorder
+- Auto-incremented for new metrics
 
 **`RingBuffer`**
 ```go
 type RingBuffer struct {
-    next   int        // Next write position in the circular buffer
-    values []float64  // Fixed-size buffer for metric values
-    n      uint64     // Total number of values written (wraps around)
-    ch     chan float64  // Channel for receiving values
-    bindN  uint64     // Binding number for synchronization
+   next   int        // Next write position in the circular buffer
+   values []float64  // Fixed-size buffer for metric values
+   n      uint64     // Total number of values written (wraps around)
 }
 ```
+- Stores metric values in a circular buffer
+- Implements circular overwrite behavior when buffer is full
+
+**`FlightRecorder`**
+```go
+type FlightRecorder struct {
+   numSamples int                    // Number of samples per RingBuffer
+   nextMetricID MetricID             // Next available metric ID
+   index   map[string]MetricID       // Map from metric key string to MetricID
+   metrics map[MetricID]*RingBuffer  // Map from MetricID to RingBuffer
+   histograms map[string]metric.Histogram  // Map for histogram metrics
+}
+```
+- Central store managing all metrics and their buffers
+- Uses MetricID for efficient metric lookup
+- Maintains index mapping metric keys to IDs
+- Supports histogram metrics separately
 
 #### Key Functions
 
-**`Write(metrics []MetricEntry) error`**
-- Adds metrics data to appropriate RingBuffer
-- Creates new RingBuffer if metric doesn't exist
-- Handles circular overwrite when buffer is full
-- Updates overflow counters
+**`RingBuffer.Add(v float64)`**
+- Adds a value to the ring buffer
+- Updates the next write position using modulo arithmetic
+- Increments the total count `n`
 
-**`Start(ctx context.Context) error`**
-- Initializes the flight recorder
-- Prepares buffer storage
+**`FlightRecorder.NewFlightRecorder(numSamples int) *FlightRecorder`**
+- Creates a new FlightRecorder with specified number of samples per buffer
+- Initializes maps for metrics, index, and histograms
+- Returns initialized FlightRecorder instance
+
+**`FlightRecorder.Update(m *metric.RawMetric)`**
+- Updates flight recorder with a new metric value
+- Sorts labels for consistent key generation
+- Creates MetricKey from metric name and labels
+- Gets or creates RingBuffer for the metric
+- Adds value to the RingBuffer
+
+**`FlightRecorder.getMetric(key metric.MetricKey) *RingBuffer`**
+- Retrieves existing RingBuffer or creates a new one
+- Generates string key from MetricKey
+- Looks up MetricID in index map
+- Creates new MetricID and RingBuffer if metric doesn't exist
+- Returns the RingBuffer for the metric
+
+**`FlightRecorder.Samples(key metric.MetricKey, onSample func(float64)) int`**
+- Retrieves samples from a metric's RingBuffer
+- Calls `onSample` callback for each sample
+- Handles circular buffer reading logic
+- Returns total number of samples written
+
+**`FlightRecorder.UpdateHistograms(hs map[string]metric.Histogram)`**
+- Updates histogram metrics in the flight recorder
+- Copies histogram map into flight recorder's histogram map
 
 **`Stop(ctx context.Context) error`**
 - Gracefully stops the flight recorder
@@ -189,32 +204,60 @@ type RingBuffer struct {
 
 #### Core Types
 
-**`Metric`**
+**`Label`**
 ```go
-type Metric struct {
-   Name        string            // Metric name
-   Labels      map[string]string // Metric labels as key-value pairs
-   Value       float64           // Metric value
-   Description string            // HELP text description if available
+type Label struct {
+	Name  string
+	Value string
+}
+```
+
+**`RawMetric`**
+```go
+type RawMetric struct {
+   Name        string      // Metric name
+   Labels      []Label     // Metric labels as key-value pairs
+   Value       float64     // Metric value
+   Description string      // HELP text description if available
+}
+```
+
+**`MetricKey`**
+```go
+type MetricKey struct {
+   Name   string
+   Labels []Label
+}
+
+func (mk MetricKey) String() string
+```
+- Used for uniquely identifying metrics in FlightRecorder
+- Labels are sorted for consistent key generation
+- String() method generates a canonical representation
+
+**`Histogram`**
+```go
+type Bin struct {
+	Value float64
+	Count uint64
+}
+type Histogram struct {
+	Name   string   // Histogram metric name
+	Labels []Label  // Metric labels as key-value pairs
+	Bins   []Bin    // Histogram bins containing value and count pairs
+   Count  uint64   // _count metric value
+	Sum    float64  // _sum metric value
 }
 ```
 
 #### Key Functions
 
-**`Parse(text string) ([]Metric, error)`**
+**`Parse(text string) ([]RawMetric, error)`**
 - Parses Prometheus text format metrics
 - Handles HELP and TYPE lines
 - Parses metric lines with labels and values
 - Handles comments and empty lines
-- Returns structured Metric objects or error
-
-#### Implementation Requirements
-
-- **Prometheus Format Support**: Parse standard Prometheus text format including HELP lines, TYPE lines, metric lines with labels
-- **Label Parsing**: Parse metric labels in format `metric_name{label1="value1",label2="value2"} value`
-- **Error Handling**: Return descriptive errors for malformed input
-- **Performance**: Optimize for parsing large metrics outputs efficiently
-- **Testing**: Include comprehensive tests for various Prometheus format edge cases
+- Returns structured RawMetric objects or error
 
 ## Data Flow
 
@@ -233,66 +276,25 @@ type Metric struct {
    - Parse TYPE lines for metric types
    - Parse metric lines with labels and values
    ↓
-5. Convert to MetricEntry Structures
+5. Convert to RawMetric Structures
    ↓
 6. Forward to Flight Recorder
    ↓
-7. Flight Recorder.Write() Called
+7. Flight Recorder.Update() Called
    ↓
 8. For Each Metric:
-   a. Look up or create RingBuffer
-   b. Write value to RingBuffer
-   c. Handle circular overwrite if buffer full
-   d. Update timestamps and counters
+   a. Create MetricKey from name and sorted labels
+   b. Call FlightRecorder.Update() with RawMetric
+   c. FlightRecorder.getMetric() looks up MetricID in index map
+   d. If metric doesn't exist:
+      - Generate new MetricID
+      - Create new RingBuffer with numSamples capacity
+      - Store in metrics map and index map
+   e. Call RingBuffer.Add() to write value
+   f. RingBuffer handles circular overwrite automatically
+   g. Update total count n
    ↓
-9. Metrics Buffered in Memory
-```
-
-## API Design
-
-### Flight Recorder Interface
-
-```go
-// FlightRecorder buffers metrics data in a circular buffer
-type FlightRecorder interface {
-    // Write adds metrics data to the buffer
-    Write(metrics []MetricEntry) error
-    
-    // Start initializes the flight recorder
-    Start(ctx context.Context) error
-    
-    // Stop stops the flight recorder
-    Stop(ctx context.Context) error
-}
-```
-
-### Watchdog Interface
-
-```go
-// Watchdog polls metrics from BanyanDB container
-type Watchdog interface {
-    // Start begins polling metrics
-    Start(ctx context.Context) error
-    
-    // Stop stops polling metrics
-    Stop(ctx context.Context) error
-}
-```
-
-### Metrics Package API
-
-```go
-// Parse parses Prometheus text format metrics and returns a slice of Metric objects
-func Parse(text string) ([]Metric, error)
-
-// Metric represents a parsed Prometheus metric
-type Metric struct {
-    Name        string
-    Labels      map[string]string
-    Value       float64
-    Description string
-    Type        MetricType
-}
+9. Metrics Buffered in Memory via FlightRecorder
 ```
 
 ## Testing Strategy
@@ -307,9 +309,12 @@ type Metric struct {
 - Test performance with large metrics outputs
 
 **Flight Recorder Package**
-- Test RingBuffer write and read operations
+- Test RingBuffer.Add() write operations
+- Test FlightRecorder.Update() with new and existing metrics
+- Test FlightRecorder.Samples() reading operations
 - Test circular overwrite behavior
-- Test buffer status aggregation
+- Test MetricID generation and index mapping
+- Test histogram storage and retrieval
 - Test concurrent writes
 - Test error handling
 
@@ -327,8 +332,6 @@ type Metric struct {
 - Test crash recovery scenario
 - Test buffer overflow handling
 - Test concurrent metric writes
-
-E2E tests are configured in `test/e2e-v2/cases/flight-recorder/e2e.yaml` with Docker Compose setup in `test/e2e-v2/cases/flight-recorder/docker-compose.yml`.
 
 ### E2E Testing
 
@@ -357,6 +360,8 @@ E2E tests are configured in `test/e2e-v2/cases/flight-recorder/e2e.yaml` with Do
 - Generate metrics
 - Verify metrics buffering through internal checks
 - Verify data persistence across restarts
+
+E2E tests are configured in `test/e2e-v2/cases/flight-recorder/e2e.yaml` with Docker Compose setup in `test/e2e-v2/cases/flight-recorder/docker-compose.yml`.
 
 ## Appendix
 
