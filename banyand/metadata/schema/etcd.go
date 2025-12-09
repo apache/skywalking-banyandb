@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math/big"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -400,7 +401,11 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 		return nil, ErrClosed
 	}
 	defer e.closer.Done()
+	hasTrailingSlash := strings.HasSuffix(prefix, "/")
 	prefix = e.prependNamespace(prefix)
+	if hasTrailingSlash {
+		prefix += "/"
+	}
 	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
