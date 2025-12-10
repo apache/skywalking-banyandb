@@ -394,15 +394,7 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 		})
 	}
 
-	// Series metadata file (optional)
-	seriesMetadataPath := path.Join(partPath, seriesMetadataFilename)
-	if seriesMetadataReader, err := lfs.OpenFile(seriesMetadataPath); err == nil {
-		readers = append(readers, seriesMetadataReader)
-		files = append(files, queue.FileInfo{
-			Name:   measureSeriesMetadataName,
-			Reader: seriesMetadataReader.SequentialRead(),
-		})
-	}
+	// Note: series metadata file is not included in sync as it's only for local debugging purposes
 
 	// Dynamic tag family files (*.tf and *.tfm)
 	ee := lfs.ReadDir(partPath)

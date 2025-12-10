@@ -160,13 +160,7 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		},
 	)
 
-	// Stream series metadata if available
-	if part.seriesMetadata != nil {
-		files = append(files, queue.FileInfo{
-			Name:   measureSeriesMetadataName,
-			Reader: part.seriesMetadata.SequentialRead(),
-		})
-	}
+	// Note: series metadata is not synced to data nodes as it's only for local debugging purposes
 
 	// Stream tag families data.
 	if part.tagFamilies != nil {

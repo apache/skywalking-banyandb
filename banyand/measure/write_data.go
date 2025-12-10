@@ -127,12 +127,6 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		partCtx.writers.timestampsWriter.MustWrite(chunk)
 	case fileName == measureFieldValuesName:
 		partCtx.writers.fieldValuesWriter.MustWrite(chunk)
-	case fileName == measureSeriesMetadataName:
-		// Store series metadata in memPart for persistence
-		if partCtx.memPart.seriesMetadata == nil {
-			partCtx.memPart.seriesMetadata = make([]byte, 0, len(chunk))
-		}
-		partCtx.memPart.seriesMetadata = append(partCtx.memPart.seriesMetadata, chunk...)
 	case strings.HasPrefix(fileName, measureTagFamiliesPrefix):
 		tagName := fileName[len(measureTagFamiliesPrefix):]
 		_, tagWriter := partCtx.writers.getColumnMetadataWriterAndColumnWriter(tagName)

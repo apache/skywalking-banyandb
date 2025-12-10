@@ -441,8 +441,28 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(dps.metadataDocs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = dps.metadataDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				} else {
+					w.l.Debug().Int("metadataDocsCount", len(dps.metadataDocs)).Int("seriesMetadataBytesLen", len(seriesMetadataBytes)).Msg("marshaled series metadata for persistence")
+				}
+			} else {
+				w.l.Debug().Msg("no metadataDocs to persist (this is normal for IndexMode measures)")
+			}
 			if dps.tsTable != nil && dps.dataPoints != nil {
-				dps.tsTable.mustAddDataPoints(dps.dataPoints)
+				// Pass series metadata to tsTable for persistence in part folder
+				// Use segment's time range start as segmentID (similar to liaison mode)
+				segmentID := int64(0)
+				if dps.segment != nil {
+					segmentID = dps.segment.GetTimeRange().Start.UnixNano()
+				}
+				dps.tsTable.mustAddDataPointsWithSegmentID(dps.dataPoints, segmentID, seriesMetadataBytes)
 			}
 			if dps.dataPoints != nil {
 				releaseDataPoints(dps.dataPoints)
