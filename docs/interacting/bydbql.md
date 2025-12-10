@@ -732,7 +732,7 @@ BydbQL for properties is designed for simple key-value lookups and metadata filt
 ### 7.1. Grammar
 
 ```
-property_query      ::= SELECT projection from_property_clause [WHERE criteria] [LIMIT integer] [WITH QUERY_TRACE]
+property_query      ::= SELECT projection from_property_clause [WHERE criteria] [LIMIT integer] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
 from_property_clause ::= "FROM PROPERTY" identifier "IN" ["("] group_list [")"]
 projection          ::= "*" | column_list
 column_list         ::= identifier ("," identifier)*
@@ -766,6 +766,13 @@ SELECT ip, owner
 FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
 LIMIT 50;
+
+-- Find properties by filtering on their tags and order by
+SELECT ip, owner
+FROM PROPERTY server_metadata IN datacenter-1
+WHERE datacenter = 'dc-101' AND in_service = 'true'
+LIMIT 50
+ORDER BY ip;
 
 -- Retrieve a specific property by its unique ID
 SELECT *

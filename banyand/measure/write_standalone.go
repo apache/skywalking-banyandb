@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -71,10 +72,10 @@ func (w *writeCallback) CheckHealth() *common.Error {
 }
 
 func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, writeEvent *measurev1.InternalWriteRequest,
-	stm *measure, is indexSchema, ts int64,
+	stm *measure, is indexSchema, ts int64, metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (uint64, error) {
 	series := &pbv1.Series{
-		Subject:      req.Metadata.Name,
+		Subject:      metadata.Name,
 		EntityValues: writeEvent.EntityValues,
 	}
 	if err := series.Marshal(); err != nil {
@@ -82,7 +83,7 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	}
 
 	if stm.schema.IndexMode {
-		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators)
+		fields := handleIndexMode(stm.schema, req, is.indexRuleLocators, spec)
 		fields = appendEntityTagsToIndexFields(fields, stm, series)
 		doc := index.Document{
 			DocID:        uint64(series.ID),
@@ -101,7 +102,7 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 		return uint64(series.ID), nil
 	}
 
-	fields := appendDataPoints(dpt, ts, series.ID, stm.GetSchema(), req, is.indexRuleLocators)
+	fields := appendDataPoints(dpt, ts, series.ID, stm.GetSchema(), req, is.indexRuleLocators, spec)
 
 	doc := index.Document{
 		DocID:        uint64(series.ID),
@@ -118,7 +119,9 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInGroup, error) {
+func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -126,7 +129,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 	ts := t.UnixNano()
 
-	gn := req.Metadata.Group
+	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -151,16 +154,16 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			break
 		}
 	}
-	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
+	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
+		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
+		return nil, fmt.Errorf("%s has no tag family", metadata)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return nil, fmt.Errorf("%s has more tag families than %s", metadata, stm.schema)
 	}
 	is := stm.indexSchema.Load().(indexSchema)
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
@@ -192,7 +195,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +204,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 }
 
 func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, schema *databasev1.Measure,
-	req *measurev1.WriteRequest, locator partition.IndexRuleLocator,
+	req *measurev1.WriteRequest, locator partition.IndexRuleLocator, spec *measurev1.DataPointSpec,
 ) []index.Field {
-	tagFamily, fields := handleTagFamily(schema, req, locator)
+	tagFamily, fields := handleTagFamily(schema, req, locator, spec)
 	if dest.dataPoints == nil {
 		dest.dataPoints = generateDataPoints()
 		dest.dataPoints.reset()
@@ -214,17 +217,34 @@ func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, sc
 	dataPoints.versions = append(dataPoints.versions, req.DataPoint.Version)
 	dataPoints.seriesIDs = append(dataPoints.seriesIDs, sid)
 
+	var specFieldMap map[string]int
+	if spec != nil {
+		specFieldMap = make(map[string]int)
+		for i, fieldName := range spec.GetFieldNames() {
+			specFieldMap[fieldName] = i
+		}
+	}
+
 	field := nameValues{}
 	for i := range schema.GetFields() {
+		schemaField := schema.GetFields()[i]
 		var v *modelv1.FieldValue
-		if len(req.DataPoint.Fields) <= i {
-			v = pbv1.NullFieldValue
+		if spec != nil {
+			if specIdx, ok := specFieldMap[schemaField.GetName()]; ok && specIdx < len(req.DataPoint.Fields) {
+				v = req.DataPoint.Fields[specIdx]
+			} else {
+				v = pbv1.NullFieldValue
+			}
 		} else {
-			v = req.DataPoint.Fields[i]
+			if len(req.DataPoint.Fields) <= i {
+				v = pbv1.NullFieldValue
+			} else {
+				v = req.DataPoint.Fields[i]
+			}
 		}
 		field.values = append(field.values, encodeFieldValue(
-			schema.GetFields()[i].GetName(),
-			schema.GetFields()[i].FieldType,
+			schemaField.GetName(),
+			schemaField.FieldType,
 			v,
 		))
 	}
@@ -250,35 +270,43 @@ func newDpt(segment storage.Segment[*tsTable, option], timeRange timestamp.TimeR
 	return dpt
 }
 
-func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, locator partition.IndexRuleLocator) ([]nameValues, []index.Field) {
+func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
+	locator partition.IndexRuleLocator, spec *measurev1.DataPointSpec,
+) ([]nameValues, []index.Field) {
 	tagFamilies := make([]nameValues, 0, len(schema.TagFamilies))
+	specFamilyMap, specTagMaps := buildSpecMaps(spec)
 
 	var fields []index.Field
 	for i := range schema.GetTagFamilies() {
-		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.DataPoint.TagFamilies) <= i {
-			tagFamily = pbv1.NullTagFamily
-		} else {
-			tagFamily = req.DataPoint.TagFamilies[i]
-		}
-		tfr := locator.TagFamilyTRule[i]
 		tagFamilySpec := schema.GetTagFamilies()[i]
+		tfr := locator.TagFamilyTRule[i]
+		srcFamily, specTagMap := getSourceFamilyAndTagMap(spec, tagFamilySpec, req, i, specFamilyMap, specTagMaps)
+
 		tf := nameValues{
 			name: tagFamilySpec.Name,
 		}
 		for j := range tagFamilySpec.Tags {
+			t := tagFamilySpec.Tags[j]
+
 			var tagValue *modelv1.TagValue
-			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
-				tagValue = pbv1.NullTagValue
+			if spec != nil {
+				if srcFamily != nil && specTagMap != nil {
+					if srcTagIdx, ok := specTagMap[t.Name]; ok && srcTagIdx < len(srcFamily.Tags) {
+						tagValue = srcFamily.Tags[srcTagIdx]
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 			} else {
-				tagValue = tagFamily.Tags[j]
+				if srcFamily == nil || len(srcFamily.Tags) <= j {
+					tagValue = pbv1.NullTagValue
+				} else {
+					tagValue = srcFamily.Tags[j]
+				}
 			}
 
-			t := tagFamilySpec.Tags[j]
-			encodeTagValue := encodeTagValue(
-				t.Name,
-				t.Type,
-				tagValue)
+			encodeTagValue := encodeTagValue(t.Name, t.Type, tagValue)
 			r, ok := tfr[t.Name]
 			if ok {
 				fieldKey := index.FieldKey{}
@@ -316,30 +344,39 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest, lo
 	return tagFamilies, fields
 }
 
-func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest, locator partition.IndexRuleLocator) []index.Field {
+func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
+	locator partition.IndexRuleLocator, spec *measurev1.DataPointSpec,
+) []index.Field {
+	specFamilyMap, specTagMaps := buildSpecMaps(spec)
+
 	var fields []index.Field
 	for i := range schema.GetTagFamilies() {
-		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.DataPoint.TagFamilies) <= i {
-			tagFamily = pbv1.NullTagFamily
-		} else {
-			tagFamily = req.DataPoint.TagFamilies[i]
-		}
-		tfr := locator.TagFamilyTRule[i]
 		tagFamilySpec := schema.GetTagFamilies()[i]
+		tfr := locator.TagFamilyTRule[i]
+		srcFamily, specTagMap := getSourceFamilyAndTagMap(spec, tagFamilySpec, req, i, specFamilyMap, specTagMaps)
+
 		for j := range tagFamilySpec.Tags {
+			t := tagFamilySpec.Tags[j]
+
 			var tagValue *modelv1.TagValue
-			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
-				tagValue = pbv1.NullTagValue
+			if spec != nil {
+				if srcFamily != nil && specTagMap != nil {
+					if srcTagIdx, ok := specTagMap[t.Name]; ok && srcTagIdx < len(srcFamily.Tags) {
+						tagValue = srcFamily.Tags[srcTagIdx]
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 			} else {
-				tagValue = tagFamily.Tags[j]
+				if srcFamily == nil || len(srcFamily.Tags) <= j {
+					tagValue = pbv1.NullTagValue
+				} else {
+					tagValue = srcFamily.Tags[j]
+				}
 			}
 
-			t := tagFamilySpec.Tags[j]
-			encodeTagValue := encodeTagValue(
-				t.Name,
-				t.Type,
-				tagValue)
+			encodeTagValue := encodeTagValue(t.Name, t.Type, tagValue)
 			r, toIndex := tfr[t.Name]
 			fieldKey := index.FieldKey{}
 			if toIndex {
@@ -415,6 +452,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 	groups := make(map[string]*dataPointsInGroup)
+	var metadata *commonv1.Metadata
+	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -430,8 +469,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetDataPointSpec() != nil {
+			spec = req.GetDataPointSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInGroup)
 			continue
@@ -513,6 +559,41 @@ func encodeFieldValue(name string, fieldType databasev1.FieldType, fieldValue *m
 		logger.Panicf("unsupported field value type: %T", fieldValue.GetValue())
 	}
 	return nv
+}
+
+func buildSpecMaps(spec *measurev1.DataPointSpec) (map[string]int, map[string]map[string]int) {
+	if spec == nil {
+		return nil, nil
+	}
+	specFamilyMap := make(map[string]int)
+	specTagMaps := make(map[string]map[string]int)
+	for i, specFamily := range spec.GetTagFamilySpec() {
+		specFamilyMap[specFamily.GetName()] = i
+		tagMap := make(map[string]int)
+		for j, tagName := range specFamily.GetTagNames() {
+			tagMap[tagName] = j
+		}
+		specTagMaps[specFamily.GetName()] = tagMap
+	}
+	return specFamilyMap, specTagMaps
+}
+
+func getSourceFamilyAndTagMap(spec *measurev1.DataPointSpec, tagFamilySpec *databasev1.TagFamilySpec,
+	req *measurev1.WriteRequest, i int, specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) (*modelv1.TagFamilyForWrite, map[string]int) {
+	var srcFamily *modelv1.TagFamilyForWrite
+	var specTagMap map[string]int
+	if spec != nil {
+		specIdx, ok := specFamilyMap[tagFamilySpec.Name]
+		if ok && specIdx < len(req.DataPoint.TagFamilies) {
+			srcFamily = req.DataPoint.TagFamilies[specIdx]
+		}
+		specTagMap = specTagMaps[tagFamilySpec.Name]
+	} else if len(req.DataPoint.TagFamilies) > i {
+		srcFamily = req.DataPoint.TagFamilies[i]
+	}
+	return srcFamily, specTagMap
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {

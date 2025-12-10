@@ -30,6 +30,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -47,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
@@ -75,6 +77,7 @@ type pub struct {
 	writableProbe   map[string]map[string]struct{}
 	cbStates        map[string]*circuitState
 	caCertPath      string
+	caCertReloader  *pkgtls.Reloader
 	prefix          string
 	retryPolicy     string
 	allowedRoles    []databasev1.Role
@@ -100,7 +103,7 @@ func (p *pub) FlagSet() *run.FlagSet {
 func (p *pub) Validate() error {
 	// simple sanity‑check: if TLS is on, a CA bundle must be provided
 	if p.tlsEnabled && p.caCertPath == "" {
-		return fmt.Errorf("TLS is enabled (--internal-tls), but no CA certificate file was provided (--internal-ca-cert is required)")
+		return fmt.Errorf("TLS is enabled (--data-client-tls), but no CA certificate file was provided (--data-client-ca-cert is required)")
 	}
 	return nil
 }
@@ -110,6 +113,11 @@ func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
 }
 
 func (p *pub) GracefulStop() {
+	// Stop CA certificate reloader if enabled
+	if p.caCertReloader != nil {
+		p.caCertReloader.Stop()
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.evictable {
@@ -126,6 +134,35 @@ func (p *pub) GracefulStop() {
 
 // Serve implements run.Service.
 func (p *pub) Serve() run.StopNotify {
+	// Start CA certificate reloader if enabled
+	if p.caCertReloader != nil {
+		if err := p.caCertReloader.Start(); err != nil {
+			p.log.Error().Err(err).Msg("Failed to start CA certificate reloader")
+			stopCh := p.closer.CloseNotify()
+			return stopCh
+		}
+		p.log.Info().Str("caCertPath", p.caCertPath).Msg("Started CA certificate file monitoring")
+
+		// Listen for certificate update events
+		certUpdateCh := p.caCertReloader.GetUpdateChannel()
+		stopCh := p.closer.CloseNotify()
+		if p.closer.AddRunning() {
+			go func() {
+				defer p.closer.Done()
+				for {
+					select {
+					case <-certUpdateCh:
+						p.log.Info().Msg("CA certificate updated, reconnecting clients")
+						p.reconnectAllClients()
+					case <-stopCh:
+						return
+					}
+				}
+			}()
+		}
+		return stopCh
+	}
+
 	return p.closer.CloseNotify()
 }
 
@@ -332,6 +369,17 @@ func (p *pub) PreRun(context.Context) error {
 	}
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
+
+	// Initialize CA certificate reloader if TLS is enabled and CA cert path is provided
+	if p.tlsEnabled && p.caCertPath != "" {
+		var err error
+		p.caCertReloader, err = pkgtls.NewClientCertReloader(p.caCertPath, p.log)
+		if err != nil {
+			return errors.Wrapf(err, "failed to initialize CA certificate reloader for %s", p.prefix)
+		}
+		p.log.Info().Str("caCertPath", p.caCertPath).Msg("Initialized CA certificate reloader")
+	}
+
 	return nil
 }
 
@@ -441,11 +489,61 @@ func isFailoverError(err error) bool {
 }
 
 func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
+	if !p.tlsEnabled {
+		return grpchelper.SecureOptions(nil, false, false, "")
+	}
+
+	// Use reloader if available (for dynamic reloading)
+	if p.caCertReloader != nil {
+		// Extract server name from the connection (we'll use a default for now)
+		// The actual server name will be validated by the TLS handshake
+		tlsConfig, err := p.caCertReloader.GetClientTLSConfig("")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get TLS config from reloader: %w", err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
+	}
+
+	// Fallback to static file reading if reloader is not available
 	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
 	return opts, nil
+}
+
+// reconnectAllClients reconnects all active clients when CA certificate is updated.
+func (p *pub) reconnectAllClients() {
+	// Collect nodes and close connections
+	p.mu.Lock()
+	nodesToReconnect := make([]schema.Metadata, 0, len(p.registered))
+	for name, node := range p.registered {
+		// Handle evictable nodes: close channel and remove from evictable
+		if en, ok := p.evictable[name]; ok {
+			close(en.c)
+			delete(p.evictable, name)
+		}
+		// Handle active nodes: close connection and remove from active
+		if client, ok := p.active[name]; ok {
+			_ = client.conn.Close()
+			delete(p.active, name)
+			p.deleteClient(client.md)
+		}
+		md := schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+			},
+			Spec: node,
+		}
+		nodesToReconnect = append(nodesToReconnect, md)
+	}
+	p.mu.Unlock()
+
+	// Reconnect with new credentials
+	for _, md := range nodesToReconnect {
+		p.OnAddOrUpdate(md)
+	}
 }
 
 // NewChunkedSyncClient implements queue.Client.
