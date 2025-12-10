@@ -101,7 +101,7 @@ type Watchdog struct {
 
 #### Configuration Flags
 
-**`--poll-interval`**
+**`--poll-metrics-interval`**
 - **Type**: `duration`
 - **Default**: `10s`
 - **Description**: Interval at which the Watchdog polls metrics from the BanyanDB container
@@ -110,6 +110,11 @@ type Watchdog struct {
 - **Type**: `string`
 - **Default**: `http://localhost:2121/metrics`
 - **Description**: URL of the BanyanDB metrics endpoint to poll from
+
+**`--max-metrics-memory-usage-percentage`**
+- **Type**: `int`
+- **Default**: `10`
+- **Description**: Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. The memory limit is obtained from the container's cgroup configuration (see `pkg/cgroups/memory.go`). When metrics memory usage exceeds this percentage, the Flight Recorder will stop accepting new metrics or evict older data. Valid range: 0-100.
 
 ### 2. Flight Recorder Component
 
@@ -148,13 +153,22 @@ type TimestampRingBuffer struct {
 
 **`FlightRecorder`**
 ```go
+type DataSource struct {
+   Name            string
+	Capacity        int
+	TimestampBuffer *TimestampRingBuffer // Store the timestamp of each time polling metrics to RingBuffer
+	MetricBuffers   map[string]*MetricRingBuffer // Map from name+labels to RingBuffer
+}
 type FlightRecorder struct {
-   metrics map[string]*RingBuffer  // Map from name+labels to RingBuffer
-   timestamp TimestampRingBuffer   // Store the timestamp of each time polling metrics
+	DataSources map[string]*DataSource
+	Capacity    int
 }
 ```
-- Central store managing all metrics and their buffers
-- Store the timestamp of each time polling metrics
+- Main container for buffering metrics data in memory
+- Manages multiple DataSources, each representing a distinct metrics collection source
+- Each DataSource maintains its own timestamp buffer and per-metric ring buffers
+- Ensures metrics data persistence across process crashes through in-memory storage
+- Implements circular overwrite behavior when capacity limits are reached
 
 #### Key Functions
 
@@ -163,28 +177,27 @@ type FlightRecorder struct {
 - Updates the next write position using modulo arithmetic
 - Increments the total count `n`
 
-**`FlightRecorder.NewFlightRecorder() *FlightRecorder`**
+**`FlightRecorder.NewFlightRecorder(capacity int) *FlightRecorder`**
 - Creates a new FlightRecorder
-- Initializes maps for metrics, index, and histograms
 - Returns initialized FlightRecorder instance
 
-**`FlightRecorder.Update(m *metric.RawMetric)`**
+**`FlightRecorder.AddDataSource(name string) *DataSource`**
+- Creates a new DataSource
+- Initializes maps for metrics, and timestamp
+- Returns initialized DataSource instance
+
+**`DataSource.Update(m *metric.RawMetric)`**
 - Updates flight recorder with a new metric value
 - Sorts labels for consistent key generation
 - Creates MetricKey from metric name and labels
 - Gets or creates RingBuffer for the metric
 - Adds value to the RingBuffer
 
-**`FlightRecorder.getMetric(key metric.MetricKey) *RingBuffer`**
+**`DataSource.getMetric(key metric.MetricKey) *RingBuffer`**
 - Retrieves existing RingBuffer or creates a new one
 - Generates string key from MetricKey
-- Looks up MetricID in index map
-- Creates new MetricID and RingBuffer if metric doesn't exist
+- Creates new RingBuffer if metric doesn't exist
 - Returns the RingBuffer for the metric
-
-**`FlightRecorder.UpdateHistograms(hs map[string]metric.Histogram)`**
-- Updates histogram metrics in the flight recorder
-- Copies histogram map into flight recorder's histogram map
 
 **`Stop(ctx context.Context) error`**
 - Gracefully stops the flight recorder
@@ -210,7 +223,7 @@ type RawMetric struct {
    Name        string      // Metric name
    Labels      []Label     // Metric labels as key-value pairs
    Value       float64     // Metric value
-   Description string      // HELP text description if available
+   Desc        string      // HELP text description if available
 }
 ```
 
@@ -226,21 +239,6 @@ func (mk MetricKey) String() string
 - Used for uniquely identifying metrics in FlightRecorder
 - Labels are sorted for consistent key generation
 - String() method generates a canonical representation
-
-**`Histogram`**
-```go
-type Bin struct {
-	Value float64
-	Count uint64
-}
-type Histogram struct {
-	Name   string   // Histogram metric name
-	Labels []Label  // Metric labels as key-value pairs
-	Bins   []Bin    // Histogram bins containing value and count pairs
-   Count  uint64   // _count metric value
-	Sum    float64  // _sum metric value
-}
-```
 
 #### Key Functions
 
@@ -276,11 +274,10 @@ type Histogram struct {
 8. For Each Metric:
    a. Create MetricKey from name and sorted labels
    b. Call FlightRecorder.Update() with RawMetric
-   c. FlightRecorder.getMetric() looks up MetricID in index map
+   c. FlightRecorder.getMetric()
    d. If metric doesn't exist:
-      - Generate new MetricID
       - Create new RingBuffer with fixed capacity
-      - Store in metrics map and index map
+      - Store in metrics map
    e. Call RingBuffer.Add() to write value
    f. RingBuffer handles circular overwrite automatically
    g. Update total count n
@@ -303,7 +300,6 @@ type Histogram struct {
 - Test RingBuffer.Add() write operations
 - Test FlightRecorder.Update() with new and existing metrics
 - Test circular overwrite behavior
-- Test MetricID generation and index mapping
 - Test histogram storage and retrieval
 - Test concurrent writes
 - Test error handling
