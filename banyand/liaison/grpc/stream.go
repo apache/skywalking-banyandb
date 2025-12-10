@@ -147,8 +147,8 @@ func (s *streamService) navigateByTagSpec(
 }
 
 func (s *streamService) buildSpecMaps(spec []*streamv1.TagFamilySpec) (map[string]int, map[string]map[string]int) {
-	specFamilyMap := make(map[string]int)
-	specTagMaps := make(map[string]map[string]int)
+	specFamilyMap := make(map[string]int, len(spec))
+	specTagMaps := make(map[string]map[string]int, len(spec))
 	for i, specFamily := range spec {
 		specFamilyMap[specFamily.GetName()] = i
 		tagMap := make(map[string]int)
