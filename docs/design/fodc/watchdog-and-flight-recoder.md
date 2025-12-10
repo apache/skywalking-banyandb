@@ -151,7 +151,6 @@ func (rb *RingBuffer[T]) Len() int
 // Capacity returns the maximum capacity of the buffer.
 func (rb *RingBuffer[T]) Capacity() int
 ```
-- Generic ring buffer implementation that eliminates code duplication
 - Stores values of any type T in a circular buffer
 - Implements circular overwrite behavior when buffer is full
 - Provides type-safe operations for both float64 and int64 values
@@ -188,12 +187,12 @@ func NewTimestampRingBuffer(capacity int) *TimestampRingBuffer
 ```go
 type DataSource struct {
    Name            string
-	Capacity        int
+	MaxCapacity     int // Maximum number of unique metrics (MetricBuffers) allowed
 	TimestampBuffer *TimestampRingBuffer // Store the timestamp of each time polling metrics to RingBuffer
 	MetricBuffers   map[string]*MetricRingBuffer // Map from name+labels to MetricRingBuffer
 }
 type FlightRecorder struct {
-	DataSources map[string]*DataSource
+	DataSources []*DataSource
 	Capacity    int
 }
 ```
@@ -220,31 +219,33 @@ type FlightRecorder struct {
 - Adds a timestamp value to the timestamp ring buffer
 - Uses the generic RingBuffer[int64].Add() method
 
-**`FlightRecorder.NewFlightRecorder(capacity int) *FlightRecorder`**
-- Creates a new FlightRecorder
-- Returns initialized FlightRecorder instance
-
-**`FlightRecorder.AddDataSource(name string) *DataSource`**
-- Creates a new DataSource
-- Initializes maps for metrics, and timestamp
-- Returns initialized DataSource instance
-
 **`DataSource.Update(m *metric.RawMetric)`**
-- Updates flight recorder with a new metric value
+- Updates the datasource with a new metric value
 - Sorts labels for consistent key generation
 - Creates MetricKey from metric name and labels
 - Gets or creates RingBuffer for the metric
 - Adds value to the RingBuffer
 
-**`DataSource.getMetric(key metric.MetricKey) *MetricRingBuffer`**
-- Retrieves existing MetricRingBuffer or creates a new one
-- Generates string key from MetricKey
-- Creates new MetricRingBuffer if metric doesn't exist
-- Returns the MetricRingBuffer for the metric
+**`DataSource.Len() int`**
+- Computes the total number of values currently stored in the DataSource
+- Returns the sum of all values stored across all MetricBuffers plus the number of timestamps in TimestampBuffer
+- Each MetricRingBuffer's Len() method provides the count of metric values stored
+- TimestampBuffer's Len() method provides the count of timestamps stored
+- Returns 0 if DataSource is nil or if no buffers are initialized
 
-**`Stop(ctx context.Context) error`**
-- Gracefully stops the flight recorder
-- Ensures all writes complete
+**`FlightRecorder.NewFlightRecorder(capacity int) *FlightRecorder`**
+- Creates a new FlightRecorder
+- Returns initialized FlightRecorder instance
+
+**`FlightRecorder.AddDataSource(name string, maxCapacity int) *DataSource`**
+- Creates a new DataSource with the given name and maxCapacity
+- Initializes maps for metrics, and timestamp
+- Appends the new DataSource to the DataSources array
+- Returns initialized DataSource instance
+
+**`FlightRecorder.GetDataSource(name string) *DataSource`**
+- Searches for a DataSource by name in the DataSources array
+- Returns the DataSource if found, nil otherwise
 
 ### 3. Metrics Package (`fodc/internal/metrics`)
 
@@ -404,7 +405,7 @@ banyand/
 
 ### Prometheus Text Format Reference
 
-**Format**: `metric_name{label1="value1", label2="value2"} value timestamp`
+**Format**: `metric_name{label1="value1", label2="value2"} value`
 
 **Example**:
 ```
@@ -423,4 +424,24 @@ http_request_duration_seconds_bucket{le="0.5"} 200
 http_request_duration_seconds_bucket{le="+Inf"} 300
 http_request_duration_seconds_count 300
 http_request_duration_seconds_sum 45.2
+```
+**Summary Format**:
+```
+# HELP http_request_duration_seconds Request duration summary
+# TYPE http_request_duration_seconds summary
+http_request_duration_seconds{quantile="0.5"} 0.052
+http_request_duration_seconds{quantile="0.9"} 0.120
+http_request_duration_seconds{quantile="0.99"} 0.250
+http_request_duration_seconds_sum 45.2
+http_request_duration_seconds_count 300
+```
+
+**Counter Format**:
+```
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",status="200"} 1234
+http_requests_total{method="POST",status="200"} 567
+http_requests_total{method="GET",status="404"} 89
+http_requests_total{method="POST",status="500"} 12
 ```
