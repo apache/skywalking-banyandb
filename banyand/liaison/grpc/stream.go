@@ -151,7 +151,7 @@ func (s *streamService) buildSpecMaps(spec []*streamv1.TagFamilySpec) (map[strin
 	specTagMaps := make(map[string]map[string]int, len(spec))
 	for i, specFamily := range spec {
 		specFamilyMap[specFamily.GetName()] = i
-		tagMap := make(map[string]int)
+		tagMap := make(map[string]int, len(specFamily.GetTagNames()))
 		for j, tagName := range specFamily.GetTagNames() {
 			tagMap[tagName] = j
 		}
