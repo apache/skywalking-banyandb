@@ -84,27 +84,45 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.shardingKeyRepo.log = log
 }
 
-func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.EntityValues, common.ShardID, error) {
+func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
+) (pbv1.EntityValues, common.ShardID, error) {
 	shardNum, existed := ds.groupRepo.shardNum(metadata.Group)
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
 	id := getID(metadata)
-	entityLocator, existed := ds.entityRepo.getLocator(id)
-	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
+	var entityValues pbv1.EntityValues
+	var shardID common.ShardID
+	var err error
+	if specEntityLocator != nil {
+		entityValues, shardID, err = specEntityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+	} else {
+		entityLocator, existed := ds.entityRepo.getLocator(id)
+		if !existed {
+			return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
+		}
+		entityValues, shardID, err = entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
 	}
-	entityValues, shardID, err := entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
-	shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
-	if !existed {
-		return entityValues, shardID, nil
-	}
-	_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
+	if specShardingKeyLocator != nil {
+		_, shardID, err = specShardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+	} else {
+		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
+		if existed {
+			_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+			if err != nil {
+				return nil, common.ShardID(0), err
+			}
+		}
 	}
 	return entityValues, shardID, nil
 }
@@ -264,9 +282,6 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
 		e.streamMap[id] = stream
-	case schema.KindTrace:
-		trace := schemaMetadata.Spec.(*databasev1.Trace)
-		e.traceMap[id] = trace
 	default:
 	}
 }

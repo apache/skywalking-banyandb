@@ -271,7 +271,12 @@ func (e *etcdSchemaRegistry) prependNamespace(key string) string {
 	if e.namespace == "" {
 		return key
 	}
-	return path.Join("/", e.namespace, key)
+	hasTrailingSlash := strings.HasSuffix(key, "/")
+	result := path.Join("/", e.namespace, key)
+	if hasTrailingSlash && !strings.HasSuffix(result, "/") {
+		result += "/"
+	}
+	return result
 }
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
@@ -401,11 +406,7 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 		return nil, ErrClosed
 	}
 	defer e.closer.Done()
-	hasTrailingSlash := strings.HasSuffix(prefix, "/")
 	prefix = e.prependNamespace(prefix)
-	if hasTrailingSlash && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
 	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err

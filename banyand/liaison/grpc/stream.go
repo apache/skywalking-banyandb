@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -37,11 +36,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+type streamTagFamilySpec struct {
+	*streamv1.TagFamilySpec
+}
+
+func (s streamTagFamilySpec) GetName() string {
+	return s.TagFamilySpec.GetName()
+}
+
+func (s streamTagFamilySpec) GetTagNames() []string {
+	return s.TagFamilySpec.GetTagNames()
+}
 
 type streamService struct {
 	streamv1.UnimplementedStreamServiceServer
@@ -102,123 +112,37 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 	return modelv1.Status_STATUS_SUCCEED
 }
 
-func (s *streamService) navigate(metadata *commonv1.Metadata,
-	writeRequest *streamv1.WriteRequest, spec []*streamv1.TagFamilySpec,
+func (s *streamService) navigate(metadata *commonv1.Metadata, writeRequest *streamv1.WriteRequest,
+	specLocator *specLocator,
 ) (pbv1.EntityValues, common.ShardID, error) {
 	tagFamilies := writeRequest.GetElement().GetTagFamilies()
-	if spec == nil {
-		return s.navigateByLocator(metadata, tagFamilies)
-	}
-	return s.navigateByTagSpec(metadata, spec, tagFamilies)
+	return s.navigateByLocator(metadata, tagFamilies, specLocator, nil)
 }
 
-func (s *streamService) navigateByTagSpec(
-	metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec, tagFamilies []*modelv1.TagFamilyForWrite,
-) (pbv1.EntityValues, common.ShardID, error) {
-	shardNum, existed := s.groupRepo.shardNum(metadata.Group)
-	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
+func (s *streamService) buildSpecLocator(metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec) *specLocator {
+	if spec == nil {
+		return nil
 	}
 	id := getID(metadata)
 	stream, ok := s.entityRepo.getStream(id)
 	if !ok {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding stream schema by: %v", metadata)
+		return nil
 	}
-	specFamilyMap, specTagMaps := s.buildSpecMaps(spec)
-
-	entityValues := s.findTagValuesByNames(
-		metadata.Name,
-		stream.GetTagFamilies(),
-		tagFamilies,
-		stream.GetEntity().GetTagNames(),
-		specFamilyMap,
-		specTagMaps,
-	)
-	entity, err := entityValues.ToEntity()
-	if err != nil {
-		return nil, common.ShardID(0), err
+	specFamilies := make([]tagFamilySpec, len(spec))
+	for i, f := range spec {
+		specFamilies[i] = streamTagFamilySpec{f}
 	}
-
-	shardID, err := partition.ShardID(entity.Marshal(), shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
-	return entityValues, common.ShardID(shardID), nil
-}
-
-func (s *streamService) buildSpecMaps(spec []*streamv1.TagFamilySpec) (map[string]int, map[string]map[string]int) {
-	specFamilyMap := make(map[string]int)
-	specTagMaps := make(map[string]map[string]int)
-	for i, specFamily := range spec {
-		specFamilyMap[specFamily.GetName()] = i
-		tagMap := make(map[string]int)
-		for j, tagName := range specFamily.GetTagNames() {
-			tagMap[tagName] = j
-		}
-		specTagMaps[specFamily.GetName()] = tagMap
-	}
-	return specFamilyMap, specTagMaps
-}
-
-func (s *streamService) findTagValuesByNames(
-	subject string,
-	schemaFamilies []*databasev1.TagFamilySpec,
-	srcTagFamilies []*modelv1.TagFamilyForWrite,
-	tagNames []string,
-	specFamilyMap map[string]int,
-	specTagMaps map[string]map[string]int,
-) pbv1.EntityValues {
-	entityValues := make(pbv1.EntityValues, len(tagNames)+1)
-	entityValues[0] = pbv1.EntityStrValue(subject)
-	for i, tagName := range tagNames {
-		tagValue := s.findTagValueByName(schemaFamilies, srcTagFamilies, tagName, specFamilyMap, specTagMaps)
-		if tagValue == nil {
-			entityValues[i+1] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-		} else {
-			entityValues[i+1] = tagValue
-		}
-	}
-	return entityValues
-}
-
-func (s *streamService) findTagValueByName(
-	schemaFamilies []*databasev1.TagFamilySpec,
-	srcTagFamilies []*modelv1.TagFamilyForWrite,
-	tagName string,
-	specFamilyMap map[string]int,
-	specTagMaps map[string]map[string]int,
-) *modelv1.TagValue {
-	for _, schemaFamily := range schemaFamilies {
-		for _, schemaTag := range schemaFamily.GetTags() {
-			if schemaTag.GetName() != tagName {
-				continue
-			}
-			familyIdx, ok := specFamilyMap[schemaFamily.GetName()]
-			if !ok || familyIdx >= len(srcTagFamilies) {
-				return nil
-			}
-			tagMap := specTagMaps[schemaFamily.GetName()]
-			if tagMap == nil {
-				return nil
-			}
-			tagIdx, ok := tagMap[tagName]
-			if !ok || tagIdx >= len(srcTagFamilies[familyIdx].GetTags()) {
-				return nil
-			}
-			return srcTagFamilies[familyIdx].GetTags()[tagIdx]
-		}
-	}
-	return nil
+	return newSpecLocator(stream.GetTagFamilies(), stream.GetEntity().GetTagNames(), specFamilies)
 }
 
 func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, metadata *commonv1.Metadata,
-	spec []*streamv1.TagFamilySpec,
+	specLocator *specLocator,
 ) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
 	if s.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = s.navigate(metadata, writeEntity, spec)
+			tagValues, shardID, err = s.navigate(metadata, writeEntity, specLocator)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
 				return
 			}
@@ -229,7 +153,7 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, me
 			}
 		}
 	}
-	return s.navigate(metadata, writeEntity, spec)
+	return s.navigate(metadata, writeEntity, specLocator)
 }
 
 func (s *streamService) publishMessages(
@@ -320,6 +244,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 
 	var metadata *commonv1.Metadata
 	var spec []*streamv1.TagFamilySpec
+	var specLocator *specLocator
 	isFirstRequest := true
 	nodeMetadataSent := make(map[string]bool)
 	nodeSpecSent := make(map[string]bool)
@@ -354,6 +279,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		if writeEntity.GetTagFamilySpec() != nil {
 			spec = writeEntity.GetTagFamilySpec()
 			nodeSpecSent = make(map[string]bool)
+			specLocator = s.buildSpecLocator(metadata, spec)
 		}
 
 		requestCount++
@@ -363,7 +289,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			continue
 		}
 
-		tagValues, shardID, err := s.navigateWithRetry(writeEntity, metadata, spec)
+		tagValues, shardID, err := s.navigateWithRetry(writeEntity, metadata, specLocator)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
 			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
