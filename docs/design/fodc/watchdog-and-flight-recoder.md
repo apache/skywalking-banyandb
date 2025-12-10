@@ -158,8 +158,8 @@ func (rb *RingBuffer[T]) Capacity() int
 **`MetricRingBuffer`**
 ```go
 type MetricRingBuffer struct {
-   *RingBuffer[float64]  // Embedded generic ring buffer for metric values
-   desc []string         // HELP content descriptions
+   *RingBuffer[float64]             // Embedded generic ring buffer for metric values
+   descriptions map[string]string   // HELP content descriptions
 }
 
 // NewMetricRingBuffer creates a new MetricRingBuffer with the specified capacity.
@@ -213,7 +213,7 @@ type FlightRecorder struct {
 **`MetricRingBuffer.AddMetric(v float64, desc string)`**
 - Adds a metric value with optional description to the metric ring buffer
 - Updates the embedded RingBuffer[float64]
-- Stores the description in the desc slice
+- Stores the description in the descriptions map, keyed by metric name and labels
 
 **`TimestampRingBuffer.Add(v int64)`**
 - Adds a timestamp value to the timestamp ring buffer
@@ -316,15 +316,16 @@ func (mk MetricKey) String() string
 7. Flight Recorder.Update() Called
    ↓
 8. For Each Metric:
-   a. Create MetricKey from name and sorted labels
-   b. Call FlightRecorder.Update() with RawMetric
-   c. FlightRecorder.getMetric()
-   d. If metric doesn't exist:
-      - Create new MetricRingBuffer with fixed capacity
-      - Store in metrics map
-   e. Call MetricRingBuffer.AddMetric() to write value and description
-   f. RingBuffer[T] handles circular overwrite automatically
-   g. Update total count n
+   a. Create MetricKey from metric name and sorted labels
+   b. Ensure the MetricRingBuffer exists in DataSource.MetricBuffers for the MetricKey
+     - If it doesn't exist, create a new MetricRingBuffer (do not add values yet)
+   c. Calculate the target capacity for each RingBuffer based on:
+     - The capacity of DataSource.MetricBuffers
+     - Available memory limitations
+   d. Adjust RingBuffer capacity if needed:
+     - If the RingBuffer's current size exceeds the new target capacity, remove oldest data using FIFO (First-In-First-Out) strategy
+     - Update the RingBuffer's capacity to match the target capacity
+   e. Add the metric value and description to the MetricRingBuffer using AddMetric()
    ↓
 9. Metrics Buffered in Memory via FlightRecorder
 ```
