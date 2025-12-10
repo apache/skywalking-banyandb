@@ -131,25 +131,14 @@ type Watchdog struct {
 **`RingBuffer[T]`** (Generic Ring Buffer)
 ```go
 type RingBuffer[T any] struct {
-   next   int        // Next write position in the circular buffer
    values []T        // Fixed-size buffer for values of type T
-   n      uint64     // Total number of values written (wraps around)
 }
 
-// NewRingBuffer creates a new RingBuffer with the specified capacity.
-func NewRingBuffer[T any](capacity int) *RingBuffer[T]
+// NewRingBuffer creates a new RingBuffer.
+func NewRingBuffer[T any]() *RingBuffer[T]
 
 // Add adds a value to the ring buffer.
 func (rb *RingBuffer[T]) Add(v T)
-
-// Get returns the value at the specified index (0-based from oldest to newest).
-func (rb *RingBuffer[T]) Get(idx int) T
-
-// Len returns the number of values currently stored in the buffer.
-func (rb *RingBuffer[T]) Len() int
-
-// Capacity returns the maximum capacity of the buffer.
-func (rb *RingBuffer[T]) Capacity() int
 ```
 - Stores values of any type T in a circular buffer
 - Implements circular overwrite behavior when buffer is full
@@ -157,27 +146,18 @@ func (rb *RingBuffer[T]) Capacity() int
 
 **`MetricRingBuffer`**
 ```go
-type MetricRingBuffer struct {
-   *RingBuffer[float64]             // Embedded generic ring buffer for metric values
-   descriptions map[string]string   // HELP content descriptions
-}
+type MetricRingBuffer = RingBuffer[float64]
 
-// NewMetricRingBuffer creates a new MetricRingBuffer with the specified capacity.
-func NewMetricRingBuffer(capacity int) *MetricRingBuffer
-
-// AddMetric adds a metric value with optional description.
-func (mrb *MetricRingBuffer) AddMetric(v float64, desc string)
+// NewMetricRingBuffer creates a new MetricRingBuffer.
+func NewMetricRingBuffer() *MetricRingBuffer
 ```
-- Specialized ring buffer for metric values (float64)
-- Extends RingBuffer[float64] with description support
-- Stores metric values in a circular buffer with associated HELP descriptions
 
 **`TimestampRingBuffer`**
 ```go
 type TimestampRingBuffer = RingBuffer[int64]
 
-// NewTimestampRingBuffer creates a new TimestampRingBuffer with the specified capacity.
-func NewTimestampRingBuffer(capacity int) *TimestampRingBuffer
+// NewTimestampRingBuffer creates a new TimestampRingBuffer.
+func NewTimestampRingBuffer() *TimestampRingBuffer
 ```
 - Type alias for RingBuffer[int64] for storing timestamps
 - Stores timestamps in a circular buffer
@@ -190,10 +170,13 @@ type DataSource struct {
 	MaxCapacity     int // Maximum number of unique metrics (MetricBuffers) allowed
 	TimestampBuffer *TimestampRingBuffer // Store the timestamp of each time polling metrics to RingBuffer
 	MetricBuffers   map[string]*MetricRingBuffer // Map from name+labels to MetricRingBuffer
+   n               uint64     // Total number of values written (wraps around)
+   descriptions    map[string]string   // Map from metric name to HELP content descriptions
+   next            int        // Next write position in the circular buffer
 }
 type FlightRecorder struct {
 	DataSources []*DataSource
-	Capacity    int
+	MaxCapacity    int
 }
 ```
 - Main container for buffering metrics data in memory
