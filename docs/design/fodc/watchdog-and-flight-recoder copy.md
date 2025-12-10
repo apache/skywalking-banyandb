@@ -1,11 +1,13 @@
-# Watchdog And Flight Recorder Development Design
+# First Occurrence Data Collection (FODC) Development Design
 
 ## Table of Contents
 1. [Overview](#overview)
 2. [Component Design](#component-design)
 3. [Data Flow](#data-flow)
-4. [Testing Strategy](#testing-strategy)
-5. [Appendix](#appendix)
+4. [API Design](#api-design)
+5. [Testing Strategy](#testing-strategy)
+6. [Performance Considerations](#performance-considerations)
+7. [Appendix](#appendix)
 
 ## Overview
 
@@ -71,13 +73,21 @@ BanyanDB Metrics Endpoint
 
 #### Core Types
 
-**`Watchdog`**
+**`Watchdog` Interface**
 ```go
-type Watchdog struct {
-	client       *http.Client
-	url          string
-	interval     time.Duration
+type Watchdog interface {
+    // Start begins polling metrics
+    Start(ctx context.Context) error
+    
+    // Stop stops polling metrics
+    Stop(ctx context.Context) error
 }
+```
+
+**`PollMetrics` Function**
+```go
+// PollMetrics retrieves and parses metrics from the metrics endpoint
+func (w *watchdog) PollMetrics(ctx context.Context) ([]metrics.Metric, error)
 ```
 
 #### Key Functions
@@ -93,7 +103,7 @@ type Watchdog struct {
 - Closes HTTP connections
 - Ensures in-flight requests complete
 
-**`pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)`**
+**`PollMetrics(ctx context.Context) ([]metrics.Metric, error)`**
 - Fetches raw metrics text from endpoint
 - Uses metrics package to parse Prometheus text format
 - Returns parsed metrics or error
@@ -103,7 +113,7 @@ type Watchdog struct {
 
 **`--poll-interval`**
 - **Type**: `duration`
-- **Default**: `10s`
+- **Default**: `15s`
 - **Description**: Interval at which the Watchdog polls metrics from the BanyanDB container
 
 **`--metrics-endpoint`**
@@ -123,68 +133,52 @@ type Watchdog struct {
 
 #### Core Types
 
+**`FlightRecorder` Interface**
+```go
+type FlightRecorder interface {
+    // Write adds metrics data to the buffer
+    Write(metrics []MetricEntry) error
+    
+    // Start initializes the flight recorder
+    Start(ctx context.Context) error
+    
+    // Stop stops the flight recorder
+    Stop(ctx context.Context) error
+}
+```
+
+**`MetricEntry`**
+```go
+type MetricEntry struct {
+   Name        string
+   Description string
+   Labels      map[string]string
+   Value       float64
+}
+```
+
 **`RingBuffer`**
 ```go
 type RingBuffer struct {
-   next   int        // Next write position in the circular buffer
-   values []float64  // Fixed-size buffer for metric values
-   desc   []string   // HELP content
-   n      uint64     // Total number of values written (wraps around)
+    next   int        // Next write position in the circular buffer
+    values []float64  // Fixed-size buffer for metric values
+    n      uint64     // Total number of values written (wraps around)
+    ch     chan float64  // Channel for receiving values
+    bindN  uint64     // Binding number for synchronization
 }
 ```
-- Stores metric values in a circular buffer
-- Implements circular overwrite behavior when buffer is full
-
-**`TimestampRingBuffer`**
-```go
-type TimestampRingBuffer struct {
-   next   int        // Next write position in the circular buffer
-   values []int64    // Fixed-size buffer for timestamps
-   n      uint64     // Total number of values written (wraps around)
-}
-```
-- Stores timestamps in a circular buffer
-- Implements circular overwrite behavior when buffer is full
-
-**`FlightRecorder`**
-```go
-type FlightRecorder struct {
-   metrics map[string]*RingBuffer  // Map from name+labels to RingBuffer
-   timestamp TimestampRingBuffer   // Store the timestamp of each time polling metrics
-}
-```
-- Central store managing all metrics and their buffers
-- Store the timestamp of each time polling metrics
 
 #### Key Functions
 
-**`RingBuffer.Add(v float64)` and `TimestampRingBuffer.Add(v int64)`**
-- Adds a value to the ring buffer
-- Updates the next write position using modulo arithmetic
-- Increments the total count `n`
+**`Write(metrics []MetricEntry) error`**
+- Adds metrics data to appropriate RingBuffer
+- Creates new RingBuffer if metric doesn't exist
+- Handles circular overwrite when buffer is full
+- Updates overflow counters
 
-**`FlightRecorder.NewFlightRecorder() *FlightRecorder`**
-- Creates a new FlightRecorder
-- Initializes maps for metrics, index, and histograms
-- Returns initialized FlightRecorder instance
-
-**`FlightRecorder.Update(m *metric.RawMetric)`**
-- Updates flight recorder with a new metric value
-- Sorts labels for consistent key generation
-- Creates MetricKey from metric name and labels
-- Gets or creates RingBuffer for the metric
-- Adds value to the RingBuffer
-
-**`FlightRecorder.getMetric(key metric.MetricKey) *RingBuffer`**
-- Retrieves existing RingBuffer or creates a new one
-- Generates string key from MetricKey
-- Looks up MetricID in index map
-- Creates new MetricID and RingBuffer if metric doesn't exist
-- Returns the RingBuffer for the metric
-
-**`FlightRecorder.UpdateHistograms(hs map[string]metric.Histogram)`**
-- Updates histogram metrics in the flight recorder
-- Copies histogram map into flight recorder's histogram map
+**`Start(ctx context.Context) error`**
+- Initializes the flight recorder
+- Prepares buffer storage
 
 **`Stop(ctx context.Context) error`**
 - Gracefully stops the flight recorder
@@ -196,60 +190,32 @@ type FlightRecorder struct {
 
 #### Core Types
 
-**`Label`**
+**`Metric`**
 ```go
-type Label struct {
-	Name  string
-	Value string
-}
-```
-
-**`RawMetric`**
-```go
-type RawMetric struct {
-   Name        string      // Metric name
-   Labels      []Label     // Metric labels as key-value pairs
-   Value       float64     // Metric value
-   Description string      // HELP text description if available
-}
-```
-
-**`MetricKey`**
-```go
-type MetricKey struct {
-   Name   string
-   Labels []Label
-}
-
-func (mk MetricKey) String() string
-```
-- Used for uniquely identifying metrics in FlightRecorder
-- Labels are sorted for consistent key generation
-- String() method generates a canonical representation
-
-**`Histogram`**
-```go
-type Bin struct {
-	Value float64
-	Count uint64
-}
-type Histogram struct {
-	Name   string   // Histogram metric name
-	Labels []Label  // Metric labels as key-value pairs
-	Bins   []Bin    // Histogram bins containing value and count pairs
-   Count  uint64   // _count metric value
-	Sum    float64  // _sum metric value
+type Metric struct {
+   Name        string            // Metric name
+   Labels      map[string]string // Metric labels as key-value pairs
+   Value       float64           // Metric value
+   Description string            // HELP text description if available
 }
 ```
 
 #### Key Functions
 
-**`Parse(text string) ([]RawMetric, error)`**
+**`Parse(text string) ([]Metric, error)`**
 - Parses Prometheus text format metrics
 - Handles HELP and TYPE lines
 - Parses metric lines with labels and values
 - Handles comments and empty lines
-- Returns structured RawMetric objects or error
+- Returns structured Metric objects or error
+
+#### Implementation Requirements
+
+- **Prometheus Format Support**: Parse standard Prometheus text format including HELP lines, TYPE lines, metric lines with labels
+- **Label Parsing**: Parse metric labels in format `metric_name{label1="value1",label2="value2"} value`
+- **Error Handling**: Return descriptive errors for malformed input
+- **Performance**: Optimize for parsing large metrics outputs efficiently
+- **Testing**: Include comprehensive tests for various Prometheus format edge cases
 
 ## Data Flow
 
@@ -265,27 +231,69 @@ type Histogram struct {
    ↓
 4. Parse Metrics Using metrics.Parse()
    - Parse HELP lines for descriptions
+   - Parse TYPE lines for metric types
    - Parse metric lines with labels and values
    ↓
-5. Convert to RawMetric Structures
+5. Convert to MetricEntry Structures
    ↓
 6. Forward to Flight Recorder
    ↓
-7. Flight Recorder.Update() Called
+7. Flight Recorder.Write() Called
    ↓
 8. For Each Metric:
-   a. Create MetricKey from name and sorted labels
-   b. Call FlightRecorder.Update() with RawMetric
-   c. FlightRecorder.getMetric() looks up MetricID in index map
-   d. If metric doesn't exist:
-      - Generate new MetricID
-      - Create new RingBuffer with fixed capacity
-      - Store in metrics map and index map
-   e. Call RingBuffer.Add() to write value
-   f. RingBuffer handles circular overwrite automatically
-   g. Update total count n
+   a. Look up or create RingBuffer
+   b. Write value to RingBuffer
+   c. Handle circular overwrite if buffer full
+   d. Update timestamps and counters
    ↓
-9. Metrics Buffered in Memory via FlightRecorder
+9. Metrics Buffered in Memory
+```
+
+## API Design
+
+### Flight Recorder Interface
+
+```go
+// FlightRecorder buffers metrics data in a circular buffer
+type FlightRecorder interface {
+    // Write adds metrics data to the buffer
+    Write(metrics []MetricEntry) error
+    
+    // Start initializes the flight recorder
+    Start(ctx context.Context) error
+    
+    // Stop stops the flight recorder
+    Stop(ctx context.Context) error
+}
+```
+
+### Watchdog Interface
+
+```go
+// Watchdog polls metrics from BanyanDB container
+type Watchdog interface {
+    // Start begins polling metrics
+    Start(ctx context.Context) error
+    
+    // Stop stops polling metrics
+    Stop(ctx context.Context) error
+}
+```
+
+### Metrics Package API
+
+```go
+// Parse parses Prometheus text format metrics and returns a slice of Metric objects
+func Parse(text string) ([]Metric, error)
+
+// Metric represents a parsed Prometheus metric
+type Metric struct {
+    Name        string
+    Labels      map[string]string
+    Value       float64
+    Description string
+    Type        MetricType
+}
 ```
 
 ## Testing Strategy
@@ -294,17 +302,15 @@ type Histogram struct {
 
 **Metrics Package**
 - Test `Parse()` with various Prometheus formats
-- Test HELP line parsing
+- Test HELP and TYPE line parsing
 - Test label parsing (quoted values, special characters)
 - Test edge cases (empty labels, invalid formats, comments)
 - Test performance with large metrics outputs
 
 **Flight Recorder Package**
-- Test RingBuffer.Add() write operations
-- Test FlightRecorder.Update() with new and existing metrics
+- Test RingBuffer write and read operations
 - Test circular overwrite behavior
-- Test MetricID generation and index mapping
-- Test histogram storage and retrieval
+- Test buffer status aggregation
 - Test concurrent writes
 - Test error handling
 
@@ -314,6 +320,14 @@ type Histogram struct {
 - Test exponential backoff retry logic
 - Test error handling for connection failures
 - Test metrics forwarding to Flight Recorder
+
+### Integration Testing
+
+**End-to-End Flow**
+- Test metrics collection → parsing → buffering
+- Test crash recovery scenario
+- Test buffer overflow handling
+- Test concurrent metric writes
 
 ### E2E Testing
 
@@ -329,6 +343,65 @@ type Histogram struct {
 - Verify circular overwrite behavior
 - Verify newest metrics are preserved
 - Verify oldest metrics are overwritten correctly
+
+**Test Case 3: Crash Recovery**
+- Start BanyanDB
+- Generate metrics and wait for buffering
+- Forcefully terminate BanyanDB process
+- Restart BanyanDB
+- Verify metrics are still available through internal checks
+
+**Test Case 4: Crash Recovery Verification**
+- Start BanyanDB
+- Generate metrics
+- Verify metrics buffering through internal checks
+- Verify data persistence across restarts
+
+## Performance Considerations
+
+### Memory Management
+
+**Ring Buffers**
+- Fixed-size buffers prevent unbounded growth
+- O(1) memory per metric regardless of time window
+- Automatic old data eviction via circular overwrite
+- Memory usage: ~100 bytes per buffer entry (configurable)
+
+**Metric Storage**
+- Map-based indexing for O(1) lookups
+- One RingBuffer per unique metric
+- Memory scales linearly with metric cardinality
+
+**Metrics Parsing**
+- Stream processing (no full file load)
+- Early termination on errors
+- Efficient string operations
+- Minimal allocations
+
+### Scalability Limits
+
+**Current Design**
+- Suitable for hundreds to thousands of metrics
+- Memory: ~100 bytes per metric entry (configurable buffer size)
+- CPU: Minimal overhead for parsing and buffering
+
+**Potential Bottlenecks**
+- High metric cardinality (>10,000 metrics)
+- Very high polling frequency (<1s)
+- Large metrics response size (>10MB)
+- Concurrent API queries during high write load
+
+### Optimization Strategies
+
+**Connection Reuse**
+- Reuse HTTP client connections for metrics polling
+- Implement connection pooling
+- Set appropriate timeouts
+
+**Concurrent Access**
+- Optimize for concurrent reads and writes
+- Use appropriate synchronization primitives
+- Minimize lock contention
 
 ## Appendix
 
@@ -382,3 +455,7 @@ http_request_duration_seconds_bucket{le="+Inf"} 300
 http_request_duration_seconds_count 300
 http_request_duration_seconds_sum 45.2
 ```
+
+### E2E Test Configuration
+
+E2E tests are configured in `test/e2e-v2/cases/flight-recorder/e2e.yaml` with Docker Compose setup in `test/e2e-v2/cases/flight-recorder/docker-compose.yml`.
