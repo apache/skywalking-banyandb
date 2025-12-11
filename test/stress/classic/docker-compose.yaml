@@ -52,7 +52,7 @@ services:
 
   ebpf-sidecar:
     build:
-      dockerfile: ./ebpf-sidecar/Dockerfile.dev
+      dockerfile: ./oa/Dockerfile.dev
       context: ../../..
     image: banyandb/ebpf-sidecar:dev
     container_name: ebpf-sidecar
@@ -62,7 +62,7 @@ services:
       - /sys/kernel/debug:/sys/kernel/debug:ro
       - /sys/fs/bpf:/sys/fs/bpf
       - /lib/modules:/lib/modules:ro
-      - ../../../ebpf-sidecar/configs/config-prometheus.yaml:/etc/ebpf-sidecar/config.yaml:ro
+      - ../../../oa/configs/config-prometheus.yaml:/etc/ebpf-sidecar/config.yaml:ro
     ports:
       - 18080:18080  # eBPF sidecar HTTP metrics
       - 19090:19090  # eBPF sidecar gRPC

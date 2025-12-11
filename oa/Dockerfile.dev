@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m -u 1000 -s /bin/bash ebpf
 
 # Copy the pre-built binary from local build directory
-COPY ./ebpf-sidecar/build/bin/ebpf-sidecar /usr/local/bin/ebpf-sidecar
-RUN chmod +x /usr/local/bin/ebpf-sidecar
+COPY ./build/bin/ebpf-agent /usr/local/bin/ebpf-agent
+RUN chmod +x /usr/local/bin/ebpf-agent
 
 # Create config directory (config will be mounted at runtime)
 RUN mkdir -p /etc/ebpf-sidecar
@@ -47,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Set the entrypoint
 # Note: Container must be run with --privileged or specific capabilities
-ENTRYPOINT ["/usr/local/bin/ebpf-sidecar"]
+ENTRYPOINT ["/usr/local/bin/ebpf-agent"]
 CMD ["--config", "/etc/ebpf-sidecar/config.yaml"]

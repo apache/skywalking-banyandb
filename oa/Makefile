@@ -26,7 +26,7 @@ export PATH := /usr/local/bin:$(PATH)
 
 # Build variables
 GO := go
-NAME := ebpf-sidecar
+NAME := ebpf-agent
 BUILD_DIR := build/bin
 UNAME_R := $(shell uname -r)
 ARCH := $(shell uname -m)

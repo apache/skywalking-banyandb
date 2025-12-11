@@ -169,7 +169,29 @@ func (l *Loader) AttachTracepoints() error {
 
 // attachFadviseTracepoints attaches fadvise-related tracepoints.
 func (l *Loader) attachFadviseTracepoints() error {
-	// Try tracepoints first
+	// Try fentry/fexit first (requires BTF)
+	if l.objects.FentryKsysFadvise6464 != nil && l.objects.FexitKsysFadvise6464 != nil {
+		fentry, err := link.AttachTracing(link.TracingOptions{
+			Program: l.objects.FentryKsysFadvise6464,
+		})
+		if err == nil {
+			l.links = append(l.links, fentry)
+
+			fexit, errExit := link.AttachTracing(link.TracingOptions{
+				Program: l.objects.FexitKsysFadvise6464,
+			})
+			if errExit == nil {
+				l.links = append(l.links, fexit)
+				return nil
+			}
+
+			// Cleanup partial attachment before fallback
+			_ = fentry.Close()
+			l.links = l.links[:len(l.links)-1]
+		}
+	}
+
+	// Try tracepoints next
 	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64", l.objects.TraceEnterFadvise64, nil)
 	if err != nil {
 		// Fallback to kprobe
@@ -179,7 +201,9 @@ func (l *Loader) attachFadviseTracepoints() error {
 
 	tpExit, err := link.Tracepoint("syscalls", "sys_exit_fadvise64", l.objects.TraceExitFadvise64, nil)
 	if err != nil {
-		// Fallback to kprobe
+		// Cleanup partial attachment before fallback
+		_ = tpEnter.Close()
+		l.links = l.links[:len(l.links)-1]
 		return l.attachFadviseKprobes()
 	}
 	l.links = append(l.links, tpExit)
@@ -227,33 +251,68 @@ func (l *Loader) attachMemoryTracepoints() {
 
 // attachCacheTracepoints attaches cache-related tracepoints with kprobe fallback.
 func (l *Loader) attachCacheTracepoints() {
-	// Try filemap tracepoints first
-	tpReadBatch, err := link.Tracepoint("filemap", "filemap_get_read_batch", l.objects.TraceFilemapGetReadBatch, nil)
-	if err != nil {
-		// Fallback to kprobe
-		kpReadBatch, kpErr := link.Kprobe("filemap_get_read_batch", l.objects.KprobeFilemapGetReadBatch, nil)
-		if kpErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to attach read batch probe: %v\n", kpErr)
-		} else {
-			l.links = append(l.links, kpReadBatch)
+	// Track whether attachments succeed to avoid double attaching the same point.
+	attachedRead := false
+	attachedAdd := false
+
+	// Try filemap fentry first
+	if l.objects.FentryFilemapGetReadBatch != nil {
+		fentry, err := link.AttachTracing(link.TracingOptions{
+			Program: l.objects.FentryFilemapGetReadBatch,
+		})
+		if err == nil {
+			l.links = append(l.links, fentry)
+			attachedRead = true
 		}
-	} else {
-		l.links = append(l.links, tpReadBatch)
 	}
 
-	// Try page cache add tracepoint
-	tpPageAdd, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", l.objects.TraceMmFilemapAddToPageCache, nil)
-	if err != nil {
-		// Fallback to kprobe
-		kpPageAdd, kpErr := link.Kprobe("add_to_page_cache_lru", l.objects.KprobeAddToPageCacheLru, nil)
-		if kpErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to attach page cache add probe: %v\n", kpErr)
+	// Try filemap tracepoint if fentry not attached
+	if !attachedRead {
+		tpReadBatch, err := link.Tracepoint("filemap", "filemap_get_read_batch", l.objects.TraceFilemapGetReadBatch, nil)
+		if err != nil {
+			// Fallback to kprobe
+			kpReadBatch, kpErr := link.Kprobe("filemap_get_read_batch", l.objects.KprobeFilemapGetReadBatch, nil)
+			if kpErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to attach read batch probe: %v\n", kpErr)
+			} else {
+				l.links = append(l.links, kpReadBatch)
+				attachedRead = true
+			}
 		} else {
-			l.links = append(l.links, kpPageAdd)
+			l.links = append(l.links, tpReadBatch)
+			attachedRead = true
 		}
-	} else {
-		l.links = append(l.links, tpPageAdd)
 	}
+
+	// Try page cache add fentry first
+	if l.objects.FentryAddToPageCacheLru != nil {
+		fentry, err := link.AttachTracing(link.TracingOptions{
+			Program: l.objects.FentryAddToPageCacheLru,
+		})
+		if err == nil {
+			l.links = append(l.links, fentry)
+			attachedAdd = true
+		}
+	}
+
+	// Try page cache add tracepoint if fentry not attached
+	if !attachedAdd {
+		tpPageAdd, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", l.objects.TraceMmFilemapAddToPageCache, nil)
+		if err != nil {
+			// Fallback to kprobe
+			kpPageAdd, kpErr := link.Kprobe("add_to_page_cache_lru", l.objects.KprobeAddToPageCacheLru, nil)
+			if kpErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to attach page cache add probe: %v\n", kpErr)
+			} else {
+				l.links = append(l.links, kpPageAdd)
+				attachedAdd = true
+			}
+		} else {
+			l.links = append(l.links, tpPageAdd)
+			attachedAdd = true
+		}
+	}
+
 }
 
 // GetObjects returns the loaded eBPF objects.

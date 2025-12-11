@@ -45,7 +45,7 @@ services:
   ebpf-sidecar:
     build:
       context: ../
-      dockerfile: ebpf-sidecar/Dockerfile
+      dockerfile: oa/Dockerfile
     image: banyandb/ebpf-sidecar:latest
     container_name: ebpf-sidecar
     privileged: true     # Required for eBPF

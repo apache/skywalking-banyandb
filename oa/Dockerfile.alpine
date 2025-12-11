@@ -40,7 +40,7 @@ RUN go mod download
 COPY . .
 
 # Build the eBPF sidecar
-WORKDIR /build/ebpf-sidecar
+WORKDIR /build/oa
 RUN make generate && make build
 
 # Runtime stage - minimal Alpine image
@@ -53,11 +53,11 @@ RUN apk add --no-cache \
     curl
 
 # Copy the binary from builder
-COPY --from=builder /build/ebpf-sidecar/build/bin/ebpf-sidecar /usr/local/bin/ebpf-sidecar
+COPY --from=builder /build/oa/build/bin/ebpf-agent /usr/local/bin/ebpf-agent
 
 # Copy default configuration
 RUN mkdir -p /etc/ebpf-sidecar
-COPY --from=builder /build/ebpf-sidecar/configs/config.yaml /etc/ebpf-sidecar/config.yaml
+COPY --from=builder /build/oa/configs/config.yaml /etc/ebpf-sidecar/config.yaml
 
 # Create directories for eBPF maps pinning
 RUN mkdir -p /sys/fs/bpf/ebpf-sidecar
@@ -74,5 +74,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 USER root
 
 # Set the entrypoint
-ENTRYPOINT ["/usr/local/bin/ebpf-sidecar"]
+ENTRYPOINT ["/usr/local/bin/ebpf-agent"]
 CMD ["--config-file", "/etc/ebpf-sidecar/config.yaml"]

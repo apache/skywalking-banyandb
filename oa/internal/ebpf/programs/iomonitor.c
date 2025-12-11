@@ -74,6 +74,14 @@ struct {
 } cgroup_filter SEC(".maps");
 
 static __always_inline bool is_cgroup_allowed() {
+    __u32 key = 0;
+    __u32 *cgfd = bpf_map_lookup_elem(&cgroup_filter, &key);
+
+    // If cgroup filter map is empty or unset, allow everything.
+    if (!cgfd || *cgfd == 0) {
+        return true;
+    }
+
     int ret = bpf_current_task_under_cgroup(&cgroup_filter, 0);
     return ret == 1;
 }

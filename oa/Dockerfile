@@ -52,7 +52,7 @@ RUN go mod download
 COPY . .
 
 # Build the eBPF sidecar
-WORKDIR /build/ebpf-sidecar
+WORKDIR /build/oa
 RUN make generate && make build
 
 # Runtime stage
@@ -69,11 +69,11 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m -u 1000 -s /bin/bash ebpf
 
 # Copy the binary from builder
-COPY --from=builder /build/ebpf-sidecar/build/bin/ebpf-sidecar /usr/local/bin/ebpf-sidecar
+COPY --from=builder /build/oa/build/bin/ebpf-agent /usr/local/bin/ebpf-agent
 
 # Copy default configuration
 RUN mkdir -p /etc/ebpf-sidecar
-COPY --from=builder /build/ebpf-sidecar/configs/config.yaml /etc/ebpf-sidecar/config.yaml
+COPY --from=builder /build/oa/configs/config.yaml /etc/ebpf-sidecar/config.yaml
 
 # Note: /sys/fs/bpf is mounted at runtime, not created during build
 
@@ -86,5 +86,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Set the entrypoint
 # Note: Container must be run with --privileged or specific capabilities
-ENTRYPOINT ["/usr/local/bin/ebpf-sidecar"]
+ENTRYPOINT ["/usr/local/bin/ebpf-agent"]
 CMD ["--config", "/etc/ebpf-sidecar/config.yaml"]
