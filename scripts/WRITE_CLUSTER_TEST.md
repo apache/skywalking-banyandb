@@ -9,7 +9,9 @@ etcd --name etcd1 \
   --advertise-client-urls http://localhost:2379
 ```
 
-## 启动 Data 
+## 启动 Data（可选，用于验证同步机制）
+
+**注意：为了验证 series-metadata.bin 文件，建议先不启动 Data 节点，或者先启动后停止**
 
 ```bash
 banyand/build/bin/dev/banyand-server data \
@@ -34,18 +36,6 @@ banyand/build/bin/dev/banyand-server liaison \
   --logging-levels=debug
 ```
 
-## 运行写入和验证脚本
-
-```bash
-go run scripts/write_measure_data.go \
-  -grpc-addr=localhost:17912 \
-  -group=test_series_metadata \
-  -measure=test_measure \
-  -data-path=/tmp/liaison-node/measure \
-  -mode=cluster
-```
-
-
 **参数说明**：
 - `-grpc-addr`: BanyanDB gRPC 服务地址（默认: localhost:17912）
 - `-group`: Group 名称（默认: test_group）
@@ -57,6 +47,7 @@ go run scripts/write_measure_data.go \
 **重要提示**：
 - `-data-path` 参数应该指向 **Liaison 节点** 的数据目录，而不是 Data 节点的目录
 - 在集群模式下，`series-metadata.bin` 文件存储在 `{data-path}/measure/data/{group}/shard-{id}/{part_id}/` 路径下（没有 seg-* 目录）
+- **关键**：正常情况下，liaison 中的 part 文件会很快同步到 data 节点，同步成功后整个 part 目录（包括 series-metadata.bin）会被删除，所以 liaison 目录通常是空的。要验证文件存在，需要停止 data 节点让同步失败，这样 part 会在 liaison 中积压。
 
 ## 验证结果
 
@@ -74,7 +65,8 @@ go run scripts/write_measure_data.go \
 
 2. **文件只在 Liaison 节点生成（Cluster 模式）**
    - `series-metadata.bin` 文件只在 Cluster 模式的 Liaison 节点的数据目录下生成
-   - **不会同步到 Data 节点**
+   - **不会同步到 Data 节点**（代码中明确排除）
+   - **但同步成功后，整个 part 目录会被删除**，包括 series-metadata.bin
    - **Standalone 模式不会生成此文件**
 
 3. **文件路径**

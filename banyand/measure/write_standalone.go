@@ -487,16 +487,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g := groups[i]
 		for j := range g.tables {
 			dps := g.tables[j]
-			// Note: In standalone mode, we do NOT generate series-metadata.bin file.
-			// Series metadata is only persisted in cluster mode (liaison) for debugging purposes.
 			if dps.tsTable != nil && dps.dataPoints != nil {
-				// Use segment's time range start as segmentID
-				segmentID := int64(0)
-				if dps.segment != nil {
-					segmentID = dps.segment.GetTimeRange().Start.UnixNano()
-				}
-				// Pass nil for seriesMetadataBytes in standalone mode
-				dps.tsTable.mustAddDataPointsWithSegmentID(dps.dataPoints, segmentID, nil)
+				dps.tsTable.mustAddDataPoints(dps.dataPoints)
 			}
 			if dps.dataPoints != nil {
 				releaseDataPoints(dps.dataPoints)

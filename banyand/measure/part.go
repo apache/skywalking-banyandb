@@ -22,7 +22,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -288,55 +287,7 @@ func (pw *partWrapper) decRef() {
 	pw.p.close()
 	if pw.removable.Load() && pw.p.fileSystem != nil {
 		go func(pw *partWrapper) {
-			// Check if this is a liaison node by checking the path structure
-			// Liaison nodes: {root}/shard-{id}/{part_id} (no seg-* directory)
-			// Data nodes: {root}/seg-{date}/shard-{id}/{part_id} (has seg-* directory)
-			partPath := pw.p.path
-			isLiaisonNode := !strings.Contains(partPath, "/seg-")
-
-			if isLiaisonNode {
-				// Only preserve series-metadata.bin on liaison nodes
-				// This file is for local debugging and should not be synced to data nodes
-				seriesMetadataPath := filepath.Join(partPath, seriesMetadataFilename)
-				shardPath := filepath.Dir(partPath) // Parent directory is shard directory
-				l := logger.GetLogger("measure")
-
-				// Try to read series-metadata.bin from part directory
-				// Note: File may not exist if:
-				// 1. Measure is IndexMode (series metadata is stored in index, not in part)
-				// 2. Part has no series metadata (empty or no metadata docs)
-				// This is normal and expected, so we don't log when file doesn't exist
-				metadataData, err := pw.p.fileSystem.Read(seriesMetadataPath)
-				if err == nil && len(metadataData) > 0 {
-					// Preserve it in shard directory with part ID in filename to avoid overwriting
-					// Format: series-metadata-{part_id}.bin
-					partID := pw.p.partMetadata.ID
-					preservedMetadataPath := filepath.Join(shardPath, fmt.Sprintf("%s-%016x.bin", measureSeriesMetadataName, partID))
-
-					// Write the preserved metadata file
-					_, err = pw.p.fileSystem.Write(metadataData, preservedMetadataPath, storage.FilePerm)
-					if err != nil {
-						l.Error().
-							Err(err).
-							Uint64("partID", partID).
-							Str("partPath", partPath).
-							Str("preservedPath", preservedMetadataPath).
-							Msg("failed to preserve series-metadata.bin before deleting part")
-					} else {
-						l.Debug().
-							Uint64("partID", partID).
-							Str("partPath", partPath).
-							Str("preservedPath", preservedMetadataPath).
-							Int("size", len(metadataData)).
-							Msg("preserved series-metadata.bin before deleting part")
-					}
-				}
-			}
-			// For data nodes, series-metadata.bin should not exist (it's not synced),
-			// so we just delete the part directory without checking
-
-			// Now delete the part directory
-			pw.p.fileSystem.MustRMAll(partPath)
+			pw.p.fileSystem.MustRMAll(pw.p.path)
 		}(pw)
 	}
 }
