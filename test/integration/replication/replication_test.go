@@ -78,8 +78,10 @@ var _ = g.Describe("Replication", func() {
 			g.By("Stopping one data node")
 			// We should have 3 data node closers in dataNodeClosers
 			// Stop the first one
-			dataNodeClosers[0]()
-			dataNodeClosers = dataNodeClosers[1:]
+			// Create a local copy to avoid mutating the package-level slice
+			closersToStop := make([]func(), len(dataNodeClosers))
+			copy(closersToStop, dataNodeClosers)
+			closersToStop[0]()
 
 			// Wait for the cluster to stabilize
 			gm.Eventually(func() int {
