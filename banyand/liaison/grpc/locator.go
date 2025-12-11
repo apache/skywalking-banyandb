@@ -45,8 +45,8 @@ func newSpecLocator[T tagFamilySpec](schemaFamilies []*databasev1.TagFamilySpec,
 }
 
 func buildSpecMaps[T tagFamilySpec](specFamilies []T) (map[string]int, map[string]map[string]int) {
-	specFamilyMap := make(map[string]int)
-	specTagMaps := make(map[string]map[string]int)
+	specFamilyMap := make(map[string]int, len(specFamilies))
+	specTagMaps := make(map[string]map[string]int, len(specFamilies))
 	for i, specFamily := range specFamilies {
 		specFamilyMap[specFamily.GetName()] = i
 		tagMap := make(map[string]int)
