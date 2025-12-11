@@ -27,9 +27,12 @@ Together, these components capture and preserve metrics data to ensure that crit
 - Monitors BanyanDB process health
 
 **Flight Recorder Component**
-- Maintains a fixed-size circular buffer (RingBuffer) per metric
+- Maintains a fixed-size circular buffer (RingBuffer) per metric in the `metrics` map
+- Uses a shared `timestamps` RingBuffer to store timestamps for each polling cycle
+- Stores metric descriptions in the `descriptions` map, keyed by metric name+labels
 - Stores metrics in-memory to ensure fast access and persistence across process crashes
 - Manages buffer capacity and handles overflow scenarios using circular overwrite behavior
+- Tracks write positions using `next`, `count`, and `n` fields for circular buffer management
 - Ensures data integrity and prevents data loss during crashes
 
 ### Component Interaction Flow
@@ -131,7 +134,8 @@ type Watchdog struct {
 **`RingBuffer[T]`** (Generic Ring Buffer)
 ```go
 type RingBuffer[T any] struct {
-   values []T        // Fixed-size buffer for values of type T
+   next   int         // Next write position in the circular buffer
+   values []T         // Fixed-size buffer for values of type T
 }
 
 // NewRingBuffer creates a new RingBuffer.
@@ -166,69 +170,68 @@ func NewTimestampRingBuffer() *TimestampRingBuffer
 **`FlightRecorder`**
 ```go
 type DataSource struct {
-   Name            string
-	MaxCapacity     int // Maximum number of unique metrics (MetricBuffers) allowed
-	TimestampBuffer *TimestampRingBuffer // Store the timestamp of each time polling metrics to RingBuffer
-	MetricBuffers   map[string]*MetricRingBuffer // Map from name+labels to MetricRingBuffer
-   n               uint64     // Total number of values written (wraps around)
-   descriptions    map[string]string   // Map from metric name to HELP content descriptions
-   next            int        // Next write position in the circular buffer
+   metrics        map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
+   timestamps     TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
+   descriptions   map[string]string            // Map from metric name to HELP content descriptions
+   Capacity       int                          // Number of writable metrics length
+   TotalWritten   uint64                       // Total number of values written (wraps around)
 }
 type FlightRecorder struct {
-	DataSources []*DataSource
-	MaxCapacity    int
+	DataSources   []*DataSource
+	CapacitySize  int                           // memory limit
 }
 ```
-- Main container for buffering metrics data in memory
-- Manages multiple DataSources, each representing a distinct metrics collection source
-- Each DataSource maintains its own timestamp buffer and per-metric ring buffers
-- Ensures metrics data persistence across process crashes through in-memory storage
-- Implements circular overwrite behavior when capacity limits are reached
 
 #### Key Functions
 
-**`RingBuffer[T].Add(v T)`**
+**`RingBuffer[T].Add(v T, capacity int)`**
 - Generic method that adds a value of type T to the ring buffer
-- Updates the next write position using modulo arithmetic
-- Increments the total count `n`
+- Implements circular overwrite behavior when buffers are full, compare the capacity with  current MetricRingBuffer capacity, and manage the buffer with FIFO based on the next write position
+- Updates the next write position
 - Works for both `RingBuffer[float64]` and `RingBuffer[int64]`
 
-**`MetricRingBuffer.AddMetric(v float64, desc string)`**
-- Adds a metric value with optional description to the metric ring buffer
+**`MetricRingBuffer.Update(v float64, capacity int)`**
+- Adds a metric value to the metric ring buffer
 - Updates the embedded RingBuffer[float64]
-- Stores the description in the descriptions map, keyed by metric name and labels
 
-**`TimestampRingBuffer.Add(v int64)`**
+**`TimestampRingBuffer.Update(v int64, capacity int)`**
 - Adds a timestamp value to the timestamp ring buffer
 - Uses the generic RingBuffer[int64].Add() method
 
 **`DataSource.Update(m *metric.RawMetric)`**
-- Updates the datasource with a new metric value
 - Sorts labels for consistent key generation
-- Creates MetricKey from metric name and labels
-- Gets or creates RingBuffer for the metric
-- Adds value to the RingBuffer
+- Creates MetricKey string from metric name and labels (e.g., "http_requests{method=\"get\"}")
+- Update Datasource.MetricBuffers with MetricKey. Please don't add any values
+- Get the total count of each RingBuffer based on the capacity of the Datasource.MetricBuffers and the memory limitation
+- Create or update the RingBuffer’s total count. Remove data using FIFO strategy if its original size exceeds the new total count
+- Uses MetricRingBuffer.Update() method to add values
 
-**`DataSource.Len() int`**
+**`DataSource.ComputeCapacitySize() int`**
 - Computes the total number of values currently stored in the DataSource
-- Returns the sum of all values stored across all MetricBuffers plus the number of timestamps in TimestampBuffer
-- Each MetricRingBuffer's Len() method provides the count of metric values stored
-- TimestampBuffer's Len() method provides the count of timestamps stored
+- Returns the sum of all values stored across all metric RingBuffers in the `metrics` map plus the number of timestamps in `timestamps` RingBuffer
+- Each metric RingBuffer's Capacity() method provides the count of metric values stored
+- The `timestamps` RingBuffer's Capacity() method provides the count of timestamps stored
 - Returns 0 if DataSource is nil or if no buffers are initialized
+```
+Total Memory = Metrics Map Overhead  
+             + Metadata Map Overhead 
+             + String Storage 
+             + Float64 Values (all RingBuffers)
+             + Timestamp RingBuffer values
+             + RingBuffer internal structures (next field, values slice headers)
+             + Descriptions Map Overhead
+```
 
-**`FlightRecorder.NewFlightRecorder(capacity int) *FlightRecorder`**
+**`FlightRecorder.NewFlightRecorder(capacitySize int) *FlightRecorder`**
 - Creates a new FlightRecorder
 - Returns initialized FlightRecorder instance
 
-**`FlightRecorder.AddDataSource(name string, maxCapacity int) *DataSource`**
-- Creates a new DataSource with the given name and maxCapacity
-- Initializes maps for metrics, and timestamp
+**`FlightRecorder.AddDataSource(name string, capacitySize int) *DataSource`**
+- Creates a new DataSource with the given capacity size
+- Initializes the `metrics` map, `timestamps` RingBuffer, and `descriptions` map
+- Initializes circular buffer tracking fields (`next`, `count`, `n`)
 - Appends the new DataSource to the DataSources array
 - Returns initialized DataSource instance
-
-**`FlightRecorder.GetDataSource(name string) *DataSource`**
-- Searches for a DataSource by name in the DataSources array
-- Returns the DataSource if found, nil otherwise
 
 ### 3. Metrics Package (`fodc/internal/metrics`)
 
@@ -299,16 +302,18 @@ func (mk MetricKey) String() string
 7. Flight Recorder.Update() Called
    ↓
 8. For Each Metric:
-   a. Create MetricKey from metric name and sorted labels
-   b. Ensure the MetricRingBuffer exists in DataSource.MetricBuffers for the MetricKey
-     - If it doesn't exist, create a new MetricRingBuffer (do not add values yet)
+   a. Create MetricKey from metric name and sorted labels (e.g., "http_requests{method=\"get\"}")
+   b. Ensure the RingBuffer[float64] exists in DataSource.metrics for the MetricKey
+     - If it doesn't exist, create a new RingBuffer[float64] (do not add values yet)
    c. Calculate the target capacity for each RingBuffer based on:
-     - The capacity of DataSource.MetricBuffers
+     - The capacity of DataSource.metrics map
      - Available memory limitations
    d. Adjust RingBuffer capacity if needed:
      - If the RingBuffer's current size exceeds the new target capacity, remove oldest data using FIFO (First-In-First-Out) strategy
      - Update the RingBuffer's capacity to match the target capacity
-   e. Add the metric value and description to the MetricRingBuffer using AddMetric()
+   e. Add the metric value to the RingBuffer in DataSource.metrics
+   f. Store the metric description in DataSource.descriptions map using the MetricKey
+   g. Add timestamp to DataSource.timestamps RingBuffer (once per polling cycle, not per metric)
    ↓
 9. Metrics Buffered in Memory via FlightRecorder
 ```
@@ -326,8 +331,8 @@ func (mk MetricKey) String() string
 
 **Flight Recorder Package**
 - Test RingBuffer[T].Add() write operations for both float64 and int64 types
-- Test MetricRingBuffer.AddMetric() with descriptions
-- Test TimestampRingBuffer.Add() operations
+- Test MetricRingBuffer.Update()
+- Test TimestampRingBuffer.Update() operations
 - Test FlightRecorder.Update() with new and existing metrics
 - Test circular overwrite behavior
 - Test histogram storage and retrieval
