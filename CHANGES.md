@@ -22,6 +22,7 @@ Release Notes.
 ### Document
 
 - Add read write benchmark document for 0.9.0 release.
+- Add design of KTM.
 
 ## 0.9.0
 
