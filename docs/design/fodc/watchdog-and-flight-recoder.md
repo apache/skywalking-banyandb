@@ -220,32 +220,37 @@ type FlightRecorder struct {
 - Create or update the RingBuffer’s total count. Remove data using FIFO strategy if its original size exceeds the new total count
 - Uses MetricRingBuffer.Update() method to add values
 
-**`Datasource.ComputeCapacitySize() int`**
-- Computes the total number of values currently stored in the Datasource
-- Returns the sum of all values stored across all metric RingBuffers in the `metrics` map plus the number of timestamps in `timestamps` RingBuffer
-- Each metric RingBuffer's Capacity() method provides the count of metric values stored
-- The `timestamps` RingBuffer's Capacity() method provides the count of timestamps stored
-- Returns 0 if Datasource is nil or if no buffers are initialized
-```
-Total Memory = Metrics Map Overhead  
-             + Metadata Map Overhead 
-             + String Storage 
-             + Float64 Values (all RingBuffers)
-             + Timestamp RingBuffer values
-             + RingBuffer internal structures (next field, values slice headers)
-             + Descriptions Map Overhead
-```
+**`Datasource.ComputeCapacity(capacitySize int) int`**
+- Computes the maximum capacity (number of entries) for ring buffers based on available memory constraints
+- Takes `capacitySize` (in bytes) as the total memory limit available for this Datasource
+- Returns the maximum number of entries that can be stored in each RingBuffer while staying within memory limits
+- Calculates capacity by accounting for all memory overheads and solving for the maximum number of entries
 
-**`FlightRecorder.NewFlightRecorder(capacitySize int) *FlightRecorder`**
-- Creates a new FlightRecorder
-- Returns initialized FlightRecorder instance
+**Calculation Steps:**
+1. **Fixed Overheads** (independent of capacity):
+   - Metrics Map Overhead: Base map structure overhead (~48 bytes) + per-entry overhead (~16 bytes per metric key)
+   - Descriptions Map Overhead: Base map structure overhead (~48 bytes) + per-entry overhead (~24 bytes per description)
+   - String Storage: Sum of all metric key strings and description strings (16 bytes string header + actual string length for each)
+   - RingBuffer Internal Structures: For each RingBuffer (metrics + timestamps), account for:
+     - `next` field (int = 8 bytes on 64-bit systems)
+     - Slice header (24 bytes: pointer + length + capacity)
 
-**`FlightRecorder.AddDatasource(name string, capacitySize int) *Datasource`**
-- Creates a new Datasource with the given capacity size
-- Initializes the `metrics` map, `timestamps` RingBuffer, and `descriptions` map
-- Initializes circular buffer tracking fields (`next`, `count`, `n`)
-- Appends the new Datasource to the Datasources array
-- Returns initialized Datasource instance
+2. **Variable Costs** (per capacity entry):
+   - Float64 Values: `numMetrics * 8 bytes` (one float64 per metric RingBuffer)
+   - Timestamp RingBuffer: `8 bytes` (one int64 per entry)
+   - Total bytes per entry: `(numMetrics * 8) + 8`
+
+3. **Capacity Calculation**:
+   ```
+   Available Memory = capacitySize - Fixed Overheads
+   Max Capacity = Available Memory / Bytes Per Entry
+   ```
+
+4. **Edge Cases**:
+   - If `capacitySize <= 0`, return 0
+   - If no metrics exist yet (`len(metrics) == 0`), return a default capacity (e.g., 1000)
+   - If fixed overheads exceed `capacitySize`, return 0
+   - Ensure the result is non-negative
 
 ### 3. Metrics Package (`fodc/internal/metrics`)
 
