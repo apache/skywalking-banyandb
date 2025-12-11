@@ -49,7 +49,7 @@ func buildSpecMaps[T tagFamilySpec](specFamilies []T) (map[string]int, map[strin
 	specTagMaps := make(map[string]map[string]int, len(specFamilies))
 	for i, specFamily := range specFamilies {
 		specFamilyMap[specFamily.GetName()] = i
-		tagMap := make(map[string]int)
+		tagMap := make(map[string]int, len(specFamily.GetTagNames()))
 		for j, tagName := range specFamily.GetTagNames() {
 			tagMap[tagName] = j
 		}
