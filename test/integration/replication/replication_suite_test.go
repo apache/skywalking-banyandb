@@ -115,7 +115,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	}
 
 	By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
+	liaisonAddr2, closerLiaisonNode := setup.LiaisonNode(ep)
+	liaisonAddr = liaisonAddr2
 
 	By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()

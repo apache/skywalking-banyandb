@@ -36,9 +36,7 @@ import (
 )
 
 var _ = g.Describe("Replication", func() {
-	var (
-		conn *grpc.ClientConn
-	)
+	var conn *grpc.ClientConn
 
 	g.BeforeEach(func() {
 		var err error
@@ -70,8 +68,8 @@ var _ = g.Describe("Replication", func() {
 
 			g.By("Getting list of all nodes from etcd (includes data nodes + liaison)")
 			nodePath := "/" + metadata.DefaultNamespace + "/nodes"
-			allNodes, err := helpers.ListKeys(etcdEndpoint, nodePath)
-			gm.Expect(err).NotTo(gm.HaveOccurred())
+			allNodes, err2 := helpers.ListKeys(etcdEndpoint, nodePath)
+			gm.Expect(err2).NotTo(gm.HaveOccurred())
 
 			// We have: 3 data nodes + 1 liaison node = 4 nodes total
 			gm.Expect(len(allNodes)).To(gm.Equal(4),
@@ -85,8 +83,8 @@ var _ = g.Describe("Replication", func() {
 
 			// Wait for the cluster to stabilize
 			gm.Eventually(func() int {
-				nodes, err := helpers.ListKeys(etcdEndpoint, nodePath)
-				if err != nil {
+				nodes, err3 := helpers.ListKeys(etcdEndpoint, nodePath)
+				if err3 != nil {
 					return 0
 				}
 				return len(nodes)
