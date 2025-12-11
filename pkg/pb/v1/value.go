@@ -89,6 +89,26 @@ func MustTagValueSpecToValueType(tag databasev1.TagType) ValueType {
 	}
 }
 
+// TagValueSpecToValueType converts databasev1.TagType to ValueType.
+func TagValueSpecToValueType(tag databasev1.TagType) ValueType {
+	switch tag {
+	case databasev1.TagType_TAG_TYPE_STRING:
+		return ValueTypeStr
+	case databasev1.TagType_TAG_TYPE_INT:
+		return ValueTypeInt64
+	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
+		return ValueTypeBinaryData
+	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
+		return ValueTypeStrArr
+	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
+		return ValueTypeInt64Arr
+	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
+		return ValueTypeTimestamp
+	default:
+		return ValueTypeUnknown
+	}
+}
+
 // MustTagValueToStr converts modelv1.TagValue to string.
 func MustTagValueToStr(tag *modelv1.TagValue) string {
 	switch tag.Value.(type) {

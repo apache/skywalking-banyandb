@@ -205,6 +205,28 @@ func Trace(trace *databasev1.Trace) error {
 	return nil
 }
 
+// TraceUpdate validates the provided Trace update operation.
+// It ensures that reserved tags cannot be deleted.
+func TraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
+	reservedTags := map[string]struct{}{
+		newTrace.GetTraceIdTagName():   {},
+		newTrace.GetTimestampTagName(): {},
+		newTrace.GetSpanIdTagName():    {},
+	}
+	newTagSet := make(map[string]struct{})
+	for _, tag := range newTrace.GetTags() {
+		newTagSet[tag.GetName()] = struct{}{}
+	}
+	for _, prevTag := range prevTrace.GetTags() {
+		if _, exists := newTagSet[prevTag.GetName()]; !exists {
+			if _, isReserved := reservedTags[prevTag.GetName()]; isReserved {
+				return errors.New("cannot delete reserved tag " + prevTag.GetName())
+			}
+		}
+	}
+	return nil
+}
+
 func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 	for i := range tagFamilies {
 		if tagFamilies[i].Name == "" {
