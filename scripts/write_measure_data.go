@@ -80,8 +80,18 @@ func main() {
 	log.Printf("✓ Data points written successfully")
 
 	// Wait for group to be loaded and data to be flushed
-	log.Println("Waiting for group to be loaded and data to be flushed (8 seconds)...")
-	time.Sleep(8 * time.Second)
+	// Note: In cluster mode, parts may be deleted after syncing to data nodes,
+	// so we need to check before sync happens (usually within 5-10 seconds)
+	waitTime := 8 * time.Second
+	if *mode == "cluster" {
+		waitTime = 5 * time.Second // Check earlier in cluster mode before sync deletes parts
+		log.Printf("Waiting for group to be loaded and data to be flushed (%v)...", waitTime)
+		log.Println("Note: In cluster mode, parts may be deleted after syncing to data nodes.")
+		log.Println("      We check the liaison node before sync happens.")
+	} else {
+		log.Printf("Waiting for group to be loaded and data to be flushed (%v)...", waitTime)
+	}
+	time.Sleep(waitTime)
 
 	// Verify series-metadata.bin file
 	if err := verifySeriesMetadata(*dataPath, *group, *mode); err != nil {
@@ -346,43 +356,105 @@ func verifySeriesMetadata(dataPath, groupName, mode string) error {
 	}
 
 	if len(partDirs) == 0 {
+		if mode == "cluster" {
+			return fmt.Errorf("no part directories found in %s.\n\nIn cluster mode, parts may have been synced to data nodes and deleted from liaison node.\nMake sure:\n  1. Data has been written successfully\n  2. Check within 5-10 seconds after writing (before sync deletes parts)\n  3. The group name is correct\n  4. Try reducing the wait time or checking immediately after write", groupDataPath)
+		}
 		return fmt.Errorf("no part directories found in %s. Make sure:\n  1. Data has been written successfully\n  2. Data has been flushed (wait 5+ seconds)\n  3. The group name is correct", groupDataPath)
 	}
 
-	// Check the most recent part directory
-	latestPart := partDirs[len(partDirs)-1]
-	seriesMetadataPath := filepath.Join(latestPart, "series-metadata.bin")
+	// Verify based on mode
+	switch mode {
+	case "standalone":
+		// In standalone mode, series-metadata.bin should NOT exist
+		latestPart := partDirs[len(partDirs)-1]
+		seriesMetadataPath := filepath.Join(latestPart, "series-metadata.bin")
+		log.Printf("Checking latest part: %s", latestPart)
+		log.Printf("Looking for: %s", seriesMetadataPath)
 
-	log.Printf("Checking latest part: %s", latestPart)
-	log.Printf("Looking for: %s", seriesMetadataPath)
-
-	// Check if file exists
-	info, err := os.Stat(seriesMetadataPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("series-metadata.bin not found in %s. Make sure:\n  1. You're using the updated code\n  2. The measure is non-IndexMode\n  3. Data has been flushed (wait 5+ seconds)", latestPart)
+		_, err := os.Stat(seriesMetadataPath)
+		fileExists := err == nil && !os.IsNotExist(err)
+		if fileExists {
+			return fmt.Errorf("series-metadata.bin should NOT exist in standalone mode, but found at %s\nThis indicates a bug: standalone mode should not generate series-metadata.bin", seriesMetadataPath)
 		}
-		return fmt.Errorf("failed to stat file: %w", err)
-	}
+		log.Printf("✓ Verified: series-metadata.bin does NOT exist (correct for standalone mode)")
 
-	if info.Size() == 0 {
-		return fmt.Errorf("series-metadata.bin exists but is empty")
-	}
-
-	log.Printf("✓ Found series-metadata.bin")
-	log.Printf("  Path: %s", seriesMetadataPath)
-	log.Printf("  Size: %d bytes", info.Size())
-
-	// List all files in the part directory for reference
-	log.Printf("\nAll files in part directory:")
-	files, err := os.ReadDir(latestPart)
-	if err == nil {
-		for _, f := range files {
-			if !f.IsDir() {
-				fileInfo, _ := f.Info()
-				log.Printf("  - %s (%d bytes)", f.Name(), fileInfo.Size())
+		// List all files in the part directory for reference
+		log.Printf("\nAll files in part directory:")
+		files, err := os.ReadDir(latestPart)
+		if err == nil {
+			for _, f := range files {
+				if !f.IsDir() {
+					fileInfo, _ := f.Info()
+					log.Printf("  - %s (%d bytes)", f.Name(), fileInfo.Size())
+				}
 			}
 		}
+
+	case "cluster":
+		// In cluster mode (liaison), series-metadata.bin is preserved in shard directory
+		// after part is synced and deleted. Format: series-metadata-{part_id}.bin
+		// Check shard directories for preserved series-metadata files
+		shardDirs := make(map[string]bool)
+		for _, partDir := range partDirs {
+			shardDir := filepath.Dir(partDir)
+			shardDirs[shardDir] = true
+		}
+
+		// Also check for shard directories directly (in case all parts are already synced)
+		err := filepath.Walk(groupDataPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() && filepath.Base(path) != filepath.Base(groupDataPath) {
+				// Check if it's a shard directory (format: shard-{id})
+				dirName := filepath.Base(path)
+				if len(dirName) > 6 && dirName[:6] == "shard-" {
+					shardDirs[path] = true
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to walk directory: %w", err)
+		}
+
+		var foundMetadataFiles []string
+		for shardDir := range shardDirs {
+			// Check for series-metadata-*.bin files in shard directory
+			files, err := os.ReadDir(shardDir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if !f.IsDir() {
+					name := f.Name()
+					if len(name) > 33 && name[:15] == "series-metadata-" && name[len(name)-4:] == ".bin" {
+						foundMetadataFiles = append(foundMetadataFiles, filepath.Join(shardDir, name))
+					}
+				}
+			}
+		}
+
+		if len(foundMetadataFiles) == 0 {
+			return fmt.Errorf("series-metadata.bin not found in shard directories under %s. Make sure:\n  1. You're using the updated code\n  2. The measure is non-IndexMode\n  3. Data has been flushed and synced\n  4. You're checking the liaison node's data directory", groupDataPath)
+		}
+
+		// Check the most recent metadata file
+		latestMetadataFile := foundMetadataFiles[len(foundMetadataFiles)-1]
+		info, err := os.Stat(latestMetadataFile)
+		if err != nil {
+			return fmt.Errorf("failed to stat series-metadata file: %w", err)
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("series-metadata.bin exists but is empty")
+		}
+		log.Printf("✓ Found series-metadata.bin")
+		log.Printf("  Path: %s", latestMetadataFile)
+		log.Printf("  Size: %d bytes", info.Size())
+		log.Printf("  Note: In cluster mode, series-metadata files are preserved in shard directories after parts are synced")
+
+	default:
+		return fmt.Errorf("invalid mode: %s. Must be 'standalone' or 'cluster'", mode)
 	}
 
 	return nil

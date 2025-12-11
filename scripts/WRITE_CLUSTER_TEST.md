@@ -17,7 +17,8 @@ banyand/build/bin/dev/banyand-server data \
   --measure-root-path=/tmp/data-node1/measure \
   --stream-root-path=/tmp/data-node1/stream \
   --grpc-port=17920 \
-  --http-port=17921
+  --http-port=17921 \
+  --logging-levels=debug
 ```
 
 ## 启动 Liaison 
@@ -29,7 +30,8 @@ banyand/build/bin/dev/banyand-server liaison \
   --stream-root-path=/tmp/liaison-node/stream \
   --grpc-port=17912 \
   --http-port=17913 \
-  --observability-modes=native
+  --observability-modes=native \
+  --logging-levels=debug
 ```
 
 ## 运行写入和验证脚本
@@ -42,6 +44,7 @@ go run scripts/write_measure_data.go \
   -data-path=/tmp/liaison-node/measure \
   -mode=cluster
 ```
+
 
 **参数说明**：
 - `-grpc-addr`: BanyanDB gRPC 服务地址（默认: localhost:17912）
@@ -69,6 +72,11 @@ go run scripts/write_measure_data.go \
    - IndexMode 的 measure 数据只存在索引中，不写入 part 文件夹
    - 脚本创建的 measure 默认是 `index_mode = false`
 
-2. **文件只在 Liaison 节点生成**
-   - `series-metadata.bin` 文件只在 Liaison 节点的数据目录下生成
+2. **文件只在 Liaison 节点生成（Cluster 模式）**
+   - `series-metadata.bin` 文件只在 Cluster 模式的 Liaison 节点的数据目录下生成
    - **不会同步到 Data 节点**
+   - **Standalone 模式不会生成此文件**
+
+3. **文件路径**
+   - Cluster 模式（Liaison）：`{data-path}/measure/data/{group}/shard-{id}/{part_id}/`（没有 seg-* 目录）
+   - 注意：`-data-path` 参数应该指向 **Liaison 节点** 的数据目录
