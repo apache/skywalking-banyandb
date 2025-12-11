@@ -56,7 +56,21 @@ BanyanDB Metrics Endpoint
          │
          │ (Per-metric buffers)
          ▼
-    In-Memory Storage
+    In-Memory Storage (Datasources)
+         │
+         │ (Read metrics)
+         ▼
+    Prometheus Metrics Exporter
+         │
+         │ (Collect via prometheus.Collector)
+         │
+         │ Convert to Prometheus Format
+         ▼
+    Prometheus Registry
+         │
+         │ (HTTP GET /metrics)
+         ▼
+    Prometheus Scraper
 ```
 
 ## Component Design
@@ -169,7 +183,7 @@ func NewTimestampRingBuffer() *TimestampRingBuffer
 
 **`FlightRecorder`**
 ```go
-type DataSource struct {
+type Datasource struct {
    metrics        map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
    timestamps     TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
    descriptions   map[string]string            // Map from metric name to HELP content descriptions
@@ -177,7 +191,7 @@ type DataSource struct {
    TotalWritten   uint64                       // Total number of values written (wraps around)
 }
 type FlightRecorder struct {
-	DataSources   []*DataSource
+	Datasources   []*Datasource
 	CapacitySize  int                           // memory limit
 }
 ```
@@ -198,7 +212,7 @@ type FlightRecorder struct {
 - Adds a timestamp value to the timestamp ring buffer
 - Uses the generic RingBuffer[int64].Add() method
 
-**`DataSource.Update(m *metric.RawMetric)`**
+**`Datasource.Update(m *metric.RawMetric)`**
 - Sorts labels for consistent key generation
 - Creates MetricKey string from metric name and labels (e.g., "http_requests{method=\"get\"}")
 - Update Datasource.MetricBuffers with MetricKey. Please don't add any values
@@ -206,12 +220,12 @@ type FlightRecorder struct {
 - Create or update the RingBuffer’s total count. Remove data using FIFO strategy if its original size exceeds the new total count
 - Uses MetricRingBuffer.Update() method to add values
 
-**`DataSource.ComputeCapacitySize() int`**
-- Computes the total number of values currently stored in the DataSource
+**`Datasource.ComputeCapacitySize() int`**
+- Computes the total number of values currently stored in the Datasource
 - Returns the sum of all values stored across all metric RingBuffers in the `metrics` map plus the number of timestamps in `timestamps` RingBuffer
 - Each metric RingBuffer's Capacity() method provides the count of metric values stored
 - The `timestamps` RingBuffer's Capacity() method provides the count of timestamps stored
-- Returns 0 if DataSource is nil or if no buffers are initialized
+- Returns 0 if Datasource is nil or if no buffers are initialized
 ```
 Total Memory = Metrics Map Overhead  
              + Metadata Map Overhead 
@@ -226,12 +240,12 @@ Total Memory = Metrics Map Overhead
 - Creates a new FlightRecorder
 - Returns initialized FlightRecorder instance
 
-**`FlightRecorder.AddDataSource(name string, capacitySize int) *DataSource`**
-- Creates a new DataSource with the given capacity size
+**`FlightRecorder.AddDatasource(name string, capacitySize int) *Datasource`**
+- Creates a new Datasource with the given capacity size
 - Initializes the `metrics` map, `timestamps` RingBuffer, and `descriptions` map
 - Initializes circular buffer tracking fields (`next`, `count`, `n`)
-- Appends the new DataSource to the DataSources array
-- Returns initialized DataSource instance
+- Appends the new Datasource to the Datasources array
+- Returns initialized Datasource instance
 
 ### 3. Metrics Package (`fodc/internal/metrics`)
 
@@ -279,6 +293,115 @@ func (mk MetricKey) String() string
 - Handles comments and empty lines
 - Returns structured RawMetric objects or error
 
+### 4. Prometheus Metrics Exporter Component (`fodc/internal/exporter`)
+
+**Purpose**: Exposes Datasource metrics from FlightRecorder to Prometheus using the `prometheus/client_golang` library
+
+#### Core Responsibilities
+
+- **Metrics Export**: Implements Prometheus Collector interface to expose Datasource metrics
+- **Metrics Conversion**: Converts internal Datasource metrics format to Prometheus metric format
+- **Registry Integration**: Registers with Prometheus registry for metrics scraping
+- **Label Handling**: Preserves metric labels and descriptions when exporting
+
+#### Core Types
+
+**`DatasourceCollector`**
+```go
+type DatasourceCollector struct {
+	flightRecorder *FlightRecorder
+	descs          map[string]*prometheus.Desc
+	mu             sync.RWMutex
+}
+```
+- Implements `prometheus.Collector` interface
+- Holds reference to FlightRecorder for accessing Datasource metrics
+- Caches Prometheus metric descriptors for performance
+- Thread-safe access to FlightRecorder data
+
+#### Key Functions
+
+**`NewDatasourceCollector(fr *FlightRecorder) *DatasourceCollector`**
+- Creates a new DatasourceCollector instance
+- Initializes the descriptor cache map
+- Returns initialized collector ready for registration
+
+**`Describe(ch chan<- *prometheus.Desc)`**
+- Implements `prometheus.Collector` interface
+- Sends metric descriptors to the channel for Prometheus registry
+- Describes all metrics that will be exposed from Datasources
+- Creates descriptors dynamically based on metrics stored in Datasources
+- Uses metric name and labels to generate unique descriptor keys
+- Includes HELP text from Datasource descriptions map
+
+**`Collect(ch chan<- prometheus.Metric)`**
+- Implements `prometheus.Collector` interface
+- Iterates through all Datasources in FlightRecorder
+- For each Datasource:
+  - Iterates through all metrics in the `metrics` map
+  - Extracts metric values from RingBuffers
+  - Creates Prometheus Gauge metrics with current values
+  - Preserves original metric labels from MetricKey
+  - Includes timestamps from TimestampRingBuffer when available
+- Sends Prometheus metrics to the channel
+- Handles concurrent access safely using mutex
+
+**`DatasourceCollector.registerMetricDesc(name string, labels []string, help string) *prometheus.Desc`**
+- Creates or retrieves cached Prometheus descriptor for a metric
+- Uses metric name and sorted labels as cache key
+- Returns Prometheus descriptor for metric registration
+- Reuses descriptors to minimize memory allocation
+
+#### Integration with Observability Service
+
+The DatasourceCollector integrates with the existing observability service (`banyand/observability`) to expose metrics:
+
+**Registration Flow**:
+```
+1. FlightRecorder instance created
+   ↓
+2. DatasourceCollector created with FlightRecorder reference
+   ↓
+3. Collector registered with Prometheus registry
+   (promReg.MustRegister(dataSourceCollector))
+   ↓
+4. Metrics endpoint handler exposes metrics
+   (registerMetricsEndpoint(promReg, metricsMux))
+   ↓
+5. Prometheus scrapes /metrics endpoint
+   ↓
+6. DatasourceCollector.Collect() called
+   ↓
+7. Metrics from Datasources exposed in Prometheus format
+```
+
+**Metric Format**:
+- Metrics are exposed as Prometheus Gauge metrics
+- Original metric names are preserved
+- Labels from MetricKey are converted to Prometheus label format
+- HELP text from descriptions map is included
+- Current values from RingBuffers are exported
+
+**Example Exported Metrics**:
+```
+# HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
+# TYPE banyandb_stream_tst_inverted_index_total_doc_count gauge
+banyandb_stream_tst_inverted_index_total_doc_count{index="test"} 12345
+```
+
+#### Dependencies
+
+- **`github.com/prometheus/client_golang/prometheus`**: Core Prometheus client library
+- **FlightRecorder**: Source of Datasource metrics data
+- **Thread Safety**: Uses mutex for concurrent access protection
+
+#### Configuration
+
+The exporter component uses the existing Prometheus configuration from the observability service:
+- **Metrics Endpoint**: `/metrics` (default)
+- **Listen Address**: Configured via `--observability-listener-addr` flag
+- **Prometheus Mode**: Enabled via `--observability-modes=prometheus` flag
+
 ## Data Flow
 
 ### Metrics Collection Flow
@@ -303,19 +426,53 @@ func (mk MetricKey) String() string
    ↓
 8. For Each Metric:
    a. Create MetricKey from metric name and sorted labels (e.g., "http_requests{method=\"get\"}")
-   b. Ensure the RingBuffer[float64] exists in DataSource.metrics for the MetricKey
+   b. Ensure the RingBuffer[float64] exists in Datasource.metrics for the MetricKey
      - If it doesn't exist, create a new RingBuffer[float64] (do not add values yet)
    c. Calculate the target capacity for each RingBuffer based on:
-     - The capacity of DataSource.metrics map
+     - The capacity of Datasource.metrics map
      - Available memory limitations
    d. Adjust RingBuffer capacity if needed:
      - If the RingBuffer's current size exceeds the new target capacity, remove oldest data using FIFO (First-In-First-Out) strategy
      - Update the RingBuffer's capacity to match the target capacity
-   e. Add the metric value to the RingBuffer in DataSource.metrics
-   f. Store the metric description in DataSource.descriptions map using the MetricKey
-   g. Add timestamp to DataSource.timestamps RingBuffer (once per polling cycle, not per metric)
+   e. Add the metric value to the RingBuffer in Datasource.metrics
+   f. Store the metric description in Datasource.descriptions map using the MetricKey
+   g. Add timestamp to Datasource.timestamps RingBuffer (once per polling cycle, not per metric)
    ↓
 9. Metrics Buffered in Memory via FlightRecorder
+```
+
+### Metrics Export Flow
+
+```
+1. Prometheus Scraper Requests Metrics
+   (HTTP GET /metrics endpoint)
+   ↓
+2. Prometheus HTTP Handler Invoked
+   (promhttp.HandlerFor with registry)
+   ↓
+3. Prometheus Registry Calls Collectors
+   ↓
+4. DatasourceCollector.Collect() Called
+   ↓
+5. For Each Datasource in FlightRecorder:
+   a. Acquire read lock on FlightRecorder
+   b. Iterate through Datasource.metrics map
+   c. For each MetricKey and RingBuffer:
+      - Extract current metric value from RingBuffer
+      - Retrieve metric description from Datasource.descriptions
+      - Parse MetricKey to extract metric name and labels
+      - Create Prometheus Gauge metric with:
+        * Metric name (from MetricKey)
+        * Labels (from MetricKey labels)
+        * Current value (from RingBuffer)
+        * HELP text (from descriptions map)
+   d. Send Prometheus metrics to channel
+   ↓
+6. Prometheus Registry Aggregates Metrics
+   ↓
+7. Metrics Exposed in Prometheus Text Format
+   ↓
+8. Prometheus Scraper Receives Metrics
 ```
 
 ## Testing Strategy
@@ -347,6 +504,29 @@ func (mk MetricKey) String() string
 - Test error handling for connection failures
 - Test metrics forwarding to Flight Recorder
 
+**Prometheus Metrics Exporter Package**
+- Test `DatasourceCollector.Describe()` method
+  - Verify all metric descriptors are described correctly
+  - Test descriptor caching behavior
+  - Test with empty FlightRecorder
+  - Test with multiple Datasources
+- Test `DatasourceCollector.Collect()` method
+  - Verify metrics are collected from all Datasources
+  - Test label preservation from MetricKey
+  - Test HELP text inclusion from descriptions map
+  - Test metric value extraction from RingBuffers
+  - Test concurrent access safety
+  - Test with empty RingBuffers
+  - Test with multiple metrics per Datasource
+- Test Prometheus registry integration
+  - Verify collector registration
+  - Test metrics exposure via HTTP endpoint
+  - Verify Prometheus text format compliance
+- Test error handling
+  - Test with nil FlightRecorder
+  - Test with corrupted metric data
+  - Test with invalid label values
+
 ### E2E Testing
 
 **Test Case 1: Basic Metrics Buffering**
@@ -361,6 +541,17 @@ func (mk MetricKey) String() string
 - Verify circular overwrite behavior
 - Verify newest metrics are preserved
 - Verify oldest metrics are overwritten correctly
+
+**Test Case 3: Metrics Export to Prometheus**
+- Start BanyanDB with Prometheus mode enabled
+- Generate metrics and wait for Watchdog to collect them
+- Verify metrics are stored in FlightRecorder Datasources
+- Scrape `/metrics` endpoint using Prometheus client
+- Verify exported metrics match buffered metrics
+- Verify metric labels are preserved correctly
+- Verify HELP text is included in exported metrics
+- Verify metric values are current (from RingBuffers)
+- Test concurrent scraping while metrics are being updated
 
 ## Appendix
 
