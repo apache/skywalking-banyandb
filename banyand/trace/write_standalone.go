@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
@@ -70,12 +71,14 @@ func (w *writeCallback) CheckHealth() *common.Error {
 }
 
 func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *tracev1.TagSpec,
 ) (map[string]*tracesInGroup, error) {
-	stm, ok := w.schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find trace definition: %s", writeEvent.GetRequest().GetMetadata())
+		return nil, fmt.Errorf("cannot find trace definition: %s", metadata)
 	}
-	idx, err := getTagIndex(stm, stm.schema.TimestampTagName)
+	specMap := buildSpecMap(spec)
+	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +87,7 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eg, err := w.prepareTracesInGroup(dst, writeEvent, ts)
+	eg, err := w.prepareTracesInGroup(dst, metadata, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -92,15 +95,15 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeCallback) prepareTracesInGroup(dst map[string]*tracesInGroup, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInGroup, error) {
-	gn := writeEvent.Request.Metadata.Group
+func (w *writeCallback) prepareTracesInGroup(dst map[string]*tracesInGroup, metadata *commonv1.Metadata, ts int64) (*tracesInGroup, error) {
+	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -170,15 +173,15 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 	return et, nil
 }
 
-func extractTraceSpanInfo(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest) (string, error) {
-	idx, err := getTagIndex(stm, stm.schema.TraceIdTagName)
+func extractTraceSpanInfo(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest, specMap map[string]int) (string, error) {
+	idx, err := getTagIndex(stm, stm.schema.TraceIdTagName, specMap)
 	if err != nil {
 		return "", err
 	}
 	traceID := req.Tags[idx].GetStr().GetValue()
 	tracesInTable.traces.traceIDs = append(tracesInTable.traces.traceIDs, traceID)
 
-	idx, err = getTagIndex(stm, stm.schema.SpanIdTagName)
+	idx, err = getTagIndex(stm, stm.schema.SpanIdTagName, specMap)
 	if err != nil {
 		return "", err
 	}
@@ -189,13 +192,19 @@ func extractTraceSpanInfo(stm *trace, tracesInTable *tracesInTable, req *tracev1
 	return traceID, nil
 }
 
-func validateTags(stm *trace, req *tracev1.WriteRequest) error {
+func validateTags(stm *trace, req *tracev1.WriteRequest, spec *tracev1.TagSpec) error {
 	tLen := len(req.GetTags())
 	if tLen < 1 {
 		return fmt.Errorf("%s has no tag family", req)
 	}
-	if tLen > len(stm.schema.GetTags()) {
-		return fmt.Errorf("%s has more tag than %s", req.Metadata, stm.schema)
+	if spec != nil {
+		if tLen > len(spec.GetTagNames()) {
+			return fmt.Errorf("request has more tags than spec: %d > %d", tLen, len(spec.GetTagNames()))
+		}
+	} else {
+		if tLen > len(stm.schema.GetTags()) {
+			return fmt.Errorf("%s has more tag than %s", req.Metadata, stm.schema)
+		}
 	}
 
 	is := stm.indexSchema.Load().(indexSchema)
@@ -207,7 +216,7 @@ func validateTags(stm *trace, req *tracev1.WriteRequest) error {
 	return nil
 }
 
-func buildTagsAndMap(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest) ([]*tagValue, map[string]*tagValue) {
+func buildTagsAndMap(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest, specMap map[string]int) ([]*tagValue, map[string]*tagValue) {
 	tags := make([]*tagValue, 0, len(stm.schema.Tags))
 	tagMap := make(map[string]*tagValue, len(stm.schema.Tags))
 	tagSpecs := stm.GetSchema().GetTags()
@@ -217,15 +226,15 @@ func buildTagsAndMap(stm *trace, tracesInTable *tracesInTable, req *tracev1.Writ
 		if tagSpec.Name == stm.schema.TraceIdTagName || tagSpec.Name == stm.schema.SpanIdTagName {
 			continue
 		}
-		if tagSpec.Name == stm.schema.TimestampTagName {
-			tracesInTable.traces.timestamps = append(tracesInTable.traces.timestamps, req.Tags[i].GetTimestamp().AsTime().UnixNano())
-		}
-
+		tagIdx, err := getTagIndex(stm, tagSpec.Name, specMap)
 		var tagValue *modelv1.TagValue
-		if len(req.Tags) <= i {
+		if err != nil || tagIdx >= len(req.Tags) {
 			tagValue = pbv1.NullTagValue
 		} else {
-			tagValue = req.Tags[i]
+			tagValue = req.Tags[tagIdx]
+		}
+		if tagSpec.Name == stm.schema.TimestampTagName && tagValue != pbv1.NullTagValue {
+			tracesInTable.traces.timestamps = append(tracesInTable.traces.timestamps, tagValue.GetTimestamp().AsTime().UnixNano())
 		}
 		tv := encodeTagValue(tagSpec.Name, tagSpec.Type, tagValue)
 		tags = append(tags, tv)
@@ -256,11 +265,13 @@ func buildSidxTags(tags []*tagValue) []sidx.Tag {
 	return sidxTags
 }
 
-func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest, traceID string, tagMap map[string]*tagValue, sidxTags []sidx.Tag) error {
+func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.WriteRequest,
+	traceID string, tagMap map[string]*tagValue, sidxTags []sidx.Tag, metadata *commonv1.Metadata, specMap map[string]int,
+) error {
 	indexRules := stm.GetIndexRules()
 	for _, indexRule := range indexRules {
 		tagName := indexRule.Tags[len(indexRule.Tags)-1]
-		tagIdx, err := getTagIndex(stm, tagName)
+		tagIdx, err := getTagIndex(stm, tagName, specMap)
 		if err != nil || tagIdx >= len(req.Tags) {
 			continue
 		}
@@ -283,7 +294,7 @@ func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.Wr
 
 		entityValues := make([]*modelv1.TagValue, 0, len(indexRule.Tags))
 		for i, tagName := range indexRule.Tags {
-			tagIdx, err := getTagIndex(stm, tagName)
+			tagIdx, err := getTagIndex(stm, tagName, specMap)
 			if err != nil || tagIdx >= len(req.Tags) {
 				continue
 			}
@@ -294,7 +305,7 @@ func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.Wr
 		}
 
 		series := &pbv1.Series{
-			Subject:      req.Metadata.Name,
+			Subject:      metadata.Name,
 			EntityValues: entityValues,
 		}
 		if err := series.Marshal(); err != nil {
@@ -348,26 +359,25 @@ func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.Wr
 	return nil
 }
 
-func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest) error {
+func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEvent *tracev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *tracev1.TagSpec,
+) error {
 	req := writeEvent.Request
-	stm, ok := schemaRepo.loadTrace(req.GetMetadata())
+	stm, ok := schemaRepo.loadTrace(metadata)
 	if !ok {
-		return fmt.Errorf("cannot find trace definition: %s", req.GetMetadata())
+		return fmt.Errorf("cannot find trace definition: %s", metadata)
 	}
-
-	traceID, err := extractTraceSpanInfo(stm, tracesInTable, req)
+	specMap := buildSpecMap(spec)
+	traceID, err := extractTraceSpanInfo(stm, tracesInTable, req, specMap)
 	if err != nil {
 		return err
 	}
-
-	if err := validateTags(stm, req); err != nil {
+	if err := validateTags(stm, req, spec); err != nil {
 		return err
 	}
-
-	tags, tagMap := buildTagsAndMap(stm, tracesInTable, req)
+	tags, tagMap := buildTagsAndMap(stm, tracesInTable, req, specMap)
 	sidxTags := buildSidxTags(tags)
-
-	return processIndexRules(stm, tracesInTable, req, traceID, tagMap, sidxTags)
+	return processIndexRules(stm, tracesInTable, req, traceID, tagMap, sidxTags, metadata, specMap)
 }
 
 func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
@@ -381,6 +391,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 	groups := make(map[string]*tracesInGroup)
+	var metadata *commonv1.Metadata
+	var spec *tracev1.TagSpec
 	for i := range events {
 		var writeEvent *tracev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -396,8 +408,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetTagSpec() != nil {
+			spec = req.GetTagSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*tracesInGroup)
 			continue
@@ -442,6 +461,32 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g.tsdb.Tick(g.latestTS)
 	}
 	return
+}
+
+func buildSpecMap(spec *tracev1.TagSpec) map[string]int {
+	if spec == nil {
+		return nil
+	}
+	specMap := make(map[string]int, 0)
+	for i, name := range spec.GetTagNames() {
+		specMap[name] = i
+	}
+	return specMap
+}
+
+func getTagIndex(trace *trace, name string, specMap map[string]int) (int, error) {
+	if specMap != nil {
+		if idx, ok := specMap[name]; ok {
+			return idx, nil
+		}
+		return -1, fmt.Errorf("tag %s not found in spec", name)
+	}
+	for i, tag := range trace.schema.Tags {
+		if tag.Name == name {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("tag %s not found in trace %s", name, trace.name)
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.TagValue) *tagValue {
@@ -493,13 +538,4 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
 	return tv
-}
-
-func getTagIndex(trace *trace, name string) (int, error) {
-	for i, tag := range trace.schema.Tags {
-		if tag.Name == name {
-			return i, nil
-		}
-	}
-	return -1, fmt.Errorf("tag %s not found in trace %s", name, trace.name)
 }
