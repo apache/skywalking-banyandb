@@ -22,6 +22,7 @@ Release Notes.
 ### Document
 
 - Add read write benchmark document for 0.9.0 release.
+- Add FODC overview doc.
 
 ## 0.9.0
 

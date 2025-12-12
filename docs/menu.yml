@@ -149,6 +149,10 @@ catalog:
             path: "/operation/mcp/inspector"
           - name: "Build and Package"
             path: "/operation/mcp/build"
+      - name: "First Occurrence Data Collection (FODC)"
+        catalog:
+          - name: "Overview"
+            path: "/operation/fodc/overview"
       - name: "Property Background Repair"
         path: "/concept/property-repair"
       - name: "Benchmark"
