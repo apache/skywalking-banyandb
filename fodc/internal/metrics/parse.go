@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package metrics implements parsing of Prometheus text format metrics.
 package metrics
 
 import (
@@ -34,9 +35,9 @@ type Label struct {
 // RawMetric represents a parsed Prometheus metric.
 type RawMetric struct {
 	Name   string
+	Desc   string
 	Labels []Label
 	Value  float64
-	Desc   string
 }
 
 // MetricKey is used for uniquely identifying metrics.
@@ -70,7 +71,7 @@ func (mk MetricKey) String() string {
 
 var (
 	helpLineRegex = regexp.MustCompile(`^#\s+HELP\s+(\S+)\s+(.+)$`)
-	// metricLineRegex matches metric lines: metric_name{label1="value1",label2="value2"} value
+	// metricLineRegex matches metric lines: metric_name{label1="value1",label2="value2"} value.
 	metricLineRegex = regexp.MustCompile(`^(\w+)(?:\{([^}]+)\})?\s+(.+)$`)
 	labelRegex      = regexp.MustCompile(`(\w+)="([^"]+)"`)
 )

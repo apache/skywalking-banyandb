@@ -19,10 +19,11 @@ package flightrecorder
 
 // RingBuffer is a generic circular buffer that stores values of type T.
 type RingBuffer[T any] struct {
-	next   int // Next write position in the circular buffer
 	values []T // Fixed-size buffer for values of type T
+	next   int // Next write position in the circular buffer
 }
 
+// NewRingBuffer creates a new RingBuffer.
 func NewRingBuffer[T any]() *RingBuffer[T] {
 	return &RingBuffer[T]{
 		next:   0,

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package watchdog implements a watchdog for metrics data.
 package watchdog
 
 import (
@@ -45,16 +46,16 @@ const (
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
 	client       *http.Client
-	url          string
-	interval     time.Duration
-	recorder     MetricsRecorder
 	log          *logger.Logger
-	ctx          context.Context
 	cancel       context.CancelFunc
+	recorder     MetricsRecorder
+	ctx          context.Context
+	url          string
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
-	isRunning    bool
+	interval     time.Duration
 	retryBackoff time.Duration
+	isRunning    bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.

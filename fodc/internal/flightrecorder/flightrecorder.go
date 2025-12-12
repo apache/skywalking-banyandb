@@ -27,8 +27,8 @@ import (
 
 // FlightRecorder buffers metrics data using fixed-size circular buffers with in-memory storage.
 type FlightRecorder struct {
-	mu           sync.RWMutex
 	datasources  []*Datasource
+	mu           sync.RWMutex
 	capacitySize int // Memory limit in bytes
 }
 

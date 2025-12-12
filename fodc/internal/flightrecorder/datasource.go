@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package flightrecorder implements a flight recorder for metrics data.
 package flightrecorder
 
 import (
@@ -62,12 +63,12 @@ func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64, capacity int) 
 
 // Datasource stores metrics data with ring buffers.
 type Datasource struct {
-	mu           sync.RWMutex
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
-	timestamps   TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
 	descriptions map[string]string            // Map from metric key to HELP content descriptions
-	Capacity     int                          // Number of writable metrics length
-	TotalWritten uint64                       // Total number of values written (wraps around)
+	timestamps   TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
+	mu           sync.RWMutex
+	TotalWritten uint64 // Total number of values written (wraps around)
+	Capacity     int    // Number of writable metrics length
 }
 
 // NewDatasource creates a new Datasource.

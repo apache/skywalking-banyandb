@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main is the main package for the FODC agent.
 package main
 
 import (
@@ -70,7 +71,8 @@ It continuously collects runtime parameters, performance indicators, node states
 	}
 }
 
-func runFODC(cmd *cobra.Command, args []string) error {
+// runFODC is the main function for the FODC agent.
+func runFODC(_ *cobra.Command, _ []string) error {
 	if initErr := logger.Init(logger.Logging{
 		Env:   "prod",
 		Level: "info",
