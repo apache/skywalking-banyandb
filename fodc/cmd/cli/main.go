@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -98,7 +100,13 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	memoryLimit, memLimitErr := cgroups.MemoryLimit()
 	if memLimitErr != nil {
-		log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
+		// On non-Linux systems (e.g., macOS), cgroups are not available
+		// This is expected and not an error condition
+		if runtime.GOOS != "linux" || strings.Contains(memLimitErr.Error(), "mountinfo") {
+			log.Debug().Err(memLimitErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
+		} else {
+			log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
+		}
 		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
 	}
 
