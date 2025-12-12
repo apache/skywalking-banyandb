@@ -297,9 +297,11 @@ func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID in
 	mp.mustInitFromDataPoints(dps)
 	mp.segmentID = segmentID
 	if len(seriesMetadata) > 0 {
-		// Copy series metadata to avoid sharing the underlying slice
-		mp.seriesMetadata = make([]byte, len(seriesMetadata))
-		copy(mp.seriesMetadata, seriesMetadata)
+		// Write series metadata to buffer to avoid sharing the underlying slice
+		_, err := mp.seriesMetadata.Write(seriesMetadata)
+		if err != nil {
+			logger.Panicf("cannot write series metadata to buffer: %s", err)
+		}
 	}
 	tst.mustAddMemPart(mp)
 }

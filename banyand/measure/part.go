@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -41,7 +42,7 @@ const (
 	measureFieldValuesName    = "fv"
 	measureTagFamiliesPrefix  = "tf:"
 	measureTagMetadataPrefix  = "tfm:"
-	measureSeriesMetadataName = "series-metadata"
+	measureSeriesMetadataName = "smeta"
 
 	metadataFilename               = "metadata.json"
 	primaryFilename                = measurePrimaryName + ".bin"
@@ -114,7 +115,7 @@ type memPart struct {
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
 	fieldValues       bytes.Buffer
-	seriesMetadata    []byte // Compacted binary format of series metadata
+	seriesMetadata    bytes.Buffer
 	partMetadata      partMetadata
 	segmentID         int64
 }
@@ -142,7 +143,7 @@ func (mp *memPart) reset() {
 	mp.primary.Reset()
 	mp.timestamps.Reset()
 	mp.fieldValues.Reset()
-	mp.seriesMetadata = nil
+	mp.seriesMetadata.Reset()
 	if mp.tagFamilies != nil {
 		for k, tf := range mp.tagFamilies {
 			tf.Reset()
@@ -217,8 +218,8 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 
 	// Flush series metadata if available
-	if len(mp.seriesMetadata) > 0 {
-		fs.MustFlush(fileSystem, mp.seriesMetadata, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
+	if len(mp.seriesMetadata.Buf) > 0 {
+		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
@@ -322,7 +323,14 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	// Try to open series metadata file (optional, for backward compatibility)
 	seriesMetadataPath := path.Join(partPath, seriesMetadataFilename)
-	if reader, err := fileSystem.OpenFile(seriesMetadataPath); err == nil {
+	reader, err := fileSystem.OpenFile(seriesMetadataPath)
+	if err != nil {
+		var fsErr *fs.FileSystemError
+		// File does not exist is acceptable for backward compatibility
+		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
+			logger.Panicf("cannot open series metadata file %q: %s", seriesMetadataPath, err)
+		}
+	} else {
 		p.seriesMetadata = reader
 	}
 
@@ -393,8 +401,6 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 			Reader: reader.SequentialRead(),
 		})
 	}
-
-	// Note: series metadata file is not included in sync as it's only for local debugging purposes
 
 	// Dynamic tag family files (*.tf and *.tfm)
 	ee := lfs.ReadDir(partPath)

@@ -263,7 +263,8 @@ func TestSeriesMetadataPersistence(t *testing.T) {
 	require.NotEmpty(t, seriesMetadataBytes)
 
 	// Set series metadata in memPart
-	mp.seriesMetadata = seriesMetadataBytes
+	_, err = mp.seriesMetadata.Write(seriesMetadataBytes)
+	require.NoError(t, err)
 
 	// Flush to disk
 	mp.mustFlush(fileSystem, path)

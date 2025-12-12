@@ -160,8 +160,6 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		},
 	)
 
-	// Note: series metadata is not synced to data nodes as it's only for local debugging purposes
-
 	// Stream tag families data.
 	if part.tagFamilies != nil {
 		for name, reader := range part.tagFamilies {
