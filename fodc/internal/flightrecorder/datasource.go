@@ -64,7 +64,7 @@ func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64, capacity int) 
 // Datasource stores metrics data with ring buffers.
 type Datasource struct {
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
-	descriptions map[string]string            // Map from metric key to HELP content descriptions
+	descriptions map[string]string            // Map from metric name to HELP content descriptions
 	timestamps   TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	TotalWritten uint64 // Total number of values written (wraps around)
@@ -109,7 +109,6 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 
 	computedCapacity := ds.ComputeCapacity(capacitySize)
-
 	// Update capacity for all ring buffers
 	for key, metricBuffer := range ds.metrics {
 		currentCap := metricBuffer.Cap()
@@ -138,7 +137,7 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 
 	if m.Desc != "" {
-		ds.descriptions[metricKey] = m.Desc
+		ds.descriptions[m.Name] = m.Desc
 	}
 
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value, computedCapacity)
