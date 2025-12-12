@@ -104,7 +104,6 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	// Compute capacity based on memory constraints
 	capacitySize := ds.Capacity
 	if capacitySize <= 0 {
-		// Use default capacity if not set
 		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8 // Rough estimate
 	}
 
@@ -137,15 +136,12 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 		ds.timestamps = *newTimestampBuffer
 	}
 
-	// Store description
 	if m.Desc != "" {
 		ds.descriptions[metricKey] = m.Desc
 	}
 
-	// Add metric value to its ring buffer
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value, computedCapacity)
 
-	// Update total written count
 	ds.TotalWritten++
 
 	return nil
@@ -206,7 +202,6 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	totalFixedOverhead := metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
 		metricBufferOverhead + timestampBufferOverhead
 
-	// Check if fixed overheads exceed capacity
 	if totalFixedOverhead >= capacitySize {
 		return 0
 	}
@@ -216,13 +211,10 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	// Timestamp: 8 bytes
 	bytesPerEntry := (numMetrics * 8) + 8
 
-	// Available memory for variable data
 	availableMemory := capacitySize - totalFixedOverhead
 
-	// Calculate maximum capacity
 	maxCapacity := availableMemory / bytesPerEntry
 
-	// Ensure non-negative
 	if maxCapacity < 0 {
 		return 0
 	}

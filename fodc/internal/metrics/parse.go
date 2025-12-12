@@ -51,7 +51,6 @@ func (mk MetricKey) String() string {
 		return mk.Name
 	}
 
-	// Sort labels for consistent key generation
 	sortedLabels := make([]Label, len(mk.Labels))
 	copy(sortedLabels, mk.Labels)
 	sort.Slice(sortedLabels, func(i, j int) bool {

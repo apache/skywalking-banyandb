@@ -115,7 +115,6 @@ func (w *Watchdog) Serve() <-chan struct{} {
 		ticker := time.NewTicker(w.interval)
 		defer ticker.Stop()
 
-		// Poll immediately on start
 		if pollErr := w.pollAndForward(); pollErr != nil {
 			w.log.Warn().Err(pollErr).Msg("Initial metrics poll failed")
 		}

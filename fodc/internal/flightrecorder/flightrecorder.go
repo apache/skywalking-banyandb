@@ -61,11 +61,9 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 		ds.Capacity = fr.capacitySize
 	}
 
-	// Add timestamp once per polling cycle (not per metric)
 	timestamp := time.Now().Unix()
 	ds.AddTimestamp(timestamp)
 
-	// Update each metric
 	for idx := range rawMetrics {
 		if updateErr := ds.Update(&rawMetrics[idx]); updateErr != nil {
 			return fmt.Errorf("failed to update metric %s: %w", rawMetrics[idx].Name, updateErr)
@@ -91,7 +89,6 @@ func (fr *FlightRecorder) SetCapacitySize(capacitySize int) {
 	defer fr.mu.Unlock()
 	fr.capacitySize = capacitySize
 
-	// Update capacity for all datasources
 	for _, ds := range fr.datasources {
 		ds.Capacity = capacitySize
 	}

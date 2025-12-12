@@ -71,7 +71,6 @@ It continuously collects runtime parameters, performance indicators, node states
 }
 
 func runFODC(cmd *cobra.Command, args []string) error {
-	// Initialize logger
 	if initErr := logger.Init(logger.Logging{
 		Env:   "prod",
 		Level: "info",
@@ -85,7 +84,6 @@ func runFODC(cmd *cobra.Command, args []string) error {
 		Dur("interval", pollInterval).
 		Msg("Starting FODC agent")
 
-	// Validate configuration
 	if pollInterval <= 0 {
 		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
@@ -96,14 +94,12 @@ func runFODC(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
 	}
 
-	// Get cgroup memory limit
 	memoryLimit, memLimitErr := cgroups.MemoryLimit()
 	if memLimitErr != nil {
 		log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
 		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
 	}
 
-	// Calculate capacity size based on memory usage percentage
 	var capacitySize int64
 	if memoryLimit > 0 {
 		capacitySize = (memoryLimit * int64(maxMetricsMemoryUsagePercent)) / 100
@@ -120,22 +116,17 @@ func runFODC(cmd *cobra.Command, args []string) error {
 		Int64("capacity-size-bytes", capacitySize).
 		Msg("Flight Recorder capacity configured")
 
-	// Create FlightRecorder with calculated capacity
 	fr := flightrecorder.NewFlightRecorder(int(capacitySize))
 
-	// Create watchdog with FlightRecorder
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
 
-	// Initialize watchdog
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
 
-	// Start watchdog
 	stopCh := wd.Serve()
 
-	// Wait for interrupt signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -146,7 +137,6 @@ func runFODC(cmd *cobra.Command, args []string) error {
 		log.Info().Msg("Watchdog stopped")
 	}
 
-	// Gracefully stop watchdog
 	wd.GracefulStop()
 
 	return nil
