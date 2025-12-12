@@ -327,6 +327,94 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
 
+// SpecWithData pairs a TagSpec with a data file.
+type SpecWithData struct {
+	Spec     *tracev1.TagSpec
+	DataFile string
+}
+
+// WriteWithSpec writes trace data using tag_spec to specify tag names.
+func WriteWithSpec(conn *grpclib.ClientConn, name, group string,
+	baseTime time.Time, interval time.Duration, specDataPairs ...SpecWithData,
+) {
+	ctx := context.Background()
+	md := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schemaClient := databasev1.NewTraceRegistryServiceClient(conn)
+	resp, err := schemaClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: md})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	md = resp.GetTrace().GetMetadata()
+
+	c := tracev1.NewTraceServiceClient(conn)
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	isFirstRequest := true
+	version := uint64(1)
+	currentTime := baseTime
+	for _, pair := range specDataPairs {
+		var templates []interface{}
+		content, err := dataFS.ReadFile("testdata/" + pair.DataFile)
+		gm.Expect(err).ShouldNot(gm.HaveOccurred())
+		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+		isFirstForSpec := true
+		for i, template := range templates {
+			templateMap, ok := template.(map[string]interface{})
+			gm.Expect(ok).To(gm.BeTrue())
+
+			spanData, ok := templateMap["span"].(string)
+			gm.Expect(ok).To(gm.BeTrue())
+
+			tagsData, ok := templateMap["tags"].([]interface{})
+			gm.Expect(ok).To(gm.BeTrue())
+
+			var tagValues []*modelv1.TagValue
+			for _, tag := range tagsData {
+				tagBytes, err := json.Marshal(tag)
+				gm.Expect(err).ShouldNot(gm.HaveOccurred())
+				tagValue := &modelv1.TagValue{}
+				gm.Expect(protojson.Unmarshal(tagBytes, tagValue)).ShouldNot(gm.HaveOccurred())
+				tagValues = append(tagValues, tagValue)
+			}
+
+			timestamp := currentTime.Add(time.Duration(i) * interval)
+			timestampTag := &modelv1.TagValue{
+				Value: &modelv1.TagValue_Timestamp{
+					Timestamp: timestamppb.New(timestamp),
+				},
+			}
+			tagValues = append(tagValues, timestampTag)
+
+			req := &tracev1.WriteRequest{
+				Tags:    tagValues,
+				Span:    []byte(spanData),
+				Version: version,
+			}
+			if isFirstRequest {
+				req.Metadata = md
+				isFirstRequest = false
+			}
+			if isFirstForSpec {
+				req.TagSpec = pair.Spec
+				isFirstForSpec = false
+			}
+			gm.Expect(writeClient.Send(req)).Should(gm.Succeed())
+			version++
+		}
+		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+	}
+
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}
+
 // unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.
 // It converts plain strings in the YAML to base64 encoded strings before protobuf unmarshaling.
 func unmarshalYAMLWithSpanEncoding(yamlData []byte, response *tracev1.QueryResponse) {

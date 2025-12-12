@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math/big"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -270,7 +271,12 @@ func (e *etcdSchemaRegistry) prependNamespace(key string) string {
 	if e.namespace == "" {
 		return key
 	}
-	return path.Join("/", e.namespace, key)
+	hasTrailingSlash := strings.HasSuffix(key, "/")
+	result := path.Join("/", e.namespace, key)
+	if hasTrailingSlash && !strings.HasSuffix(result, "/") {
+		result += "/"
+	}
+	return result
 }
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {

@@ -29,7 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -37,11 +36,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+type measureTagFamilySpec struct {
+	*measurev1.TagFamilySpec
+}
+
+func (m measureTagFamilySpec) GetName() string {
+	return m.TagFamilySpec.GetName()
+}
+
+func (m measureTagFamilySpec) GetTagNames() []string {
+	return m.TagFamilySpec.GetTagNames()
+}
 
 type measureService struct {
 	measurev1.UnimplementedMeasureServiceServer
@@ -87,6 +97,8 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
+	var specEntityLocator *specLocator
+	var specShardingKeyLocator *specLocator
 	isFirstRequest := true
 	nodeMetadataSent := make(map[string]bool)
 	nodeSpecSent := make(map[string]bool)
@@ -118,10 +130,10 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return errors.New("metadata is required for the first request of gRPC stream")
 		}
 		isFirstRequest = false
-
 		if writeRequest.GetDataPointSpec() != nil {
 			spec = writeRequest.GetDataPointSpec()
 			nodeSpecSent = make(map[string]bool)
+			specEntityLocator, specShardingKeyLocator = ms.buildSpecLocators(metadata, spec)
 		}
 
 		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
@@ -130,10 +142,33 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			continue
 		}
 
-		if err := ms.processAndPublishRequest(ctx, writeRequest, metadata, spec, publisher, &succeedSent, measure, nodeMetadataSent, nodeSpecSent); err != nil {
+		if err := ms.processAndPublishRequest(ctx, writeRequest, metadata, spec,
+			specEntityLocator, specShardingKeyLocator, publisher, &succeedSent, measure, nodeMetadataSent, nodeSpecSent); err != nil {
 			continue
 		}
 	}
+}
+
+func (ms *measureService) buildSpecLocators(metadata *commonv1.Metadata, spec *measurev1.DataPointSpec) (*specLocator, *specLocator) {
+	if spec == nil {
+		return nil, nil
+	}
+	id := getID(metadata)
+	measure, ok := ms.entityRepo.getMeasure(id)
+	if !ok {
+		return nil, nil
+	}
+	specFamilies := make([]tagFamilySpec, len(spec.GetTagFamilySpec()))
+	for i, f := range spec.GetTagFamilySpec() {
+		specFamilies[i] = measureTagFamilySpec{f}
+	}
+	entityLocator := newSpecLocator(measure.GetTagFamilies(), measure.GetEntity().GetTagNames(), specFamilies)
+	var shardingKeyLocator *specLocator
+	shardingKey := measure.GetShardingKey()
+	if shardingKey != nil && len(shardingKey.GetTagNames()) > 0 {
+		shardingKeyLocator = newSpecLocator(measure.GetTagFamilies(), shardingKey.GetTagNames(), specFamilies)
+	}
+	return entityLocator, shardingKeyLocator
 }
 
 func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequest,
@@ -148,7 +183,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 	if metadata.ModRevision > 0 {
 		measureCache, existed := ms.entityRepo.getLocator(getID(metadata))
 		if !existed {
-			ms.l.Error().Stringer("written", writeRequest).Msg("failed to measure schema not found")
+			ms.l.Error().Stringer("written", writeRequest).Msg("measure schema not found")
 			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
@@ -163,8 +198,9 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 }
 
 func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, publisher queue.BatchPublisher,
-	succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
+	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
 	nodeMetadataSent map[string]bool, nodeSpecSent map[string]bool,
 ) error {
 	// Retry with backoff when encountering errNotExist
@@ -176,7 +212,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = ms.navigate(metadata, writeRequest, spec)
+			tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
 				break
 			}
@@ -189,7 +225,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 			}
 		}
 	} else {
-		tagValues, shardID, err = ms.navigate(metadata, writeRequest, spec)
+		tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 	}
 
 	if err != nil {
@@ -266,134 +302,11 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 	return []string{nodeID}, nil
 }
 
-func (ms *measureService) navigate(metadata *commonv1.Metadata,
-	writeRequest *measurev1.WriteRequest, spec *measurev1.DataPointSpec,
+func (ms *measureService) navigate(metadata *commonv1.Metadata, writeRequest *measurev1.WriteRequest,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
 ) (pbv1.EntityValues, common.ShardID, error) {
 	tagFamilies := writeRequest.GetDataPoint().GetTagFamilies()
-	if spec == nil {
-		return ms.navigateByLocator(metadata, tagFamilies)
-	}
-	return ms.navigateByTagSpec(metadata, spec, tagFamilies)
-}
-
-func (ms *measureService) navigateByTagSpec(
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, tagFamilies []*modelv1.TagFamilyForWrite,
-) (pbv1.EntityValues, common.ShardID, error) {
-	shardNum, existed := ms.groupRepo.shardNum(metadata.Group)
-	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
-	}
-	id := getID(metadata)
-	measure, ok := ms.entityRepo.getMeasure(id)
-	if !ok {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding measure schema by: %v", metadata)
-	}
-	specFamilyMap, specTagMaps := ms.buildSpecMaps(spec)
-
-	entityValues := ms.findTagValuesByNames(
-		metadata.Name,
-		measure.GetTagFamilies(),
-		tagFamilies,
-		measure.GetEntity().GetTagNames(),
-		specFamilyMap,
-		specTagMaps,
-	)
-	entity, err := entityValues.ToEntity()
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
-
-	shardingKey := measure.GetShardingKey()
-	if shardingKey != nil && len(shardingKey.GetTagNames()) > 0 {
-		shardingKeyValues := ms.findTagValuesByNames(
-			metadata.Name,
-			measure.GetTagFamilies(),
-			tagFamilies,
-			shardingKey.GetTagNames(),
-			specFamilyMap,
-			specTagMaps,
-		)
-		shardingEntity, shardingErr := shardingKeyValues.ToEntity()
-		if shardingErr != nil {
-			return nil, common.ShardID(0), shardingErr
-		}
-		shardID, shardingErr := partition.ShardID(shardingEntity.Marshal(), shardNum)
-		if shardingErr != nil {
-			return nil, common.ShardID(0), shardingErr
-		}
-		return entityValues, common.ShardID(shardID), nil
-	}
-
-	shardID, err := partition.ShardID(entity.Marshal(), shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
-	return entityValues, common.ShardID(shardID), nil
-}
-
-func (ms *measureService) buildSpecMaps(spec *measurev1.DataPointSpec) (map[string]int, map[string]map[string]int) {
-	specFamilyMap := make(map[string]int)
-	specTagMaps := make(map[string]map[string]int)
-	for i, specFamily := range spec.GetTagFamilySpec() {
-		specFamilyMap[specFamily.GetName()] = i
-		tagMap := make(map[string]int)
-		for j, tagName := range specFamily.GetTagNames() {
-			tagMap[tagName] = j
-		}
-		specTagMaps[specFamily.GetName()] = tagMap
-	}
-	return specFamilyMap, specTagMaps
-}
-
-func (ms *measureService) findTagValuesByNames(
-	subject string,
-	schemaFamilies []*databasev1.TagFamilySpec,
-	srcTagFamilies []*modelv1.TagFamilyForWrite,
-	tagNames []string,
-	specFamilyMap map[string]int,
-	specTagMaps map[string]map[string]int,
-) pbv1.EntityValues {
-	entityValues := make(pbv1.EntityValues, len(tagNames)+1)
-	entityValues[0] = pbv1.EntityStrValue(subject)
-	for i, tagName := range tagNames {
-		tagValue := ms.findTagValueByName(schemaFamilies, srcTagFamilies, tagName, specFamilyMap, specTagMaps)
-		if tagValue == nil {
-			entityValues[i+1] = &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-		} else {
-			entityValues[i+1] = tagValue
-		}
-	}
-	return entityValues
-}
-
-func (ms *measureService) findTagValueByName(
-	schemaFamilies []*databasev1.TagFamilySpec,
-	srcTagFamilies []*modelv1.TagFamilyForWrite,
-	tagName string,
-	specFamilyMap map[string]int,
-	specTagMaps map[string]map[string]int,
-) *modelv1.TagValue {
-	for _, schemaFamily := range schemaFamilies {
-		for _, schemaTag := range schemaFamily.GetTags() {
-			if schemaTag.GetName() != tagName {
-				continue
-			}
-			familyIdx, ok := specFamilyMap[schemaFamily.GetName()]
-			if !ok || familyIdx >= len(srcTagFamilies) {
-				return nil
-			}
-			tagMap := specTagMaps[schemaFamily.GetName()]
-			if tagMap == nil {
-				return nil
-			}
-			tagIdx, ok := tagMap[tagName]
-			if !ok || tagIdx >= len(srcTagFamilies[familyIdx].GetTags()) {
-				return nil
-			}
-			return srcTagFamilies[familyIdx].GetTags()[tagIdx]
-		}
-	}
-	return nil
+	return ms.navigateByLocator(metadata, tagFamilies, specEntityLocator, specShardingKeyLocator)
 }
 
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {

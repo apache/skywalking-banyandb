@@ -1,0 +1,123 @@
+[
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "spec_trace_001"
+        }
+      },
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_1"
+        }
+      },
+      {
+        "str": {
+          "value": "/home_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 1100
+        }
+      },
+      {
+        "str": {
+          "value": "spec_span_001_1"
+        }
+      }
+    ],
+    "span": "spec_trace_001_span_1"
+  },
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "spec_trace_001"
+        }
+      },
+      {
+        "int": {
+          "value": 0
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_2"
+        }
+      },
+      {
+        "str": {
+          "value": "/product_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 600
+        }
+      },
+      {
+        "str": {
+          "value": "spec_span_001_2"
+        }
+      }
+    ],
+    "span": "spec_trace_001_span_2"
+  },
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "spec_trace_002"
+        }
+      },
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_3"
+        }
+      },
+      {
+        "str": {
+          "value": "/item_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 900
+        }
+      },
+      {
+        "str": {
+          "value": "spec_span_002_1"
+        }
+      }
+    ],
+    "span": "spec_trace_002_span_1"
+  }
+]
+

@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"context"
-	"hash/fnv"
 	"io"
 	"time"
 
@@ -40,6 +39,30 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+type traceSpecLocator struct {
+	traceIDIndex   int
+	timestampIndex int
+}
+
+func newTraceSpecLocator(spec *tracev1.TagSpec, traceIDTagName, timestampTagName string) *traceSpecLocator {
+	locator := &traceSpecLocator{
+		traceIDIndex:   -1,
+		timestampIndex: -1,
+	}
+	if spec == nil {
+		return locator
+	}
+	for i, tagName := range spec.GetTagNames() {
+		if tagName == traceIDTagName {
+			locator.traceIDIndex = i
+		}
+		if tagName == timestampTagName {
+			locator.timestampIndex = i
+		}
+	}
+	return locator
+}
 
 type traceService struct {
 	tracev1.UnimplementedTraceServiceServer
@@ -74,51 +97,115 @@ func (s *traceService) activeQueryAccessLog(root string, sampled bool) (err erro
 	return nil
 }
 
-func (s *traceService) validateTimestamp(writeEntity *tracev1.WriteRequest) error {
-	// Get trace schema from entityRepo
-	id := getID(writeEntity.GetMetadata())
+func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
+	metadata *commonv1.Metadata, specLocator *traceSpecLocator, stream tracev1.TraceService_WriteServer,
+) modelv1.Status {
+	id := getID(metadata)
 	traceEntity, existed := s.entityRepo.getTrace(id)
 	if !existed {
-		return errors.New("trace schema not found")
+		s.l.Error().Stringer("written", writeEntity).Msg("trace schema not found")
+		s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetVersion(), stream)
+		return modelv1.Status_STATUS_NOT_FOUND
 	}
 
-	timestampTagName := traceEntity.GetTimestampTagName()
-	for _, tag := range writeEntity.GetTags() {
-		if tag.GetTimestamp() != nil {
-			if err := timestamp.CheckPb(tag.GetTimestamp()); err != nil {
-				s.l.Error().Stringer("written", writeEntity).Err(err).Msg("the timestamp is invalid")
-				return err
+	var foundTimestamp bool
+	if specLocator != nil && specLocator.timestampIndex >= 0 {
+		tags := writeEntity.GetTags()
+		if specLocator.timestampIndex < len(tags) {
+			tagValue := tags[specLocator.timestampIndex]
+			if tagValue != nil && tagValue.GetTimestamp() != nil {
+				if errTime := timestamp.CheckPb(tagValue.GetTimestamp()); errTime != nil {
+					s.l.Error().Err(errTime).Stringer("written", writeEntity).Msg("the timestamp is invalid")
+					s.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetVersion(), stream)
+					return modelv1.Status_STATUS_INVALID_TIMESTAMP
+				}
+				foundTimestamp = true
 			}
-			return nil
+		}
+	}
+	if !foundTimestamp {
+		for _, tag := range writeEntity.GetTags() {
+			if tag.GetTimestamp() != nil {
+				if errTime := timestamp.CheckPb(tag.GetTimestamp()); errTime != nil {
+					s.l.Error().Err(errTime).Stringer("written", writeEntity).Msg("the timestamp is invalid")
+					s.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetVersion(), stream)
+					return modelv1.Status_STATUS_INVALID_TIMESTAMP
+				}
+				foundTimestamp = true
+				break
+			}
+		}
+	}
+	if !foundTimestamp {
+		timestampTagName := traceEntity.GetTimestampTagName()
+		s.l.Error().Stringer("written", writeEntity).Msg("timestamp tag not found: " + timestampTagName)
+		s.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetVersion(), stream)
+		return modelv1.Status_STATUS_INVALID_TIMESTAMP
+	}
+
+	if metadata.ModRevision > 0 {
+		if metadata.ModRevision != traceEntity.GetMetadata().GetModRevision() {
+			s.l.Error().Stringer("written", writeEntity).Msg("the trace schema is expired")
+			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetVersion(), stream)
+			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
 	}
 
-	return errors.New("timestamp tag not found: " + timestampTagName)
+	return modelv1.Status_STATUS_SUCCEED
 }
 
-func (s *traceService) validateMetadata(writeEntity *tracev1.WriteRequest) error {
-	if writeEntity.Metadata.ModRevision > 0 {
-		traceCache, existed := s.entityRepo.getTrace(getID(writeEntity.GetMetadata()))
-		if !existed {
-			return errors.New("trace schema not found")
-		}
-		if writeEntity.Metadata.ModRevision != traceCache.GetMetadata().GetModRevision() {
-			return errors.New("expired trace schema")
+func (s *traceService) navigate(metadata *commonv1.Metadata,
+	writeRequest *tracev1.WriteRequest, specLocator *traceSpecLocator,
+) (common.ShardID, error) {
+	shardCount, existed := s.groupRepo.shardNum(metadata.GetGroup())
+	if !existed {
+		return 0, errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
+	}
+	id := getID(metadata)
+	traceEntity, existed := s.entityRepo.getTrace(id)
+	if !existed {
+		return 0, errors.Wrapf(errNotExist, "finding trace schema by: %v", metadata)
+	}
+
+	var traceID string
+	var err error
+	if specLocator != nil && specLocator.traceIDIndex >= 0 {
+		tags := writeRequest.GetTags()
+		if specLocator.traceIDIndex < len(tags) {
+			traceID, err = extractTraceIDFromTagValue(tags[specLocator.traceIDIndex])
+			if err == nil {
+				return s.shardID(traceID, shardCount), nil
+			}
 		}
 	}
-	return nil
+
+	traceIDIndex, existed := s.entityRepo.getTraceIDIndex(id)
+	if !existed || traceIDIndex == -1 {
+		return 0, errors.New("trace ID tag not found in schema: " + traceEntity.GetTraceIdTagName())
+	}
+	traceID, err = s.extractTraceID(writeRequest.GetTags(), traceIDIndex)
+	if err != nil {
+		return 0, err
+	}
+	return s.shardID(traceID, shardCount), nil
+}
+
+func (s *traceService) shardID(traceID string, shardCount uint32) common.ShardID {
+	hash := convert.Hash([]byte(traceID))
+	return common.ShardID(hash % uint64(shardCount))
 }
 
 func (s *traceService) extractTraceID(tags []*modelv1.TagValue, traceIDIndex int) (string, error) {
 	if len(tags) == 0 {
 		return "", errors.New("no tags found")
 	}
-
 	if traceIDIndex < 0 || traceIDIndex >= len(tags) {
 		return "", errors.New("trace ID tag index out of range")
 	}
+	return extractTraceIDFromTagValue(tags[traceIDIndex])
+}
 
-	tag := tags[traceIDIndex]
+func extractTraceIDFromTagValue(tag *modelv1.TagValue) (string, error) {
 	switch v := tag.GetValue().(type) {
 	case *modelv1.TagValue_Str:
 		return v.Str.GetValue(), nil
@@ -129,45 +216,16 @@ func (s *traceService) extractTraceID(tags []*modelv1.TagValue, traceIDIndex int
 	}
 }
 
-func (s *traceService) getTraceShardID(writeEntity *tracev1.WriteRequest) (common.ShardID, error) {
-	// Get shard count from group configuration
-	shardCount, existed := s.groupRepo.shardNum(writeEntity.GetMetadata().GetGroup())
-	if !existed {
-		return 0, errors.New("group not found or no shard configuration")
-	}
-
-	// Get cached trace ID index from entityRepo
-	id := getID(writeEntity.GetMetadata())
-	traceIDIndex, existed := s.entityRepo.getTraceIDIndex(id)
-	if !existed {
-		return 0, errors.New("trace schema not found")
-	}
-
-	if traceIDIndex == -1 {
-		return 0, errors.New("trace ID tag not found in schema")
-	}
-
-	traceID, err := s.extractTraceID(writeEntity.GetTags(), traceIDIndex)
-	if err != nil {
-		return 0, err
-	}
-
-	// Calculate shard ID using hash of trace ID
-	hasher := fnv.New32a()
-	hasher.Write([]byte(traceID))
-	hash := hasher.Sum32()
-
-	return common.ShardID(hash % shardCount), nil
-}
-
-func (s *traceService) getTraceShardIDWithRetry(writeEntity *tracev1.WriteRequest) (common.ShardID, error) {
+func (s *traceService) navigateWithRetry(writeEntity *tracev1.WriteRequest, metadata *commonv1.Metadata,
+	specLocator *traceSpecLocator,
+) (shardID common.ShardID, err error) {
 	if s.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			shardID, err := s.getTraceShardID(writeEntity)
+			shardID, err = s.navigate(metadata, writeEntity, specLocator)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > s.maxWaitDuration {
-				return shardID, err
+				return
 			}
 			time.Sleep(retryInterval)
 			retryInterval = time.Duration(float64(retryInterval) * 1.5)
@@ -176,22 +234,40 @@ func (s *traceService) getTraceShardIDWithRetry(writeEntity *tracev1.WriteReques
 			}
 		}
 	}
-	return s.getTraceShardID(writeEntity)
+	return s.navigate(metadata, writeEntity, specLocator)
 }
 
 func (s *traceService) publishMessages(
 	ctx context.Context,
 	publisher queue.BatchPublisher,
 	writeEntity *tracev1.WriteRequest,
+	metadata *commonv1.Metadata,
+	spec *tracev1.TagSpec,
 	shardID common.ShardID,
+	nodeMetadataSent map[string]bool,
+	nodeSpecSent map[string]bool,
 ) ([]string, error) {
-	iwr := &tracev1.InternalWriteRequest{
-		ShardId: uint32(shardID),
-		Request: writeEntity,
-	}
-	nodeID, err := s.nodeRegistry.Locate(writeEntity.GetMetadata().GetGroup(), writeEntity.GetMetadata().GetName(), uint32(shardID), 0)
+	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
 	if err != nil {
 		return nil, err
+	}
+
+	requestToSend := &tracev1.WriteRequest{
+		Version: writeEntity.GetVersion(),
+		Tags:    writeEntity.GetTags(),
+		Span:    writeEntity.GetSpan(),
+	}
+	if !nodeMetadataSent[nodeID] {
+		requestToSend.Metadata = metadata
+		nodeMetadataSent[nodeID] = true
+	}
+	if spec != nil && !nodeSpecSent[nodeID] {
+		requestToSend.TagSpec = spec
+		nodeSpecSent[nodeID] = true
+	}
+	iwr := &tracev1.InternalWriteRequest{
+		ShardId: uint32(shardID),
+		Request: requestToSend,
 	}
 
 	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
@@ -201,20 +277,24 @@ func (s *traceService) publishMessages(
 	return []string{nodeID}, nil
 }
 
-func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
-	reply := func(metadata *commonv1.Metadata, status modelv1.Status, version uint64, stream tracev1.TraceService_WriteServer, logger *logger.Logger) {
-		if status != modelv1.Status_STATUS_SUCCEED {
-			s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "trace", "write")
-		}
-		s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "trace", "write")
-		if errResp := stream.Send(&tracev1.WriteResponse{Metadata: metadata, Status: status.String(), Version: version}); errResp != nil {
-			if dl := logger.Debug(); dl.Enabled() {
-				dl.Err(errResp).Msg("failed to send trace write response")
-			}
-			s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "trace", "write")
-		}
+func (s *traceService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, version uint64, stream tracev1.TraceService_WriteServer) {
+	if metadata == nil {
+		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
+		return
 	}
+	if status != modelv1.Status_STATUS_SUCCEED {
+		s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "trace", "write")
+	}
+	s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "trace", "write")
+	if errResp := stream.Send(&tracev1.WriteResponse{Metadata: metadata, Status: status.String(), Version: version}); errResp != nil {
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to send trace write response")
+		}
+		s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "trace", "write")
+	}
+}
 
+func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "trace", "write")
 	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
@@ -232,7 +312,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 					}
 				}
 			}
-			reply(ssm.metadata, code, ssm.messageID, stream, s.l)
+			s.sendReply(ssm.metadata, code, ssm.messageID, stream)
 		}
 		if err != nil {
 			s.l.Error().Err(err).Msg("failed to close the publisher")
@@ -245,6 +325,14 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 	}()
 
 	ctx := stream.Context()
+
+	var metadata *commonv1.Metadata
+	var spec *tracev1.TagSpec
+	var specLocator *traceSpecLocator
+	isFirstRequest := true
+	nodeMetadataSent := make(map[string]bool)
+	nodeSpecSent := make(map[string]bool)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -263,30 +351,37 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 			return err
 		}
 
-		requestCount++
-		s.metrics.totalStreamMsgReceived.Inc(1, writeEntity.Metadata.Group, "trace", "write")
-
-		if err = s.validateTimestamp(writeEntity); err != nil {
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetVersion(), stream, s.l)
-			continue
+		if writeEntity.GetMetadata() != nil {
+			metadata = writeEntity.GetMetadata()
+			nodeMetadataSent = make(map[string]bool)
+			specLocator = nil
+		} else if isFirstRequest {
+			s.l.Error().Msg("metadata is required for the first request of gRPC stream")
+			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetVersion(), stream)
+			return errors.New("metadata is required for the first request of gRPC stream")
 		}
-
-		if err = s.validateMetadata(writeEntity); err != nil {
-			status := modelv1.Status_STATUS_INTERNAL_ERROR
-			if errors.Is(err, errors.New("trace schema not found")) {
-				status = modelv1.Status_STATUS_NOT_FOUND
-			} else if errors.Is(err, errors.New("expired trace schema")) {
-				status = modelv1.Status_STATUS_EXPIRED_SCHEMA
+		isFirstRequest = false
+		if writeEntity.GetTagSpec() != nil {
+			spec = writeEntity.GetTagSpec()
+			nodeSpecSent = make(map[string]bool)
+			id := getID(metadata)
+			traceEntity, existed := s.entityRepo.getTrace(id)
+			if existed {
+				specLocator = newTraceSpecLocator(spec, traceEntity.GetTraceIdTagName(), traceEntity.GetTimestampTagName())
 			}
-			s.l.Error().Err(err).Stringer("written", writeEntity).Msg("metadata validation failed")
-			reply(writeEntity.GetMetadata(), status, writeEntity.GetVersion(), stream, s.l)
+		}
+
+		requestCount++
+		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "trace", "write")
+
+		if s.validateWriteRequest(writeEntity, metadata, specLocator, stream) != modelv1.Status_STATUS_SUCCEED {
 			continue
 		}
 
-		shardID, err := s.getTraceShardIDWithRetry(writeEntity)
+		shardID, err := s.navigateWithRetry(writeEntity, metadata, specLocator)
 		if err != nil {
-			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("trace sharding failed")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream, s.l)
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
 			continue
 		}
 
@@ -296,15 +391,15 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 			}
 		}
 
-		nodes, err := s.publishMessages(ctx, publisher, writeEntity, shardID)
+		nodes, err := s.publishMessages(ctx, publisher, writeEntity, metadata, spec, shardID, nodeMetadataSent, nodeSpecSent)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
-			reply(writeEntity.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream, s.l)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
 			continue
 		}
 
 		succeedSent = append(succeedSent, succeedSentMessage{
-			metadata:  writeEntity.GetMetadata(),
+			metadata:  metadata,
 			messageID: writeEntity.GetVersion(),
 			nodes:     nodes,
 		})

@@ -12,6 +12,7 @@ Release Notes.
 - Add sorted query support for the Property.
 - Update bydbQL to add sorted query support for the Property.
 - Remove the windows arch for binary and docker image.
+- Support writing data with specifications.
 
 ### Bug Fixes
 
@@ -23,6 +24,7 @@ Release Notes.
 
 - Add read write benchmark document for 0.9.0 release.
 - Add design of KTM.
+- Add FODC overview doc.
 
 ## 0.9.0
 
