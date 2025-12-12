@@ -90,7 +90,6 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
-	// Create MetricKey and generate string representation
 	mk := metrics.MetricKey{
 		Name:   m.Name,
 		Labels: m.Labels,

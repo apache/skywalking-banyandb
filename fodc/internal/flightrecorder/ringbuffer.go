@@ -23,7 +23,6 @@ type RingBuffer[T any] struct {
 	values []T // Fixed-size buffer for values of type T
 }
 
-// NewRingBuffer creates a new RingBuffer.
 func NewRingBuffer[T any]() *RingBuffer[T] {
 	return &RingBuffer[T]{
 		next:   0,
@@ -40,14 +39,9 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 
 	currentLen := len(rb.values)
 
-	// If capacity is smaller than current size, resize using FIFO strategy
-	// Keep the most recent 'capacity' items
 	if capacity < currentLen {
-		// Create new buffer with target capacity
 		newValues := make([]T, capacity)
 
-		// Copy the most recent 'capacity' items
-		// The most recent items are those closest to rb.next (going backwards)
 		startIdx := (rb.next - capacity + currentLen) % currentLen
 		if startIdx < 0 {
 			startIdx += currentLen
@@ -64,17 +58,14 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 		// next should be at capacity (which will wrap to 0 on next write)
 		rb.next = capacity
 	} else if capacity > currentLen {
-		// Expand buffer to target capacity
 		newValues := make([]T, capacity)
 		copy(newValues, rb.values)
 		rb.values = newValues
-		// next position stays the same, but we need to ensure it's within bounds
 		if rb.next >= len(rb.values) {
 			rb.next = len(rb.values)
 		}
 	}
 
-	// Add the new value at the next position
 	if len(rb.values) > 0 {
 		rb.values[rb.next%len(rb.values)] = v
 		rb.next = (rb.next + 1) % len(rb.values)
