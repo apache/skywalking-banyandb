@@ -71,8 +71,6 @@ func NewServer(config Config) (*Server, error) {
 
 // Start starts the Prometheus metrics server with the provided registry.
 // It registers the DatasourceCollector and starts serving metrics on the configured address.
-// Returns an error channel that will receive any server errors.
-// The server runs in a goroutine and can be stopped with Stop().
 func (s *Server) Start(registry *prometheus.Registry, datasourceCollector *exporter.DatasourceCollector) (<-chan error, error) {
 	if s.started {
 		return nil, fmt.Errorf("server is already started")
