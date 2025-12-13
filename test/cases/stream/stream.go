@@ -91,4 +91,5 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("multi-groups: sort duration", helpers.Args{Input: "multi_group_sort_duration", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("hybrid index", helpers.Args{Input: "hybrid_index", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("err in arr", helpers.Args{Input: "err_in_arr", Duration: 1 * time.Hour, WantErr: true}),
+	g.Entry("write spec", helpers.Args{Input: "write_spec", Duration: 1 * time.Hour, IgnoreElementID: true}),
 )

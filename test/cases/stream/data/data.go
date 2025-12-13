@@ -274,3 +274,71 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 		return err
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
+
+// SpecWithData pairs a TagFamilySpec with a data file.
+type SpecWithData struct {
+	DataFile string
+	Spec     []*streamv1.TagFamilySpec
+}
+
+// WriteWithSpec writes stream data using multiple tag_family_specs to specify tag names.
+func WriteWithSpec(conn *grpclib.ClientConn, name, group string,
+	baseTime time.Time, interval time.Duration, specDataPairs ...SpecWithData,
+) {
+	ctx := context.Background()
+	md := &commonv1.Metadata{
+		Name:  name,
+		Group: group,
+	}
+
+	schemaClient := databasev1.NewStreamRegistryServiceClient(conn)
+	resp, err := schemaClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: md})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	md = resp.GetStream().GetMetadata()
+
+	c := streamv1.NewStreamServiceClient(conn)
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	isFirstRequest := true
+	elementCounter := 0
+	currentTime := baseTime
+	for _, pair := range specDataPairs {
+		var templates []interface{}
+		content, err := dataFS.ReadFile("testdata/" + pair.DataFile)
+		gm.Expect(err).ShouldNot(gm.HaveOccurred())
+		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+		isFirstForSpec := true
+		for i, template := range templates {
+			rawElementValue, errMarshal := json.Marshal(template)
+			gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+			elementValue := &streamv1.ElementValue{}
+			gm.Expect(protojson.Unmarshal(rawElementValue, elementValue)).ShouldNot(gm.HaveOccurred())
+			elementValue.ElementId = strconv.Itoa(elementCounter)
+			elementValue.Timestamp = timestamppb.New(currentTime.Add(time.Duration(i) * interval))
+
+			req := &streamv1.WriteRequest{
+				Element:   elementValue,
+				MessageId: uint64(time.Now().UnixNano()),
+			}
+			if isFirstRequest {
+				req.Metadata = md
+				isFirstRequest = false
+			}
+			if isFirstForSpec {
+				req.TagFamilySpec = pair.Spec
+				isFirstForSpec = false
+			}
+			gm.Expect(writeClient.Send(req)).Should(gm.Succeed())
+			elementCounter++
+		}
+		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+	}
+
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}
