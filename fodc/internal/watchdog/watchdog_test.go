@@ -34,12 +34,14 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
 )
 
+const testMetricsCPUUsage = "cpu_usage 75.5"
+
 // mockMetricsRecorder is a mock implementation of MetricsRecorder for testing.
 type mockMetricsRecorder struct {
-	mu              sync.Mutex
 	metrics         [][]metrics.RawMetric
 	updateErrors    []error
 	updateCallCount int
+	mu              sync.Mutex
 }
 
 // Update records metrics from a polling cycle.
@@ -125,7 +127,7 @@ func TestWatchdog_PollMetrics_Success(t *testing.T) {
 	metricsText := `# HELP http_requests_total Total number of HTTP requests
 # TYPE http_requests_total counter
 http_requests_total{method="GET"} 100
-cpu_usage 75.5`
+` + testMetricsCPUUsage
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -152,7 +154,7 @@ cpu_usage 75.5`
 }
 
 func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
@@ -187,7 +189,7 @@ func TestWatchdog_PollMetrics_ConnectionFailure(t *testing.T) {
 }
 
 func TestWatchdog_PollMetrics_InvalidMetricsFormat(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("invalid metric format"))
 	}))
@@ -210,14 +212,14 @@ func TestWatchdog_PollMetrics_InvalidMetricsFormat(t *testing.T) {
 
 func TestWatchdog_PollMetrics_RetryWithExponentialBackoff(t *testing.T) {
 	var attemptCount int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := atomic.AddInt32(&attemptCount, 1)
 		if attempt < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("cpu_usage 75.5"))
+		_, _ = w.Write([]byte(testMetricsCPUUsage))
 	}))
 	defer server.Close()
 
@@ -242,10 +244,10 @@ func TestWatchdog_PollMetrics_RetryWithExponentialBackoff(t *testing.T) {
 }
 
 func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(1 * time.Second)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("cpu_usage 75.5"))
+		_, _ = w.Write([]byte(testMetricsCPUUsage))
 	}))
 	defer server.Close()
 
@@ -270,7 +272,7 @@ func TestWatchdog_PollAndForward_Success(t *testing.T) {
 	metricsText := `# HELP http_requests_total Total number of HTTP requests
 http_requests_total{method="GET"} 100`
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
 	}))
@@ -294,9 +296,9 @@ http_requests_total{method="GET"} 100`
 }
 
 func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
 	}))
@@ -314,9 +316,9 @@ func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
 }
 
 func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
 	}))
@@ -374,10 +376,10 @@ func TestWatchdog_ExponentialBackoff(t *testing.T) {
 }
 
 func TestWatchdog_Serve_StartStop(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
 	var requestCount int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&requestCount, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
@@ -413,11 +415,11 @@ func TestWatchdog_Serve_StartStop(t *testing.T) {
 }
 
 func TestWatchdog_Serve_PollingIntervalAccuracy(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
 	var requestTimes []time.Time
 	var mu sync.Mutex
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		requestTimes = append(requestTimes, time.Now())
 		mu.Unlock()
@@ -515,7 +517,7 @@ func TestWatchdog_GracefulStop_NotRunning(t *testing.T) {
 }
 
 func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
 	var connectionHeaders []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -554,9 +556,9 @@ func TestWatchdog_MetricsForwardingToFlightRecorder(t *testing.T) {
 # TYPE http_requests_total counter
 http_requests_total{method="GET"} 100
 http_requests_total{method="POST"} 200
-cpu_usage 75.5`
+` + testMetricsCPUUsage
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
 	}))
@@ -580,10 +582,10 @@ cpu_usage 75.5`
 }
 
 func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
-	metricsText := `cpu_usage 75.5`
+	metricsText := testMetricsCPUUsage
 
 	var attemptCount int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempt := atomic.AddInt32(&attemptCount, 1)
 		if attempt == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -614,7 +616,7 @@ func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
 }
 
 func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(""))
 	}))
