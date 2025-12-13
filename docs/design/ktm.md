@@ -56,15 +56,16 @@ Notes:
 ## Metrics Model and Collection Strategy
 
 - Counters in BPF maps are monotonic and are not cleared by the userspace collector (NoCleanup).
-- Collection interval: 10 seconds by default.
-- KTM writes collected metrics into the FODC FlightRecorder through a Go-native interface; the FlightRecorder is responsible for any subsequent export, persistence, or diagnostics workflows.
+- Collection and push interval: 10 seconds by default.
+- KTM periodically pushes collected metrics into the FODC FlightRecorder through a Go-native interface at the configured interval (default 10s). The push interval is exported through the `collector.interval` configuration option. The FlightRecorder is responsible for any subsequent export, persistence, or diagnostics workflows.
 - Downstream systems (for example, FODC Discovery Proxy or higher-level exporters) should derive rates using `rate()`/`irate()` or equivalents; we avoid windowed counters and map resets to preserve counter semantics.
 - int64 overflow is not a practical concern for our use cases; we accept long-lived monotonic growth.
 
 Configuration surface (current):
-- `collector.interval`: 10s by default.
+- `collector.interval`: Controls the periodic push interval for metrics to FlightRecorder. Defaults to 10s.
 - `collector.enable_cgroup_filter`, `collector.enable_mntns_filter`: default on when in sidecar mode; can be toggled.
 - `collector.target_pid`/`collector.target_comm`: optional helpers for discovering scoping targets.
+- `collector.target_comm_regex`: process matcher regular expression used during target discovery (matches `/proc/<pid>/comm` and/or executable basename). Defaults to `banyand`.
 - Cleanup strategy is effectively `no_cleanup` by design intent; clear-after-read logic is deprecated for production metrics.
 - Configuration is applied via the FODC sidecar; KTM does not define its own standalone process-level configuration surface.
 
@@ -75,6 +76,28 @@ Configuration surface (current):
 - The target process is identified at startup, and eBPF programs are instructed to filter events to only that process.
 - Primary filtering mechanism: cgroup v2. This ensures all events originate from the correct container. PID and mount namespace filters are used as supplementary checks.
 - The design intentionally avoids multi-process or node-level (DaemonSet) monitoring to keep the implementation simple and overhead minimal.
+
+### Target Process Discovery (Pod / VM)
+
+KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** driven by a configurable regular expression (`collector.target_comm_regex`, default `banyand`).
+
+#### Kubernetes Pod (sidecar)
+
+Preconditions:
+- The pod should be configured with `shareProcessNamespace: true` so the monitor sidecar can see the target container’s `/proc` entries.
+- The monitor container should have cgroup v2 mounted (typically at `/sys/fs/cgroup`).
+
+Discovery flow (high level):
+- Scan `/proc` for candidate processes.
+- For each PID, read `/proc/<pid>/comm` (and/or the executable basename) and match it against `collector.target_comm_regex`.
+- Once matched, read `/proc/<pid>/cgroup` to obtain the target’s cgroup path/identity, then enable cgroup filtering so only events from that container/process are counted.
+
+#### VM / bare metal
+
+Discovery flow (high level):
+- Scan `/proc` for candidate processes.
+- Match `/proc/<pid>/comm` (and/or executable basename) against `collector.target_comm_regex` (default `banyand`).
+- Use PID (and optionally cgroup/mount namespace filters if available) to scope kernel events to the selected process.
 
 ### Scoping Semantics
 
@@ -100,14 +123,14 @@ KTM does not expose a dedicated HTTP or gRPC API. Instead, it provides an intern
 - Go-native interfaces (implemented):
   - Register and manage KTM modules (such as `iomonitor`).
   - Configure collectors and scoping behavior.
-  - Read monotonic counters from BPF maps and write the results into the FlightRecorder.
+  - Periodically read monotonic counters from BPF maps and push the results into the FlightRecorder at the configured interval (default 10s).
 
 Any external APIs (HTTP or gRPC) that expose KTM-derived metrics are part of the broader FODC system (for example, Discovery Proxy or other FODC components) and are documented separately. KTM itself is not responsible for serving `/metrics` or any other network endpoints.
 
 
 ## Exporters
 
-KTM itself has no direct network exporters. All metrics collected by KTM are written into the FlightRecorder inside the FODC sidecar. External consumers (such as FODC Discovery Proxy, Prometheus integrations, or BanyanDB push/pull paths) read from the FlightRecorder or other FODC-facing APIs and are specified in the FODC design documents rather than this KTM-focused document.
+KTM itself has no direct network exporters. All metrics collected by KTM are periodically pushed into the FlightRecorder inside the FODC sidecar at the configured interval (default 10s). External consumers (such as FODC Discovery Proxy, Prometheus integrations, or BanyanDB push/pull paths) read from the FlightRecorder or other FODC-facing APIs and are specified in the FODC design documents rather than this KTM-focused document.
 
 
 ## Metrics Reference (selected)
