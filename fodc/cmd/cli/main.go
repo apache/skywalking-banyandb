@@ -28,9 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/fodc/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -41,12 +44,14 @@ const (
 	defaultPollInterval                 = 10 * time.Second
 	defaultMetricsEndpoint              = "http://localhost:2121/metrics"
 	defaultMaxMetricsMemoryUsagePercent = 10
+	defaultPrometheusListenAddr         = ":9090"
 )
 
 var (
 	pollInterval                 time.Duration
 	metricsEndpoint              string
 	maxMetricsMemoryUsagePercent int
+	prometheusListenAddr         string
 )
 
 func main() {
@@ -66,6 +71,8 @@ It continuously collects runtime parameters, performance indicators, node states
 	rootCmd.Flags().IntVar(&maxMetricsMemoryUsagePercent, "max-metrics-memory-usage-percentage",
 		defaultMaxMetricsMemoryUsagePercent,
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
+	rootCmd.Flags().StringVar(&prometheusListenAddr, "prometheus-listen-addr", defaultPrometheusListenAddr,
+		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -86,6 +93,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	log.Info().
 		Str("endpoint", metricsEndpoint).
 		Dur("interval", pollInterval).
+		Str("prometheus-listen-addr", prometheusListenAddr).
 		Msg("Starting FODC agent")
 
 	if pollInterval <= 0 {
@@ -128,10 +136,30 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	fr := flightrecorder.NewFlightRecorder(int(capacitySize))
 
+	// Create Prometheus registry
+	promReg := prometheus.NewRegistry()
+	datasourceCollector := exporter.NewDatasourceCollector(fr)
+
+	// Create and start Prometheus metrics server
+	metricsServer, serverCreateErr := server.NewServer(server.Config{
+		ListenAddr:        prometheusListenAddr,
+		ReadHeaderTimeout: 3 * time.Second,
+		ShutdownTimeout:   5 * time.Second,
+	})
+	if serverCreateErr != nil {
+		return fmt.Errorf("failed to create metrics server: %w", serverCreateErr)
+	}
+
+	serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
+	if serverStartErr != nil {
+		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
+	}
+
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
 
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
+		_ = metricsServer.Stop()
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
 
@@ -145,9 +173,16 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		log.Info().Msg("Received shutdown signal")
 	case <-stopCh:
 		log.Info().Msg("Watchdog stopped")
+	case err := <-serverErrCh:
+		log.Error().Err(err).Msg("Metrics server error")
 	}
 
+	// Graceful shutdown
 	wd.GracefulStop()
+
+	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
+		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
+	}
 
 	return nil
 }

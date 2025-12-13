@@ -207,7 +207,7 @@ func TestDatasourceCollector_Collect_LabelPreservation(t *testing.T) {
 	// Add metric with multiple labels
 	rawMetrics := []metrics.RawMetric{
 		{
-			Name: "http_requests_total",
+			Name:  "http_requests_total",
 			Value: 100.0,
 			Labels: []metrics.Label{
 				{Name: "method", Value: "GET"},
@@ -438,4 +438,3 @@ func getLabelNamesFromDesc(desc *prometheus.Desc) []string {
 
 	return labelNames
 }
-
