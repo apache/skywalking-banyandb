@@ -30,6 +30,41 @@ traces:
             value: trace_010
     traceId: trace_010
   - spans:
+    - span: trace_008_span_1
+      spanId: span_008_1
+      tags:
+      - key: duration
+        value:
+          int:
+            value: "890"
+      - key: trace_id
+        value:
+          str:
+            value: trace_008
+    - span: trace_008_span_2
+      spanId: span_008_2
+      tags:
+      - key: duration
+        value:
+          int:
+            value: "340"
+      - key: trace_id
+        value:
+          str:
+            value: trace_008
+    - span: trace_008_span_3
+      spanId: span_008_3
+      tags:
+      - key: duration
+        value:
+          int:
+            value: "2100"
+      - key: trace_id
+        value:
+          str:
+            value: trace_008
+    traceId: trace_008
+  - spans:
     - span: trace_009_span_1
       spanId: span_009_1
       tags:
@@ -53,38 +88,3 @@ traces:
           str:
             value: trace_009
     traceId: trace_009
-  - spans:
-    - span: trace_003_span_1
-      spanId: span_003_1
-      tags:
-      - key: duration
-        value:
-          int:
-            value: "1200"
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-    - span: trace_003_span_2
-      spanId: span_003_2
-      tags:
-      - key: duration
-        value:
-          int:
-            value: "150"
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-    - span: trace_003_span_3
-      spanId: span_003_3
-      tags:
-      - key: duration
-        value:
-          int:
-            value: "400"
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-    traceId: trace_003

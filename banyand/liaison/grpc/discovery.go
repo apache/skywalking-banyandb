@@ -50,6 +50,7 @@ func newDiscoveryService(kind schema.Kind, metadataRepo metadata.Repo, nodeRegis
 	er := &entityRepo{
 		entitiesMap:     make(map[identity]partition.Locator),
 		measureMap:      make(map[identity]*databasev1.Measure),
+		streamMap:       make(map[identity]*databasev1.Stream),
 		traceMap:        make(map[identity]*databasev1.Trace),
 		traceIDIndexMap: make(map[identity]int),
 	}
@@ -83,27 +84,45 @@ func (ds *discoveryService) SetLogger(log *logger.Logger) {
 	ds.shardingKeyRepo.log = log
 }
 
-func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite) (pbv1.EntityValues, common.ShardID, error) {
+func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
+) (pbv1.EntityValues, common.ShardID, error) {
 	shardNum, existed := ds.groupRepo.shardNum(metadata.Group)
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
 	id := getID(metadata)
-	entityLocator, existed := ds.entityRepo.getLocator(id)
-	if !existed {
-		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
+	var entityValues pbv1.EntityValues
+	var shardID common.ShardID
+	var err error
+	if specEntityLocator != nil {
+		entityValues, shardID, err = specEntityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+	} else {
+		entityLocator, existed := ds.entityRepo.getLocator(id)
+		if !existed {
+			return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
+		}
+		entityValues, shardID, err = entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
 	}
-	entityValues, shardID, err := entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
-	}
-	shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
-	if !existed {
-		return entityValues, shardID, nil
-	}
-	_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
-	if err != nil {
-		return nil, common.ShardID(0), err
+	if specShardingKeyLocator != nil {
+		_, shardID, err = specShardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+		if err != nil {
+			return nil, common.ShardID(0), err
+		}
+	} else {
+		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
+		if existed {
+			_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
+			if err != nil {
+				return nil, common.ShardID(0), err
+			}
+		}
 	}
 	return entityValues, shardID, nil
 }
@@ -192,6 +211,7 @@ type entityRepo struct {
 	log             *logger.Logger
 	entitiesMap     map[identity]partition.Locator
 	measureMap      map[identity]*databasev1.Measure
+	streamMap       map[identity]*databasev1.Stream
 	traceMap        map[identity]*databasev1.Trace
 	traceIDIndexMap map[identity]int // Cache trace ID tag index
 	sync.RWMutex
@@ -255,11 +275,14 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
 	e.entitiesMap[id] = partition.Locator{TagLocators: l.TagLocators, ModRevision: modRevision}
-	if schemaMetadata.Kind == schema.KindMeasure {
+	switch schemaMetadata.Kind {
+	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
 		e.measureMap[id] = measure
-	} else {
-		delete(e.measureMap, id) // Ensure measure is not stored for streams
+	case schema.KindStream:
+		stream := schemaMetadata.Spec.(*databasev1.Stream)
+		e.streamMap[id] = stream
+	default:
 	}
 }
 
@@ -301,6 +324,7 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	defer e.RWMutex.Unlock()
 	delete(e.entitiesMap, id)
 	delete(e.measureMap, id)      // Clean up measure
+	delete(e.streamMap, id)       // Clean up stream
 	delete(e.traceMap, id)        // Clean up trace
 	delete(e.traceIDIndexMap, id) // Clean up trace ID index
 }
@@ -340,6 +364,13 @@ func (e *entityRepo) getMeasure(id identity) (*databasev1.Measure, bool) {
 	defer e.RWMutex.RUnlock()
 	m, ok := e.measureMap[id]
 	return m, ok
+}
+
+func (e *entityRepo) getStream(id identity) (*databasev1.Stream, bool) {
+	e.RWMutex.RLock()
+	defer e.RWMutex.RUnlock()
+	s, ok := e.streamMap[id]
+	return s, ok
 }
 
 var _ schema.EventHandler = (*shardingKeyRepo)(nil)

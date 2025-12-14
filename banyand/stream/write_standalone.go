@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -69,13 +70,14 @@ func (w *writeCallback) CheckHealth() *common.Error {
 }
 
 func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec,
 ) (map[string]*elementsInGroup, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eg, err := w.prepareElementsInGroup(dst, writeEvent, ts)
+	eg, err := w.prepareElementsInGroup(dst, metadata, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -83,15 +85,15 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 	if err != nil {
 		return nil, err
 	}
-	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs)
+	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInGroup, error) {
-	gn := writeEvent.Request.Metadata.Group
+func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, metadata *commonv1.Metadata, ts int64) (*elementsInGroup, error) {
+	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -161,17 +163,17 @@ func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *
 }
 
 func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *streamv1.InternalWriteRequest,
-	ts int64, tableDocs *index.Documents, seriesDocs *seriesDoc,
+	ts int64, tableDocs *index.Documents, seriesDocs *seriesDoc, metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec,
 ) error {
 	req := writeEvent.Request
 
 	elements.timestamps = append(elements.timestamps, ts)
-	eID := convert.HashStr(req.Metadata.Group + "|" + req.Metadata.Name + "|" + req.Element.ElementId)
+	eID := convert.HashStr(metadata.Group + "|" + metadata.Name + "|" + req.Element.ElementId)
 	elements.elementIDs = append(elements.elementIDs, eID)
 
-	stm, ok := schemaRepo.loadStream(writeEvent.GetRequest().GetMetadata())
+	stm, ok := schemaRepo.loadStream(metadata)
 	if !ok {
-		return fmt.Errorf("cannot find stream definition: %s", writeEvent.GetRequest().GetMetadata())
+		return fmt.Errorf("cannot find stream definition: %s", metadata)
 	}
 
 	fLen := len(req.Element.GetTagFamilies())
@@ -179,11 +181,11 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 		return fmt.Errorf("%s has no tag family", req)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return fmt.Errorf("%s has more tag families than %s", metadata, stm.schema)
 	}
 
 	series := &pbv1.Series{
-		Subject:      req.Metadata.Name,
+		Subject:      metadata.Name,
 		EntityValues: writeEvent.EntityValues,
 	}
 	if err := series.Marshal(); err != nil {
@@ -200,28 +202,37 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 
+	specFamilyMap, specTagMaps := buildSpecMaps(spec)
+
 	for i := range stm.GetSchema().GetTagFamilies() {
-		var tagFamily *modelv1.TagFamilyForWrite
-		if len(req.Element.TagFamilies) <= i {
-			tagFamily = pbv1.NullTagFamily
-		} else {
-			tagFamily = req.Element.TagFamilies[i]
-		}
-		tfr := is.indexRuleLocators.TagFamilyTRule[i]
 		tagFamilySpec := stm.GetSchema().GetTagFamilies()[i]
+		srcFamily, specTagMap := getSrcFamilyAndTagMap(spec, tagFamilySpec, req, i, specFamilyMap, specTagMaps)
+		tfr := is.indexRuleLocators.TagFamilyTRule[i]
 		tf := tagValues{
 			tag: tagFamilySpec.Name,
 		}
 
 		for j := range tagFamilySpec.Tags {
+			t := tagFamilySpec.Tags[j]
+
 			var tagValue *modelv1.TagValue
-			if tagFamily == pbv1.NullTagFamily || len(tagFamily.Tags) <= j {
-				tagValue = pbv1.NullTagValue
+			if spec != nil {
+				if srcFamily != nil && specTagMap != nil {
+					if srcTagIdx, ok := specTagMap[t.Name]; ok && srcTagIdx < len(srcFamily.Tags) {
+						tagValue = srcFamily.Tags[srcTagIdx]
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 			} else {
-				tagValue = tagFamily.Tags[j]
+				if srcFamily == nil || len(srcFamily.Tags) <= j {
+					tagValue = pbv1.NullTagValue
+				} else {
+					tagValue = srcFamily.Tags[j]
+				}
 			}
 
-			t := tagFamilySpec.Tags[j]
 			indexed := false
 			if r, ok := tfr[t.Name]; ok && tagValue != pbv1.NullTagValue {
 				if r.GetType() == databasev1.IndexRule_TYPE_INVERTED {
@@ -277,6 +288,8 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 	groups := make(map[string]*elementsInGroup)
+	var metadata *commonv1.Metadata
+	var spec []*streamv1.TagFamilySpec
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -292,8 +305,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetTagFamilySpec() != nil {
+			spec = req.GetTagFamilySpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*elementsInGroup)
 			continue
@@ -325,6 +345,41 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		g.tsdb.Tick(g.latestTS)
 	}
 	return
+}
+
+func buildSpecMaps(spec []*streamv1.TagFamilySpec) (map[string]int, map[string]map[string]int) {
+	if spec == nil {
+		return nil, nil
+	}
+	specFamilyMap := make(map[string]int)
+	specTagMaps := make(map[string]map[string]int)
+	for i, specFamily := range spec {
+		specFamilyMap[specFamily.GetName()] = i
+		tagMap := make(map[string]int)
+		for j, tagName := range specFamily.GetTagNames() {
+			tagMap[tagName] = j
+		}
+		specTagMaps[specFamily.GetName()] = tagMap
+	}
+	return specFamilyMap, specTagMaps
+}
+
+func getSrcFamilyAndTagMap(spec []*streamv1.TagFamilySpec, tagFamilySpec *databasev1.TagFamilySpec,
+	req *streamv1.WriteRequest, i int, specFamilyMap map[string]int,
+	specTagMaps map[string]map[string]int,
+) (*modelv1.TagFamilyForWrite, map[string]int) {
+	var srcFamily *modelv1.TagFamilyForWrite
+	var specTagMap map[string]int
+	if spec != nil {
+		specIdx, ok := specFamilyMap[tagFamilySpec.Name]
+		if ok && specIdx < len(req.Element.TagFamilies) {
+			srcFamily = req.Element.TagFamilies[specIdx]
+		}
+		specTagMap = specTagMaps[tagFamilySpec.Name]
+	} else if len(req.Element.TagFamilies) > i {
+		srcFamily = req.Element.TagFamilies[i]
+	}
+	return srcFamily, specTagMap
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.TagValue) *tagValue {
