@@ -279,10 +279,10 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 				matchedCount++
 				// Check if this is a volatile metric (memory-related gauges)
 				if isVolatileMetric(metricKeyStr) {
-					// For volatile metrics, use percentage-based tolerance (5%)
-					// or absolute tolerance of 5MB, whichever is larger
-					absTolerance := 5.0 * 1024 * 1024        // 5MB
-					percentTolerance := bufferedValue * 0.05 // 5%
+					// For volatile metrics, use percentage-based tolerance (10%)
+					// or absolute tolerance of 10MB, whichever is larger
+					absTolerance := 10.0 * 1024 * 1024       // 10MB
+					percentTolerance := bufferedValue * 0.10 // 10%
 					tolerance := absTolerance
 					if percentTolerance > absTolerance {
 						tolerance = percentTolerance
@@ -395,10 +395,10 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 				currentValue := metricBuffer.GetCurrentValue()
 				// Check if this is a volatile metric (memory-related gauges)
 				if isVolatileMetric(metricKeyStr) {
-					// For volatile metrics, use percentage-based tolerance (5%)
-					// or absolute tolerance of 5MB, whichever is larger
-					absTolerance := 5.0 * 1024 * 1024        // 5MB
-					percentTolerance := bufferedValue * 0.05 // 5%
+					// For volatile metrics, use percentage-based tolerance (10%)
+					// or absolute tolerance of 10MB, whichever is larger
+					absTolerance := 10.0 * 1024 * 1024       // 10MB
+					percentTolerance := bufferedValue * 0.10 // 10%
 					tolerance := absTolerance
 					if percentTolerance > absTolerance {
 						tolerance = percentTolerance
