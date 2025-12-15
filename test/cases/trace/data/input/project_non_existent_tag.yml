@@ -17,12 +17,4 @@
 
 name: "sw"
 groups: ["test-trace-group"]
-tag_projection: ["trace_id"]
-criteria:
-  condition:
-    name: "nonexistent_tag"
-    op: "BINARY_OP_EQ"
-    value:
-      str:
-        value: "test_value"
-
+tag_projection: ["trace_id", "nonexistent_tag"]

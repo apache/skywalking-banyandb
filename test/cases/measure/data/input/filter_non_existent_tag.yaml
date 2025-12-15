@@ -30,4 +30,3 @@ criteria:
     value:
       str:
         value: "test_value"
-

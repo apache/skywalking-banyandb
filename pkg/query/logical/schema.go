@@ -158,9 +158,11 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	for _, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			if ts, ok := cs.TagSpecMap[tag.GetTagName()]; ok {
-				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
+			ts, ok := cs.TagSpecMap[tag.GetTagName()]
+			if !ok {
+				return nil, errors.WithMessagef(ErrTagNotFound, "tag %q does not exist in the current schema", tag.GetTagName())
 			}
+			tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 		}
 		tagRefs = append(tagRefs, tagRefsInFamily)
 	}
