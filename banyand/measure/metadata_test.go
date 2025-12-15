@@ -394,13 +394,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_deleted_tag"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			deleteExtraMeasureTag(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+			deleteExtraMeasureTag(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-3*time.Hour), now,
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
 
@@ -425,13 +425,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_added_tag"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{})
-			addExtraMeasureTag(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{withExtraTag: true, entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{})
+			addExtraMeasureTag(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{withExtraTag: true, entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-3*time.Hour), now,
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id", "extra_tag"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
 
@@ -465,13 +465,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_tag_type"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			changeExtraMeasureTagType(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+			changeExtraMeasureTagType(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-3*time.Hour), now,
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id", "extra_tag"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
 
@@ -506,13 +506,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_deleted_family"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraFamily: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraFamily: true})
-			deleteExtraMeasureTagFamily(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraFamily: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraFamily: true})
+			deleteExtraMeasureTagFamily(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-3*time.Hour), now,
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
 
@@ -533,13 +533,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_delete_field"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraField: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraField: true})
-			deleteExtraField(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraField: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraField: true})
+			deleteExtraField(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-3*time.Hour), now,
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id"}, []string{"total", "extra_field"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
 
@@ -565,13 +565,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_filter_deleted"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			deleteExtraMeasureTag(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+			deleteExtraMeasureTag(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				err := queryMeasureWithDeletedTagCondition(svcs, measureName, groupName, now)
+				err := queryMeasureWithDeletedTagCondition(svcs, measureName, now)
 				innerGm.Expect(err).To(HaveOccurred())
 				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
 			}, flags.EventuallyTimeout).Should(Succeed())
@@ -583,13 +583,13 @@ var _ = Describe("Schema Change", func() {
 			measureName := "schema_change_projection_deleted"
 			now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			deleteExtraMeasureTag(svcs, measureName, groupName)
-			writeSchemaChangeMeasureData(svcs, measureName, groupName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+			deleteExtraMeasureTag(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
 			Eventually(func(innerGm Gomega) {
-				err := queryMeasureWithDeletedTagProjection(svcs, measureName, groupName, now)
+				err := queryMeasureWithDeletedTagProjection(svcs, measureName, now)
 				innerGm.Expect(err).To(HaveOccurred())
 				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
 			}, flags.EventuallyTimeout).Should(Succeed())
@@ -602,11 +602,11 @@ var _ = Describe("Schema Change", func() {
 		It("updating entity should fail", func() {
 			ctx := context.TODO()
 			measureName := "schema_change_entity"
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{})
 
 			measureSchema, err := svcs.metadataService.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  measureName,
-				Group: groupName,
+				Group: schemaChangeGroupName,
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 
@@ -623,11 +623,11 @@ var _ = Describe("Schema Change", func() {
 		It("deleting entity tag should fail", func() {
 			ctx := context.TODO()
 			measureName := "schema_delete_entity_tag"
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{})
 
 			measureSchema, err := svcs.metadataService.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  measureName,
-				Group: groupName,
+				Group: schemaChangeGroupName,
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 
@@ -644,11 +644,11 @@ var _ = Describe("Schema Change", func() {
 		It("modifying field definition should fail", func() {
 			ctx := context.TODO()
 			measureName := "schema_modify_field"
-			env := setupSchemaChangeMeasure(svcs, measureName, groupName, measureSetupOptions{})
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{})
 
 			measureSchema, err := svcs.metadataService.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  measureName,
-				Group: groupName,
+				Group: schemaChangeGroupName,
 			})
 			Expect(err).ShouldNot(HaveOccurred())
 
@@ -674,7 +674,9 @@ type measureSetupOptions struct {
 	withInterval    bool
 }
 
-func setupSchemaChangeMeasure(svcs *services, measureName, groupName string, opts measureSetupOptions) *measureSchemaChangeEnv {
+const schemaChangeGroupName = "sw_metric"
+
+func setupSchemaChangeMeasure(svcs *services, measureName string, opts measureSetupOptions) *measureSchemaChangeEnv {
 	ctx := context.TODO()
 
 	tags := []*databasev1.TagSpec{
@@ -721,7 +723,7 @@ func setupSchemaChangeMeasure(svcs *services, measureName, groupName string, opt
 	initialMeasure := &databasev1.Measure{
 		Metadata: &commonv1.Metadata{
 			Name:  measureName,
-			Group: groupName,
+			Group: schemaChangeGroupName,
 		},
 		TagFamilies: tagFamilies,
 		Fields:      fields,
@@ -738,7 +740,7 @@ func setupSchemaChangeMeasure(svcs *services, measureName, groupName string, opt
 	Eventually(func() bool {
 		_, err := svcs.measure.Measure(&commonv1.Metadata{
 			Name:  measureName,
-			Group: groupName,
+			Group: schemaChangeGroupName,
 		})
 		return err == nil
 	}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
@@ -747,17 +749,17 @@ func setupSchemaChangeMeasure(svcs *services, measureName, groupName string, opt
 		cleanup: func() {
 			_, _ = svcs.metadataService.MeasureRegistry().DeleteMeasure(ctx, &commonv1.Metadata{
 				Name:  measureName,
-				Group: groupName,
+				Group: schemaChangeGroupName,
 			})
 		},
 	}
 }
 
-func updateMeasureSchema(svcs *services, measureName, groupName string, updateFn func(*databasev1.Measure)) {
+func updateMeasureSchema(svcs *services, measureName string, updateFn func(*databasev1.Measure)) {
 	ctx := context.TODO()
 	measureSchema, err := svcs.metadataService.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 		Name:  measureName,
-		Group: groupName,
+		Group: schemaChangeGroupName,
 	})
 	Expect(err).ShouldNot(HaveOccurred())
 	updateFn(measureSchema)
@@ -766,8 +768,8 @@ func updateMeasureSchema(svcs *services, measureName, groupName string, updateFn
 	time.Sleep(2 * time.Second)
 }
 
-func deleteExtraField(svcs *services, measureName, groupName string) {
-	updateMeasureSchema(svcs, measureName, groupName, func(m *databasev1.Measure) {
+func deleteExtraField(svcs *services, measureName string) {
+	updateMeasureSchema(svcs, measureName, func(m *databasev1.Measure) {
 		m.Fields = []*databasev1.FieldSpec{
 			{
 				Name:              "total",
@@ -779,8 +781,8 @@ func deleteExtraField(svcs *services, measureName, groupName string) {
 	})
 }
 
-func deleteExtraMeasureTag(svcs *services, measureName, groupName string) {
-	updateMeasureSchema(svcs, measureName, groupName, func(m *databasev1.Measure) {
+func deleteExtraMeasureTag(svcs *services, measureName string) {
+	updateMeasureSchema(svcs, measureName, func(m *databasev1.Measure) {
 		m.TagFamilies[0].Tags = []*databasev1.TagSpec{
 			{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
 			{Name: "entity_id", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -788,15 +790,15 @@ func deleteExtraMeasureTag(svcs *services, measureName, groupName string) {
 	})
 }
 
-func addExtraMeasureTag(svcs *services, measureName, groupName string) {
-	updateMeasureSchema(svcs, measureName, groupName, func(m *databasev1.Measure) {
+func addExtraMeasureTag(svcs *services, measureName string) {
+	updateMeasureSchema(svcs, measureName, func(m *databasev1.Measure) {
 		m.TagFamilies[0].Tags = append(m.TagFamilies[0].Tags,
 			&databasev1.TagSpec{Name: "extra_tag", Type: databasev1.TagType_TAG_TYPE_INT})
 	})
 }
 
-func changeExtraMeasureTagType(svcs *services, measureName, groupName string) {
-	updateMeasureSchema(svcs, measureName, groupName, func(m *databasev1.Measure) {
+func changeExtraMeasureTagType(svcs *services, measureName string) {
+	updateMeasureSchema(svcs, measureName, func(m *databasev1.Measure) {
 		m.TagFamilies[0].Tags = []*databasev1.TagSpec{
 			{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
 			{Name: "entity_id", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -805,8 +807,8 @@ func changeExtraMeasureTagType(svcs *services, measureName, groupName string) {
 	})
 }
 
-func deleteExtraMeasureTagFamily(svcs *services, measureName, groupName string) {
-	updateMeasureSchema(svcs, measureName, groupName, func(m *databasev1.Measure) {
+func deleteExtraMeasureTagFamily(svcs *services, measureName string) {
+	updateMeasureSchema(svcs, measureName, func(m *databasev1.Measure) {
 		m.TagFamilies = []*databasev1.TagFamilySpec{
 			{
 				Name: "default",
@@ -820,14 +822,14 @@ func deleteExtraMeasureTagFamily(svcs *services, measureName, groupName string) 
 }
 
 type measureWriteDataOptions struct {
+	entityIDPrefix     string
 	withExtraTag       bool
 	withExtraTagString bool
 	withExtraField     bool
 	withExtraFamily    bool
-	entityIDPrefix     string
 }
 
-func writeSchemaChangeMeasureData(svcs *services, name, group string, baseTime time.Time, count int, opts measureWriteDataOptions) {
+func writeSchemaChangeMeasureData(svcs *services, name string, baseTime time.Time, count int, opts measureWriteDataOptions) {
 	bp := svcs.pipeline.NewBatchPublisher(5 * time.Second)
 	defer bp.Close()
 	interval := 500 * time.Millisecond
@@ -872,7 +874,7 @@ func writeSchemaChangeMeasureData(svcs *services, name, group string, baseTime t
 		req := &measurev1.WriteRequest{
 			Metadata: &commonv1.Metadata{
 				Name:  name,
-				Group: group,
+				Group: schemaChangeGroupName,
 			},
 			DataPoint: &measurev1.DataPointValue{
 				Timestamp:   timestamppb.New(baseTime.Add(time.Duration(i) * interval)),
@@ -887,11 +889,11 @@ func writeSchemaChangeMeasureData(svcs *services, name, group string, baseTime t
 	}
 }
 
-func querySchemaChangeMeasureData(svcs *services, measureName, groupName string, startTime, endTime time.Time,
+func querySchemaChangeMeasureData(svcs *services, measureName string, startTime, endTime time.Time,
 	tagNames []string, fieldNames []string,
 ) []*measurev1.DataPoint {
 	req := &measurev1.QueryRequest{
-		Groups: []string{groupName},
+		Groups: []string{schemaChangeGroupName},
 		Name:   measureName,
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(startTime),
@@ -924,9 +926,9 @@ func querySchemaChangeMeasureData(svcs *services, measureName, groupName string,
 	return resp.DataPoints
 }
 
-func queryMeasureWithDeletedTagCondition(svcs *services, measureName, groupName string, now time.Time) error {
+func queryMeasureWithDeletedTagCondition(svcs *services, measureName string, now time.Time) error {
 	req := &measurev1.QueryRequest{
-		Groups: []string{groupName},
+		Groups: []string{schemaChangeGroupName},
 		Name:   measureName,
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(now.Add(-3 * time.Hour)),
@@ -972,9 +974,9 @@ func queryMeasureWithDeletedTagCondition(svcs *services, measureName, groupName 
 	}
 }
 
-func queryMeasureWithDeletedTagProjection(svcs *services, measureName, groupName string, now time.Time) error {
+func queryMeasureWithDeletedTagProjection(svcs *services, measureName string, now time.Time) error {
 	req := &measurev1.QueryRequest{
-		Groups: []string{groupName},
+		Groups: []string{schemaChangeGroupName},
 		Name:   measureName,
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(now.Add(-3 * time.Hour)),

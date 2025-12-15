@@ -808,9 +808,9 @@ func queryWithDeletedTagProjection(svcs *services, streamName, groupName string,
 }
 
 type writeDataOptions struct {
+	traceIDPrefix   string
 	extraTag        extraTagType
 	withExtraFamily bool
-	traceIDPrefix   string
 	elementIDOffset int
 }
 
@@ -831,6 +831,8 @@ func writeSchemaChangeData(svcs *services, name, group string, baseTime time.Tim
 			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(100 * (i + 1))}}},
 		}
 		switch opts.extraTag {
+		case extraTagNone:
+			// No extra tag
 		case extraTagInt:
 			searchableTags = append(searchableTags,
 				&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(200 + i)}}})
@@ -867,7 +869,7 @@ func writeSchemaChangeData(svcs *services, name, group string, baseTime time.Tim
 	}
 }
 
-func querySchemaChangeData(svcs *services, name, group string, begin, end time.Time, tags []string, criteria *modelv1.Criteria) []*streamv1.Element {
+func querySchemaChangeData(svcs *services, name, group string, begin, end time.Time, tags []string, _ *modelv1.Criteria) []*streamv1.Element {
 	req := &streamv1.QueryRequest{
 		Groups: []string{group},
 		Name:   name,
@@ -883,9 +885,6 @@ func querySchemaChangeData(svcs *services, name, group string, begin, end time.T
 				},
 			},
 		},
-	}
-	if criteria != nil {
-		req.Criteria = criteria
 	}
 	var resp *streamv1.QueryResponse
 	Eventually(func() bool {

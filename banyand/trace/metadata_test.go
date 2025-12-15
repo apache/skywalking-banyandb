@@ -116,11 +116,11 @@ var _ = Describe("Metadata", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			Eventually(func() bool {
-				_, err := svcs.trace.Trace(&commonv1.Metadata{
+				_, traceErr := svcs.trace.Trace(&commonv1.Metadata{
 					Name:  traceName,
 					Group: groupName,
 				})
-				return err == nil
+				return traceErr == nil
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 
 			updatedTrace := &databasev1.Trace{
@@ -168,11 +168,11 @@ var _ = Describe("Metadata", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			Eventually(func() bool {
-				_, err := svcs.trace.Trace(&commonv1.Metadata{
+				_, traceErr := svcs.trace.Trace(&commonv1.Metadata{
 					Name:  traceName,
 					Group: groupName,
 				})
-				return err == nil
+				return traceErr == nil
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 
 			updatedTrace := &databasev1.Trace{
@@ -224,11 +224,11 @@ var _ = Describe("Metadata", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 
 			Eventually(func() bool {
-				_, err := svcs.trace.Trace(&commonv1.Metadata{
+				_, traceErr := svcs.trace.Trace(&commonv1.Metadata{
 					Name:  traceName,
 					Group: groupName,
 				})
-				return err == nil
+				return traceErr == nil
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 
 			updatedTrace := &databasev1.Trace{
@@ -601,8 +601,8 @@ func queryWithDeletedTagProjection(svcs *services, traceName, groupName string, 
 }
 
 type writeTraceDataOptions struct {
-	extraTag      extraTagType
 	traceIDPrefix string
+	extraTag      extraTagType
 	spanIDOffset  int
 }
 
@@ -625,6 +625,8 @@ func writeSchemaChangeTraceData(svcs *services, name, group string, baseTime tim
 			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(100 * (i + 1))}}},
 		}
 		switch opts.extraTag {
+		case extraTagNone:
+			// No extra tag
 		case extraTagInt:
 			tags = append(tags,
 				&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(200 + i)}}})
@@ -685,6 +687,7 @@ func querySchemaChangeTraceData(svcs *services, name, group string, begin, end t
 			GinkgoWriter.Printf("query error: %s\n", d.Error())
 			return false
 		default:
+			GinkgoWriter.Printf("unexpected data type: %T\n", respData)
 			Fail("unexpected data type")
 		}
 		return false
