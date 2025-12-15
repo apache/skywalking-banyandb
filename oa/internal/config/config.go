@@ -59,9 +59,11 @@ type TLSConfig struct {
 
 // CollectorConfig defines the collector configuration.
 type CollectorConfig struct {
-	Modules  []string      `mapstructure:"modules"`
-	EBPF     EBPFConfig    `mapstructure:"ebpf"`
-	Interval time.Duration `mapstructure:"interval"`
+	Modules         []string      `mapstructure:"modules"`
+	EBPF            EBPFConfig    `mapstructure:"ebpf"`
+	Interval        time.Duration `mapstructure:"interval"`
+	CleanupStrategy string        `mapstructure:"cleanup_strategy"`
+	CleanupInterval time.Duration `mapstructure:"cleanup_interval"`
 }
 
 // EBPFConfig defines eBPF-specific configuration.
@@ -101,8 +103,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Collector: CollectorConfig{
-			Interval: 10 * time.Second,
-			Modules:  []string{"fadvise", "memory"},
+			Interval:        10 * time.Second,
+			Modules:         []string{"fadvise", "memory"},
+			CleanupStrategy: "clear_after_read",
+			CleanupInterval: 60 * time.Second,
 			EBPF: EBPFConfig{
 				PinPath:      "/sys/fs/bpf/ebpf-sidecar",
 				MapSizeLimit: 10240,
@@ -201,4 +205,103 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+type Option func(*Config)
+
+func New(opts ...Option) (*Config, error) {
+    cfg := DefaultConfig()
+    for _, o := range opts {
+        o(cfg)
+    }
+    if err := cfg.Validate(); err != nil {
+        return nil, err
+    }
+    return cfg, nil
+}
+
+func WithCollectorInterval(d time.Duration) Option {
+    return func(c *Config) {
+        c.Collector.Interval = d
+    }
+}
+
+func WithCollectorModules(mods ...string) Option {
+    return func(c *Config) {
+        c.Collector.Modules = append([]string(nil), mods...)
+    }
+}
+
+func WithEBPFPinPath(path string) Option {
+    return func(c *Config) {
+        c.Collector.EBPF.PinPath = path
+    }
+}
+
+func WithEBPFMapSizeLimit(limit int) Option {
+    return func(c *Config) {
+        c.Collector.EBPF.MapSizeLimit = limit
+    }
+}
+
+func WithEBPFCgroupPath(path string) Option {
+    return func(c *Config) {
+        c.Collector.EBPF.CgroupPath = path
+    }
+}
+
+func WithServerHTTPPort(port int) Option {
+    return func(c *Config) {
+        c.Server.HTTP.Port = port
+    }
+}
+
+func WithServerHTTPMetricsPath(p string) Option {
+    return func(c *Config) {
+        c.Server.HTTP.MetricsPath = p
+    }
+}
+
+func WithServerGRPCPort(port int) Option {
+    return func(c *Config) {
+        c.Server.GRPC.Port = port
+    }
+}
+
+func WithServerGRPCTLS(enabled bool, certFile, keyFile string) Option {
+    return func(c *Config) {
+        c.Server.GRPC.TLS.Enabled = enabled
+        c.Server.GRPC.TLS.CertFile = certFile
+        c.Server.GRPC.TLS.KeyFile = keyFile
+    }
+}
+
+func WithExportPrometheus() Option {
+    return func(c *Config) {
+        c.Export.Type = "prometheus"
+    }
+}
+
+func WithExportBanyanDB(endpoint, group string, timeout time.Duration) Option {
+    return func(c *Config) {
+        c.Export.Type = "banyandb"
+        c.Export.BanyanDB.Endpoint = endpoint
+        c.Export.BanyanDB.Group = group
+        c.Export.BanyanDB.Timeout = timeout
+    }
+}
+
+func WithExportBanyanDBTLS(enabled bool, certFile, keyFile string) Option {
+	return func(c *Config) {
+		c.Export.BanyanDB.TLS.Enabled = enabled
+		c.Export.BanyanDB.TLS.CertFile = certFile
+		c.Export.BanyanDB.TLS.KeyFile = keyFile
+	}
+}
+
+func WithCleanup(strategy string, interval time.Duration) Option {
+	return func(c *Config) {
+		c.Collector.CleanupStrategy = strategy
+		c.Collector.CleanupInterval = interval
+	}
 }
