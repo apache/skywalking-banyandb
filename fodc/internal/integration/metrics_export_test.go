@@ -38,6 +38,35 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/watchdog"
 )
 
+// volatileMetricNames contains names of metrics that are known to be volatile (gauges that change frequently).
+var volatileMetricNames = []string{
+	"go_memstats_heap_alloc_bytes",
+	"go_memstats_heap_sys_bytes",
+	"go_memstats_heap_inuse_bytes",
+	"go_memstats_heap_idle_bytes",
+	"go_memstats_heap_released_bytes",
+	"go_memstats_alloc_bytes",
+	"go_memstats_sys_bytes",
+	"go_memstats_mallocs_total",
+	"go_memstats_frees_total",
+	"go_memstats_gc_sys_bytes",
+	"go_memstats_other_sys_bytes",
+	"go_memstats_next_gc_bytes",
+	"go_memstats_last_gc_time_seconds",
+	"process_resident_memory_bytes",
+	"process_virtual_memory_bytes",
+}
+
+// isVolatileMetric checks if a metric key contains any volatile metric name.
+func isVolatileMetric(metricKeyStr string) bool {
+	for _, volatileName := range volatileMetricNames {
+		if strings.Contains(metricKeyStr, volatileName) {
+			return true
+		}
+	}
+	return false
+}
+
 var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 	var (
 		metricsEndpoint     string
@@ -244,40 +273,15 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Verify that exported metrics match buffered metrics
 		matchedCount := 0
-		// Metrics that are known to be volatile (gauges that change frequently)
-		volatileMetrics := map[string]bool{
-			"go_memstats_heap_alloc_bytes":      true,
-			"go_memstats_heap_sys_bytes":        true,
-			"go_memstats_heap_inuse_bytes":      true,
-			"go_memstats_heap_idle_bytes":       true,
-			"go_memstats_heap_released_bytes":   true,
-			"go_memstats_alloc_bytes":           true,
-			"go_memstats_sys_bytes":             true,
-			"go_memstats_mallocs_total":         true,
-			"go_memstats_frees_total":           true,
-			"go_memstats_gc_sys_bytes":          true,
-			"go_memstats_other_sys_bytes":       true,
-			"go_memstats_next_gc_bytes":         true,
-			"go_memstats_last_gc_time_seconds":  true,
-			"process_resident_memory_bytes":      true,
-			"process_virtual_memory_bytes":      true,
-		}
 		for metricKeyStr, bufferedValue := range bufferedMetricsMap {
 			exportedValue, exists := exportedMetricsMap[metricKeyStr]
 			if exists {
 				matchedCount++
 				// Check if this is a volatile metric (memory-related gauges)
-				isVolatile := false
-				for volatileName := range volatileMetrics {
-					if strings.Contains(metricKeyStr, volatileName) {
-						isVolatile = true
-						break
-					}
-				}
-				if isVolatile {
+				if isVolatileMetric(metricKeyStr) {
 					// For volatile metrics, use percentage-based tolerance (5%)
 					// or absolute tolerance of 5MB, whichever is larger
-					absTolerance := 5.0 * 1024 * 1024 // 5MB
+					absTolerance := 5.0 * 1024 * 1024        // 5MB
 					percentTolerance := bufferedValue * 0.05 // 5%
 					tolerance := absTolerance
 					if percentTolerance > absTolerance {
@@ -384,41 +388,16 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Step 8: Verify metric values are current (from RingBuffers)
 		// The exporter uses GetCurrentValue() which returns the most recent value
-		// Metrics that are known to be volatile (gauges that change frequently)
-		volatileMetricsForStep8 := map[string]bool{
-			"go_memstats_heap_alloc_bytes":      true,
-			"go_memstats_heap_sys_bytes":        true,
-			"go_memstats_heap_inuse_bytes":      true,
-			"go_memstats_heap_idle_bytes":       true,
-			"go_memstats_heap_released_bytes":   true,
-			"go_memstats_alloc_bytes":           true,
-			"go_memstats_sys_bytes":             true,
-			"go_memstats_mallocs_total":         true,
-			"go_memstats_frees_total":           true,
-			"go_memstats_gc_sys_bytes":          true,
-			"go_memstats_other_sys_bytes":       true,
-			"go_memstats_next_gc_bytes":         true,
-			"go_memstats_last_gc_time_seconds":  true,
-			"process_resident_memory_bytes":      true,
-			"process_virtual_memory_bytes":      true,
-		}
 		for metricKeyStr, bufferedValue := range bufferedMetricsMap {
 			exportedValue, exists := exportedMetricsMap[metricKeyStr]
 			if exists {
 				metricBuffer := metricsMap[metricKeyStr]
 				currentValue := metricBuffer.GetCurrentValue()
 				// Check if this is a volatile metric (memory-related gauges)
-				isVolatile := false
-				for volatileName := range volatileMetricsForStep8 {
-					if strings.Contains(metricKeyStr, volatileName) {
-						isVolatile = true
-						break
-					}
-				}
-				if isVolatile {
+				if isVolatileMetric(metricKeyStr) {
 					// For volatile metrics, use percentage-based tolerance (5%)
 					// or absolute tolerance of 5MB, whichever is larger
-					absTolerance := 5.0 * 1024 * 1024 // 5MB
+					absTolerance := 5.0 * 1024 * 1024        // 5MB
 					percentTolerance := bufferedValue * 0.05 // 5%
 					tolerance := absTolerance
 					if percentTolerance > absTolerance {

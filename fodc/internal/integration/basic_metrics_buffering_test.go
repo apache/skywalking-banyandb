@@ -177,7 +177,8 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Verify that timestamps were recorded (one per polling cycle)
 		timestamps := ds.GetTimestamps()
-		timestampValues := (&timestamps).GetAllValues()
+		Expect(timestamps).NotTo(BeNil())
+		timestampValues := timestamps.GetAllValues()
 		Expect(len(timestampValues)).To(BeNumerically(">", 0), "Timestamps should be recorded")
 
 		// Verify that at least some metrics have values
@@ -243,7 +244,10 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			}
 			ds := datasources[0]
 			timestamps := ds.GetTimestamps()
-			timestampValues := (&timestamps).GetAllValues()
+			if timestamps == nil {
+				return false
+			}
+			timestampValues := timestamps.GetAllValues()
 			return len(timestampValues) >= 2
 		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "Should have multiple timestamps from multiple polling cycles")
 
@@ -254,7 +258,8 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Check that multiple timestamps were recorded (one per polling cycle)
 		timestamps := ds.GetTimestamps()
-		timestampValues := (&timestamps).GetAllValues()
+		Expect(timestamps).NotTo(BeNil())
+		timestampValues := timestamps.GetAllValues()
 		Expect(len(timestampValues)).To(BeNumerically(">=", 2),
 			"Should have multiple timestamps from multiple polling cycles")
 

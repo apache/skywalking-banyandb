@@ -58,14 +58,16 @@ func UpdateMetricRingBuffer(mrb *MetricRingBuffer, v float64, capacity int) {
 
 // UpdateTimestampRingBuffer adds a timestamp value to the timestamp ring buffer.
 func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64, capacity int) {
-	trb.Add(v, capacity)
+	if trb != nil {
+		trb.Add(v, capacity)
+	}
 }
 
 // Datasource stores metrics data with ring buffers.
 type Datasource struct {
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
-	timestamps   TimestampRingBuffer          // RingBuffer storing timestamps for each polling cycle
+	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	TotalWritten uint64 // Total number of values written (wraps around)
 	Capacity     int    // Number of writable metrics length
@@ -75,7 +77,7 @@ type Datasource struct {
 func NewDatasource() *Datasource {
 	return &Datasource{
 		metrics:      make(map[string]*MetricRingBuffer),
-		timestamps:   *NewTimestampRingBuffer(),
+		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
 		Capacity:     0,
 		TotalWritten: 0,
@@ -134,7 +136,7 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 		for _, ts := range currentTimestamps {
 			newTimestampBuffer.Add(ts, computedCapacity)
 		}
-		ds.timestamps = *newTimestampBuffer
+		ds.timestamps = newTimestampBuffer
 	}
 
 	if m.Desc != "" {
@@ -157,7 +159,7 @@ func (ds *Datasource) addTimestampUnlocked(timestamp int64) {
 	}
 
 	computedCapacity := ds.ComputeCapacity(capacitySize)
-	UpdateTimestampRingBuffer(&ds.timestamps, timestamp, computedCapacity)
+	UpdateTimestampRingBuffer(ds.timestamps, timestamp, computedCapacity)
 }
 
 // AddTimestamp adds a timestamp for the current polling cycle.
@@ -204,8 +206,8 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	// RingBuffer Internal Structures
 	// For each metric RingBuffer: next field (8 bytes) + slice header (24 bytes)
 	metricBufferOverhead := numMetrics * (intSize + sliceHeaderSize)
-	// For timestamp RingBuffer: next field (8 bytes) + slice header (24 bytes)
-	timestampBufferOverhead := intSize + sliceHeaderSize
+	// For timestamp RingBuffer: pointer (8 bytes) + next field (8 bytes) + slice header (24 bytes) + mutex (24 bytes)
+	timestampBufferOverhead := 8 + intSize + sliceHeaderSize + 24
 
 	totalFixedOverhead := metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
 		metricBufferOverhead + timestampBufferOverhead
@@ -243,11 +245,10 @@ func (ds *Datasource) GetMetrics() map[string]*MetricRingBuffer {
 }
 
 // GetTimestamps returns a copy of the timestamps ring buffer.
-func (ds *Datasource) GetTimestamps() TimestampRingBuffer {
+func (ds *Datasource) GetTimestamps() *TimestampRingBuffer {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
-	copyRB := (&ds.timestamps).Copy()
-	return *copyRB
+	return ds.timestamps.Copy()
 }
 
 // GetDescriptions returns a copy of the descriptions map.

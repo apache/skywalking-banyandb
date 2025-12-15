@@ -164,7 +164,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		ds := datasources[0]
 
 		initialTimestamps := ds.GetTimestamps()
-		initialTimestampValues := (&initialTimestamps).GetAllValues()
+		Expect(initialTimestamps).NotTo(BeNil())
+		initialTimestampValues := initialTimestamps.GetAllValues()
 		initialTimestampCount := len(initialTimestampValues)
 
 		// Get a sample metric to track
@@ -221,7 +222,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Verify timestamps - should have reached capacity and started overwriting
 		finalTimestamps := ds.GetTimestamps()
-		finalTimestampValues := (&finalTimestamps).GetAllValues()
+		Expect(finalTimestamps).NotTo(BeNil())
+		finalTimestampValues := finalTimestamps.GetAllValues()
 		finalTimestampCount := len(finalTimestampValues)
 
 		// Verify capacity limit is maintained

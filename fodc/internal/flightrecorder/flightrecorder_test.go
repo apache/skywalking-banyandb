@@ -943,7 +943,9 @@ func TestNewDatasource(t *testing.T) {
 	assert.Empty(t, ds.descriptions)
 	assert.Equal(t, 0, ds.Capacity)
 	assert.Equal(t, uint64(0), ds.TotalWritten)
-	assert.Equal(t, 0, ds.timestamps.Len())
+	if ds.timestamps != nil {
+		assert.Equal(t, 0, ds.timestamps.Len())
+	}
 }
 
 func TestDatasource_Update_NilMetric(t *testing.T) {

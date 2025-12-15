@@ -21,9 +21,9 @@ import "sync"
 
 // RingBuffer is a generic circular buffer that stores values of type T.
 type RingBuffer[T any] struct {
-	mu     sync.RWMutex // Protects concurrent access to values and next
 	values []T          // Fixed-size buffer for values of type T
 	next   int          // Next write position in the circular buffer
+	mu     sync.RWMutex // Protects concurrent access to values and next
 }
 
 // NewRingBuffer creates a new RingBuffer.
