@@ -28,7 +28,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const measureSchemaPath = "/api/v1/measure/schema"
+const (
+	measureSchemaPath = "/api/v1/measure/schema"
+	measureQueryPath  = "/api/v1/measure/data"
+	measureListPath   = "/api/v1/measure/schema/lists/{group}"
+)
 
 var measureSchemaPathWithParams = measureSchemaPath + pathTemp
 
@@ -132,7 +136,7 @@ func newMeasureCmd() *cobra.Command {
 		Short:   "List measures",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/measure/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath(measureListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
@@ -145,7 +149,7 @@ func newMeasureCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/measure/data"))
+					return request.req.SetBody(request.data).Post(getPath(measureQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}

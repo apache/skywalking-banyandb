@@ -1,0 +1,26 @@
+[
+    {
+        "metadata": {
+            "name": "time_based_index",
+            "group": "trace_streaming_test"
+        },
+        "tags": [
+            "serviceId",
+            "serviceInstanceId",
+            "startTime"
+        ],
+        "type": "TYPE_INVERTED"
+    },
+    {
+        "metadata": {
+            "name": "latency_based_index",
+            "group": "trace_streaming_test"
+        },
+        "tags": [
+            "serviceId",
+            "serviceInstanceId",
+            "latency"
+        ],
+        "type": "TYPE_INVERTED"
+    }
+]

@@ -50,7 +50,7 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 			return nil, parsedEntity, nil
 		}
 		if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
-			return parseConditionToFilter(cond, indexRule, expr, entity)
+			return parseConditionToFilter(cond, indexRule, expr, entity, schema)
 		}
 		return ENode, [][]*modelv1.TagValue{entity}, nil
 	case *modelv1.Criteria_Le:
@@ -103,7 +103,7 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 }
 
 func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.IndexRule,
-	expr logical.LiteralExpr, entity []*modelv1.TagValue,
+	expr logical.LiteralExpr, entity []*modelv1.TagValue, schema logical.Schema,
 ) (index.Filter, [][]*modelv1.TagValue, error) {
 	switch cond.Op {
 	case modelv1.Condition_BINARY_OP_GT:
@@ -124,6 +124,10 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 	case modelv1.Condition_BINARY_OP_NE:
 		return newNot(indexRule, newEq(indexRule, expr)), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_HAVING:
+		tagSpec := schema.FindTagSpecByName(cond.Name)
+		if tagSpec == nil {
+			return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v for skipping index", cond)
+		}
 		ee := expr.SubExprs()
 		l := len(ee)
 		if l < 1 {
@@ -135,6 +139,10 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		return and, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_HAVING:
+		tagSpec := schema.FindTagSpecByName(cond.Name)
+		if tagSpec == nil {
+			return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index filter parses %v for skipping index", cond)
+		}
 		ee := expr.SubExprs()
 		l := len(ee)
 		if l < 1 {
@@ -146,6 +154,10 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		return newNot(indexRule, and), [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_IN:
+		tagSpec := schema.FindTagSpecByName(cond.Name)
+		if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+			return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "in condition is not supported for array type")
+		}
 		ee := expr.SubExprs()
 		l := len(ee)
 		if l < 1 {
@@ -157,6 +169,10 @@ func parseConditionToFilter(cond *modelv1.Condition, indexRule *databasev1.Index
 		}
 		return or, [][]*modelv1.TagValue{entity}, nil
 	case modelv1.Condition_BINARY_OP_NOT_IN:
+		tagSpec := schema.FindTagSpecByName(cond.Name)
+		if tagSpec != nil && (tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_STRING_ARRAY || tagSpec.Spec.GetType() == databasev1.TagType_TAG_TYPE_INT_ARRAY) {
+			return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "not in condition is not supported for array type")
+		}
 		ee := expr.SubExprs()
 		l := len(ee)
 		if l < 1 {

@@ -26,9 +26,8 @@ import (
 )
 
 var (
-	streamScope  = observability.RootScope.SubScope("stream")
-	tbScope      = streamScope.SubScope("tst")
-	storageScope = streamScope.SubScope("storage")
+	streamScope = observability.RootScope.SubScope("trace")
+	tbScope     = streamScope.SubScope("tst")
 )
 
 type metrics struct {
@@ -52,6 +51,8 @@ type metrics struct {
 	totalSyncLoopStarted  meter.Counter
 	totalSyncLoopFinished meter.Counter
 	totalSyncLoopErr      meter.Counter
+	totalSyncLoopLatency  meter.Counter
+	totalSyncLoopBytes    meter.Counter
 
 	totalFlushLoopProgress   meter.Counter
 	totalFlushed             meter.Counter
@@ -164,6 +165,20 @@ func (tst *tsTable) incTotalSyncLoopErr(delta int) {
 	tst.metrics.totalSyncLoopErr.Inc(float64(delta))
 }
 
+func (tst *tsTable) incTotalSyncLoopLatency(delta float64) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalSyncLoopLatency.Inc(delta)
+}
+
+func (tst *tsTable) incTotalSyncLoopBytes(delta uint64) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalSyncLoopBytes.Inc(float64(delta))
+}
+
 func (tst *tsTable) incTotalFlushLoopProgress(delta int) {
 	if tst == nil || tst.metrics == nil {
 		return
@@ -260,6 +275,8 @@ func (m *metrics) DeleteAll() {
 	m.totalSyncLoopStarted.Delete()
 	m.totalSyncLoopFinished.Delete()
 	m.totalSyncLoopErr.Delete()
+	m.totalSyncLoopLatency.Delete()
+	m.totalSyncLoopBytes.Delete()
 
 	m.totalFlushLoopProgress.Delete()
 	m.totalFlushed.Delete()
@@ -293,6 +310,8 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
 		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
 		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
+		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
+		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
 		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:               factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),
@@ -336,6 +355,8 @@ func (qs *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
 		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
 		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
+		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
+		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
 		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:               factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),

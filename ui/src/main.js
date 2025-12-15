@@ -23,7 +23,6 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
 
-import axios from 'axios';
 import mitt from 'mitt';
 
 import * as echarts from 'echarts/core';
@@ -44,6 +43,7 @@ import 'element-plus/dist/index.css';
 import './styles/custom.scss';
 import './styles/main.scss';
 import * as ElIcon from '@element-plus/icons-vue';
+import { installVueQuery } from './plugins/vue-query';
 
 const app = createApp(App);
 
@@ -61,7 +61,6 @@ echarts.use([
   UniversalTransition,
   CanvasRenderer,
 ]);
-app.config.globalProperties.$http = axios;
 app.config.globalProperties.$loading = ElLoading;
 app.config.globalProperties.$loadingCreate = () => {
   app.config.globalProperties.instance = ElLoading.service({
@@ -78,7 +77,7 @@ app.config.globalProperties.$loadingClose = () => {
 app.config.globalProperties.$message = ElMessage;
 app.config.globalProperties.$message.error = (status, text) => {
   ElMessage({
-    message: status + statusText,
+    message: `${status} ${text}`,
     type: 'error',
   });
 };
@@ -88,15 +87,10 @@ app.config.globalProperties.$message.errorNet = () => {
     type: 'error',
   });
 };
-app.config.globalProperties.$message.success = () => {
-  ElMessage({
-    message: 'OK',
-    type: 'success',
-  });
-};
 app.config.globalProperties.mittBus = new mitt();
 app.use(createPinia());
 app.use(router);
 app.use(ElementPlus);
+installVueQuery(app);
 
 app.mount('#app');

@@ -60,27 +60,35 @@ func TestGetSnapshotDir(t *testing.T) {
 		streamRoot  string
 		measureRoot string
 		propRoot    string
+		traceRoot   string
 		want        string
 		wantErr     bool
 	}{
 		{
 			"stream catalog",
 			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: "test"},
-			"/tmp", "/tmp", "/tmp",
+			"/tmp", "/tmp", "/tmp", "/tmp",
 			filepath.Join("/tmp/stream", storage.SnapshotsDir, "test"),
+			false,
+		},
+		{
+			"trace catalog",
+			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_TRACE, Name: "test"},
+			"/tmp", "/tmp", "/tmp", "/tmp",
+			filepath.Join("/tmp/trace", storage.SnapshotsDir, "test"),
 			false,
 		},
 		{
 			"unknown catalog",
 			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_UNSPECIFIED, Name: "test"},
-			"", "", "",
+			"", "", "", "",
 			"",
 			true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := snapshot.Dir(tt.snapshot, tt.streamRoot, tt.measureRoot, tt.propRoot)
+			got, err := snapshot.Dir(tt.snapshot, tt.streamRoot, tt.measureRoot, tt.propRoot, tt.traceRoot)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getSnapshotDir() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
@@ -204,6 +205,7 @@ type traceIDFilter struct {
 }
 
 func (tf *traceIDFilter) reset() {
+	releaseTraceIDBloomFilter(tf.filter)
 	tf.filter = nil
 }
 
@@ -225,8 +227,7 @@ func (tf *traceIDFilter) mustReadTraceIDFilter(fileSystem fs.FileSystem, partPat
 		return
 	}
 
-	bf := generateBloomFilter()
-	defer releaseBloomFilter(bf)
+	bf := generateTraceIDBloomFilter()
 	tf.filter = decodeBloomFilter(data, bf)
 }
 
@@ -247,4 +248,27 @@ func (tf *traceIDFilter) mustWriteTraceIDFilter(fileSystem fs.FileSystem, partPa
 	if n != len(data) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", traceIDFilterPath, n, len(data))
 	}
+}
+
+// ParsePartMetadata parses the part metadata from the metadata.json file.
+func ParsePartMetadata(fileSystem fs.FileSystem, partPath string) (queue.StreamingPartData, error) {
+	metadataPath := filepath.Join(partPath, metadataFilename)
+	metadata, err := fileSystem.Read(metadataPath)
+	if err != nil {
+		return queue.StreamingPartData{}, errors.WithMessage(err, "cannot read metadata.json")
+	}
+	var pm partMetadata
+	if err := json.Unmarshal(metadata, &pm); err != nil {
+		return queue.StreamingPartData{}, errors.WithMessage(err, "cannot parse metadata.json")
+	}
+
+	return queue.StreamingPartData{
+		ID:                    pm.ID,
+		CompressedSizeBytes:   pm.CompressedSizeBytes,
+		UncompressedSizeBytes: pm.UncompressedSpanSizeBytes,
+		TotalCount:            pm.TotalCount,
+		BlocksCount:           pm.BlocksCount,
+		MinTimestamp:          pm.MinTimestamp,
+		MaxTimestamp:          pm.MaxTimestamp,
+	}, nil
 }

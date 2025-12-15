@@ -23,7 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -56,11 +58,14 @@ func TestEncodeDecodeTagValues_Int64_WithNilValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoded, err := EncodeTagValues(tt.values, pbv1.ValueTypeInt64)
+			bb := &bytes.Buffer{}
+			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64)
 			require.NoError(t, err)
-			require.NotNil(t, encoded)
+			require.NotNil(t, bb.Buf)
+			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
-			decoded, err := DecodeTagValues(encoded, pbv1.ValueTypeInt64, len(tt.values))
+			decoder := &pkgencoding.BytesBlockDecoder{}
+			decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
 			require.NoError(t, err)
 			require.Len(t, decoded, len(tt.values))
 
@@ -104,11 +109,14 @@ func TestEncodeDecodeTagValues_Int64_WithNullStringValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoded, err := EncodeTagValues(tt.values, pbv1.ValueTypeInt64)
+			bb := &bytes.Buffer{}
+			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64)
 			require.NoError(t, err)
-			require.NotNil(t, encoded)
+			require.NotNil(t, bb.Buf)
+			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
-			decoded, err := DecodeTagValues(encoded, pbv1.ValueTypeInt64, len(tt.values))
+			decoder := &pkgencoding.BytesBlockDecoder{}
+			decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
 			require.NoError(t, err)
 			require.Len(t, decoded, len(tt.values))
 
@@ -133,11 +141,14 @@ func TestEncodeDecodeTagValues_Int64_MixedNilAndNullString(t *testing.T) {
 		[]byte("null"),
 	}
 
-	encoded, err := EncodeTagValues(values, pbv1.ValueTypeInt64)
+	bb := &bytes.Buffer{}
+	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64)
 	require.NoError(t, err)
-	require.NotNil(t, encoded)
+	require.NotNil(t, bb.Buf)
+	require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
-	decoded, err := DecodeTagValues(encoded, pbv1.ValueTypeInt64, len(values))
+	decoder := &pkgencoding.BytesBlockDecoder{}
+	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
 	require.NoError(t, err)
 	require.Len(t, decoded, len(values))
 
@@ -164,11 +175,14 @@ func TestEncodeDecodeTagValues_Int64_ValidValues(t *testing.T) {
 		convert.Int64ToBytes(-9223372036854775808), // min int64
 	}
 
-	encoded, err := EncodeTagValues(values, pbv1.ValueTypeInt64)
+	bb := &bytes.Buffer{}
+	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64)
 	require.NoError(t, err)
-	require.NotNil(t, encoded)
+	require.NotNil(t, bb.Buf)
+	require.Equal(t, pkgencoding.EncodeTypeDelta, encodeType)
 
-	decoded, err := DecodeTagValues(encoded, pbv1.ValueTypeInt64, len(values))
+	decoder := &pkgencoding.BytesBlockDecoder{}
+	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
 	require.NoError(t, err)
 	require.Len(t, decoded, len(values))
 
@@ -178,11 +192,60 @@ func TestEncodeDecodeTagValues_Int64_ValidValues(t *testing.T) {
 }
 
 func TestEncodeDecodeTagValues_Int64_EmptyInput(t *testing.T) {
-	encoded, err := EncodeTagValues(nil, pbv1.ValueTypeInt64)
+	bb := &bytes.Buffer{}
+	encodeType, err := EncodeTagValues(bb, nil, pbv1.ValueTypeInt64)
 	require.NoError(t, err)
-	assert.Nil(t, encoded)
+	assert.Nil(t, bb.Buf)
+	require.Equal(t, pkgencoding.EncodeTypeUnknown, encodeType)
 
-	decoded, err := DecodeTagValues(nil, pbv1.ValueTypeInt64, 0)
+	decoder := &pkgencoding.BytesBlockDecoder{}
+	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, 0)
 	require.NoError(t, err)
 	assert.Nil(t, decoded)
+}
+
+func TestMarshalVarArray(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected []byte
+	}{
+		{
+			name:     "empty",
+			input:    []byte{},
+			expected: []byte{'|'},
+		},
+		{
+			name:     "no special chars",
+			input:    []byte("abc"),
+			expected: []byte("abc|"),
+		},
+		{
+			name:     "with delimiter",
+			input:    []byte("a|b"),
+			expected: []byte("a\\|b|"),
+		},
+		{
+			name:     "with escape",
+			input:    []byte("a\\b"),
+			expected: []byte("a\\\\b|"),
+		},
+		{
+			name:     "with delimiter and escape",
+			input:    []byte("a|\\b"),
+			expected: []byte("a\\|\\\\b|"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, MarshalVarArray(nil, tt.input))
+		})
+	}
+
+	t.Run("multiple values", func(t *testing.T) {
+		var result []byte
+		result = MarshalVarArray(result, []byte("a|b"))
+		result = MarshalVarArray(result, []byte("c\\d"))
+		assert.Equal(t, []byte("a\\|b|c\\\\d|"), result)
+	})
 }

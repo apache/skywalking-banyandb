@@ -38,11 +38,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -60,10 +62,10 @@ var (
 )
 
 // NewServer return a http service.
-func NewServer(cfg *auth.Config) Server {
+func NewServer(authReloader *auth.Reloader) Server {
 	return &server{
-		stopCh: make(chan struct{}),
-		cfg:    cfg,
+		stopCh:       make(chan struct{}),
+		authReloader: authReloader,
 	}
 }
 
@@ -90,7 +92,7 @@ type server struct {
 	grpcAddr        string
 	keyFile         string
 	certFile        string
-	cfg             *auth.Config
+	authReloader    *auth.Reloader
 	grpcCert        string
 	grpcMu          sync.Mutex
 	port            uint32
@@ -359,6 +361,8 @@ func (p *server) initGRPCClient() error {
 		measurev1.RegisterMeasureServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		databasev1.RegisterTraceRegistryServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
+		tracev1.RegisterTraceServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
+		bydbqlv1.RegisterBydbQLServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to register endpoints")
@@ -368,9 +372,9 @@ func (p *server) initGRPCClient() error {
 	// This avoids the conflict when remounting to /api path
 	newMux := chi.NewRouter()
 
-	newMux.Use(authMiddleware(p.cfg))
+	newMux.Use(authMiddleware(p.authReloader))
 	newMux.Handle("/api/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := buildGRPCContextForHealthCheck(p.cfg, r)
+		ctx, err := buildGRPCContextForHealthCheck(p.authReloader, r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return

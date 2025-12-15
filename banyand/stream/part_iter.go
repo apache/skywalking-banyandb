@@ -238,7 +238,7 @@ func (pi *partIter) findBlock() bool {
 			shouldSkip, err := func() (bool, error) {
 				tfs := generateTagFamilyFilters()
 				defer releaseTagFamilyFilters(tfs)
-				tfs.unmarshal(bm.tagFamilies, pi.p.tagFamilyMetadata, pi.p.tagFamilyFilter)
+				tfs.unmarshal(bm.tagFamilies, pi.p.tagFamilyMetadata, pi.p.tagFamilyFilter, pi.p.tagFamilies)
 				return pi.blockFilter.ShouldSkip(tfs)
 			}()
 			if err != nil {

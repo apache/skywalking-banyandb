@@ -1,0 +1,93 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_schema_1"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_schema_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 10
+        }
+      },
+      {
+        "int": {
+          "value": 100
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_schema_2"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_schema_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 20
+        }
+      },
+      {
+        "int": {
+          "value": 200
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "id_schema_3"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_schema_3"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 30
+        }
+      },
+      {
+        "int": {
+          "value": 300
+        }
+      }
+    ]
+  }
+]
+

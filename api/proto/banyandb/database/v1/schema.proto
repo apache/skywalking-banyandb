@@ -42,11 +42,29 @@ message TagFamilySpec {
   string name = 1 [(validate.rules).string.min_len = 1];
   // tags defines accepted tags
   repeated TagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
+  // stage_names defines which lifecycle stages this tag family is retained in.
+  // If empty, the tag family is retained in all stages.
+  // Each value must match the name of a LifecycleStage in the parent Group's ResourceOpts.
+  repeated string stage_names = 3;
 }
 
 message TagSpec {
   string name = 1 [(validate.rules).string.min_len = 1];
   TagType type = 2 [(validate.rules).enum.defined_only = true];
+  // stage_names defines which lifecycle stages this tag is retained in.
+  // Semantics with TagFamilySpec.stage_names:
+  // - If TagFamilySpec.stage_names is empty and TagSpec.stage_names is empty,
+  //   the tag is retained in all stages.
+  // - If TagFamilySpec.stage_names is non-empty and TagSpec.stage_names is empty,
+  //   the tag is retained in all stages listed in TagFamilySpec.stage_names.
+  // - If TagSpec.stage_names is non-empty, the tag is retained only in the
+  //   intersection of TagFamilySpec.stage_names (or all stages if that is empty)
+  //   and TagSpec.stage_names.
+  // - Implementations SHOULD validate that TagSpec.stage_names does not contain
+  //   stages outside TagFamilySpec.stage_names when the latter is non-empty and
+  //   reject such schemas as invalid.
+  // Each value must match the name of a LifecycleStage in the parent Group's ResourceOpts.
+  repeated string stage_names = 3;
 }
 
 // Stream intends to store streaming data, for example, traces or logs
@@ -97,6 +115,10 @@ message FieldSpec {
   EncodingMethod encoding_method = 3 [(validate.rules).enum.defined_only = true];
   // compression_method indicates how to compress data during writing
   CompressionMethod compression_method = 4 [(validate.rules).enum.defined_only = true];
+  // stage_names defines which lifecycle stages this field is retained in.
+  // If empty, the field is retained in all stages.
+  // Each value must match the name of a LifecycleStage in the parent Group's ResourceOpts.
+  repeated string stage_names = 5;
 }
 
 // Measure intends to store data point
@@ -226,6 +248,10 @@ message TraceTagSpec {
   string name = 1 [(validate.rules).string.min_len = 1];
   // type is the type of the tag.
   TagType type = 2 [(validate.rules).enum.defined_only = true];
+  // stage_names defines which lifecycle stages this trace tag is retained in.
+  // If empty, the trace tag is retained in all stages.
+  // Each value must match the name of a LifecycleStage in the parent Group's ResourceOpts.
+  repeated string stage_names = 3;
 }
 
 // Trace defines a tracing-specific storage resource.
@@ -243,4 +269,6 @@ message Trace {
   string timestamp_tag_name = 4 [(validate.rules).string.min_len = 1];
   // updated_at indicates when the trace resource is updated.
   google.protobuf.Timestamp updated_at = 5;
+  // span_id_tag_name is the name of the tag that stores the span ID.
+  string span_id_tag_name = 6 [(validate.rules).string.min_len = 1];
 }

@@ -52,7 +52,7 @@ var TopicDeleteExpiredStreamSegments = bus.BiTopic(StreamDeleteExpiredSegmentsKi
 // StreamPartSyncKindVersion is the version tag of part sync kind.
 var StreamPartSyncKindVersion = common.KindVersion{
 	Version: "v1",
-	Kind:    "part-sync",
+	Kind:    "stream-part-sync",
 }
 
 // TopicStreamPartSync is the part sync topic.
@@ -79,7 +79,7 @@ var TopicStreamLocalIndexWrite = bus.BiTopic(StreamLocalIndexWriteKindVersion.St
 // StreamSeriesSyncKindVersion is the version tag of series sync kind.
 var StreamSeriesSyncKindVersion = common.KindVersion{
 	Version: "v1",
-	Kind:    "series-sync",
+	Kind:    "stream-series-sync",
 }
 
 // TopicStreamSeriesSync is the series sync topic.
@@ -88,7 +88,7 @@ var TopicStreamSeriesSync = bus.BiTopic(StreamSeriesSyncKindVersion.String())
 // StreamElementIndexSyncKindVersion is the version tag of element index sync kind.
 var StreamElementIndexSyncKindVersion = common.KindVersion{
 	Version: "v1",
-	Kind:    "element-index-sync",
+	Kind:    "stream-element-index-sync",
 }
 
 // TopicStreamElementIndexSync is the element index sync topic.

@@ -69,6 +69,9 @@ func (w *writer) MustClose() {
 // mustCreateTagWriters function type for creating tag file writers.
 type mustCreateTagWriters func(name string) (fs.Writer, fs.Writer, fs.Writer)
 
+// Writers is a type alias for writers.
+type Writers = writers
+
 // writers manages all file writers for a part.
 type writers struct {
 	mustCreateTagWriters mustCreateTagWriters
@@ -103,8 +106,8 @@ func (sw *writers) reset() {
 	}
 }
 
-// mustInitForMemPart initializes writers for memory part.
-func (sw *writers) mustInitForMemPart(mp *memPart) {
+// MustInitForMemPart initializes writers for memory part.
+func (sw *writers) MustInitForMemPart(mp *memPart) {
 	sw.reset()
 	sw.mustCreateTagWriters = mp.mustCreateTagWriters
 	sw.metaWriter.init(&mp.meta)
@@ -148,8 +151,28 @@ func (sw *writers) MustClose() {
 	}
 }
 
-// getWriters returns writers for the specified tag name, creating them if needed.
-func (sw *writers) getWriters(tagName string) (*writer, *writer, *writer) {
+// SidxMetaWriter returns the meta writer.
+func (sw *writers) SidxMetaWriter() *writer {
+	return &sw.metaWriter
+}
+
+// SidxPrimaryWriter returns the primary writer.
+func (sw *writers) SidxPrimaryWriter() *writer {
+	return &sw.primaryWriter
+}
+
+// SidxDataWriter returns the data writer.
+func (sw *writers) SidxDataWriter() *writer {
+	return &sw.dataWriter
+}
+
+// SidxKeysWriter returns the keys writer.
+func (sw *writers) SidxKeysWriter() *writer {
+	return &sw.keysWriter
+}
+
+// GetTagWriters returns writers for the specified tag name, creating them if needed.
+func (sw *writers) GetTagWriters(tagName string) (*writer, *writer, *writer) {
 	tmw, ok := sw.tagMetadataWriters[tagName]
 	tdw := sw.tagDataWriters[tagName]
 	tfw := sw.tagFilterWriters[tagName]
@@ -215,7 +238,7 @@ func (bw *blockWriter) reset() {
 // MustInitForMemPart initializes block writer for memory part.
 func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 	bw.reset()
-	bw.writers.mustInitForMemPart(mp)
+	bw.writers.MustInitForMemPart(mp)
 }
 
 // mustInitForFilePart initializes block writer for file part.
@@ -239,29 +262,20 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 }
 
 // MustWriteElements writes elements to the block writer.
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, tags [][]tag) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, data [][]byte, tags [][]*tag) {
 	if len(userKeys) == 0 {
 		return
 	}
 
 	b := generateBlock()
 	defer releaseBlock(b)
+	// Copy core data
+	b.userKeys = append(b.userKeys, userKeys...)
+	b.data = append(b.data, data...)
 
-	// Convert to elements format for initialization
-	es := generateElements()
-	defer releaseElements(es)
+	// Process tags
+	b.mustInitFromTags(tags)
 
-	es.seriesIDs = append(es.seriesIDs, sid)
-	es.userKeys = append(es.userKeys, userKeys...)
-	es.tags = append(es.tags, tags...)
-
-	// Create data slice with proper length
-	es.data = make([][]byte, len(userKeys))
-	for i := range es.data {
-		es.data[i] = nil // Placeholder data
-	}
-
-	b.mustInitFromElements(es)
 	bw.mustWriteBlock(sid, b)
 }
 
@@ -315,13 +329,7 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	bw.totalBlocksCount++
 
 	// Serialize block metadata
-	bm.setSeriesID(sid)
-	bm.setKeyRange(minKey, maxKey)
-	bmData, err := bm.marshal()
-	if err != nil {
-		logger.Panicf("failed to marshal block metadata: %v", err)
-	}
-	bw.primaryBlockData = append(bw.primaryBlockData, bmData...)
+	bw.primaryBlockData = bm.marshal(bw.primaryBlockData)
 
 	if len(bw.primaryBlockData) > maxUncompressedPrimaryBlockSize {
 		bw.mustFlushPrimaryBlock(bw.primaryBlockData)
@@ -333,8 +341,7 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	if len(data) > 0 {
 		bw.primaryBlockMetadata.mustWriteBlock(data, bw.sidFirst, bw.minKey, bw.maxKey, &bw.writers)
-		bmData := bw.primaryBlockMetadata.marshal(bw.metaData[:0])
-		bw.metaData = append(bw.metaData, bmData...)
+		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.hasWrittenBlocks = false
 	bw.minKey = 0
@@ -396,11 +403,11 @@ func releaseBlockWriter(bw *blockWriter) {
 	blockWriterPool.Put(bw)
 }
 
-// generateWriters gets writers from pool or creates new.
-func generateWriters() *writers {
+// GenerateWriters gets writers from pool or creates new.
+func GenerateWriters() *Writers {
 	v := writersPool.Get()
 	if v == nil {
-		return &writers{
+		return &Writers{
 			tagMetadataWriters: make(map[string]*writer),
 			tagDataWriters:     make(map[string]*writer),
 			tagFilterWriters:   make(map[string]*writer),
@@ -409,8 +416,8 @@ func generateWriters() *writers {
 	return v
 }
 
-// releaseWriters returns writers to pool after reset.
-func releaseWriters(sw *writers) {
+// ReleaseWriters returns writers to pool after reset.
+func ReleaseWriters(sw *writers) {
 	sw.reset()
 	writersPool.Put(sw)
 }

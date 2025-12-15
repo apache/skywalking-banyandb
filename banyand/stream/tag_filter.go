@@ -31,6 +31,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
+// Filter interface provides a unified interface for both BloomFilter and DictionaryFilter.
+type Filter interface {
+	MightContain(item []byte) bool
+}
+
 func encodeBloomFilter(dst []byte, bf *filter.BloomFilter) []byte {
 	dst = encoding.Int64ToBytes(dst, int64(bf.N()))
 	dst = encoding.EncodeUint64Block(dst, bf.Bits())
@@ -41,9 +46,9 @@ func decodeBloomFilter(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
 	n := encoding.BytesToInt64(src)
 	bf.SetN(int(n))
 
-	m := n * filter.B
+	// With B=16, use optimized bit shift calculation
 	bits := make([]uint64, 0)
-	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64((m+63)/64))
+	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64(filter.OptimalBitsSize(int(n))))
 	if err != nil {
 		logger.Panicf("failed to decode Bloom filter: %v", err)
 	}
@@ -67,8 +72,23 @@ func releaseBloomFilter(bf *filter.BloomFilter) {
 
 var bloomFilterPool = pool.Register[*filter.BloomFilter]("stream-bloomFilter")
 
+func generateDictionaryFilter() *filter.DictionaryFilter {
+	v := dictionaryFilterPool.Get()
+	if v == nil {
+		return &filter.DictionaryFilter{}
+	}
+	return v
+}
+
+func releaseDictionaryFilter(df *filter.DictionaryFilter) {
+	df.Reset()
+	dictionaryFilterPool.Put(df)
+}
+
+var dictionaryFilterPool = pool.Register[*filter.DictionaryFilter]("stream-dictionaryFilter")
+
 type tagFilter struct {
-	filter *filter.BloomFilter
+	filter Filter
 	min    []byte
 	max    []byte
 }
@@ -88,7 +108,14 @@ func generateTagFilter() *tagFilter {
 }
 
 func releaseTagFilter(tf *tagFilter) {
-	releaseBloomFilter(tf.filter)
+	if tf.filter != nil {
+		switch f := tf.filter.(type) {
+		case *filter.BloomFilter:
+			releaseBloomFilter(f)
+		case *filter.DictionaryFilter:
+			releaseDictionaryFilter(f)
+		}
+	}
 	tf.reset()
 	tagFilterPool.Put(tf)
 }
@@ -101,9 +128,10 @@ func (tff *tagFamilyFilter) reset() {
 	clear(*tff)
 }
 
-func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader) {
+func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaReader, filterReader fs.Reader, tagValueReader fs.Reader) {
 	bb := bigValuePool.Generate()
-	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
+	defer bigValuePool.Release(bb)
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tagFamilyMetadataBlock.size))
 	fs.MustReadData(metaReader, int64(tagFamilyMetadataBlock.offset), bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
@@ -111,20 +139,41 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	if err != nil {
 		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
-	bigValuePool.Release(bb)
 	for _, tm := range tfm.tagMetadata {
-		if tm.filterBlock.size == 0 {
-			continue
-		}
-		bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tm.filterBlock.size))
-		fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
-		bf := generateBloomFilter()
-		bf = decodeBloomFilter(bb.Buf, bf)
 		tf := generateTagFilter()
-		tf.filter = bf
+		hasMinMax := false
 		if tm.valueType == pbv1.ValueTypeInt64 {
 			tf.min = tm.min
 			tf.max = tm.max
+			hasMinMax = true
+		}
+		if tm.filterBlock.size > 0 {
+			bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.filterBlock.size))
+			fs.MustReadData(filterReader, int64(tm.filterBlock.offset), bb.Buf)
+			bf := generateBloomFilter()
+			bf = decodeBloomFilter(bb.Buf, bf)
+			tf.filter = bf
+		} else {
+			encodeTypeBuf := make([]byte, 1)
+			fs.MustReadData(tagValueReader, int64(tm.offset), encodeTypeBuf)
+			encodeType := encoding.EncodeType(encodeTypeBuf[0])
+			if encodeType == encoding.EncodeTypeDictionary {
+				bb.Buf = pkgbytes.ResizeExact(bb.Buf[:0], int(tm.size))
+				fs.MustReadData(tagValueReader, int64(tm.offset), bb.Buf)
+				dictValues, err := encoding.DecodeDictionaryValues(bb.Buf[1:])
+				if err != nil {
+					logger.Panicf("failed to extract dictionary values: %v", err)
+				}
+				df := generateDictionaryFilter()
+				df.SetValues(dictValues)
+				df.SetValueType(tm.valueType)
+				tf.filter = df
+			}
+		}
+		// Only add to map if it has useful data (filter or min/max for range queries)
+		if tf.filter == nil && !hasMinMax {
+			releaseTagFilter(tf)
+			continue
 		}
 		tff[tm.name] = tf
 	}
@@ -156,10 +205,10 @@ func (tfs *tagFamilyFilters) reset() {
 	tfs.tagFamilyFilters = tfs.tagFamilyFilters[:0]
 }
 
-func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaReader, filterReader map[string]fs.Reader) {
+func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaReader, filterReader, tagValueReader map[string]fs.Reader) {
 	for tf := range tagFamilies {
 		tff := generateTagFamilyFilter()
-		tff.unmarshal(tagFamilies[tf], metaReader[tf], filterReader[tf])
+		tff.unmarshal(tagFamilies[tf], metaReader[tf], filterReader[tf], tagValueReader[tf])
 		tfs.tagFamilyFilters = append(tfs.tagFamilyFilters, tff)
 	}
 }
@@ -167,6 +216,10 @@ func (tfs *tagFamilyFilters) unmarshal(tagFamilies map[string]*dataBlock, metaRe
 func (tfs *tagFamilyFilters) Eq(tagName string, tagValue string) bool {
 	for _, tff := range tfs.tagFamilyFilters {
 		if tf, ok := (*tff)[tagName]; ok {
+			if tf.filter == nil {
+				// No filter available, conservatively return true (don't skip)
+				return true
+			}
 			return tf.filter.MightContain([]byte(tagValue))
 		}
 	}
@@ -201,6 +254,28 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 		}
 	}
 	return true, nil
+}
+
+// Having checks if any of the provided tag values might exist in the bloom filter.
+// It returns true if at least one value might be contained in any tag family filter.
+func (tfs *tagFamilyFilters) Having(tagName string, tagValues []string) bool {
+	for _, tff := range tfs.tagFamilyFilters {
+		if tf, ok := (*tff)[tagName]; ok {
+			if tf.filter != nil {
+				for _, tagValue := range tagValues {
+					if tf.filter.MightContain([]byte(tagValue)) {
+						return true // Return true as soon as we find a potential match
+					}
+				}
+				// None of the values might exist in this tag family filter
+				return false
+			}
+			// If no bloom filter, conservatively return true
+			return true
+		}
+	}
+	// If tag is not found in any tag family filter, return true (conservative)
+	return true
 }
 
 func generateTagFamilyFilters() *tagFamilyFilters {

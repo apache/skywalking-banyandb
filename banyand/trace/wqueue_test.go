@@ -74,6 +74,7 @@ func Test_newWriteQueue(t *testing.T) {
 		"test-group",
 		common.ShardID(1),
 		func() []string { return []string{"node1", "node2"} },
+		nil, // handoffCtrl
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tst)
@@ -81,7 +82,7 @@ func Test_newWriteQueue(t *testing.T) {
 
 	// Wait for the creator to be set to snapshotCreatorSyncer
 	assert.Eventually(t, func() bool {
-		tst.mustAddTraces(ts)
+		tst.mustAddTraces(ts, nil)
 		time.Sleep(100 * time.Millisecond)
 		s := tst.currentSnapshot()
 		if s == nil {

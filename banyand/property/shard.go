@@ -18,6 +18,7 @@
 package property
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -28,9 +29,12 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 	segment "github.com/blugelabs/bluge_segment_api"
+	"go.uber.org/multierr"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -152,7 +156,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 		}
 		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(t.Key))}, tv)
 		tagField.Index = true
-		tagField.NoSort = true
+		tagField.NoSort = false
 		doc.Fields = append(doc.Fields, tagField)
 	}
 
@@ -195,11 +199,14 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 			Type:  index.SeriesMatcherTypeExact,
 		})
 	}
+	if len(seriesMatchers) == 0 {
+		return nil, nil
+	}
 	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build property query failure: %w", err)
 	}
-	exisingDocList, err := s.search(ctx, iq, len(docID))
+	exisingDocList, err := s.search(ctx, iq, nil, len(docID))
 	if err != nil {
 		return nil, fmt.Errorf("search existing documents failure: %w", err)
 	}
@@ -247,13 +254,16 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	return nil
 }
 
-func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
+func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.QueryOrder, limit int,
 ) (data []*queryProperty, err error) {
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "property.search")
-		span.Tagf("query", "%s", indexQuery.String())
+		span.Tagf("query", "%s", q.String())
 		span.Tagf("shard", "%d", s.id)
+		if orderBy != nil {
+			span.Tagf("order", "%s(%s)", orderBy.TagName, orderBy.Sort)
+		}
 		defer func() {
 			if data != nil {
 				span.Tagf("matched", "%d", len(data))
@@ -264,25 +274,67 @@ func (s *shard) search(ctx context.Context, indexQuery index.Query, limit int,
 			span.Stop()
 		}()
 	}
-	ss, err := s.store.Search(ctx, projection, indexQuery, limit)
+	if orderBy == nil {
+		ss, searchErr := s.store.Search(ctx, projection, q, limit)
+		if searchErr != nil {
+			return nil, searchErr
+		}
+
+		if len(ss) == 0 {
+			return nil, nil
+		}
+		data = make([]*queryProperty, 0, len(ss))
+		for _, s := range ss {
+			bytes := s.Fields[sourceField]
+			var deleteTime int64
+			if s.Fields[deleteField] != nil {
+				deleteTime = convert.BytesToInt64(s.Fields[deleteField])
+			}
+			data = append(data, &queryProperty{
+				id:         s.Key.EntityValues,
+				timestamp:  s.Timestamp,
+				source:     bytes,
+				deleteTime: deleteTime,
+			})
+		}
+		return data, nil
+	}
+	order := &index.OrderBy{
+		Index: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{
+				Id: uint32(convert.HashStr(orderBy.TagName)),
+			},
+		},
+		Sort: orderBy.Sort,
+		Type: index.OrderByTypeIndex,
+	}
+	iter, err := s.store.SeriesSort(ctx, q, order, limit, projection)
 	if err != nil {
 		return nil, err
 	}
-	if len(ss) == 0 {
-		return nil, nil
-	}
-	data = make([]*queryProperty, 0, len(ss))
-	for _, s := range ss {
-		bytes := s.Fields[sourceField]
+	defer func() {
+		err = multierr.Append(err, iter.Close())
+	}()
+	data = make([]*queryProperty, 0, limit)
+	for iter.Next() {
+		val := iter.Val()
+
 		var deleteTime int64
-		if s.Fields[deleteField] != nil {
-			deleteTime = convert.BytesToInt64(s.Fields[deleteField])
+		if val.Values[deleteField] != nil {
+			deleteTime = convert.BytesToInt64(val.Values[deleteField])
 		}
+
+		var sortedValue []byte
+		if len(val.SortedValue) > 0 {
+			sortedValue = bytes.Clone(val.SortedValue)
+		}
+
 		data = append(data, &queryProperty{
-			id:         s.Key.EntityValues,
-			timestamp:  s.Timestamp,
-			source:     bytes,
-			deleteTime: deleteTime,
+			id:          val.EntityValues,
+			timestamp:   val.Timestamp,
+			source:      val.Values[sourceField],
+			sortedValue: sortedValue,
+			deleteTime:  deleteTime,
 		})
 	}
 	return data, nil
@@ -297,7 +349,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	if err != nil {
 		return false, nil, fmt.Errorf("build property query failure: %w", err)
 	}
-	olderProperties, err := s.search(ctx, iq, 100)
+	olderProperties, err := s.search(ctx, iq, nil, 100)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
 	}

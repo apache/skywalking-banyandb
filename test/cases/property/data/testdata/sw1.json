@@ -1,0 +1,32 @@
+{
+  "property" : {
+    "metadata" : {
+      "group" : "sw",
+      "name" : "ui_menu"
+    },
+    "id" : "1",
+    "tags" : [ {
+      "key" : "menu_name",
+      "value" : {
+        "str" : {
+          "value" : "test1"
+        }
+      }
+    }, {
+      "key" : "configuration",
+      "value" : {
+        "str" : {
+          "value" : "test1"
+        }
+      }
+    }, {
+      "key" : "update_time",
+      "value" : {
+        "int" : {
+          "value" : "1760606198934"
+        }
+      }
+    } ]
+  },
+  "strategy" : "STRATEGY_MERGE"
+}

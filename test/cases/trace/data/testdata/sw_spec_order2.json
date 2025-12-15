@@ -1,0 +1,83 @@
+[
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "spec_span_003_1"
+        }
+      },
+      {
+        "int": {
+          "value": 750
+        }
+      },
+      {
+        "str": {
+          "value": "/order_endpoint"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_1"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "int": {
+          "value": 0
+        }
+      },
+      {
+        "str": {
+          "value": "spec_trace_003"
+        }
+      }
+    ],
+    "span": "spec_trace_003_span_1"
+  },
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "spec_span_003_2"
+        }
+      },
+      {
+        "int": {
+          "value": 450
+        }
+      },
+      {
+        "str": {
+          "value": "/cart_endpoint"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_2"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "int": {
+          "value": 0
+        }
+      },
+      {
+        "str": {
+          "value": "spec_trace_003"
+        }
+      }
+    ],
+    "span": "spec_trace_003_span_2"
+  }
+]
+

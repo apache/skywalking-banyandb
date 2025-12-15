@@ -185,7 +185,7 @@ func BenchmarkAppendDataPoints(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Call appendDataPoints
-		appendDataPoints(dest, ts, sid, schema, req, locator)
+		appendDataPoints(dest, ts, sid, schema, req, locator, nil)
 		releaseDataPoints(dest.dataPoints)
 		dest.dataPoints = nil
 	}

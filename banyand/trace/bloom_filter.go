@@ -34,9 +34,9 @@ func decodeBloomFilter(src []byte, bf *filter.BloomFilter) *filter.BloomFilter {
 	n := encoding.BytesToInt64(src)
 	bf.SetN(int(n))
 
-	m := n * filter.B
+	// With B=16, use optimized bit shift calculation
 	bits := make([]uint64, 0)
-	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64((m+63)/64))
+	bits, _, err := encoding.DecodeUint64Block(bits[:0], src[8:], uint64(filter.OptimalBitsSize(int(n))))
 	if err != nil {
 		logger.Panicf("failed to decode Bloom filter: %v", err)
 	}
@@ -54,8 +54,29 @@ func generateBloomFilter() *filter.BloomFilter {
 }
 
 func releaseBloomFilter(bf *filter.BloomFilter) {
+	if bf == nil {
+		return
+	}
 	bf.Reset()
 	bloomFilterPool.Put(bf)
 }
 
 var bloomFilterPool = pool.Register[*filter.BloomFilter]("trace-bloomFilter")
+
+func generateTraceIDBloomFilter() *filter.BloomFilter {
+	v := traceIDBloomFilterPool.Get()
+	if v == nil {
+		v = filter.NewBloomFilter(0)
+	}
+	return v
+}
+
+func releaseTraceIDBloomFilter(bf *filter.BloomFilter) {
+	if bf == nil {
+		return
+	}
+	bf.Reset()
+	traceIDBloomFilterPool.Put(bf)
+}
+
+var traceIDBloomFilterPool = pool.Register[*filter.BloomFilter]("trace-traceIDBloomFilter")

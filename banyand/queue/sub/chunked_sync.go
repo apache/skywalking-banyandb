@@ -25,10 +25,74 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
+
+func checkSyncVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.VersionCompatibility, clusterv1.SyncStatus) {
+	if versionInfo == nil {
+		return &clusterv1.VersionCompatibility{
+			Supported:                   true,
+			ServerApiVersion:            apiversion.Version,
+			SupportedApiVersions:        []string{apiversion.Version},
+			ServerFileFormatVersion:     storage.GetCurrentVersion(),
+			SupportedFileFormatVersions: storage.GetCompatibleVersions(),
+			Reason:                      "No version info provided, assuming compatible",
+		}, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+	}
+
+	serverAPIVersion := apiversion.Version
+	serverFileFormatVersion := storage.GetCurrentVersion()
+	compatibleFileFormatVersions := storage.GetCompatibleVersions()
+
+	// Check API version compatibility
+	apiCompatible := versionInfo.ApiVersion == serverAPIVersion
+
+	// Check file format version compatibility
+	fileFormatCompatible := false
+	if versionInfo.FileFormatVersion == serverFileFormatVersion {
+		fileFormatCompatible = true
+	} else {
+		// Check if client's file format version is in our compatible list
+		for _, compatVer := range compatibleFileFormatVersions {
+			if compatVer == versionInfo.FileFormatVersion {
+				fileFormatCompatible = true
+				break
+			}
+		}
+	}
+
+	versionCompatibility := &clusterv1.VersionCompatibility{
+		ServerApiVersion:            serverAPIVersion,
+		SupportedApiVersions:        []string{serverAPIVersion},
+		ServerFileFormatVersion:     serverFileFormatVersion,
+		SupportedFileFormatVersions: compatibleFileFormatVersions,
+	}
+
+	switch {
+	case !apiCompatible && !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.ApiVersion, serverAPIVersion, versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
+	case !apiCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
+	case !fileFormatCompatible:
+		versionCompatibility.Supported = false
+		versionCompatibility.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
+			versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
+		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_FORMAT_VERSION_MISMATCH
+	}
+
+	versionCompatibility.Supported = true
+	versionCompatibility.Reason = "Client version compatible with server"
+	return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+}
 
 type chunkBuffer struct {
 	chunks        map[uint32]*clusterv1.SyncPartRequest
@@ -96,10 +160,12 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 				chunksReceived: 0,
 				partsProgress:  make(map[int]*partProgress),
 			}
-			s.log.Info().Str("session_id", sessionID).
-				Str("topic", req.GetMetadata().Topic).
-				Uint32("total_parts", req.GetMetadata().TotalParts).
-				Msg("started chunked sync session")
+			if dl := s.log.Debug(); dl.Enabled() {
+				dl.Str("session_id", sessionID).
+					Str("topic", req.GetMetadata().Topic).
+					Uint32("total_parts", req.GetMetadata().TotalParts).
+					Msg("started chunked sync session")
+			}
 		}
 
 		if currentSession == nil {
@@ -122,6 +188,21 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 }
 
 func (s *server) processChunk(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
+	// Check version compatibility on every chunk
+	if req.VersionInfo != nil {
+		versionCompatibility, status := checkSyncVersionCompatibility(req.VersionInfo)
+		if status != clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED {
+			s.log.Warn().
+				Str("session_id", req.SessionId).
+				Str("client_api_version", req.VersionInfo.ApiVersion).
+				Str("client_file_format_version", req.VersionInfo.FileFormatVersion).
+				Str("reason", versionCompatibility.Reason).
+				Msg("sync version compatibility check failed")
+
+			return s.sendResponse(stream, req, status, versionCompatibility.Reason, versionCompatibility)
+		}
+	}
+
 	if !s.enableChunkReordering {
 		return s.processChunkSequential(stream, session, req)
 	}
@@ -195,11 +276,14 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 		}
 
 		buffer.chunks[req.ChunkIndex] = req
-		s.log.Info().Str("session_id", req.SessionId).
-			Uint32("chunk_index", req.ChunkIndex).
-			Uint32("expected_index", buffer.expectedIndex).
-			Uint32("buffered_chunks", uint32(len(buffer.chunks))).
-			Msg("buffered out-of-order chunk")
+		if dl := s.log.Debug(); dl.Enabled() {
+			dl.Str("session_id", req.SessionId).
+				Str("topic", session.metadata.Topic).
+				Uint32("chunk_index", req.ChunkIndex).
+				Uint32("expected_index", buffer.expectedIndex).
+				Uint32("buffered_chunks", uint32(len(buffer.chunks))).
+				Msg("buffered out-of-order chunk")
+		}
 		s.updateChunkOrderMetrics("chunk_buffered", req.SessionId)
 
 		return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
@@ -209,6 +293,7 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 	if req.ChunkIndex < buffer.expectedIndex {
 		s.log.Warn().
 			Str("session_id", req.SessionId).
+			Str("topic", session.metadata.Topic).
 			Uint32("chunk_index", req.ChunkIndex).
 			Uint32("expected_index", buffer.expectedIndex).
 			Msg("received duplicate or old chunk, ignoring")
@@ -245,7 +330,16 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 	}
 
 	for partIndex, partInfo := range req.PartsInfo {
-		if session.partCtx == nil {
+		createNewContext := session.partCtx == nil ||
+			session.partCtx.ID != partInfo.Id
+
+		if createNewContext && session.partCtx != nil && session.partCtx.Handler != nil {
+			if err := session.partCtx.Handler.FinishSync(); err != nil {
+				return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
+			}
+		}
+
+		if createNewContext {
 			session.partCtx = &queue.ChunkedSyncPartContext{
 				ID:                    partInfo.Id,
 				Group:                 session.metadata.Group,
@@ -256,34 +350,34 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 				BlocksCount:           partInfo.BlocksCount,
 				MinTimestamp:          partInfo.MinTimestamp,
 				MaxTimestamp:          partInfo.MaxTimestamp,
+				MinKey:                partInfo.MinKey,
+				MaxKey:                partInfo.MaxKey,
+				PartType:              partInfo.PartType,
 			}
-		} else if session.partCtx.ID != partInfo.Id {
-			if session.partCtx.Handler != nil {
-				if err := session.partCtx.Handler.FinishSync(); err != nil {
-					return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
-				}
-				session.partCtx.Handler = nil
+			partHandler, err := handler.CreatePartHandler(session.partCtx)
+			if err != nil {
+				return fmt.Errorf("failed to create part handler: %w", err)
 			}
-			session.partCtx.ID = partInfo.Id
+			session.partCtx.Handler = partHandler
+		} else if session.partCtx.PartType != partInfo.PartType {
 			session.partCtx.CompressedSizeBytes = partInfo.CompressedSizeBytes
 			session.partCtx.UncompressedSizeBytes = partInfo.UncompressedSizeBytes
 			session.partCtx.TotalCount = partInfo.TotalCount
 			session.partCtx.BlocksCount = partInfo.BlocksCount
 			session.partCtx.MinTimestamp = partInfo.MinTimestamp
 			session.partCtx.MaxTimestamp = partInfo.MaxTimestamp
-		}
-
-		if session.partCtx.Handler == nil {
-			partHandler, err := handler.CreatePartHandler(session.partCtx)
-			if err != nil {
-				return fmt.Errorf("failed to create part handler: %w", err)
+			session.partCtx.MinKey = partInfo.MinKey
+			session.partCtx.MaxKey = partInfo.MaxKey
+			session.partCtx.PartType = partInfo.PartType
+			if err := session.partCtx.Handler.NewPartType(session.partCtx); err != nil {
+				return fmt.Errorf("failed to new part type: %w", err)
 			}
-			session.partCtx.Handler = partHandler
 		}
 
 		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {
 			s.log.Error().Err(err).
 				Str("session_id", req.SessionId).
+				Str("topic", session.metadata.Topic).
 				Int("part_index", partIndex).
 				Msg("failed to process part")
 			return err
@@ -300,10 +394,13 @@ func (s *server) processBufferedChunks(stream clusterv1.ChunkedSyncService_SyncP
 		if chunk, exists := buffer.chunks[buffer.expectedIndex]; exists {
 			delete(buffer.chunks, buffer.expectedIndex)
 
-			s.log.Debug().Str("session_id", session.sessionID).
-				Uint32("chunk_index", buffer.expectedIndex).
-				Uint32("remaining_buffered", uint32(len(buffer.chunks))).
-				Msg("processing buffered chunk")
+			if dl := s.log.Debug(); dl.Enabled() {
+				dl.Str("session_id", session.sessionID).
+					Str("topic", session.metadata.Topic).
+					Uint32("chunk_index", buffer.expectedIndex).
+					Uint32("remaining_buffered", uint32(len(buffer.chunks))).
+					Msg("processing buffered chunk")
+			}
 
 			if err := s.processExpectedChunk(stream, session, chunk); err != nil {
 				return err
@@ -361,6 +458,7 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 	for _, fileInfo := range partInfo.Files {
 		if fileInfo.Offset >= uint32(len(req.ChunkData)) {
 			s.log.Warn().Str("session_id", session.sessionID).
+				Str("topic", session.metadata.Topic).
 				Str("file_name", fileInfo.Name).
 				Uint32("offset", fileInfo.Offset).
 				Uint32("chunk_size", uint32(len(req.ChunkData))).
@@ -378,6 +476,7 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 		partDataSize += actualFileSize
 
 		session.partCtx.FileName = fileInfo.Name
+		session.partCtx.PartType = partInfo.PartType
 
 		if err := handler.HandleFileChunk(session.partCtx, fileChunk); err != nil {
 			return fmt.Errorf("failed to stream file chunk for %s: %w", fileInfo.Name, err)
@@ -429,12 +528,14 @@ func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartSe
 		PartsResults:       partsResults,
 	}
 
-	s.log.Info().
-		Str("session_id", session.sessionID).
-		Bool("success", syncResult.Success).
-		Uint64("bytes_received", syncResult.TotalBytesReceived).
-		Int64("duration_ms", syncResult.DurationMs).
-		Msg("completed chunked sync session")
+	if dl := s.log.Debug(); dl.Enabled() {
+		dl.Str("session_id", session.sessionID).
+			Str("topic", session.metadata.Topic).
+			Bool("success", syncResult.Success).
+			Uint64("bytes_received", syncResult.TotalBytesReceived).
+			Int64("duration_ms", syncResult.DurationMs).
+			Msg("completed chunked sync session")
+	}
 
 	return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_SYNC_COMPLETE, "", syncResult)
 }
@@ -444,14 +545,20 @@ func (s *server) sendResponse(
 	req *clusterv1.SyncPartRequest,
 	status clusterv1.SyncStatus,
 	errorMsg string,
-	syncResult *clusterv1.SyncResult,
+	result interface{},
 ) error {
 	resp := &clusterv1.SyncPartResponse{
 		SessionId:  req.SessionId,
 		ChunkIndex: req.ChunkIndex,
 		Status:     status,
 		Error:      errorMsg,
-		SyncResult: syncResult,
+	}
+
+	switch r := result.(type) {
+	case *clusterv1.SyncResult:
+		resp.SyncResult = r
+	case *clusterv1.VersionCompatibility:
+		resp.VersionCompatibility = r
 	}
 
 	return stream.Send(resp)

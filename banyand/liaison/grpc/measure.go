@@ -41,9 +41,22 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+type measureTagFamilySpec struct {
+	*measurev1.TagFamilySpec
+}
+
+func (m measureTagFamilySpec) GetName() string {
+	return m.TagFamilySpec.GetName()
+}
+
+func (m measureTagFamilySpec) GetTagNames() []string {
+	return m.TagFamilySpec.GetTagNames()
+}
+
 type measureService struct {
 	measurev1.UnimplementedMeasureServiceServer
 	ingestionAccessLog accesslog.Log
+	queryAccessLog     accesslog.Log
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
@@ -57,9 +70,17 @@ func (ms *measureService) setLogger(log *logger.Logger) {
 	ms.l = log
 }
 
-func (ms *measureService) activeIngestionAccessLog(root string) (err error) {
+func (ms *measureService) activeIngestionAccessLog(root string, sampled bool) (err error) {
 	if ms.ingestionAccessLog, err = accesslog.
-		NewFileLog(root, "measure-ingest-%s", 10*time.Minute, ms.log); err != nil {
+		NewFileLog(root, "measure-ingest-%s", 10*time.Minute, ms.log, sampled); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ms *measureService) activeQueryAccessLog(root string, sampled bool) (err error) {
+	if ms.queryAccessLog, err = accesslog.
+		NewFileLog(root, "measure-query-%s", 10*time.Minute, ms.log, sampled); err != nil {
 		return err
 	}
 	return nil
@@ -74,6 +95,14 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 	defer ms.handleWriteCleanup(publisher, &succeedSent, measure, start)
 
+	var metadata *commonv1.Metadata
+	var spec *measurev1.DataPointSpec
+	var specEntityLocator *specLocator
+	var specShardingKeyLocator *specLocator
+	isFirstRequest := true
+	nodeMetadataSent := make(map[string]bool)
+	nodeSpecSent := make(map[string]bool)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,41 +115,81 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 			return nil
 		}
 		if err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			if status.Code(err) != codes.Canceled && status.Code(err) != codes.DeadlineExceeded {
 				ms.l.Error().Err(err).Stringer("written", writeRequest).Msg("failed to receive message")
 			}
 			return err
 		}
 
-		ms.metrics.totalStreamMsgReceived.Inc(1, writeRequest.Metadata.Group, "measure", "write")
+		if writeRequest.GetMetadata() != nil {
+			metadata = writeRequest.GetMetadata()
+			nodeMetadataSent = make(map[string]bool)
+		} else if isFirstRequest {
+			ms.l.Error().Msg("metadata is required for the first request of gRPC stream")
+			ms.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeRequest.GetMessageId(), measure)
+			return errors.New("metadata is required for the first request of gRPC stream")
+		}
+		isFirstRequest = false
+		if writeRequest.GetDataPointSpec() != nil {
+			spec = writeRequest.GetDataPointSpec()
+			nodeSpecSent = make(map[string]bool)
+			specEntityLocator, specShardingKeyLocator = ms.buildSpecLocators(metadata, spec)
+		}
 
-		if status := ms.validateWriteRequest(writeRequest, measure); status != modelv1.Status_STATUS_SUCCEED {
+		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
+
+		if status := ms.validateWriteRequest(writeRequest, metadata, measure); status != modelv1.Status_STATUS_SUCCEED {
 			continue
 		}
 
-		if err := ms.processAndPublishRequest(ctx, writeRequest, publisher, &succeedSent, measure); err != nil {
+		if err := ms.processAndPublishRequest(ctx, writeRequest, metadata, spec,
+			specEntityLocator, specShardingKeyLocator, publisher, &succeedSent, measure, nodeMetadataSent, nodeSpecSent); err != nil {
 			continue
 		}
 	}
 }
 
-func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequest, measure measurev1.MeasureService_WriteServer) modelv1.Status {
+func (ms *measureService) buildSpecLocators(metadata *commonv1.Metadata, spec *measurev1.DataPointSpec) (*specLocator, *specLocator) {
+	if spec == nil {
+		return nil, nil
+	}
+	id := getID(metadata)
+	measure, ok := ms.entityRepo.getMeasure(id)
+	if !ok {
+		return nil, nil
+	}
+	specFamilies := make([]tagFamilySpec, len(spec.GetTagFamilySpec()))
+	for i, f := range spec.GetTagFamilySpec() {
+		specFamilies[i] = measureTagFamilySpec{f}
+	}
+	entityLocator := newSpecLocator(measure.GetTagFamilies(), measure.GetEntity().GetTagNames(), specFamilies)
+	var shardingKeyLocator *specLocator
+	shardingKey := measure.GetShardingKey()
+	if shardingKey != nil && len(shardingKey.GetTagNames()) > 0 {
+		shardingKeyLocator = newSpecLocator(measure.GetTagFamilies(), shardingKey.GetTagNames(), specFamilies)
+	}
+	return entityLocator, shardingKeyLocator
+}
+
+func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequest,
+	metadata *commonv1.Metadata, measure measurev1.MeasureService_WriteServer,
+) modelv1.Status {
 	if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 		ms.l.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure)
+		ms.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeRequest.GetMessageId(), measure)
 		return modelv1.Status_STATUS_INVALID_TIMESTAMP
 	}
 
-	if writeRequest.Metadata.ModRevision > 0 {
-		measureCache, existed := ms.entityRepo.getLocator(getID(writeRequest.GetMetadata()))
+	if metadata.ModRevision > 0 {
+		measureCache, existed := ms.entityRepo.getLocator(getID(metadata))
 		if !existed {
-			ms.l.Error().Stringer("written", writeRequest).Msg("failed to measure schema not found")
-			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
+			ms.l.Error().Stringer("written", writeRequest).Msg("measure schema not found")
+			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
-		if writeRequest.Metadata.ModRevision != measureCache.ModRevision {
+		if metadata.ModRevision != measureCache.ModRevision {
 			ms.l.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
-			ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
+			ms.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
 	}
@@ -129,7 +198,10 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 }
 
 func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
 	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
+	nodeMetadataSent map[string]bool, nodeSpecSent map[string]bool,
 ) error {
 	// Retry with backoff when encountering errNotExist
 	var tagValues pbv1.EntityValues
@@ -140,7 +212,7 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
-			tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+			tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
 				break
 			}
@@ -153,12 +225,12 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 			}
 		}
 	} else {
-		tagValues, shardID, err = ms.navigate(writeRequest.GetMetadata(), writeRequest.GetDataPoint().GetTagFamilies())
+		tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 	}
 
 	if err != nil {
 		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
 		return err
 	}
 
@@ -181,27 +253,38 @@ func (ms *measureService) processAndPublishRequest(ctx context.Context, writeReq
 		EntityValues: tagValues[1:].Encode(),
 	}
 
-	nodes, err := ms.publishToNodes(ctx, writeRequest, iwr, publisher, uint32(shardID), measure)
+	nodes, err := ms.publishToNodes(ctx, writeRequest, metadata, spec, iwr, publisher, uint32(shardID), measure, nodeMetadataSent, nodeSpecSent)
 	if err != nil {
 		return err
 	}
 
 	*succeedSent = append(*succeedSent, succeedSentMessage{
-		metadata:  writeRequest.GetMetadata(),
+		metadata:  metadata,
 		messageID: writeRequest.GetMessageId(),
 		nodes:     nodes,
 	})
 	return nil
 }
 
-func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *measurev1.WriteRequest, iwr *measurev1.InternalWriteRequest,
+func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *measurev1.WriteRequest,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, iwr *measurev1.InternalWriteRequest,
 	publisher queue.BatchPublisher, shardID uint32, measure measurev1.MeasureService_WriteServer,
+	nodeMetadataSent map[string]bool, nodeSpecSent map[string]bool,
 ) ([]string, error) {
-	nodeID, errPickNode := ms.nodeRegistry.Locate(writeRequest.GetMetadata().GetGroup(), writeRequest.GetMetadata().GetName(), shardID, 0)
+	nodeID, errPickNode := ms.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), shardID, 0)
 	if errPickNode != nil {
 		ms.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
 		return nil, errPickNode
+	}
+
+	if !nodeMetadataSent[nodeID] {
+		iwr.Request.Metadata = metadata
+		nodeMetadataSent[nodeID] = true
+	}
+	if spec != nil && !nodeSpecSent[nodeID] {
+		iwr.Request.DataPointSpec = spec
+		nodeSpecSent[nodeID] = true
 	}
 
 	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
@@ -210,16 +293,27 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 		ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
 		var ce *common.Error
 		if errors.As(errWritePub, &ce) {
-			ms.sendReply(writeRequest.GetMetadata(), ce.Status(), writeRequest.GetMessageId(), measure)
+			ms.sendReply(metadata, ce.Status(), writeRequest.GetMessageId(), measure)
 			return nil, errWritePub
 		}
-		ms.sendReply(writeRequest.GetMetadata(), modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
 		return nil, errWritePub
 	}
 	return []string{nodeID}, nil
 }
 
+func (ms *measureService) navigate(metadata *commonv1.Metadata, writeRequest *measurev1.WriteRequest,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
+) (pbv1.EntityValues, common.ShardID, error) {
+	tagFamilies := writeRequest.GetDataPoint().GetTagFamilies()
+	return ms.navigateByLocator(metadata, tagFamilies, specEntityLocator, specShardingKeyLocator)
+}
+
 func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {
+	if metadata == nil {
+		ms.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
+		return
+	}
 	if status != modelv1.Status_STATUS_SUCCEED {
 		ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
 	}
@@ -269,30 +363,42 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	}
 	start := time.Now()
 	defer func() {
+		duration := time.Since(start)
 		for _, g := range req.Groups {
 			ms.metrics.totalFinished.Inc(1, g, "measure", "query")
 			if err != nil {
 				ms.metrics.totalErr.Inc(1, g, "measure", "query")
 			}
-			ms.metrics.totalLatency.Inc(time.Since(start).Seconds(), g, "measure", "query")
+			ms.metrics.totalLatency.Inc(duration.Seconds(), g, "measure", "query")
+		}
+		// Log query with timing information at the end
+		if ms.queryAccessLog != nil {
+			if errAccessLog := ms.queryAccessLog.WriteQuery("measure", start, duration, req, err); errAccessLog != nil {
+				ms.l.Error().Err(errAccessLog).Msg("query access log error")
+			}
 		}
 	}()
 	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var tracer *query.Tracer
+	var span *query.Span
+	var responseDataPointCount int
 	if req.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "measure-grpc")
+		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		span, _ = tracer.StartSpan(ctx, "measure-grpc")
 		span.Tag("request", convert.BytesToString(logger.Proto(req)))
 		defer func() {
 			if err != nil {
 				span.Error(err)
+				span.Stop()
 			} else {
+				span.Tagf("response_data_point_count", "%d", responseDataPointCount)
 				span.AddSubTrace(resp.Trace)
+				span.Stop()
 				resp.Trace = tracer.ToProto()
 			}
-			span.Stop()
 		}()
 	}
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
@@ -309,6 +415,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	data := msg.Data()
 	switch d := data.(type) {
 	case *measurev1.QueryResponse:
+		responseDataPointCount = len(d.DataPoints)
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())
@@ -317,22 +424,36 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 }
 
 func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		// Log query with timing information at the end
+		if ms.queryAccessLog != nil {
+			if errAccessLog := ms.queryAccessLog.WriteQuery("measure", start, duration, topNRequest, err); errAccessLog != nil {
+				ms.l.Error().Err(errAccessLog).Msg("query access log error")
+			}
+		}
+	}()
 	if err = timestamp.CheckTimeRange(topNRequest.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", topNRequest.GetTimeRange(), err)
 	}
 	now := time.Now()
+	var topNTracer *query.Tracer
+	var topNSpan *query.Span
+	var responseListCount int
 	if topNRequest.Trace {
-		tracer, _ := query.NewTracer(ctx, now.Format(time.RFC3339Nano))
-		span, _ := tracer.StartSpan(ctx, "topn-grpc")
-		span.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
+		topNTracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
+		topNSpan, _ = topNTracer.StartSpan(ctx, "topn-grpc")
+		topNSpan.Tag("request", convert.BytesToString(logger.Proto(topNRequest)))
 		defer func() {
 			if err != nil {
-				span.Error(err)
+				topNSpan.Error(err)
 			} else {
-				span.AddSubTrace(resp.Trace)
-				resp.Trace = tracer.ToProto()
+				topNSpan.Tagf("response_list_count", "%d", responseListCount)
+				topNSpan.AddSubTrace(resp.Trace)
+				resp.Trace = topNTracer.ToProto()
 			}
-			span.Stop()
+			topNSpan.Stop()
 		}()
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), topNRequest)
@@ -347,6 +468,7 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 	data := msg.Data()
 	switch d := data.(type) {
 	case *measurev1.TopNResponse:
+		responseListCount = len(d.Lists)
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())

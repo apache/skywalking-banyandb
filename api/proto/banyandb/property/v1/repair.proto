@@ -69,7 +69,18 @@ message PropertySync {
   int64 delete_time = 3;
 }
 
-message NoMorePropertySync {}
+enum PropertySyncFromType {
+  PROPERTY_SYNC_FROM_TYPE_UNSPECIFIED = 0;
+  PROPERTY_SYNC_FROM_TYPE_MISSING = 1; // client missing but server existing
+  PROPERTY_SYNC_FROM_TYPE_SYNC = 2; // client existing but server missing or SHA value mismatches
+}
+
+message PropertySyncWithFrom {
+  PropertySyncFromType from = 1;
+  PropertySync property = 2;
+}
+
+message WaitNextDifferData {}
 
 message RepairRequest {
   oneof data {
@@ -82,9 +93,8 @@ message RepairRequest {
     // case 2: client existing but server missing
     // case 3: SHA value mismatches
     PropertySync property_sync = 4;
-    // if client side is already send all the properties(missing or property sync)
-    // which means the client side will not sending more properties to sync, server side should close the stream.
-    NoMorePropertySync no_more_property_sync = 5;
+    // wait next differ tree summary for process
+    WaitNextDifferData wait_next_differ = 5;
   }
 }
 
@@ -96,7 +106,7 @@ message RepairResponse {
     // repair stage
     // case 1: return from PropertyMissing
     // case 3: return if the client is older
-    PropertySync property_sync = 3;
+    PropertySyncWithFrom property_sync = 3;
   }
 }
 

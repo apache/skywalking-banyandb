@@ -36,8 +36,6 @@ type MockClock interface {
 	Add(d time.Duration)
 	// Set sets the current time of the mock clock to a specific one.
 	Set(t time.Time)
-	// TriggerTimer sends the current time to timer.C
-	TriggerTimer() bool
 }
 
 // NewClock returns an instance of a real-time clock.

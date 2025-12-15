@@ -20,7 +20,8 @@ package sidx
 import (
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/stretchr/testify/assert"
+
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -43,72 +44,6 @@ func TestBlock_BasicOperations(t *testing.T) {
 	}
 }
 
-func TestBlock_InitFromElements(t *testing.T) {
-	// Create test elements
-	elems := generateElements()
-	defer releaseElements(elems)
-
-	// Add test data
-	elems.seriesIDs = append(elems.seriesIDs, common.SeriesID(1), common.SeriesID(1))
-	elems.userKeys = append(elems.userKeys, 100, 200)
-	elems.data = append(elems.data, []byte("data1"), []byte("data2"))
-
-	// Add test tags
-	tag1 := tag{
-		name:      "service",
-		value:     []byte("web-service"),
-		valueType: pbv1.ValueTypeStr,
-		indexed:   true,
-	}
-	tag2 := tag{
-		name:      "endpoint",
-		value:     []byte("/api/users"),
-		valueType: pbv1.ValueTypeStr,
-		indexed:   false,
-	}
-
-	elems.tags = append(elems.tags,
-		[]tag{tag1, tag2},
-		[]tag{tag1, tag2},
-	)
-
-	// Create block and initialize from elements
-	b := generateBlock()
-	defer releaseBlock(b)
-
-	b.mustInitFromElements(elems)
-
-	// Verify block state
-	if b.isEmpty() {
-		t.Error("Block should not be empty after initialization")
-	}
-
-	if b.Len() != 2 {
-		t.Errorf("Expected block length 2, got %d", b.Len())
-	}
-
-	if len(b.userKeys) != 2 {
-		t.Errorf("Expected 2 user keys, got %d", len(b.userKeys))
-	}
-
-	if b.userKeys[0] != 100 || b.userKeys[1] != 200 {
-		t.Errorf("User keys not properly set: got %v", b.userKeys)
-	}
-
-	// Verify tags were processed
-	if len(b.tags) != 2 {
-		t.Errorf("Expected 2 tags, got %d", len(b.tags))
-	}
-
-	if _, exists := b.tags["service"]; !exists {
-		t.Error("Expected 'service' tag to exist")
-	}
-
-	if _, exists := b.tags["endpoint"]; !exists {
-		t.Error("Expected 'endpoint' tag to exist")
-	}
-}
-
 func TestBlock_Validation(t *testing.T) {
 	b := generateBlock()
 	defer releaseBlock(b)
@@ -119,8 +54,8 @@ func TestBlock_Validation(t *testing.T) {
 	}
 
 	// Add inconsistent data
-	b.userKeys = append(b.userKeys, 100, 200)
-	b.elementIDs = append(b.elementIDs, 1) // Only one element ID for two keys
+	b.userKeys = append(b.userKeys, 100)
+	b.data = append(b.data, []byte("dummy"), []byte("dummy2"))
 
 	// Should fail validation
 	if err := b.validate(); err == nil {
@@ -139,7 +74,6 @@ func TestBlock_SizeCalculation(t *testing.T) {
 
 	// Add some data
 	b.userKeys = append(b.userKeys, 100, 200)
-	b.elementIDs = append(b.elementIDs, 1, 2)
 	b.data = append(b.data, []byte("test1"), []byte("test2"))
 
 	// Should have non-zero size
@@ -160,7 +94,6 @@ func TestBlock_IsFull(t *testing.T) {
 	// Add elements up to the limit
 	for i := 0; i < maxElementsPerBlock-1; i++ {
 		b.userKeys = append(b.userKeys, int64(i))
-		b.elementIDs = append(b.elementIDs, uint64(i))
 		b.data = append(b.data, []byte("data"))
 	}
 
@@ -171,7 +104,6 @@ func TestBlock_IsFull(t *testing.T) {
 
 	// Add one more element to reach the limit
 	b.userKeys = append(b.userKeys, int64(maxElementsPerBlock))
-	b.elementIDs = append(b.elementIDs, uint64(maxElementsPerBlock))
 	b.data = append(b.data, []byte("data"))
 
 	// Should now be full
@@ -199,26 +131,41 @@ func TestBlock_KeyRange(t *testing.T) {
 	}
 }
 
-func TestBlock_MemoryManagement(t *testing.T) {
+func TestBlock_ProcessTag_WithArrValues(t *testing.T) {
 	b := generateBlock()
 	defer releaseBlock(b)
 
-	// Add some normal-sized data
-	b.data = append(b.data, make([]byte, 100), make([]byte, 200))
-
-	// Add an oversized slice (larger than maxPooledSliceSize)
-	oversizedData := make([]byte, maxPooledSliceSize+1)
-	b.data = append(b.data, oversizedData)
-
-	// Reset should handle both normal and oversized slices correctly
-	b.reset()
-
-	// After reset, data slice should be empty but not nil (since the outer slice is within limits)
-	if b.data == nil {
-		t.Error("Data slice should not be nil after reset when within count limits")
+	b.userKeys = []int64{100, 101}
+	elementTags := [][]*tag{
+		{
+			{
+				name: "arr_tag",
+				valueArr: [][]byte{
+					[]byte("a"),
+					[]byte("b"),
+				},
+				valueType: pbv1.ValueTypeStrArr,
+			},
+		},
+		{
+			{
+				name:      "arr_tag",
+				value:     []byte("c"),
+				valueType: pbv1.ValueTypeStr,
+			},
+		},
 	}
 
-	if len(b.data) != 0 {
-		t.Errorf("Data slice should be empty after reset, got length %d", len(b.data))
-	}
+	b.processTag("arr_tag", elementTags)
+
+	// Check the first element has valueArr
+	assert.NotNil(t, b.tags["arr_tag"].values[0].valueArr)
+	assert.Equal(t, 2, len(b.tags["arr_tag"].values[0].valueArr))
+	assert.Equal(t, "a", string(b.tags["arr_tag"].values[0].valueArr[0]))
+	assert.Equal(t, "b", string(b.tags["arr_tag"].values[0].valueArr[1]))
+
+	// Check the second element has value
+	assert.Equal(t, "c", string(b.tags["arr_tag"].values[1].value))
+
+	// Note: bloom filter is now created at write time, not during processTag
 }

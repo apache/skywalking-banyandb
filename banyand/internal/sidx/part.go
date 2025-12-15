@@ -20,57 +20,93 @@ package sidx
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 const (
-	// Standard file names for sidx parts.
-	primaryFilename  = "primary.bin"
-	dataFilename     = "data.bin"
-	keysFilename     = "keys.bin"
-	metaFilename     = "meta.bin"
+	// SidxPrimaryName is the name for primary files.
+	SidxPrimaryName = "primary"
+	// SidxDataName is the name for data files.
+	SidxDataName = "data"
+	// SidxKeysName is the name for keys files.
+	SidxKeysName = "keys"
+	// SidxMetaName is the name for meta files.
+	SidxMetaName = "meta"
+
+	// primaryFilename is the filename for primary files.
+	primaryFilename = SidxPrimaryName + ".bin"
+	// dataFilename is the filename for data files.
+	dataFilename = SidxDataName + ".bin"
+	// keysFilename is the filename for keys files.
+	keysFilename = SidxKeysName + ".bin"
+	// metaFilename is the filename for meta files.
+	metaFilename = SidxMetaName + ".bin"
+	// manifestFilename is the filename for manifest files.
 	manifestFilename = "manifest.json"
 
-	// Tag file extensions.
-	tagDataExtension     = ".td" // <name>.td files
-	tagMetadataExtension = ".tm" // <name>.tm files
-	tagFilterExtension   = ".tf" // <name>.tf files
+	// tagDataExtension is the extension for tag data files.
+	tagDataExtension = ".td"
+	// tagMetadataExtension is the extension for tag metadata files.
+	tagMetadataExtension = ".tm"
+	// tagFilterExtension is the extension for tag filter files.
+	tagFilterExtension = ".tf"
+
+	// TagDataPrefix is the prefix for tag data files.
+	TagDataPrefix = "td:"
+	// TagMetadataPrefix is the prefix for tag metadata files.
+	TagMetadataPrefix = "tm:"
+	// TagFilterPrefix is the prefix for tag filter files.
+	TagFilterPrefix = "tf:"
 )
+
+// Part is a type alias for part.
+type Part = part
 
 // part represents a collection of files containing sidx data.
 // Each part contains multiple files organized by type:
 // - primary.bin: Block metadata and structure information
 // - data.bin: User payload data (compressed)
-// - keys.bin: User-provided int64 keys (compressed)
-// - meta.bin: Part metadata
+// - keys.bin: User-provided int64 keys (encoded but not compressed)
+// - meta.bin: part metadata
 // - <name>.td: Tag data files (one per tag)
 // - <name>.tm: Tag metadata files (one per tag)
 // - <name>.tf: Tag filter files (bloom filters, one per tag).
 type part struct {
-	primary       fs.Reader
-	data          fs.Reader
-	keys          fs.Reader
-	fileSystem    fs.FileSystem
-	tagData       map[string]fs.Reader
-	tagMetadata   map[string]fs.Reader
-	tagFilters    map[string]fs.Reader
-	partMetadata  *partMetadata
-	path          string
-	blockMetadata []blockMetadata
+	primary              fs.Reader
+	data                 fs.Reader
+	keys                 fs.Reader
+	meta                 fs.Reader
+	fileSystem           fs.FileSystem
+	tagData              map[string]fs.Reader
+	tagMetadata          map[string]fs.Reader
+	tagFilters           map[string]fs.Reader
+	partMetadata         *partMetadata
+	path                 string
+	primaryBlockMetadata []primaryBlockMetadata
+}
+
+func (p *part) ID() uint64 {
+	return p.partMetadata.ID
 }
 
 // mustOpenPart opens a part from the specified path using the given file system.
 // It opens all standard files and discovers tag files automatically.
 // Panics if any required file cannot be opened.
-func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
+func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 	p := &part{
 		path:       path,
 		fileSystem: fileSystem,
@@ -80,18 +116,17 @@ func mustOpenPart(path string, fileSystem fs.FileSystem) *part {
 	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
 	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
 	p.keys = mustOpenReader(filepath.Join(path, keysFilename), fileSystem)
+	p.meta = mustOpenReader(filepath.Join(path, metaFilename), fileSystem)
 
 	// Load part metadata from meta.bin.
 	if err := p.loadPartMetadata(); err != nil {
 		p.close()
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load part metadata")
 	}
+	p.partMetadata.ID = partID
 
-	// Load block metadata from primary.bin.
-	if err := p.loadBlockMetadata(); err != nil {
-		p.close()
-		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("failed to load block metadata")
-	}
+	// Load primary block metadata from primary.bin.
+	p.loadPrimaryBlockMetadata()
 
 	// Discover and open tag files.
 	p.openTagFiles()
@@ -106,9 +141,8 @@ func (p *part) loadPartMetadata() error {
 	manifestData, err := p.fileSystem.Read(manifestPath)
 	if err == nil {
 		// Parse JSON manifest
-		pm := generatePartMetadata()
+		pm := &partMetadata{}
 		if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
-			releasePartMetadata(pm)
 			return fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
 		}
 		p.partMetadata = pm
@@ -131,22 +165,140 @@ func (p *part) loadPartMetadata() error {
 	return nil
 }
 
-// loadBlockMetadata reads and parses block metadata from primary.bin.
-func (p *part) loadBlockMetadata() error {
-	// Read the entire primary.bin file.
-	_, err := p.fileSystem.Read(filepath.Join(p.path, primaryFilename))
+// ParsePartMetadata reads and parses part metadata from manifest.json in the specified parent path.
+func ParsePartMetadata(fs fs.FileSystem, parentPath string) (*queue.StreamingPartData, error) {
+	manifestData, err := fs.Read(filepath.Join(parentPath, manifestFilename))
 	if err != nil {
-		return fmt.Errorf("failed to read primary.bin: %w", err)
+		return nil, fmt.Errorf("failed to read manifest.json: %w", err)
+	}
+	// Parse JSON manifest
+	pm := &partMetadata{}
+	if unmarshalErr := json.Unmarshal(manifestData, pm); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to unmarshal manifest.json: %w", unmarshalErr)
+	}
+	return &queue.StreamingPartData{
+		ID:                    pm.ID,
+		CompressedSizeBytes:   pm.CompressedSizeBytes,
+		UncompressedSizeBytes: pm.UncompressedSizeBytes,
+		TotalCount:            pm.TotalCount,
+		BlocksCount:           pm.BlocksCount,
+		MinKey:                pm.MinKey,
+		MaxKey:                pm.MaxKey,
+	}, nil
+}
+
+// CreatePartFileReaderFromPath opens all files in a part directory and returns their FileInfo and a cleanup function.
+func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.FileInfo, func()) {
+	var files []queue.FileInfo
+	var readers []fs.Reader
+
+	// Core trace files (required files)
+	metaPath := path.Join(partPath, metaFilename)
+	metaReader, err := lfs.OpenFile(metaPath)
+	if err != nil {
+		logger.Panicf("cannot open trace meta file %q: %s", metaPath, err)
+	}
+	readers = append(readers, metaReader)
+	files = append(files, queue.FileInfo{
+		Name:   SidxMetaName,
+		Reader: metaReader.SequentialRead(),
+	})
+
+	primaryPath := path.Join(partPath, primaryFilename)
+	primaryReader, err := lfs.OpenFile(primaryPath)
+	if err != nil {
+		logger.Panicf("cannot open trace primary file %q: %s", primaryPath, err)
+	}
+	readers = append(readers, primaryReader)
+	files = append(files, queue.FileInfo{
+		Name:   SidxPrimaryName,
+		Reader: primaryReader.SequentialRead(),
+	})
+
+	keysPath := path.Join(partPath, keysFilename)
+	if keysReader, err := lfs.OpenFile(keysPath); err == nil {
+		readers = append(readers, keysReader)
+		files = append(files, queue.FileInfo{
+			Name:   SidxKeysName,
+			Reader: keysReader.SequentialRead(),
+		})
 	}
 
-	// Parse block metadata (implementation would depend on the exact format).
-	// For now, we'll allocate space based on the part metadata.
-	p.blockMetadata = make([]blockMetadata, 0, p.partMetadata.BlocksCount)
+	dataPath := path.Join(partPath, dataFilename)
+	if dataReader, err := lfs.OpenFile(dataPath); err == nil {
+		readers = append(readers, dataReader)
+		files = append(files, queue.FileInfo{
+			Name:   SidxDataName,
+			Reader: dataReader.SequentialRead(),
+		})
+	}
 
-	// TODO: Implement actual primary.bin parsing when block format is defined.
-	// This is a placeholder for the structure.
+	// Dynamic tag files (*.t and *.tm)
+	ee := lfs.ReadDir(partPath)
+	for _, e := range ee {
+		if e.IsDir() {
+			continue
+		}
 
-	return nil
+		// Tag metadata files (.tm)
+		if filepath.Ext(e.Name()) == tagMetadataExtension {
+			tmPath := path.Join(partPath, e.Name())
+			tmReader, err := lfs.OpenFile(tmPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag metadata file %q: %s", tmPath, err)
+			}
+			readers = append(readers, tmReader)
+			tagName := removeExt(e.Name(), tagMetadataExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagMetadataPrefix + tagName,
+				Reader: tmReader.SequentialRead(),
+			})
+		}
+
+		// Tag family files (.tf)
+		if filepath.Ext(e.Name()) == tagFilterExtension {
+			tPath := path.Join(partPath, e.Name())
+			tReader, err := lfs.OpenFile(tPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag file %q: %s", tPath, err)
+			}
+			readers = append(readers, tReader)
+			tagName := removeExt(e.Name(), tagFilterExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagFilterPrefix + tagName,
+				Reader: tReader.SequentialRead(),
+			})
+		}
+
+		// Tag data files (.td)
+		if filepath.Ext(e.Name()) == tagDataExtension {
+			tdPath := path.Join(partPath, e.Name())
+			tdReader, err := lfs.OpenFile(tdPath)
+			if err != nil {
+				logger.Panicf("cannot open trace tag data file %q: %s", tdPath, err)
+			}
+			readers = append(readers, tdReader)
+			tagName := removeExt(e.Name(), tagDataExtension)
+			files = append(files, queue.FileInfo{
+				Name:   TagDataPrefix + tagName,
+				Reader: tdReader.SequentialRead(),
+			})
+		}
+	}
+
+	cleanup := func() {
+		for _, reader := range readers {
+			fs.MustClose(reader)
+		}
+	}
+
+	return files, cleanup
+}
+
+// loadPrimaryBlockMetadata reads and parses primary block metadata from meta.bin.
+func (p *part) loadPrimaryBlockMetadata() {
+	// Load primary block metadata from meta.bin file (compressed primaryBlockMetadata)
+	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], p.meta)
 }
 
 // openTagFiles discovers and opens all tag files in the part directory.
@@ -236,6 +388,9 @@ func (p *part) close() {
 	if p.keys != nil {
 		fs.MustClose(p.keys)
 	}
+	if p.meta != nil {
+		fs.MustClose(p.meta)
+	}
 
 	// Close tag files.
 	for _, reader := range p.tagData {
@@ -250,15 +405,10 @@ func (p *part) close() {
 
 	// Release metadata.
 	if p.partMetadata != nil {
-		releasePartMetadata(p.partMetadata)
 		p.partMetadata = nil
 	}
 
-	// Release block metadata.
-	for i := range p.blockMetadata {
-		releaseBlockMetadata(&p.blockMetadata[i])
-	}
-	p.blockMetadata = nil
+	// No block metadata to release since it's now passed as parameter
 }
 
 // mustOpenReader opens a file reader and panics if it fails.
@@ -270,22 +420,175 @@ func mustOpenReader(filePath string, fileSystem fs.FileSystem) fs.Reader {
 	return file
 }
 
+// readAll reads all blocks from the part and returns them as separate elements.
+// Each elements collection represents the data from a single block.
+func (p *part) readAll() ([]*elements, error) {
+	if len(p.primaryBlockMetadata) == 0 {
+		return nil, nil
+	}
+
+	result := make([]*elements, 0, len(p.primaryBlockMetadata))
+	compressedPrimaryBuf := make([]byte, 0, 1024)
+	primaryBuf := make([]byte, 0, 1024)
+	dataBuf := make([]byte, 0, 1024)
+	compressedKeysBuf := make([]byte, 0, 1024)
+
+	for _, pbm := range p.primaryBlockMetadata {
+		// Read and decompress primary block metadata
+		compressedPrimaryBuf = bytes.ResizeOver(compressedPrimaryBuf, int(pbm.size))
+		fs.MustReadData(p.primary, int64(pbm.offset), compressedPrimaryBuf)
+
+		var err error
+		primaryBuf, err = zstd.Decompress(primaryBuf[:0], compressedPrimaryBuf)
+		if err != nil {
+			// Clean up any elements created so far
+			for _, e := range result {
+				releaseElements(e)
+			}
+			return nil, fmt.Errorf("cannot decompress primary block: %w", err)
+		}
+
+		// Unmarshal all block metadata entries in this primary block
+		blockMetadataArray, err := unmarshalBlockMetadata(nil, primaryBuf)
+		if err != nil {
+			// Clean up any elements created so far
+			for _, e := range result {
+				releaseElements(e)
+			}
+			return nil, fmt.Errorf("cannot unmarshal block metadata: %w", err)
+		}
+
+		// Process each block metadata
+		for i := range blockMetadataArray {
+			bm := &blockMetadataArray[i]
+
+			// Create elements for this block
+			elems := generateElements()
+
+			// Read user keys
+			compressedKeysBuf = bytes.ResizeOver(compressedKeysBuf, int(bm.keysBlock.size))
+			fs.MustReadData(p.keys, int64(bm.keysBlock.offset), compressedKeysBuf)
+
+			// Decode user keys directly using the stored encoding information
+			elems.userKeys, err = encoding.BytesToInt64List(elems.userKeys[:0], compressedKeysBuf, bm.keysEncodeType, bm.minKey, int(bm.count))
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode user keys: %w", err)
+			}
+
+			// Read data payloads
+			dataBuf = bytes.ResizeOver(dataBuf, int(bm.dataBlock.size))
+			fs.MustReadData(p.data, int64(bm.dataBlock.offset), dataBuf)
+
+			// Decode data payloads - create a new decoder for each block to avoid state corruption
+			blockBytesDecoder := &encoding.BytesBlockDecoder{}
+			elems.data, err = blockBytesDecoder.Decode(elems.data[:0], dataBuf, bm.count)
+			if err != nil {
+				releaseElements(elems)
+				for _, e := range result {
+					releaseElements(e)
+				}
+				return nil, fmt.Errorf("cannot decode data payloads: %w", err)
+			}
+
+			// Initialize seriesIDs and tags slices
+			elems.seriesIDs = make([]common.SeriesID, int(bm.count))
+			elems.tags = make([][]*tag, int(bm.count))
+
+			// Fill seriesIDs - all elements in this block have the same seriesID
+			for j := range elems.seriesIDs {
+				elems.seriesIDs[j] = bm.seriesID
+			}
+
+			// Read tags for each tag name
+			for tagName := range bm.tagsBlocks {
+				err = p.readBlockTags(tagName, bm, elems, blockBytesDecoder)
+				if err != nil {
+					releaseElements(elems)
+					for _, e := range result {
+						releaseElements(e)
+					}
+					return nil, fmt.Errorf("cannot read tags for %s: %w", tagName, err)
+				}
+			}
+
+			result = append(result, elems)
+		}
+	}
+
+	return result, nil
+}
+
+// readBlockTags reads and decodes tag data for a specific tag in a block.
+func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements, decoder *encoding.BytesBlockDecoder) error {
+	tagBlockInfo, exists := bm.tagsBlocks[tagName]
+	if !exists {
+		return fmt.Errorf("tag block info not found for tag: %s", tagName)
+	}
+
+	// Get tag metadata reader
+	tmReader, tmExists := p.getTagMetadataReader(tagName)
+	if !tmExists {
+		return fmt.Errorf("tag metadata reader not found for tag: %s", tagName)
+	}
+
+	// Get tag data reader
+	tdReader, tdExists := p.getTagDataReader(tagName)
+	if !tdExists {
+		return fmt.Errorf("tag data reader not found for tag: %s", tagName)
+	}
+
+	// Read tag metadata
+	tmData := make([]byte, tagBlockInfo.size)
+	fs.MustReadData(tmReader, int64(tagBlockInfo.offset), tmData)
+
+	tm, err := unmarshalTagMetadata(tmData)
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal tag metadata: %w", err)
+	}
+	defer releaseTagMetadata(tm)
+
+	// Read tag data
+	tdData := make([]byte, tm.dataBlock.size)
+	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
+
+	// Decode tag values directly (no compression)
+	tagValues, err := internalencoding.DecodeTagValues(nil, decoder, &bytes.Buffer{Buf: tdData}, tm.valueType, int(bm.count))
+	if err != nil {
+		return fmt.Errorf("cannot decode tag values: %w", err)
+	}
+
+	// Add tag values to elements (only for non-nil values)
+	for i, value := range tagValues {
+		if i >= len(elems.tags) {
+			break
+		}
+		// Skip nil values - they represent missing tags for this element
+		if value == nil {
+			continue
+		}
+		if elems.tags[i] == nil {
+			elems.tags[i] = make([]*tag, 0, 1)
+		}
+		newTag := generateTag()
+		newTag.name = tagName
+		newTag.value = value
+		newTag.valueType = tm.valueType
+		elems.tags[i] = append(elems.tags[i], newTag)
+	}
+
+	return nil
+}
+
 // String returns a string representation of the part.
 func (p *part) String() string {
 	if p.partMetadata != nil {
 		return fmt.Sprintf("sidx part %d at %s", p.partMetadata.ID, p.path)
 	}
 	return fmt.Sprintf("sidx part at %s", p.path)
-}
-
-// getPartMetadata returns the part metadata.
-func (p *part) getPartMetadata() *partMetadata {
-	return p.partMetadata
-}
-
-// getBlockMetadata returns the block metadata slice.
-func (p *part) getBlockMetadata() []blockMetadata {
-	return p.blockMetadata
 }
 
 // getTagDataReader returns the tag data reader for the specified tag name.
@@ -306,42 +609,13 @@ func (p *part) getTagFilterReader(tagName string) (fs.Reader, bool) {
 	return reader, exists
 }
 
-// getAvailableTagNames returns a slice of all available tag names in this part.
-func (p *part) getAvailableTagNames() []string {
-	tagNames := make(map[string]struct{})
-
-	// Collect tag names from all tag file types.
-	for tagName := range p.tagData {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagMetadata {
-		tagNames[tagName] = struct{}{}
-	}
-	for tagName := range p.tagFilters {
-		tagNames[tagName] = struct{}{}
-	}
-
-	// Convert to slice.
-	result := make([]string, 0, len(tagNames))
-	for tagName := range tagNames {
-		result = append(result, tagName)
-	}
-
-	return result
-}
-
-// hasTagFiles returns true if the part has any tag files for the specified tag name.
-func (p *part) hasTagFiles(tagName string) bool {
-	_, hasData := p.tagData[tagName]
-	_, hasMeta := p.tagMetadata[tagName]
-	_, hasFilter := p.tagFilters[tagName]
-	return hasData || hasMeta || hasFilter
-}
-
 // Path returns the part's directory path.
 func (p *part) Path() string {
 	return p.path
 }
+
+// MemPart is a type alias for memPart.
+type MemPart = memPart
 
 // memPart represents an in-memory part for SIDX with tag-based file design.
 // This structure mirrors the stream module's memPart but uses user keys instead of timestamps.
@@ -354,6 +628,24 @@ type memPart struct {
 	primary      bytes.Buffer
 	data         bytes.Buffer
 	keys         bytes.Buffer
+}
+
+func (mp *memPart) ID() uint64 {
+	return mp.partMetadata.ID
+}
+
+// SetPartMetadata sets the part metadata for the MemPart.
+func (mp *memPart) SetPartMetadata(compressedSizeBytes, uncompressedSizeBytes, totalCount, blocksCount uint64, minKey, maxKey int64, id uint64) {
+	if mp.partMetadata == nil {
+		mp.partMetadata = &partMetadata{}
+	}
+	mp.partMetadata.CompressedSizeBytes = compressedSizeBytes
+	mp.partMetadata.UncompressedSizeBytes = uncompressedSizeBytes
+	mp.partMetadata.TotalCount = totalCount
+	mp.partMetadata.BlocksCount = blocksCount
+	mp.partMetadata.MinKey = minKey
+	mp.partMetadata.MaxKey = maxKey
+	mp.partMetadata.ID = id
 }
 
 // mustCreateTagWriters creates writers for individual tag files.
@@ -428,7 +720,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 
 	// Initialize part metadata
 	if mp.partMetadata == nil {
-		mp.partMetadata = generatePartMetadata()
+		mp.partMetadata = &partMetadata{}
 	}
 
 	// Initialize block writer for memory part
@@ -440,32 +732,44 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 	// Group elements by seriesID and write to blocks
 	currentSeriesID := es.seriesIDs[0]
 	blockStart := 0
+	var accumulatedSize uint64
 
 	for i := 1; i <= len(es.seriesIDs); i++ {
-		// Process block when series changes or at end
-		if i == len(es.seriesIDs) || es.seriesIDs[i] != currentSeriesID {
+		// Calculate size of current element if not at end
+		if i < len(es.seriesIDs) {
+			// Add userKey size (8 bytes)
+			accumulatedSize += 8
+			// Add data payload size
+			accumulatedSize += uint64(len(es.data[i-1]))
+			// Add tag sizes
+			for _, tag := range es.tags[i-1] {
+				if tag != nil {
+					accumulatedSize += uint64(tag.size())
+				}
+			}
+		}
+
+		// Process block when series changes, size limit reached, count limit reached, or at end
+		seriesChanged := i < len(es.seriesIDs) && es.seriesIDs[i] != currentSeriesID
+		if (i-blockStart) > maxBlockLength || accumulatedSize >= maxUncompressedBlockSize || i == len(es.seriesIDs) || seriesChanged {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
+			seriesData := es.data[blockStart:i]
 			seriesTags := es.tags[blockStart:i]
 
 			// Write elements for this series
-			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesTags)
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesData, seriesTags)
 
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]
 				blockStart = i
+				accumulatedSize = 0
 			}
 		}
 	}
 
 	// Flush the block writer to finalize metadata
 	bw.Flush(mp.partMetadata)
-
-	// Update key range in part metadata
-	if len(es.userKeys) > 0 {
-		mp.partMetadata.MinKey = es.userKeys[0]
-		mp.partMetadata.MaxKey = es.userKeys[len(es.userKeys)-1]
-	}
 }
 
 // mustFlush flushes the memory part to disk with tag-based file organization.
@@ -473,10 +777,10 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 	fileSystem.MkdirPanicIfExist(partPath, storage.DirPerm)
 
 	// Write core files
-	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.primary.Buf, filepath.Join(partPath, primaryFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.data.Buf, filepath.Join(partPath, dataFilename), storage.FilePerm)
 	fs.MustFlush(fileSystem, mp.keys.Buf, filepath.Join(partPath, keysFilename), storage.FilePerm)
+	fs.MustFlush(fileSystem, mp.meta.Buf, filepath.Join(partPath, metaFilename), storage.FilePerm)
 
 	// Write individual tag files
 	for tagName, td := range mp.tagData {
@@ -491,29 +795,30 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, partPath string) {
 
 	// Write part metadata manifest
 	if mp.partMetadata != nil {
-		manifestData, err := mp.partMetadata.marshal()
-		if err != nil {
-			logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
-		}
-		fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
+		mp.partMetadata.mustWriteMetadata(fileSystem, partPath)
 	}
 
 	fileSystem.SyncPath(partPath)
 }
 
-// generateMemPart gets memPart from pool or creates new.
-func generateMemPart() *memPart {
+// GenerateMemPart gets memPart from pool or creates new.
+func GenerateMemPart() *MemPart {
 	v := memPartPool.Get()
 	if v == nil {
-		return &memPart{}
+		return &MemPart{}
 	}
 	return v
 }
 
-// releaseMemPart returns memPart to pool after reset.
-func releaseMemPart(mp *memPart) {
+// ReleaseMemPart returns memPart to pool after reset.
+func ReleaseMemPart(mp *memPart) {
 	mp.reset()
 	memPartPool.Put(mp)
+}
+
+// MustFlush flushes the memory part to disk (exported version).
+func (mp *memPart) MustFlush(fileSystem fs.FileSystem, partPath string) {
+	mp.mustFlush(fileSystem, partPath)
 }
 
 var memPartPool = pool.Register[*memPart]("sidx-memPart")
@@ -521,19 +826,18 @@ var memPartPool = pool.Register[*memPart]("sidx-memPart")
 // openMemPart creates a part from a memory part.
 func openMemPart(mp *memPart) *part {
 	p := &part{}
-	if mp.partMetadata != nil {
-		// Copy part metadata
-		p.partMetadata = generatePartMetadata()
-		*p.partMetadata = *mp.partMetadata
-	}
+	p.partMetadata = mp.partMetadata
 
-	// TODO: Read block metadata when blockWriter is implemented
-	// p.blockMetadata = mustReadBlockMetadata(p.blockMetadata[:0], &mp.primary)
+	// Load primary block metadata from meta buffer
+	if len(mp.meta.Buf) > 0 {
+		p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(nil, &mp.meta)
+	}
 
 	// Open data files as readers from memory buffers
 	p.primary = &mp.primary
 	p.data = &mp.data
 	p.keys = &mp.keys
+	p.meta = &mp.meta
 
 	// Open individual tag files if they exist
 	if mp.tagData != nil {
@@ -554,31 +858,6 @@ func openMemPart(mp *memPart) *part {
 	return p
 }
 
-// uncompressedElementSizeBytes calculates the uncompressed size of an element.
-// This is a utility function similar to the stream module.
-func uncompressedElementSizeBytes(index int, es *elements) uint64 {
-	// 8 bytes for user key
-	// 8 bytes for elementID
-	n := uint64(8 + 8)
-
-	// Add data payload size
-	if index < len(es.data) && es.data[index] != nil {
-		n += uint64(len(es.data[index]))
-	}
-
-	// Add tag sizes
-	if index < len(es.tags) {
-		for _, tag := range es.tags[index] {
-			n += uint64(len(tag.name))
-			if tag.value != nil {
-				n += uint64(len(tag.value))
-			}
-		}
-	}
-
-	return n
-}
-
 // partPath returns the path for a part with the given epoch.
 func partPath(root string, epoch uint64) string {
 	return filepath.Join(root, partName(epoch))
@@ -588,4 +867,50 @@ func partPath(root string, epoch uint64) string {
 // Uses 16-character hex format consistent with stream module.
 func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
+}
+
+// SyncPartContext manages multiple sidx memParts.
+type SyncPartContext struct {
+	memPart *memPart
+	writers *writers
+	name    string
+}
+
+// NewSyncPartContext creates a new sidx part context.
+func NewSyncPartContext() *SyncPartContext {
+	return &SyncPartContext{}
+}
+
+// Set sets the memory part and writers.
+func (spc *SyncPartContext) Set(name string, memPart *memPart, writers *writers) {
+	spc.name = name
+	spc.memPart = memPart
+	spc.writers = writers
+}
+
+// Name gets the name.
+func (spc *SyncPartContext) Name() string {
+	return spc.name
+}
+
+// GetMemPart gets the memory part.
+func (spc *SyncPartContext) GetMemPart() *MemPart {
+	return spc.memPart
+}
+
+// GetWriters gets the writers.
+func (spc *SyncPartContext) GetWriters() *Writers {
+	return spc.writers
+}
+
+// Close closes the sidx part context.
+func (spc *SyncPartContext) Close() {
+	spc.writers.MustClose()
+	ReleaseWriters(spc.writers)
+	spc.writers = nil
+	spc.memPart = nil
+}
+
+func removeExt(nameWithExt, ext string) string {
+	return nameWithExt[:len(nameWithExt)-len(ext)]
 }

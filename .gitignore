@@ -27,6 +27,11 @@ include
 target
 tmp
 
+# go cache
+.gocache
+.gomodcache
+.cache
+
 # Test binary, build with `go test -c`
 *.test
 *.log
@@ -72,9 +77,12 @@ gomock_reflect*
 # Claude
 Claude.md
 .claude/
+CLAUDE.md
 
 # eBPF generated files and binaries
 oa/internal/ebpf/generated/
 oa/sidecar
 oa/build/
 
+# Codex
+AGENTS.md

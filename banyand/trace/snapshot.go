@@ -18,24 +18,17 @@
 package trace
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort" // added for sorting parts
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
 func (tst *tsTable) currentSnapshot() *snapshot {
@@ -67,11 +60,26 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, minTimestamp, maxTimestamp int64) ([]*part, int) {
+func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64, traceIDs []string) ([]*part, int) {
+	shouldSkip := func(p *part) bool {
+		if p.traceIDFilter.filter == nil || len(traceIDs) == 0 {
+			return false
+		}
+		for _, traceID := range traceIDs {
+			if p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+				return false
+			}
+		}
+		return true
+	}
+
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
+			continue
+		}
+		if shouldSkip(p.p) {
 			continue
 		}
 		dst = append(dst, p.p)
@@ -125,6 +133,7 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot
 	var result snapshot
 	result.epoch = nextEpoch
 	result.ref = 1
+	var removedCount int
 	for i := 0; i < len(s.parts); i++ {
 		if _, ok := merged[s.parts[i].ID()]; !ok {
 			s.parts[i].incRef()
@@ -132,6 +141,7 @@ func (s *snapshot) remove(nextEpoch uint64, merged map[uint64]struct{}) snapshot
 			continue
 		}
 		s.parts[i].removable.Store(true)
+		removedCount++
 	}
 	return result
 }
@@ -194,6 +204,13 @@ func parseSnapshot(name string) (uint64, error) {
 }
 
 func (tst *tsTable) TakeFileSnapshot(dst string) error {
+	for k, v := range tst.sidxMap {
+		indexDir := filepath.Join(dst, sidxDirName, k)
+		tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
+		if err := v.TakeFileSnapshot(indexDir); err != nil {
+			return fmt.Errorf("failed to take file snapshot for index, %s: %w", k, err)
+		}
+	}
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
 		return fmt.Errorf("no current snapshot available")
@@ -240,80 +257,4 @@ func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
 	if n != len(data) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
 	}
-}
-
-func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
-	group, ok := s.schemaRepo.LoadGroup(groupName)
-	if !ok {
-		return errors.Errorf("group %s not found", groupName)
-	}
-	db := group.SupplyTSDB()
-	if db == nil {
-		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
-	}
-	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
-		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
-	}
-	return nil
-}
-
-type snapshotListener struct {
-	*bus.UnImplementedHealthyListener
-	s           *standalone
-	snapshotSeq uint64
-	snapshotMux sync.Mutex
-}
-
-// Rev takes a snapshot of the database.
-func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
-	groups := message.Data().([]*databasev1.SnapshotRequest_Group)
-	var gg []schema.Group
-	if len(groups) == 0 {
-		gg = s.s.schemaRepo.LoadAllGroups()
-	} else {
-		for _, g := range groups {
-			if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
-				continue
-			}
-			group, ok := s.s.schemaRepo.LoadGroup(g.Group)
-			if !ok {
-				continue
-			}
-			gg = append(gg, group)
-		}
-	}
-	if len(gg) == 0 {
-		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-	}
-	s.snapshotMux.Lock()
-	defer s.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.lfs)
-	sn := s.snapshotName()
-	var err error
-	for _, g := range gg {
-		select {
-		case <-ctx.Done():
-			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-		default:
-		}
-		if errGroup := s.s.takeGroupSnapshot(filepath.Join(s.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
-			s.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
-			err = multierr.Append(err, errGroup)
-			continue
-		}
-	}
-	snp := &databasev1.Snapshot{
-		Name:    sn,
-		Catalog: commonv1.Catalog_CATALOG_TRACE,
-	}
-	if err != nil {
-		snp.Error = err.Error()
-	}
-	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
-}
-
-func (s *snapshotListener) snapshotName() string {
-	s.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), s.snapshotSeq)
 }

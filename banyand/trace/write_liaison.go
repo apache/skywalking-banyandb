@@ -25,11 +25,17 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -55,7 +61,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "trace is readonly because \"trace-retention-high-watermark\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -65,12 +71,15 @@ func (w *writeQueueCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (map[string]*tracesInQueue, error) {
-	stm, ok := w.schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *tracev1.TagSpec,
+) (map[string]*tracesInQueue, error) {
+	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find trace definition: %s", writeEvent.GetRequest().GetMetadata())
+		return nil, fmt.Errorf("cannot find trace definition: %s", metadata)
 	}
-	idx, err := getTagIndex(stm, stm.schema.TimestampTagName)
+	specMap := buildSpecMap(spec)
+	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +88,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eq, err := w.prepareElementsInQueue(dst, writeEvent)
+	eq, err := w.prepareElementsInQueue(dst, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -87,15 +96,15 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et.traces, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (*tracesInQueue, error) {
-	gn := writeEvent.Request.Metadata.Group
+func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueue, metadata *commonv1.Metadata) (*tracesInQueue, error) {
+	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
@@ -115,15 +124,15 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueu
 
 func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
 	var et *tracesInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eq.tables {
-		if eq.tables[i].timeRange.Contains(ts) {
+		if eq.tables[i].timeRange.Contains(ts) && eq.tables[i].shardID == shardID {
 			et = eq.tables[i]
 			break
 		}
 	}
 
 	if et == nil {
-		shardID := common.ShardID(writeEvent.ShardId)
 		shard, err := eq.queue.GetOrCreateShard(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create shard: %w", err)
@@ -133,10 +142,15 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEven
 		timeRange := eq.queue.GetTimeRange(time.Unix(0, ts))
 
 		et = &tracesInTable{
-			shardID:   shardID,
-			timeRange: timeRange,
-			tsTable:   tstb,
-			traces:    generateTraces(),
+			shardID:     shardID,
+			timeRange:   timeRange,
+			tsTable:     tstb,
+			traces:      generateTraces(),
+			sidxReqsMap: make(map[string][]sidx.WriteRequest),
+			seriesDocs: seriesDoc{
+				docs:        make(index.Documents, 0),
+				docIDsAdded: make(map[uint64]struct{}),
+			},
 		}
 		et.traces.reset()
 		eq.tables = append(eq.tables, et)
@@ -144,7 +158,7 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *tracesInQueue, writeEven
 	return et, nil
 }
 
-func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -155,6 +169,8 @@ func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp b
 		return
 	}
 	groups := make(map[string]*tracesInQueue)
+	var metadata *commonv1.Metadata
+	var spec *tracev1.TagSpec
 	for i := range events {
 		var writeEvent *tracev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -170,8 +186,15 @@ func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp b
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetTagSpec() != nil {
+			spec = req.GetTagSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*tracesInQueue)
 			continue
@@ -181,8 +204,56 @@ func (w *writeQueueCallback) Rev(_ context.Context, message bus.Message) (resp b
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddTraces(es.traces)
+			var sidxMemPartMap map[string]*sidx.MemPart
+			for sidxName, sidxReqs := range es.sidxReqsMap {
+				if len(sidxReqs) > 0 {
+					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					if err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						continue
+					}
+					var siMemPart *sidx.MemPart
+					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
+						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+						continue
+					}
+					if sidxMemPartMap == nil {
+						sidxMemPartMap = make(map[string]*sidx.MemPart)
+					}
+					sidxMemPartMap[sidxName] = siMemPart
+				}
+			}
+			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano(), sidxMemPartMap)
 			releaseTraces(es.traces)
+
+			nodes := g.queue.GetNodes(es.shardID)
+			if len(nodes) == 0 {
+				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
+				continue
+			}
+
+			// Handle series index writing
+			if len(es.seriesDocs.docs) > 0 {
+				seriesDocData, marshalErr := es.seriesDocs.docs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
+				} else {
+					// Encode group name, start timestamp from timeRange, and prepend to docData
+					combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
+					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
+					combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
+					combinedData = append(combinedData, seriesDocData...)
+
+					// Send to all nodes for this shard
+					for _, node := range nodes {
+						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
+						_, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
+						if publishErr != nil {
+							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						}
+					}
+				}
+			}
 		}
 	}
 	return

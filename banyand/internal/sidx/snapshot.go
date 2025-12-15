@@ -19,11 +19,10 @@ package sidx
 
 import (
 	"fmt"
-	"sort"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 // snapshot represents an immutable collection of parts at a specific epoch.
@@ -33,24 +32,16 @@ type snapshot struct {
 	// parts contains all active parts sorted by epoch (oldest first)
 	parts []*partWrapper
 
-	// epoch uniquely identifies this snapshot generation
-	epoch uint64
-
 	// ref is the atomic reference counter for safe concurrent access
 	ref int32
-
-	// released tracks if this snapshot has been released
-	released atomic.Bool
 }
 
 // newSnapshot creates a new snapshot with the given parts and epoch.
 // The snapshot starts with a reference count of 1.
-func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
-	s := generateSnapshot()
+func newSnapshot(parts []*partWrapper) *snapshot {
+	s := &snapshot{}
 	s.parts = append(s.parts[:0], parts...)
-	s.epoch = epoch
 	s.ref = 1
-	s.released.Store(false)
 
 	// Acquire references to all parts to ensure they remain valid
 	for _, pw := range s.parts {
@@ -58,7 +49,6 @@ func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
 			// Part is being removed, skip it
 			logger.GetLogger().Warn().
 				Uint64("part_id", pw.ID()).
-				Uint64("epoch", epoch).
 				Msg("part unavailable during snapshot creation")
 		}
 	}
@@ -69,25 +59,12 @@ func newSnapshot(parts []*partWrapper, epoch uint64) *snapshot {
 // acquire increments the snapshot reference count.
 // Returns true if successful, false if snapshot has been released.
 func (s *snapshot) acquire() bool {
-	if s.released.Load() {
-		return false
-	}
+	return atomic.AddInt32(&s.ref, 1) > 0
+}
 
-	for {
-		oldRef := atomic.LoadInt32(&s.ref)
-		if oldRef <= 0 {
-			return false
-		}
-
-		if atomic.CompareAndSwapInt32(&s.ref, oldRef, oldRef+1) {
-			// Double-check that snapshot wasn't released during acquire
-			if s.released.Load() {
-				s.release()
-				return false
-			}
-			return true
-		}
-	}
+// decRef decrements the snapshot reference count (helper for snapshot interface).
+func (s *snapshot) decRef() {
+	s.release()
 }
 
 // release decrements the snapshot reference count.
@@ -101,15 +78,10 @@ func (s *snapshot) release() {
 	if newRef < 0 {
 		logger.GetLogger().Warn().
 			Int32("ref", newRef).
-			Uint64("epoch", s.epoch).
 			Msg("snapshot reference count went negative")
 		return
 	}
-
-	// Mark as released first
-	s.released.Store(true)
-	// Return to pool
-	releaseSnapshot(s)
+	s.reset()
 }
 
 // getParts returns parts that potentially contain data within the specified key range.
@@ -119,10 +91,6 @@ func (s *snapshot) getParts(minKey, maxKey int64) []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if !pw.isActive() {
-			continue
-		}
-
 		part := pw.p
 		if part == nil || part.partMetadata == nil {
 			continue
@@ -148,7 +116,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
-		if pw.isActive() {
+		if !pw.removable.Load() {
 			result = append(result, pw)
 		}
 	}
@@ -158,18 +126,7 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 
 // getPartCount returns the number of parts in the snapshot.
 func (s *snapshot) getPartCount() int {
-	count := 0
-	for _, pw := range s.parts {
-		if pw.isActive() {
-			count++
-		}
-	}
-	return count
-}
-
-// getEpoch returns the snapshot's epoch.
-func (s *snapshot) getEpoch() uint64 {
-	return s.epoch
+	return len(s.getPartsAll())
 }
 
 // refCount returns the current reference count (for testing/debugging).
@@ -177,17 +134,8 @@ func (s *snapshot) refCount() int32 {
 	return atomic.LoadInt32(&s.ref)
 }
 
-// isReleased returns true if the snapshot has been released.
-func (s *snapshot) isReleased() bool {
-	return s.released.Load()
-}
-
 // validate checks snapshot consistency and part availability.
 func (s *snapshot) validate() error {
-	if s.released.Load() {
-		return fmt.Errorf("snapshot has been released")
-	}
-
 	if atomic.LoadInt32(&s.ref) <= 0 {
 		return fmt.Errorf("snapshot has zero or negative reference count")
 	}
@@ -207,32 +155,6 @@ func (s *snapshot) validate() error {
 	}
 
 	return nil
-}
-
-// sortPartsByEpoch sorts parts by their epoch (ID), oldest first.
-// This ensures consistent iteration order during queries.
-func (s *snapshot) sortPartsByEpoch() {
-	sort.Slice(s.parts, func(i, j int) bool {
-		partI := s.parts[i].p
-		partJ := s.parts[j].p
-
-		if partI == nil || partI.partMetadata == nil {
-			return false
-		}
-		if partJ == nil || partJ.partMetadata == nil {
-			return true
-		}
-
-		return partI.partMetadata.ID < partJ.partMetadata.ID
-	})
-}
-
-// copyParts creates a copy of the parts slice for safe iteration.
-// The caller should acquire references to parts they intend to use.
-func (s *snapshot) copyParts() []*partWrapper {
-	result := make([]*partWrapper, len(s.parts))
-	copy(result, s.parts)
-	return result
 }
 
 // addPart adds a new part to the snapshot during construction.
@@ -265,46 +187,25 @@ func (s *snapshot) reset() {
 	}
 
 	s.parts = s.parts[:0]
-	s.epoch = 0
 	s.ref = 0
-	s.released.Store(false)
 }
 
 // String returns a string representation of the snapshot.
 func (s *snapshot) String() string {
 	activeCount := s.getPartCount()
-	return fmt.Sprintf("snapshot{epoch=%d, parts=%d/%d, ref=%d}",
-		s.epoch, activeCount, len(s.parts), s.refCount())
+	return fmt.Sprintf("snapshot{parts=%d/%d, ref=%d}",
+		activeCount, len(s.parts), s.refCount())
 }
 
-// Pool for snapshot reuse.
-var snapshotPool = pool.Register[*snapshot]("sidx-snapshot")
-
-// generateSnapshot gets a snapshot from the pool or creates a new one.
-func generateSnapshot() *snapshot {
-	v := snapshotPool.Get()
-	if v == nil {
-		return &snapshot{}
-	}
-	return v
-}
-
-// releaseSnapshot returns a snapshot to the pool after reset.
-func releaseSnapshot(s *snapshot) {
-	if s == nil {
-		return
-	}
-	s.reset()
-	snapshotPool.Put(s)
+func parseEpoch(epochStr string) (uint64, error) {
+	return strconv.ParseUint(epochStr, 16, 64)
 }
 
 // copyAllTo creates a new snapshot with all parts from current snapshot.
-func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
-	result := generateSnapshot()
+func (s *snapshot) copyAllTo() *snapshot {
+	var result snapshot
 	result.parts = make([]*partWrapper, len(s.parts))
-	result.epoch = epoch
 	result.ref = 1
-	result.released.Store(false)
 
 	// Copy all parts and acquire references
 	copy(result.parts, s.parts)
@@ -314,43 +215,41 @@ func (s *snapshot) copyAllTo(epoch uint64) *snapshot {
 		}
 	}
 
-	return result
+	return &result
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
-func (s *snapshot) merge(epoch uint64, flushed map[uint64]*part) *snapshot {
-	result := s.copyAllTo(epoch)
-
-	// Add flushed parts to the snapshot
-	for partID, part := range flushed {
-		// Set the part ID from the map key
-		if part != nil && part.partMetadata != nil {
-			part.partMetadata.ID = partID
+func (s *snapshot) merge(nextParts map[uint64]*partWrapper) *snapshot {
+	var result snapshot
+	result.ref = 1
+	for i := 0; i < len(s.parts); i++ {
+		if n, ok := nextParts[s.parts[i].ID()]; ok {
+			result.parts = append(result.parts, n)
+			continue
 		}
-		// Create part wrapper for the flushed part
-		pw := newPartWrapper(part)
-		result.parts = append(result.parts, pw)
+		if s.parts[i].acquire() {
+			result.parts = append(result.parts, s.parts[i])
+		}
 	}
-
-	result.sortPartsByEpoch()
-	return result
+	return &result
 }
 
 // remove creates a new snapshot by removing specified parts.
-func (s *snapshot) remove(epoch uint64, toRemove map[uint64]struct{}) *snapshot {
-	result := generateSnapshot()
-	result.epoch = epoch
+func (s *snapshot) remove(toRemove map[uint64]struct{}) *snapshot {
+	var result snapshot
 	result.ref = 1
-	result.released.Store(false)
 
 	// Copy parts except those being removed
 	for _, pw := range s.parts {
 		if _, shouldRemove := toRemove[pw.ID()]; !shouldRemove {
 			if pw.acquire() {
 				result.parts = append(result.parts, pw)
+				continue
 			}
+			continue
 		}
+		pw.markForRemoval()
 	}
 
-	return result
+	return &result
 }

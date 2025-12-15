@@ -22,20 +22,18 @@ package sidx
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-)
-
-const (
-	maxPooledSliceSize = 1024 * 1024 // 1MB
 )
 
 // tag represents an individual tag (not tag family like stream).
 type tag struct {
 	name      string
 	value     []byte
+	valueArr  [][]byte
 	valueType pbv1.ValueType
-	indexed   bool
 }
 
 // elements is a collection of elements optimized for batch operations.
@@ -43,18 +41,48 @@ type elements struct {
 	seriesIDs []common.SeriesID // Pooled slice
 	userKeys  []int64           // Pooled slice (replaces timestamps)
 	data      [][]byte          // Pooled slice of slices
-	tags      [][]tag           // Pooled slice of tag slices
-
-	// Pool management
-	pooled bool // Whether from pool
+	tags      [][]*tag          // Pooled slice of tag pointer slices
 }
 
 // reset clears tag for reuse.
 func (t *tag) reset() {
 	t.name = ""
 	t.value = nil
+	t.valueArr = nil
 	t.valueType = pbv1.ValueTypeUnknown
-	t.indexed = false
+}
+
+func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte, error) {
+	if valueType == pbv1.ValueTypeInt64Arr {
+		for i := 0; i < len(src); i += 8 {
+			dest = append(dest, src[i:i+8])
+		}
+		return dest, nil
+	}
+	if valueType == pbv1.ValueTypeStrArr {
+		bb := bigValuePool.Get()
+		if bb == nil {
+			bb = &bytes.Buffer{}
+		}
+		defer func() {
+			bb.Buf = bb.Buf[:0]
+			bigValuePool.Put(bb)
+		}()
+		var err error
+		for len(src) > 0 {
+			bb.Buf, src, err = encoding.UnmarshalVarArray(bb.Buf[:0], src)
+			if err != nil {
+				return nil, err
+			}
+			// Make a copy since bb.Buf will be reused
+			valueCopy := make([]byte, len(bb.Buf))
+			copy(valueCopy, bb.Buf)
+			dest = append(dest, valueCopy)
+		}
+		return dest, nil
+	}
+	dest = append(dest, src)
+	return dest, nil
 }
 
 // reset elements collection for pooling.
@@ -66,20 +94,27 @@ func (e *elements) reset() {
 		e.data[i] = nil
 	}
 	e.data = e.data[:0]
-	// Reset tag slices
+	// Reset tag slices and release tag pointers to pool
 	for i := range e.tags {
 		for j := range e.tags[i] {
-			e.tags[i][j].reset()
+			releaseTag(e.tags[i][j])
 		}
 		e.tags[i] = e.tags[i][:0]
 	}
 	e.tags = e.tags[:0]
-	e.pooled = false
 }
 
 // size returns the size of the tag in bytes.
 func (t *tag) size() int {
-	return len(t.name) + len(t.value) + 1 // +1 for valueType
+	size := len(t.name) + 1 // +1 for valueType
+	if t.valueArr != nil {
+		for _, v := range t.valueArr {
+			size += len(v)
+		}
+	} else {
+		size += len(t.value)
+	}
+	return size
 }
 
 // size returns the total size of all elements.
@@ -125,15 +160,14 @@ var (
 func generateElements() *elements {
 	v := elementsPool.Get()
 	if v == nil {
-		return &elements{pooled: true}
+		return &elements{}
 	}
-	v.pooled = true
 	return v
 }
 
 // releaseElements returns elements to pool after reset.
 func releaseElements(e *elements) {
-	if e == nil || !e.pooled {
+	if e == nil {
 		return
 	}
 	e.reset()
@@ -168,15 +202,21 @@ func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []by
 	copy(dataCopy, data)
 	e.data = append(e.data, dataCopy)
 
-	// Convert and copy tags
-	elementTags := make([]tag, len(tags))
-	for i, t := range tags {
-		elementTags[i] = tag{
-			name:      t.name,
-			value:     append([]byte(nil), t.value...),
-			valueType: t.valueType,
-			indexed:   t.indexed,
+	// Convert and copy tags using generateTag()
+	elementTags := make([]*tag, 0, len(tags))
+	for _, t := range tags {
+		newTag := generateTag()
+		newTag.name = t.Name
+		if t.ValueArr != nil {
+			newTag.valueArr = make([][]byte, len(t.ValueArr))
+			for i, v := range t.ValueArr {
+				newTag.valueArr[i] = append(newTag.valueArr[i][:0], v...)
+			}
+		} else {
+			newTag.value = append(newTag.value[:0], t.Value...)
 		}
+		newTag.valueType = t.ValueType
+		elementTags = append(elementTags, newTag)
 	}
 	e.tags = append(e.tags, elementTags)
 }

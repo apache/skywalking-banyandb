@@ -29,7 +29,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const streamSchemaPath = "/api/v1/stream/schema"
+const (
+	streamSchemaPath = "/api/v1/stream/schema"
+	streamQueryPath  = "/api/v1/stream/data"
+	streamListPath   = "/api/v1/stream/schema/lists/{group}"
+)
 
 var streamSchemaPathWithParams = streamSchemaPath + pathTemp
 
@@ -137,7 +141,7 @@ func newStreamCmd() *cobra.Command {
 		Short:   "List streams",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/stream/schema/lists/{group}"))
+				return request.req.SetPathParam("group", request.group).Get(getPath(streamListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}
@@ -150,7 +154,7 @@ func newStreamCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
-					return request.req.SetBody(request.data).Post(getPath("/api/v1/stream/data"))
+					return request.req.SetBody(request.data).Post(getPath(streamQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)
 		},
 	}

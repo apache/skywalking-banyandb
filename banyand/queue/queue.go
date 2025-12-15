@@ -19,6 +19,7 @@ package queue
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -50,6 +51,7 @@ type Client interface {
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
+	HealthyNodes() []string
 }
 
 // Server is the interface for receiving data from the queue.
@@ -78,6 +80,7 @@ type FileInfo struct {
 type StreamingPartData struct {
 	Group                 string
 	Topic                 string
+	PartType              string
 	Files                 []FileInfo
 	ID                    uint64
 	CompressedSizeBytes   uint64
@@ -86,6 +89,8 @@ type StreamingPartData struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
+	MinKey                int64
+	MaxKey                int64
 	ShardID               uint32
 }
 
@@ -102,6 +107,7 @@ type ChunkedSyncPartContext struct {
 	Handler               PartHandler
 	Group                 string
 	FileName              string
+	PartType              string
 	ID                    uint64
 	CompressedSizeBytes   uint64
 	UncompressedSizeBytes uint64
@@ -109,6 +115,8 @@ type ChunkedSyncPartContext struct {
 	BlocksCount           uint64
 	MinTimestamp          int64
 	MaxTimestamp          int64
+	MinKey                int64
+	MaxKey                int64
 	ShardID               uint32
 }
 
@@ -126,6 +134,7 @@ func (c *ChunkedSyncPartContext) Close() error {
 
 // PartHandler handles individual parts during sync operations.
 type PartHandler interface {
+	NewPartType(ctx *ChunkedSyncPartContext) error
 	FinishSync() error
 	Close() error
 }
@@ -150,14 +159,53 @@ type FileData struct {
 
 // SyncResult represents the result of a sync operation.
 type SyncResult struct {
-	SessionID    string
-	ErrorMessage string
-	TotalBytes   uint64
-	DurationMs   int64
-	ChunksCount  uint32
-	PartsCount   uint32
-	Success      bool
+	SessionID   string
+	FailedParts []FailedPart
+	TotalBytes  uint64
+	DurationMs  int64
+	ChunksCount uint32
+	PartsCount  uint32
+	Success     bool
+}
+
+// FailedPart contains information about a part that failed to sync.
+type FailedPart struct {
+	PartID string
+	Error  string
 }
 
 // SyncMetadata is an alias for clusterv1.SyncMetadata.
 type SyncMetadata = clusterv1.SyncMetadata
+
+// ChunkedSyncFailureInjector allows tests to deterministically inject failures into
+// chunked sync operations. It is only intended for test code.
+type ChunkedSyncFailureInjector interface {
+	// BeforeSync returns whether the current SyncStreamingParts invocation should
+	// short-circuit. The returned slice provides the failed parts that should be
+	// reported back to the caller when a failure is injected.
+	BeforeSync(parts []StreamingPartData) (bool, []FailedPart, error)
+}
+
+var (
+	chunkedSyncFailureInjectorMu sync.RWMutex
+	chunkedSyncFailureInjector   ChunkedSyncFailureInjector
+)
+
+// RegisterChunkedSyncFailureInjector registers a failure injector for testing.
+func RegisterChunkedSyncFailureInjector(injector ChunkedSyncFailureInjector) {
+	chunkedSyncFailureInjectorMu.Lock()
+	chunkedSyncFailureInjector = injector
+	chunkedSyncFailureInjectorMu.Unlock()
+}
+
+// ClearChunkedSyncFailureInjector removes the registered failure injector.
+func ClearChunkedSyncFailureInjector() {
+	RegisterChunkedSyncFailureInjector(nil)
+}
+
+// GetChunkedSyncFailureInjector returns the currently registered failure injector.
+func GetChunkedSyncFailureInjector() ChunkedSyncFailureInjector {
+	chunkedSyncFailureInjectorMu.RLock()
+	defer chunkedSyncFailureInjectorMu.RUnlock()
+	return chunkedSyncFailureInjector
+}

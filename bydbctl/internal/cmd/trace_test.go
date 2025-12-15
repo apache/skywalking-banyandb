@@ -18,18 +18,25 @@
 package cmd_test
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	"github.com/zenizh/go-capturer"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	cases_trace_data "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
 
 var _ = Describe("Trace Schema Operation", func() {
@@ -73,9 +80,12 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
@@ -99,8 +109,9 @@ timestamp_tag_name: timestamp`))
 		Expect(resp.Trace.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Trace.Metadata.Name).To(Equal("name1"))
 		Expect(resp.Trace.TraceIdTagName).To(Equal("trace_id"))
+		Expect(resp.Trace.SpanIdTagName).To(Equal("span_id"))
 		Expect(resp.Trace.TimestampTagName).To(Equal("timestamp"))
-		Expect(resp.Trace.Tags).To(HaveLen(2))
+		Expect(resp.Trace.Tags).To(HaveLen(3))
 	})
 
 	It("update trace schema", func() {
@@ -112,11 +123,14 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
   - name: service_name
     type: TAG_TYPE_STRING
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -132,8 +146,8 @@ timestamp_tag_name: timestamp`))
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Trace.Metadata.Group).To(Equal("group1"))
 		Expect(resp.Trace.Metadata.Name).To(Equal("name1"))
-		Expect(resp.Trace.Tags).To(HaveLen(3))
-		Expect(resp.Trace.Tags[2].Name).To(Equal("service_name"))
+		Expect(resp.Trace.Tags).To(HaveLen(4))
+		Expect(resp.Trace.Tags[3].Name).To(Equal("service_name"))
 	})
 
 	It("delete trace schema", func() {
@@ -160,9 +174,12 @@ metadata:
 tags:
   - name: trace_id
     type: TAG_TYPE_STRING
+  - name: span_id
+    type: TAG_TYPE_STRING
   - name: timestamp
     type: TAG_TYPE_TIMESTAMP
 trace_id_tag_name: trace_id
+span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -179,6 +196,111 @@ timestamp_tag_name: timestamp`))
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Trace).To(HaveLen(2))
 	})
+
+	AfterEach(func() {
+		deferFunc()
+	})
+})
+
+var _ = Describe("Trace Data Query", func() {
+	var addr, grpcAddr string
+	var deferFunc func()
+	var rootCmd *cobra.Command
+	var now time.Time
+	var nowStr, endStr string
+	var interval time.Duration
+	BeforeEach(func() {
+		var err error
+		now, err = time.ParseInLocation("2006-01-02T15:04:05", "2021-09-01T23:30:00", time.Local)
+		Expect(err).NotTo(HaveOccurred())
+		nowStr = now.Format(time.RFC3339)
+		interval = 500 * time.Millisecond
+		endStr = now.Add(1 * time.Hour).Format(time.RFC3339)
+		grpcAddr, addr, deferFunc = setup.Standalone()
+		addr = httpSchema + addr
+		rootCmd = &cobra.Command{Use: "root"}
+		cmd.RootCmdFlags(rootCmd)
+	})
+
+	It("query trace all data", func() {
+		conn, err := grpclib.NewClient(
+			grpcAddr,
+			grpclib.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		cases_trace_data.Write(conn, "sw", now, interval)
+		rootCmd.SetArgs([]string{"trace", "query", "-a", addr, "-f", "-"})
+		issue := func() string {
+			sprintf := fmt.Sprintf(`
+name: sw
+groups: ["test-trace-group"]
+timeRange:
+  begin: %s
+  end: %s
+limit: 100
+orderBy:
+  indexRuleName: "timestamp"
+  sort: SORT_DESC`, nowStr, endStr)
+			rootCmd.SetIn(strings.NewReader(sprintf))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
+		Eventually(func() int {
+			out := issue()
+			resp := new(tracev1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Traces)
+		}, flags.EventuallyTimeout).Should(Equal(5))
+	})
+
+	DescribeTable("query trace data with time range flags", func(timeArgs ...string) {
+		conn, err := grpclib.NewClient(
+			grpcAddr,
+			grpclib.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		now := timestamp.NowMilli()
+		interval := -1 * time.Millisecond
+		cases_trace_data.Write(conn, "sw", now, interval)
+		args := []string{"trace", "query", "-a", addr}
+		args = append(args, timeArgs...)
+		args = append(args, "-f", "-")
+		rootCmd.SetArgs(args)
+		issue := func() string {
+			rootCmd.SetIn(strings.NewReader(`
+name: sw
+groups: ["test-trace-group"]
+limit: 100
+orderBy:
+  indexRuleName: "timestamp"
+  sort: SORT_DESC`))
+			return capturer.CaptureStdout(func() {
+				err := rootCmd.Execute()
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
+		Eventually(func() int {
+			out := issue()
+			resp := new(tracev1.QueryResponse)
+			helpers.UnmarshalYAML([]byte(out), resp)
+			GinkgoWriter.Println(resp)
+			return len(resp.Traces)
+		}, flags.EventuallyTimeout).Should(Equal(5))
+	},
+		Entry("relative start", "--start", "-30m"),
+		Entry("relative end", "--end", "0m"),
+		Entry("absolute start", "--start", nowStr),
+		Entry("absolute end", "--end", endStr),
+		Entry("default"),
+		Entry("all relative", "--start", "-30m", "--end", "0m"),
+		Entry("all absolute", "--start", nowStr, "--end", endStr),
+	)
 
 	AfterEach(func() {
 		deferFunc()

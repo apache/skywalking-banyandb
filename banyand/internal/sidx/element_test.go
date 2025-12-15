@@ -28,16 +28,19 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+const (
+	tag1Name = "tag1"
+	tag2Name = "tag2"
+)
+
 func TestElementPoolAllocation(t *testing.T) {
 	// Test pool allocation correctness
 	t.Run("elements pool allocation", func(t *testing.T) {
 		es1 := generateElements()
 		require.NotNil(t, es1)
-		assert.True(t, es1.pooled, "elements should be marked as pooled")
 
 		es2 := generateElements()
 		require.NotNil(t, es2)
-		assert.True(t, es2.pooled, "elements should be marked as pooled")
 
 		// Elements should be different instances
 		assert.NotSame(t, es1, es2, "pool should provide different instances")
@@ -69,7 +72,6 @@ func TestElementReset(t *testing.T) {
 		tag.name = "test-tag"
 		tag.value = []byte("test-value")
 		tag.valueType = pbv1.ValueTypeStr
-		tag.indexed = true
 
 		// Reset the tag
 		tag.reset()
@@ -78,7 +80,6 @@ func TestElementReset(t *testing.T) {
 		assert.Equal(t, "", tag.name, "name should be empty")
 		assert.Nil(t, tag.value, "value should be nil")
 		assert.Equal(t, pbv1.ValueTypeUnknown, tag.valueType, "valueType should be reset")
-		assert.False(t, tag.indexed, "indexed should be reset")
 
 		releaseTag(tag)
 	})
@@ -90,10 +91,20 @@ func TestElementReset(t *testing.T) {
 		es.seriesIDs = []common.SeriesID{1, 2, 3}
 		es.userKeys = []int64{100, 200, 300}
 		es.data = [][]byte{[]byte("data1"), []byte("data2"), []byte("data3")}
-		es.tags = [][]tag{
-			{{name: "tag1", value: []byte("value1")}},
-			{{name: "tag2", value: []byte("value2")}},
-			{{name: "tag3", value: []byte("value3")}},
+		// Create tag pointers
+		tag1 := generateTag()
+		tag1.name = tag1Name
+		tag1.value = []byte("value1")
+		tag2 := generateTag()
+		tag2.name = tag2Name
+		tag2.value = []byte("value2")
+		tag3 := generateTag()
+		tag3.name = "tag3"
+		tag3.value = []byte("value3")
+		es.tags = [][]*tag{
+			{tag1},
+			{tag2},
+			{tag3},
 		}
 
 		// Reset elements
@@ -104,7 +115,6 @@ func TestElementReset(t *testing.T) {
 		assert.Len(t, es.userKeys, 0, "userKeys slice should be empty")
 		assert.Len(t, es.data, 0, "data slice should be empty")
 		assert.Len(t, es.tags, 0, "tags slice should be empty")
-		assert.False(t, es.pooled, "pooled flag should be reset")
 
 		releaseElements(es)
 	})
@@ -129,9 +139,16 @@ func TestSizeCalculation(t *testing.T) {
 		es.seriesIDs = []common.SeriesID{1, 2}
 		es.userKeys = []int64{100, 200}
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
-		es.tags = [][]tag{
-			{{name: "tag1", value: []byte("val1")}}, // 4 + 4 + 1 = 9 bytes
-			{{name: "tag2", value: []byte("val2")}}, // 4 + 4 + 1 = 9 bytes
+		// Create tag pointers
+		tag1 := generateTag()
+		tag1.name = tag1Name
+		tag1.value = []byte("val1")
+		tag2 := generateTag()
+		tag2.name = tag2Name
+		tag2.value = []byte("val2")
+		es.tags = [][]*tag{
+			{tag1}, // 4 + 4 + 1 = 9 bytes
+			{tag2}, // 4 + 4 + 1 = 9 bytes
 		}
 
 		expectedSize := 2*8 + 2*8 + 10 + 9 + 9 // seriesIDs + userKeys + data + tags
@@ -148,11 +165,20 @@ func TestElementsSorting(t *testing.T) {
 		es.seriesIDs = []common.SeriesID{3, 1, 2, 1}
 		es.userKeys = []int64{100, 300, 200, 100}
 		es.data = [][]byte{[]byte("data3"), []byte("data1"), []byte("data2"), []byte("data1b")}
-		es.tags = [][]tag{
-			{{name: "tag3"}},
-			{{name: "tag1"}},
-			{{name: "tag2"}},
-			{{name: "tag1b"}},
+		// Create tag pointers
+		tag3 := generateTag()
+		tag3.name = "tag3"
+		tag1 := generateTag()
+		tag1.name = tag1Name
+		tag2 := generateTag()
+		tag2.name = tag2Name
+		tag1b := generateTag()
+		tag1b.name = "tag1b"
+		es.tags = [][]*tag{
+			{tag3},
+			{tag1},
+			{tag2},
+			{tag1b},
 		}
 
 		// Sort elements
@@ -179,10 +205,17 @@ func TestElementsSorting(t *testing.T) {
 		es.seriesIDs = []common.SeriesID{2, 1, 3}
 		es.userKeys = []int64{200, 100, 300}
 		es.data = [][]byte{[]byte("data2"), []byte("data1"), []byte("data3")}
-		es.tags = [][]tag{
-			{{name: "tag2"}},
-			{{name: "tag1"}},
-			{{name: "tag3"}},
+		// Create tag pointers
+		tag2 := generateTag()
+		tag2.name = tag2Name
+		tag1 := generateTag()
+		tag1.name = tag1Name
+		tag3 := generateTag()
+		tag3.name = "tag3"
+		es.tags = [][]*tag{
+			{tag2},
+			{tag1},
+			{tag3},
 		}
 
 		// Test sort.Interface methods
@@ -205,10 +238,17 @@ func TestElementsSorting(t *testing.T) {
 		es.seriesIDs = []common.SeriesID{1, 1, 1}
 		es.userKeys = []int64{300, 100, 200}
 		es.data = [][]byte{[]byte("data300"), []byte("data100"), []byte("data200")}
-		es.tags = [][]tag{
-			{{name: "tag300"}},
-			{{name: "tag100"}},
-			{{name: "tag200"}},
+		// Create tag pointers
+		tag300 := generateTag()
+		tag300.name = "tag300"
+		tag100 := generateTag()
+		tag100.name = "tag100"
+		tag200 := generateTag()
+		tag200.name = "tag200"
+		es.tags = [][]*tag{
+			{tag300},
+			{tag100},
+			{tag200},
 		}
 
 		sort.Sort(es)
@@ -237,9 +277,9 @@ func TestNilSafety(t *testing.T) {
 		releaseTag(nil)
 	})
 
-	t.Run("release non-pooled elements", func(_ *testing.T) {
-		es := &elements{pooled: false}
-		// Should not panic or add to pool
+	t.Run("release elements", func(_ *testing.T) {
+		es := &elements{}
+		// Should not panic
 		releaseElements(es)
 	})
 }

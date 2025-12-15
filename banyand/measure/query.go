@@ -226,9 +226,14 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			newTagProjection = append(newTagProjection, tagProjection)
 		}
 	}
+
+	// Collect all search results first
+	var segResults []*segResult
+	var needsSorting bool
 	seriesFilter := roaring.NewPostingList()
+
 	for i := range segments {
-		sd, _, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
+		sd, sortedValues, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
 			Query:       mqo.Query,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
@@ -241,42 +246,133 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			tt, cc := segments[i].Tables()
 			tables = append(tables, tt...)
 			caches = append(caches, cc...)
-		}
-		for j := range sd.SeriesList {
-			if seriesFilter.Contains(uint64(sd.SeriesList[j].ID)) {
-				continue
+
+			// Create segResult for this segment
+			sr := &segResult{
+				SeriesData:   sd,
+				sortedValues: sortedValues,
+				i:            0,
 			}
-			seriesFilter.Insert(uint64(sd.SeriesList[j].ID))
-			sl = append(sl, sd.SeriesList[j].ID)
-			if projectedEntityOffsets == nil && sd.Fields == nil {
-				continue
-			}
-			if storedIndexValue == nil {
-				storedIndexValue = make(map[common.SeriesID]map[string]*modelv1.TagValue)
-			}
-			tagValues := make(map[string]*modelv1.TagValue)
-			storedIndexValue[sd.SeriesList[j].ID] = tagValues
-			for name, offset := range projectedEntityOffsets {
-				if offset < 0 || offset >= len(sd.SeriesList[j].EntityValues) {
-					logger.Warningf("offset %d for tag %s is out of range for series ID %v", offset, name, sd.SeriesList[j].ID)
-					tagValues[name] = pbv1.NullTagValue
-					continue
-				}
-				tagValues[name] = sd.SeriesList[j].EntityValues[offset]
-			}
-			if sd.Fields == nil {
-				continue
-			}
-			for f, v := range sd.Fields[j] {
-				if tnt, ok := fieldToValueType[f]; ok {
-					tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
-				} else {
-					logger.Panicf("unknown field %s not found in fieldToValueType", f)
-				}
+			segResults = append(segResults, sr)
+
+			// Check if we need sorting
+			if mqo.Order != nil && sortedValues != nil {
+				needsSorting = true
 			}
 		}
 	}
+
+	// Sort if needed, otherwise use original order
+	if needsSorting && len(segResults) > 0 {
+		// Use segResultHeap to sort
+		segHeap := &segResultHeap{
+			results:  segResults,
+			sortDesc: mqo.Order.Sort == modelv1.Sort_SORT_DESC,
+		}
+		heap.Init(segHeap)
+
+		// Extract sorted series IDs
+		for segHeap.Len() > 0 {
+			top := heap.Pop(segHeap).(*segResult)
+			series := top.SeriesList[top.i]
+
+			if seriesFilter.Contains(uint64(series.ID)) {
+				// Move to next in this segment
+				top.i++
+				if top.i < len(top.SeriesList) {
+					heap.Push(segHeap, top)
+				}
+				continue
+			}
+
+			seriesFilter.Insert(uint64(series.ID))
+			sl = append(sl, series.ID)
+
+			// Build storedIndexValue for this series
+			var fieldResult map[string][]byte
+			if top.Fields != nil && top.i < len(top.Fields) {
+				fieldResult = top.Fields[top.i]
+			}
+			storedIndexValue = m.buildStoredIndexValue(
+				series.ID,
+				series.EntityValues,
+				fieldResult,
+				projectedEntityOffsets,
+				fieldToValueType,
+				storedIndexValue,
+			)
+
+			// Move to next in this segment
+			top.i++
+			if top.i < len(top.SeriesList) {
+				heap.Push(segHeap, top)
+			}
+		}
+	} else {
+		// Original logic when no sorting is needed
+		for _, sr := range segResults {
+			for j := range sr.SeriesList {
+				if seriesFilter.Contains(uint64(sr.SeriesList[j].ID)) {
+					continue
+				}
+				seriesFilter.Insert(uint64(sr.SeriesList[j].ID))
+				sl = append(sl, sr.SeriesList[j].ID)
+
+				var fieldResult map[string][]byte
+				if sr.Fields != nil && j < len(sr.Fields) {
+					fieldResult = sr.Fields[j]
+				}
+				storedIndexValue = m.buildStoredIndexValue(
+					sr.SeriesList[j].ID,
+					sr.SeriesList[j].EntityValues,
+					fieldResult,
+					projectedEntityOffsets,
+					fieldToValueType,
+					storedIndexValue,
+				)
+			}
+		}
+	}
+
 	return sl, tables, caches, storedIndexValue, newTagProjection, nil
+}
+
+func (m *measure) buildStoredIndexValue(
+	seriesID common.SeriesID,
+	entityValues []*modelv1.TagValue,
+	fieldResult map[string][]byte,
+	projectedEntityOffsets map[string]int,
+	fieldToValueType map[string]tagNameWithType,
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) map[common.SeriesID]map[string]*modelv1.TagValue {
+	if projectedEntityOffsets == nil && fieldResult == nil {
+		return storedIndexValue
+	}
+
+	if storedIndexValue == nil {
+		storedIndexValue = make(map[common.SeriesID]map[string]*modelv1.TagValue)
+	}
+	tagValues := make(map[string]*modelv1.TagValue)
+	storedIndexValue[seriesID] = tagValues
+
+	for name, offset := range projectedEntityOffsets {
+		if offset < 0 || offset >= len(entityValues) {
+			logger.Warningf("offset %d for tag %s is out of range for series ID %v", offset, name, seriesID)
+			tagValues[name] = pbv1.NullTagValue
+			continue
+		}
+		tagValues[name] = entityValues[offset]
+	}
+
+	for f, v := range fieldResult {
+		if tnt, ok := fieldToValueType[f]; ok {
+			tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
+		} else {
+			logger.Panicf("unknown field %s not found in fieldToValueType", f)
+		}
+	}
+
+	return storedIndexValue
 }
 
 func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQueryOptions,
@@ -351,11 +447,17 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		if len(sr.SeriesList) < 1 {
 			continue
 		}
-		r.segResults = append(r.segResults, sr)
+		r.segResults.results = append(r.segResults.results, sr)
 	}
-	if len(r.segResults) < 1 {
+	if len(r.segResults.results) < 1 {
 		return nilResult, nil
 	}
+
+	// Set sort order based on mqo.Order.Sort
+	if mqo.Order != nil && mqo.Order.Sort == modelv1.Sort_SORT_DESC {
+		r.segResults.sortDesc = true
+	}
+
 	heap.Init(&r.segResults)
 	return r, nil
 }
@@ -770,18 +872,18 @@ type indexSortResult struct {
 
 // Pull implements model.MeasureQueryResult.
 func (iqr *indexSortResult) Pull() *model.MeasureResult {
-	if len(iqr.segResults) < 1 {
+	if len(iqr.segResults.results) < 1 {
 		return nil
 	}
-	if len(iqr.segResults) == 1 {
-		if iqr.segResults[0].i >= len(iqr.segResults[0].SeriesList) {
+	if len(iqr.segResults.results) == 1 {
+		if iqr.segResults.results[0].i >= len(iqr.segResults.results[0].SeriesList) {
 			return nil
 		}
-		sr := iqr.segResults[0]
+		sr := iqr.segResults.results[0]
 		r := iqr.copyTo(sr)
 		sr.i++
 		if sr.i >= len(sr.SeriesList) {
-			iqr.segResults = iqr.segResults[:0]
+			iqr.segResults.results = iqr.segResults.results[:0]
 		}
 		return r
 	}
@@ -861,25 +963,56 @@ func (sr *segResult) remove(i int) {
 	}
 }
 
-type segResultHeap []*segResult
-
-func (h segResultHeap) Len() int { return len(h) }
-func (h segResultHeap) Less(i, j int) bool {
-	if h[i].sortedValues == nil {
-		return h[i].SeriesList[h[i].i].ID < h[j].SeriesList[h[j].i].ID
-	}
-	return bytes.Compare(h[i].sortedValues[h[i].i], h[j].sortedValues[h[j].i]) < 0
+type segResultHeap struct {
+	results  []*segResult
+	sortDesc bool
 }
-func (h segResultHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *segResultHeap) Len() int { return len(h.results) }
+func (h *segResultHeap) Less(i, j int) bool {
+	// Handle NPE - check for nil results or invalid indices
+	if i >= len(h.results) || j >= len(h.results) {
+		return false
+	}
+	if h.results[i] == nil || h.results[j] == nil {
+		return false
+	}
+	if h.results[i].i >= len(h.results[i].SeriesList) || h.results[j].i >= len(h.results[j].SeriesList) {
+		return false
+	}
+
+	// If no sortedValues, compare by SeriesID
+	if h.results[i].sortedValues == nil || h.results[j].sortedValues == nil {
+		if h.sortDesc {
+			return h.results[i].SeriesList[h.results[i].i].ID > h.results[j].SeriesList[h.results[j].i].ID
+		}
+		return h.results[i].SeriesList[h.results[i].i].ID < h.results[j].SeriesList[h.results[j].i].ID
+	}
+
+	// Handle potential index out of bounds for sortedValues
+	if h.results[i].i >= len(h.results[i].sortedValues) || h.results[j].i >= len(h.results[j].sortedValues) {
+		if h.sortDesc {
+			return h.results[i].SeriesList[h.results[i].i].ID > h.results[j].SeriesList[h.results[j].i].ID
+		}
+		return h.results[i].SeriesList[h.results[i].i].ID < h.results[j].SeriesList[h.results[j].i].ID
+	}
+
+	cmp := bytes.Compare(h.results[i].sortedValues[h.results[i].i], h.results[j].sortedValues[h.results[j].i])
+	if h.sortDesc {
+		return cmp > 0
+	}
+	return cmp < 0
+}
+func (h *segResultHeap) Swap(i, j int) { h.results[i], h.results[j] = h.results[j], h.results[i] }
 
 func (h *segResultHeap) Push(x interface{}) {
-	*h = append(*h, x.(*segResult))
+	h.results = append(h.results, x.(*segResult))
 }
 
 func (h *segResultHeap) Pop() interface{} {
-	old := *h
+	old := h.results
 	n := len(old)
 	x := old[n-1]
-	*h = old[0 : n-1]
+	h.results = old[0 : n-1]
 	return x
 }

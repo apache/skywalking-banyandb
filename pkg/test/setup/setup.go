@@ -41,7 +41,9 @@ import (
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 )
 
 const host = "localhost"
@@ -51,6 +53,8 @@ func Standalone(flags ...string) (string, string, func()) {
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", "", "", flags...)
 }
 
@@ -59,6 +63,8 @@ func StandaloneWithAuth(username, password string, flags ...string) (string, str
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", username, password, flags...)
 }
 
@@ -67,6 +73,8 @@ func StandaloneWithTLS(certFile, keyFile string, flags ...string) (string, strin
 	return StandaloneWithSchemaLoaders([]SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, certFile, keyFile, "", "", flags...)
 }
 
@@ -99,6 +107,8 @@ func ClosableStandalone(path string, ports []int, flags ...string) (string, stri
 	return standaloneServer(path, ports, []SchemaLoader{
 		&preloadService{name: "stream"},
 		&preloadService{name: "measure"},
+		&preloadService{name: "trace"},
+		&preloadService{name: "property"},
 	}, "", "", flags...)
 }
 
@@ -134,6 +144,7 @@ func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLo
 		"--measure-root-path=" + path,
 		"--metadata-root-path=" + path,
 		"--property-root-path=" + path,
+		"--trace-root-path=" + path,
 		fmt.Sprintf("--etcd-listen-client-url=%s", endpoint), fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
 	}
 	tlsEnabled := false
@@ -202,6 +213,12 @@ func (p *preloadService) PreRun(ctx context.Context) error {
 	if p.name == "stream" {
 		return test_stream.PreloadSchema(ctx, p.registry)
 	}
+	if p.name == "trace" {
+		return test_trace.PreloadSchema(ctx, p.registry)
+	}
+	if p.name == "property" {
+		return test_property.PreloadSchema(ctx, p.registry)
+	}
 	return test_measure.PreloadSchema(ctx, p.registry)
 }
 
@@ -243,9 +260,12 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		"--stream-root-path="+dataDir,
 		"--measure-root-path="+dataDir,
 		"--property-root-path="+dataDir,
+		"--trace-root-path="+dataDir,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
+		"--logging-modules", "trace,sidx",
+		"--logging-levels", "debug,debug",
 	)
 
 	closeFn := CMD(flags...)
@@ -327,10 +347,15 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 		"--node-host", nodeHost,
 		"--stream-root-path="+path,
 		"--measure-root-path="+path,
+		"--trace-root-path="+path,
 		"--stream-flush-timeout=500ms",
 		"--measure-flush-timeout=500ms",
+		"--trace-flush-timeout=500ms",
 		"--stream-sync-interval=1s",
 		"--measure-sync-interval=1s",
+		"--trace-sync-interval=1s",
+		"--logging-modules", "trace,sidx",
+		"--logging-levels", "debug,debug",
 	)
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())

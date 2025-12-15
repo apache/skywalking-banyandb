@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
@@ -34,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -60,7 +60,7 @@ type writeQueueCallback struct {
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-retention-high-watermark\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -81,6 +81,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*dataPointsInQueue)
+	var metadata *commonv1.Metadata
+	var spec *measurev1.DataPointSpec
 	for i := range events {
 		var writeEvent *measurev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -96,8 +98,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetDataPointSpec() != nil {
+			spec = req.GetDataPointSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*dataPointsInQueue)
 			continue
@@ -107,8 +116,18 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(es.metadataDocs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = es.metadataDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				}
+			}
 			if es.tsTable != nil && es.dataPoints != nil {
-				es.tsTable.mustAddDataPoints(es.dataPoints)
+				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
 				releaseDataPoints(es.dataPoints)
 			}
 			nodes := g.queue.GetNodes(es.shardID)
@@ -116,12 +135,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
 				continue
 			}
-			sendDocuments := func(topic bus.Topic, docs index.Documents) {
-				seriesDocData, marshalErr := docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
-					return
-				}
+			sendDocuments := func(topic bus.Topic, seriesDocData []byte) {
 				// Encode group name, start timestamp from timeRange, and prepend to docData
 				combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
 				combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
@@ -131,24 +145,37 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				// Send to all nodes for this shard
 				for _, node := range nodes {
 					message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-					_, publishErr := w.tire2Client.Publish(ctx, topic, message)
+					future, publishErr := w.tire2Client.Publish(ctx, topic, message)
 					if publishErr != nil {
 						w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						continue
+					}
+					_, err := future.Get()
+					if err != nil {
+						w.l.Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
+						continue
 					}
 				}
 			}
-			if len(es.metadataDocs) > 0 {
-				sendDocuments(data.TopicMeasureSeriesIndexInsert, es.metadataDocs)
+			if len(seriesMetadataBytes) > 0 {
+				sendDocuments(data.TopicMeasureSeriesIndexInsert, seriesMetadataBytes)
 			}
 			if len(es.indexModeDocs) > 0 {
-				sendDocuments(data.TopicMeasureSeriesIndexUpdate, es.indexModeDocs)
+				seriesDocData, marshalErr := es.indexModeDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal index mode documents")
+				} else {
+					sendDocuments(data.TopicMeasureSeriesIndexUpdate, seriesDocData)
+				}
 			}
 		}
 	}
 	return
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEvent *measurev1.InternalWriteRequest) (map[string]*dataPointsInQueue, error) {
+func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
+	writeEvent *measurev1.InternalWriteRequest, metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+) (map[string]*dataPointsInQueue, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
@@ -156,7 +183,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEven
 	}
 	ts := t.UnixNano()
 
-	gn := req.Metadata.Group
+	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
@@ -179,16 +206,16 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEven
 			break
 		}
 	}
-	stm, ok := w.schemaRepo.loadMeasure(req.GetMetadata())
+	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", req.GetMetadata())
+		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
-		return nil, fmt.Errorf("%s has no tag family", req.Metadata)
+		return nil, fmt.Errorf("%s has no tag family", metadata)
 	}
 	if fLen > len(stm.schema.GetTagFamilies()) {
-		return nil, fmt.Errorf("%s has more tag families than %s", req.Metadata, stm.schema)
+		return nil, fmt.Errorf("%s has more tag families than %s", metadata, stm.schema)
 	}
 	is := stm.indexSchema.Load().(indexSchema)
 	if len(is.indexRuleLocators.TagFamilyTRule) != len(stm.GetSchema().GetTagFamilies()) {
@@ -207,7 +234,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue, writeEven
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
-	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts)
+	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
 	}

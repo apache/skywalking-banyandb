@@ -54,6 +54,7 @@ The following flags are used to configure access logs for the data ingestion:
 
 - `--access-log-root-path string`: Access log root path.
 - `--enable-ingestion-access-log`: Enable ingestion access log.
+- `--access-log-sampled`: if true, requests may be dropped when the channel is full; if false, requests are never dropped
 
 BanyanDB uses etcd for service discovery and configuration. The following flags are used to configure the etcd settings. These flags are only used when running as a liaison or data server. Standalone server embeds etcd server and does not need these flags.
 
@@ -62,8 +63,9 @@ BanyanDB uses etcd for service discovery and configuration. The following flags 
 
 The following flags are used to configure the timeout of data sending from liaison to data servers:
 
-- `--stream-write-timeout duration`: Stream write timeout (default: 15s).
-- `--measure-write-timeout duration`: Measure write timeout (default: 15s).
+- `--stream-write-timeout duration`: Stream write timeout (default: 1m).
+- `--measure-write-timeout duration`: Measure write timeout (default: 1m).
+- `--trace-write-timeout duration`: Trace write timeout (default: 1m).
 
 ### TLS
 
@@ -114,7 +116,7 @@ The following flags are used to configure the embedded etcd storage engine which
 - `--etcd-auto-compaction-mode string`: The mode to compact the storage (default: "periodic").
 - `--etcd-auto-compaction-retention string`: The retention period of the storage (default: "1h").
 - `--etcd-defrag-cron string`: The scheduled task to free up disk space (default: "@daily").
-- `--quota-backend-bytes bytes`: Quota for backend storage (default: 2.00GiB).
+- `--etcd-quota-backend-bytes bytes`: Quota for backend storage (default: 2.00GiB).
 
 The following flags are used to configure the memory protector:
 

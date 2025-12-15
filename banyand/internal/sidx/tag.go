@@ -18,13 +18,10 @@
 package sidx
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -45,25 +42,32 @@ type tagMetadata struct {
 	dataBlock   dataBlock // Offset/size in .td file
 	filterBlock dataBlock // Offset/size in .tf file
 	valueType   pbv1.ValueType
-	indexed     bool
-	compressed  bool
 }
 
 // tagData represents the runtime data for a tag with filtering capabilities.
 type tagData struct {
-	values    [][]byte
-	filter    *filter.BloomFilter // For indexed tags
-	name      string
-	min       []byte // For int64 tags
-	max       []byte // For int64 tags
-	valueType pbv1.ValueType
-	indexed   bool
+	uniqueValues map[string]struct{}
+	name         string
+	values       []tagRow
+	tmpBytes     [][]byte
+	valueType    pbv1.ValueType
+}
+
+type tagRow struct {
+	value    []byte
+	valueArr [][]byte
+}
+
+func (tr *tagRow) reset() {
+	tr.value = nil
+	tr.valueArr = nil
 }
 
 var (
-	tagDataPool     = pool.Register[*tagData]("sidx-tagData")
-	tagMetadataPool = pool.Register[*tagMetadata]("sidx-tagMetadata")
-	bloomFilterPool = pool.Register[*filter.BloomFilter]("sidx-bloomFilter")
+	tagDataPool          = pool.Register[*tagData]("sidx-tagData")
+	tagMetadataPool      = pool.Register[*tagMetadata]("sidx-tagMetadata")
+	bloomFilterPool      = pool.Register[*filter.BloomFilter]("sidx-bloomFilter")
+	dictionaryFilterPool = pool.Register[*filter.DictionaryFilter]("sidx-dictionaryFilter")
 )
 
 // generateTagData gets a tagData from pool or creates new.
@@ -106,56 +110,33 @@ func releaseTagMetadata(tm *tagMetadata) {
 func (td *tagData) reset() {
 	td.name = ""
 	td.valueType = pbv1.ValueTypeUnknown
-	td.indexed = false
 
 	// Reset values slice
 	for i := range td.values {
-		td.values[i] = nil
+		td.values[i].reset()
 	}
 	td.values = td.values[:0]
 
-	// Reset filter
-	if td.filter != nil {
-		releaseBloomFilter(td.filter)
-		td.filter = nil
+	// Reset tmpBytes slice
+	for i := range td.tmpBytes {
+		td.tmpBytes[i] = nil
 	}
+	td.tmpBytes = td.tmpBytes[:0]
 
-	// Reset min/max
-	td.min = nil
-	td.max = nil
+	// Reset uniqueValues map for reuse
+	for k := range td.uniqueValues {
+		delete(td.uniqueValues, k)
+	}
 }
 
 // reset clears tagMetadata for reuse in object pool.
 func (tm *tagMetadata) reset() {
 	tm.name = ""
 	tm.valueType = pbv1.ValueTypeUnknown
-	tm.indexed = false
-	tm.compressed = false
 	tm.dataBlock = dataBlock{}
 	tm.filterBlock = dataBlock{}
 	tm.min = nil
 	tm.max = nil
-}
-
-const (
-	// defaultCompressionLevel for zstd compression.
-	defaultCompressionLevel = 3
-)
-
-// compressTagData compresses tag data using zstd compression.
-func compressTagData(data []byte) []byte {
-	if len(data) == 0 {
-		return nil
-	}
-	return zstd.Compress(nil, data, defaultCompressionLevel)
-}
-
-// decompressTagData decompresses tag data using zstd decompression.
-func decompressTagData(compressedData []byte) ([]byte, error) {
-	if len(compressedData) == 0 {
-		return nil, nil
-	}
-	return zstd.Decompress(nil, compressedData)
 }
 
 // generateBloomFilter gets a bloom filter from pool or creates new.
@@ -166,8 +147,7 @@ func generateBloomFilter(expectedElements int) *filter.BloomFilter {
 	}
 	// Reset and resize for new expected elements
 	v.SetN(expectedElements)
-	m := expectedElements * filter.B
-	v.ResizeBits((m + 63) / 64)
+	v.ResizeBits(filter.OptimalBitsSize(expectedElements))
 	return v
 }
 
@@ -178,6 +158,24 @@ func releaseBloomFilter(bf *filter.BloomFilter) {
 	}
 	bf.Reset()
 	bloomFilterPool.Put(bf)
+}
+
+// generateDictionaryFilter gets a dictionary filter from pool or creates new.
+func generateDictionaryFilter() *filter.DictionaryFilter {
+	v := dictionaryFilterPool.Get()
+	if v == nil {
+		return &filter.DictionaryFilter{}
+	}
+	return v
+}
+
+// releaseDictionaryFilter returns dictionary filter to pool after reset.
+func releaseDictionaryFilter(df *filter.DictionaryFilter) {
+	if df == nil {
+		return
+	}
+	df.Reset()
+	dictionaryFilterPool.Put(df)
 }
 
 // encodeBloomFilter encodes a bloom filter to bytes.
@@ -198,11 +196,9 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 
 	n := pkgencoding.BytesToInt64(src)
 	bf := generateBloomFilter(int(n))
+	bitsLen := len(bf.Bits())
 
-	m := n * filter.B
-	bits := make([]uint64, 0, (m+63)/64)
-	var err error
-	bits, _, err = pkgencoding.DecodeUint64Block(bits, src[8:], uint64((m+63)/64))
+	bits, _, err := pkgencoding.DecodeUint64Block(bf.Bits()[:0], src[8:], uint64(bitsLen))
 	if err != nil {
 		releaseBloomFilter(bf)
 		return nil, fmt.Errorf("failed to decode bloom filter bits: %w", err)
@@ -212,321 +208,132 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 	return bf, nil
 }
 
-// generateTagFilter creates a bloom filter for indexed tags.
-func generateTagFilter(values [][]byte, expectedElements int) *filter.BloomFilter {
-	if len(values) == 0 {
-		return nil
+// marshalTagRow marshals the tagRow value to a byte slice.
+func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
+	if tr.valueArr != nil {
+		for i := range tr.valueArr {
+			if valueType == pbv1.ValueTypeInt64Arr {
+				dst = append(dst, tr.valueArr[i]...)
+				continue
+			}
+			dst = internalencoding.MarshalVarArray(dst, tr.valueArr[i])
+		}
+		return dst
 	}
-
-	bloomFilter := generateBloomFilter(expectedElements)
-
-	for _, value := range values {
-		bloomFilter.Add(value)
-	}
-
-	return bloomFilter
+	dst = append(dst, tr.value...)
+	return dst
 }
 
-// EncodeTagValues encodes tag values using the shared encoding module.
-func EncodeTagValues(values [][]byte, valueType pbv1.ValueType) ([]byte, error) {
-	return encoding.EncodeTagValues(values, valueType)
-}
+// decodeAndConvertTagValues decodes encoded tag values and converts them to tagRow format.
+// This is a common operation shared between reading from disk and querying.
+func decodeAndConvertTagValues(td *tagData, decoder *pkgencoding.BytesBlockDecoder, encodedData *bytes.Buffer, valueType pbv1.ValueType, count int) error {
+	var err error
 
-// DecodeTagValues decodes tag values using the shared encoding module.
-func DecodeTagValues(data []byte, valueType pbv1.ValueType, count int) ([][]byte, error) {
-	return encoding.DecodeTagValues(data, valueType, count)
-}
-
-// updateMinMax updates min/max values for int64 tags.
-func (td *tagData) updateMinMax() {
-	if td.valueType != pbv1.ValueTypeInt64 || len(td.values) == 0 {
-		return
+	// Decode to tmpBytes buffer, reusing the existing slice to avoid allocations
+	td.tmpBytes, err = internalencoding.DecodeTagValues(td.tmpBytes[:0], decoder, encodedData, valueType, count)
+	if err != nil {
+		return fmt.Errorf("cannot decode tag values: %w", err)
 	}
 
-	var minVal, maxVal int64
-	first := true
+	// Convert [][]byte to []tagRow based on valueType
+	if cap(td.values) < len(td.tmpBytes) {
+		td.values = make([]tagRow, len(td.tmpBytes))
+	} else {
+		td.values = td.values[:len(td.tmpBytes)]
+	}
 
-	for _, value := range td.values {
-		if len(value) != 8 {
-			continue // Skip invalid int64 values
+	for i, encodedValue := range td.tmpBytes {
+		if encodedValue == nil {
+			td.values[i] = tagRow{}
+			continue
 		}
 
-		val := pkgencoding.BytesToInt64(value)
-
-		if first {
-			minVal = val
-			maxVal = val
-			first = false
+		if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
+			// For array types, unmarshal to valueArr
+			td.values[i].valueArr, err = unmarshalTag(td.values[i].valueArr[:0], encodedValue, valueType)
+			if err != nil {
+				return fmt.Errorf("cannot unmarshal tag array: %w", err)
+			}
 		} else {
-			if val < minVal {
-				minVal = val
-			}
-			if val > maxVal {
-				maxVal = val
-			}
+			// For scalar types, set value directly
+			td.values[i].value = encodedValue
 		}
 	}
 
-	if !first {
-		td.min = pkgencoding.Int64ToBytes(nil, minVal)
-		td.max = pkgencoding.Int64ToBytes(nil, maxVal)
-	}
+	return nil
 }
 
-// addValue adds a value to the tag data.
-func (td *tagData) addValue(value []byte) {
-	td.values = append(td.values, value)
+// marshal serializes tag metadata to bytes using encoding package.
+func (tm *tagMetadata) marshal(dst []byte) []byte {
+	dst = pkgencoding.EncodeBytes(dst, []byte(tm.name))
+	dst = append(dst, byte(tm.valueType))
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.dataBlock.offset)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.dataBlock.size)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.offset)
+	dst = pkgencoding.VarUint64ToBytes(dst, tm.filterBlock.size)
 
-	// Update filter for indexed tags
-	if td.indexed && td.filter != nil {
-		td.filter.Add(value)
-	}
+	dst = pkgencoding.EncodeBytes(dst, tm.min)
+	dst = pkgencoding.EncodeBytes(dst, tm.max)
+	return dst
 }
 
-// hasValue checks if a value exists in the tag using the bloom filter.
-func (td *tagData) hasValue(value []byte) bool {
-	if !td.indexed || td.filter == nil {
-		// For non-indexed tags, do linear search
-		for _, v := range td.values {
-			if bytes.Equal(v, value) {
-				return true
-			}
-		}
-		return false
+// unmarshal deserializes tag metadata from bytes using encoding package.
+func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
+	var nameBytes []byte
+	var err error
+
+	src, nameBytes, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.name: %w", err)
+	}
+	tm.name = string(nameBytes)
+
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.valueType: src is too short")
+	}
+	tm.valueType = pbv1.ValueType(src[0])
+	src = src[1:]
+
+	src, tm.dataBlock.offset = pkgencoding.BytesToVarUint64(src)
+	src, tm.dataBlock.size = pkgencoding.BytesToVarUint64(src)
+	src, tm.filterBlock.offset = pkgencoding.BytesToVarUint64(src)
+	src, tm.filterBlock.size = pkgencoding.BytesToVarUint64(src)
+
+	if len(src) < 1 {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata flags: src is too short")
 	}
 
-	return td.filter.MightContain(value)
+	src, tm.min, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.min: %w", err)
+	}
+	if len(tm.min) == 0 {
+		tm.min = nil
+	}
+
+	src, tm.max, err = pkgencoding.DecodeBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot unmarshal tagMetadata.max: %w", err)
+	}
+	if len(tm.max) == 0 {
+		tm.max = nil
+	}
+
+	return src, nil
 }
 
-// marshalTagMetadata serializes tag metadata to bytes.
-func (tm *tagMetadata) marshal() ([]byte, error) {
-	buf := &bytes.Buffer{}
-
-	// Write name length and name
-	nameBytes := []byte(tm.name)
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
-		return nil, err
-	}
-	if _, err := buf.Write(nameBytes); err != nil {
-		return nil, err
-	}
-
-	// Write value type
-	if err := binary.Write(buf, binary.LittleEndian, uint32(tm.valueType)); err != nil {
-		return nil, err
-	}
-
-	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write filter block
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write flags
-	var flags uint8
-	if tm.indexed {
-		flags |= 1
-	}
-	if tm.compressed {
-		flags |= 2
-	}
-	if err := binary.Write(buf, binary.LittleEndian, flags); err != nil {
-		return nil, err
-	}
-
-	// Write min length and min
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.min))); err != nil {
-		return nil, err
-	}
-	if len(tm.min) > 0 {
-		if _, err := buf.Write(tm.min); err != nil {
-			return nil, err
-		}
-	}
-
-	// Write max length and max
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.max))); err != nil {
-		return nil, err
-	}
-	if len(tm.max) > 0 {
-		if _, err := buf.Write(tm.max); err != nil {
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
+// marshalAppend serializes tagMetadata to bytes and appends to dst (panic version for mustWriteTag).
+func (tm *tagMetadata) marshalAppend(dst []byte) []byte {
+	return tm.marshal(dst)
 }
 
 // unmarshalTagMetadata deserializes tag metadata from bytes.
 func unmarshalTagMetadata(data []byte) (*tagMetadata, error) {
 	tm := generateTagMetadata()
-	buf := bytes.NewReader(data)
-
-	// Read name
-	var nameLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &nameLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	nameBytes := make([]byte, nameLen)
-	if _, err := io.ReadFull(buf, nameBytes); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.name = string(nameBytes)
-
-	// Read value type
-	var valueType uint32
-	if err := binary.Read(buf, binary.LittleEndian, &valueType); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.valueType = pbv1.ValueType(valueType)
-
-	// Read data block
-	if err := binary.Read(buf, binary.LittleEndian, &tm.dataBlock.offset); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &tm.dataBlock.size); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-
-	// Read filter block
-	if err := binary.Read(buf, binary.LittleEndian, &tm.filterBlock.offset); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if err := binary.Read(buf, binary.LittleEndian, &tm.filterBlock.size); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-
-	// Read flags
-	var flags uint8
-	if err := binary.Read(buf, binary.LittleEndian, &flags); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	tm.indexed = (flags & 1) != 0
-	tm.compressed = (flags & 2) != 0
-
-	// Read min
-	var minLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &minLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if minLen > 0 {
-		tm.min = make([]byte, minLen)
-		if _, err := io.ReadFull(buf, tm.min); err != nil {
-			releaseTagMetadata(tm)
-			return nil, err
-		}
-	}
-
-	// Read max
-	var maxLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &maxLen); err != nil {
-		releaseTagMetadata(tm)
-		return nil, err
-	}
-	if maxLen > 0 {
-		tm.max = make([]byte, maxLen)
-		if _, err := io.ReadFull(buf, tm.max); err != nil {
-			releaseTagMetadata(tm)
-			return nil, err
-		}
-	}
-
-	return tm, nil
-}
-
-// marshalAppend serializes tagMetadata to bytes and appends to dst (panic version for mustWriteTag).
-func (tm *tagMetadata) marshalAppend(dst []byte) []byte {
-	data, err := tm.marshal()
+	_, err := tm.unmarshal(data)
 	if err != nil {
-		panic(fmt.Sprintf("failed to marshal tag metadata: %v", err))
-	}
-	return append(dst, data...)
-}
-
-// marshalTagMetadata is the error-returning version of marshal.
-func (tm *tagMetadata) marshalTagMetadata() ([]byte, error) {
-	buf := &bytes.Buffer{}
-
-	// Write name length and name
-	nameBytes := []byte(tm.name)
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(nameBytes))); err != nil {
+		releaseTagMetadata(tm)
 		return nil, err
 	}
-	if _, err := buf.Write(nameBytes); err != nil {
-		return nil, err
-	}
-
-	// Write value type
-	if err := binary.Write(buf, binary.LittleEndian, uint32(tm.valueType)); err != nil {
-		return nil, err
-	}
-
-	// Write data block
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.dataBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write filter block
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.offset); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, tm.filterBlock.size); err != nil {
-		return nil, err
-	}
-
-	// Write flags
-	var flags uint8
-	if tm.indexed {
-		flags |= 1
-	}
-	if tm.compressed {
-		flags |= 2
-	}
-	if err := binary.Write(buf, binary.LittleEndian, flags); err != nil {
-		return nil, err
-	}
-
-	// Write min length and min
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.min))); err != nil {
-		return nil, err
-	}
-	if len(tm.min) > 0 {
-		if _, err := buf.Write(tm.min); err != nil {
-			return nil, err
-		}
-	}
-
-	// Write max length and max
-	if err := binary.Write(buf, binary.LittleEndian, uint32(len(tm.max))); err != nil {
-		return nil, err
-	}
-	if len(tm.max) > 0 {
-		if _, err := buf.Write(tm.max); err != nil {
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
+	return tm, nil
 }

@@ -33,6 +33,7 @@ func TestNewCreateCmd(t *testing.T) {
 	streamDir := filepath.Join(baseDir, "stream")
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
+	traceDir := filepath.Join(baseDir, "trace")
 
 	content := "2023-10-12"
 	cmd := newCreateCmd()
@@ -41,6 +42,7 @@ func TestNewCreateCmd(t *testing.T) {
 		"--stream-root", baseDir,
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
+		"--trace-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newCreateCmd.Execute() error: %v", err)
@@ -53,6 +55,7 @@ func TestNewCreateCmd(t *testing.T) {
 		{"stream", streamDir},
 		{"measure", measureDir},
 		{"property", propertyDir},
+		{"trace", traceDir},
 	} {
 		fp := filepath.Join(dir.root, "time-dir")
 		data, err := os.ReadFile(fp)
@@ -71,7 +74,8 @@ func TestNewReadCmd(t *testing.T) {
 	streamDir := filepath.Join(baseDir, "stream")
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
-	for _, dir := range []string{streamDir, measureDir, propertyDir} {
+	traceDir := filepath.Join(baseDir, "trace")
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
 		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
@@ -88,13 +92,14 @@ func TestNewReadCmd(t *testing.T) {
 		"--stream-root", baseDir,
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
+		"--trace-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newReadCmd.Execute() error: %v", err)
 	}
 
 	output := outBuf.String()
-	for _, catalog := range []string{"stream", "measure", "property"} {
+	for _, catalog := range []string{"stream", "measure", "property", "trace"} {
 		if !strings.Contains(output, "Catalog '"+catalog+"'") {
 			t.Errorf("Output missing expected catalog '%s'", catalog)
 		}
@@ -106,7 +111,8 @@ func TestNewDeleteCmd(t *testing.T) {
 	streamDir := filepath.Join(baseDir, "stream")
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
-	for _, dir := range []string{streamDir, measureDir, propertyDir} {
+	traceDir := filepath.Join(baseDir, "trace")
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
 		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
@@ -121,12 +127,13 @@ func TestNewDeleteCmd(t *testing.T) {
 		"--stream-root", baseDir,
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
+		"--trace-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newDeleteCmd.Execute() error: %v", err)
 	}
 
-	for _, dir := range []string{streamDir, measureDir, propertyDir} {
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
 		catalog := filepath.Base(dir)
 		fp := filepath.Join(dir, fmt.Sprintf("%s-time-dir", catalog))
 		if _, err := os.Stat(fp); !os.IsNotExist(err) {

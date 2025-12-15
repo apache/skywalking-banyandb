@@ -23,6 +23,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
@@ -35,23 +36,30 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
-const defaultRecvSize = 10 << 20
+const (
+	defaultRecvSize         = 16 << 20
+	maxReasonableBufferSize = 1 << 30 // 1GB
+)
 
 var (
 	errServerCert        = errors.New("invalid server cert file")
@@ -66,7 +74,7 @@ var (
 // Server defines the gRPC server.
 type Server interface {
 	run.Unit
-	GetAuthCfg() *auth.Config
+	GetAuthReloader() *auth.Reloader
 	GetPort() *uint32
 }
 
@@ -75,46 +83,56 @@ type NodeRegistries struct {
 	StreamLiaisonNodeRegistry  NodeRegistry
 	MeasureLiaisonNodeRegistry NodeRegistry
 	PropertyNodeRegistry       NodeRegistry
+	TraceLiaisonNodeRegistry   NodeRegistry
 }
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
-	*topNAggregationRegistryServer
-	*groupRegistryServer
-	stopCh chan struct{}
+	protector  protector.Memory
+	traceSVC   *traceService
+	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
 	streamSVC *streamService
 	*streamRegistryServer
 	measureSVC *measureService
+	bydbQLSVC  *bydbQLService
 	log        *logger.Logger
 	*propertyRegistryServer
 	ser         *grpclib.Server
 	tlsReloader *pkgtls.Reloader
 	*propertyServer
-	*indexRuleBindingRegistryServer
+	*topNAggregationRegistryServer
+	*groupRegistryServer
 	*traceRegistryServer
-	groupRepo                *groupRepo
+	authReloader *auth.Reloader
+	groupRepo    *groupRepo
+	*indexRuleBindingRegistryServer
 	metrics                  *metrics
-	certFile                 string
 	keyFile                  string
 	authConfigFile           string
-	cfg                      *auth.Config
-	host                     string
 	addr                     string
 	accessLogRootPath        string
+	certFile                 string
+	host                     string
 	accessLogRecorders       []accessLogRecorder
+	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
+	grpcBufferMemoryRatio    float64
 	port                     uint32
-	enableIngestionAccessLog bool
 	tls                      bool
+	enableIngestionAccessLog bool
+	enableQueryAccessLog     bool
+	accessLogSampled         bool
+	healthAuthEnabled        bool
 }
 
 // NewServer returns a new gRPC server.
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
+	protectorService protector.Memory,
 ) Server {
 	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
@@ -128,11 +146,32 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 	}
+	traceSVC := &traceService{
+		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
+		pipeline:         tir1Client,
+		broadcaster:      broadcaster,
+	}
+	propertyService := &propertyServer{
+		schemaRegistry:   schemaRegistry,
+		pipeline:         tir2Client,
+		nodeRegistry:     nr.PropertyNodeRegistry,
+		discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
+	}
+	bydbQLSVC := &bydbQLService{
+		repo:           schemaRegistry,
+		transformer:    bydbql.NewTransformer(schemaRegistry),
+		streamSvc:      streamSVC,
+		measureSvc:     measureSVC,
+		traceSvc:       traceSVC,
+		propertyServer: propertyService,
+	}
 
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
 		measureSVC: measureSVC,
+		traceSVC:   traceSVC,
+		bydbQLSVC:  bydbQLSVC,
 		groupRepo:  gr,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -152,22 +191,19 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		topNAggregationRegistryServer: &topNAggregationRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		propertyServer: &propertyServer{
-			schemaRegistry:   schemaRegistry,
-			pipeline:         tir2Client,
-			nodeRegistry:     nr.PropertyNodeRegistry,
-			discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
-		},
+		propertyServer: propertyService,
 		propertyRegistryServer: &propertyRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
 		traceRegistryServer: &traceRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		schemaRepo: schemaRegistry,
-		cfg:        auth.InitCfg(),
+		schemaRepo:   schemaRegistry,
+		authReloader: auth.InitAuthReloader(),
+		protector:    protectorService,
 	}
-	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC}
+	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
+	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 
 	return s
 }
@@ -176,10 +212,13 @@ func (s *server) PreRun(_ context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
+	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
+	s.bydbQLSVC.setLogger(s.log.Named("bydbql"))
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,
+		s.traceSVC.discoveryService,
 		s.propertyServer.discoveryService,
 	}
 	s.schemaRepo.RegisterHandler("liaison", schema.KindGroup, s.groupRepo)
@@ -190,14 +229,22 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	if s.authConfigFile != "" {
-		if err := auth.LoadConfig(s.cfg, s.authConfigFile); err != nil {
+		if err := s.authReloader.ConfigAuthReloader(s.authConfigFile, s.healthAuthEnabled, s.log); err != nil {
 			return err
 		}
 	}
 
 	if s.enableIngestionAccessLog {
 		for _, alr := range s.accessLogRecorders {
-			if err := alr.activeIngestionAccessLog(s.accessLogRootPath); err != nil {
+			if err := alr.activeIngestionAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.enableQueryAccessLog {
+		for _, qalr := range s.queryAccessLogRecorders {
+			if err := qalr.activeQueryAccessLog(s.accessLogRootPath, s.accessLogSampled); err != nil {
 				return err
 			}
 		}
@@ -206,6 +253,8 @@ func (s *server) PreRun(_ context.Context) error {
 	s.metrics = metrics
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
+	s.traceSVC.metrics = metrics
+	s.bydbQLSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
@@ -239,9 +288,9 @@ func (s *server) GetPort() *uint32 {
 	return &s.port
 }
 
-// GetAuthCfg returns auth cfg (for httpserver).
-func (s *server) GetAuthCfg() *auth.Config {
-	return s.cfg
+// GetAuthReloader returns auth reloader (for httpserver).
+func (s *server) GetAuthReloader() *auth.Reloader {
+	return s.authReloader
 }
 
 func (s *server) FlagSet() *run.FlagSet {
@@ -252,18 +301,26 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.certFile, "cert-file", "", "the TLS cert file")
 	fs.StringVar(&s.keyFile, "key-file", "", "the TLS key file")
 	fs.StringVar(&s.authConfigFile, "auth-config-file", "", "Path to the authentication config file (YAML format)")
-	fs.BoolVar(&s.cfg.HealthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
+	fs.BoolVar(&s.healthAuthEnabled, "enable-health-auth", false, "enable authentication for health check")
 	fs.StringVar(&s.host, "grpc-host", "", "the host of banyand listens")
 	fs.Uint32Var(&s.port, "grpc-port", 17912, "the port of banyand listens")
 	fs.BoolVar(&s.enableIngestionAccessLog, "enable-ingestion-access-log", false, "enable ingestion access log")
+	fs.BoolVar(&s.enableQueryAccessLog, "enable-query-access-log", false, "enable query access log")
 	fs.StringVar(&s.accessLogRootPath, "access-log-root-path", "", "access log root path")
-	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", 15*time.Second, "timeout for writing stream among liaison nodes")
-	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", 15*time.Second, "timeout for writing measure among liaison nodes")
+	fs.BoolVar(&s.accessLogSampled, "access-log-sampled", false, "if true, requests may be dropped when the channel is full; if false, requests are never dropped")
+	fs.DurationVar(&s.streamSVC.writeTimeout, "stream-write-timeout", time.Minute, "timeout for writing stream among liaison nodes")
+	fs.DurationVar(&s.measureSVC.writeTimeout, "measure-write-timeout", time.Minute, "timeout for writing measure among liaison nodes")
+	fs.DurationVar(&s.traceSVC.writeTimeout, "trace-write-timeout", time.Minute, "timeout for writing trace among liaison nodes")
 	fs.DurationVar(&s.measureSVC.maxWaitDuration, "measure-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.DurationVar(&s.streamSVC.maxWaitDuration, "stream-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
+	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
+		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
+	s.grpcBufferMemoryRatio = 0.1
+	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
+		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")
 	return fs
 }
 
@@ -274,6 +331,9 @@ func (s *server) Validate() error {
 	}
 	if s.enableIngestionAccessLog && s.accessLogRootPath == "" {
 		return errAccessLogRootPath
+	}
+	if s.grpcBufferMemoryRatio <= 0.0 || s.grpcBufferMemoryRatio > 1.0 {
+		return errors.Errorf("grpc-buffer-memory-ratio must be in range (0.0, 1.0], got %f", s.grpcBufferMemoryRatio)
 	}
 	if !s.tls {
 		return nil
@@ -300,6 +360,14 @@ func (s *server) Serve() run.StopNotify {
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpclib.Creds(creds))
 	}
+	if s.authConfigFile != "" {
+		if err := s.authReloader.Start(); err != nil {
+			s.log.Error().Err(err).Msg("Failed to start authReloader for gRPC")
+			close(s.stopCh)
+			return s.stopCh
+		}
+		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
+	}
 	grpcPanicRecoveryHandler := func(p any) (err error) {
 		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
 		s.metrics.totalPanic.Inc(1)
@@ -315,8 +383,22 @@ func (s *server) Serve() run.StopNotify {
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
-		streamChain = append(streamChain, authStreamInterceptor(s.cfg))
-		unaryChain = append(unaryChain, authInterceptor(s.cfg))
+		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
+		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
+	}
+	if s.protector != nil {
+		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
+	}
+
+	// Calculate dynamic buffer sizes based on available memory
+	connWindowSize, streamWindowSize := s.calculateGrpcBufferSizes()
+	if connWindowSize > 0 && streamWindowSize > 0 {
+		opts = append(opts,
+			grpclib.InitialConnWindowSize(connWindowSize),
+			grpclib.InitialWindowSize(streamWindowSize),
+		)
+	} else if s.log != nil {
+		s.log.Warn().Msg("using gRPC default buffer sizes")
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
@@ -328,6 +410,8 @@ func (s *server) Serve() run.StopNotify {
 	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
 	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
 	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
+	tracev1.RegisterTraceServiceServer(s.ser, s.traceSVC)
+	bydbqlv1.RegisterBydbQLServiceServer(s.ser, s.bydbQLSVC)
 	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
 	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
 	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
@@ -360,10 +444,107 @@ func (s *server) Serve() run.StopNotify {
 	return s.stopCh
 }
 
+// protectorLoadSheddingInterceptor rejects streams when memory pressure is high.
+func (s *server) protectorLoadSheddingInterceptor(srv interface{}, ss grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		return handler(srv, ss)
+	}
+
+	// Get current memory state and update metric
+	state := s.protector.State()
+	if s.metrics != nil {
+		stateValue := 0 // StateLow
+		if state == protector.StateHigh {
+			stateValue = 1 // StateHigh
+		}
+		s.metrics.updateMemoryState(stateValue)
+	}
+
+	if state == protector.StateHigh {
+		// Extract service name from FullMethod (e.g., "/banyandb.stream.v1.StreamService/Write")
+		serviceName := "unknown"
+		if info != nil && info.FullMethod != "" {
+			// Extract service name from FullMethod
+			parts := strings.Split(info.FullMethod, "/")
+			if len(parts) >= 2 {
+				serviceName = parts[1]
+			}
+		}
+
+		// Log rejection with metrics
+		if s.log != nil {
+			s.log.Warn().
+				Str("service", info.FullMethod).
+				Msg("rejecting new stream due to high memory pressure")
+		}
+		if s.metrics != nil {
+			s.metrics.memoryLoadSheddingRejections.Inc(1, serviceName)
+		}
+
+		return status.Errorf(codes.ResourceExhausted, "server is under memory pressure, please retry later")
+	}
+
+	return handler(srv, ss)
+}
+
+// calculateGrpcBufferSizes calculates the gRPC buffer sizes based on available system memory.
+// Returns (connWindowSize, streamWindowSize) in bytes.
+// Returns (0, 0) if protector is unavailable, which will cause gRPC to use defaults.
+func (s *server) calculateGrpcBufferSizes() (int32, int32) {
+	// Fail open if protector is not available
+	if s.protector == nil {
+		if s.log != nil {
+			s.log.Warn().Msg("protector unavailable, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Get memory limit from protector
+	memoryLimit := s.protector.GetLimit()
+	if memoryLimit == 0 {
+		if s.log != nil {
+			s.log.Warn().Msg("memory limit not set, using gRPC default buffer sizes")
+		}
+		return 0, 0
+	}
+
+	// Calculate total buffer size: min(availableMemory * ratio, maxReasonableBufferSize)
+	// Note: We use the memory limit (not available bytes) as the basis for calculation
+	// to ensure consistent buffer sizing regardless of current usage
+	totalBufferSize := uint64(float64(memoryLimit) * s.grpcBufferMemoryRatio)
+	if totalBufferSize > maxReasonableBufferSize {
+		totalBufferSize = maxReasonableBufferSize
+	}
+
+	// Split buffer size: 2/3 for connection-level, 1/3 for stream-level
+	connWindowSize := int32(totalBufferSize * 2 / 3)
+	streamWindowSize := int32(totalBufferSize * 1 / 3)
+
+	if s.log != nil {
+		s.log.Info().
+			Uint64("memory_limit", memoryLimit).
+			Float64("ratio", s.grpcBufferMemoryRatio).
+			Int32("conn_window_size", connWindowSize).
+			Int32("stream_window_size", streamWindowSize).
+			Msg("calculated gRPC buffer sizes")
+	}
+
+	// Update metrics
+	if s.metrics != nil {
+		s.metrics.updateBufferSizeMetrics(connWindowSize, streamWindowSize)
+	}
+
+	return connWindowSize, streamWindowSize
+}
+
 func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
 	if s.tls && s.tlsReloader != nil {
 		s.tlsReloader.Stop()
+	}
+	if s.authConfigFile != "" && s.authReloader != nil {
+		s.authReloader.Stop()
 	}
 	stopped := make(chan struct{})
 	go func() {
@@ -371,6 +552,11 @@ func (s *server) GracefulStop() {
 		if s.enableIngestionAccessLog {
 			for _, alr := range s.accessLogRecorders {
 				_ = alr.Close()
+			}
+		}
+		if s.enableQueryAccessLog {
+			for _, qalr := range s.queryAccessLogRecorders {
+				_ = qalr.Close()
 			}
 		}
 		close(stopped)
@@ -388,6 +574,11 @@ func (s *server) GracefulStop() {
 }
 
 type accessLogRecorder interface {
-	activeIngestionAccessLog(root string) error
+	activeIngestionAccessLog(root string, sampled bool) error
+	Close() error
+}
+
+type queryAccessLogRecorder interface {
+	activeQueryAccessLog(root string, sampled bool) error
 	Close() error
 }

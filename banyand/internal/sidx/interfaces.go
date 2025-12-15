@@ -25,8 +25,9 @@ import (
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -35,82 +36,40 @@ import (
 // opaque ordering values by sidx - the system only performs numerical comparisons
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
-	// Write performs batch write operations. All writes must be submitted as batches.
-	// Elements within each batch should be pre-sorted by the caller for optimal performance.
-	Write(ctx context.Context, reqs []WriteRequest) error
-
-	// Query executes a query with key range and tag filtering.
-	// Returns a QueryResult for iterating over results, following BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
-
+	// IntroduceMemPart introduces a memPart to the SIDX instance.
+	IntroduceMemPart(partID uint64, mp *MemPart)
+	// IntroduceFlushed introduces a flushed map to the SIDX instance.
+	IntroduceFlushed(nextIntroduction *FlusherIntroduction)
+	// IntroduceMerged introduces a merged map and a new part to the SIDX instance.
+	IntroduceMerged(nextIntroduction *MergerIntroduction) func()
+	// ConvertToMemPart converts a write request to a memPart.
+	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
+	// StreamingQuery executes the query and streams batched QueryResponse objects.
+	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
+	// unique Data elements (when positive). The error channel delivers any fatal execution error.
+	StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error)
+	// ScanQuery executes a synchronous full scan query without requiring series IDs.
+	// It scans all blocks in parts sequentially and applies filters to each row.
+	// Returns a slice of QueryResponse objects containing all matching results.
+	// This is a synchronous operation suitable for dump/debug tools.
+	ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryResponse, error)
 	// Stats returns current system statistics and performance metrics.
 	Stats(ctx context.Context) (*Stats, error)
-
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
 	Close() error
-
-	// User-triggered operations for manual control
-	Flusher
-	Merger
-}
-
-// Flusher provides user-triggered persistence operations.
-// Users control when memory parts are flushed to disk for durability.
-// This interface abstracts flush functionality to enable testing and modularity.
-type Flusher interface {
-	// Flush triggers persistence of memory parts to disk.
-	// The implementation should select appropriate memory parts, persist them to disk files,
-	// and coordinate with the introducer loop for snapshot updates.
-	// This operation is user-controlled and synchronous.
-	// Returns error if flush operation fails.
-	Flush() error
-}
-
-// Merger provides user-triggered compaction operations.
-// Users control when parts are merged to optimize storage and query performance.
-// This interface abstracts merge functionality to enable testing and modularity.
-type Merger interface {
-	// Merge triggers compaction of parts to optimize storage.
-	// The implementation should select appropriate parts for merging, combine them while maintaining key order,
-	// and coordinate with the introducer loop for snapshot updates.
-	// This operation is user-controlled and synchronous.
-	// Returns error if merge operation fails.
-	Merge() error
-}
-
-// Writer handles write path operations for batch processing.
-// This interface abstracts the write functionality to enable testing and modularity.
-type Writer interface {
-	// Write performs batch write operations on multiple elements.
-	// All elements in the batch should be pre-sorted by seriesID then userKey for optimal performance.
-	// The implementation should handle element accumulation, validation, and coordination with memory parts.
-	// Returns error if any element in the batch fails validation or if write operation fails.
-	Write(ctx context.Context, reqs []WriteRequest) error
-}
-
-// Querier handles query path operations with filtering and range selection.
-// This interface abstracts the query functionality to enable testing and modularity.
-type Querier interface {
-	// Query executes a query with specified parameters including key ranges and tag filters.
-	// The implementation should handle snapshot access, part filtering, block scanning, and result assembly.
-	// Returns a QueryResult for iterating over results following the BanyanDB pattern.
-	// The returned error indicates query setup/validation failures.
-	// Execution errors during result iteration are available in QueryResponse.Error.
-	Query(ctx context.Context, req QueryRequest) (QueryResult, error)
-}
-
-// QueryResult provides iterator-like access to query results, following BanyanDB pattern.
-type QueryResult interface {
-	// Pull returns the next batch of query results.
-	// Returns nil when no more results are available.
-	// Check QueryResponse.Error for execution errors during iteration.
-	Pull() *QueryResponse
-
-	// Release releases resources associated with the query result.
-	// Must be called when done with the QueryResult to prevent resource leaks.
-	Release()
+	// Flush flushes the SIDX instance to disk.
+	Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
+	// Merge merges the specified parts into a new part.
+	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error)
+	// StreamingParts returns the streaming parts.
+	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
+	// PartPaths returns filesystem paths for the requested partIDs keyed by partID.
+	// Missing partIDs are omitted from the returned map.
+	PartPaths(partIDs map[uint64]struct{}) map[uint64]string
+	// IntroduceSynced introduces a synced map to the SIDX instance.
+	IntroduceSynced(partIDsToSync map[uint64]struct{}) func()
+	// TakeFileSnapshot creates a snapshot of the SIDX files at the specified destination path.
+	TakeFileSnapshot(dst string) error
 }
 
 // WriteRequest contains data for a single write operation within a batch.
@@ -124,48 +83,46 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	// Name identifies the series/index to query
-	Name string
-
-	// Entities specifies entity filtering (same as StreamQueryOptions)
-	Entities [][]*modelv1.TagValue
-
-	// Filter for key range and tag-based filtering using index.Filter
-	// Note: sidx uses bloom filters for tag filtering, not inverted indexes
-	Filter index.Filter
-
-	// Order specifies result ordering using existing index.OrderBy
-	Order *index.OrderBy
-
-	// TagProjection specifies which tags to include
+	Filter        index.Filter
+	TagFilter     model.TagFilterMatcher
+	Order         *index.OrderBy
+	MinKey        *int64
+	MaxKey        *int64
+	SeriesIDs     []common.SeriesID
 	TagProjection []model.TagProjection
+	MaxBatchSize  int
+}
 
-	// MaxElementSize limits result size
-	MaxElementSize int
+// ScanProgressFunc is a callback for reporting scan progress.
+// It receives the current part number (1-based), total parts, and rows found so far.
+type ScanProgressFunc func(currentPart, totalParts int, rowsFound int)
+
+// ScanQueryRequest specifies parameters for a full-scan query operation.
+// Unlike QueryRequest, this does not require SeriesIDs and does not support Filter
+// (all blocks are scanned, none are skipped).
+//
+//nolint:govet // struct layout optimized for readability; 64 bytes is acceptable
+type ScanQueryRequest struct {
+	TagFilter     model.TagFilterMatcher
+	TagProjection []model.TagProjection
+	OnProgress    ScanProgressFunc
+	MinKey        *int64
+	MaxKey        *int64
+	MaxBatchSize  int
+	// OnProgress is an optional callback for progress reporting during scan.
+	// Called after processing each part with the current progress.
 }
 
 // QueryResponse contains a batch of query results and execution metadata.
 // This follows BanyanDB result patterns with parallel arrays for efficiency.
 // Uses individual tag-based strategy (like trace module) rather than tag-family approach (like stream module).
 type QueryResponse struct {
-	// Error contains any error that occurred during this batch of query execution.
-	// Non-nil Error indicates partial or complete failure during result iteration.
-	// Query setup errors are returned by Query() method directly.
-	Error error
-
-	// Keys contains the user-provided ordering keys for each result
-	Keys []int64
-
-	// Data contains the user payload data for each result
-	Data [][]byte
-
-	// Tags contains individual tag data for each result
-	Tags [][]Tag
-
-	// SIDs contains the series IDs for each result
-	SIDs []common.SeriesID
-
-	// Metadata provides query execution information for this batch
+	Error    error
+	Keys     []int64
+	Data     [][]byte
+	SIDs     []common.SeriesID
+	PartIDs  []uint64
+	Tags     map[string][]string // Projected tags: tag name -> values for each row
 	Metadata ResponseMetadata
 }
 
@@ -179,8 +136,8 @@ func (qr *QueryResponse) Reset() {
 	qr.Error = nil
 	qr.Keys = qr.Keys[:0]
 	qr.Data = qr.Data[:0]
-	qr.Tags = qr.Tags[:0]
 	qr.SIDs = qr.SIDs[:0]
+	qr.PartIDs = qr.PartIDs[:0]
 	qr.Metadata = ResponseMetadata{}
 }
 
@@ -189,6 +146,7 @@ func (qr *QueryResponse) Validate() error {
 	keysLen := len(qr.Keys)
 	dataLen := len(qr.Data)
 	sidsLen := len(qr.SIDs)
+	partIDsLen := len(qr.PartIDs)
 
 	if keysLen != dataLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, data=%d", keysLen, dataLen)
@@ -196,19 +154,8 @@ func (qr *QueryResponse) Validate() error {
 	if keysLen != sidsLen {
 		return fmt.Errorf("inconsistent array lengths: keys=%d, sids=%d", keysLen, sidsLen)
 	}
-
-	// Validate Tags structure if present
-	if len(qr.Tags) > 0 {
-		if len(qr.Tags) != keysLen {
-			return fmt.Errorf("tags length=%d, expected=%d", len(qr.Tags), keysLen)
-		}
-		for i, tagGroup := range qr.Tags {
-			for j, tag := range tagGroup {
-				if tag.name == "" {
-					return fmt.Errorf("tags[%d][%d] name cannot be empty", i, j)
-				}
-			}
-		}
+	if keysLen != partIDsLen {
+		return fmt.Errorf("inconsistent array lengths: keys=%d, partIDs=%d", keysLen, partIDsLen)
 	}
 
 	return nil
@@ -221,6 +168,7 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	// Copy parallel arrays
 	qr.Keys = append(qr.Keys[:0], other.Keys...)
 	qr.SIDs = append(qr.SIDs[:0], other.SIDs...)
+	qr.PartIDs = append(qr.PartIDs[:0], other.PartIDs...)
 
 	// Deep copy data
 	if cap(qr.Data) < len(other.Data) {
@@ -230,26 +178,6 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	}
 	for i, data := range other.Data {
 		qr.Data[i] = append(qr.Data[i][:0], data...)
-	}
-
-	// Deep copy tags
-	if cap(qr.Tags) < len(other.Tags) {
-		qr.Tags = make([][]Tag, len(other.Tags))
-	} else {
-		qr.Tags = qr.Tags[:len(other.Tags)]
-	}
-	for i, tagGroup := range other.Tags {
-		if cap(qr.Tags[i]) < len(tagGroup) {
-			qr.Tags[i] = make([]Tag, len(tagGroup))
-		} else {
-			qr.Tags[i] = qr.Tags[i][:len(tagGroup)]
-		}
-		for j, tag := range tagGroup {
-			qr.Tags[i][j].name = tag.name
-			qr.Tags[i][j].value = append(qr.Tags[i][j].value[:0], tag.value...)
-			qr.Tags[i][j].valueType = tag.valueType
-			qr.Tags[i][j].indexed = tag.indexed
-		}
 	}
 
 	// Copy metadata
@@ -322,8 +250,57 @@ func (rm *ResponseMetadata) Validate() error {
 }
 
 // Tag represents an individual tag for WriteRequest.
-// This uses the existing tag structure from the sidx package.
-type Tag = tag
+// This is an exported type that can be used outside the package.
+type Tag struct {
+	Name      string
+	Value     []byte
+	ValueArr  [][]byte
+	ValueType pbv1.ValueType
+}
+
+// Reset resets the Tag to its zero state for reuse.
+func (t *Tag) Reset() {
+	t.Name = ""
+	t.Value = nil
+	t.ValueArr = nil
+	t.ValueType = pbv1.ValueTypeUnknown
+}
+
+// Size returns the size of the tag in bytes.
+func (t *Tag) Size() int {
+	size := len(t.Name) + 1 // +1 for valueType
+	if t.ValueArr != nil {
+		for _, v := range t.ValueArr {
+			size += len(v)
+		}
+	} else {
+		size += len(t.Value)
+	}
+	return size
+}
+
+// Copy creates a deep copy of the Tag.
+func (t *Tag) Copy() Tag {
+	var valueCopy []byte
+	if t.Value != nil {
+		valueCopy = make([]byte, len(t.Value))
+		copy(valueCopy, t.Value)
+	}
+	var valueArrCopy [][]byte
+	if t.ValueArr != nil {
+		valueArrCopy = make([][]byte, len(t.ValueArr))
+		for i, v := range t.ValueArr {
+			valueArrCopy[i] = make([]byte, len(v))
+			copy(valueArrCopy[i], v)
+		}
+	}
+	return Tag{
+		Name:      t.Name,
+		Value:     valueCopy,
+		ValueArr:  valueArrCopy,
+		ValueType: t.ValueType,
+	}
+}
 
 // Validate validates a WriteRequest for correctness.
 func (wr WriteRequest) Validate() error {
@@ -338,11 +315,8 @@ func (wr WriteRequest) Validate() error {
 	}
 	// Validate tags if present
 	for i, tag := range wr.Tags {
-		if tag.name == "" {
+		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
-		}
-		if len(tag.value) == 0 {
-			return fmt.Errorf("tag[%d] value cannot be empty", i)
 		}
 	}
 	return nil
@@ -350,52 +324,49 @@ func (wr WriteRequest) Validate() error {
 
 // Validate validates a QueryRequest for correctness.
 func (qr QueryRequest) Validate() error {
-	if qr.Name == "" {
-		return fmt.Errorf("name cannot be empty")
+	if len(qr.SeriesIDs) == 0 {
+		return fmt.Errorf("at least one SeriesID is required")
 	}
-	if qr.MaxElementSize < 0 {
-		return fmt.Errorf("maxElementSize cannot be negative")
+	if qr.MaxBatchSize < 0 {
+		return fmt.Errorf("maxBatchSize cannot be negative")
 	}
-	// Validate tag projection names
-	for i, projection := range qr.TagProjection {
-		if projection.Family == "" {
-			return fmt.Errorf("tagProjection[%d] family cannot be empty", i)
-		}
+	// Validate key range
+	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
+		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
-	// Validate entities structure
-	for i, entityGroup := range qr.Entities {
-		if len(entityGroup) == 0 {
-			return fmt.Errorf("entities[%d] cannot be empty", i)
-		}
-		for j, tagValue := range entityGroup {
-			if tagValue == nil {
-				return fmt.Errorf("entities[%d][%d] cannot be nil", i, j)
-			}
-		}
+	return nil
+}
+
+// Validate validates a ScanQueryRequest for correctness.
+func (sqr ScanQueryRequest) Validate() error {
+	if sqr.MaxBatchSize < 0 {
+		return fmt.Errorf("maxBatchSize cannot be negative")
+	}
+	if sqr.MinKey != nil && sqr.MaxKey != nil && *sqr.MinKey > *sqr.MaxKey {
+		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
 	return nil
 }
 
 // Reset resets the QueryRequest to its zero state.
 func (qr *QueryRequest) Reset() {
-	qr.Name = ""
-	qr.Entities = nil
+	qr.SeriesIDs = nil
 	qr.Filter = nil
 	qr.Order = nil
 	qr.TagProjection = nil
-	qr.MaxElementSize = 0
+	qr.MaxBatchSize = 0
+	qr.MinKey = nil
+	qr.MaxKey = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
 func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
-	qr.Name = other.Name
-
-	// Deep copy for Entities if it's a slice
-	if other.Entities != nil {
-		qr.Entities = make([][]*modelv1.TagValue, len(other.Entities))
-		copy(qr.Entities, other.Entities)
+	// Deep copy for SeriesIDs if it's a slice
+	if other.SeriesIDs != nil {
+		qr.SeriesIDs = make([]common.SeriesID, len(other.SeriesIDs))
+		copy(qr.SeriesIDs, other.SeriesIDs)
 	} else {
-		qr.Entities = nil
+		qr.SeriesIDs = nil
 	}
 
 	qr.Filter = other.Filter
@@ -409,7 +380,22 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.TagProjection = nil
 	}
 
-	qr.MaxElementSize = other.MaxElementSize
+	qr.MaxBatchSize = other.MaxBatchSize
+
+	// Copy key range pointers
+	if other.MinKey != nil {
+		minKey := *other.MinKey
+		qr.MinKey = &minKey
+	} else {
+		qr.MinKey = nil
+	}
+
+	if other.MaxKey != nil {
+		maxKey := *other.MaxKey
+		qr.MaxKey = &maxKey
+	} else {
+		qr.MaxKey = nil
+	}
 }
 
 // Interface Usage Examples and Best Practices
@@ -428,7 +414,7 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		log.Fatalf("write failed: %v", err)
 //	}
 
-// Example: Using Querier interface independently
+// Example: Using StreamingQuery interface independently
 //
 //	querier := NewQuerier(options)
 //	req := QueryRequest{
@@ -436,21 +422,15 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		Filter: createKeyRangeFilter(100, 200),
 //		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 //	}
-//	result, err := querier.Query(ctx, req)
-//	if err != nil {
-//		log.Fatalf("query setup failed: %v", err)
-//	}
-//	defer result.Release()
-//
-//	for {
-//		batch := result.Pull()
-//		if batch == nil {
-//			break // No more results
-//		}
+//	resultsCh, errCh := querier.StreamingQuery(ctx, req)
+//	for batch := range resultsCh {
 //		if batch.Error != nil {
 //			log.Printf("query execution error: %v", batch.Error)
 //		}
 //		// Process batch.Keys, batch.Data, batch.Tags, etc.
+//	}
+//	if err := <-errCh; err != nil {
+//		log.Fatalf("query failed: %v", err)
 //	}
 
 // Example: Interface composition in SIDX
@@ -466,8 +446,8 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 //		return s.writer.Write(ctx, reqs)
 //	}
 //
-//	func (s *sidxImpl) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
-//		return s.querier.Query(ctx, req)
+//	func (s *sidxImpl) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
+//		return s.querier.StreamingQuery(ctx, req)
 //	}
 //
 //	func (s *sidxImpl) Flush() error {

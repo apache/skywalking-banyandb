@@ -48,33 +48,20 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 					tst.incTotalFlushLatency(time.Since(start).Seconds())
 				}()
 				curSnapshot := tst.currentSnapshot()
-				if curSnapshot != nil {
-					flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
-					curSnapshot.decRef()
-					curSnapshot = nil
-				}
-				tst.RLock()
-				if tst.snapshot != nil && tst.snapshot.epoch > epoch {
-					curSnapshot = tst.snapshot
-					curSnapshot.incRef()
-				}
-				tst.RUnlock()
+				var ok bool
+				var merged bool
+				curSnapshot, flusherWatchers, ok, merged = tst.pauseFlusherToPileupMemPartsWithMerge(curSnapshot, flusherWatcher, flusherWatchers, epoch, mergeCh)
 				if curSnapshot != nil {
 					defer curSnapshot.decRef()
-					merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
-					if err != nil {
-						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
-						tst.incTotalFlushLoopErr(1)
+					if !ok {
 						return false
 					}
 					if !merged {
 						tst.flush(curSnapshot, flushCh)
 					}
-					epoch = curSnapshot.epoch
-					// Notify merger to start a new round of merge.
-					// This round might have be triggered in pauseFlusherToPileupMemParts.
 					flusherWatchers.Notify(math.MaxUint64)
 					flusherWatchers = nil
+					epoch = curSnapshot.epoch
 					if tst.currentEpoch() != epoch {
 						tst.incTotalFlushLoopProgress(1)
 						return false
@@ -89,47 +76,34 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 	}
 }
 
-func (tst *tsTable) flusherLoopNoMerger(flushCh chan *flusherIntroduction, introducerWatcher, flusherWatcher watcher.Channel, epoch uint64) {
-	defer tst.loopCloser.Done()
-	epochWatcher := introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-	if epochWatcher == nil {
-		return
+func (tst *tsTable) pauseFlusherToPileupMemPartsWithMerge(
+	curSnapshot *snapshot, flusherWatcher watcher.Channel, flusherWatchers watcher.Epochs,
+	epoch uint64, mergeCh chan *mergerIntroduction,
+) (*snapshot, watcher.Epochs, bool, bool) {
+	if tst.option.flushTimeout < 1 {
+		return curSnapshot, flusherWatchers, true, false
 	}
-	var flusherWatchers watcher.Epochs
-
-	for {
-		select {
-		case <-tst.loopCloser.CloseNotify():
-			return
-		case e := <-flusherWatcher:
-			flusherWatchers.Add(e)
-		case <-epochWatcher.Watch():
-			if func() bool {
-				tst.incTotalFlushLoopStarted(1)
-				start := time.Now()
-				defer func() {
-					tst.incTotalFlushLoopFinished(1)
-					tst.incTotalFlushLatency(time.Since(start).Seconds())
-				}()
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot != nil {
-					defer curSnapshot.decRef()
-					tst.flush(curSnapshot, flushCh)
-					epoch = curSnapshot.epoch
-					flusherWatchers.Notify(epoch)
-					flusherWatchers = nil
-					if tst.currentEpoch() != epoch {
-						tst.incTotalFlushLoopProgress(1)
-						return false
-					}
-				}
-				epochWatcher = introducerWatcher.Add(epoch, tst.loopCloser.CloseNotify())
-				return epochWatcher == nil
-			}() {
-				return
-			}
-		}
+	if curSnapshot != nil {
+		flusherWatchers = tst.pauseFlusherToPileupMemParts(epoch, flusherWatcher, flusherWatchers)
+		curSnapshot.decRef()
+		curSnapshot = nil
 	}
+	tst.RLock()
+	if tst.snapshot != nil && tst.snapshot.epoch > epoch {
+		curSnapshot = tst.snapshot
+		curSnapshot.incRef()
+	}
+	tst.RUnlock()
+	if curSnapshot == nil {
+		return nil, flusherWatchers, false, false
+	}
+	merged, err := tst.mergeMemParts(curSnapshot, mergeCh)
+	if err != nil {
+		tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
+		tst.incTotalFlushLoopErr(1)
+		return curSnapshot, flusherWatchers, false, false
+	}
+	return curSnapshot, flusherWatchers, true, merged
 }
 
 // pauseFlusherToPileupMemParts takes a pause to wait for in-memory parts to pile up.
@@ -155,33 +129,80 @@ func (tst *tsTable) pauseFlusherToPileupMemParts(epoch uint64, flushWatcher watc
 }
 
 func (tst *tsTable) mergeMemParts(snp *snapshot, mergeCh chan *mergerIntroduction) (bool, error) {
+	var merged bool
+	var currentSegmentID int64
 	var memParts []*partWrapper
 	mergedIDs := make(map[uint64]struct{})
+
+	// Helper function to merge current segment's parts
+	mergeCurrentSegment := func() (bool, error) {
+		if len(memParts) < 2 {
+			return false, nil
+		}
+
+		// Create a copy of mergedIDs for this merge operation
+		currentMergedIDs := make(map[uint64]struct{}, len(mergedIDs))
+		for id := range mergedIDs {
+			currentMergedIDs[id] = struct{}{}
+		}
+
+		// merge memory must not be closed by the tsTable.close
+		closeCh := make(chan struct{})
+		newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
+			currentMergedIDs, mergeCh, closeCh, mergeTypeMem)
+		close(closeCh)
+		if err != nil {
+			if errors.Is(err, errClosed) {
+				return true, nil
+			}
+			return false, err
+		}
+		return newPart != nil, nil
+	}
+
+	// Process parts grouped by segmentID
 	for i := range snp.parts {
-		if snp.parts[i].mp != nil {
-			memParts = append(memParts, snp.parts[i])
-			mergedIDs[snp.parts[i].ID()] = struct{}{}
+		if snp.parts[i].mp == nil {
 			continue
 		}
-	}
-	if len(memParts) < 2 {
-		return false, nil
-	}
-	// merge memory must not be closed by the tsTable.close
-	closeCh := make(chan struct{})
-	newPart, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMergedFlusher, memParts,
-		mergedIDs, mergeCh, closeCh, "mem")
-	close(closeCh)
-	if err != nil {
-		if errors.Is(err, errClosed) {
-			return true, nil
+
+		segID := snp.parts[i].mp.segmentID
+
+		// If this is a new segment, merge the previous segment first
+		if currentSegmentID != 0 && currentSegmentID != segID {
+			m, err := mergeCurrentSegment()
+			if err != nil {
+				return false, err
+			}
+			if m {
+				merged = true
+			}
+
+			// Reset for next segment
+			memParts = memParts[:0]
+			for id := range mergedIDs {
+				delete(mergedIDs, id)
+			}
 		}
-		return false, err
+
+		// Add part to current segment
+		currentSegmentID = segID
+		memParts = append(memParts, snp.parts[i])
+		mergedIDs[snp.parts[i].ID()] = struct{}{}
 	}
-	if newPart == nil {
-		return false, nil
+
+	// Merge the last segment if it has parts
+	if len(memParts) >= 2 {
+		m, err := mergeCurrentSegment()
+		if err != nil {
+			return false, err
+		}
+		if m {
+			merged = true
+		}
 	}
-	return true, nil
+
+	return merged, nil
 }
 
 func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction) {
@@ -189,6 +210,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	defer releaseFlusherIntroduction(ind)
 	start := time.Now()
 	partsCount := 0
+	partIDMap := make(map[uint64]struct{})
 	for _, pw := range snapshot.parts {
 		if pw.mp == nil || pw.mp.partMetadata.TotalCount < 1 {
 			continue
@@ -199,9 +221,31 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		newPW := newPartWrapper(nil, mustOpenFilePart(pw.ID(), tst.root, tst.fileSystem))
 		newPW.p.partMetadata.ID = pw.ID()
 		ind.flushed[newPW.ID()] = newPW
+		partIDMap[newPW.ID()] = struct{}{}
 	}
 	if len(ind.flushed) < 1 {
 		return
+	}
+	allSidx := tst.getAllSidx()
+	for name, sidxInstance := range allSidx {
+		if l := tst.l.Debug(); l.Enabled() {
+			tst.l.Debug().
+				Str("sidx_name", name).
+				Msg("flushing sidx")
+		}
+		sidxFlusherIntroduced, err := sidxInstance.Flush(partIDMap)
+		if err != nil {
+			tst.l.Warn().Err(err).Str("sidx", name).Msg("sidx flush failed")
+			return
+		}
+		ind.sidxFlusherIntroduced[name] = sidxFlusherIntroduced
+	}
+	if len(ind.sidxFlusherIntroduced) > 0 {
+		defer func() {
+			for _, sidxFlusherIntroduced := range ind.sidxFlusherIntroduced {
+				sidxFlusherIntroduced.Release()
+			}
+		}()
 	}
 	end := time.Now()
 	tst.incTotalFlushed(1)
@@ -211,6 +255,9 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	select {
 	case flushCh <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		for _, pw := range ind.flushed {
+			pw.decRef()
+		}
 		return
 	}
 	select {

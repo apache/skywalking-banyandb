@@ -61,7 +61,19 @@ type Memory interface {
 	run.PreRunner
 	run.Config
 	run.Service
+	// State returns the current memory pressure state.
+	State() State
 }
+
+// State represents memory pressure levels for load shedding.
+type State int
+
+const (
+	// StateLow indicates normal memory usage, accept all requests.
+	StateLow State = iota
+	// StateHigh indicates high memory pressure, reject new requests.
+	StateHigh
+)
 
 var _ Memory = (*memory)(nil)
 
@@ -161,6 +173,31 @@ func (m *memory) AvailableBytes() int64 {
 		return 0
 	}
 	return int64(m.limit.Load() - usage)
+}
+
+// State returns the current memory pressure state for load shedding decisions.
+// It uses 20% of the memory limit as the threshold for high pressure state.
+// Returns StateLow if no limit is set (fail open).
+func (m *memory) State() State {
+	limit := m.GetLimit()
+	if limit == 0 {
+		// No limit set, fail open
+		return StateLow
+	}
+
+	available := m.AvailableBytes()
+	if available <= 0 {
+		return StateHigh
+	}
+
+	// Use 20% of memory limit as the threshold for high pressure
+	// This provides a buffer zone to prevent rapid state oscillations
+	threshold := int64(limit / 5)
+	if available <= threshold {
+		return StateHigh
+	}
+
+	return StateLow
 }
 
 // Name returns the name of the protector.
@@ -269,7 +306,9 @@ func (m *memory) GetThreshold() int64 {
 	// Try reading cgroup memory limit
 	cgLimit, err := cgroups.MemoryLimit()
 	if err != nil {
-		m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		if dl := m.l.Debug(); dl.Enabled() {
+			dl.Err(err).Msg("failed to get memory limit from cgroups, using default threshold")
+		}
 		// Fallback default threshold of 64MB
 		return 64 << 20
 	}

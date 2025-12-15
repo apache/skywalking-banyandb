@@ -80,23 +80,26 @@ type schemaRepo struct {
 	metadata         metadata.Repo
 	pipeline         queue.Client
 	l                *logger.Logger
+	closingGroups    map[string]struct{}
 	topNProcessorMap sync.Map
 	nodeID           string
 	path             string
+	closingGroupsMu  sync.RWMutex
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) *schemaRepo {
 	sr := &schemaRepo{
-		path:     path,
-		l:        svc.l,
-		metadata: svc.metadata,
-		pipeline: svc.localPipeline,
-		nodeID:   nodeID,
+		path:          path,
+		l:             svc.l,
+		metadata:      svc.metadata,
+		pipeline:      svc.localPipeline,
+		nodeID:        nodeID,
+		closingGroups: make(map[string]struct{}),
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
 		svc.l,
-		newSupplier(path, svc, sr, nodeLabels, nodeID),
+		newSupplier(path, svc, sr, nodeLabels),
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
@@ -105,10 +108,11 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 
 func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client) *schemaRepo {
 	sr := &schemaRepo{
-		path:     path,
-		l:        svc.l,
-		metadata: svc.metadata,
-		pipeline: pipeline,
+		path:          path,
+		l:             svc.l,
+		metadata:      svc.metadata,
+		pipeline:      pipeline,
+		closingGroups: make(map[string]struct{}),
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -118,6 +122,31 @@ func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grp
 	)
 	sr.start()
 	return sr
+}
+
+// markGroupClosing marks a group as closing to prevent new processors from being created.
+func (sr *schemaRepo) markGroupClosing(group string) {
+	sr.closingGroupsMu.Lock()
+	if sr.closingGroups == nil {
+		sr.closingGroups = make(map[string]struct{})
+	}
+	sr.closingGroups[group] = struct{}{}
+	sr.closingGroupsMu.Unlock()
+}
+
+// unmarkGroupClosing removes the closing mark of a group.
+func (sr *schemaRepo) unmarkGroupClosing(group string) {
+	sr.closingGroupsMu.Lock()
+	delete(sr.closingGroups, group)
+	sr.closingGroupsMu.Unlock()
+}
+
+// isGroupClosing returns true if the group is currently being closed.
+func (sr *schemaRepo) isGroupClosing(group string) bool {
+	sr.closingGroupsMu.RLock()
+	_, ok := sr.closingGroups[group]
+	sr.closingGroupsMu.RUnlock()
+	return ok
 }
 
 func (sr *schemaRepo) start() {
@@ -218,11 +247,22 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			return
 		}
 		topNSchema := metadata.Spec.(*databasev1.TopNAggregation)
+		// Skip creating/registering processors if the group is closing
+		if sr.isGroupClosing(topNSchema.GetMetadata().GetGroup()) || (topNSchema.SourceMeasure != nil && sr.isGroupClosing(topNSchema.SourceMeasure.GetGroup())) {
+			sr.l.Debug().Str("group", topNSchema.GetMetadata().GetGroup()).
+				Str("topN", topNSchema.GetMetadata().GetName()).
+				Msg("skip TopNAggregation registration: group is closing")
+			return
+		}
 		if err := validate.TopNAggregation(topNSchema); err != nil {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
 			return
 		}
 		manager := sr.getSteamingManager(topNSchema.SourceMeasure, sr.pipeline)
+		if manager == nil {
+			// group is closing; skip registering
+			return
+		}
 		manager.register(topNSchema)
 	default:
 	}
@@ -235,12 +275,16 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
 			return
 		}
+		// Mark group as closing to prevent new processors from being created during deletion
+		sr.markGroupClosing(g.Metadata.Name)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
 		sr.stopAllProcessorsWithGroupPrefix(g.Metadata.Name)
+		// Deletion completed; allow future re-creation
+		sr.unmarkGroupClosing(g.Metadata.Name)
 	case schema.KindMeasure:
 		m := metadata.Spec.(*databasev1.Measure)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -356,29 +400,31 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 }
 
 func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
-	var keysToDelete []string
 	groupPrefix := groupName + "/"
-
-	sr.topNProcessorMap.Range(func(key, _ any) bool {
-		keyStr := key.(string)
-		if strings.HasPrefix(keyStr, groupPrefix) {
-			keysToDelete = append(keysToDelete, keyStr)
-		}
-		return true
-	})
-
-	for _, key := range keysToDelete {
-		if v, ok := sr.topNProcessorMap.Load(key); ok {
-			manager := v.(*topNProcessorManager)
-			if err := manager.Close(); err != nil {
-				sr.l.Error().Err(err).Str("key", key).Msg("failed to close topN processor manager")
+	totalClosed := 0
+	for {
+		closedThisRound := 0
+		sr.topNProcessorMap.Range(func(key, val any) bool {
+			keyStr := key.(string)
+			if strings.HasPrefix(keyStr, groupPrefix) {
+				manager := val.(*topNProcessorManager)
+				if err := manager.Close(); err != nil {
+					sr.l.Error().Err(err).Str("key", keyStr).Msg("failed to close topN processor manager")
+				} else {
+					sr.topNProcessorMap.Delete(keyStr)
+					closedThisRound++
+				}
 			}
-			sr.topNProcessorMap.Delete(key)
+			return true
+		})
+		if closedThisRound == 0 {
+			break
 		}
+		totalClosed += closedThisRound
+		// continue to ensure no late-created managers remain
 	}
-
-	if len(keysToDelete) > 0 {
-		sr.l.Info().Str("groupName", groupName).Int("count", len(keysToDelete)).Msg("stopped topN processors for group")
+	if totalClosed > 0 {
+		sr.l.Info().Str("groupName", groupName).Int("count", totalClosed).Msg("stopped topN processors for group")
 	}
 }
 
@@ -392,12 +438,11 @@ type supplier struct {
 	l          *logger.Logger
 	schemaRepo *schemaRepo
 	nodeLabels map[string]string
-	nodeID     string
 	path       string
 	option     option
 }
 
-func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string, nodeID string) *supplier {
+func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
 	if svc.pm == nil {
 		svc.l.Panic().Msg("CRITICAL: svc.pm is nil in newSupplier")
 	}
@@ -418,7 +463,6 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 		pm:         svc.pm,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
-		nodeID:     nodeID,
 	}
 }
 
@@ -450,9 +494,11 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
 	segmentIdleTimeout := time.Duration(0)
+	disableRetention := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
-		for _, st := range ro.Stages {
+		foundMatched := false
+		for i, st := range ro.Stages {
 			if st.Ttl.Unit != ro.Ttl.Unit {
 				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
 			}
@@ -464,13 +510,18 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			if !selector.Matches(s.nodeLabels) {
 				continue
 			}
+			foundMatched = true
 			ttl.Num += ttlNum
 			shardNum = st.ShardNum
 			segInterval = st.SegmentInterval
 			if st.Close {
 				segmentIdleTimeout = 5 * time.Minute
 			}
+			disableRetention = i+1 < len(ro.Stages)
 			break
+		}
+		if !foundMatched {
+			disableRetention = true
 		}
 	}
 	group := groupSchema.Metadata.Name
@@ -486,6 +537,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
 		SegmentIdleTimeout:             segmentIdleTimeout,
+		DisableRetention:               disableRetention,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -597,6 +649,11 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
 		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
 		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
+		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
+		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
+		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
+		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
+		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
 		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:               factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),

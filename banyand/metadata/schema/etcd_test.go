@@ -421,3 +421,278 @@ func Test_Etcd_Entity_Update(t *testing.T) {
 		})
 	}
 }
+
+func Test_Etcd_Stream_GroupPrefixMatching(t *testing.T) {
+	tester := assert.New(t)
+	registry, closer := initServerAndRegister(t)
+	defer closer()
+
+	// Create groups with similar names to test prefix matching
+	groups := []string{"records", "recordsTrace", "recordsLog"}
+	for _, groupName := range groups {
+		group := &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
+		}
+		err := registry.CreateGroup(context.TODO(), group)
+		tester.NoError(err)
+	}
+
+	// Create streams in each group
+	streams := []struct {
+		name  string
+		group string
+	}{
+		{"alarm_record", "records"},
+		{"top_n_cache_read_command", "records"},
+		{"log", "recordsLog"},
+		{"sw_span_attached_event_record", "recordsTrace"},
+	}
+
+	for _, streamData := range streams {
+		stream := &databasev1.Stream{
+			Metadata: &commonv1.Metadata{
+				Name:  streamData.name,
+				Group: streamData.group,
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "searchable",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "timestamp",
+							Type: databasev1.TagType_TAG_TYPE_INT,
+						},
+					},
+				},
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"timestamp"},
+			},
+		}
+		_, err := registry.CreateStream(context.Background(), stream)
+		tester.NoError(err)
+	}
+
+	// Test that listing streams for "records" group only returns streams from "records" group
+	recordsStreams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: "records"})
+	tester.NoError(err)
+	tester.Equal(2, len(recordsStreams), "Should only return streams from 'records' group")
+
+	// Verify the returned streams are from the correct group
+	for _, stream := range recordsStreams {
+		tester.Equal("records", stream.Metadata.Group, "All returned streams should be from 'records' group")
+	}
+
+	// Test that listing streams for "recordsTrace" group only returns streams from "recordsTrace" group
+	recordsTraceStreams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: "recordsTrace"})
+	tester.NoError(err)
+	tester.Equal(1, len(recordsTraceStreams), "Should only return streams from 'recordsTrace' group")
+	tester.Equal("recordsTrace", recordsTraceStreams[0].Metadata.Group)
+	tester.Equal("sw_span_attached_event_record", recordsTraceStreams[0].Metadata.Name)
+
+	// Test that listing streams for "recordsLog" group only returns streams from "recordsLog" group
+	recordsLogStreams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: "recordsLog"})
+	tester.NoError(err)
+	tester.Equal(1, len(recordsLogStreams), "Should only return streams from 'recordsLog' group")
+	tester.Equal("recordsLog", recordsLogStreams[0].Metadata.Group)
+	tester.Equal("log", recordsLogStreams[0].Metadata.Name)
+}
+
+func Test_Etcd_Measure_GroupPrefixMatching(t *testing.T) {
+	tester := assert.New(t)
+	registry, closer := initServerAndRegister(t)
+	defer closer()
+
+	// Create groups with similar names to test prefix matching
+	groups := []string{"metrics", "metricsTrace", "metricsLog"}
+	for _, groupName := range groups {
+		group := &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
+		}
+		err := registry.CreateGroup(context.TODO(), group)
+		tester.NoError(err)
+	}
+
+	// Create measures in each group
+	measures := []struct {
+		name  string
+		group string
+	}{
+		{"service_cpm", "metrics"},
+		{"service_resp_time", "metrics"},
+		{"trace_metrics", "metricsTrace"},
+		{"log_metrics", "metricsLog"},
+	}
+
+	for _, measureData := range measures {
+		measure := &databasev1.Measure{
+			Metadata: &commonv1.Metadata{
+				Name:  measureData.name,
+				Group: measureData.group,
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "default",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "service_id",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+			Fields: []*databasev1.FieldSpec{
+				{
+					Name:              "value",
+					FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
+					EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+					CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"service_id"},
+			},
+			Interval: "1m",
+		}
+		_, err := registry.CreateMeasure(context.Background(), measure)
+		tester.NoError(err)
+	}
+
+	// Test that listing measures for "metrics" group only returns measures from "metrics" group
+	metricsResults, err := registry.ListMeasure(context.TODO(), schema.ListOpt{Group: "metrics"})
+	tester.NoError(err)
+	tester.Equal(2, len(metricsResults), "Should only return measures from 'metrics' group")
+
+	// Verify the returned measures are from the correct group
+	for _, measure := range metricsResults {
+		tester.Equal("metrics", measure.Metadata.Group, "All returned measures should be from 'metrics' group")
+	}
+
+	// Test that listing measures for "metricsTrace" group only returns measures from "metricsTrace" group
+	metricsTraceResults, err := registry.ListMeasure(context.TODO(), schema.ListOpt{Group: "metricsTrace"})
+	tester.NoError(err)
+	tester.Equal(1, len(metricsTraceResults), "Should only return measures from 'metricsTrace' group")
+	tester.Equal("metricsTrace", metricsTraceResults[0].Metadata.Group)
+	tester.Equal("trace_metrics", metricsTraceResults[0].Metadata.Name)
+
+	// Test that listing measures for "metricsLog" group only returns measures from "metricsLog" group
+	metricsLogResults, err := registry.ListMeasure(context.TODO(), schema.ListOpt{Group: "metricsLog"})
+	tester.NoError(err)
+	tester.Equal(1, len(metricsLogResults), "Should only return measures from 'metricsLog' group")
+	tester.Equal("metricsLog", metricsLogResults[0].Metadata.Group)
+	tester.Equal("log_metrics", metricsLogResults[0].Metadata.Name)
+}
+
+func Test_Etcd_GroupPrefixMatching_EdgeCases(t *testing.T) {
+	tester := assert.New(t)
+	registry, closer := initServerAndRegister(t)
+	defer closer()
+
+	// Test edge cases with various group name patterns
+	groups := []string{
+		"a",
+		"ab",
+		"abc",
+		"a_",
+		"a_b",
+		"test",
+		"testGroup",
+		"testGroupSuffix",
+	}
+
+	for _, groupName := range groups {
+		group := &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: groupName,
+			},
+			Catalog: commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
+		}
+		err := registry.CreateGroup(context.TODO(), group)
+		tester.NoError(err)
+
+		// Create one stream per group
+		stream := &databasev1.Stream{
+			Metadata: &commonv1.Metadata{
+				Name:  "stream_" + groupName,
+				Group: groupName,
+			},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{
+					Name: "default",
+					Tags: []*databasev1.TagSpec{
+						{
+							Name: "id",
+							Type: databasev1.TagType_TAG_TYPE_STRING,
+						},
+					},
+				},
+			},
+			Entity: &databasev1.Entity{
+				TagNames: []string{"id"},
+			},
+		}
+		_, err = registry.CreateStream(context.Background(), stream)
+		tester.NoError(err)
+	}
+
+	// Test each group individually to ensure exact matching
+	for _, groupName := range groups {
+		streams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: groupName})
+		tester.NoError(err)
+		tester.Equal(1, len(streams), "Group '%s' should have exactly 1 stream", groupName)
+		tester.Equal(groupName, streams[0].Metadata.Group, "Stream should belong to group '%s'", groupName)
+		tester.Equal("stream_"+groupName, streams[0].Metadata.Name, "Stream name should match expected pattern")
+	}
+
+	// Specifically test the problematic case from the GitHub issue
+	// Ensure "a" group doesn't return streams from "ab" or "abc" groups
+	aStreams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: "a"})
+	tester.NoError(err)
+	tester.Equal(1, len(aStreams), "Group 'a' should have exactly 1 stream")
+	tester.Equal("a", aStreams[0].Metadata.Group)
+
+	// Ensure "test" group doesn't return streams from "testGroup" or "testGroupSuffix" groups
+	testStreams, err := registry.ListStream(context.TODO(), schema.ListOpt{Group: "test"})
+	tester.NoError(err)
+	tester.Equal(1, len(testStreams), "Group 'test' should have exactly 1 stream")
+	tester.Equal("test", testStreams[0].Metadata.Group)
+}

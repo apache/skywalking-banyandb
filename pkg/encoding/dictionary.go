@@ -255,3 +255,50 @@ func decodeBitPacking(dst []uint32, src []byte) ([]uint32, error) {
 	decoder := newBitPackingDecoder(br)
 	return decoder.decode(dst)
 }
+
+// DecodeDictionaryValues extracts only the dictionary values without decoding indices.
+func DecodeDictionaryValues(src []byte) ([][]byte, error) {
+	if len(src) == 0 {
+		return nil, nil
+	}
+
+	src, count := BytesToVarUint64(src)
+	if count == 0 {
+		return nil, nil
+	}
+
+	// Decode only the values part, skip the indices
+	u64List := GenerateUint64List(0)
+	defer ReleaseUint64List(u64List)
+
+	var tail []byte
+	var err error
+	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, count)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode string lengths: %w", err)
+	}
+	aLens := u64List.L
+	src = tail
+
+	var decompressedData []byte
+	decompressedData, _, err = decompressBlock(nil, src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode bytes block with strings: %w", err)
+	}
+
+	var values [][]byte
+	data := decompressedData
+	for _, sLen := range aLens {
+		if uint64(len(data)) < sLen {
+			return nil, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
+		}
+		if sLen == 0 {
+			values = append(values, nil)
+			continue
+		}
+		values = append(values, data[:sLen])
+		data = data[sLen:]
+	}
+
+	return values, nil
+}

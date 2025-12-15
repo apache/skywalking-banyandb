@@ -2,6 +2,30 @@
 
 Release Notes.
 
+## 0.10.0
+
+### Features
+
+- Remove Bloom filter for dictionary-encoded tags.
+- Implement BanyanDB MCP.
+- Remove check requiring tags in criteria to be present in projection
+- Add sorted query support for the Property.
+- Update bydbQL to add sorted query support for the Property.
+- Remove the windows arch for binary and docker image.
+- Support writing data with specifications.
+
+### Bug Fixes
+
+- Fix the wrong retention setting of each measure/stream/trace.
+- Fix server got panic when create/update property with high dist usage.
+- Fix incorrect key range update in sidx part metadata.
+
+### Document
+
+- Add read write benchmark document for 0.9.0 release.
+- Add design of KTM.
+- Add FODC overview doc.
+
 ## 0.9.0
 
 ### Features
@@ -33,6 +57,32 @@ Release Notes.
 - Enhance flusher and introducer loops to support merging operations, improving efficiency by eliminating the need for a separate merge loop and optimizing data handling process during flushing and merging
 - Enhance stream synchronization with configurable sync interval - Allows customization of synchronization timing for better performance tuning
 - Refactor flusher and introducer loops to support conditional merging - Optimizes data processing by adding conditional logic to merge operations
+- New storage engine for trace:
+  - Data ingestion and retrieval.
+  - Flush memory data to disk.
+  - Merge memory data and disk data.
+- Enhance access log functionality with sampling option.
+- Implement a resilient publisher with circuit breaker and retry logic with exponential backoff.
+- Optimize gRPC message size limits: increase server max receive message size to 16MB and client max receive message size to 32MB for better handling of large time-series data blocks.
+- Add query access log support for stream, measure, trace, and property services to capture and log all query requests for monitoring and debugging purposes.
+- Implement comprehensive version compatibility checking for both regular data transmission and chunked sync operations, ensuring proper API version and file format version validation with detailed error reporting and graceful handling of version mismatches.
+- **Breaking Change**: Rename disk usage configuration flags and implement forced retention cleanup:
+  - `*-max-disk-usage-percent` → `*-retention-high-watermark` (measure, stream, trace, property services)
+  - Add new retention configuration flags: `*-retention-low-watermark`, `*-retention-check-interval`, `*-retention-cooldown`
+  - Implement disk monitor with forced retention cleanup for data/standalone servers
+  - Add comprehensive disk management documentation with configuration guides and troubleshooting
+- Implement cluster mode for trace.
+- Implement Trace views.
+- Use Fetch request to instead of axios request and remove axios.
+- Implement Trace Tree for debug mode.
+- Implement bydbQL.
+- UI: Implement the Query Page for BydbQL.
+- Refactor router for better usability.
+- Implement the handoff queue for Trace.
+- Add dump command-line tool to parse and display trace part data with support for CSV export and human-readable timestamp formatting.
+- Implement backoff retry mechanism for sending queue failures.
+- Implement memory load shedding and dynamic gRPC buffer sizing for liaison server to prevent OOM errors under high-throughput write traffic.
+- Add stream dump command to parse and display stream shard data with support for CSV export, filtering, and projection.
 
 ### Bug Fixes
 
@@ -41,6 +91,11 @@ Release Notes.
 - Fix the crash when collecting the metrics from a closed segment.
 - Fix topN parsing panic when the criteria is set.
 - Remove the indexed_only field in TagSpec.
+- Fix returning empty result when using IN operatior on the array type tags.
+- Fix memory leaks and OOM issues in streaming processing by implementing deduplication logic in priority queues and improving sliding window memory management.
+- Fix etcd prefix matching any key that starts with this prefix.
+- Fix the sorting timestamps issue of the measure model when there are more than one segment.
+- Fix comparison issues in TopN test cases
 
 ### Document
 

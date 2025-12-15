@@ -19,6 +19,7 @@ package trace
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -49,6 +51,7 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 					timestamps: []int64{},
 					tags:       [][]*tagValue{},
 					spans:      [][]byte{},
+					spanIDs:    []string{},
 				},
 			},
 			want: 0,
@@ -65,7 +68,8 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 							{tag: "intArrTag", valueType: pbv1.ValueTypeInt64Arr, value: nil, valueArr: [][]byte{convert.Int64ToBytes(25), convert.Int64ToBytes(30)}},
 						},
 					},
-					spans: [][]byte{[]byte("span1")},
+					spans:   [][]byte{[]byte("span1")},
+					spanIDs: []string{"span1"},
 				},
 			},
 			want: 1,
@@ -91,7 +95,7 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 			go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 			defer tst.Close()
 			for _, ts := range tt.tsList {
-				tst.mustAddTraces(ts)
+				tst.mustAddTraces(ts, nil)
 				time.Sleep(100 * time.Millisecond)
 			}
 			s := tst.currentSnapshot()
@@ -115,10 +119,10 @@ func Test_tsTable_mustAddTraces(t *testing.T) {
 
 func Test_tstIter(t *testing.T) {
 	type testCtx struct {
+		tsList       []*traces
 		wantErr      error
 		name         string
-		tsList       []*traces
-		tids         []string
+		tid          string
 		want         []blockMetadata
 		minTimestamp int64
 		maxTimestamp int64
@@ -133,17 +137,22 @@ func Test_tstIter(t *testing.T) {
 			s = new(snapshot)
 		}
 		defer s.decRef()
-		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp)
+		pp, n := s.getParts(nil, tt.minTimestamp, tt.maxTimestamp, []string{tt.tid})
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
-		ti.init(bma, pp, tt.tids, tt.minTimestamp, tt.maxTimestamp)
+		// Convert trace IDs to grouped format (each part gets all trace IDs for testing)
+		groupedTids := make([][]string, len(pp))
+		for i := range groupedTids {
+			groupedTids[i] = []string{tt.tid}
+		}
+		ti.init(bma, pp, groupedTids)
 		var got []blockMetadata
 		for ti.nextBlock() {
-			if ti.piHeap[0].curBlock.traceID == "" {
+			if ti.piPool[ti.idx].curBlock.traceID == "" {
 				t.Errorf("Expected curBlock to be initialized, but it was nil")
 			}
 			var bm blockMetadata
-			bm.copyFrom(ti.piHeap[0].curBlock)
+			bm.copyFrom(ti.piPool[ti.idx].curBlock)
 			got = append(got, bm)
 		}
 
@@ -166,37 +175,28 @@ func Test_tstIter(t *testing.T) {
 	t.Run("memory snapshot", func(t *testing.T) {
 		tests := []testCtx{
 			{
-				name:         "Test with no traces",
-				tsList:       []*traces{},
-				tids:         []string{"trace1", "trace2", "trace3"},
-				minTimestamp: 1,
-				maxTimestamp: 1,
+				name:   "Test with no traces",
+				tsList: []*traces{},
 			},
 			{
 				name:         "Test with single part",
 				tsList:       []*traces{tsTS1},
-				tids:         []string{"trace1", "trace2", "trace3"},
+				tid:          "trace1",
 				minTimestamp: 1,
-				maxTimestamp: 1,
+				maxTimestamp: 2,
 				want: []blockMetadata{
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
 				},
 			},
 			{
 				name:         "Test with multiple parts",
 				tsList:       []*traces{tsTS1, tsTS2},
-				tids:         []string{"trace1", "trace2", "trace3"},
+				tid:          "trace1",
 				minTimestamp: 1,
 				maxTimestamp: 2,
 				want: []blockMetadata{
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
 					{traceID: "trace1", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace2", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
-					{traceID: "trace3", count: 1, uncompressedSpanSizeBytes: 5},
 				},
 			},
 		}
@@ -216,13 +216,17 @@ func Test_tstIter(t *testing.T) {
 				introducerWatcher := make(watcher.Channel, 1)
 				go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, 1)
 				for _, ts := range tt.tsList {
-					tst.mustAddTraces(ts)
+					tst.mustAddTraces(ts, nil)
 					time.Sleep(100 * time.Millisecond)
 				}
 				verify(t, tt, tst)
 			})
 		}
 	})
+}
+
+var allTagProjections = &model.TagProjection{
+	Names: []string{"strArrTag", "strTag", "intTag"},
 }
 
 var tsTS1 = &traces{
@@ -245,7 +249,8 @@ var tsTS1 = &traces{
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 		},
 	},
-	spans: [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+	spans:   [][]byte{[]byte("span1"), []byte("span2"), []byte("span3")},
+	spanIDs: []string{"span1", "span2", "span3"},
 }
 
 var tsTS2 = &traces{
@@ -268,7 +273,8 @@ var tsTS2 = &traces{
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(60), valueArr: nil},
 		},
 	},
-	spans: [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
+	spans:   [][]byte{[]byte("span4"), []byte("span5"), []byte("span6")},
+	spanIDs: []string{"span4", "span5", "span6"},
 }
 
 func generateHugeTraces(num int) *traces {
@@ -277,6 +283,7 @@ func generateHugeTraces(num int) *traces {
 		timestamps: []int64{},
 		tags:       [][]*tagValue{},
 		spans:      [][]byte{},
+		spanIDs:    []string{},
 	}
 	for i := 1; i <= num; i++ {
 		traces.traceIDs = append(traces.traceIDs, "trace1")
@@ -289,6 +296,7 @@ func generateHugeTraces(num int) *traces {
 			{tag: "intTag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(30), valueArr: nil},
 		})
 		traces.spans = append(traces.spans, []byte("span1"))
+		traces.spanIDs = append(traces.spanIDs, "span1")
 	}
 	traces.traceIDs = append(traces.traceIDs, []string{"trace2", "trace3"}...)
 	traces.timestamps = append(traces.timestamps, []int64{int64(num + 1), int64(num + 2)}...)
@@ -300,5 +308,300 @@ func generateHugeTraces(num int) *traces {
 		{}, // empty tags
 	}...)
 	traces.spans = append(traces.spans, [][]byte{[]byte("span2"), []byte("span3")}...)
+	traces.spanIDs = append(traces.spanIDs, []string{"span2", "span3"}...)
 	return traces
+}
+
+// generateRealisticTraces creates a more realistic dataset for benchmarking:
+// - Each trace has 3-5 spans
+// - Each span is more than 100KB
+// - Creates the specified number of unique traces.
+func generateRealisticTraces(numTraces int) *traces {
+	traces := &traces{
+		traceIDs:   []string{},
+		timestamps: []int64{},
+		tags:       [][]*tagValue{},
+		spans:      [][]byte{},
+		spanIDs:    []string{},
+	}
+
+	// Create a large span payload (>100 KiB)
+	// Using a mix of realistic data: stack traces, error messages, metadata
+	const spanPayloadSizeKiB = 110 // 110 KiB (1 KiB = 1024 bytes)
+	spanPayloadTemplate := make([]byte, spanPayloadSizeKiB*1024)
+	for i := range spanPayloadTemplate {
+		// Fill with semi-realistic data
+		spanPayloadTemplate[i] = byte('A' + (i % 26))
+	}
+
+	timestamp := int64(1000000)
+
+	for traceIdx := 0; traceIdx < numTraces; traceIdx++ {
+		traceID := fmt.Sprintf("trace_%d", traceIdx)
+
+		// Each trace has 3-5 spans
+		numSpans := 3 + (traceIdx % 3) // Will give 3, 4, or 5 spans
+
+		for spanIdx := 0; spanIdx < numSpans; spanIdx++ {
+			spanID := fmt.Sprintf("%s_span_%d", traceID, spanIdx)
+
+			// Create a unique span payload by appending span-specific data
+			spanPayload := make([]byte, len(spanPayloadTemplate))
+			copy(spanPayload, spanPayloadTemplate)
+			// Add span-specific suffix to ensure uniqueness
+			suffix := []byte(fmt.Sprintf("_trace_%d_span_%d", traceIdx, spanIdx))
+			copy(spanPayload[len(spanPayload)-len(suffix):], suffix)
+
+			traces.traceIDs = append(traces.traceIDs, traceID)
+			traces.timestamps = append(traces.timestamps, timestamp)
+			timestamp++
+
+			// Add realistic tags
+			traces.tags = append(traces.tags, []*tagValue{
+				{tag: "http.method", valueType: pbv1.ValueTypeStr, value: []byte("POST"), valueArr: nil},
+				{tag: "http.status", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(200), valueArr: nil},
+				{tag: "http.url", valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("/api/v1/trace/%d", traceIdx)), valueArr: nil},
+				{tag: "service.name", valueType: pbv1.ValueTypeStr, value: []byte("test-service"), valueArr: nil},
+				{tag: "span.kind", valueType: pbv1.ValueTypeStr, value: []byte("server"), valueArr: nil},
+				{tag: "error", valueType: pbv1.ValueTypeBinaryData, value: spanPayload[:1024], valueArr: nil}, // Use part of payload for error
+			})
+
+			traces.spans = append(traces.spans, spanPayload)
+			traces.spanIDs = append(traces.spanIDs, spanID)
+		}
+	}
+
+	return traces
+}
+
+// Test_tstIter_reset_does_not_corrupt_parts verifies the fix for the bug where
+// tstIter.reset() was corrupting the input parts array through slice aliasing.
+// This test ensures that parts array elements remain intact after init/release cycles.
+func Test_tstIter_reset_does_not_corrupt_parts(t *testing.T) {
+	createMockPart := func(id uint64) *part {
+		return &part{
+			partMetadata: partMetadata{
+				ID:           id,
+				MinTimestamp: 0,
+				MaxTimestamp: 100,
+			},
+		}
+	}
+
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	t.Run("single_cycle_preserves_parts", func(t *testing.T) {
+		// Create parts array with 3 elements
+		parts := []*part{
+			createMockPart(1),
+			createMockPart(2),
+			createMockPart(3),
+		}
+
+		// Store original pointers
+		originalPtrs := make([]*part, len(parts))
+		copy(originalPtrs, parts)
+
+		// Initialize and release tstIter
+		ti := generateTstIter()
+		groupedTids := make([][]string, len(parts))
+		for i := range groupedTids {
+			groupedTids[i] = []string{"trace1"}
+		}
+		ti.init(bma, parts, groupedTids)
+		releaseTstIter(ti)
+
+		// Verify parts array is intact
+		require.NotNil(t, parts[0], "parts[0] should not be nil after release")
+		require.NotNil(t, parts[1], "parts[1] should not be nil after release")
+		require.NotNil(t, parts[2], "parts[2] should not be nil after release")
+
+		// Verify elements are the same objects
+		require.Equal(t, originalPtrs[0], parts[0], "parts[0] should be the same object")
+		require.Equal(t, originalPtrs[1], parts[1], "parts[1] should be the same object")
+		require.Equal(t, originalPtrs[2], parts[2], "parts[2] should be the same object")
+
+		t.Log("✓ Single cycle: parts array preserved correctly")
+	})
+
+	t.Run("multiple_cycles_no_corruption", func(t *testing.T) {
+		// This test simulates scanTraceIDsInline being called multiple times
+		// which is the real-world scenario where the bug occurred
+
+		parts := []*part{
+			createMockPart(10),
+			createMockPart(20),
+			createMockPart(30),
+		}
+
+		originalPtrs := make([]*part, len(parts))
+		copy(originalPtrs, parts)
+
+		traceIDs := []string{"trace1", "trace2", "trace3"}
+
+		// Simulate 5 cycles of getting, using, and releasing tstIter from pool
+		for cycle := 0; cycle < 5; cycle++ {
+			// Verify parts are intact at start of cycle
+			for i, p := range parts {
+				require.NotNil(t, p, "Cycle %d: parts[%d] should not be nil at cycle start", cycle, i)
+				require.Equal(t, originalPtrs[i], p, "Cycle %d: parts[%d] should be same object", cycle, i)
+			}
+
+			// Simulate scanTraceIDsInline: get tstIter, use it, release it
+			ti := generateTstIter()
+			groupedTids := make([][]string, len(parts))
+			for i := range groupedTids {
+				groupedTids[i] = traceIDs
+			}
+			ti.init(bma, parts, groupedTids)
+
+			// Verify tstIter was initialized correctly
+			require.Equal(t, 3, len(ti.parts), "Cycle %d: tstIter should have 3 parts", cycle)
+
+			releaseTstIter(ti)
+
+			// Verify parts are still intact after release
+			for i, p := range parts {
+				require.NotNil(t, p, "Cycle %d: parts[%d] should not be nil after release", cycle, i)
+				require.Equal(t, originalPtrs[i], p, "Cycle %d: parts[%d] should be same object after release", cycle, i)
+			}
+
+			t.Logf("Cycle %d: ✓ Parts intact", cycle)
+		}
+
+		t.Log("✓ Multiple cycles: no corruption detected")
+	})
+
+	t.Run("parts_array_length_preserved", func(t *testing.T) {
+		// Verify that the parts array length is preserved across cycles
+		parts := []*part{
+			createMockPart(100),
+			createMockPart(101),
+		}
+
+		originalLen := len(parts)
+		originalCap := cap(parts)
+
+		ti := generateTstIter()
+		groupedTids := make([][]string, len(parts))
+		for i := range groupedTids {
+			groupedTids[i] = []string{"trace1"}
+		}
+		ti.init(bma, parts, groupedTids)
+		releaseTstIter(ti)
+
+		// Verify length and capacity are preserved
+		require.Equal(t, originalLen, len(parts), "parts length should be preserved")
+		require.Equal(t, originalCap, cap(parts), "parts capacity should be preserved")
+
+		t.Log("✓ Parts array length and capacity preserved")
+	})
+
+	t.Run("reused_tstiter_works_correctly", func(t *testing.T) {
+		// Verify that reusing the same tstIter from pool works correctly
+
+		parts1 := []*part{
+			createMockPart(1),
+			createMockPart(2),
+		}
+
+		parts2 := []*part{
+			createMockPart(3),
+			createMockPart(4),
+			createMockPart(5),
+		}
+
+		// First use: with parts1
+		ti := generateTstIter()
+		groupedTids1 := make([][]string, len(parts1))
+		for i := range groupedTids1 {
+			groupedTids1[i] = []string{"a", "b"}
+		}
+		ti.init(bma, parts1, groupedTids1)
+		require.Equal(t, 2, len(ti.parts), "First init: tstIter should have 2 parts")
+		releaseTstIter(ti)
+
+		// Verify parts1 is intact
+		require.NotNil(t, parts1[0], "parts1[0] should not be nil after first release")
+		require.NotNil(t, parts1[1], "parts1[1] should not be nil after first release")
+
+		// Second use: reuse tstIter with parts2 (different size)
+		ti = generateTstIter()
+		groupedTids2 := make([][]string, len(parts2))
+		for i := range groupedTids2 {
+			groupedTids2[i] = []string{"c", "d", "e"}
+		}
+		ti.init(bma, parts2, groupedTids2)
+		require.Equal(t, 3, len(ti.parts), "Second init: tstIter should have 3 parts")
+		releaseTstIter(ti)
+
+		// Verify parts2 is intact
+		require.NotNil(t, parts2[0], "parts2[0] should not be nil after second release")
+		require.NotNil(t, parts2[1], "parts2[1] should not be nil after second release")
+		require.NotNil(t, parts2[2], "parts2[2] should not be nil after second release")
+
+		// Verify parts1 is still intact (wasn't corrupted by reuse)
+		require.NotNil(t, parts1[0], "parts1[0] should still be non-nil")
+		require.NotNil(t, parts1[1], "parts1[1] should still be non-nil")
+
+		t.Log("✓ Reused tstIter works correctly with different parts arrays")
+	})
+}
+
+// Test_tstIter_reset_clears_but_preserves_input verifies that reset() properly
+// clears the tstIter's internal state without modifying the input.
+func Test_tstIter_reset_clears_but_preserves_input(t *testing.T) {
+	createMockPart := func(id uint64) *part {
+		return &part{
+			partMetadata: partMetadata{
+				ID:           id,
+				MinTimestamp: 0,
+				MaxTimestamp: 100,
+			},
+		}
+	}
+
+	bma := generateBlockMetadataArray()
+	defer releaseBlockMetadataArray(bma)
+
+	parts := []*part{
+		createMockPart(1),
+		createMockPart(2),
+		createMockPart(3),
+	}
+
+	originalPtrs := make([]*part, len(parts))
+	copy(originalPtrs, parts)
+
+	// Initialize tstIter
+	ti := generateTstIter()
+	groupedTids := make([][]string, len(parts))
+	for i := range groupedTids {
+		groupedTids[i] = []string{"trace1"}
+	}
+	ti.init(bma, parts, groupedTids)
+
+	require.Equal(t, 3, len(ti.parts), "After init: tstIter should have 3 parts")
+	require.NotNil(t, ti.parts[0], "After init: ti.parts[0] should not be nil")
+
+	// Call reset directly (normally called by releaseTstIter)
+	ti.reset()
+
+	// Verify tstIter internal state is cleared
+	require.Equal(t, 0, len(ti.parts), "After reset: tstIter.parts length should be 0")
+	require.Nil(t, ti.err, "After reset: tstIter.err should be nil")
+	require.Equal(t, 0, ti.idx, "After reset: tstIter.idx should be 0")
+
+	// Verify original parts array is NOT modified
+	require.NotNil(t, parts[0], "Original parts[0] should not be nil after reset")
+	require.NotNil(t, parts[1], "Original parts[1] should not be nil after reset")
+	require.NotNil(t, parts[2], "Original parts[2] should not be nil after reset")
+
+	// Verify elements are still the same objects
+	require.Equal(t, originalPtrs[0], parts[0], "Original parts[0] should be same object")
+	require.Equal(t, originalPtrs[1], parts[1], "Original parts[1] should be same object")
+	require.Equal(t, originalPtrs[2], parts[2], "Original parts[2] should be same object")
+
+	t.Log("✓ Reset clears tstIter state without modifying input")
 }

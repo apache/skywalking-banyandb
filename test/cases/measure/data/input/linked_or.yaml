@@ -44,12 +44,9 @@ criteria:
               str:
                 value: "entity_5"
         right:
-          le:
-            op: "LOGICAL_OP_OR"
-            left:
-              condition:
-                name: "entity_id"
-                op: "BINARY_OP_EQ"
-                value:
-                  str:
-                    value: "unknown"
+          condition:
+            name: "entity_id"
+            op: "BINARY_OP_EQ"
+            value:
+              str:
+                value: "unknown"

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -285,11 +286,12 @@ type recordTrace struct {
 	id          string
 	allSpans    []*recordTraceSpan
 	roundNum    int
+	lock        sync.Mutex
 }
 
 func (r *recordTrace) CreateSpan(parent Span, message string) Span {
 	spanID := fmt.Sprintf("%s_%d", r.s.nodeID, time.Now().UnixNano())
-	r.request.TraceContext.ParentSpanId = spanID
+	r.changeParentID(spanID)
 	span := &recordTraceSpan{
 		trace:     r,
 		id:        spanID,
@@ -300,6 +302,12 @@ func (r *recordTrace) CreateSpan(parent Span, message string) Span {
 	}
 	r.allSpans = append(r.allSpans, span)
 	return span
+}
+
+func (r *recordTrace) changeParentID(id string) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.request.TraceContext.ParentSpanId = id
 }
 
 func (r *recordTrace) ActivateSpan() Span {
@@ -350,7 +358,7 @@ func (r *recordTraceSpan) End() {
 	// if still have parent span, then this is not the root span
 	// change the context to parent span
 	if r.parent != nil {
-		r.trace.request.TraceContext.ParentSpanId = r.parent.ID()
+		r.trace.changeParentID(r.parent.ID())
 	}
 }
 

@@ -28,7 +28,9 @@ import (
 
 	"google.golang.org/grpc"
 
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -67,6 +69,21 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		}
 	}()
 
+	if injector := queue.GetChunkedSyncFailureInjector(); injector != nil {
+		shouldFail, failedParts, err := injector.BeforeSync(parts)
+		if err != nil {
+			return nil, err
+		}
+		if shouldFail {
+			return &queue.SyncResult{
+				Success:     false,
+				SessionID:   "",
+				PartsCount:  uint32(len(parts)),
+				FailedParts: failedParts,
+			}, nil
+		}
+	}
+
 	sessionID := generateSessionID()
 
 	chunkedClient := clusterv1.NewChunkedSyncServiceClient(c.conn)
@@ -93,11 +110,11 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 
 	var totalBytesSent uint64
 
-	totalChunks, err := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
+	totalChunks, failedParts, err := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream parts: %w", err)
 	}
-	if totalChunks == 0 {
+	if totalChunks == 0 && len(failedParts) == 0 {
 		return &queue.SyncResult{
 			Success:    true,
 			SessionID:  sessionID,
@@ -127,6 +144,9 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		result := finalResp.GetSyncResult()
 		success = result.Success
 	}
+	if !success && len(failedParts) < len(parts) {
+		success = true
+	}
 
 	return &queue.SyncResult{
 		Success:     success,
@@ -135,6 +155,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		DurationMs:  duration.Milliseconds(),
 		ChunksCount: totalChunks,
 		PartsCount:  uint32(len(parts)),
+		FailedParts: failedParts,
 	}, nil
 }
 
@@ -149,10 +170,12 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 	metadata *clusterv1.SyncMetadata,
 	parts []queue.StreamingPartData,
 	totalBytesSent *uint64,
-) (uint32, error) {
+) (uint32, []queue.FailedPart, error) {
 	var totalChunks uint32
 	var chunkIndex uint32
 	isFirstChunk := true
+	var failedParts []queue.FailedPart
+	failedPartIDs := make(map[uint64]struct{})
 
 	buffer := make([]byte, 0, c.chunkSize)
 
@@ -186,12 +209,19 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 	}
 
 	currentFileIdx := 0
+	partsInCurrentChunk := make(map[int]struct{})
 
 	for currentFileIdx < len(fileStates) {
 		var chunkFileInfos []*chunkFileInfo
 
 		for len(buffer) < cap(buffer) && currentFileIdx < len(fileStates) {
 			fileState := fileStates[currentFileIdx]
+			part := parts[fileState.partIndex]
+			if _, failed := failedPartIDs[part.ID]; failed {
+				fileState.finished = true
+				currentFileIdx++
+				continue
+			}
 			if fileState.finished {
 				currentFileIdx++
 				continue
@@ -213,11 +243,34 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 				fileState.finished = true
 				currentFileIdx++
 			} else if err != nil {
-				return totalChunks, fmt.Errorf("failed to read from file %s: %w", fileState.info.Name, err)
+				errMsg := fmt.Sprintf("failed to read from file %s: %v", fileState.info.Name, err)
+				c.log.Error().Err(err).Str("part-id", fmt.Sprint(part.ID)).Msg(errMsg)
+				if _, failed := failedPartIDs[part.ID]; !failed {
+					failedParts = append(failedParts, queue.FailedPart{PartID: fmt.Sprint(part.ID), Error: errMsg})
+					failedPartIDs[part.ID] = struct{}{}
+				}
+				fileState.finished = true
+				currentFileIdx++
+
+				// If this part has already contributed data to the current chunk buffer,
+				// we must discard the entire buffer to prevent sending corrupted partial data.
+				if _, inChunk := partsInCurrentChunk[fileState.partIndex]; inChunk {
+					c.log.Warn().
+						Str("part-id", fmt.Sprint(part.ID)).
+						Int("buffer-size", len(buffer)).
+						Msg("discarding chunk buffer due to part failure")
+					buffer = buffer[:0]
+					chunkFileInfos = nil
+					partsInCurrentChunk = make(map[int]struct{})
+				}
+				continue
 			}
 
 			if n > 0 {
 				fileState.bytesRead += uint64(n)
+
+				// Track that this part has contributed data to the current chunk
+				partsInCurrentChunk[fileState.partIndex] = struct{}{}
 
 				chunkFileInfos = append(chunkFileInfos, &chunkFileInfo{
 					fileInfo: &clusterv1.FileInfo{
@@ -253,6 +306,9 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 						BlocksCount:           originalPart.BlocksCount,
 						MinTimestamp:          originalPart.MinTimestamp,
 						MaxTimestamp:          originalPart.MaxTimestamp,
+						MinKey:                originalPart.MinKey,
+						MaxKey:                originalPart.MaxKey,
+						PartType:              originalPart.PartType,
 					}
 					currentPartIdx = filePartIdx
 				}
@@ -265,10 +321,15 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 			}
 
 			if err := c.sendChunk(stream, sessionID, buffer, chunkPartsInfo, &chunkIndex, &totalChunks, totalBytesSent, isFirstChunk, metadata); err != nil {
-				return totalChunks, err
+				// Any sendChunk failure breaks the sync session's state machine.
+				// The receiver expects sequential chunks and cannot recover from gaps.
+				// Abort the entire session immediately.
+				c.log.Error().Err(err).Msg("chunk send failed, aborting sync session")
+				return totalChunks, failedParts, fmt.Errorf("failed to send chunk %d: %w", chunkIndex, err)
 			}
 			isFirstChunk = false
 			buffer = buffer[:0]
+			partsInCurrentChunk = make(map[int]struct{})
 		}
 
 		if len(buffer) == 0 && currentFileIdx >= len(fileStates) {
@@ -287,15 +348,20 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 					TotalChunks:    totalChunks,
 				},
 			},
+			VersionInfo: &clusterv1.VersionInfo{
+				ApiVersion:                  apiversion.Version,
+				FileFormatVersion:           storage.GetCurrentVersion(),
+				CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
+			},
 		}
 
 		if err := stream.Send(completionReq); err != nil {
-			return totalChunks, fmt.Errorf("failed to send completion: %w", err)
+			return totalChunks, failedParts, fmt.Errorf("failed to send completion: %w", err)
 		}
 		totalChunks++
 	}
 
-	return totalChunks, nil
+	return totalChunks, failedParts, nil
 }
 
 func (c *chunkedSyncClient) sendChunk(
@@ -319,6 +385,11 @@ func (c *chunkedSyncClient) sendChunk(
 			ChunkData:     chunkData,
 			ChunkChecksum: chunkChecksum,
 			PartsInfo:     partsInfo,
+			VersionInfo: &clusterv1.VersionInfo{
+				ApiVersion:                  apiversion.Version,
+				FileFormatVersion:           storage.GetCurrentVersion(),
+				CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
+			},
 		}
 
 		if isFirstChunk {

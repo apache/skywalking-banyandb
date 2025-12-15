@@ -40,9 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// ErrExpiredData is returned when the data is expired.
-var ErrExpiredData = errors.New("expired data")
-
 // ErrSegmentClosed is returned when trying to access a closed segment.
 var ErrSegmentClosed = errors.New("segment closed")
 
@@ -311,7 +308,6 @@ type segmentController[T TSTable, O any] struct {
 	stage       string
 	location    string
 	lst         []*segment[T, O]
-	deadline    atomic.Int64
 	idleTimeout time.Duration
 	optsMutex   sync.RWMutex
 	sync.RWMutex
@@ -379,10 +375,6 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
-	// Before the first remove old segment run, any segment should be created.
-	if sc.deadline.Load() > ts.UnixNano() {
-		return nil, ErrExpiredData
-	}
 	s, err := sc.create(ts)
 	if err != nil {
 		return nil, err
@@ -598,17 +590,36 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 	return timeRange
 }
 
-func (sc *segmentController[T, O]) deleteExpiredSegments(timeRange timestamp.TimeRange) int64 {
+func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
 	ss, _ := sc.segments(false)
+	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
+		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
+		Str("deadline", deadline.String()).
+		Int("total_segment_count", len(ss)).Msg("deleting expired segments")
+	shouldDeleteSuffixes := make(map[string]bool)
+	for _, s := range segmentSuffixes {
+		shouldDeleteSuffixes[s] = true
+	}
 	for _, s := range ss {
-		if s.Before(deadline) && s.Overlapping(timeRange) {
+		if shouldDeleteSuffixes[s.suffix] {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("deleting an expired segment")
 			s.delete()
 			sc.Lock()
 			sc.removeSeg(s.id)
 			sc.Unlock()
 			count++
+		} else {
+			sc.l.Info().Str("suffix", s.suffix).
+				Str("deadline", deadline.String()).
+				Str("segment_name", s.String()).
+				Str("segment_time_range", s.GetTimeRange().String()).
+				Msg("segment is not expired or not in the time range, skipping deletion")
 		}
 		s.DecRef()
 	}
@@ -619,21 +630,62 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 	for i, b := range sc.lst {
 		if b.id == segID {
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
-			if len(sc.lst) < 1 {
-				sc.deadline.Store(0)
-			} else {
-				sc.deadline.Store(sc.lst[0].Start.UnixNano())
-			}
 			break
 		}
 	}
+}
+
+// peekOldestSegmentEndTime returns the end time of the oldest segment.
+// It returns the zero time and false if no segments exist or all segments have refCount <= 0.
+func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) {
+	sc.RLock()
+	defer sc.RUnlock()
+
+	if len(sc.lst) <= 1 {
+		return time.Time{}, false
+	}
+
+	// Segments are sorted by ID (which correlates with start time),
+	// so the first one is the oldest
+	oldest := sc.lst[0]
+
+	// Only return segments that are still active (have references > 0)
+	if atomic.LoadInt32(&oldest.refCount) > 0 {
+		return oldest.End, true
+	}
+
+	return time.Time{}, false
+}
+
+// removeOldest removes exactly one oldest segment if it exists and meets the keep-one rule.
+// Returns true if a segment was deleted, false if no segments to delete or keep-one rule prevents deletion.
+func (sc *segmentController[T, O]) removeOldest() (bool, error) {
+	sc.Lock()
+	defer sc.Unlock()
+
+	if len(sc.lst) <= 1 {
+		// Keep-one rule: never delete the last remaining segment
+		return false, nil
+	}
+
+	// Find the oldest segment (first in sorted list)
+	oldest := sc.lst[0]
+
+	// Delete the segment and remove from list
+	oldest.delete()
+	sc.removeSeg(oldest.id)
+
+	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", fmt.Sprintf("%v", sc.lst)).Msg("removed oldest segment via forced cleanup")
+	return true, nil
 }
 
 func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()
 	for _, s := range sc.lst {
-		s.DecRef()
+		for atomic.LoadInt32(&s.refCount) > 0 {
+			s.DecRef()
+		}
 	}
 	sc.lst = sc.lst[:0]
 	if sc.metrics != nil {

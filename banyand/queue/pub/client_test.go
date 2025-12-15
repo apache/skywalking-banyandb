@@ -144,7 +144,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		verifyClientsWithGomega(gomega.Default, p, data.TopicMeasureWrite, 1, 0, 1, 0)
 		hs.SetServingStatus(data.TopicStreamWrite.String(), grpc_health_v1.HealthCheckResponse_SERVING)
 		gomega.Eventually(func(g gomega.Gomega) {
-			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 2, 1)
+			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 1, 1)
 		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	})
 

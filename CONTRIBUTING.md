@@ -41,7 +41,7 @@ Once we've discussed your changes and you've got your code ready, make sure that
 
 Users who want to build a binary from sources have to set up:
 
-* Go 1.24
+* Go 1.25
 * Node 20.12
 * Git >= 2.30
 * Linux, macOS or Windows + WSL2
@@ -82,6 +82,26 @@ Test your changes before submitting them by
 ```shell
 make test
 ```
+
+### Testing in Docker with Constrained Resources
+
+To test your changes in a controlled environment with limited resources (useful for catching race conditions and resource-related issues), use the `test-docker` target:
+
+```shell
+# Test a specific package
+make test-docker PKG=./banyand/trace
+
+# Test all packages (default)
+make test-docker
+```
+
+This target runs tests in a Docker container with:
+- **2 CPU cores** - Helps expose concurrency issues
+- **4GB RAM** - Tests memory constraints
+- **Race detector enabled** - Detects data races
+- **Go version from go.mod** - Ensures version consistency
+
+The Docker test environment automatically uses the Go version specified in `go.mod`, ensuring consistency between local development and CI environments.
 
 ## Linting your codes
 

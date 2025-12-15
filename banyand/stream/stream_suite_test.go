@@ -82,7 +82,7 @@ func setUp() (*services, func()) {
 	streamService, err := stream.NewService(metadataService, pipeline, metricSvc, pm, nil)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadStreamSvc := &preloadStreamService{metaSvc: metadataService}
-	querySvc, err := query.NewService(context.TODO(), streamService, nil, metadataService, pipeline)
+	querySvc, err := query.NewService(context.TODO(), streamService, nil, nil, metadataService, pipeline)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -181,9 +182,15 @@ func (sr *schemaRepo) Watcher() {
 							err = sr.storeResource(evt.Metadata)
 						case EventKindIndexRule:
 							indexRule := evt.Metadata.(*databasev1.IndexRule)
+							if indexRule.GetMetadata().GetGroup() == "test-trace-group" {
+								sr.l.Info().Str("group", indexRule.GetMetadata().GetGroup()).Msg("index rule")
+							}
 							sr.storeIndexRule(indexRule)
 						case EventKindIndexRuleBinding:
 							indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+							if indexRuleBinding.GetMetadata().GetGroup() == "test-trace-group" {
+								sr.l.Info().Str("group", indexRuleBinding.GetMetadata().GetGroup()).Msg("index rule binding")
+							}
 							sr.storeIndexRuleBinding(indexRuleBinding)
 						}
 					case EventDelete:
@@ -288,6 +295,7 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
 	g, loaded := sr.groupMap.LoadAndDelete(name)
+	log.Info().Str("group", name).Bool("loaded", loaded).Msg("deleting group")
 	if !loaded {
 		return nil
 	}
@@ -545,6 +553,9 @@ func (g *group) GetSchema() *commonv1.Group {
 }
 
 func (g *group) SupplyTSDB() io.Closer {
+	if g.db.Load() == nil {
+		return nil
+	}
 	return g.db.Load().(io.Closer)
 }
 

@@ -26,37 +26,29 @@ env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
+  prepare:
+    name: Prepare (Generate)
+    uses: ./.github/workflows/prepare.yml
   check:
     name: Check
     runs-on: ubuntu-latest
+    needs: [prepare]
     steps:
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v3
-        id: cache-go
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          download-artifacts: 'true'
+          setup-docker: 'false'
       - name: Cache Tools
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-check-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-check-tool-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
+          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
       - name: npm ci and format
         run: |
           cd ui
@@ -70,20 +62,11 @@ jobs:
             git status -s; \
             exit 1; \
           fi
-      - name: Install Go
-        uses: actions/setup-go@v3
-        with:
-          go-version-file: 'go.mod'
       - name: Check License Header
         run: make license-check
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
       - name: Check requirements
         run: make check-req
-      - name: Generate codes
-        run: make generate
-      - name: Build
+      - name: Build binaries, UI dist and MCP dist
         run: make build
       - name: Lint
         run: make lint
@@ -91,59 +74,34 @@ jobs:
         run: make license-dep
       - name: Check
         run: make check
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
-        with:
-          fetch-tags: true
-      - name: Cache Go Modules
-        uses: actions/cache@v3
-        id: cache-go
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-      - name: Cache Tools
-        uses: actions/cache@v3
-        id: cache-tool
-        with:
-          path: bin
-          key: ${{ runner.os }}-build-tool-${{ hashFiles('**/version.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-build-tool-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20.12
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-      - name: Install Go
-        uses: actions/setup-go@v3
-        with:
-          go-version-file: 'go.mod'
-      - name: Update dependencies 
-        if: steps.cache-go.outputs.cache-hit != 'true'
-        run: GOPROXY=https://proxy.golang.org go mod download
-      - name: Generate codes
-        run: make generate
-      - name: Build
-        run: make build
-      - name: Build release
-        run: make release
-  test:
-    uses: ./.github/workflows/test.yml
-    with:
-      options: --vv --fail-fast --label-filter \\!slow
-      timeout-minutes: 30
-      
+  test-banyand:
+    name: Test Banyand
+    needs: [check]
+    uses: ./.github/workflows/test-banyand.yml
+  test-bydbctl:
+    name: Test Bydbctl
+    needs: [check]
+    uses: ./.github/workflows/test-bydbctl.yml
+  test-pkg:
+    name: Test Pkg
+    needs: [check]
+    uses: ./.github/workflows/test-pkg.yml
+  test-integration-standalone:
+    name: Test Integration Standalone
+    needs: [check]
+    uses: ./.github/workflows/test-integration-standalone.yml
+  test-integration-distributed:
+    name: Test Integration Distributed
+    needs: [check]
+    uses: ./.github/workflows/test-integration-distributed.yml
+  e2e:
+    name: E2E Tests
+    needs: [check]
+    uses: ./.github/workflows/e2e.yml
+
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
-    needs: [check, build, test]
+    needs: [test-banyand, test-bydbctl, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
     steps:
       - run: echo 'success'

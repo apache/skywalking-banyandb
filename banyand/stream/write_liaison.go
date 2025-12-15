@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -59,7 +60,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
 	if w.maxDiskUsagePercent < 1 {
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-max-disk-usage-percent\" is 0")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-retention-high-watermark\" is 0")
 	}
 	diskPercent := observability.GetPathUsedPercent(w.schemaRepo.path)
 	if diskPercent < w.maxDiskUsagePercent {
@@ -69,13 +70,15 @@ func (w *writeQueueCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (map[string]*elementsInQueue, error) {
+func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec []*streamv1.TagFamilySpec,
+) (map[string]*elementsInQueue, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eq, err := w.prepareElementsInQueue(dst, writeEvent)
+	eq, err := w.prepareElementsInQueue(dst, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -83,15 +86,15 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 	if err != nil {
 		return nil, err
 	}
-	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs)
+	err = processElements(w.schemaRepo, et.elements, writeEvent, ts, &et.docs, &et.seriesDocs, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQueue, writeEvent *streamv1.InternalWriteRequest) (*elementsInQueue, error) {
-	gn := writeEvent.Request.Metadata.Group
+func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQueue, metadata *commonv1.Metadata) (*elementsInQueue, error) {
+	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
@@ -155,6 +158,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*elementsInQueue)
+	var metadata *commonv1.Metadata
+	var spec []*streamv1.TagFamilySpec
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -170,8 +175,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetTagFamilySpec() != nil {
+			spec = req.GetTagFamilySpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*elementsInQueue)
 			continue
@@ -181,7 +193,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElements(es.elements)
+			es.tsTable.mustAddElementsWithSegmentID(es.elements, es.timeRange.Start.UnixNano())
 			releaseElements(es.elements)
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)
@@ -204,9 +216,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					// Send to all nodes for this shard
 					for _, node := range nodes {
 						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						_, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
+						future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
 						if publishErr != nil {
 							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+							continue
+						}
+						_, err := future.Get()
+						if err != nil {
+							w.l.Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
+							continue
 						}
 					}
 				}

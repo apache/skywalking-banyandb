@@ -131,6 +131,7 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 	}
 
 	cursorChan := make(chan int, len(qr.data))
+	is := qr.sm.indexSchema.Load().(indexSchema)
 	for i := 0; i < len(qr.data); i++ {
 		go func(i int) {
 			select {
@@ -146,7 +147,7 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 			}
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
-			if loadBlockCursor(qr.data[i], tmpBlock, qo, qr.sm) {
+			if loadBlockCursor(qr.data[i], tmpBlock, qo, is) {
 				cursorChan <- -1
 				return
 			}

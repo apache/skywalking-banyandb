@@ -42,8 +42,6 @@ type partIter struct {
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
 	tidIdx               int
-	minTimestamp         int64
-	maxTimestamp         int64
 }
 
 func (pi *partIter) reset() {
@@ -58,19 +56,51 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(bma *blockMetadataArray, p *part, tids []string) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
 	pi.p = p
 
 	pi.bms = bma.arr
 	pi.tids = tids
-	pi.minTimestamp = minTimestamp
-	pi.maxTimestamp = maxTimestamp
 
 	pi.primaryBlockMetadata = p.primaryBlockMetadata
 
 	pi.nextTraceID()
+}
+
+func (pi *partIter) nextTraceID() bool {
+	if pi.tidIdx >= len(pi.tids) {
+		pi.err = io.EOF
+		return false
+	}
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
+	return true
+}
+
+func (pi *partIter) searchTargetTraceID(tid string) bool {
+	if pi.curBlock.traceID >= tid {
+		return true
+	}
+	if !pi.nextTraceID() {
+		return false
+	}
+	if pi.curBlock.traceID >= tid {
+		return true
+	}
+	tids := pi.tids[pi.tidIdx:]
+	pi.tidIdx += sort.Search(len(tids), func(i int) bool {
+		return tid <= tids[i]
+	})
+	if pi.tidIdx >= len(pi.tids) {
+		pi.tidIdx = len(pi.tids)
+		pi.err = io.EOF
+		return false
+	}
+	pi.curBlock.traceID = pi.tids[pi.tidIdx]
+	pi.tidIdx++
+	return true
 }
 
 func (pi *partIter) nextBlock() bool {
@@ -96,7 +126,7 @@ func (pi *partIter) error() error {
 	return pi.err
 }
 
-func (pi *partIter) nextTraceID() bool {
+func (pi *partIter) nextTID() bool {
 	if pi.tidIdx >= len(pi.tids) {
 		pi.err = io.EOF
 		return false
@@ -106,11 +136,11 @@ func (pi *partIter) nextTraceID() bool {
 	return true
 }
 
-func (pi *partIter) searchTargetTraceID(tid string) bool {
+func (pi *partIter) searchTargetTID(tid string) bool {
 	if pi.curBlock.traceID >= tid {
 		return true
 	}
-	if !pi.nextTraceID() {
+	if !pi.nextTID() {
 		return false
 	}
 	if pi.curBlock.traceID >= tid {
@@ -184,7 +214,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType, int(mr.traceIDLen))
+	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}
@@ -200,14 +230,15 @@ func (pi *partIter) findBlock() bool {
 				return tid <= bhs[i].traceID
 			})
 			if n == len(bhs) {
-				break
+				pi.bms = nil
+				return false
 			}
 			bhs = bhs[n:]
 		}
 		bm := &bhs[0]
 
 		if bm.traceID != tid {
-			if !pi.searchTargetTraceID(bm.traceID) {
+			if !pi.searchTargetTID(bm.traceID) {
 				return false
 			}
 			continue
@@ -236,7 +267,7 @@ type partMergeIter struct {
 func (pmi *partMergeIter) reset() {
 	pmi.err = nil
 	pmi.seqReaders.reset()
-	clear(pmi.tagType)
+	pmi.tagType = nil
 	pmi.primaryBlockMetadata = nil
 	pmi.primaryMetadataIdx = 0
 	pmi.primaryBuf = pmi.primaryBuf[:0]
@@ -295,8 +326,7 @@ func (pmi *partMergeIter) loadPrimaryBuf() error {
 func (pmi *partMergeIter) loadBlockMetadata() error {
 	pmi.block.reset()
 	var err error
-	traceIDLen := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1].traceIDLen
-	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, pmi.tagType, int(traceIDLen))
+	pmi.primaryBuf, err = pmi.block.bm.unmarshal(pmi.primaryBuf, pmi.tagType)
 	if err != nil {
 		pm := pmi.primaryBlockMetadata[pmi.primaryMetadataIdx-1]
 		return fmt.Errorf("can't read block metadata from primary at %d: %w", pm.offset, err)
@@ -304,8 +334,88 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 	return nil
 }
 
+func (pmi *partMergeIter) peekBlockMetadata() (*blockMetadata, bool) {
+	if len(pmi.primaryBuf) == 0 {
+		return nil, false
+	}
+	bm := generateBlockMetadata()
+	_, err := bm.unmarshal(pmi.primaryBuf, pmi.tagType)
+	if err != nil {
+		return nil, false
+	}
+	return bm, true
+}
+
 func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer) {
 	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm)
+}
+
+func (pmi *partMergeIter) mustReadRaw(r *rawBlock, bm *blockMetadata) {
+	r.bm = bm
+	// spans
+	if bm.spans != nil && bm.spans.size > 0 {
+		// Validate the reader is aligned to the expected offset
+		if bm.spans.offset != pmi.seqReaders.spans.bytesRead {
+			logger.Panicf("offset %d must be equal to bytesRead %d", bm.spans.offset, pmi.seqReaders.spans.bytesRead)
+		}
+		r.spans = bytes.ResizeOver(r.spans[:0], int(bm.spans.size))
+		pmi.seqReaders.spans.mustReadFull(r.spans)
+	} else {
+		r.spans = r.spans[:0]
+	}
+	// tags
+	if len(bm.tags) > 0 {
+		if r.tags == nil {
+			r.tags = make(map[string][]byte, len(bm.tags))
+		}
+		if r.tagMetadata == nil {
+			r.tagMetadata = make(map[string][]byte, len(bm.tags))
+		}
+		for name, db := range bm.tags {
+			// read tag metadata block
+			// Validate the tag metadata reader alignment
+			if db.offset != pmi.seqReaders.tagMetadata[name].bytesRead {
+				logger.Panicf("offset %d must be equal to bytesRead %d", db.offset, pmi.seqReaders.tagMetadata[name].bytesRead)
+			}
+			mb := r.tagMetadata[name]
+			mb = bytes.ResizeOver(mb[:0], int(db.size))
+			pmi.seqReaders.tagMetadata[name].mustReadFull(mb)
+			r.tagMetadata[name] = mb
+			// parse to locate tag values range
+			tm := generateTagMetadata()
+			if err := tm.unmarshal(mb); err != nil {
+				logger.Panicf("cannot unmarshal tag metadata: %v", err)
+			}
+			// read tag values
+			// Validate the tag values reader alignment
+			if tm.offset != pmi.seqReaders.tags[name].bytesRead {
+				logger.Panicf("offset %d must be equal to bytesRead %d", tm.offset, pmi.seqReaders.tags[name].bytesRead)
+			}
+			vb := r.tags[name]
+			vb = bytes.ResizeOver(vb[:0], int(tm.size))
+			pmi.seqReaders.tags[name].mustReadFull(vb)
+			r.tags[name] = vb
+			releaseTagMetadata(tm)
+		}
+		for k := range r.tags {
+			if _, ok := bm.tags[k]; !ok {
+				delete(r.tags, k)
+			}
+		}
+		for k := range r.tagMetadata {
+			if _, ok := bm.tags[k]; !ok {
+				delete(r.tagMetadata, k)
+			}
+		}
+	} else {
+		// Clear maps for tags that are not present
+		for k := range r.tags {
+			delete(r.tags, k)
+		}
+		for k := range r.tagMetadata {
+			delete(r.tagMetadata, k)
+		}
+	}
 }
 
 func generatePartMergeIter() *partMergeIter {

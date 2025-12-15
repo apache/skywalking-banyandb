@@ -18,6 +18,7 @@
 package streaming
 
 import (
+	"container/heap"
 	"context"
 	"time"
 
@@ -134,6 +135,142 @@ var _ = g.Describe("Sliding Window", func() {
 			gomega.Eventually(func(g gomega.Gomega) {
 				g.Expect(snk.Value()).Should(gomega.HaveLen(1))
 			}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
+		})
+	})
+
+	g.Describe("Timer Heap Deduplication", func() {
+		var timerHeap *flow.DedupPriorityQueue
+
+		g.BeforeEach(func() {
+			timerHeap = flow.NewPriorityQueue(func(a, b interface{}) int {
+				return int(a.(*internalTimer).w.MaxTimestamp() - b.(*internalTimer).w.MaxTimestamp())
+			}, false)
+		})
+
+		g.It("Should deduplicate same reference internalTimer objects", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000},
+			}
+
+			// Push the same reference twice
+			heap.Push(timerHeap, timer1)
+			heap.Push(timerHeap, timer1)
+
+			// Should only have one item due to reference-based deduplication
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(1))
+		})
+
+		g.It("Should deduplicate different internalTimer objects with same window content", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000},
+			}
+			timer2 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Same window content
+			}
+
+			// Push different objects with same content
+			heap.Push(timerHeap, timer1)
+			heap.Push(timerHeap, timer2)
+
+			// Should only have one item due to content-based deduplication
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(1))
+		})
+
+		g.It("Should not deduplicate internalTimer objects with different windows", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000},
+			}
+			timer2 := &internalTimer{
+				w: timeWindow{start: 2000, end: 3000}, // Different window
+			}
+
+			// Push different objects with different content
+			heap.Push(timerHeap, timer1)
+			heap.Push(timerHeap, timer2)
+
+			// Should have two items as they have different content
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(2))
+		})
+
+		g.It("Should maintain proper ordering after deduplication", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 3000, end: 4000}, // Later timestamp
+			}
+			timer2 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Earlier timestamp
+			}
+			timer3 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Duplicate of timer2
+			}
+
+			// Push in order: later, earlier, duplicate
+			heap.Push(timerHeap, timer1)
+			heap.Push(timerHeap, timer2)
+			heap.Push(timerHeap, timer3) // Should be deduplicated
+
+			// Should only have 2 items
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(2))
+
+			// Peek should return the earliest timer (timer2)
+			earliest := timerHeap.Peek().(*internalTimer)
+			gomega.Expect(earliest.w.start).Should(gomega.Equal(int64(1000)))
+			gomega.Expect(earliest.w.end).Should(gomega.Equal(int64(2000)))
+		})
+
+		g.It("Should verify Hash and Equal methods work correctly", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000},
+			}
+			timer2 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Same content
+			}
+			timer3 := &internalTimer{
+				w: timeWindow{start: 1000, end: 3000}, // Different end
+			}
+
+			// Test Hash method
+			gomega.Expect(timer1.Hash()).Should(gomega.Equal(timer2.Hash()))
+			gomega.Expect(timer1.Hash()).ShouldNot(gomega.Equal(timer3.Hash()))
+
+			// Test Equal method
+			gomega.Expect(timer1.Equal(timer2)).Should(gomega.BeTrue())
+			gomega.Expect(timer1.Equal(timer3)).Should(gomega.BeFalse())
+		})
+
+		g.It("Should work with heap operations", func() {
+			timer1 := &internalTimer{
+				w: timeWindow{start: 3000, end: 4000}, // Later
+			}
+			timer2 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Earlier
+			}
+			timer3 := &internalTimer{
+				w: timeWindow{start: 1000, end: 2000}, // Duplicate of timer2
+			}
+
+			// Initialize heap
+			heap.Init(timerHeap)
+
+			// Push timers
+			heap.Push(timerHeap, timer1)
+			heap.Push(timerHeap, timer2)
+			heap.Push(timerHeap, timer3) // Should be deduplicated
+
+			// Should only have 2 items
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(2))
+
+			// Pop should return earliest first
+			earliest := heap.Pop(timerHeap).(*internalTimer)
+			gomega.Expect(earliest.w.start).Should(gomega.Equal(int64(1000)))
+			gomega.Expect(earliest.w.end).Should(gomega.Equal(int64(2000)))
+
+			// Next should be the later timer
+			later := heap.Pop(timerHeap).(*internalTimer)
+			gomega.Expect(later.w.start).Should(gomega.Equal(int64(3000)))
+			gomega.Expect(later.w.end).Should(gomega.Equal(int64(4000)))
+
+			// Heap should be empty now
+			gomega.Expect(timerHeap.Len()).Should(gomega.Equal(0))
 		})
 	})
 })

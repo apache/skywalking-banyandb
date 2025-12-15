@@ -48,6 +48,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--stream-root-path", SharedContext.RootDir,
 				"--measure-root-path", SharedContext.RootDir,
 				"--property-root-path", SharedContext.RootDir,
+				"--trace-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
 			}, SharedContext.S3Args...))
@@ -110,6 +111,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--stream-root", newCatalogDir,
 				"--measure-root", newCatalogDir,
 				"--property-root", newCatalogDir,
+				"--trace-root", newCatalogDir,
 				latestTimedir,
 			})
 			createOut := &bytes.Buffer{}
@@ -125,6 +127,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--stream-root", newCatalogDir,
 				"--measure-root", newCatalogDir,
 				"--property-root", newCatalogDir,
+				"--trace-root", newCatalogDir,
 			})
 			readOut := &bytes.Buffer{}
 			readCmd.SetOut(readOut)
@@ -135,7 +138,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 			gomega.Expect(readResult).To(gomega.ContainSubstring(latestTimedir))
 
 			ginkgo.By("Create random files in the data directories of the new catalog")
-			catalogs := []string{"stream", "measure", "property"}
+			catalogs := []string{"stream", "measure", "property", "trace"}
 			for _, cat := range catalogs {
 				dataDir := filepath.Join(newCatalogDir, cat, "data")
 				err = os.MkdirAll(dataDir, 0o755)
@@ -154,6 +157,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--stream-root-path", newCatalogDir,
 				"--measure-root-path", newCatalogDir,
 				"--property-root-path", newCatalogDir,
+				"--trace-root-path", newCatalogDir,
 			}, SharedContext.S3Args...))
 			restoreOut := &bytes.Buffer{}
 			restoreCmd.SetOut(restoreOut)
@@ -229,6 +233,7 @@ func clearSnapshotDirs() {
 		filepath.Join(SharedContext.RootDir, "measure", "snapshots"),
 		filepath.Join(SharedContext.RootDir, "stream", "snapshots"),
 		filepath.Join(SharedContext.RootDir, "property", "snapshots"),
+		filepath.Join(SharedContext.RootDir, "trace", "snapshots"),
 	}
 
 	for _, dir := range snpDirs {

@@ -67,6 +67,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
 	g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
+	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("get results by no non-index tag", helpers.Args{Input: "filter_no_indexed", Duration: 1 * time.Hour}),
@@ -89,4 +90,6 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("multi-groups: update tag type", helpers.Args{Input: "multi_group_tag_type", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("multi-groups: sort duration", helpers.Args{Input: "multi_group_sort_duration", Duration: 1 * time.Hour, IgnoreElementID: true}),
 	g.Entry("hybrid index", helpers.Args{Input: "hybrid_index", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("err in arr", helpers.Args{Input: "err_in_arr", Duration: 1 * time.Hour, WantErr: true}),
+	g.Entry("write spec", helpers.Args{Input: "write_spec", Duration: 1 * time.Hour, IgnoreElementID: true}),
 )

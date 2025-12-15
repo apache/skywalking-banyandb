@@ -66,31 +66,52 @@ func (uis *unresolvedTagFilter) Analyze(s logical.Schema) (logical.Plan, error) 
 		return nil, err
 	}
 
-	projTags := make([]model.TagProjection, len(uis.projectionTags))
-	if len(uis.projectionTags) > 0 {
-		for i := range uis.projectionTags {
-			for _, tag := range uis.projectionTags[i] {
-				projTags[i].Family = tag.GetFamilyName()
-				projTags[i].Names = append(projTags[i].Names, tag.GetTagName())
-			}
-		}
-		var errProject error
-		ctx.projTagsRefs, errProject = s.CreateTagRef(uis.projectionTags...)
-		if errProject != nil {
-			return nil, errProject
-		}
-	}
-	ctx.projectionTags = projTags
-	plan := uis.selectIndexScanner(ctx, uis.ec)
+	projBuilder := newProjectionBuilder(uis.projectionTags)
+	criteriaTagNames := make(map[string]struct{})
+	logical.CollectCriteriaTagNames(uis.criteria, criteriaTagNames)
+
+	hiddenTags := logical.NewHiddenTagSet()
+	var tagFilter logical.TagFilter
 	if uis.criteria != nil {
-		tagFilter, errFilter := logical.BuildTagFilter(uis.criteria, entityDict, s, len(ctx.globalConditions) > 1)
+		var errFilter error
+		tagFilter, errFilter = logical.BuildTagFilter(uis.criteria, entityDict, s, s, false, "")
 		if errFilter != nil {
 			return nil, errFilter
 		}
 		if tagFilter != logical.DummyFilter {
-			// create tagFilter with a projected view
-			plan = newTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter)
+			for tagName := range criteriaTagNames {
+				if _, isEntity := entityDict[tagName]; isEntity {
+					continue
+				}
+				added, errAdd := projBuilder.AddTagFromSchema(s, tagName)
+				if errAdd != nil {
+					return nil, errAdd
+				}
+				if added {
+					hiddenTags.Add(tagName)
+				}
+			}
 		}
+	}
+
+	ctx.projectionTags = projBuilder.Model()
+	if logicalTags := projBuilder.LogicalTags(); len(logicalTags) > 0 {
+		var errProject error
+		ctx.projTagsRefs, errProject = s.CreateTagRef(logicalTags...)
+		if errProject != nil {
+			return nil, errProject
+		}
+	}
+
+	plan := uis.selectIndexScanner(ctx, uis.ec)
+	if uis.criteria != nil && tagFilter != nil && tagFilter != logical.DummyFilter {
+		projSchema := s
+		if len(ctx.projTagsRefs) > 0 {
+			if projected := s.ProjTags(ctx.projTagsRefs...); projected != nil {
+				projSchema = projected
+			}
+		}
+		plan = newTagFilter(projSchema, plan, tagFilter, hiddenTags)
 	}
 	return plan, err
 }
@@ -124,19 +145,17 @@ func tagFilter(startTime, endTime time.Time, metadata *commonv1.Metadata, criter
 }
 
 type analyzeContext struct {
-	s                logical.Schema
-	invertedFilter   index.Filter
-	skippingFilter   index.Filter
-	entities         [][]*modelv1.TagValue
-	projectionTags   []model.TagProjection
-	globalConditions []interface{}
-	projTagsRefs     [][]*logical.TagRef
+	s              logical.Schema
+	invertedFilter index.Filter
+	skippingFilter index.Filter
+	entities       [][]*modelv1.TagValue
+	projectionTags []model.TagProjection
+	projTagsRefs   [][]*logical.TagRef
 }
 
 func newAnalyzerContext(s logical.Schema) *analyzeContext {
 	return &analyzeContext{
-		globalConditions: make([]interface{}, 0),
-		s:                s,
+		s: s,
 	}
 }
 
@@ -146,20 +165,22 @@ var (
 )
 
 type tagFilterPlan struct {
-	s         logical.Schema
-	parent    logical.Plan
-	tagFilter logical.TagFilter
+	s          logical.Schema
+	parent     logical.Plan
+	tagFilter  logical.TagFilter
+	hiddenTags logical.HiddenTagSet
 }
 
 func (t *tagFilterPlan) Close() {
 	t.parent.(executor.StreamExecutable).Close()
 }
 
-func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter) logical.Plan {
+func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet) logical.Plan {
 	return &tagFilterPlan{
-		s:         s,
-		parent:    parent,
-		tagFilter: tagFilter,
+		s:          s,
+		parent:     parent,
+		tagFilter:  tagFilter,
+		hiddenTags: hiddenTags,
 	}
 }
 
@@ -180,6 +201,8 @@ func (t *tagFilterPlan) Execute(ec context.Context) ([]*streamv1.Element, error)
 				return nil, err
 			}
 			if ok {
+				// Strip hidden tags using shared utility
+				e.TagFamilies = t.hiddenTags.StripHiddenTags(e.TagFamilies)
 				filteredElements = append(filteredElements, e)
 			}
 		}
@@ -201,4 +224,122 @@ func (t *tagFilterPlan) Children() []logical.Plan {
 
 func (t *tagFilterPlan) Schema() logical.Schema {
 	return t.s
+}
+
+type projectionBuilder struct {
+	familyTags  map[string][]string
+	tagSet      map[string]struct{}
+	familyOrder []string
+}
+
+func newProjectionBuilder(existing [][]*logical.Tag) *projectionBuilder {
+	pb := &projectionBuilder{
+		familyTags: make(map[string][]string),
+		tagSet:     make(map[string]struct{}),
+	}
+	for _, tags := range existing {
+		if len(tags) == 0 {
+			continue
+		}
+		family := tags[0].GetFamilyName()
+		pb.ensureFamily(family)
+		for _, tag := range tags {
+			pb.addTag(family, tag.GetTagName())
+		}
+	}
+	return pb
+}
+
+func (pb *projectionBuilder) HasTag(tagName string) bool {
+	_, ok := pb.tagSet[tagName]
+	return ok
+}
+
+func (pb *projectionBuilder) addTag(family, tagName string) {
+	if tagName == "" || pb.HasTag(tagName) {
+		return
+	}
+	pb.ensureFamily(family)
+	pb.familyTags[family] = append(pb.familyTags[family], tagName)
+	pb.tagSet[tagName] = struct{}{}
+}
+
+func (pb *projectionBuilder) ensureFamily(family string) {
+	if _, ok := pb.familyTags[family]; ok {
+		return
+	}
+	pb.familyOrder = append(pb.familyOrder, family)
+	pb.familyTags[family] = make([]string, 0)
+}
+
+func (pb *projectionBuilder) AddTagFromSchema(s logical.Schema, tagName string) (bool, error) {
+	if pb.HasTag(tagName) {
+		return false, nil
+	}
+	tagSpec := s.FindTagSpecByName(tagName)
+	if tagSpec == nil {
+		return false, fmt.Errorf("tag %s not defined in schema", tagName)
+	}
+	family, ok := familyNameFromSchema(s, tagSpec)
+	if !ok {
+		return false, fmt.Errorf("tag family not found for %s", tagName)
+	}
+	pb.addTag(family, tagName)
+	return true, nil
+}
+
+func (pb *projectionBuilder) Model() []model.TagProjection {
+	if len(pb.familyOrder) == 0 {
+		return nil
+	}
+	projections := make([]model.TagProjection, 0, len(pb.familyOrder))
+	for _, family := range pb.familyOrder {
+		names := pb.familyTags[family]
+		if len(names) == 0 {
+			continue
+		}
+		proj := model.TagProjection{
+			Family: family,
+			Names:  append([]string(nil), names...),
+		}
+		projections = append(projections, proj)
+	}
+	if len(projections) == 0 {
+		return nil
+	}
+	return projections
+}
+
+func (pb *projectionBuilder) LogicalTags() [][]*logical.Tag {
+	if len(pb.familyOrder) == 0 {
+		return nil
+	}
+	logicalTags := make([][]*logical.Tag, 0, len(pb.familyOrder))
+	for _, family := range pb.familyOrder {
+		names := pb.familyTags[family]
+		if len(names) == 0 {
+			continue
+		}
+		familyTags := make([]*logical.Tag, 0, len(names))
+		for _, name := range names {
+			familyTags = append(familyTags, logical.NewTag(family, name))
+		}
+		logicalTags = append(logicalTags, familyTags)
+	}
+	if len(logicalTags) == 0 {
+		return nil
+	}
+	return logicalTags
+}
+
+func familyNameFromSchema(s logical.Schema, tagSpec *logical.TagSpec) (string, bool) {
+	streamSchema, ok := s.(*schema)
+	if !ok || streamSchema == nil || streamSchema.stream == nil {
+		return "", false
+	}
+	tagFamilies := streamSchema.stream.GetTagFamilies()
+	if tagSpec.TagFamilyIdx < 0 || tagSpec.TagFamilyIdx >= len(tagFamilies) {
+		return "", false
+	}
+	return tagFamilies[tagSpec.TagFamilyIdx].GetName(), true
 }

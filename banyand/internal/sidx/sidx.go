@@ -18,32 +18,44 @@
 package sidx
 
 import (
+	"bytes"
+	"container/heap"
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/watcher"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
+)
+
+const (
+	maxBlockLength           = 8 * 1024
+	maxUncompressedBlockSize = 2 * 1024 * 1024
 )
 
 // sidx implements the SIDX interface with introduction channels for async operations.
 type sidx struct {
-	snapshot                   *snapshot
-	introductions              chan *introduction
-	flushCh                    chan *flusherIntroduction
-	mergeCh                    chan *mergerIntroduction
-	loopCloser                 *run.Closer
-	gc                         *gc
-	l                          *logger.Logger
-	totalIntroduceLoopStarted  atomic.Int64
-	totalIntroduceLoopFinished atomic.Int64
-	mu                         sync.RWMutex
+	fileSystem   fs.FileSystem
+	snapshot     *snapshot
+	l            *logger.Logger
+	pm           protector.Memory
+	root         string
+	totalQueries atomic.Int64
+	totalWrites  atomic.Int64
+	mu           sync.RWMutex
 }
 
 // NewSIDX creates a new SIDX instance with introduction channels.
-func NewSIDX(opts *Options) (SIDX, error) {
+func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 	if opts == nil {
 		opts = NewDefaultOptions()
 	}
@@ -53,31 +65,28 @@ func NewSIDX(opts *Options) (SIDX, error) {
 	}
 
 	s := &sidx{
-		introductions: make(chan *introduction),
-		flushCh:       make(chan *flusherIntroduction),
-		mergeCh:       make(chan *mergerIntroduction),
-		loopCloser:    run.NewCloser(1),
-		l:             logger.GetLogger().Named("sidx"),
+		fileSystem: fileSystem,
+		l:          logger.GetLogger().Named("sidx"),
+		pm:         opts.Memory,
+		root:       opts.Path,
 	}
 
-	// Initialize garbage collector
-	s.gc = newGC(opts)
-
-	// Start introducer loop
-	watcherCh := make(watcher.Channel, 10)
-	go s.introducerLoop(s.flushCh, s.mergeCh, watcherCh, 0)
-
+	// Initialize sidx
+	s.init(opts.AvailablePartIDs)
 	return s, nil
 }
 
-// Write implements SIDX interface.
-func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
+// ConvertToMemPart converts a write request to a memPart.
+func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error) {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
-			return err
+			return nil, err
 		}
 	}
+
+	// Increment write counter
+	s.totalWrites.Add(1)
 
 	// Create elements from requests
 	es := generateElements()
@@ -88,48 +97,10 @@ func (s *sidx) Write(ctx context.Context, reqs []WriteRequest) error {
 	}
 
 	// Create memory part from elements
-	mp := generateMemPart()
+	mp := GenerateMemPart()
 	mp.mustInitFromElements(es)
-
-	// Create introduction
-	intro := generateIntroduction()
-	intro.memPart = mp
-	intro.applied = make(chan struct{})
-
-	// Send to introducer loop
-	select {
-	case s.introductions <- intro:
-		// Wait for introduction to be applied
-		<-intro.applied
-		releaseIntroduction(intro)
-		return nil
-	case <-ctx.Done():
-		releaseIntroduction(intro)
-		releaseMemPart(mp)
-		return ctx.Err()
-	}
-}
-
-// Query implements SIDX interface.
-func (s *sidx) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	// Get current snapshot
-	snap := s.currentSnapshot()
-	if snap == nil {
-		return &emptyQueryResult{}, nil
-	}
-
-	// Create query result
-	qr := &queryResult{
-		snapshot: snap,
-		request:  req,
-		ctx:      ctx,
-	}
-
-	return qr, nil
+	mp.partMetadata.SegmentID = segmentID
+	return mp, nil
 }
 
 // Stats implements SIDX interface.
@@ -145,98 +116,104 @@ func (s *sidx) Stats(_ context.Context) (*Stats, error) {
 	}
 
 	// Load atomic counters
-	stats.QueryCount.Store(s.totalIntroduceLoopStarted.Load())
-	stats.WriteCount.Store(s.totalIntroduceLoopFinished.Load())
+	stats.QueryCount.Store(s.totalQueries.Load())
+	stats.WriteCount.Store(s.totalWrites.Load())
 
 	return stats, nil
 }
 
 // Flush implements Flusher interface.
-func (s *sidx) Flush() error {
+func (s *sidx) Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error) {
 	// Get current memory parts that need flushing
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return nil
+		return nil, nil
 	}
 	defer snap.decRef()
 
 	// Create flush introduction
 	flushIntro := generateFlusherIntroduction()
-	flushIntro.applied = make(chan struct{})
 
-	// Select memory parts to flush (simplified logic)
+	// Select memory parts to flush
 	for _, pw := range snap.parts {
-		if pw.isMemPart() && pw.isActive() {
-			flushIntro.flushed[pw.ID()] = pw.p
+		if _, ok := partIDsToFlush[pw.ID()]; !ok {
+			continue
 		}
+		if !pw.isMemPart() {
+			logger.Panicf("sidx part %d is not a memory part", pw.ID())
+		}
+		partPath := partPath(s.root, pw.ID())
+		pw.mp.mustFlush(s.fileSystem, partPath)
+		if l := s.l.Debug(); l.Enabled() {
+			s.l.Debug().
+				Uint64("part_id", pw.ID()).
+				Str("part_path", partPath).
+				Msg("flushing sidx part")
+		}
+		newPW := newPartWrapper(nil, mustOpenPart(pw.ID(), partPath, s.fileSystem))
+		flushIntro.flushed[newPW.ID()] = newPW
 	}
 
-	if len(flushIntro.flushed) == 0 {
-		releaseFlusherIntroduction(flushIntro)
-		return nil
+	if len(flushIntro.flushed) != len(partIDsToFlush) {
+		logger.Panicf("expected %d parts to flush, but got %d", len(partIDsToFlush), len(flushIntro.flushed))
+		return nil, nil
 	}
-
-	// Send to introducer loop
-	s.flushCh <- flushIntro
-
-	// Wait for flush to complete
-	<-flushIntro.applied
-	releaseFlusherIntroduction(flushIntro)
-
-	return nil
+	return flushIntro, nil
 }
 
-// Merge implements Merger interface.
-func (s *sidx) Merge() error {
-	// Get current snapshot
+// PartPaths implements SIDX interface and returns on-disk paths for the requested part IDs.
+func (s *sidx) PartPaths(partIDs map[uint64]struct{}) map[uint64]string {
+	if len(partIDs) == 0 {
+		return map[uint64]string{}
+	}
+
 	snap := s.currentSnapshot()
 	if snap == nil {
-		return nil
+		return map[uint64]string{}
 	}
 	defer snap.decRef()
 
-	// Create merge introduction
-	mergeIntro := generateMergerIntroduction()
-	mergeIntro.applied = make(chan struct{})
+	result := make(map[uint64]string, len(partIDs))
 
-	// Select parts to merge (simplified logic - merge first 2 parts)
-	var partsToMerge []*partWrapper
 	for _, pw := range snap.parts {
-		if pw.isActive() && !pw.isMemPart() {
-			partsToMerge = append(partsToMerge, pw)
-			if len(partsToMerge) >= 2 {
-				break
-			}
+		var (
+			id   uint64
+			path string
+		)
+
+		switch {
+		case pw.p != nil && pw.p.partMetadata != nil:
+			id = pw.p.partMetadata.ID
+			path = pw.p.path
+		case pw.mp != nil && pw.mp.partMetadata != nil:
+			id = pw.mp.partMetadata.ID
+		default:
+			continue
+		}
+
+		if _, ok := partIDs[id]; !ok {
+			continue
+		}
+		// Skip mem parts since they do not have stable on-disk paths yet.
+		if pw.isMemPart() || pw.p == nil {
+			continue
+		}
+		if path == "" {
+			path = partPath(s.root, id)
+		}
+		result[id] = path
+
+		// All requested IDs found.
+		if len(result) == len(partIDs) {
+			break
 		}
 	}
 
-	if len(partsToMerge) < 2 {
-		releaseMergerIntroduction(mergeIntro)
-		return nil
-	}
-
-	// Mark parts for merging
-	for _, pw := range partsToMerge {
-		mergeIntro.merged[pw.ID()] = struct{}{}
-	}
-
-	// Create new merged part (simplified - would actually merge the parts)
-	mergeIntro.newPart = partsToMerge[0].p
-
-	// Send to introducer loop
-	s.mergeCh <- mergeIntro
-
-	// Wait for merge to complete
-	<-mergeIntro.applied
-	releaseMergerIntroduction(mergeIntro)
-
-	return nil
+	return result
 }
 
 // Close implements SIDX interface.
 func (s *sidx) Close() error {
-	s.loopCloser.CloseThenWait()
-
 	// Close current snapshot
 	s.mu.Lock()
 	if s.snapshot != nil {
@@ -264,89 +241,583 @@ func (s *sidx) currentSnapshot() *snapshot {
 	return nil
 }
 
-// decRef decrements the snapshot reference count (helper for snapshot interface).
-func (s *snapshot) decRef() {
-	s.release()
-}
-
-// Helper methods for metrics.
-func (s *sidx) incTotalIntroduceLoopStarted(_ string) {
-	s.totalIntroduceLoopStarted.Add(1)
-}
-
-func (s *sidx) incTotalIntroduceLoopFinished(_ string) {
-	s.totalIntroduceLoopFinished.Add(1)
-}
-
-// persistSnapshot persists the snapshot to disk (placeholder).
-func (s *sidx) persistSnapshot(_ *snapshot) {
-	// TODO: Implement snapshot persistence
-}
-
-// Lock/Unlock methods for introducer loop.
-func (s *sidx) Lock() {
-	s.mu.Lock()
-}
-
-func (s *sidx) Unlock() {
-	s.mu.Unlock()
-}
-
-// gc represents garbage collector (placeholder).
-type gc struct{}
-
-func newGC(_ *Options) *gc {
-	return &gc{}
-}
-
-func (g *gc) clean() {
-	// TODO: Implement garbage collection
-}
-
-// emptyQueryResult represents an empty query result.
-type emptyQueryResult struct{}
-
-func (e *emptyQueryResult) Pull() *QueryResponse {
-	return nil
-}
-
-func (e *emptyQueryResult) Release() {
-	// Nothing to release
-}
-
-// queryResult implements QueryResult interface.
-type queryResult struct {
-	ctx      context.Context
-	snapshot *snapshot
+// blockCursor represents a cursor for iterating through a loaded block, similar to query_by_ts.go.
+type blockCursor struct {
+	p        *part
+	bm       *blockMetadata
+	tags     map[string][]Tag
+	userKeys []int64
+	data     [][]byte
 	request  QueryRequest
-	released bool
+	seriesID common.SeriesID
+	idx      int
 }
 
-func (qr *queryResult) Pull() *QueryResponse {
-	if qr.released {
+type blockCursorBuilder struct {
+	bc      *blockCursor
+	block   *block
+	metrics *batchMetrics
+	seen    map[uint64][][]byte
+	minKey  int64
+	maxKey  int64
+	hasMin  bool
+	hasMax  bool
+}
+
+func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Logger) error {
+	if req.TagFilter == nil {
 		return nil
 	}
 
-	// Simple implementation - return empty response
-	// TODO: Implement actual query logic
-	return &QueryResponse{
-		Keys: []int64{},
-		Data: [][]byte{},
-		Tags: [][]Tag{},
-		SIDs: []common.SeriesID{},
-		Metadata: ResponseMetadata{
-			ExecutionTimeMs: 0,
-		},
+	tags := make([]*modelv1.Tag, 0, len(b.block.tags))
+	decoder := req.TagFilter.GetDecoder()
+
+	for i := 0; i < len(b.block.userKeys); i++ {
+		dataBytes := b.block.data[i]
+		hash, duplicate := b.checkDuplicate(dataBytes, true)
+		if duplicate {
+			continue
+		}
+
+		tags = b.collectTagsForFilter(tags, decoder, i)
+
+		matched, err := req.TagFilter.Match(tags)
+		if err != nil {
+			log.Error().Err(err).Msg("tag filter match error")
+			return err
+		}
+		if !matched {
+			continue
+		}
+
+		b.appendElement(i, hash, dataBytes)
+	}
+
+	return nil
+}
+
+func (b *blockCursorBuilder) processWithoutFilter() {
+	for i := 0; i < len(b.block.userKeys); i++ {
+		dataBytes := b.block.data[i]
+		hash, duplicate := b.checkDuplicate(dataBytes, false)
+		if duplicate {
+			continue
+		}
+
+		b.appendElement(i, hash, dataBytes)
 	}
 }
 
-func (qr *queryResult) Release() {
-	if qr.released {
+func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue, index int) []*modelv1.Tag {
+	buf = buf[:0]
+
+	for tagName, tagData := range b.block.tags {
+		if index >= len(tagData.values) {
+			continue
+		}
+
+		row := &tagData.values[index]
+		tagValue := decoder(tagData.valueType, row.value, row.valueArr)
+		if tagValue != nil {
+			buf = append(buf, &modelv1.Tag{
+				Key:   tagName,
+				Value: tagValue,
+			})
+		}
+	}
+	return buf
+}
+
+func (b *blockCursorBuilder) appendElement(index int, hash uint64, dataBytes []byte) {
+	key := b.block.userKeys[index]
+	if !b.keyInRange(key) {
 		return
 	}
-	qr.released = true
-	if qr.snapshot != nil {
-		qr.snapshot.decRef()
-		qr.snapshot = nil
+
+	b.markSeen(hash, dataBytes)
+
+	b.bc.userKeys = append(b.bc.userKeys, key)
+
+	dataCopy := make([]byte, len(dataBytes))
+	copy(dataCopy, dataBytes)
+	b.bc.data = append(b.bc.data, dataCopy)
+
+	for tagName, tagData := range b.block.tags {
+		if index < len(tagData.values) {
+			row := &tagData.values[index]
+			tag := Tag{
+				Name:      tagName,
+				ValueType: tagData.valueType,
+			}
+			if len(row.valueArr) > 0 {
+				tag.ValueArr = row.valueArr
+			} else if len(row.value) > 0 {
+				tag.Value = row.value
+			}
+			b.bc.tags[tagName] = append(b.bc.tags[tagName], tag)
+		}
 	}
+}
+
+func (b *blockCursorBuilder) checkDuplicate(dataBytes []byte, recordMetric bool) (uint64, bool) {
+	hash := convert.Hash(dataBytes)
+	bucket := b.seen[hash]
+	for _, existing := range bucket {
+		if bytes.Equal(existing, dataBytes) {
+			if recordMetric && b.metrics != nil {
+				b.metrics.elementsDeduplicated.Add(1)
+			}
+			return hash, true
+		}
+	}
+	return hash, false
+}
+
+func (b *blockCursorBuilder) markSeen(hash uint64, dataBytes []byte) {
+	b.seen[hash] = append(b.seen[hash], dataBytes)
+}
+
+func (b *blockCursorBuilder) keyInRange(key int64) bool {
+	if b.hasMin && key < b.minKey {
+		return false
+	}
+	if b.hasMax && key > b.maxKey {
+		return false
+	}
+	return true
+}
+
+// init initializes the block cursor.
+func (bc *blockCursor) init(p *part, bm *blockMetadata, req QueryRequest) {
+	bc.p = p
+	bc.bm = bm
+	bc.request = req
+	bc.seriesID = bm.seriesID
+	bc.idx = 0
+}
+
+// loadBlockCursor loads block data into the cursor, similar to loadBlockCursor in query_by_ts.go.
+func (s *sidx) loadBlockCursor(bc *blockCursor, tmpBlock *block, bs blockScanResult,
+	tagsToLoad map[string]struct{}, req QueryRequest, pm protector.Memory, metrics *batchMetrics,
+) bool {
+	tmpBlock.reset()
+
+	// Create a temporary queryResult to reuse existing logic
+	qr := &queryResult{
+		request:    req,
+		tagsToLoad: tagsToLoad,
+		pm:         pm,
+		l:          s.l,
+	}
+
+	// Load the block data
+	if !qr.loadBlockData(tmpBlock, bs.p, &bs.bm) {
+		return false
+	}
+
+	if metrics != nil {
+		metrics.blockElementsLoaded.Add(int64(len(tmpBlock.userKeys)))
+	}
+
+	totalElements := len(tmpBlock.userKeys)
+	if totalElements == 0 {
+		return false
+	}
+
+	var (
+		minKey int64
+		maxKey int64
+		hasMin = req.MinKey != nil
+		hasMax = req.MaxKey != nil
+	)
+	if hasMin {
+		minKey = *req.MinKey
+	}
+	if hasMax {
+		maxKey = *req.MaxKey
+	}
+
+	// Pre-allocate slices for filtered data (optimize for common case where most elements match)
+	bc.userKeys = make([]int64, 0, totalElements)
+	bc.data = make([][]byte, 0, totalElements)
+
+	// Pre-allocate tag slices
+	bc.tags = make(map[string][]Tag)
+	for tagName := range tmpBlock.tags {
+		bc.tags[tagName] = make([]Tag, 0, totalElements)
+	}
+
+	// Track seen data for deduplication using hash buckets with collision checks
+	builder := &blockCursorBuilder{
+		bc:      bc,
+		block:   tmpBlock,
+		hasMin:  hasMin,
+		minKey:  minKey,
+		hasMax:  hasMax,
+		maxKey:  maxKey,
+		metrics: metrics,
+		seen:    make(map[uint64][][]byte),
+	}
+
+	if req.TagFilter != nil {
+		if err := builder.processWithFilter(req, s.l); err != nil {
+			return false
+		}
+	} else {
+		builder.processWithoutFilter()
+	}
+
+	if metrics != nil {
+		metrics.outputElementsEmitted.Add(int64(len(bc.userKeys)))
+		if len(bc.userKeys) == 0 {
+			metrics.blocksSkipped.Add(1)
+		}
+	}
+
+	return len(bc.userKeys) > 0
+}
+
+// copyTo copies the current element to a QueryResponse, similar to query_by_ts.go.
+func (bc *blockCursor) copyTo(result *QueryResponse) bool {
+	if bc.idx < 0 || bc.idx >= len(bc.userKeys) {
+		return false
+	}
+
+	// Apply key range filtering
+	key := bc.userKeys[bc.idx]
+	if bc.request.MinKey != nil && key < *bc.request.MinKey {
+		return false
+	}
+	if bc.request.MaxKey != nil && key > *bc.request.MaxKey {
+		return false
+	}
+
+	result.Keys = append(result.Keys, key)
+	result.Data = append(result.Data, bc.data[bc.idx])
+	result.SIDs = append(result.SIDs, bc.seriesID)
+	result.PartIDs = append(result.PartIDs, bc.p.ID())
+
+	// Copy projected tags if specified
+	if len(bc.request.TagProjection) > 0 && len(result.Tags) > 0 {
+		for _, proj := range bc.request.TagProjection {
+			for _, tagName := range proj.Names {
+				if tagData, exists := bc.tags[tagName]; exists && bc.idx < len(tagData) {
+					tagValue := formatTagValue(tagData[bc.idx])
+					result.Tags[tagName] = append(result.Tags[tagName], tagValue)
+				} else {
+					// Tag not present for this row
+					result.Tags[tagName] = append(result.Tags[tagName], "")
+				}
+			}
+		}
+	}
+
+	return true
+}
+
+// formatTagValue converts a Tag to its string form: arrays are serialized as
+// bracketed, comma-separated values, while scalar values are returned as-is.
+// When both Value and ValueArr are empty, the function returns an empty string.
+func formatTagValue(tag Tag) string {
+	if len(tag.ValueArr) > 0 {
+		// Array of values
+		values := make([]string, len(tag.ValueArr))
+		for i, v := range tag.ValueArr {
+			values[i] = string(v)
+		}
+		return "[" + strings.Join(values, ",") + "]"
+	}
+	return string(tag.Value)
+}
+
+// blockCursorHeap implements heap.Interface for sorting block cursors.
+type blockCursorHeap struct {
+	bcc         []*blockCursor
+	asc         bool
+	initialized bool
+}
+
+func (bch blockCursorHeap) Len() int {
+	return len(bch.bcc)
+}
+
+func (bch blockCursorHeap) Less(i, j int) bool {
+	leftIdx, rightIdx := bch.bcc[i].idx, bch.bcc[j].idx
+	if leftIdx >= len(bch.bcc[i].userKeys) || rightIdx >= len(bch.bcc[j].userKeys) {
+		return false // Handle bounds check
+	}
+	leftTS := bch.bcc[i].userKeys[leftIdx]
+	rightTS := bch.bcc[j].userKeys[rightIdx]
+	if bch.asc {
+		return leftTS < rightTS
+	}
+	return leftTS > rightTS
+}
+
+func (bch *blockCursorHeap) Swap(i, j int) {
+	bch.bcc[i], bch.bcc[j] = bch.bcc[j], bch.bcc[i]
+}
+
+func (bch *blockCursorHeap) Push(x interface{}) {
+	bch.bcc = append(bch.bcc, x.(*blockCursor))
+}
+
+func (bch *blockCursorHeap) Pop() interface{} {
+	old := bch.bcc
+	n := len(old)
+	x := old[n-1]
+	bch.bcc = old[0 : n-1]
+	releaseBlockCursor(x)
+	return x
+}
+
+func (bch *blockCursorHeap) reset() {
+	for i := range bch.bcc {
+		releaseBlockCursor(bch.bcc[i])
+	}
+	bch.bcc = bch.bcc[:0]
+	bch.initialized = false
+}
+
+// pushCursors adds cursors to the heap and initializes it if necessary.
+func (bch *blockCursorHeap) pushCursors(cursors []*blockCursor) {
+	if len(cursors) == 0 {
+		return
+	}
+
+	for i := range cursors {
+		if bch.initialized {
+			heap.Push(bch, cursors[i])
+		} else {
+			bch.Push(cursors[i])
+		}
+	}
+
+	if !bch.initialized && bch.Len() > 0 {
+		heap.Init(bch)
+		bch.initialized = true
+	}
+}
+
+// merge performs heap-based merge similar to query_by_ts.go.
+// It returns a QueryResponse along with a flag indicating whether the merge
+// stopped because the MaxBatchSize limit has been reached.
+func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh chan<- *QueryResponse, metrics *batchMetrics) error {
+	if !bch.initialized || bch.Len() == 0 {
+		return nil
+	}
+
+	step := -1
+	if bch.asc {
+		step = 1
+	}
+
+	// Initialize first batch
+	batch := &QueryResponse{
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
+	}
+
+	// Track seen data for deduplication across all batches using hash buckets with collision checks
+	seenData := make(map[uint64][][]byte)
+
+	for bch.Len() > 0 {
+		topBC := bch.bcc[0]
+		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
+			heap.Pop(bch)
+			continue
+		}
+
+		// Check for duplicate data before copying via hash + bytes.Equal on collisions
+		currentData := topBC.data[topBC.idx]
+		h := convert.Hash(currentData)
+		bucket := seenData[h]
+		duplicate := false
+		for _, b := range bucket {
+			if bytes.Equal(b, currentData) {
+				duplicate = true
+				break
+			}
+		}
+
+		// Only copy if this data hasn't been seen across all batches
+		if !duplicate {
+			// Copy the element (may be filtered out by key range)
+			if topBC.copyTo(batch) {
+				// Mark this data as seen
+				seenData[h] = append(bucket, currentData)
+			}
+		}
+
+		topBC.idx += step
+
+		if bch.asc {
+			if topBC.idx >= len(topBC.userKeys) {
+				heap.Pop(bch)
+			} else {
+				heap.Fix(bch, 0)
+			}
+		} else {
+			if topBC.idx < 0 {
+				heap.Pop(bch)
+			} else {
+				heap.Fix(bch, 0)
+			}
+		}
+
+		// Send the batch when it reaches batchSize
+		if batchSize > 0 && batch.Len() >= batchSize {
+			if metrics != nil {
+				metrics.record(batch)
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case resultsCh <- batch:
+			}
+
+			// Create a new batch but keep the deduplication map for global deduplication
+			batch = &QueryResponse{
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
+			}
+			// Do NOT reset seenData here - maintain it across batches for global deduplication
+		}
+	}
+
+	// Send remaining elements in the last batch
+	if batch.Len() > 0 {
+		if metrics != nil {
+			metrics.record(batch)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case resultsCh <- batch:
+		}
+	}
+
+	return nil
+}
+
+var blockCursorHeapPool = pool.Register[*blockCursorHeap]("sidx-blockCursorHeap")
+
+func generateBlockCursorHeap(asc bool) *blockCursorHeap {
+	v := blockCursorHeapPool.Get()
+	if v == nil {
+		return &blockCursorHeap{
+			asc: asc,
+			bcc: make([]*blockCursor, 0, blockScannerBatchSize),
+		}
+	}
+	v.asc = asc
+	return v
+}
+
+func releaseBlockCursorHeap(bch *blockCursorHeap) {
+	bch.reset()
+	blockCursorHeapPool.Put(bch)
+}
+
+var blockCursorPool = pool.Register[*blockCursor]("sidx-blockCursor")
+
+func generateBlockCursor() *blockCursor {
+	v := blockCursorPool.Get()
+	if v == nil {
+		return &blockCursor{}
+	}
+	return v
+}
+
+func releaseBlockCursor(bc *blockCursor) {
+	bc.p = nil
+	bc.bm = nil
+	bc.userKeys = bc.userKeys[:0]
+	bc.data = bc.data[:0]
+	bc.tags = nil
+	bc.seriesID = 0
+	bc.idx = 0
+	blockCursorPool.Put(bc)
+}
+
+func (s *sidx) init(availablePartIDs []uint64) {
+	if _, err := os.Stat(s.root); os.IsNotExist(err) {
+		s.l.Debug().Str("path", s.root).Msg("sidx directory does not exist")
+		return
+	}
+
+	entries := s.fileSystem.ReadDir(s.root)
+	if len(entries) == 0 {
+		s.l.Debug().Str("path", s.root).Msg("no existing sidx data found")
+		return
+	}
+
+	var loadedParts []uint64
+	var needToDelete []string
+
+	for i := range entries {
+		if entries[i].IsDir() {
+			p, err := parseEpoch(entries[i].Name())
+			if err != nil {
+				s.l.Info().Err(err).Str("name", entries[i].Name()).Msg("cannot parse part directory name, skipping")
+				needToDelete = append(needToDelete, entries[i].Name())
+				continue
+			}
+			loadedParts = append(loadedParts, p)
+			continue
+		}
+	}
+
+	for i := range needToDelete {
+		s.l.Info().Str("path", filepath.Join(s.root, needToDelete[i])).Msg("deleting invalid directory or file")
+		s.fileSystem.MustRMAll(filepath.Join(s.root, needToDelete[i]))
+	}
+
+	if len(loadedParts) == 0 {
+		s.l.Debug().Msg("no valid parts found")
+		return
+	}
+
+	s.loadSnapshot(loadedParts, availablePartIDs)
+
+	s.l.Info().Int("parts", len(loadedParts)).Msg("loaded existing sidx data")
+}
+
+func (s *sidx) loadSnapshot(loadedParts, availablePartIDs []uint64) {
+	snp := newSnapshot(nil)
+	for _, id := range loadedParts {
+		var find bool
+		for j := range availablePartIDs {
+			if id == availablePartIDs[j] {
+				find = true
+				break
+			}
+		}
+		if !find {
+			s.fileSystem.MustRMAll(partPath(s.root, id))
+			continue
+		}
+		err := validatePartMetadata(s.fileSystem, partPath(s.root, id))
+		if err != nil {
+			s.l.Info().Err(err).Uint64("id", id).Msg("cannot validate part metadata. skip and delete it")
+			s.fileSystem.MustRMAll(partPath(s.root, id))
+			continue
+		}
+		partPath := partPath(s.root, id)
+		part := mustOpenPart(id, partPath, s.fileSystem)
+		pw := newPartWrapper(nil, part)
+		snp.addPart(pw)
+	}
+	if snp.getPartCount() < 1 {
+		snp.release()
+		return
+	}
+	snp.acquire()
+	s.snapshot = snp
 }

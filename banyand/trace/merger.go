@@ -25,6 +25,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -32,6 +33,11 @@ import (
 )
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
+
+var (
+	mergeTypeMem  = "mem"
+	mergeTypeFile = "file"
+)
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
@@ -95,7 +101,7 @@ func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntr
 		return nil, nil
 	}
 	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify(), "file"); err != nil {
+		toBeMerged, merges, tst.loopCloser.CloseNotify(), mergeTypeFile); err != nil {
 		return dst, err
 	}
 	return dst, nil
@@ -107,7 +113,8 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
-	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, atomic.AddUint64(&tst.curPartID, 1), tst.root)
+	newPartID := atomic.AddUint64(&tst.curPartID, 1)
+	newPart, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root)
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +157,41 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				Msg("background merger merges unbalanced parts")
 		}
 	}
+	partIDMap := make(map[uint64]struct{})
+	for _, pw := range parts {
+		partIDMap[pw.ID()] = struct{}{}
+	}
+	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
+	for sidxName, sidxInstance := range tst.getAllSidx() {
+		start = time.Now()
+		mergerIntroduction, err := sidxInstance.Merge(closeCh, partIDMap, newPartID)
+		if err != nil {
+			tst.l.Warn().Err(err).Msg("sidx merge mem parts failed")
+			return nil, err
+		}
+		mergerIntroductionMap[sidxName] = mergerIntroduction
+		elapsed = time.Since(start)
+		tst.incTotalMergeLatency(elapsed.Seconds(), fmt.Sprintf("%s_%s", typ, sidxName))
+		tst.incTotalMerged(1, fmt.Sprintf("%s_%s", typ, sidxName))
+		tst.incTotalMergedParts(len(parts), fmt.Sprintf("%s_%s", typ, sidxName))
+		if elapsed > 30*time.Second {
+			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
+		}
+	}
+	if len(mergerIntroductionMap) > 0 {
+		defer func() {
+			for _, mergerIntroduction := range mergerIntroductionMap {
+				mergerIntroduction.Release()
+			}
+		}()
+	}
 
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
 	mi.creator = creator
 	mi.newPart = newPart
 	mi.merged = merged
+	mi.sidxMergerIntroduced = mergerIntroductionMap
 	mi.applied = make(chan struct{})
 	select {
 	case merges <- mi:
@@ -240,27 +276,38 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 	dstPath := partPath(root, partID)
 	var totalSize int64
+	var traceSize uint64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
 		pmi := generatePartMergeIter()
 		pmi.mustInitFromPart(parts[i].p)
 		pii = append(pii, pmi)
 		totalSize += int64(parts[i].p.partMetadata.CompressedSizeBytes)
+		traceSize += parts[i].p.partMetadata.BlocksCount
 	}
 	shouldCache := tst.pm.ShouldCache(totalSize)
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
-	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
-	for _, pw := range parts {
-		for _, pbm := range pw.p.primaryBlockMetadata {
-			if len(pbm.traceID) > int(bw.traceIDLen) {
-				bw.traceIDLen = uint32(len(pbm.traceID))
-			}
+	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache, int(traceSize))
+
+	var minTimestamp, maxTimestamp int64
+	for i, pw := range parts {
+		pm := pw.p.partMetadata
+		if i == 0 {
+			minTimestamp = pm.MinTimestamp
+			maxTimestamp = pm.MaxTimestamp
+			continue
+		}
+		if pm.MinTimestamp < minTimestamp {
+			minTimestamp = pm.MinTimestamp
+		}
+		if pm.MaxTimestamp > maxTimestamp {
+			maxTimestamp = pm.MaxTimestamp
 		}
 	}
 
-	pm, err := mergeBlocks(closeCh, bw, br)
+	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -269,21 +316,28 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, err
 	}
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
 	pm.mustWriteMetadata(fileSystem, dstPath)
+	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
+	tt.mustWriteTagType(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)
-
 	return newPartWrapper(nil, p), nil
 }
 
 var errClosed = fmt.Errorf("the merger is closed")
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+// forceSlowMerge is used for testing to disable the fast raw merge path.
+var forceSlowMerge = false
+
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, *traceIDFilter, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
 	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
+	var rawBlk rawBlock
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
 			decoder = generateColumnValuesDecoder()
@@ -299,10 +353,19 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
-			return nil, errClosed
+			return nil, nil, nil, errClosed
 		default:
 		}
 		b := br.block
+		// Fast path: if this is the only block for this traceID AND we have no pending block,
+		// copy it raw without unmarshaling
+		nextB := br.peek()
+		if !forceSlowMerge && pendingBlockIsEmpty && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
+			// fast path: only a single block for the trace id and no pending data
+			br.mustReadRaw(&rawBlk, &b.bm)
+			bw.mustWriteRawBlock(&rawBlk)
+			continue
+		}
 
 		if pendingBlockIsEmpty {
 			br.loadBlockData(getDecoder())
@@ -315,8 +378,19 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
+			// After writing the pending block, check if the new block can be copied raw
+			// This is the same fast path check as at the beginning of the loop
+			nextB = br.peek()
+			if !forceSlowMerge && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
+				// fast path: only a single block for this new trace id
+				br.mustReadRaw(&rawBlk, &b.bm)
+				bw.mustWriteRawBlock(&rawBlk)
+				continue
+			}
+			// Slow path: start accumulating the new block
 			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
+			pendingBlockIsEmpty = false
 			continue
 		}
 
@@ -342,7 +416,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		pendingBlockIsEmpty = true
 	}
 	if err := br.error(); err != nil {
-		return nil, fmt.Errorf("cannot read block to merge: %w", err)
+		return nil, nil, nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
 		bw.mustWriteBlock(pendingBlock.bm.traceID, &pendingBlock.block)
@@ -352,7 +426,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var tf traceIDFilter
 	tt := make(tagType)
 	bw.Flush(&pm, &tf, &tt)
-	return &pm, nil
+	return &pm, &tf, &tt, nil
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

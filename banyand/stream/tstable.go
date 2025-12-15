@@ -230,6 +230,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			if ee[i].Name() == inverted.ExternalSegmentTempDirName {
 				continue
 			}
+			if ee[i].Name() == storage.FailedPartsDirName {
+				continue
+			}
 			p, err := parseEpoch(ee[i].Name())
 			if err != nil {
 				l.Info().Err(err).Msg("cannot parse part file name. skip and delete it")
@@ -261,6 +264,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		fileSystem.MustRMAll(filepath.Join(rootPath, needToDelete[i]))
 	}
 	if len(loadedParts) == 0 || len(loadedSnapshots) == 0 {
+		for _, id := range loadedSnapshots {
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
 		return &tst, uint64(time.Now().UnixNano()), nil
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -336,12 +342,17 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 }
 
 func (tst *tsTable) mustAddElements(es *elements) {
+	tst.mustAddElementsWithSegmentID(es, 0)
+}
+
+func (tst *tsTable) mustAddElementsWithSegmentID(es *elements, segmentID int64) {
 	if len(es.seriesIDs) == 0 {
 		return
 	}
 
 	mp := generateMemPart()
 	mp.mustInitFromElements(es)
+	mp.segmentID = segmentID
 	tst.mustAddMemPart(mp)
 }
 

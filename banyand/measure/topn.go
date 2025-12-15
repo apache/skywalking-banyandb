@@ -81,6 +81,10 @@ func (sr *schemaRepo) inFlow(stm *databasev1.Measure, seriesID uint64, shardID u
 
 func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
 	key := getKey(source)
+	// avoid creating a new manager if the source group is closing
+	if sr.isGroupClosing(source.GetGroup()) {
+		return nil
+	}
 	sourceMeasure, ok := sr.loadMeasure(source)
 	if !ok {
 		m, _ := sr.topNProcessorMap.LoadOrStore(key, &topNProcessorManager{
@@ -690,8 +694,10 @@ func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
 }
 
 func (t *TopNValue) addValue(value int64, entityValues []*modelv1.TagValue) {
+	entityValuesCopy := make([]*modelv1.TagValue, len(entityValues))
+	copy(entityValuesCopy, entityValues)
 	t.values = append(t.values, value)
-	t.entities = append(t.entities, entityValues)
+	t.entities = append(t.entities, entityValuesCopy)
 }
 
 // Values returns the valueName, entityTagNames, values, and entities.

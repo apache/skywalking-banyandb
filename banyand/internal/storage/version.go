@@ -68,3 +68,13 @@ func readCompatibleVersions() []string {
 	}
 	return vv
 }
+
+// GetCurrentVersion returns the current storage version.
+func GetCurrentVersion() string {
+	return currentVersion
+}
+
+// GetCompatibleVersions returns the list of compatible storage versions.
+func GetCompatibleVersions() []string {
+	return compatibleVersions
+}

@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl oa
+PROJECTS := ui banyand bydbctl mcp oa
 
 TEST_CI_OPTS ?=
 
@@ -70,12 +70,27 @@ test-coverage: default ## Run the unit tests in all projects with coverage analy
 
 include scripts/build/ginkgo.mk
 
-test-ci: $(GINKGO) ## Run the unit tests in CI
+test-ci: $(GINKGO) ## Run the unit tests in CI. Usage: make test-ci PKG=./banyand/trace
 	$(GINKGO) --race \
 	  -ldflags \
 	  "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
 	  $(TEST_CI_OPTS) \
-	  ./... 
+	  $(PKG)
+
+PKG ?= ./...
+GO_VERSION := $(shell grep -E '^go [0-9]+\.[0-9]+' go.mod | awk '{print $$2}')
+test-docker: ## Run tests in Docker with constrained resources (2 CPU cores, 4GB RAM). Usage: make test-docker PKG=./banyand/trace
+	@echo "Running tests in Docker container (2 CPUs, 4GB RAM) for package: $(PKG)"
+	@echo "Using Go version: $(GO_VERSION) (from go.mod)"
+	docker run --rm \
+	  --cpus=2 \
+	  --memory=4g \
+	  -v $(mk_dir):/workspace \
+	  -w /workspace \
+	  golang:$(GO_VERSION) \
+	  go run github.com/onsi/ginkgo/v2/ginkgo --race \
+	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
+	  $(PKG)
 
 ##@ Code quality targets
 
@@ -101,6 +116,7 @@ format: default ## Run the linters on all projects
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
 	@$(MAKE) -C ui check-version
+	@$(MAKE) -C mcp check-version
 
 include scripts/build/vuln.mk
 
@@ -125,7 +141,6 @@ pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
 	$(MAKE) generate
 	$(MAKE) lint
-	$(MAKE) license-dep
 	$(MAKE) check
 	$(MAKE) vuln-check
 
@@ -135,33 +150,35 @@ include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE)
 license-check: TARGET=license-check
-license-check: PROJECTS:=ui
+license-check: PROJECTS:=ui mcp
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
  
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui
+license-fix: PROJECTS:=ui mcp
 license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui
+license-dep: PROJECTS:=ui mcp
 license-dep: default ## Fix license header issues
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
+	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
+	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
 
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: PROJECTS:= banyand bydbctl
+docker.build: PROJECTS:= banyand bydbctl mcp
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:= banyand bydbctl
+docker.push: PROJECTS:= banyand bydbctl mcp
 docker.push: default ## Push docker images
 
 default:
@@ -191,6 +208,7 @@ release-source: ## Package source archive
 release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
+	${RELEASE_SCRIPTS} -k mcp
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Generate release package
@@ -202,7 +220,7 @@ release-push-candidate: ## Push release candidate
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push
-.PHONY: test test-race test-coverage test-ci
+.PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
 .PHONY: vendor-update

@@ -26,7 +26,21 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
+
+// writeTestData is a helper function for writing test data using the new pattern.
+func writeTestDataToSIDX(t *testing.T, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
+	// Convert write requests to MemPart
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	if err != nil {
+		t.Errorf("ConvertToMemPart failed: %v", err)
+		return
+	}
+
+	// Introduce the MemPart to SIDX
+	sidx.IntroduceMemPart(partID, memPart)
+}
 
 func TestSnapshot_Creation(t *testing.T) {
 	// Create test parts with different key ranges
@@ -38,14 +52,10 @@ func TestSnapshot_Creation(t *testing.T) {
 	defer cleanupTestParts(parts)
 
 	// Create snapshot
-	epoch := uint64(1001)
-	snapshot := newSnapshot(parts, epoch)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	// Verify snapshot properties
-	if snapshot.getEpoch() != epoch {
-		t.Errorf("expected epoch %d, got %d", epoch, snapshot.getEpoch())
-	}
 
 	if snapshot.refCount() != 1 {
 		t.Errorf("expected ref count 1, got %d", snapshot.refCount())
@@ -54,17 +64,13 @@ func TestSnapshot_Creation(t *testing.T) {
 	if snapshot.getPartCount() != len(parts) {
 		t.Errorf("expected part count %d, got %d", len(parts), snapshot.getPartCount())
 	}
-
-	if snapshot.isReleased() {
-		t.Error("snapshot should not be released")
-	}
 }
 
 func TestSnapshot_ReferenceCountingBasic(t *testing.T) {
 	parts := createTestParts(t, []keyRange{{minKey: 100, maxKey: 199, id: 1}})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 
 	// Test acquire
 	if !snapshot.acquire() {
@@ -80,25 +86,15 @@ func TestSnapshot_ReferenceCountingBasic(t *testing.T) {
 		t.Errorf("expected ref count 1, got %d", snapshot.refCount())
 	}
 
-	// Check state before final release
-	isReleasedBefore := snapshot.isReleased()
-	if isReleasedBefore {
-		t.Error("snapshot should not be released before final release")
-	}
-
 	// Final release should clean up
 	snapshot.release()
-
-	// After final release, the snapshot object may be reset and returned to pool
-	// so we can't reliably check its state. The important thing is that it
-	// doesn't crash and the cleanup happens properly.
 }
 
 func TestSnapshot_ReferenceCountingConcurrent(t *testing.T) {
 	parts := createTestParts(t, []keyRange{{minKey: 100, maxKey: 199, id: 1}})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	// Simulate concurrent access
@@ -147,7 +143,7 @@ func TestSnapshot_GetPartsByKeyRange(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	tests := []struct {
@@ -227,7 +223,7 @@ func TestSnapshot_GetPartsAll(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	allParts := snapshot.getPartsAll()
@@ -242,7 +238,7 @@ func TestSnapshot_GetPartsAll(t *testing.T) {
 	allParts = snapshot.getPartsAll()
 	activeCount := 0
 	for _, pw := range allParts {
-		if pw.isActive() {
+		if pw.refCount() > 0 {
 			activeCount++
 		}
 	}
@@ -258,7 +254,7 @@ func TestSnapshot_Validation(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 
 	// Valid snapshot should pass validation
 	if err := snapshot.validate(); err != nil {
@@ -279,7 +275,7 @@ func TestSnapshot_String(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	str := snapshot.String()
@@ -287,10 +283,7 @@ func TestSnapshot_String(t *testing.T) {
 		t.Error("String() should return non-empty string")
 	}
 
-	// String should contain epoch and part count
-	if !contains(str, "epoch=1001") {
-		t.Error("String() should contain epoch")
-	}
+	// String should contain part count
 	if !contains(str, "parts=2") {
 		t.Error("String() should contain part count")
 	}
@@ -304,7 +297,7 @@ func TestSnapshot_PartManagement(t *testing.T) {
 	})
 	defer cleanupTestParts(parts)
 
-	snapshot := newSnapshot(parts, 1001)
+	snapshot := newSnapshot(parts)
 	defer snapshot.release()
 
 	initialCount := snapshot.getPartCount()
@@ -334,22 +327,16 @@ func TestSnapshot_PoolReuse(t *testing.T) {
 	defer cleanupTestParts(parts)
 
 	// Create and release a snapshot
-	snapshot1 := newSnapshot(parts, 1001)
+	snapshot1 := newSnapshot(parts)
 	snapshot1.release()
 
 	// Create another snapshot - should potentially reuse the same object
-	snapshot2 := newSnapshot(parts, 1002)
+	snapshot2 := newSnapshot(parts)
 	defer snapshot2.release()
 
 	// Should be clean state
-	if snapshot2.getEpoch() != 1002 {
-		t.Errorf("expected epoch 1002, got %d", snapshot2.getEpoch())
-	}
 	if snapshot2.refCount() != 1 {
 		t.Errorf("expected ref count 1, got %d", snapshot2.refCount())
-	}
-	if snapshot2.isReleased() {
-		t.Error("new snapshot should not be released")
 	}
 }
 
@@ -366,7 +353,7 @@ func createTestParts(_ *testing.T, ranges []keyRange) []*partWrapper {
 
 	for i, kr := range ranges {
 		// Create a minimal part with metadata
-		pm := generatePartMetadata()
+		pm := &partMetadata{}
 		pm.MinKey = kr.minKey
 		pm.MaxKey = kr.maxKey
 		pm.ID = kr.id
@@ -378,7 +365,7 @@ func createTestParts(_ *testing.T, ranges []keyRange) []*partWrapper {
 			path:         "",
 		}
 
-		parts[i] = newPartWrapper(part)
+		parts[i] = newPartWrapper(nil, part)
 	}
 
 	return parts
@@ -386,7 +373,7 @@ func createTestParts(_ *testing.T, ranges []keyRange) []*partWrapper {
 
 func cleanupTestParts(parts []*partWrapper) {
 	for _, pw := range parts {
-		if pw != nil && !pw.isRemoved() {
+		if pw != nil && pw.refCount() > 0 {
 			pw.release()
 		}
 	}
@@ -410,8 +397,9 @@ func anySubstring(s, substr string) bool {
 
 func TestSnapshotReplacement_Basic(t *testing.T) {
 	// Test that snapshot replacement works correctly with basic operations
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -425,12 +413,10 @@ func TestSnapshotReplacement_Basic(t *testing.T) {
 			SeriesID: common.SeriesID(i + 1),
 			Key:      int64(i),
 			Data:     []byte(fmt.Sprintf("test-data-%d", i)),
-			Tags:     []Tag{{name: "test", value: []byte("snapshot-replacement")}},
+			Tags:     []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
 		}
 
-		if err := sidx.Write(ctx, []WriteRequest{req}); err != nil {
-			t.Errorf("write %d failed: %v", i, err)
-		}
+		writeTestDataToSIDX(t, sidx, []WriteRequest{req}, int64(i+1), uint64(i+1))
 
 		// Verify system remains consistent after each write
 		stats, err := sidx.Stats(ctx)
@@ -448,8 +434,9 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 	// Test that concurrent readers see consistent data during snapshot replacements
 	// This verifies that snapshot replacement doesn't cause readers to see inconsistent state
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -512,15 +499,13 @@ func TestSnapshotReplacement_ConcurrentReadsConsistentData(t *testing.T) {
 				Key:      int64(1000 + i),
 				Data:     []byte(fmt.Sprintf("replacement-data-%d", i)),
 				Tags: []Tag{
-					{name: "test", value: []byte("replacement")},
-					{name: "sequence", value: []byte(fmt.Sprintf("%d", i))},
+					{Name: "test", Value: []byte("replacement")},
+					{Name: "sequence", Value: []byte(fmt.Sprintf("%d", i))},
 				},
 			},
 		}
 
-		if err := sidx.Write(ctx, reqs); err != nil {
-			t.Errorf("write %d failed: %v", i, err)
-		}
+		writeTestDataToSIDX(t, sidx, reqs, int64(i+1), uint64(i+1))
 
 		time.Sleep(10 * time.Millisecond) // Space out writes
 	}
@@ -572,8 +557,9 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 	// This test should be run with -race flag to detect data races during snapshot replacement
 	// We test through concurrent write and read operations that trigger snapshot replacements
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -597,27 +583,30 @@ func TestSnapshotReplacement_NoDataRacesDuringReplacement(t *testing.T) {
 					// Write operation - triggers memory part introduction (snapshot replacement)
 					reqs := []WriteRequest{
 						{
-							SeriesID: common.SeriesID(id*1000 + j),
+							SeriesID: common.SeriesID(id*1000 + j + 1), // Ensure non-zero SeriesID
 							Key:      int64(id*1000 + j),
 							Data:     []byte(fmt.Sprintf("race-test-%d-%d", id, j)),
 							Tags: []Tag{
-								{name: "goroutine", value: []byte(fmt.Sprintf("%d", id))},
-								{name: "operation", value: []byte(fmt.Sprintf("%d", j))},
+								{Name: "goroutine", Value: []byte(fmt.Sprintf("%d", id))},
+								{Name: "operation", Value: []byte(fmt.Sprintf("%d", j))},
 							},
 						},
 					}
-					sidx.Write(ctx, reqs)
+					writeTestDataToSIDX(t, sidx, reqs, int64(id+1), uint64(j+1))
 				case 1:
 					// Stats operation - accesses current snapshot
 					sidx.Stats(ctx)
 				case 2:
 					// Query operation - accesses current snapshot
 					queryReq := QueryRequest{
-						Name: "test-index",
+						SeriesIDs: []common.SeriesID{1},
 					}
-					result, err := sidx.Query(ctx, queryReq)
-					if err == nil && result != nil {
-						result.Release()
+					resultsCh, errCh := sidx.StreamingQuery(ctx, queryReq)
+					// revive:disable-next-line:empty-block
+					for range resultsCh {
+					}
+					if err, ok := <-errCh; ok && err != nil {
+						t.Errorf("query failed: %v", err)
 					}
 				}
 			}
@@ -636,8 +625,9 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 	// Test to ensure old snapshots are properly cleaned up during replacement operations
 	// This verifies that reference counting prevents memory leaks
 
+	fileSystem := fs.NewLocalFileSystem()
 	opts := NewDefaultOptions().WithMemory(protector.Nop{})
-	sidx, err := NewSIDX(opts)
+	sidx, err := NewSIDX(fileSystem, opts)
 	if err != nil {
 		t.Fatalf("failed to create SIDX: %v", err)
 	}
@@ -658,16 +648,14 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 					Key:      int64(i*100 + j),
 					Data:     []byte(fmt.Sprintf("leak-test-batch-%d-write-%d", i, j)),
 					Tags: []Tag{
-						{name: "batch", value: []byte(fmt.Sprintf("%d", i))},
-						{name: "write", value: []byte(fmt.Sprintf("%d", j))},
-						{name: "test", value: []byte("memory-leak-prevention")},
+						{Name: "batch", Value: []byte(fmt.Sprintf("%d", i))},
+						{Name: "write", Value: []byte(fmt.Sprintf("%d", j))},
+						{Name: "test", Value: []byte("memory-leak-prevention")},
 					},
 				},
 			}
 
-			if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
-				t.Errorf("batch %d write %d failed: %v", i, j, writeErr)
-			}
+			writeTestDataToSIDX(t, sidx, reqs, int64(i+1), uint64(j+1))
 		}
 
 		// Verify the system state remains consistent
@@ -720,15 +708,13 @@ func TestSnapshotReplacement_MemoryLeaksPrevention(t *testing.T) {
 						Key:      int64(writerID*1000 + j + 5000),
 						Data:     []byte(fmt.Sprintf("concurrent-leak-test-%d-%d", writerID, j)),
 						Tags: []Tag{
-							{name: "writer", value: []byte(fmt.Sprintf("%d", writerID))},
-							{name: "concurrent", value: []byte("true")},
+							{Name: "writer", Value: []byte(fmt.Sprintf("%d", writerID))},
+							{Name: "concurrent", Value: []byte("true")},
 						},
 					},
 				}
 
-				if writeErr := sidx.Write(ctx, reqs); writeErr != nil {
-					t.Errorf("concurrent writer %d write %d failed: %v", writerID, j, writeErr)
-				}
+				writeTestDataToSIDX(t, sidx, reqs, int64(writerID+1), uint64(j+1))
 
 				time.Sleep(3 * time.Millisecond)
 			}

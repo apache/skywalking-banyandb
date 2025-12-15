@@ -22,6 +22,7 @@
 package trace
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -43,17 +45,19 @@ const (
 	maxUncompressedPrimaryBlockSize = 128 * 1024
 
 	defaultFlushTimeout = time.Second
+	defaultSyncInterval = 30 * time.Second
 )
 
 var traceScope = observability.RootScope.SubScope("trace")
 
 type option struct {
-	mergePolicy              *mergePolicy
-	protector                protector.Memory
-	tire2Client              queue.Client
-	seriesCacheMaxSize       run.Bytes
-	flushTimeout             time.Duration
-	elementIndexFlushTimeout time.Duration
+	mergePolicy                  *mergePolicy
+	protector                    protector.Memory
+	tire2Client                  queue.Client
+	seriesCacheMaxSize           run.Bytes
+	flushTimeout                 time.Duration
+	syncInterval                 time.Duration
+	failedPartsMaxTotalSizeBytes uint64
 }
 
 // Service allows inspecting the trace data.
@@ -75,6 +79,7 @@ type Query interface {
 type Trace interface {
 	GetSchema() *databasev1.Trace
 	GetIndexRules() []*databasev1.IndexRule
+	Query(ctx context.Context, opts model.TraceQueryOptions) (model.TraceQueryResult, error)
 }
 
 type indexSchema struct {
@@ -103,22 +108,21 @@ type trace struct {
 	group       string
 }
 
-type traceSpec struct {
-	schema *databasev1.Trace
-}
-
 func (t *trace) GetSchema() *databasev1.Trace {
 	return t.schema
 }
 
 func (t *trace) GetIndexRules() []*databasev1.IndexRule {
 	if is := t.indexSchema.Load(); is != nil {
-		return is.(*indexSchema).indexRules
+		return is.(indexSchema).indexRules
 	}
 	return nil
 }
 
 func (t *trace) OnIndexUpdate(index []*databasev1.IndexRule) {
+	if len(index) == 0 {
+		return
+	}
 	var is indexSchema
 	is.indexRules = index
 	is.parse(t.schema)

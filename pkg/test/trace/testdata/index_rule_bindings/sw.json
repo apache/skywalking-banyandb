@@ -1,0 +1,17 @@
+{
+    "metadata": {
+        "name": "sw-index-rule-binding",
+        "group": "test-trace-group"
+    },
+    "rules": [
+        "duration",
+        "timestamp"
+    ],
+    "subject": {
+        "catalog": "CATALOG_TRACE",
+        "name": "sw"
+    },
+    "begin_at": "2021-04-15T01:30:15.01Z",
+    "expire_at": "2121-04-15T01:30:15.01Z",
+    "updated_at": "2021-04-15T01:30:15.01Z"
+}

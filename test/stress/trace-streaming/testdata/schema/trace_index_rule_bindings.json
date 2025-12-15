@@ -1,0 +1,16 @@
+[
+    {
+        "metadata": {
+            "name": "segment_trace_binding",
+            "group": "trace_streaming_test"
+        },
+        "subject": {
+            "catalog": "CATALOG_TRACE",
+            "name": "segment_trace"
+        },
+        "rules": [
+            "time_based_index",
+            "latency_based_index"
+        ]
+    }
+]

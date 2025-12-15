@@ -18,7 +18,7 @@ If you notice high disk usage on the BanyanDB server, follow these steps to trou
 
 ## Cannot Write Data
 
-The parameters `measure-max-disk-usage-percent`, `stream-max-disk-usage-percent`, and `property-max-disk-usage-percent` control what percentage of the disk these three different modules can use. If the disk usage exceeds these limits, or if we set these parameters to 0, the module will not accept writing. However, queries can still run. Once the disk usage goes down below the set limits, the module can accept data again.
+The parameters `measure-retention-high-watermark`, `stream-retention-high-watermark`, and `property-retention-high-watermark` control what percentage of the disk these three different modules can use. If the disk usage exceeds these limits, or if we set these parameters to 0, the module will not accept writing. However, queries can still run. Once the disk usage goes down below the set limits, the module can accept data again.
 
 ## Too Many Open Files
 
