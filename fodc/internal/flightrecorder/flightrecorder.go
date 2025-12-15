@@ -54,11 +54,11 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 	var ds *Datasource
 	if len(fr.datasources) == 0 {
 		ds = NewDatasource()
-		ds.Capacity = fr.capacitySize
+		ds.SetCapacity(fr.capacitySize)
 		fr.datasources = append(fr.datasources, ds)
 	} else {
 		ds = fr.datasources[0]
-		ds.Capacity = fr.capacitySize
+		ds.SetCapacity(fr.capacitySize)
 	}
 
 	timestamp := time.Now().Unix()
@@ -90,7 +90,7 @@ func (fr *FlightRecorder) SetCapacitySize(capacitySize int) {
 	fr.capacitySize = capacitySize
 
 	for _, ds := range fr.datasources {
-		ds.Capacity = capacitySize
+		ds.SetCapacity(capacitySize)
 	}
 }
 

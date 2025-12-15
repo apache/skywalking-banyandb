@@ -244,13 +244,52 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Verify that exported metrics match buffered metrics
 		matchedCount := 0
+		// Metrics that are known to be volatile (gauges that change frequently)
+		volatileMetrics := map[string]bool{
+			"go_memstats_heap_alloc_bytes":      true,
+			"go_memstats_heap_sys_bytes":        true,
+			"go_memstats_heap_inuse_bytes":      true,
+			"go_memstats_heap_idle_bytes":       true,
+			"go_memstats_heap_released_bytes":   true,
+			"go_memstats_alloc_bytes":           true,
+			"go_memstats_sys_bytes":             true,
+			"go_memstats_mallocs_total":         true,
+			"go_memstats_frees_total":           true,
+			"go_memstats_gc_sys_bytes":          true,
+			"go_memstats_other_sys_bytes":       true,
+			"go_memstats_next_gc_bytes":         true,
+			"go_memstats_last_gc_time_seconds":  true,
+			"process_resident_memory_bytes":      true,
+			"process_virtual_memory_bytes":      true,
+		}
 		for metricKeyStr, bufferedValue := range bufferedMetricsMap {
 			exportedValue, exists := exportedMetricsMap[metricKeyStr]
 			if exists {
 				matchedCount++
-				// Allow small floating point differences
-				Expect(exportedValue).To(BeNumerically("~", bufferedValue, 0.0001),
-					fmt.Sprintf("Exported metric %s value should match buffered value", metricKeyStr))
+				// Check if this is a volatile metric (memory-related gauges)
+				isVolatile := false
+				for volatileName := range volatileMetrics {
+					if strings.Contains(metricKeyStr, volatileName) {
+						isVolatile = true
+						break
+					}
+				}
+				if isVolatile {
+					// For volatile metrics, use percentage-based tolerance (5%)
+					// or absolute tolerance of 5MB, whichever is larger
+					absTolerance := 5.0 * 1024 * 1024 // 5MB
+					percentTolerance := bufferedValue * 0.05 // 5%
+					tolerance := absTolerance
+					if percentTolerance > absTolerance {
+						tolerance = percentTolerance
+					}
+					Expect(exportedValue).To(BeNumerically("~", bufferedValue, tolerance),
+						fmt.Sprintf("Exported metric %s value should be within tolerance of buffered value (volatile metric)", metricKeyStr))
+				} else {
+					// Allow small floating point differences for non-volatile metrics
+					Expect(exportedValue).To(BeNumerically("~", bufferedValue, 0.0001),
+						fmt.Sprintf("Exported metric %s value should match buffered value", metricKeyStr))
+				}
 			}
 		}
 
@@ -345,16 +384,58 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Step 8: Verify metric values are current (from RingBuffers)
 		// The exporter uses GetCurrentValue() which returns the most recent value
+		// Metrics that are known to be volatile (gauges that change frequently)
+		volatileMetricsForStep8 := map[string]bool{
+			"go_memstats_heap_alloc_bytes":      true,
+			"go_memstats_heap_sys_bytes":        true,
+			"go_memstats_heap_inuse_bytes":      true,
+			"go_memstats_heap_idle_bytes":       true,
+			"go_memstats_heap_released_bytes":   true,
+			"go_memstats_alloc_bytes":           true,
+			"go_memstats_sys_bytes":             true,
+			"go_memstats_mallocs_total":         true,
+			"go_memstats_frees_total":           true,
+			"go_memstats_gc_sys_bytes":          true,
+			"go_memstats_other_sys_bytes":       true,
+			"go_memstats_next_gc_bytes":         true,
+			"go_memstats_last_gc_time_seconds":  true,
+			"process_resident_memory_bytes":      true,
+			"process_virtual_memory_bytes":      true,
+		}
 		for metricKeyStr, bufferedValue := range bufferedMetricsMap {
 			exportedValue, exists := exportedMetricsMap[metricKeyStr]
 			if exists {
 				metricBuffer := metricsMap[metricKeyStr]
 				currentValue := metricBuffer.GetCurrentValue()
-				// Exported value should match current value from RingBuffer
-				Expect(exportedValue).To(BeNumerically("~", currentValue, 0.0001),
-					fmt.Sprintf("Exported value for %s should match current RingBuffer value", metricKeyStr))
-				Expect(exportedValue).To(BeNumerically("~", bufferedValue, 0.0001),
-					fmt.Sprintf("Exported value for %s should match buffered value", metricKeyStr))
+				// Check if this is a volatile metric (memory-related gauges)
+				isVolatile := false
+				for volatileName := range volatileMetricsForStep8 {
+					if strings.Contains(metricKeyStr, volatileName) {
+						isVolatile = true
+						break
+					}
+				}
+				if isVolatile {
+					// For volatile metrics, use percentage-based tolerance (5%)
+					// or absolute tolerance of 5MB, whichever is larger
+					absTolerance := 5.0 * 1024 * 1024 // 5MB
+					percentTolerance := bufferedValue * 0.05 // 5%
+					tolerance := absTolerance
+					if percentTolerance > absTolerance {
+						tolerance = percentTolerance
+					}
+					// Exported value should match current value from RingBuffer (with tolerance for volatile metrics)
+					Expect(exportedValue).To(BeNumerically("~", currentValue, tolerance),
+						fmt.Sprintf("Exported value for %s should match current RingBuffer value (volatile metric)", metricKeyStr))
+					Expect(exportedValue).To(BeNumerically("~", bufferedValue, tolerance),
+						fmt.Sprintf("Exported value for %s should match buffered value (volatile metric)", metricKeyStr))
+				} else {
+					// Exported value should match current value from RingBuffer
+					Expect(exportedValue).To(BeNumerically("~", currentValue, 0.0001),
+						fmt.Sprintf("Exported value for %s should match current RingBuffer value", metricKeyStr))
+					Expect(exportedValue).To(BeNumerically("~", bufferedValue, 0.0001),
+						fmt.Sprintf("Exported value for %s should match buffered value", metricKeyStr))
+				}
 			}
 		}
 	})

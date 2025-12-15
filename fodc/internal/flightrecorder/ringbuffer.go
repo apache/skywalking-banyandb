@@ -17,10 +17,13 @@
 
 package flightrecorder
 
+import "sync"
+
 // RingBuffer is a generic circular buffer that stores values of type T.
 type RingBuffer[T any] struct {
-	values []T // Fixed-size buffer for values of type T
-	next   int // Next write position in the circular buffer
+	mu     sync.RWMutex // Protects concurrent access to values and next
+	values []T          // Fixed-size buffer for values of type T
+	next   int          // Next write position in the circular buffer
 }
 
 // NewRingBuffer creates a new RingBuffer.
@@ -37,6 +40,9 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 	if capacity <= 0 {
 		return
 	}
+
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
 
 	currentLen := len(rb.values)
 
@@ -75,6 +81,9 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 
 // Get returns the value at the specified index.
 func (rb *RingBuffer[T]) Get(index int) T {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
 	var zero T
 	if index < 0 || index >= len(rb.values) {
 		return zero
@@ -84,16 +93,23 @@ func (rb *RingBuffer[T]) Get(index int) T {
 
 // Len returns the current length of the buffer.
 func (rb *RingBuffer[T]) Len() int {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 	return len(rb.values)
 }
 
 // Cap returns the current capacity of the buffer.
 func (rb *RingBuffer[T]) Cap() int {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 	return cap(rb.values)
 }
 
 // GetCurrentValue returns the most recently written value.
 func (rb *RingBuffer[T]) GetCurrentValue() T {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
 	var zero T
 	if len(rb.values) == 0 {
 		return zero
@@ -107,6 +123,9 @@ func (rb *RingBuffer[T]) GetCurrentValue() T {
 
 // GetAllValues returns all values in the buffer in order (oldest to newest).
 func (rb *RingBuffer[T]) GetAllValues() []T {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
 	if len(rb.values) == 0 {
 		return nil
 	}
@@ -128,6 +147,9 @@ func (rb *RingBuffer[T]) Copy() *RingBuffer[T] {
 	if rb == nil {
 		return nil
 	}
+
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
 
 	copyRB := &RingBuffer[T]{
 		next:   rb.next,

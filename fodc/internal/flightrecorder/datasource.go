@@ -103,6 +103,7 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 
 	// Compute capacity based on memory constraints
+	// Read Capacity while holding the lock to avoid race conditions
 	capacitySize := ds.Capacity
 	if capacitySize <= 0 {
 		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8 // Rough estimate
@@ -164,6 +165,13 @@ func (ds *Datasource) AddTimestamp(timestamp int64) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	ds.addTimestampUnlocked(timestamp)
+}
+
+// SetCapacity sets the capacity for the datasource in a thread-safe manner.
+func (ds *Datasource) SetCapacity(capacity int) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	ds.Capacity = capacity
 }
 
 // ComputeCapacity computes the maximum capacity for ring buffers based on available memory constraints.
@@ -239,9 +247,6 @@ func (ds *Datasource) GetTimestamps() TimestampRingBuffer {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 	copyRB := (&ds.timestamps).Copy()
-	if copyRB == nil {
-		return TimestampRingBuffer{}
-	}
 	return *copyRB
 }
 

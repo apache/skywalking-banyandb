@@ -412,7 +412,7 @@ func TestDatasource_Update_TotalWrittenWrapsAround(t *testing.T) {
 // TestDatasource_Update_ConcurrentCapacityChanges tests concurrent updates with capacity changes.
 func TestDatasource_Update_ConcurrentCapacityChanges(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	var wg sync.WaitGroup
 	numGoroutines := 5
@@ -421,9 +421,9 @@ func TestDatasource_Update_ConcurrentCapacityChanges(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			// Change capacity in some goroutines
+			// Change capacity in some goroutines using thread-safe method
 			if id%2 == 0 {
-				ds.Capacity = 20000
+				ds.SetCapacity(20000)
 			}
 			rawMetric := &metrics.RawMetric{
 				Name:   "cpu_usage",
