@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package fodc_test
+package integration_test
 
 import (
 	"fmt"
@@ -107,3 +107,4 @@ var _ = ReportAfterSuite("FODC Integration Test Suite", func(report Report) {
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}
 })
+
