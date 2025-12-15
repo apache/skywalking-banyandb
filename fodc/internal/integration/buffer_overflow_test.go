@@ -312,7 +312,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		}
 
 		// Verify TotalWritten counter reflects all writes (including overwrites)
-		Expect(ds.TotalWritten).To(BeNumerically(">", initialTimestampCount),
+		Expect(ds.GetTotalWritten()).To(BeNumerically(">", initialTimestampCount),
 			"TotalWritten should reflect all metric writes, including overwrites")
 	})
 })

@@ -215,7 +215,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 		}
 
 		// Verify TotalWritten counter is incremented
-		Expect(ds.TotalWritten).To(BeNumerically(">", 0), "TotalWritten should be greater than 0")
+		Expect(ds.GetTotalWritten()).To(BeNumerically(">", 0), "TotalWritten should be greater than 0")
 	})
 
 	It("should handle multiple polling cycles correctly", func() {
@@ -329,6 +329,6 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 		Expect(descriptions).NotTo(BeNil())
 
 		// Verify TotalWritten is accessible
-		Expect(ds.TotalWritten).To(BeNumerically(">=", 0), "TotalWritten should be accessible")
+		Expect(ds.GetTotalWritten()).To(BeNumerically(">=", 0), "TotalWritten should be accessible")
 	})
 })

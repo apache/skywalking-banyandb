@@ -216,7 +216,7 @@ func TestFlightRecorder_ConcurrentUpdates(t *testing.T) {
 	datasources := fr.GetDatasources()
 	require.Len(t, datasources, 1)
 	// Verify that updates were successful
-	assert.Greater(t, datasources[0].TotalWritten, uint64(0))
+	assert.Greater(t, datasources[0].GetTotalWritten(), uint64(0))
 }
 
 func TestFlightRecorder_HistogramStorage(t *testing.T) {
@@ -942,7 +942,7 @@ func TestNewDatasource(t *testing.T) {
 	assert.NotNil(t, ds.descriptions)
 	assert.Empty(t, ds.descriptions)
 	assert.Equal(t, 0, ds.Capacity)
-	assert.Equal(t, uint64(0), ds.TotalWritten)
+	assert.Equal(t, uint64(0), ds.GetTotalWritten())
 	if ds.timestamps != nil {
 		assert.Equal(t, 0, ds.timestamps.Len())
 	}
@@ -1044,7 +1044,7 @@ func TestDatasource_Update_UpdatesDescription(t *testing.T) {
 func TestDatasource_Update_IncrementsTotalWritten(t *testing.T) {
 	ds := NewDatasource()
 
-	initialTotal := ds.TotalWritten
+	initialTotal := ds.GetTotalWritten()
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1053,7 +1053,7 @@ func TestDatasource_Update_IncrementsTotalWritten(t *testing.T) {
 	}
 	_ = ds.Update(rawMetric)
 
-	assert.Equal(t, initialTotal+1, ds.TotalWritten)
+	assert.Equal(t, initialTotal+1, ds.GetTotalWritten())
 }
 
 func TestDatasource_AddTimestamp(t *testing.T) {
@@ -1758,7 +1758,7 @@ func TestDatasource_Update_ConcurrentUpdatesSameMetric(t *testing.T) {
 	// Should have successfully updated
 	metricsMap := ds.GetMetrics()
 	assert.Contains(t, metricsMap, "cpu_usage")
-	assert.Equal(t, uint64(numGoroutines*updatesPerGoroutine), ds.TotalWritten)
+	assert.Equal(t, uint64(numGoroutines*updatesPerGoroutine), ds.GetTotalWritten())
 }
 
 func TestDatasource_GetMetrics_ReturnsCopy(t *testing.T) {

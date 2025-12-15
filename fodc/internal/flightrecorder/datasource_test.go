@@ -187,7 +187,7 @@ func TestDatasource_Update_MultipleUpdatesSameMetric(t *testing.T) {
 	metricsMap := ds.GetMetrics()
 	buffer := metricsMap["cpu_usage"]
 	assert.Equal(t, 84.0, buffer.GetCurrentValue()) // 75 + 9
-	assert.Equal(t, uint64(10), ds.TotalWritten)
+	assert.Equal(t, uint64(10), ds.GetTotalWritten())
 }
 
 // TestDatasource_ComputeCapacity_EdgeCases tests edge cases for ComputeCapacity.
@@ -406,7 +406,7 @@ func TestDatasource_Update_TotalWrittenWrapsAround(t *testing.T) {
 	}
 
 	// TotalWritten should reflect the number of updates
-	assert.Equal(t, uint64(1000), ds.TotalWritten)
+	assert.Equal(t, uint64(1000), ds.GetTotalWritten())
 }
 
 // TestDatasource_Update_ConcurrentCapacityChanges tests concurrent updates with capacity changes.

@@ -21,6 +21,7 @@ package flightrecorder
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
 )
@@ -80,7 +81,7 @@ func NewDatasource() *Datasource {
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
 		Capacity:     0,
-		TotalWritten: 0,
+		TotalWritten: 0, // Accessed via atomic operations
 	}
 }
 
@@ -145,7 +146,7 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value, computedCapacity)
 
-	ds.TotalWritten++
+	atomic.AddUint64(&ds.TotalWritten, 1)
 
 	return nil
 }
@@ -261,4 +262,10 @@ func (ds *Datasource) GetDescriptions() map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// GetTotalWritten returns the total number of values written to the datasource.
+// This method is thread-safe and uses atomic operations.
+func (ds *Datasource) GetTotalWritten() uint64 {
+	return atomic.LoadUint64(&ds.TotalWritten)
 }
