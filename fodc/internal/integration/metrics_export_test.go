@@ -58,13 +58,49 @@ var volatileMetricNames = []string{
 }
 
 // isVolatileMetric checks if a metric key contains any volatile metric name.
+// Latency metrics are also considered volatile as they represent timing measurements that fluctuate.
 func isVolatileMetric(metricKeyStr string) bool {
+	// Check for latency-related keywords (case-insensitive)
+	lowerKey := strings.ToLower(metricKeyStr)
+	if strings.Contains(lowerKey, "latency") {
+		return true
+	}
+
+	// Check against predefined volatile metric names
 	for _, volatileName := range volatileMetricNames {
 		if strings.Contains(metricKeyStr, volatileName) {
 			return true
 		}
 	}
 	return false
+}
+
+// isLatencyMetric checks if a metric key represents a latency metric.
+func isLatencyMetric(metricKeyStr string) bool {
+	lowerKey := strings.ToLower(metricKeyStr)
+	return strings.Contains(lowerKey, "latency")
+}
+
+// calculateTolerance calculates the appropriate tolerance for a volatile metric.
+// For latency metrics, uses a smaller absolute tolerance (0.1 seconds).
+// For memory metrics, uses 10MB as absolute tolerance.
+func calculateTolerance(metricKeyStr string, bufferedValue float64) float64 {
+	if isLatencyMetric(metricKeyStr) {
+		// For latency metrics, use percentage-based tolerance (10%) or 0.1 seconds, whichever is larger
+		absTolerance := 0.1                      // 100ms
+		percentTolerance := bufferedValue * 0.10 // 10%
+		if percentTolerance > absTolerance {
+			return percentTolerance
+		}
+		return absTolerance
+	}
+	// For memory metrics, use percentage-based tolerance (10%) or 10MB, whichever is larger
+	absTolerance := 10.0 * 1024 * 1024       // 10MB
+	percentTolerance := bufferedValue * 0.10 // 10%
+	if percentTolerance > absTolerance {
+		return percentTolerance
+	}
+	return absTolerance
 }
 
 var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
@@ -277,16 +313,9 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			exportedValue, exists := exportedMetricsMap[metricKeyStr]
 			if exists {
 				matchedCount++
-				// Check if this is a volatile metric (memory-related gauges)
+				// Check if this is a volatile metric (memory-related gauges or latency metrics)
 				if isVolatileMetric(metricKeyStr) {
-					// For volatile metrics, use percentage-based tolerance (10%)
-					// or absolute tolerance of 10MB, whichever is larger
-					absTolerance := 10.0 * 1024 * 1024       // 10MB
-					percentTolerance := bufferedValue * 0.10 // 10%
-					tolerance := absTolerance
-					if percentTolerance > absTolerance {
-						tolerance = percentTolerance
-					}
+					tolerance := calculateTolerance(metricKeyStr, bufferedValue)
 					Expect(exportedValue).To(BeNumerically("~", bufferedValue, tolerance),
 						fmt.Sprintf("Exported metric %s value should be within tolerance of buffered value (volatile metric)", metricKeyStr))
 				} else {
@@ -393,16 +422,9 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if exists {
 				metricBuffer := metricsMap[metricKeyStr]
 				currentValue := metricBuffer.GetCurrentValue()
-				// Check if this is a volatile metric (memory-related gauges)
+				// Check if this is a volatile metric (memory-related gauges or latency metrics)
 				if isVolatileMetric(metricKeyStr) {
-					// For volatile metrics, use percentage-based tolerance (10%)
-					// or absolute tolerance of 10MB, whichever is larger
-					absTolerance := 10.0 * 1024 * 1024       // 10MB
-					percentTolerance := bufferedValue * 0.10 // 10%
-					tolerance := absTolerance
-					if percentTolerance > absTolerance {
-						tolerance = percentTolerance
-					}
+					tolerance := calculateTolerance(metricKeyStr, bufferedValue)
 					// Exported value should match current value from RingBuffer (with tolerance for volatile metrics)
 					Expect(exportedValue).To(BeNumerically("~", currentValue, tolerance),
 						fmt.Sprintf("Exported value for %s should match current RingBuffer value (volatile metric)", metricKeyStr))
