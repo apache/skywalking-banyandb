@@ -157,7 +157,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					}
 				}
 			}
-			if len(es.metadataDocs) > 0 && len(seriesMetadataBytes) > 0 {
+			if len(seriesMetadataBytes) > 0 {
 				sendDocuments(data.TopicMeasureSeriesIndexInsert, seriesMetadataBytes)
 			}
 			if len(es.indexModeDocs) > 0 {
