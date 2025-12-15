@@ -122,3 +122,17 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 
 	return result
 }
+
+// Copy creates a deep copy of the RingBuffer.
+func (rb *RingBuffer[T]) Copy() *RingBuffer[T] {
+	if rb == nil {
+		return nil
+	}
+
+	copyRB := &RingBuffer[T]{
+		next:   rb.next,
+		values: make([]T, len(rb.values)),
+	}
+	copy(copyRB.values, rb.values)
+	return copyRB
+}

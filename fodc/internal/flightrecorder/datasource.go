@@ -234,11 +234,15 @@ func (ds *Datasource) GetMetrics() map[string]*MetricRingBuffer {
 	return result
 }
 
-// GetTimestamps returns the timestamps ring buffer.
+// GetTimestamps returns a copy of the timestamps ring buffer.
 func (ds *Datasource) GetTimestamps() TimestampRingBuffer {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
-	return ds.timestamps
+	copyRB := (&ds.timestamps).Copy()
+	if copyRB == nil {
+		return TimestampRingBuffer{}
+	}
+	return *copyRB
 }
 
 // GetDescriptions returns a copy of the descriptions map.
