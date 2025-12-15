@@ -35,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -117,8 +116,18 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(es.metadataDocs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = es.metadataDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				}
+			}
 			if es.tsTable != nil && es.dataPoints != nil {
-				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano())
+				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
 				releaseDataPoints(es.dataPoints)
 			}
 			nodes := g.queue.GetNodes(es.shardID)
@@ -126,12 +135,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
 				continue
 			}
-			sendDocuments := func(topic bus.Topic, docs index.Documents) {
-				seriesDocData, marshalErr := docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
-					return
-				}
+			sendDocuments := func(topic bus.Topic, seriesDocData []byte) {
 				// Encode group name, start timestamp from timeRange, and prepend to docData
 				combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
 				combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
@@ -153,11 +157,16 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					}
 				}
 			}
-			if len(es.metadataDocs) > 0 {
-				sendDocuments(data.TopicMeasureSeriesIndexInsert, es.metadataDocs)
+			if len(seriesMetadataBytes) > 0 {
+				sendDocuments(data.TopicMeasureSeriesIndexInsert, seriesMetadataBytes)
 			}
 			if len(es.indexModeDocs) > 0 {
-				sendDocuments(data.TopicMeasureSeriesIndexUpdate, es.indexModeDocs)
+				seriesDocData, marshalErr := es.indexModeDocs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal index mode documents")
+				} else {
+					sendDocuments(data.TopicMeasureSeriesIndexUpdate, seriesDocData)
+				}
 			}
 		}
 	}
