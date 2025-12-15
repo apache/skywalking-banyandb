@@ -3,7 +3,7 @@
 
 ## Overview
 
-Kernel Telemetry Module (KTM) is an optional, modular kernel observability component embedded inside the BanyanDB First Occurrence Data Collection (FODC) sidecar. The first built-in module is an eBPF-based I/O monitor ("iomonitor") that focuses on page cache behavior, fadvise() effectiveness, and memory pressure signals and their impact on BanyanDB performance. KTM is not a standalone agent or network-facing service; it runs as a sub-component of the FODC sidecar ("black box") and exposes a Go-native interface to the FlightRecorder for ingesting metrics. Collection scoping is configurable and defaults to cgroup v2.
+Kernel Telemetry Module (KTM) is an optional, modular kernel observability component embedded inside the BanyanDB First Occurrence Data Collection (FODC) sidecar. The first built-in module is an eBPF-based I/O monitor ("iomonitor") that focuses on page cache behavior, fadvise() effectiveness, and memory pressure signals and their impact on BanyanDB performance. KTM is not a standalone agent or network-facing service; it runs as a sub-component of the FODC sidecar ("black box") and exposes a Go-native interface to the Flight Recorder for ingesting metrics. Collection scoping is configurable and defaults to cgroup v2.
 
 
 ## Architecture
@@ -20,10 +20,10 @@ Kernel Telemetry Module (KTM) is an optional, modular kernel observability compo
 ┌─────────────────────────────────────────────────────────┐
 │           FODC Sidecar ("Black Box" Agent)              │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │   Watchdog / FlightRecorder / KTM (iomonitor)     │ │
+│  │   Watchdog / Flight Recorder / KTM (iomonitor)     │ │
 │  │   - KTM eBPF Loader & Manager                     │ │
 │  │   - KTM Collector (Module Management)             │ │
-│  │   - FlightRecorder (in-memory diagnostics store)  │ │
+│  │   - Flight Recorder (in-memory diagnostics store)  │ │
 │  └────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
                              │
@@ -57,12 +57,12 @@ Notes:
 
 - Counters in BPF maps are monotonic and are not cleared by the userspace collector (NoCleanup).
 - Collection and push interval: 10 seconds by default.
-- KTM periodically pushes collected metrics into the FODC FlightRecorder through a Go-native interface at the configured interval (default 10s). The push interval is exported through the `collector.interval` configuration option. The FlightRecorder is responsible for any subsequent export, persistence, or diagnostics workflows.
+- KTM periodically pushes collected metrics into the FODC Flight Recorder through a Go-native interface at the configured interval (default 10s). The push interval is exported through the `collector.interval` configuration option. The Flight Recorder is responsible for any subsequent export, persistence, or diagnostics workflows.
 - Downstream systems (for example, FODC Discovery Proxy or higher-level exporters) should derive rates using `rate()`/`irate()` or equivalents; we avoid windowed counters and map resets to preserve counter semantics.
 - int64 overflow is not a practical concern for our use cases; we accept long-lived monotonic growth.
 
 Configuration surface (current):
-- `collector.interval`: Controls the periodic push interval for metrics to FlightRecorder. Defaults to 10s.
+- `collector.interval`: Controls the periodic push interval for metrics to Flight Recorder. Defaults to 10s.
 - `collector.enable_cgroup_filter`, `collector.enable_mntns_filter`: default on when in sidecar mode; can be toggled.
 - `collector.target_pid`/`collector.target_comm`: optional helpers for discovering scoping targets.
 - `collector.target_comm_regex`: process matcher regular expression used during target discovery (matches `/proc/<pid>/comm` and/or executable basename). Defaults to `banyand`.
@@ -123,14 +123,14 @@ KTM does not expose a dedicated HTTP or gRPC API. Instead, it provides an intern
 - Go-native interfaces (implemented):
   - Register and manage KTM modules (such as `iomonitor`).
   - Configure collectors and scoping behavior.
-  - Periodically read monotonic counters from BPF maps and push the results into the FlightRecorder at the configured interval (default 10s).
+  - Periodically read monotonic counters from BPF maps and push the results into the Flight Recorder at the configured interval (default 10s).
 
 Any external APIs (HTTP or gRPC) that expose KTM-derived metrics are part of the broader FODC system (for example, Discovery Proxy or other FODC components) and are documented separately. KTM itself is not responsible for serving `/metrics` or any other network endpoints.
 
 
 ## Exporters
 
-KTM itself has no direct network exporters. All metrics collected by KTM are periodically pushed into the FlightRecorder inside the FODC sidecar at the configured interval (default 10s). External consumers (such as FODC Discovery Proxy, Prometheus integrations, or BanyanDB push/pull paths) read from the FlightRecorder or other FODC-facing APIs and are specified in the FODC design documents rather than this KTM-focused document.
+KTM itself has no direct network exporters. All metrics collected by KTM are periodically pushed into the Flight Recorder inside the FODC sidecar at the configured interval (default 10s). External consumers (such as FODC Discovery Proxy, Prometheus integrations, or BanyanDB push/pull paths) read from the Flight Recorder or other FODC-facing APIs and are specified in the FODC design documents rather than this KTM-focused document.
 
 
 ## Metrics Reference (selected)
