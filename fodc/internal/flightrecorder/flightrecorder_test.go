@@ -482,8 +482,7 @@ func TestFlightRecorder_ReuseSameDatasource(t *testing.T) {
 	assert.Equal(t, ds1, ds2)
 }
 
-// RingBuffer Tests
-
+// RingBuffer Tests.
 func TestRingBuffer_NewRingBuffer(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 
@@ -786,7 +785,7 @@ func TestRingBuffer_Resize_SameCapacity(t *testing.T) {
 	assert.Equal(t, 4.0, rb.GetCurrentValue())
 }
 
-// MetricRingBuffer and TimestampRingBuffer Tests
+// MetricRingBuffer and TimestampRingBuffer Tests.
 
 func TestNewMetricRingBuffer(t *testing.T) {
 	mrb := NewMetricRingBuffer()
@@ -839,7 +838,7 @@ func TestUpdateTimestampRingBuffer(t *testing.T) {
 	assert.Equal(t, timestamp2, trb.GetCurrentValue())
 }
 
-// Datasource.ComputeCapacity Tests
+// Datasource.ComputeCapacity Tests.
 
 func TestDatasource_ComputeCapacity_ZeroCapacity(t *testing.T) {
 	ds := NewDatasource()
@@ -932,7 +931,7 @@ func TestDatasource_ComputeCapacity_MemoryCalculation(t *testing.T) {
 	assert.Less(t, result, capacitySize)
 }
 
-// Datasource Tests
+// Datasource Tests.
 
 func TestNewDatasource(t *testing.T) {
 	ds := NewDatasource()
@@ -1266,7 +1265,7 @@ func TestRingBuffer_TypeSafety_String(t *testing.T) {
 	assert.Equal(t, "test1", value)
 }
 
-// Additional Datasource Tests
+// Additional Datasource Tests.
 
 func TestDatasource_Update_LabelSorting(t *testing.T) {
 	ds := NewDatasource()

@@ -57,11 +57,11 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if len(parts) > 0 {
 				host = parts[0]
 			} else {
-				host = "localhost"
+				host = defaultLocalhost
 			}
 		}
 		if host == "" {
-			host = "localhost"
+			host = defaultLocalhost
 		}
 		metricsEndpoint = fmt.Sprintf("http://%s:2121/metrics", host)
 
@@ -75,7 +75,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Create and start Prometheus metrics server for FODC with fixed port for testing
 		// Use a high port number to avoid conflicts
-		metricsServerAddr = "localhost:9091"
+		metricsServerAddr = defaultLocalhost + ":9091"
 		var serverCreateErr error
 		metricsServer, serverCreateErr = server.NewServer(server.Config{
 			ListenAddr:        metricsServerAddr,
@@ -492,8 +492,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 })
 
 // stripTimestampsFromPrometheusFormat removes timestamps from Prometheus metric lines.
-// Prometheus format: metric_name{labels} value timestamp
-// This function removes the timestamp part, leaving: metric_name{labels} value
+// Prometheus format: metric_name{labels} value timestamp.
+// This function removes the timestamp part, leaving: metric_name{labels} value.
 func stripTimestampsFromPrometheusFormat(text string) string {
 	lines := strings.Split(text, "\n")
 	var result []string

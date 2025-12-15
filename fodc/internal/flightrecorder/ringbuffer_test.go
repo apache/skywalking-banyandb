@@ -534,8 +534,8 @@ func TestRingBuffer_GetAllValues_PreservesOrder(t *testing.T) {
 // TestRingBuffer_Add_StructType tests Add with struct type.
 func TestRingBuffer_Add_StructType(t *testing.T) {
 	type testStruct struct {
-		ID    int
 		Value string
+		ID    int
 	}
 
 	rb := NewRingBuffer[testStruct]()

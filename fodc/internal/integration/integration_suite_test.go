@@ -35,6 +35,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
+const (
+	defaultLocalhost = "localhost"
+)
+
 func TestFODCIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "FODC Integration Test Suite")
@@ -70,11 +74,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		if len(parts) > 0 {
 			host = parts[0]
 		} else {
-			host = "localhost"
+			host = defaultLocalhost
 		}
 	}
 	if host == "" {
-		host = "localhost"
+		host = defaultLocalhost
 	}
 	metricsAddr := fmt.Sprintf("%s:2121", host)
 
@@ -107,4 +111,3 @@ var _ = ReportAfterSuite("FODC Integration Test Suite", func(report Report) {
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}
 })
-

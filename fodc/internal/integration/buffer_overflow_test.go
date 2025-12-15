@@ -53,11 +53,11 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			if len(parts) > 0 {
 				host = parts[0]
 			} else {
-				host = "localhost"
+				host = defaultLocalhost
 			}
 		}
 		if host == "" {
-			host = "localhost"
+			host = defaultLocalhost
 		}
 		metricsEndpoint = fmt.Sprintf("http://%s:2121/metrics", host)
 
@@ -73,7 +73,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		// Create and start Prometheus metrics server for FODC
 		var serverCreateErr error
 		metricsServer, serverCreateErr = server.NewServer(server.Config{
-			ListenAddr:        "localhost:0",
+			ListenAddr:        defaultLocalhost + ":0",
 			ReadHeaderTimeout: 3 * time.Second,
 			ShutdownTimeout:   5 * time.Second,
 		})
