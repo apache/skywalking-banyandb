@@ -40,6 +40,10 @@ type tagFilterOp struct {
 // Filter is an interface for tag filtering.
 type Filter interface {
 	MightContain(item []byte) bool
+	// ContainsAll checks if all elements in the items slice are present.
+	// For array types (StrArr/Int64Arr), it checks if items is a subset of any stored array.
+	// For non-array types, it checks if any of the items are present.
+	ContainsAll(items [][]byte) bool
 }
 
 // tagFilterCache caches tag filter data for a specific tag.
@@ -78,8 +82,9 @@ func (tfo *tagFilterOp) Eq(tagName string, tagValue string) bool {
 	return true
 }
 
-// Having checks if any of the provided tag values might exist in the bloom filter.
-// It returns true if at least one value might be contained in the bloom filter.
+// Having checks if any of the provided tag values might exist in the filter.
+// For non-array types: returns true if ANY value might be contained (OR semantics).
+// For array types: returns true if ALL values are a subset of any stored array (AND semantics).
 func (tfo *tagFilterOp) Having(tagName string, tagValues []string) bool {
 	if tfo.blockMetadata == nil || tfo.part == nil {
 		return false
@@ -98,8 +103,18 @@ func (tfo *tagFilterOp) Having(tagName string, tagValues []string) bool {
 		return true // Conservative approach - don't filter out
 	}
 
-	// Use filter to check if any value might exist
+	// Use filter to check values
 	if cache.filter != nil {
+		// For array types (StrArr/Int64Arr), use ContainsAll for optimized subset checking
+		if cache.valueType == pbv1.ValueTypeStrArr || cache.valueType == pbv1.ValueTypeInt64Arr {
+			items := make([][]byte, len(tagValues))
+			for i, v := range tagValues {
+				items[i] = []byte(v)
+			}
+			return cache.filter.ContainsAll(items)
+		}
+
+		// For non-array types, check if any value might exist (OR semantics)
 		for _, tagValue := range tagValues {
 			if cache.filter.MightContain([]byte(tagValue)) {
 				return true // Return true as soon as we find a potential match
@@ -208,8 +223,7 @@ func (tfo *tagFilterOp) getTagFilterCache(tagName string, tagBlock dataBlock) (*
 				logger.Panicf("failed to extract dictionary values for tag %s: %v", tagName, err)
 			}
 			df := generateDictionaryFilter()
-			df.SetValues(dictValues)
-			df.SetValueType(tagMetadata.valueType)
+			df.Set(dictValues, tagMetadata.valueType)
 			cache.filter = df
 		}
 	}

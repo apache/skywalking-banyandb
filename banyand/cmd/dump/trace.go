@@ -186,18 +186,18 @@ func unmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
 	if len(src) == 0 {
 		return nil, nil, fmt.Errorf("empty entity value")
 	}
-	if src[0] == internalencoding.EntityDelimiter {
+	if src[0] == encoding.EntityDelimiter {
 		return dest, src[1:], nil
 	}
 	for len(src) > 0 {
 		switch {
-		case src[0] == internalencoding.Escape:
+		case src[0] == encoding.Escape:
 			if len(src) < 2 {
 				return nil, nil, fmt.Errorf("invalid escape character")
 			}
 			src = src[1:]
 			dest = append(dest, src[0])
-		case src[0] == internalencoding.EntityDelimiter:
+		case src[0] == encoding.EntityDelimiter:
 			return dest, src[1:], nil
 		default:
 			dest = append(dest, src[0])
@@ -955,7 +955,7 @@ func calculateSeriesIDFromTags(tags map[string][]byte) common.SeriesID {
 			entityValues = append(entityValues, []byte(name)...)
 			entityValues = append(entityValues, '=')
 			entityValues = append(entityValues, value...)
-			entityValues = append(entityValues, internalencoding.EntityDelimiter)
+			entityValues = append(entityValues, encoding.EntityDelimiter)
 		}
 	}
 

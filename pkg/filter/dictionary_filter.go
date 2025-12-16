@@ -18,61 +18,74 @@
 package filter
 
 import (
-	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"bytes"
+
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // DictionaryFilter is a filter implementation backed by a dictionary.
-// It uses a map-based lookup for O(1) performance instead of O(n) linear search.
+// For non-array types: uses linear iteration through values.
+// For array types: uses iterative approach, extracting and sorting on-the-fly.
 type DictionaryFilter struct {
-	valueSet  map[string]struct{}
+	// Original serialized values
 	values    [][]byte
 	valueType pbv1.ValueType
 }
 
-// NewDictionaryFilter creates a new dictionary filter with the given values.
-func NewDictionaryFilter(values [][]byte) *DictionaryFilter {
-	df := &DictionaryFilter{
-		values: values,
-	}
-	df.buildValueSet()
-	return df
-}
-
 // MightContain checks if an item is in the dictionary.
-// For non-array types, it uses O(1) map lookup instead of O(n) linear search.
+// For non-array types: linear iteration through values.
+// For array types: checks if the single item exists as an element in any stored array.
 func (df *DictionaryFilter) MightContain(item []byte) bool {
 	if df.valueType == pbv1.ValueTypeStrArr || df.valueType == pbv1.ValueTypeInt64Arr {
-		// For array types, check if the item exists in the pre-computed element set
-		if df.valueSet != nil {
-			_, exists := df.valueSet[convert.BytesToString(item)]
-			return exists
-		}
 		return false
 	}
 
-	// For non-array types, use O(1) map lookup
-	if df.valueSet != nil {
-		_, exists := df.valueSet[convert.BytesToString(item)]
-		return exists
+	for _, v := range df.values {
+		if bytes.Equal(v, item) {
+			return true
+		}
 	}
 	return false
 }
 
-// SetValues sets the dictionary values and builds the lookup set.
-func (df *DictionaryFilter) SetValues(values [][]byte) {
-	df.values = values
-	df.buildValueSet()
+// ContainsAll checks if all items are present in the dictionary.
+// For non-array types: checks if ANY of the items are present (OR semantics).
+// For array types: checks if ALL items form a subset of any stored array (AND semantics).
+func (df *DictionaryFilter) ContainsAll(items [][]byte) bool {
+	if len(items) == 0 {
+		return true
+	}
+
+	if df.valueType == pbv1.ValueTypeStrArr || df.valueType == pbv1.ValueTypeInt64Arr {
+		for _, serializedArray := range df.values {
+			if df.extractElements(serializedArray, items) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// For non-array types: a single value can only match one item
+	// If multiple items are requested, return false immediately
+	if len(items) != 1 {
+		return false
+	}
+
+	// Check if the single item exists
+	item := items[0]
+	for _, v := range df.values {
+		if bytes.Equal(v, item) {
+			return true
+		}
+	}
+	return false
 }
 
-// SetValueType sets the value type for the dictionary filter.
-// For array types, it rebuilds the lookup set by extracting elements from serialized arrays.
-func (df *DictionaryFilter) SetValueType(valueType pbv1.ValueType) {
+// Set sets both the dictionary values and value type.
+func (df *DictionaryFilter) Set(values [][]byte, valueType pbv1.ValueType) {
+	df.values = values
 	df.valueType = valueType
-	// Rebuild the set for array types since elements need to be extracted
-	if valueType == pbv1.ValueTypeStrArr || valueType == pbv1.ValueTypeInt64Arr {
-		df.buildValueSet()
-	}
 }
 
 // Reset resets the dictionary filter.
@@ -82,76 +95,55 @@ func (df *DictionaryFilter) Reset() {
 	}
 	df.values = df.values[:0]
 	df.valueType = pbv1.ValueTypeUnknown
-	clear(df.valueSet)
 }
 
-// buildValueSet builds a map-based lookup set from the dictionary values.
-// For non-array types, values are added directly.
-// For array types, elements are extracted from serialized arrays.
-func (df *DictionaryFilter) buildValueSet() {
-	if df.valueSet == nil {
-		df.valueSet = make(map[string]struct{}, len(df.values))
+// extractElements checks if all query values form a subset of the serialized array.
+// Returns true if all query values exist in the array (subset check).
+func (df *DictionaryFilter) extractElements(serializedArray []byte, values [][]byte) bool {
+	if len(values) == 0 {
+		return true
 	}
 
 	if df.valueType == pbv1.ValueTypeInt64Arr {
-		// Extract int64 elements from serialized arrays
-		for _, serializedArray := range df.values {
+		// For each query value, check if it exists in the array
+		for _, v := range values {
+			found := false
 			for i := 0; i+8 <= len(serializedArray); i += 8 {
-				df.valueSet[convert.BytesToString(serializedArray[i:i+8])] = struct{}{}
+				if bytes.Equal(v, serializedArray[i:i+8]) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
 			}
 		}
-		return
+		return true
 	}
 
 	if df.valueType == pbv1.ValueTypeStrArr {
-		// Extract string elements from serialized arrays
-		for _, serializedArray := range df.values {
-			extractStrings(serializedArray, df.valueSet)
-		}
-		return
-	}
-
-	// For non-array types, add values directly
-	for _, v := range df.values {
-		df.valueSet[convert.BytesToString(v)] = struct{}{}
-	}
-}
-
-// extractStrings extracts string elements from a serialized string array and adds them to the set.
-func extractStrings(serializedArray []byte, set map[string]struct{}) {
-	const (
-		entityDelimiter = '|'
-		escape          = '\\'
-	)
-
-	src := serializedArray
-	var buf []byte
-	for len(src) > 0 {
-		buf = buf[:0]
-		if src[0] == entityDelimiter {
-			// Empty string element
-			set[""] = struct{}{}
-			src = src[1:]
-			continue
-		}
-		for len(src) > 0 {
-			switch {
-			case src[0] == escape:
-				if len(src) < 2 {
-					return
+		// For each query value, check if it exists in the array
+		// UnmarshalVarArray modifies the source in-place for decoding
+		// This approach has zero allocations and early-exits on match
+		for _, v := range values {
+			found := false
+			for idx := 0; idx < len(serializedArray); {
+				end, next, err := encoding.UnmarshalVarArray(serializedArray, idx)
+				if err != nil {
+					return false
 				}
-				src = src[1:]
-				buf = append(buf, src[0])
-			case src[0] == entityDelimiter:
-				src = src[1:]
-				set[string(buf)] = struct{}{}
-				goto nextElement
-			default:
-				buf = append(buf, src[0])
+				if bytes.Equal(v, serializedArray[idx:end]) {
+					found = true
+					break
+				}
+				idx = next
 			}
-			src = src[1:]
+			if !found {
+				return false
+			}
 		}
-		return
-	nextElement:
+		return true
 	}
+
+	return false
 }
