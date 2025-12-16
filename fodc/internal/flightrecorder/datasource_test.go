@@ -20,6 +20,7 @@ package flightrecorder
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -424,4 +425,233 @@ func TestDatasource_Update_ConcurrentCapacityChanges(t *testing.T) {
 	// Should have successfully updated
 	metricsMap := ds.GetMetrics()
 	assert.Contains(t, metricsMap, "cpu_usage")
+}
+
+// TestDatasource_UpdateBatch_Atomicity tests that batch updates are atomic.
+// All metrics and timestamp are updated together, ensuring readers never see partial updates.
+func TestDatasource_UpdateBatch_Atomicity(t *testing.T) {
+	ds := NewDatasource()
+	ds.SetCapacity(10000)
+
+	// First batch: initialize metrics
+	batch1 := []metrics.RawMetric{
+		{Name: "metric1", Value: 10.0, Labels: []metrics.Label{}},
+		{Name: "metric2", Value: 20.0, Labels: []metrics.Label{}},
+		{Name: "metric3", Value: 30.0, Labels: []metrics.Label{}},
+	}
+	timestamp1 := int64(1000)
+	err := ds.UpdateBatch(batch1, timestamp1)
+	require.NoError(t, err)
+
+	// Verify first batch is visible
+	metricsMap1 := ds.GetMetrics()
+	timestamps1 := ds.GetTimestamps()
+	assert.Equal(t, 10.0, metricsMap1["metric1"].GetCurrentValue())
+	assert.Equal(t, 20.0, metricsMap1["metric2"].GetCurrentValue())
+	assert.Equal(t, 30.0, metricsMap1["metric3"].GetCurrentValue())
+	assert.Equal(t, timestamp1, timestamps1.GetCurrentValue())
+
+	// Second batch: update all metrics
+	batch2 := []metrics.RawMetric{
+		{Name: "metric1", Value: 11.0, Labels: []metrics.Label{}},
+		{Name: "metric2", Value: 21.0, Labels: []metrics.Label{}},
+		{Name: "metric3", Value: 31.0, Labels: []metrics.Label{}},
+	}
+	timestamp2 := int64(2000)
+	err = ds.UpdateBatch(batch2, timestamp2)
+	require.NoError(t, err)
+
+	// Verify second batch is visible - all metrics and timestamp updated together
+	metricsMap2 := ds.GetMetrics()
+	timestamps2 := ds.GetTimestamps()
+	assert.Equal(t, 11.0, metricsMap2["metric1"].GetCurrentValue())
+	assert.Equal(t, 21.0, metricsMap2["metric2"].GetCurrentValue())
+	assert.Equal(t, 31.0, metricsMap2["metric3"].GetCurrentValue())
+	assert.Equal(t, timestamp2, timestamps2.GetCurrentValue())
+}
+
+// TestDatasource_UpdateBatch_ConcurrentReadsDuringUpdate tests that concurrent reads
+// during batch update see the previous complete batch, not partial updates.
+func TestDatasource_UpdateBatch_ConcurrentReadsDuringUpdate(t *testing.T) {
+	ds := NewDatasource()
+	ds.SetCapacity(10000)
+
+	// Initial batch
+	batch1 := []metrics.RawMetric{
+		{Name: "metric1", Value: 100.0, Labels: []metrics.Label{}},
+		{Name: "metric2", Value: 200.0, Labels: []metrics.Label{}},
+		{Name: "metric3", Value: 300.0, Labels: []metrics.Label{}},
+	}
+	timestamp1 := int64(1000)
+	err := ds.UpdateBatch(batch1, timestamp1)
+	require.NoError(t, err)
+
+	// Use a channel to coordinate between writer and readers
+	batchStart := make(chan struct{})
+	readComplete := make(chan struct{})
+	readResults := make([]struct {
+		metric1Value float64
+		metric2Value float64
+		metric3Value float64
+		timestamp    int64
+	}, 10)
+
+	var wg sync.WaitGroup
+
+	// Start concurrent readers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			// Wait for batch update to start
+			<-batchStart
+
+			// Try to read during batch update
+			metricsMap := ds.GetMetrics()
+			timestamps := ds.GetTimestamps()
+
+			readResults[idx] = struct {
+				metric1Value float64
+				metric2Value float64
+				metric3Value float64
+				timestamp    int64
+			}{
+				metric1Value: metricsMap["metric1"].GetCurrentValue(),
+				metric2Value: metricsMap["metric2"].GetCurrentValue(),
+				metric3Value: metricsMap["metric3"].GetCurrentValue(),
+				timestamp:    timestamps.GetCurrentValue(),
+			}
+
+			readComplete <- struct{}{}
+		}(i)
+	}
+
+	// Start batch update in a goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Signal batch start
+		close(batchStart)
+
+		// Small delay to allow readers to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Update batch
+		batch2 := []metrics.RawMetric{
+			{Name: "metric1", Value: 111.0, Labels: []metrics.Label{}},
+			{Name: "metric2", Value: 222.0, Labels: []metrics.Label{}},
+			{Name: "metric3", Value: 333.0, Labels: []metrics.Label{}},
+		}
+		timestamp2 := int64(2000)
+		_ = ds.UpdateBatch(batch2, timestamp2)
+	}()
+
+	// Wait for all reads to complete
+	for i := 0; i < 10; i++ {
+		<-readComplete
+	}
+
+	wg.Wait()
+
+	// Verify all readers saw consistent data (either all old batch or all new batch)
+	// Since UpdateBatch holds the lock, readers should block and see either:
+	// - All old values (if they read before batch started)
+	// - All new values (if they read after batch completed)
+	for idx := range readResults {
+		result := readResults[idx]
+		// All metrics should be from the same batch (either all old or all new)
+		// Since readers block during update, they should see either:
+		// - Old batch: 100, 200, 300, timestamp 1000
+		// - New batch: 111, 222, 333, timestamp 2000
+		// But never a mix
+		if result.metric1Value == 100.0 {
+			// Old batch
+			assert.Equal(t, 200.0, result.metric2Value, "Reader %d: metric2 should be from old batch", idx)
+			assert.Equal(t, 300.0, result.metric3Value, "Reader %d: metric3 should be from old batch", idx)
+			assert.Equal(t, int64(1000), result.timestamp, "Reader %d: timestamp should be from old batch", idx)
+		} else {
+			// New batch
+			assert.Equal(t, 111.0, result.metric1Value, "Reader %d: metric1 should be from new batch", idx)
+			assert.Equal(t, 222.0, result.metric2Value, "Reader %d: metric2 should be from new batch", idx)
+			assert.Equal(t, 333.0, result.metric3Value, "Reader %d: metric3 should be from new batch", idx)
+			assert.Equal(t, int64(2000), result.timestamp, "Reader %d: timestamp should be from new batch", idx)
+		}
+	}
+}
+
+// TestDatasource_UpdateBatch_NoPartialVisibility tests that partial updates
+// are never visible to readers.
+func TestDatasource_UpdateBatch_NoPartialVisibility(t *testing.T) {
+	ds := NewDatasource()
+	ds.SetCapacity(10000)
+
+	// Initial batch
+	batch1 := []metrics.RawMetric{
+		{Name: "metric1", Value: 1.0, Labels: []metrics.Label{}},
+		{Name: "metric2", Value: 2.0, Labels: []metrics.Label{}},
+		{Name: "metric3", Value: 3.0, Labels: []metrics.Label{}},
+	}
+	timestamp1 := int64(1000)
+	err := ds.UpdateBatch(batch1, timestamp1)
+	require.NoError(t, err)
+
+	// Verify initial state
+	metricsMap := ds.GetMetrics()
+	timestamps := ds.GetTimestamps()
+	assert.Equal(t, 1.0, metricsMap["metric1"].GetCurrentValue())
+	assert.Equal(t, 2.0, metricsMap["metric2"].GetCurrentValue())
+	assert.Equal(t, 3.0, metricsMap["metric3"].GetCurrentValue())
+	assert.Equal(t, timestamp1, timestamps.GetCurrentValue())
+
+	// Update batch with new values
+	batch2 := []metrics.RawMetric{
+		{Name: "metric1", Value: 10.0, Labels: []metrics.Label{}},
+		{Name: "metric2", Value: 20.0, Labels: []metrics.Label{}},
+		{Name: "metric3", Value: 30.0, Labels: []metrics.Label{}},
+	}
+	timestamp2 := int64(2000)
+	err = ds.UpdateBatch(batch2, timestamp2)
+	require.NoError(t, err)
+
+	// After batch completes, verify all values are updated together
+	metricsMap2 := ds.GetMetrics()
+	timestamps2 := ds.GetTimestamps()
+
+	// All metrics should be updated together
+	assert.Equal(t, 10.0, metricsMap2["metric1"].GetCurrentValue(), "metric1 should be updated")
+	assert.Equal(t, 20.0, metricsMap2["metric2"].GetCurrentValue(), "metric2 should be updated")
+	assert.Equal(t, 30.0, metricsMap2["metric3"].GetCurrentValue(), "metric3 should be updated")
+	assert.Equal(t, timestamp2, timestamps2.GetCurrentValue(), "timestamp should be updated")
+
+	// Verify no old values remain
+	assert.NotEqual(t, 1.0, metricsMap2["metric1"].GetCurrentValue(), "metric1 should not have old value")
+	assert.NotEqual(t, 2.0, metricsMap2["metric2"].GetCurrentValue(), "metric2 should not have old value")
+	assert.NotEqual(t, 3.0, metricsMap2["metric3"].GetCurrentValue(), "metric3 should not have old value")
+	assert.NotEqual(t, timestamp1, timestamps2.GetCurrentValue(), "timestamp should not have old value")
+}
+
+// TestDatasource_UpdateBatch_EmptyBatch tests that empty batch updates work correctly.
+func TestDatasource_UpdateBatch_EmptyBatch(t *testing.T) {
+	ds := NewDatasource()
+	ds.SetCapacity(10000)
+
+	// Initial batch
+	batch1 := []metrics.RawMetric{
+		{Name: "metric1", Value: 100.0, Labels: []metrics.Label{}},
+	}
+	timestamp1 := int64(1000)
+	err := ds.UpdateBatch(batch1, timestamp1)
+	require.NoError(t, err)
+
+	// Empty batch update (only timestamp)
+	emptyBatch := []metrics.RawMetric{}
+	timestamp2 := int64(2000)
+	err = ds.UpdateBatch(emptyBatch, timestamp2)
+	require.NoError(t, err)
+
+	// Verify timestamp is updated but metrics remain unchanged
+	metricsMap := ds.GetMetrics()
+	timestamps := ds.GetTimestamps()
+	assert.Equal(t, 100.0, metricsMap["metric1"].GetCurrentValue())
+	assert.Equal(t, timestamp2, timestamps.GetCurrentValue())
 }

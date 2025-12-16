@@ -59,12 +59,8 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 	}
 
 	timestamp := time.Now().Unix()
-	ds.AddTimestamp(timestamp)
-
-	for idx := range rawMetrics {
-		if updateErr := ds.Update(&rawMetrics[idx]); updateErr != nil {
-			return fmt.Errorf("failed to update metric %s: %w", rawMetrics[idx].Name, updateErr)
-		}
+	if updateErr := ds.UpdateBatch(rawMetrics, timestamp); updateErr != nil {
+		return fmt.Errorf("failed to update batch: %w", updateErr)
 	}
 
 	ds.SetCapacity(fr.capacitySize)

@@ -115,6 +115,36 @@ func (ds *Datasource) AddTimestamp(timestamp int64) {
 	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
 }
 
+// UpdateBatch atomically updates a batch of metrics and timestamp.
+func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int64) error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	// Update timestamp first
+	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
+
+	// Update all metrics
+	for idx := range rawMetrics {
+		m := &rawMetrics[idx]
+
+		mk := metrics.MetricKey{
+			Name:   m.Name,
+			Labels: m.Labels,
+		}
+		metricKey := mk.String()
+
+		if _, exists := ds.metrics[metricKey]; !exists {
+			ds.metrics[metricKey] = NewMetricRingBuffer()
+		}
+		if m.Desc != "" {
+			ds.descriptions[m.Name] = m.Desc
+		}
+		UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
+	}
+
+	return nil
+}
+
 // SetCapacity sets the capacity for the datasource and updates all ring buffer capacities.
 func (ds *Datasource) SetCapacity(capacity int) {
 	ds.mu.Lock()

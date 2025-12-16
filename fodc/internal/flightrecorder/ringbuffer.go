@@ -31,6 +31,7 @@ type RingBuffer[T any] struct {
 func NewRingBuffer[T any]() *RingBuffer[T] {
 	return &RingBuffer[T]{
 		next:   0,
+		size:   0,
 		values: make([]T, 0),
 	}
 }
