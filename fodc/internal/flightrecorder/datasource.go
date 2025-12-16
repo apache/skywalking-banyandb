@@ -53,14 +53,14 @@ func NewTimestampRingBuffer() *TimestampRingBuffer {
 }
 
 // UpdateMetricRingBuffer adds a metric value to the metric ring buffer.
-func UpdateMetricRingBuffer(mrb *MetricRingBuffer, v float64, capacity int) {
-	mrb.Add(v, capacity)
+func UpdateMetricRingBuffer(mrb *MetricRingBuffer, v float64) {
+	mrb.Add(v)
 }
 
 // UpdateTimestampRingBuffer adds a timestamp value to the timestamp ring buffer.
-func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64, capacity int) {
+func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64) {
 	if trb != nil {
-		trb.Add(v, capacity)
+		trb.Add(v)
 	}
 }
 
@@ -71,7 +71,7 @@ type Datasource struct {
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	TotalWritten uint64 // Total number of values written (wraps around)
-	Capacity     int    // Number of writable metrics length
+	CapacitySize int    // Memory limit in bytes
 }
 
 // NewDatasource creates a new Datasource.
@@ -80,12 +80,13 @@ func NewDatasource() *Datasource {
 		metrics:      make(map[string]*MetricRingBuffer),
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
-		Capacity:     0,
+		CapacitySize: 0,
 		TotalWritten: 0, // Accessed via atomic operations
 	}
 }
 
 // Update records a metric in the datasource.
+// First adds the metric value, then updates ring buffer capacities if needed.
 func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	if m == nil {
 		return fmt.Errorf("metric cannot be nil")
@@ -100,53 +101,27 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 	metricKey := mk.String()
 
-	// Ensure the RingBuffer exists for this metric key (don't add values yet)
+	// Ensure the RingBuffer exists for this metric key
 	if _, exists := ds.metrics[metricKey]; !exists {
 		ds.metrics[metricKey] = NewMetricRingBuffer()
 	}
-
-	// Compute capacity based on memory constraints
-	// Read Capacity while holding the lock to avoid race conditions
-	capacitySize := ds.Capacity
-	if capacitySize <= 0 {
-		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8 // Rough estimate
-	}
-
-	computedCapacity := ds.ComputeCapacity(capacitySize)
-	// Update capacity for all ring buffers
-	for key, metricBuffer := range ds.metrics {
-		currentCap := metricBuffer.Cap()
-		if currentCap != computedCapacity {
-			// Resize buffer if needed (FIFO strategy handled in Add)
-			// Get current values to preserve them
-			currentValues := metricBuffer.GetAllValues()
-			// Create new buffer with correct capacity
-			newBuffer := NewMetricRingBuffer()
-			// Restore values
-			for _, val := range currentValues {
-				newBuffer.Add(val, computedCapacity)
-			}
-			ds.metrics[key] = newBuffer
-		}
-	}
-
-	// Update timestamp ring buffer capacity
-	if ds.timestamps.Cap() != computedCapacity {
-		currentTimestamps := ds.timestamps.GetAllValues()
-		newTimestampBuffer := NewTimestampRingBuffer()
-		for _, ts := range currentTimestamps {
-			newTimestampBuffer.Add(ts, computedCapacity)
-		}
-		ds.timestamps = newTimestampBuffer
-	}
-
 	if m.Desc != "" {
 		ds.descriptions[m.Name] = m.Desc
 	}
-
-	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value, computedCapacity)
-
+	// Step 1: Add metric value to the metric ring buffer
+	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
 	atomic.AddUint64(&ds.TotalWritten, 1)
+	// Step 2: Compute capacity based on memory constraints
+	capacitySize := ds.CapacitySize
+	if capacitySize <= 0 {
+		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8 // Rough estimate
+	}
+	computedCapacity := ds.ComputeCapacity(capacitySize)
+	// Step 3: Update capacity for all metric ring buffers (FIFO removal handled in SetCapacity)
+	for _, metricBuffer := range ds.metrics {
+		metricBuffer.SetCapacity(computedCapacity)
+	}
+	ds.timestamps.SetCapacity(computedCapacity)
 
 	return nil
 }
@@ -154,13 +129,17 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 // AddTimestamp adds a timestamp for the current polling cycle.
 // This method assumes the caller already holds the lock.
 func (ds *Datasource) addTimestampUnlocked(timestamp int64) {
-	capacitySize := ds.Capacity
+	// Add timestamp first (without capacity changes)
+	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
+
+	// Then update capacity if needed
+	capacitySize := ds.CapacitySize
 	if capacitySize <= 0 {
 		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8
 	}
 
 	computedCapacity := ds.ComputeCapacity(capacitySize)
-	UpdateTimestampRingBuffer(ds.timestamps, timestamp, computedCapacity)
+	ds.timestamps.SetCapacity(computedCapacity)
 }
 
 // AddTimestamp adds a timestamp for the current polling cycle.
@@ -174,7 +153,7 @@ func (ds *Datasource) AddTimestamp(timestamp int64) {
 func (ds *Datasource) SetCapacity(capacity int) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
-	ds.Capacity = capacity
+	ds.CapacitySize = capacity
 }
 
 // ComputeCapacity computes the maximum capacity for ring buffers based on available memory constraints.
@@ -182,7 +161,6 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	if capacitySize <= 0 {
 		return 0
 	}
-
 	numMetrics := len(ds.metrics)
 	if numMetrics == 0 {
 		return defaultCapacity

@@ -185,7 +185,7 @@ func TestDatasourceCollector_Collect_EmptyRingBuffer(t *testing.T) {
 
 	// Create a datasource with empty ring buffers
 	ds := flightrecorder.NewDatasource()
-	ds.Capacity = 1000
+	ds.SetCapacity(1000)
 
 	ch := make(chan prometheus.Metric, 100)
 	collector.Collect(ch)

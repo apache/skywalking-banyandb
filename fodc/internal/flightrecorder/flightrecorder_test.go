@@ -351,7 +351,7 @@ func TestFlightRecorder_CapacityPropagation(t *testing.T) {
 
 	datasources := fr.GetDatasources()
 	require.Len(t, datasources, 1)
-	assert.Equal(t, 2000, datasources[0].Capacity)
+	assert.Equal(t, 2000, datasources[0].CapacitySize)
 }
 
 func TestFlightRecorder_DescriptionStorage(t *testing.T) {
@@ -438,10 +438,10 @@ func TestFlightRecorder_ZeroCapacity(t *testing.T) {
 	}
 
 	err := fr.Update(rawMetrics)
-	// Should handle zero capacity gracefully
+	// Should handle zero capacity size gracefully
 	// The behavior depends on implementation, but should not panic
 	if err != nil {
-		assert.Contains(t, err.Error(), "capacity")
+		assert.Contains(t, err.Error(), "capacity size")
 	}
 }
 
@@ -496,9 +496,11 @@ func TestRingBuffer_Add_Float64(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 	capacity := 5
 
-	rb.Add(1.5, capacity)
-	rb.Add(2.5, capacity)
-	rb.Add(3.5, capacity)
+	// Set capacity first, then add values
+	rb.SetCapacity(capacity)
+	rb.Add(1.5)
+	rb.Add(2.5)
+	rb.Add(3.5)
 
 	// Len() returns the slice length (capacity), not the number of values added
 	assert.Equal(t, capacity, rb.Len())
@@ -515,9 +517,11 @@ func TestRingBuffer_Add_Int64(t *testing.T) {
 	rb := NewRingBuffer[int64]()
 	capacity := 5
 
-	rb.Add(100, capacity)
-	rb.Add(200, capacity)
-	rb.Add(300, capacity)
+	// Set capacity first, then add values
+	rb.SetCapacity(capacity)
+	rb.Add(100)
+	rb.Add(200)
+	rb.Add(300)
 
 	// Len() returns the slice length (capacity), not the number of values added
 	assert.Equal(t, capacity, rb.Len())
@@ -533,11 +537,12 @@ func TestRingBuffer_Add_Int64(t *testing.T) {
 func TestRingBuffer_CircularOverwrite(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
 	// Fill buffer to capacity
-	rb.Add(1.0, capacity)
-	rb.Add(2.0, capacity)
-	rb.Add(3.0, capacity)
+	rb.Add(1.0)
+	rb.Add(2.0)
+	rb.Add(3.0)
 
 	assert.Equal(t, capacity, rb.Len())
 	assert.Equal(t, 1.0, rb.Get(0))
@@ -545,7 +550,7 @@ func TestRingBuffer_CircularOverwrite(t *testing.T) {
 	assert.Equal(t, 3.0, rb.Get(2))
 
 	// Add one more - should overwrite the oldest (FIFO)
-	rb.Add(4.0, capacity)
+	rb.Add(4.0)
 
 	assert.Equal(t, capacity, rb.Len())
 	// Oldest value (1.0) should be overwritten
@@ -559,16 +564,17 @@ func TestRingBuffer_CircularOverwrite(t *testing.T) {
 func TestRingBuffer_CircularOverwrite_Multiple(t *testing.T) {
 	rb := NewRingBuffer[int64]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
 	// Fill buffer
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	// Add multiple values that exceed capacity
-	rb.Add(40, capacity)
-	rb.Add(50, capacity)
-	rb.Add(60, capacity)
+	rb.Add(40)
+	rb.Add(50)
+	rb.Add(60)
 
 	allValues := rb.GetAllValues()
 	assert.Equal(t, capacity, len(allValues))
@@ -584,15 +590,14 @@ func TestRingBuffer_CircularOverwrite_Multiple(t *testing.T) {
 
 func TestRingBuffer_GetCurrentValue(t *testing.T) {
 	rb := NewRingBuffer[float64]()
-	capacity := 5
-
-	rb.Add(1.0, capacity)
+	rb.SetCapacity(10)
+	rb.Add(1.0)
 	assert.Equal(t, 1.0, rb.GetCurrentValue())
 
-	rb.Add(2.0, capacity)
+	rb.Add(2.0)
 	assert.Equal(t, 2.0, rb.GetCurrentValue())
 
-	rb.Add(3.0, capacity)
+	rb.Add(3.0)
 	assert.Equal(t, 3.0, rb.GetCurrentValue())
 }
 
@@ -607,12 +612,11 @@ func TestRingBuffer_GetCurrentValue_Empty(t *testing.T) {
 
 func TestRingBuffer_GetCurrentValue_AfterOverwrite(t *testing.T) {
 	rb := NewRingBuffer[float64]()
-	capacity := 3
-
-	rb.Add(1.0, capacity)
-	rb.Add(2.0, capacity)
-	rb.Add(3.0, capacity)
-	rb.Add(4.0, capacity) // Overwrites 1.0
+	rb.SetCapacity(3)
+	rb.Add(1.0)
+	rb.Add(2.0)
+	rb.Add(3.0)
+	rb.Add(4.0) // Overwrites 1.0
 
 	assert.Equal(t, 4.0, rb.GetCurrentValue())
 }
@@ -620,10 +624,11 @@ func TestRingBuffer_GetCurrentValue_AfterOverwrite(t *testing.T) {
 func TestRingBuffer_GetAllValues(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 	capacity := 5
+	rb.SetCapacity(capacity)
 
-	rb.Add(1.0, capacity)
-	rb.Add(2.0, capacity)
-	rb.Add(3.0, capacity)
+	rb.Add(1.0)
+	rb.Add(2.0)
+	rb.Add(3.0)
 
 	allValues := rb.GetAllValues()
 
@@ -656,11 +661,12 @@ func TestRingBuffer_GetAllValues_Empty(t *testing.T) {
 func TestRingBuffer_GetAllValues_OrderAfterOverwrite(t *testing.T) {
 	rb := NewRingBuffer[int64]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
-	rb.Add(40, capacity) // Overwrites 10
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
+	rb.Add(40) // Overwrites 10
 
 	allValues := rb.GetAllValues()
 
@@ -678,9 +684,8 @@ func TestRingBuffer_GetAllValues_OrderAfterOverwrite(t *testing.T) {
 
 func TestRingBuffer_Get_OutOfBounds(t *testing.T) {
 	rb := NewRingBuffer[float64]()
-	capacity := 3
-
-	rb.Add(1.0, capacity)
+	rb.SetCapacity(10)
+	rb.Add(1.0)
 
 	var zero float64
 	assert.Equal(t, zero, rb.Get(-1))
@@ -690,7 +695,7 @@ func TestRingBuffer_Get_OutOfBounds(t *testing.T) {
 func TestRingBuffer_Add_ZeroCapacity(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 
-	rb.Add(1.0, 0)
+	rb.Add(1.0)
 
 	assert.Equal(t, 0, rb.Len())
 	assert.Equal(t, 0, rb.Cap())
@@ -699,7 +704,7 @@ func TestRingBuffer_Add_ZeroCapacity(t *testing.T) {
 func TestRingBuffer_Add_NegativeCapacity(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 
-	rb.Add(1.0, -1)
+	rb.Add(1.0)
 
 	assert.Equal(t, 0, rb.Len())
 }
@@ -708,15 +713,17 @@ func TestRingBuffer_Resize_Grow(t *testing.T) {
 	rb := NewRingBuffer[float64]()
 	initialCapacity := 3
 
-	rb.Add(1.0, initialCapacity)
-	rb.Add(2.0, initialCapacity)
-	rb.Add(3.0, initialCapacity)
+	rb.SetCapacity(initialCapacity)
+	rb.Add(1.0)
+	rb.Add(2.0)
+	rb.Add(3.0)
 
 	assert.Equal(t, initialCapacity, rb.Cap())
 
 	// Grow capacity
 	newCapacity := 5
-	rb.Add(4.0, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(4.0)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	// Len() returns the slice length (capacity), not the number of values added
@@ -739,18 +746,20 @@ func TestRingBuffer_Resize_Shrink(t *testing.T) {
 	rb := NewRingBuffer[int64]()
 	initialCapacity := 5
 
-	rb.Add(10, initialCapacity)
-	rb.Add(20, initialCapacity)
-	rb.Add(30, initialCapacity)
-	rb.Add(40, initialCapacity)
-	rb.Add(50, initialCapacity)
+	rb.SetCapacity(initialCapacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
+	rb.Add(40)
+	rb.Add(50)
 
 	assert.Equal(t, initialCapacity, rb.Cap())
 	assert.Equal(t, initialCapacity, rb.Len())
 
 	// Shrink capacity - should keep most recent values (FIFO)
 	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(60)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	assert.Equal(t, newCapacity, rb.Len())
@@ -767,16 +776,17 @@ func TestRingBuffer_Resize_Shrink(t *testing.T) {
 
 func TestRingBuffer_Resize_SameCapacity(t *testing.T) {
 	rb := NewRingBuffer[float64]()
-	capacity := 5
+	capacity := 10
 
-	rb.Add(1.0, capacity)
-	rb.Add(2.0, capacity)
-	rb.Add(3.0, capacity)
+	rb.SetCapacity(capacity)
+	rb.Add(1.0)
+	rb.Add(2.0)
+	rb.Add(3.0)
 
 	initialLen := rb.Len()
 	initialCap := rb.Cap()
 
-	rb.Add(4.0, capacity)
+	rb.Add(4.0)
 
 	// Capacity and length should remain the same when capacity doesn't change
 	assert.Equal(t, initialCap, rb.Cap())
@@ -805,8 +815,10 @@ func TestUpdateMetricRingBuffer(t *testing.T) {
 	mrb := NewMetricRingBuffer()
 	capacity := 5
 
-	UpdateMetricRingBuffer(mrb, 75.5, capacity)
-	UpdateMetricRingBuffer(mrb, 80.0, capacity)
+	// Set capacity first, then add values
+	mrb.SetCapacity(capacity)
+	UpdateMetricRingBuffer(mrb, 75.5)
+	UpdateMetricRingBuffer(mrb, 80.0)
 
 	// Len() returns the slice length (capacity), not the number of values added
 	assert.Equal(t, capacity, mrb.Len())
@@ -825,8 +837,10 @@ func TestUpdateTimestampRingBuffer(t *testing.T) {
 	timestamp1 := int64(1000)
 	timestamp2 := int64(2000)
 
-	UpdateTimestampRingBuffer(trb, timestamp1, capacity)
-	UpdateTimestampRingBuffer(trb, timestamp2, capacity)
+	// Set capacity first, then add values
+	trb.SetCapacity(capacity)
+	UpdateTimestampRingBuffer(trb, timestamp1)
+	UpdateTimestampRingBuffer(trb, timestamp2)
 
 	// Len() returns the slice length (capacity), not the number of values added
 	assert.Equal(t, capacity, trb.Len())
@@ -941,7 +955,7 @@ func TestNewDatasource(t *testing.T) {
 	assert.Empty(t, ds.metrics)
 	assert.NotNil(t, ds.descriptions)
 	assert.Empty(t, ds.descriptions)
-	assert.Equal(t, 0, ds.Capacity)
+	assert.Equal(t, 0, ds.CapacitySize)
 	assert.Equal(t, uint64(0), ds.GetTotalWritten())
 	if ds.timestamps != nil {
 		assert.Equal(t, 0, ds.timestamps.Len())
@@ -1058,7 +1072,7 @@ func TestDatasource_Update_IncrementsTotalWritten(t *testing.T) {
 
 func TestDatasource_AddTimestamp(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	timestamp1 := int64(1000)
 	timestamp2 := int64(2000)
@@ -1072,7 +1086,7 @@ func TestDatasource_AddTimestamp(t *testing.T) {
 
 func TestDatasource_AddTimestamp_MultipleCycles(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	for i := 0; i < 5; i++ {
 		ds.AddTimestamp(int64(i * 1000))
@@ -1084,7 +1098,7 @@ func TestDatasource_AddTimestamp_MultipleCycles(t *testing.T) {
 
 func TestDatasource_GetMetrics_ThreadSafe(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add metrics concurrently
 	var wg sync.WaitGroup
@@ -1111,7 +1125,7 @@ func TestDatasource_GetMetrics_ThreadSafe(t *testing.T) {
 
 func TestDatasource_GetTimestamps_ThreadSafe(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add timestamps concurrently
 	var wg sync.WaitGroup
@@ -1133,7 +1147,7 @@ func TestDatasource_GetTimestamps_ThreadSafe(t *testing.T) {
 
 func TestDatasource_Update_MetricKeyWithLabels(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric1 := &metrics.RawMetric{
 		Name:   "http_requests_total",
@@ -1157,7 +1171,7 @@ func TestDatasource_Update_MetricKeyWithLabels(t *testing.T) {
 func TestDatasource_Update_CapacityAdjustment(t *testing.T) {
 	ds := NewDatasource()
 	initialCapacity := 10000
-	ds.Capacity = initialCapacity
+	ds.SetCapacity(initialCapacity)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1172,7 +1186,7 @@ func TestDatasource_Update_CapacityAdjustment(t *testing.T) {
 
 	// Change capacity
 	newCapacity := 20000
-	ds.Capacity = newCapacity
+	ds.SetCapacity(newCapacity)
 
 	// Update again - should adjust buffer capacity
 	_ = ds.Update(rawMetric)
@@ -1230,10 +1244,9 @@ func TestFlightRecorder_Update_ErrorPropagation(t *testing.T) {
 
 func TestRingBuffer_TypeSafety_Float64(t *testing.T) {
 	rb := NewRingBuffer[float64]()
-	capacity := 5
 
-	rb.Add(1.5, capacity)
-	rb.Add(2.5, capacity)
+	rb.Add(1.5)
+	rb.Add(2.5)
 
 	value := rb.Get(0)
 	// Type assertion should work
@@ -1244,10 +1257,9 @@ func TestRingBuffer_TypeSafety_Float64(t *testing.T) {
 
 func TestRingBuffer_TypeSafety_Int64(t *testing.T) {
 	rb := NewRingBuffer[int64]()
-	capacity := 5
 
-	rb.Add(100, capacity)
-	rb.Add(200, capacity)
+	rb.Add(100)
+	rb.Add(200)
 
 	value := rb.Get(0)
 	// Type assertion should work
@@ -1258,10 +1270,9 @@ func TestRingBuffer_TypeSafety_Int64(t *testing.T) {
 
 func TestRingBuffer_TypeSafety_String(t *testing.T) {
 	rb := NewRingBuffer[string]()
-	capacity := 5
 
-	rb.Add("test1", capacity)
-	rb.Add("test2", capacity)
+	rb.Add("test1")
+	rb.Add("test2")
 
 	value := rb.Get(0)
 	assert.Equal(t, "test1", value)
@@ -1271,7 +1282,7 @@ func TestRingBuffer_TypeSafety_String(t *testing.T) {
 
 func TestDatasource_Update_LabelSorting(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add metric with labels in one order
 	rawMetric1 := &metrics.RawMetric{
@@ -1306,7 +1317,7 @@ func TestDatasource_Update_LabelSorting(t *testing.T) {
 
 func TestDatasource_Update_MetricKeyGeneration(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1322,7 +1333,7 @@ func TestDatasource_Update_MetricKeyGeneration(t *testing.T) {
 
 func TestDatasource_Update_MetricKeyWithSortedLabels(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:  "http_requests_total",
@@ -1342,7 +1353,7 @@ func TestDatasource_Update_MetricKeyWithSortedLabels(t *testing.T) {
 
 func TestDatasource_Update_EmptyDescription(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric1 := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1368,7 +1379,7 @@ func TestDatasource_Update_EmptyDescription(t *testing.T) {
 func TestDatasource_Update_FIFOStrategyOnShrink(t *testing.T) {
 	ds := NewDatasource()
 	initialCapacity := 50000
-	ds.Capacity = initialCapacity
+	ds.SetCapacity(initialCapacity)
 
 	// Add multiple values to fill buffer
 	for i := 0; i < 10; i++ {
@@ -1385,7 +1396,7 @@ func TestDatasource_Update_FIFOStrategyOnShrink(t *testing.T) {
 	initialCurrentValue := buffer.GetCurrentValue()
 
 	// Reduce capacity significantly
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 	// Update again to trigger capacity recalculation
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1406,7 +1417,7 @@ func TestDatasource_Update_FIFOStrategyOnShrink(t *testing.T) {
 
 func TestDatasource_Update_CircularOverwrite(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add many values that exceed buffer capacity
 	for i := 0; i < 50; i++ {
@@ -1465,7 +1476,7 @@ func contains[T comparable](slice []T, value T) bool {
 
 func TestDatasource_Update_MultipleMetricsCircularOverwrite(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 20000
+	ds.SetCapacity(20000)
 
 	// Add multiple metrics with many updates
 	for cycle := 0; cycle < 30; cycle++ {
@@ -1502,7 +1513,7 @@ func TestDatasource_Update_MultipleMetricsCircularOverwrite(t *testing.T) {
 
 func TestDatasource_Update_BufferPreservationOnCapacityChange(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add some values
 	for i := 0; i < 5; i++ {
@@ -1519,7 +1530,7 @@ func TestDatasource_Update_BufferPreservationOnCapacityChange(t *testing.T) {
 	valuesBefore := buffer1.GetAllValues()
 
 	// Increase capacity
-	ds.Capacity = 50000
+	ds.SetCapacity(50000)
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
 		Value:  80.0,
@@ -1543,7 +1554,7 @@ func TestDatasource_Update_BufferPreservationOnCapacityChange(t *testing.T) {
 
 func TestDatasource_Update_DifferentLabelCombinations(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 20000
+	ds.SetCapacity(20000)
 
 	// Add metrics with different label combinations
 	labelCombinations := []struct {
@@ -1583,7 +1594,7 @@ func TestDatasource_Update_DifferentLabelCombinations(t *testing.T) {
 
 func TestDatasource_Update_SameMetricNameDifferentLabels(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 20000
+	ds.SetCapacity(20000)
 
 	rawMetric1 := &metrics.RawMetric{
 		Name:   "http_requests_total",
@@ -1612,7 +1623,7 @@ func TestDatasource_Update_SameMetricNameDifferentLabels(t *testing.T) {
 
 func TestDatasource_GetDescriptions_ThreadSafe(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Add metrics concurrently
 	var wg sync.WaitGroup
@@ -1641,7 +1652,7 @@ func TestDatasource_GetDescriptions_ThreadSafe(t *testing.T) {
 
 func TestDatasource_Update_ZeroCapacity(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 0
+	ds.SetCapacity(0)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1660,7 +1671,7 @@ func TestDatasource_Update_ZeroCapacity(t *testing.T) {
 
 func TestDatasource_Update_VerySmallCapacity(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 100 // Very small capacity
+	ds.SetCapacity(100) // Very small capacity
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1686,7 +1697,7 @@ func TestDatasource_Update_VerySmallCapacity(t *testing.T) {
 
 func TestDatasource_AddTimestamp_OnePerPollingCycle(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	// Simulate multiple polling cycles
 	for cycle := 0; cycle < 5; cycle++ {
@@ -1732,7 +1743,7 @@ func TestDatasource_ComputeCapacity_WithManyMetrics(t *testing.T) {
 
 func TestDatasource_Update_ConcurrentUpdatesSameMetric(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 100000
+	ds.SetCapacity(100000)
 
 	var wg sync.WaitGroup
 	numGoroutines := 20
@@ -1763,7 +1774,7 @@ func TestDatasource_Update_ConcurrentUpdatesSameMetric(t *testing.T) {
 
 func TestDatasource_GetMetrics_ReturnsCopy(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -1788,7 +1799,7 @@ func TestDatasource_GetMetrics_ReturnsCopy(t *testing.T) {
 
 func TestDatasource_GetDescriptions_ReturnsCopy(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",

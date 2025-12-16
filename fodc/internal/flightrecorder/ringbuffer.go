@@ -34,9 +34,27 @@ func NewRingBuffer[T any]() *RingBuffer[T] {
 	}
 }
 
-// Add adds a value to the ring buffer with the specified capacity.
-// If the buffer needs to be resized, it uses FIFO strategy to remove oldest data.
-func (rb *RingBuffer[T]) Add(v T, capacity int) {
+// Add adds a value to the ring buffer without changing capacity.
+// If the buffer is not initialized (empty), it will be initialized with a default capacity.
+// Returns true if the value was successfully added.
+func (rb *RingBuffer[T]) Add(v T) bool {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	// Initialize buffer with default capacity if empty
+	if len(rb.values) == 0 {
+		rb.values = make([]T, 1000) // Default capacity
+		rb.next = 0
+	}
+
+	rb.values[rb.next%len(rb.values)] = v
+	rb.next = (rb.next + 1) % len(rb.values)
+	return true
+}
+
+// SetCapacity sets the capacity of the ring buffer and uses FIFO strategy to remove oldest data if needed.
+// If the new capacity is smaller than the current length, the oldest data will be removed.
+func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 	if capacity <= 0 {
 		return
 	}
@@ -47,6 +65,7 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 	currentLen := len(rb.values)
 
 	if capacity < currentLen {
+		// Shrink: keep the most recent items using FIFO strategy
 		newValues := make([]T, capacity)
 
 		startIdx := (rb.next - capacity + currentLen) % currentLen
@@ -64,18 +83,22 @@ func (rb *RingBuffer[T]) Add(v T, capacity int) {
 		// Since we kept the most recent items and filled positions 0 to capacity-1,
 		// next should be at capacity (which will wrap to 0 on next write)
 		rb.next = capacity
-	} else if capacity > currentLen {
+		return
+	}
+	if capacity > currentLen {
+		// Grow: expand the buffer
 		newValues := make([]T, capacity)
 		copy(newValues, rb.values)
 		rb.values = newValues
 		if rb.next >= len(rb.values) {
 			rb.next = len(rb.values)
 		}
+		return
 	}
-
-	if len(rb.values) > 0 {
-		rb.values[rb.next%len(rb.values)] = v
-		rb.next = (rb.next + 1) % len(rb.values)
+	if currentLen == 0 {
+		// Initialize: create buffer with specified capacity
+		rb.values = make([]T, capacity)
+		rb.next = 0
 	}
 }
 

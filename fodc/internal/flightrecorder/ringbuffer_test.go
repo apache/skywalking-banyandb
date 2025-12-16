@@ -40,10 +40,11 @@ func TestNewRingBuffer(t *testing.T) {
 func TestRingBuffer_Add_Basic(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 5
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	assert.Equal(t, capacity, rb.Len())
 	assert.Equal(t, capacity, rb.Cap())
@@ -56,10 +57,11 @@ func TestRingBuffer_Add_Basic(t *testing.T) {
 func TestRingBuffer_Add_String(t *testing.T) {
 	rb := NewRingBuffer[string]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add("first", capacity)
-	rb.Add("second", capacity)
-	rb.Add("third", capacity)
+	rb.Add("first")
+	rb.Add("second")
+	rb.Add("third")
 
 	assert.Equal(t, capacity, rb.Len())
 	assert.Equal(t, "first", rb.Get(0))
@@ -72,9 +74,10 @@ func TestRingBuffer_Add_String(t *testing.T) {
 func TestRingBuffer_Add_Bool(t *testing.T) {
 	rb := NewRingBuffer[bool]()
 	capacity := 2
+	rb.SetCapacity(capacity)
 
-	rb.Add(true, capacity)
-	rb.Add(false, capacity)
+	rb.Add(true)
+	rb.Add(false)
 
 	assert.Equal(t, capacity, rb.Len())
 	assert.True(t, rb.Get(0))
@@ -87,13 +90,14 @@ func TestRingBuffer_Add_CircularBehavior(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
 
+	rb.SetCapacity(capacity)
 	// Fill buffer
-	rb.Add(1, capacity)
-	rb.Add(2, capacity)
-	rb.Add(3, capacity)
+	rb.Add(1)
+	rb.Add(2)
+	rb.Add(3)
 
 	// Add one more - should overwrite oldest
-	rb.Add(4, capacity)
+	rb.Add(4)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -110,9 +114,10 @@ func TestRingBuffer_Add_MultipleOverwrites(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
 
+	rb.SetCapacity(capacity)
 	// Fill and overflow multiple times
 	for i := 1; i <= 10; i++ {
-		rb.Add(i, capacity)
+		rb.Add(i)
 	}
 
 	allValues := rb.GetAllValues()
@@ -130,11 +135,11 @@ func TestRingBuffer_Add_MultipleOverwrites(t *testing.T) {
 // TestRingBuffer_Get tests Get method.
 func TestRingBuffer_Get(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 5
+	rb.SetCapacity(10)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	assert.Equal(t, 10, rb.Get(0))
 	assert.Equal(t, 20, rb.Get(1))
@@ -145,8 +150,9 @@ func TestRingBuffer_Get(t *testing.T) {
 func TestRingBuffer_Get_OutOfBoundsIndex(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
+	rb.Add(10)
 
 	var zero int
 	assert.Equal(t, zero, rb.Get(-1))
@@ -170,10 +176,12 @@ func TestRingBuffer_Len(t *testing.T) {
 
 	assert.Equal(t, 0, rb.Len())
 
-	rb.Add(1, 5)
+	rb.SetCapacity(5)
+	rb.Add(1)
 	assert.Equal(t, 5, rb.Len())
 
-	rb.Add(2, 3)
+	rb.SetCapacity(3)
+	rb.Add(2)
 	assert.Equal(t, 3, rb.Len())
 }
 
@@ -183,28 +191,30 @@ func TestRingBuffer_Cap(t *testing.T) {
 
 	assert.Equal(t, 0, rb.Cap())
 
-	rb.Add(1, 5)
+	rb.SetCapacity(5)
+	rb.Add(1)
 	assert.Equal(t, 5, rb.Cap())
 
-	rb.Add(2, 3)
+	rb.SetCapacity(3)
+	rb.Add(2)
 	assert.Equal(t, 3, rb.Cap())
 
-	rb.Add(3, 10)
+	rb.SetCapacity(10)
+	rb.Add(3)
 	assert.Equal(t, 10, rb.Cap())
 }
 
 // TestRingBuffer_GetCurrentValue_Basic tests GetCurrentValue method.
 func TestRingBuffer_GetCurrentValue_Basic(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 5
 
-	rb.Add(10, capacity)
+	rb.Add(10)
 	assert.Equal(t, 10, rb.GetCurrentValue())
 
-	rb.Add(20, capacity)
+	rb.Add(20)
 	assert.Equal(t, 20, rb.GetCurrentValue())
 
-	rb.Add(30, capacity)
+	rb.Add(30)
 	assert.Equal(t, 30, rb.GetCurrentValue())
 }
 
@@ -219,12 +229,11 @@ func TestRingBuffer_GetCurrentValue_EmptyBuffer(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_AfterOverwriteValue tests GetCurrentValue after overwrite.
 func TestRingBuffer_GetCurrentValue_AfterOverwriteValue(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
 
-	rb.Add(1, capacity)
-	rb.Add(2, capacity)
-	rb.Add(3, capacity)
-	rb.Add(4, capacity) // Overwrites 1
+	rb.Add(1)
+	rb.Add(2)
+	rb.Add(3)
+	rb.Add(4) // Overwrites 1
 
 	assert.Equal(t, 4, rb.GetCurrentValue())
 }
@@ -232,16 +241,14 @@ func TestRingBuffer_GetCurrentValue_AfterOverwriteValue(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_WrapAround tests GetCurrentValue with wrap around.
 func TestRingBuffer_GetCurrentValue_WrapAround(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
-
 	// Fill buffer
-	rb.Add(1, capacity)
-	rb.Add(2, capacity)
-	rb.Add(3, capacity)
+	rb.Add(1)
+	rb.Add(2)
+	rb.Add(3)
 
 	// Wrap around
-	rb.Add(4, capacity)
-	rb.Add(5, capacity)
+	rb.Add(4)
+	rb.Add(5)
 
 	assert.Equal(t, 5, rb.GetCurrentValue())
 }
@@ -250,10 +257,11 @@ func TestRingBuffer_GetCurrentValue_WrapAround(t *testing.T) {
 func TestRingBuffer_GetAllValues_Basic(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 5
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -288,9 +296,10 @@ func TestRingBuffer_GetAllValues_Ordering(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 5
 
+	rb.SetCapacity(capacity)
 	// Add values sequentially
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, capacity)
+		rb.Add(i * 10)
 	}
 
 	allValues := rb.GetAllValues()
@@ -307,11 +316,12 @@ func TestRingBuffer_GetAllValues_Ordering(t *testing.T) {
 func TestRingBuffer_GetAllValues_AfterOverwrite(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
-	rb.Add(40, capacity) // Overwrites 10
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
+	rb.Add(40) // Overwrites 10
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -327,15 +337,17 @@ func TestRingBuffer_Resize_GrowBuffer(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	initialCapacity := 3
 
-	rb.Add(10, initialCapacity)
-	rb.Add(20, initialCapacity)
-	rb.Add(30, initialCapacity)
+	rb.SetCapacity(initialCapacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	assert.Equal(t, initialCapacity, rb.Cap())
 
 	// Grow capacity
 	newCapacity := 5
-	rb.Add(40, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(40)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	assert.Equal(t, newCapacity, rb.Len())
@@ -356,16 +368,18 @@ func TestRingBuffer_Resize_ShrinkBuffer(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	initialCapacity := 5
 
+	rb.SetCapacity(initialCapacity)
 	// Fill buffer
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	assert.Equal(t, initialCapacity, rb.Cap())
 
 	// Shrink capacity - should keep most recent values
 	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(60)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	assert.Equal(t, newCapacity, rb.Len())
@@ -385,16 +399,15 @@ func TestRingBuffer_Resize_ShrinkBuffer(t *testing.T) {
 // TestRingBuffer_Resize_SameCapacitySize tests resize with same capacity.
 func TestRingBuffer_Resize_SameCapacitySize(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 5
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	initialLen := rb.Len()
 	initialCap := rb.Cap()
 
-	rb.Add(40, capacity)
+	rb.Add(40)
 
 	// Capacity and length should remain the same
 	assert.Equal(t, initialCap, rb.Cap())
@@ -406,16 +419,17 @@ func TestRingBuffer_Resize_SameCapacitySize(t *testing.T) {
 // TestRingBuffer_Resize_ShrinkToSmaller tests shrinking to a smaller size.
 func TestRingBuffer_Resize_ShrinkToSmaller(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 10
+	rb.SetCapacity(10)
 
 	// Fill buffer
 	for i := 1; i <= 10; i++ {
-		rb.Add(i, initialCapacity)
+		rb.Add(i)
 	}
 
 	// Shrink to 2
 	newCapacity := 2
-	rb.Add(11, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(11)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	allValues := rb.GetAllValues()
@@ -431,7 +445,7 @@ func TestRingBuffer_Resize_GrowFromEmpty(t *testing.T) {
 
 	assert.Equal(t, 0, rb.Cap())
 
-	rb.Add(10, 5)
+	rb.Add(10)
 
 	assert.Equal(t, 5, rb.Cap())
 	assert.Equal(t, 5, rb.Len())
@@ -442,12 +456,13 @@ func TestRingBuffer_Resize_GrowFromEmpty(t *testing.T) {
 func TestRingBuffer_Resize_ShrinkToEmpty(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
+	rb.Add(10)
+	rb.Add(20)
 
 	// Adding with capacity 0 should not change the buffer
-	rb.Add(30, 0)
+	rb.Add(30)
 
 	// Buffer should remain unchanged when capacity is 0
 	assert.Equal(t, capacity, rb.Cap())
@@ -457,15 +472,15 @@ func TestRingBuffer_Resize_ShrinkToEmpty(t *testing.T) {
 // TestRingBuffer_FIFOBehavior tests FIFO (First In First Out) behavior.
 func TestRingBuffer_FIFOBehavior(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
+	rb.SetCapacity(3)
 
 	// Add values
-	rb.Add(1, capacity)
-	rb.Add(2, capacity)
-	rb.Add(3, capacity)
+	rb.Add(1)
+	rb.Add(2)
+	rb.Add(3)
 
 	// Add more - oldest should be removed first
-	rb.Add(4, capacity)
+	rb.Add(4)
 
 	allValues := rb.GetAllValues()
 	// 1 should be removed (oldest)
@@ -481,14 +496,15 @@ func TestRingBuffer_CircularWrapAround(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
 
+	rb.SetCapacity(capacity)
 	// Fill buffer completely
-	rb.Add(1, capacity)
-	rb.Add(2, capacity)
-	rb.Add(3, capacity)
+	rb.Add(1)
+	rb.Add(2)
+	rb.Add(3)
 
 	// Wrap around multiple times
 	for i := 4; i <= 9; i++ {
-		rb.Add(i, capacity)
+		rb.Add(i)
 	}
 
 	allValues := rb.GetAllValues()
@@ -502,11 +518,11 @@ func TestRingBuffer_CircularWrapAround(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_AfterMultipleWraps tests GetCurrentValue after multiple wraps.
 func TestRingBuffer_GetCurrentValue_AfterMultipleWraps(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
+	rb.SetCapacity(10)
 
 	// Fill and wrap multiple times
 	for i := 1; i <= 10; i++ {
-		rb.Add(i, capacity)
+		rb.Add(i)
 	}
 
 	// Current value should be the last added
@@ -516,12 +532,12 @@ func TestRingBuffer_GetCurrentValue_AfterMultipleWraps(t *testing.T) {
 // TestRingBuffer_GetAllValues_PreservesOrder tests that GetAllValues preserves order.
 func TestRingBuffer_GetAllValues_PreservesOrder(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 4
+	rb.SetCapacity(10)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
-	rb.Add(40, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
+	rb.Add(40)
 
 	allValues := rb.GetAllValues()
 	// Should be in order: oldest to newest
@@ -540,10 +556,11 @@ func TestRingBuffer_Add_StructType(t *testing.T) {
 
 	rb := NewRingBuffer[testStruct]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(testStruct{ID: 1, Value: "first"}, capacity)
-	rb.Add(testStruct{ID: 2, Value: "second"}, capacity)
-	rb.Add(testStruct{ID: 3, Value: "third"}, capacity)
+	rb.Add(testStruct{ID: 1, Value: "first"})
+	rb.Add(testStruct{ID: 2, Value: "second"})
+	rb.Add(testStruct{ID: 3, Value: "third"})
 
 	assert.Equal(t, capacity, rb.Len())
 	val1 := rb.Get(0)
@@ -559,14 +576,15 @@ func TestRingBuffer_Add_StructType(t *testing.T) {
 func TestRingBuffer_Add_PointerType(t *testing.T) {
 	rb := NewRingBuffer[*int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
 	val1 := 10
 	val2 := 20
 	val3 := 30
 
-	rb.Add(&val1, capacity)
-	rb.Add(&val2, capacity)
-	rb.Add(&val3, capacity)
+	rb.Add(&val1)
+	rb.Add(&val2)
+	rb.Add(&val3)
 
 	assert.Equal(t, capacity, rb.Len())
 	assert.Equal(t, &val1, rb.Get(0))
@@ -577,9 +595,10 @@ func TestRingBuffer_Add_PointerType(t *testing.T) {
 func TestRingBuffer_Add_SliceType(t *testing.T) {
 	rb := NewRingBuffer[[]int]()
 	capacity := 2
+	rb.SetCapacity(capacity)
 
-	rb.Add([]int{1, 2, 3}, capacity)
-	rb.Add([]int{4, 5, 6}, capacity)
+	rb.Add([]int{1, 2, 3})
+	rb.Add([]int{4, 5, 6})
 
 	assert.Equal(t, capacity, rb.Len())
 	slice1 := rb.Get(0)
@@ -591,16 +610,16 @@ func TestRingBuffer_Add_SliceType(t *testing.T) {
 // TestRingBuffer_Resize_ComplexShrink tests complex shrinking scenario.
 func TestRingBuffer_Resize_ComplexShrink(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 7
 
 	// Fill buffer
 	for i := 1; i <= 7; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Shrink to 4
 	newCapacity := 4
-	rb.Add(80, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(80)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	allValues := rb.GetAllValues()
@@ -615,14 +634,13 @@ func TestRingBuffer_Resize_ComplexShrink(t *testing.T) {
 // TestRingBuffer_GetAllValues_AfterResize tests GetAllValues after resize.
 func TestRingBuffer_GetAllValues_AfterResize(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	// Grow
-	rb.Add(40, 5)
+	rb.Add(40)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, 5)
@@ -640,12 +658,13 @@ func TestRingBuffer_GetAllValues_AfterResize(t *testing.T) {
 func TestRingBuffer_NextPositionTracking(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 	// Buffer should be full, next write will wrap
-	rb.Add(40, capacity)
+	rb.Add(40)
 	// Verify wrap around by checking values
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -660,15 +679,18 @@ func TestRingBuffer_NextPositionTracking(t *testing.T) {
 func TestRingBuffer_Add_WithCapacityChange(t *testing.T) {
 	rb := NewRingBuffer[int]()
 
-	rb.Add(10, 2)
+	rb.SetCapacity(2)
+	rb.Add(10)
 	assert.Equal(t, 2, rb.Cap())
 
-	rb.Add(20, 5)
+	rb.SetCapacity(5)
+	rb.Add(20)
 	assert.Equal(t, 5, rb.Cap())
 	assert.Equal(t, 10, rb.Get(0))
 	assert.Equal(t, 20, rb.Get(1))
 
-	rb.Add(30, 3)
+	rb.SetCapacity(3)
+	rb.Add(30)
 	assert.Equal(t, 3, rb.Cap())
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, 3)
@@ -680,9 +702,10 @@ func TestRingBuffer_Add_WithCapacityChange(t *testing.T) {
 func TestRingBuffer_GetAllValues_EmptySlots(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 5
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
+	rb.Add(10)
+	rb.Add(20)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -702,11 +725,10 @@ func TestRingBuffer_GetAllValues_EmptySlots(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_WithZeroValues tests GetCurrentValue with zero values.
 func TestRingBuffer_GetCurrentValue_WithZeroValues(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
 
-	rb.Add(0, capacity)
-	rb.Add(10, capacity)
-	rb.Add(0, capacity)
+	rb.Add(0)
+	rb.Add(10)
+	rb.Add(0)
 
 	// Zero is a valid value, not empty
 	assert.Equal(t, 0, rb.GetCurrentValue())
@@ -715,16 +737,16 @@ func TestRingBuffer_GetCurrentValue_WithZeroValues(t *testing.T) {
 // TestRingBuffer_Resize_MaintainsFIFO tests that resize maintains FIFO order.
 func TestRingBuffer_Resize_MaintainsFIFO(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 5
 
 	// Fill buffer
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Shrink - should keep most recent in FIFO order
 	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(60)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, newCapacity)
@@ -738,17 +760,16 @@ func TestRingBuffer_Resize_MaintainsFIFO(t *testing.T) {
 // TestRingBuffer_CapacityOne tests ring buffer with capacity of 1.
 func TestRingBuffer_CapacityOne(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 1
 
-	rb.Add(10, capacity)
+	rb.Add(10)
 	assert.Equal(t, 10, rb.Get(0))
 	assert.Equal(t, 10, rb.GetCurrentValue())
 
-	rb.Add(20, capacity)
+	rb.Add(20)
 	assert.Equal(t, 20, rb.Get(0))
 	assert.Equal(t, 20, rb.GetCurrentValue())
 
-	rb.Add(30, capacity)
+	rb.Add(30)
 	assert.Equal(t, 30, rb.Get(0))
 	assert.Equal(t, 30, rb.GetCurrentValue())
 
@@ -760,17 +781,18 @@ func TestRingBuffer_CapacityOne(t *testing.T) {
 // TestRingBuffer_ShrinkWithDifferentNextPositions tests shrinking with different next positions.
 func TestRingBuffer_ShrinkWithDifferentNextPositions(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 7
+	rb.SetCapacity(7)
 
 	// Fill buffer completely
 	for i := 1; i <= 7; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 	// At this point, next should be 0 (wrapped around)
 
 	// Shrink to 3 - should keep the 3 most recent values
 	newCapacity := 3
-	rb.Add(80, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(80)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	allValues := rb.GetAllValues()
@@ -785,19 +807,24 @@ func TestRingBuffer_ShrinkWithDifferentNextPositions(t *testing.T) {
 func TestRingBuffer_RapidCapacityChanges(t *testing.T) {
 	rb := NewRingBuffer[int]()
 
-	rb.Add(10, 2)
+	rb.SetCapacity(2)
+	rb.Add(10)
 	assert.Equal(t, 2, rb.Cap())
 
-	rb.Add(20, 5)
+	rb.SetCapacity(5)
+	rb.Add(20)
 	assert.Equal(t, 5, rb.Cap())
 
-	rb.Add(30, 3)
+	rb.SetCapacity(3)
+	rb.Add(30)
 	assert.Equal(t, 3, rb.Cap())
 
-	rb.Add(40, 7)
+	rb.SetCapacity(7)
+	rb.Add(40)
 	assert.Equal(t, 7, rb.Cap())
 
-	rb.Add(50, 2)
+	rb.SetCapacity(2)
+	rb.Add(50)
 	assert.Equal(t, 2, rb.Cap())
 
 	allValues := rb.GetAllValues()
@@ -810,18 +837,18 @@ func TestRingBuffer_RapidCapacityChanges(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_ExactWrapAround tests GetCurrentValue when next wraps exactly.
 func TestRingBuffer_GetCurrentValue_ExactWrapAround(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	capacity := 3
+	rb.SetCapacity(3)
 
 	// Fill buffer completely (next will be 0 after this)
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	// Verify next is 0 (wrapped around)
 	assert.Equal(t, 30, rb.GetCurrentValue())
 
 	// Add one more to wrap
-	rb.Add(40, capacity)
+	rb.Add(40)
 	assert.Equal(t, 40, rb.GetCurrentValue())
 }
 
@@ -830,13 +857,14 @@ func TestRingBuffer_GetAllValues_AfterExactWrapAround(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
 
+	rb.SetCapacity(capacity)
 	// Fill buffer completely
-	rb.Add(10, capacity)
-	rb.Add(20, capacity)
-	rb.Add(30, capacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	// Add one more to wrap
-	rb.Add(40, capacity)
+	rb.Add(40)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -850,16 +878,17 @@ func TestRingBuffer_GetAllValues_AfterExactWrapAround(t *testing.T) {
 // TestRingBuffer_ShrinkFromPartiallyFilled tests shrinking from partially filled buffer.
 func TestRingBuffer_ShrinkFromPartiallyFilled(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 10
+	rb.SetCapacity(5)
 
 	// Partially fill buffer
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Shrink to 3
 	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(60)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	allValues := rb.GetAllValues()
@@ -873,15 +902,16 @@ func TestRingBuffer_ShrinkFromPartiallyFilled(t *testing.T) {
 // TestRingBuffer_GrowFromPartiallyFilled tests growing from partially filled buffer.
 func TestRingBuffer_GrowFromPartiallyFilled(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 3
+	rb.SetCapacity(2)
 
 	// Partially fill buffer
-	rb.Add(10, initialCapacity)
-	rb.Add(20, initialCapacity)
+	rb.Add(10)
+	rb.Add(20)
 
 	// Grow to 5
 	newCapacity := 5
-	rb.Add(30, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(30)
 
 	assert.Equal(t, newCapacity, rb.Cap())
 	assert.Equal(t, newCapacity, rb.Len())
@@ -896,16 +926,16 @@ func TestRingBuffer_GrowFromPartiallyFilled(t *testing.T) {
 // TestRingBuffer_GetAllValues_OrderingAfterShrink tests GetAllValues ordering after shrink.
 func TestRingBuffer_GetAllValues_OrderingAfterShrink(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 5
 
 	// Fill buffer
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Shrink to 3
 	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(60)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, newCapacity)
@@ -920,8 +950,9 @@ func TestRingBuffer_GetAllValues_OrderingAfterShrink(t *testing.T) {
 func TestRingBuffer_GetAllValues_WithSingleValue(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 5
+	rb.SetCapacity(capacity)
 
-	rb.Add(10, capacity)
+	rb.Add(10)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -943,16 +974,16 @@ func TestRingBuffer_GetAllValues_WithSingleValue(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_AfterShrink tests GetCurrentValue after shrink.
 func TestRingBuffer_GetCurrentValue_AfterShrink(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 5
+	rb.SetCapacity(5)
 
 	// Fill buffer
 	for i := 1; i <= 5; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Shrink and add new value
-	newCapacity := 3
-	rb.Add(60, newCapacity)
+	rb.SetCapacity(3)
+	rb.Add(60)
 
 	// Current value should be the most recently added
 	assert.Equal(t, 60, rb.GetCurrentValue())
@@ -961,16 +992,16 @@ func TestRingBuffer_GetCurrentValue_AfterShrink(t *testing.T) {
 // TestRingBuffer_GetCurrentValue_AfterGrow tests GetCurrentValue after grow.
 func TestRingBuffer_GetCurrentValue_AfterGrow(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 3
+	rb.SetCapacity(3)
 
 	// Fill buffer
 	for i := 1; i <= 3; i++ {
-		rb.Add(i*10, initialCapacity)
+		rb.Add(i * 10)
 	}
 
 	// Grow and add new value
-	newCapacity := 5
-	rb.Add(40, newCapacity)
+	rb.SetCapacity(5)
+	rb.Add(40)
 
 	// Current value should be the most recently added
 	assert.Equal(t, 40, rb.GetCurrentValue())
@@ -981,14 +1012,15 @@ func TestRingBuffer_ComplexWrapAroundSequence(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 4
 
+	rb.SetCapacity(capacity)
 	// Fill buffer
 	for i := 1; i <= 4; i++ {
-		rb.Add(i*10, capacity)
+		rb.Add(i * 10)
 	}
 
 	// Wrap around multiple times
 	for i := 5; i <= 12; i++ {
-		rb.Add(i*10, capacity)
+		rb.Add(i * 10)
 	}
 
 	allValues := rb.GetAllValues()
@@ -1004,15 +1036,15 @@ func TestRingBuffer_ComplexWrapAroundSequence(t *testing.T) {
 // TestRingBuffer_Get_AfterResize tests Get after resize operations.
 func TestRingBuffer_Get_AfterResize(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 3
 
-	rb.Add(10, initialCapacity)
-	rb.Add(20, initialCapacity)
-	rb.Add(30, initialCapacity)
+	rb.Add(10)
+	rb.Add(20)
+	rb.Add(30)
 
 	// Grow
 	newCapacity := 5
-	rb.Add(40, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(40)
 
 	// After growing, values are preserved and new value is added
 	allValues := rb.GetAllValues()
@@ -1036,16 +1068,20 @@ func TestRingBuffer_Len_AfterMultipleResizes(t *testing.T) {
 
 	assert.Equal(t, 0, rb.Len())
 
-	rb.Add(10, 2)
+	rb.SetCapacity(2)
+	rb.Add(10)
 	assert.Equal(t, 2, rb.Len())
 
-	rb.Add(20, 5)
+	rb.SetCapacity(5)
+	rb.Add(20)
 	assert.Equal(t, 5, rb.Len())
 
-	rb.Add(30, 3)
+	rb.SetCapacity(3)
+	rb.Add(30)
 	assert.Equal(t, 3, rb.Len())
 
-	rb.Add(40, 1)
+	rb.SetCapacity(1)
+	rb.Add(40)
 	assert.Equal(t, 1, rb.Len())
 }
 
@@ -1055,16 +1091,20 @@ func TestRingBuffer_Cap_AfterMultipleResizes(t *testing.T) {
 
 	assert.Equal(t, 0, rb.Cap())
 
-	rb.Add(10, 2)
+	rb.SetCapacity(2)
+	rb.Add(10)
 	assert.Equal(t, 2, rb.Cap())
 
-	rb.Add(20, 5)
+	rb.SetCapacity(5)
+	rb.Add(20)
 	assert.Equal(t, 5, rb.Cap())
 
-	rb.Add(30, 3)
+	rb.SetCapacity(3)
+	rb.Add(30)
 	assert.Equal(t, 3, rb.Cap())
 
-	rb.Add(40, 7)
+	rb.SetCapacity(7)
+	rb.Add(40)
 	assert.Equal(t, 7, rb.Cap())
 }
 
@@ -1073,9 +1113,10 @@ func TestRingBuffer_GetAllValues_Consistency(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 4
 
+	rb.SetCapacity(capacity)
 	// Add values
 	for i := 1; i <= 4; i++ {
-		rb.Add(i*10, capacity)
+		rb.Add(i * 10)
 	}
 
 	allValues1 := rb.GetAllValues()
@@ -1083,7 +1124,7 @@ func TestRingBuffer_GetAllValues_Consistency(t *testing.T) {
 
 	// Add more values
 	for i := 5; i <= 6; i++ {
-		rb.Add(i*10, capacity)
+		rb.Add(i * 10)
 	}
 
 	allValues2 := rb.GetAllValues()
@@ -1102,10 +1143,11 @@ func TestRingBuffer_GetAllValues_Consistency(t *testing.T) {
 func TestRingBuffer_Add_ZeroValue(t *testing.T) {
 	rb := NewRingBuffer[int]()
 	capacity := 3
+	rb.SetCapacity(capacity)
 
-	rb.Add(0, capacity)
-	rb.Add(10, capacity)
-	rb.Add(0, capacity)
+	rb.Add(0)
+	rb.Add(10)
+	rb.Add(0)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, capacity)
@@ -1118,16 +1160,16 @@ func TestRingBuffer_Add_ZeroValue(t *testing.T) {
 // TestRingBuffer_ShrinkPreservesMostRecent tests that shrink preserves most recent values.
 func TestRingBuffer_ShrinkPreservesMostRecent(t *testing.T) {
 	rb := NewRingBuffer[int]()
-	initialCapacity := 10
 
 	// Fill buffer
 	for i := 1; i <= 10; i++ {
-		rb.Add(i, initialCapacity)
+		rb.Add(i)
 	}
 
 	// Shrink to 2
 	newCapacity := 2
-	rb.Add(11, newCapacity)
+	rb.SetCapacity(newCapacity)
+	rb.Add(11)
 
 	allValues := rb.GetAllValues()
 	require.Len(t, allValues, newCapacity)

@@ -54,21 +54,24 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 	var ds *Datasource
 	if len(fr.datasources) == 0 {
 		ds = NewDatasource()
-		ds.SetCapacity(fr.capacitySize)
 		fr.datasources = append(fr.datasources, ds)
 	} else {
 		ds = fr.datasources[0]
-		ds.SetCapacity(fr.capacitySize)
 	}
 
+	// Step 1: Add timestamp first (without capacity changes)
 	timestamp := time.Now().Unix()
 	ds.AddTimestamp(timestamp)
 
+	// Step 2: Add all metrics first (without capacity changes)
 	for idx := range rawMetrics {
 		if updateErr := ds.Update(&rawMetrics[idx]); updateErr != nil {
 			return fmt.Errorf("failed to update metric %s: %w", rawMetrics[idx].Name, updateErr)
 		}
 	}
+
+	// Step 3: Set capacity after all metrics are added (triggers FIFO removal if needed)
+	ds.SetCapacity(fr.capacitySize)
 
 	return nil
 }

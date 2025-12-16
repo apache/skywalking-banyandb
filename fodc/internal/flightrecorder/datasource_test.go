@@ -30,7 +30,7 @@ import (
 // TestDatasource_Update_TimestampBufferCapacity tests timestamp buffer capacity adjustment.
 func TestDatasource_Update_TimestampBufferCapacity(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 1000000 // Use larger capacity to ensure ComputeCapacity returns > 0
+	ds.SetCapacity(1000000) // Use larger capacity to ensure ComputeCapacity returns > 0
 
 	// Add a metric to trigger capacity calculation
 	rawMetric := &metrics.RawMetric{
@@ -48,7 +48,7 @@ func TestDatasource_Update_TimestampBufferCapacity(t *testing.T) {
 	}
 
 	// Change capacity
-	ds.Capacity = 2000000
+	ds.SetCapacity(2000000)
 	err = ds.Update(rawMetric)
 	require.NoError(t, err)
 
@@ -64,7 +64,7 @@ func TestDatasource_Update_TimestampBufferCapacity(t *testing.T) {
 // TestDatasource_Update_AllBuffersSameCapacity tests that all buffers have the same capacity.
 func TestDatasource_Update_AllBuffersSameCapacity(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 1000000 // Use larger capacity to ensure ComputeCapacity returns > 0
+	ds.SetCapacity(1000000) // Use larger capacity to ensure ComputeCapacity returns > 0
 
 	// Add multiple metrics
 	rawMetric1 := &metrics.RawMetric{
@@ -101,7 +101,7 @@ func TestDatasource_Update_AllBuffersSameCapacity(t *testing.T) {
 // TestDatasource_Update_ConcurrentUpdatesDifferentMetrics tests concurrent updates to different metrics.
 func TestDatasource_Update_ConcurrentUpdatesDifferentMetrics(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 100000
+	ds.SetCapacity(100000)
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -129,7 +129,7 @@ func TestDatasource_Update_ConcurrentUpdatesDifferentMetrics(t *testing.T) {
 // TestDatasource_addTimestampUnlocked tests the internal addTimestampUnlocked method.
 func TestDatasource_addTimestampUnlocked(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.CapacitySize = 10000
 
 	ds.mu.Lock()
 	ds.addTimestampUnlocked(int64(1000))
@@ -142,7 +142,7 @@ func TestDatasource_addTimestampUnlocked(t *testing.T) {
 // TestDatasource_Update_EmptyDescriptionDoesNotOverwrite tests that empty description does not overwrite existing.
 func TestDatasource_Update_EmptyDescriptionDoesNotOverwrite(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric1 := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -170,7 +170,7 @@ func TestDatasource_Update_EmptyDescriptionDoesNotOverwrite(t *testing.T) {
 // TestDatasource_Update_MultipleUpdatesSameMetric tests multiple updates to the same metric.
 func TestDatasource_Update_MultipleUpdatesSameMetric(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
@@ -213,7 +213,7 @@ func TestDatasource_ComputeCapacity_EdgeCases(t *testing.T) {
 // TestDatasource_Update_BufferResizePreservesValues tests that buffer resize preserves values.
 func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.CapacitySize = 10000
 
 	// Add some values
 	values := []float64{70.0, 71.0, 72.0, 73.0, 74.0}
@@ -232,7 +232,7 @@ func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 	_ = buffer1.GetAllValues() // Verify buffer exists before resize
 
 	// Change capacity to trigger resize
-	ds.Capacity = 50000
+	ds.SetCapacity(50000)
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
 		Value:  75.0,
@@ -256,7 +256,7 @@ func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 // TestDatasource_Update_ResizesAllBuffers tests that Update resizes all buffers when capacity changes.
 func TestDatasource_Update_ResizesAllBuffers(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 1000000 // Use larger capacity to ensure ComputeCapacity returns > 0
+	ds.SetCapacity(1000000) // Use larger capacity to ensure ComputeCapacity returns > 0
 
 	// Add multiple metrics
 	rawMetric1 := &metrics.RawMetric{
@@ -286,7 +286,7 @@ func TestDatasource_Update_ResizesAllBuffers(t *testing.T) {
 	}
 
 	// Change capacity
-	ds.Capacity = 2000000
+	ds.SetCapacity(2000000)
 	err3 := ds.Update(rawMetric1)
 	require.NoError(t, err3)
 
@@ -314,7 +314,7 @@ func TestDatasource_Update_ResizesAllBuffers(t *testing.T) {
 // TestDatasource_Update_WithLongMetricNames tests Update with long metric names.
 func TestDatasource_Update_WithLongMetricNames(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	longName := "very_long_metric_name_that_might_affect_string_overhead_calculation"
 	rawMetric := &metrics.RawMetric{
@@ -335,7 +335,7 @@ func TestDatasource_Update_WithLongMetricNames(t *testing.T) {
 // TestDatasource_Update_WithManyLabels tests Update with metrics that have many labels.
 func TestDatasource_Update_WithManyLabels(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:  "http_requests_total",
@@ -381,8 +381,8 @@ func TestDatasource_ComputeCapacity_WithDescriptions(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	capacitySize := 100000
-	result := ds.ComputeCapacity(capacitySize)
+	ds.SetCapacity(100000)
+	result := ds.ComputeCapacity(ds.CapacitySize)
 
 	// Should calculate capacity accounting for descriptions
 	assert.Greater(t, result, 0)
@@ -391,7 +391,7 @@ func TestDatasource_ComputeCapacity_WithDescriptions(t *testing.T) {
 // TestDatasource_Update_TotalWrittenWrapsAround tests that TotalWritten can wrap around.
 func TestDatasource_Update_TotalWrittenWrapsAround(t *testing.T) {
 	ds := NewDatasource()
-	ds.Capacity = 10000
+	ds.SetCapacity(10000)
 
 	rawMetric := &metrics.RawMetric{
 		Name:   "cpu_usage",
