@@ -158,10 +158,10 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 		stringOverhead += stringHeaderSize + len(desc)
 	}
 
-	// For each metric RingBuffer: next field (8 bytes) + slice header (24 bytes)
-	metricBufferOverhead := numMetrics * (intSize + sliceHeaderSize)
-	// For timestamp RingBuffer: pointer (8 bytes) + next field (8 bytes) + slice header (24 bytes) + mutex (24 bytes)
-	timestampBufferOverhead := 8 + intSize + sliceHeaderSize + 24
+	// For each metric RingBuffer: next field (8 bytes) + size field (8 bytes) + slice header (24 bytes)
+	metricBufferOverhead := numMetrics * (intSize + intSize + sliceHeaderSize)
+	// For timestamp RingBuffer: pointer (8 bytes) + next field (8 bytes) + size field (8 bytes) + slice header (24 bytes) + mutex (24 bytes)
+	timestampBufferOverhead := 8 + intSize + intSize + sliceHeaderSize + 24
 
 	totalFixedOverhead := metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
 		metricBufferOverhead + timestampBufferOverhead
