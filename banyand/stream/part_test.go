@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -179,4 +181,123 @@ var es = &elements{
 		{},
 		{}, // empty tagFamilies for seriesID 3
 	},
+}
+
+func TestSeriesMetadataPersistence(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	epoch := uint64(12345)
+	path := partPath(tmpPath, epoch)
+
+	// Create a memPart with elements
+	mp := generateMemPart()
+	mp.mustInitFromElements(es)
+
+	// Create sample series metadata using NewBytesField
+	field1 := index.NewBytesField(index.FieldKey{
+		IndexRuleID: 1,
+		Analyzer:    "keyword",
+		TagName:     "tag1",
+	}, []byte("term1"))
+	field2 := index.NewBytesField(index.FieldKey{
+		IndexRuleID: 2,
+		Analyzer:    "keyword",
+		TagName:     "tag2",
+	}, []byte("term2"))
+	metadataDocs := index.Documents{
+		{
+			DocID:        1,
+			EntityValues: []byte("entity1"),
+			Fields:       []index.Field{field1},
+		},
+		{
+			DocID:        2,
+			EntityValues: []byte("entity2"),
+			Fields:       []index.Field{field2},
+		},
+	}
+
+	// Marshal series metadata
+	seriesMetadataBytes, err := metadataDocs.Marshal()
+	require.NoError(t, err)
+	require.NotEmpty(t, seriesMetadataBytes)
+
+	// Set series metadata in memPart
+	_, err = mp.seriesMetadata.Write(seriesMetadataBytes)
+	require.NoError(t, err)
+
+	// Flush to disk
+	mp.mustFlush(fileSystem, path)
+
+	// Verify series metadata file exists by trying to read it
+	seriesMetadataPath := filepath.Join(path, seriesMetadataFilename)
+	readBytes, err := fileSystem.Read(seriesMetadataPath)
+	require.NoError(t, err, "series metadata file should exist")
+	assert.Equal(t, seriesMetadataBytes, readBytes, "series metadata content should match")
+
+	// Open the part and verify series metadata is accessible
+	p := mustOpenFilePart(epoch, tmpPath, fileSystem)
+	defer p.close()
+
+	// Verify series metadata reader is available
+	assert.NotNil(t, p.seriesMetadata, "series metadata reader should be available")
+
+	// Read and unmarshal series metadata using SequentialRead
+	seqReader := p.seriesMetadata.SequentialRead()
+	defer seqReader.Close()
+	readMetadataBytes := make([]byte, 0)
+	buf := make([]byte, 1024)
+	for {
+		var n int
+		n, err = seqReader.Read(buf)
+		if n == 0 {
+			if err != nil {
+				break
+			}
+			continue
+		}
+		if err != nil {
+			break
+		}
+		readMetadataBytes = append(readMetadataBytes, buf[:n]...)
+	}
+
+	var readDocs index.Documents
+	err = readDocs.Unmarshal(readMetadataBytes)
+	require.NoError(t, err)
+	assert.Equal(t, len(metadataDocs), len(readDocs), "number of documents should match")
+	assert.Equal(t, metadataDocs[0].DocID, readDocs[0].DocID, "first document DocID should match")
+	assert.Equal(t, metadataDocs[1].DocID, readDocs[1].DocID, "second document DocID should match")
+}
+
+func TestSeriesMetadataBackwardCompatibility(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	epoch := uint64(67890)
+	path := partPath(tmpPath, epoch)
+
+	// Create a memPart with elements but without series metadata
+	mp := generateMemPart()
+	mp.mustInitFromElements(es)
+	// Don't set series metadata to simulate old parts
+
+	// Flush to disk
+	mp.mustFlush(fileSystem, path)
+
+	// Verify series metadata file does not exist by trying to read it
+	seriesMetadataPath := filepath.Join(path, seriesMetadataFilename)
+	_, err := fileSystem.Read(seriesMetadataPath)
+	assert.Error(t, err, "series metadata file should not exist for old parts")
+
+	// Open the part - should work without series metadata (backward compatibility)
+	p := mustOpenFilePart(epoch, tmpPath, fileSystem)
+	defer p.close()
+
+	// Verify part can be opened successfully
+	assert.NotNil(t, p, "part should be opened successfully")
+	assert.Nil(t, p.seriesMetadata, "series metadata reader should be nil for old parts")
 }

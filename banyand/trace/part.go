@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -41,12 +42,14 @@ const (
 	traceSpansName          = "spans"
 	traceTagsPrefix         = "t:"
 	traceTagMetadataPrefix  = "tm:"
+	traceSeriesMetadataName = "smeta"
 	metadataFilename        = "metadata.json"
 	traceIDFilterFilename   = "traceID.filter"
 	tagTypeFilename         = "tag.type"
 	primaryFilename         = tracePrimaryName + ".bin"
 	metaFilename            = traceMetaName + ".bin"
 	spansFilename           = traceSpansName + ".bin"
+	seriesMetadataFilename  = traceSeriesMetadataName + ".bin"
 	tagsMetadataFilenameExt = ".tm"
 	tagsFilenameExt         = ".t"
 )
@@ -59,6 +62,7 @@ type part struct {
 	tags                 map[string]fs.Reader
 	tagType              tagType
 	traceIDFilter        traceIDFilter
+	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
@@ -67,6 +71,9 @@ type part struct {
 func (p *part) close() {
 	fs.MustClose(p.primary)
 	fs.MustClose(p.spans)
+	if p.seriesMetadata != nil {
+		fs.MustClose(p.seriesMetadata)
+	}
 	for _, t := range p.tags {
 		fs.MustClose(t)
 	}
@@ -91,6 +98,9 @@ func openMemPart(mp *memPart) *part {
 	// Open data files
 	p.primary = &mp.primary
 	p.spans = &mp.spans
+	if len(mp.seriesMetadata.Buf) > 0 {
+		p.seriesMetadata = &mp.seriesMetadata
+	}
 	if mp.tags != nil {
 		p.tags = make(map[string]fs.Reader)
 		p.tagMetadata = make(map[string]fs.Reader)
@@ -103,15 +113,16 @@ func openMemPart(mp *memPart) *part {
 }
 
 type memPart struct {
-	tagMetadata   map[string]*bytes.Buffer
-	tags          map[string]*bytes.Buffer
-	tagType       tagType
-	traceIDFilter traceIDFilter
-	spans         bytes.Buffer
-	meta          bytes.Buffer
-	primary       bytes.Buffer
-	partMetadata  partMetadata
-	segmentID     int64
+	tagMetadata    map[string]*bytes.Buffer
+	tags           map[string]*bytes.Buffer
+	tagType        tagType
+	traceIDFilter  traceIDFilter
+	spans          bytes.Buffer
+	meta           bytes.Buffer
+	primary        bytes.Buffer
+	seriesMetadata bytes.Buffer
+	partMetadata   partMetadata
+	segmentID      int64
 }
 
 func (mp *memPart) mustCreateMemTagWriters(name string) (fs.Writer, fs.Writer) {
@@ -142,6 +153,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.spans.Reset()
+	mp.seriesMetadata.Reset()
 	mp.segmentID = 0
 	if mp.tags != nil {
 		for k, t := range mp.tags {
@@ -284,6 +296,11 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(path, name+tagsMetadataFilenameExt), storage.FilePerm)
 	}
 
+	// Flush series metadata if available
+	if len(mp.seriesMetadata.Buf) > 0 {
+		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
+	}
+
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
@@ -370,6 +387,20 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
 	p.spans = mustOpenReader(path.Join(partPath, spansFilename), fileSystem)
+
+	// Try to open series metadata file (optional, for backward compatibility)
+	seriesMetadataPath := path.Join(partPath, seriesMetadataFilename)
+	reader, err := fileSystem.OpenFile(seriesMetadataPath)
+	if err != nil {
+		var fsErr *fs.FileSystemError
+		// File does not exist is acceptable for backward compatibility
+		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
+			logger.Panicf("cannot open series metadata file %q: %s", seriesMetadataPath, err)
+		}
+	} else {
+		p.seriesMetadata = reader
+	}
+
 	ee := fileSystem.ReadDir(partPath)
 	for _, e := range ee {
 		if e.IsDir() {

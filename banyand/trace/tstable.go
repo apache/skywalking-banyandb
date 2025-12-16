@@ -486,10 +486,10 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 }
 
 func (tst *tsTable) mustAddTraces(ts *traces, sidxReqsMap map[string]*sidx.MemPart) {
-	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap)
+	tst.mustAddTracesWithSegmentID(ts, 0, sidxReqsMap, nil)
 }
 
-func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart) {
+func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidxReqsMap map[string]*sidx.MemPart, seriesMetadata []byte) {
 	if len(ts.traceIDs) == 0 {
 		return
 	}
@@ -497,6 +497,13 @@ func (tst *tsTable) mustAddTracesWithSegmentID(ts *traces, segmentID int64, sidx
 	mp := generateMemPart()
 	mp.mustInitFromTraces(ts)
 	mp.segmentID = segmentID
+	if len(seriesMetadata) > 0 {
+		// Write series metadata to buffer to avoid sharing the underlying slice
+		_, err := mp.seriesMetadata.Write(seriesMetadata)
+		if err != nil {
+			logger.Panicf("cannot write series metadata to buffer: %s", err)
+		}
+	}
 
 	tst.mustAddMemPart(mp, sidxReqsMap)
 }
