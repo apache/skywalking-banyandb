@@ -132,14 +132,12 @@ func TestDatasource_Update_ConcurrentUpdatesDifferentMetrics(t *testing.T) {
 	assert.GreaterOrEqual(t, len(metricsMap), numGoroutines)
 }
 
-// TestDatasource_addTimestampUnlocked tests the internal addTimestampUnlocked method.
-func TestDatasource_addTimestampUnlocked(t *testing.T) {
+// TestDatasource_AddTimestamp tests adding timestamps to the datasource.
+func TestDatasource_AddTimestamp(t *testing.T) {
 	ds := NewDatasource()
-	ds.CapacitySize = 10000
+	ds.SetCapacity(10000)
 
-	ds.mu.Lock()
-	ds.addTimestampUnlocked(int64(1000))
-	ds.mu.Unlock()
+	ds.AddTimestamp(int64(1000))
 
 	timestamps := ds.GetTimestamps()
 	assert.GreaterOrEqual(t, timestamps.Len(), 1)

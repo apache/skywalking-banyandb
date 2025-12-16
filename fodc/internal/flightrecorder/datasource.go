@@ -112,23 +112,11 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	return nil
 }
 
-func (ds *Datasource) addTimestampUnlocked(timestamp int64) {
-	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
-
-	capacitySize := ds.CapacitySize
-	if capacitySize <= 0 {
-		capacitySize = defaultCapacity * (len(ds.metrics) + 1) * 8
-	}
-
-	computedCapacity := ds.ComputeCapacity(capacitySize)
-	ds.timestamps.SetCapacity(computedCapacity)
-}
-
 // AddTimestamp adds a timestamp for the current polling cycle.
 func (ds *Datasource) AddTimestamp(timestamp int64) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
-	ds.addTimestampUnlocked(timestamp)
+	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
 }
 
 // SetCapacity sets the capacity for the datasource and updates all ring buffer capacities.
