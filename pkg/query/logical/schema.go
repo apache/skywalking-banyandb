@@ -158,15 +158,25 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	for _, tagInFamily := range tags {
 		var tagRefsInFamily []*TagRef
 		for _, tag := range tagInFamily {
-			ts, ok := cs.TagSpecMap[tag.GetTagName()]
-			if !ok {
-				return nil, errors.WithMessagef(ErrTagNotFound, "tag %q does not exist in the current schema", tag.GetTagName())
+			if ts, ok := cs.TagSpecMap[tag.GetTagName()]; ok {
+				tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 			}
-			tagRefsInFamily = append(tagRefsInFamily, &TagRef{tag, ts})
 		}
 		tagRefs = append(tagRefs, tagRefsInFamily)
 	}
 	return tagRefs, nil
+}
+
+// ValidateProjectionTags checks if all tags in the projection exist in the schema.
+func (cs *CommonSchema) ValidateProjectionTags(tags ...[]*Tag) error {
+	for _, tagInFamily := range tags {
+		for _, tag := range tagInFamily {
+			if _, ok := cs.TagSpecMap[tag.GetTagName()]; !ok {
+				return errors.Errorf("tag %s not found in schema", tag.GetTagName())
+			}
+		}
+	}
+	return nil
 }
 
 func stringSliceEqual(a, b []string) bool {
@@ -203,6 +213,13 @@ func MergeSchemas(schemas []*CommonSchema) (*CommonSchema, error) {
 	indexRuleMap := make(map[string]*databasev1.IndexRule)
 
 	for _, s := range schemas {
+		for tagName, tagSpec := range s.TagSpecMap {
+			if existingSpec, exists := merged.TagSpecMap[tagName]; !exists {
+				merged.TagSpecMap[tagName] = tagSpec
+			} else if existingSpec.Spec.Type != tagSpec.Spec.Type {
+				existingSpec.Spec.Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
+			}
+		}
 		for _, rule := range s.IndexRules {
 			if existedRule := indexRuleMap[rule.Metadata.Name]; existedRule == nil {
 				indexRuleMap[rule.Metadata.Name] = rule

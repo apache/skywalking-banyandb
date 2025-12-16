@@ -66,6 +66,16 @@ func (m *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, 
 	return fieldRefs, nil
 }
 
+// ValidateProjectionFields checks if all fields in the projection exist in the schema.
+func (m *schema) ValidateProjectionFields(fields ...*logical.Field) error {
+	for _, field := range fields {
+		if _, ok := m.fieldMap[field.Name]; !ok {
+			return errors.Errorf("field %s not found in schema", field.Name)
+		}
+	}
+	return nil
+}
+
 func (m *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
 	if len(refs) == 0 {
 		return nil

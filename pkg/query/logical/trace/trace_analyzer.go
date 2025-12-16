@@ -72,6 +72,13 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 		}
 	}
 
+	if len(tagProjection) > 0 {
+		traceSchema := s.(*schema)
+		if err := traceSchema.common.ValidateProjectionTags(tagProjection...); err != nil {
+			return nil, err
+		}
+	}
+
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
