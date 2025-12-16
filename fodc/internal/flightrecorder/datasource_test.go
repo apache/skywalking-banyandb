@@ -41,6 +41,9 @@ func TestDatasource_Update_TimestampBufferCapacity(t *testing.T) {
 	err := ds.Update(rawMetric)
 	require.NoError(t, err)
 
+	// Set capacity after adding metric to ensure all buffers have the correct capacity
+	ds.SetCapacity(1000000)
+
 	initialTimestampCap := ds.timestamps.Cap()
 	// Skip test if initial capacity is 0 (overhead too high)
 	if initialTimestampCap == 0 {
@@ -82,6 +85,9 @@ func TestDatasource_Update_AllBuffersSameCapacity(t *testing.T) {
 	}
 	err2 := ds.Update(rawMetric2)
 	require.NoError(t, err2)
+
+	// Set capacity again after adding metrics to ensure all buffers have the correct capacity
+	ds.SetCapacity(1000000)
 
 	metricsMap := ds.GetMetrics()
 	cpuCap := metricsMap["cpu_usage"].Cap()
@@ -274,6 +280,9 @@ func TestDatasource_Update_ResizesAllBuffers(t *testing.T) {
 	}
 	err2 := ds.Update(rawMetric2)
 	require.NoError(t, err2)
+
+	// Set capacity again after adding metrics to ensure all buffers have the correct capacity
+	ds.SetCapacity(1000000)
 
 	metricsMap1 := ds.GetMetrics()
 	cpuCap1 := metricsMap1["cpu_usage"].Cap()

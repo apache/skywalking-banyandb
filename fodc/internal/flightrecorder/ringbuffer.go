@@ -35,9 +35,7 @@ func NewRingBuffer[T any]() *RingBuffer[T] {
 	}
 }
 
-// Add adds a value to the ring buffer without changing capacity.
-// If the buffer is not initialized (empty), it will be initialized with a default capacity.
-// Returns true if the value was successfully added.
+// Add adds a value to the ring buffer.
 func (rb *RingBuffer[T]) Add(v T) bool {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
@@ -59,8 +57,6 @@ func (rb *RingBuffer[T]) Add(v T) bool {
 }
 
 // SetCapacity sets the capacity of the ring buffer and uses FIFO strategy to remove oldest data if needed.
-// If the new capacity is smaller than the current length, the oldest data will be removed.
-// After SetCapacity, values are normalized to start from index 0 in FIFO order.
 func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 	if capacity <= 0 {
 		return
@@ -154,9 +150,7 @@ func (rb *RingBuffer[T]) Get(index int) T {
 	if len(rb.values) == 0 || index < 0 || index >= len(rb.values) {
 		return zero
 	}
-	// Get values in FIFO order
-	// When buffer hasn't wrapped (size < len): oldest is at index 0
-	// When buffer has wrapped (size == len): oldest is at index next
+
 	var startIdx int
 	if rb.size >= len(rb.values) {
 		// Buffer has wrapped, oldest is at next
@@ -200,7 +194,6 @@ func (rb *RingBuffer[T]) GetCurrentValue() T {
 }
 
 // GetAllValues returns all values in the buffer in order (oldest to newest).
-// Only returns actual written values, not zero-initialized slots.
 func (rb *RingBuffer[T]) GetAllValues() []T {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
@@ -209,8 +202,6 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 		return nil
 	}
 
-	// Determine how many actual values to return
-	// size already tracks the actual number of values (capped at len)
 	numValues := rb.size
 
 	if numValues == 0 {
@@ -218,14 +209,10 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 	}
 
 	result := make([]T, numValues)
-	// Start from the oldest position
-	// Use same logic as Get(): start from 0 when not wrapped, from next when wrapped
 	var startIdx int
 	if rb.size >= len(rb.values) {
-		// Buffer has wrapped, oldest is at next
 		startIdx = rb.next
 	} else {
-		// Buffer hasn't wrapped, oldest is at 0
 		startIdx = 0
 	}
 

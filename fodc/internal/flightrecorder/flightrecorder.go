@@ -41,7 +41,6 @@ func NewFlightRecorder(capacitySize int) *FlightRecorder {
 }
 
 // Update records metrics from a polling cycle.
-// This implements the MetricsRecorder interface.
 func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 	if len(rawMetrics) == 0 {
 		return nil
@@ -59,18 +58,15 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 		ds = fr.datasources[0]
 	}
 
-	// Step 1: Add timestamp first (without capacity changes)
 	timestamp := time.Now().Unix()
 	ds.AddTimestamp(timestamp)
 
-	// Step 2: Add all metrics first (without capacity changes)
 	for idx := range rawMetrics {
 		if updateErr := ds.Update(&rawMetrics[idx]); updateErr != nil {
 			return fmt.Errorf("failed to update metric %s: %w", rawMetrics[idx].Name, updateErr)
 		}
 	}
 
-	// Step 3: Set capacity after all metrics are added (triggers FIFO removal if needed)
 	ds.SetCapacity(fr.capacitySize)
 
 	return nil
