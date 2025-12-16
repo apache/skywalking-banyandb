@@ -23,8 +23,8 @@ import "sync"
 type RingBuffer[T any] struct {
 	values []T          // Fixed-size buffer for values of type T
 	next   int          // Next write position in the circular buffer
-	count  int          // Total number of values added (used to detect wrap)
-	mu     sync.RWMutex // Protects concurrent access to values, next, and count
+	size   int          // Actual number of values stored (capped at len(values), used to detect wrap)
+	mu     sync.RWMutex // Protects concurrent access to values, next, and size
 }
 
 // NewRingBuffer creates a new RingBuffer.
@@ -46,12 +46,15 @@ func (rb *RingBuffer[T]) Add(v T) bool {
 	if len(rb.values) == 0 {
 		rb.values = make([]T, 5) // Default capacity
 		rb.next = 0
-		rb.count = 0
+		rb.size = 0
 	}
 
 	rb.values[rb.next%len(rb.values)] = v
 	rb.next = (rb.next + 1) % len(rb.values)
-	rb.count++
+	// Increment size until it reaches capacity, then keep it at capacity
+	if rb.size < len(rb.values) {
+		rb.size++
+	}
 	return true
 }
 
@@ -75,13 +78,13 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		// Calculate how many items to keep (most recent)
 		// We want to keep the last 'capacity' items, or all items if we have fewer
 		itemsToKeep := capacity
-		if rb.count < capacity {
-			itemsToKeep = rb.count
+		if rb.size < capacity {
+			itemsToKeep = rb.size
 		}
 
 		// Determine the start index for copying the most recent itemsToKeep items
 		var startIdx int
-		if rb.count >= currentLen {
+		if rb.size >= currentLen {
 			// Buffer has wrapped: oldest is at next, most recent itemsToKeep items start from
 			// (next - itemsToKeep) mod currentLen, but we need to handle negative modulo
 			oldestIdx := rb.next % currentLen
@@ -104,7 +107,7 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		rb.values = newValues
 		// After shrinking, values are stored starting from index 0
 		rb.next = itemsToKeep
-		rb.count = itemsToKeep
+		rb.size = itemsToKeep
 		return
 	}
 	if capacity > currentLen {
@@ -114,17 +117,14 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		if currentLen > 0 {
 			// Copy values in FIFO order starting from oldest position
 			var oldestIdx int
-			if rb.count >= currentLen {
+			if rb.size >= currentLen {
 				// Buffer has wrapped, oldest is at next
 				oldestIdx = rb.next % currentLen
 			} else {
 				// Buffer hasn't wrapped, oldest is at 0
 				oldestIdx = 0
 			}
-			itemsToCopy = currentLen
-			if rb.count < currentLen {
-				itemsToCopy = rb.count
-			}
+			itemsToCopy = rb.size
 			for i := 0; i < itemsToCopy; i++ {
 				sourceIdx := (oldestIdx + i) % currentLen
 				newValues[i] = rb.values[sourceIdx]
@@ -132,8 +132,8 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		}
 		rb.values = newValues
 		// After growing, values are stored starting from index 0
-		// Update count to reflect the actual number of values we kept
-		rb.count = itemsToCopy
+		// Update size to reflect the actual number of values we kept
+		rb.size = itemsToCopy
 		rb.next = itemsToCopy
 		return
 	}
@@ -141,7 +141,7 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		// Initialize: create buffer with specified capacity
 		rb.values = make([]T, capacity)
 		rb.next = 0
-		rb.count = 0
+		rb.size = 0
 	}
 }
 
@@ -155,10 +155,10 @@ func (rb *RingBuffer[T]) Get(index int) T {
 		return zero
 	}
 	// Get values in FIFO order
-	// When buffer hasn't wrapped (count < len): oldest is at index 0
-	// When buffer has wrapped (count >= len): oldest is at index next
+	// When buffer hasn't wrapped (size < len): oldest is at index 0
+	// When buffer has wrapped (size == len): oldest is at index next
 	var startIdx int
-	if rb.count >= len(rb.values) {
+	if rb.size >= len(rb.values) {
 		// Buffer has wrapped, oldest is at next
 		startIdx = rb.next
 	} else {
@@ -210,12 +210,8 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 	}
 
 	// Determine how many actual values to return
-	// If buffer hasn't wrapped, return count (number of values written)
-	// If buffer has wrapped, return len (all slots contain actual values)
-	numValues := rb.count
-	if numValues > len(rb.values) {
-		numValues = len(rb.values)
-	}
+	// size already tracks the actual number of values (capped at len)
+	numValues := rb.size
 
 	if numValues == 0 {
 		return nil
@@ -225,7 +221,7 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 	// Start from the oldest position
 	// Use same logic as Get(): start from 0 when not wrapped, from next when wrapped
 	var startIdx int
-	if rb.count >= len(rb.values) {
+	if rb.size >= len(rb.values) {
 		// Buffer has wrapped, oldest is at next
 		startIdx = rb.next
 	} else {
@@ -253,7 +249,7 @@ func (rb *RingBuffer[T]) Copy() *RingBuffer[T] {
 
 	copyRB := &RingBuffer[T]{
 		next:   rb.next,
-		count:  rb.count,
+		size:   rb.size,
 		values: make([]T, len(rb.values)),
 	}
 	copy(copyRB.values, rb.values)
