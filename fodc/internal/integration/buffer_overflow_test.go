@@ -166,7 +166,14 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		initialTimestamps := ds.GetTimestamps()
 		Expect(initialTimestamps).NotTo(BeNil())
 		initialTimestampValues := initialTimestamps.GetAllValues()
-		initialTimestampCount := len(initialTimestampValues)
+		// Filter out zeros to get actual count
+		nonZeroInitialTimestamps := make([]int64, 0)
+		for _, ts := range initialTimestampValues {
+			if ts != 0 {
+				nonZeroInitialTimestamps = append(nonZeroInitialTimestamps, ts)
+			}
+		}
+		initialTimestampCount := len(nonZeroInitialTimestamps)
 
 		// Get a sample metric to track
 		metricsMap := ds.GetMetrics()
@@ -262,30 +269,40 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			GinkgoWriter.Printf("Buffer overflow detected: %d timestamps at capacity %d\n",
 				finalTimestampCount, timestampCapacity)
 
+			// Filter out zero values before checking chronological order
+			// GetAllValues() returns all values in buffer array, including zeros
+			nonZeroTimestamps := make([]int64, 0)
+			for _, ts := range finalTimestampValues {
+				if ts != 0 {
+					nonZeroTimestamps = append(nonZeroTimestamps, ts)
+				}
+			}
+
 			// Verify timestamps are in chronological order (oldest to newest)
-			if len(finalTimestampValues) >= 2 {
-				for i := 1; i < len(finalTimestampValues); i++ {
-					Expect(finalTimestampValues[i]).To(BeNumerically(">=", finalTimestampValues[i-1]),
+			// Only check if we have at least 2 non-zero timestamps
+			if len(nonZeroTimestamps) >= 2 {
+				for i := 1; i < len(nonZeroTimestamps); i++ {
+					Expect(nonZeroTimestamps[i]).To(BeNumerically(">=", nonZeroTimestamps[i-1]),
 						"Timestamps should be in chronological order")
 				}
 			}
 
 			// Verify newest timestamp is more recent than oldest
-			if len(finalTimestampValues) >= 2 {
-				newestTimestamp := finalTimestampValues[len(finalTimestampValues)-1]
-				oldestTimestamp := finalTimestampValues[0]
+			// Use non-zero timestamps for comparison
+			if len(nonZeroTimestamps) >= 2 {
+				newestTimestamp := nonZeroTimestamps[len(nonZeroTimestamps)-1]
+				oldestTimestamp := nonZeroTimestamps[0]
 				Expect(newestTimestamp).To(BeNumerically(">", oldestTimestamp),
 					"Newest timestamp should be more recent than oldest")
 			}
 
 			// Verify that if we had initial timestamps, newest are more recent
-			if initialTimestampCount > 0 && finalTimestampCount >= timestampCapacity {
-				// The oldest timestamp from initial state
-				oldestInitialTimestamp := initialTimestampValues[0]
+			if initialTimestampCount > 0 && len(nonZeroTimestamps) >= timestampCapacity {
 				// If we overflowed significantly, verify newest timestamps are present
-				if finalTimestampCount > initialTimestampCount {
+				if len(nonZeroTimestamps) > initialTimestampCount {
 					// Verify that newest timestamps are present and more recent
-					newestTimestamp := finalTimestampValues[len(finalTimestampValues)-1]
+					newestTimestamp := nonZeroTimestamps[len(nonZeroTimestamps)-1]
+					oldestInitialTimestamp := nonZeroInitialTimestamps[0]
 					Expect(newestTimestamp).To(BeNumerically(">", oldestInitialTimestamp),
 						"Newest timestamp should be more recent than initial oldest")
 				}

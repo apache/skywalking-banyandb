@@ -23,7 +23,8 @@ import "sync"
 type RingBuffer[T any] struct {
 	values []T          // Fixed-size buffer for values of type T
 	next   int          // Next write position in the circular buffer
-	mu     sync.RWMutex // Protects concurrent access to values and next
+	count  int          // Total number of values added (used to detect wrap)
+	mu     sync.RWMutex // Protects concurrent access to values, next, and count
 }
 
 // NewRingBuffer creates a new RingBuffer.
@@ -43,17 +44,20 @@ func (rb *RingBuffer[T]) Add(v T) bool {
 
 	// Initialize buffer with default capacity if empty
 	if len(rb.values) == 0 {
-		rb.values = make([]T, 1000) // Default capacity
+		rb.values = make([]T, 5) // Default capacity
 		rb.next = 0
+		rb.count = 0
 	}
 
 	rb.values[rb.next%len(rb.values)] = v
 	rb.next = (rb.next + 1) % len(rb.values)
+	rb.count++
 	return true
 }
 
 // SetCapacity sets the capacity of the ring buffer and uses FIFO strategy to remove oldest data if needed.
 // If the new capacity is smaller than the current length, the oldest data will be removed.
+// After SetCapacity, values are normalized to start from index 0 in FIFO order.
 func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 	if capacity <= 0 {
 		return
@@ -68,50 +72,101 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		// Shrink: keep the most recent items using FIFO strategy
 		newValues := make([]T, capacity)
 
-		startIdx := (rb.next - capacity + currentLen) % currentLen
-		if startIdx < 0 {
-			startIdx += currentLen
+		// Calculate how many items to keep (most recent)
+		// We want to keep the last 'capacity' items, or all items if we have fewer
+		itemsToKeep := capacity
+		if rb.count < capacity {
+			itemsToKeep = rb.count
 		}
 
-		for i := 0; i < capacity; i++ {
+		// Determine the start index for copying the most recent itemsToKeep items
+		var startIdx int
+		if rb.count >= currentLen {
+			// Buffer has wrapped: oldest is at next, most recent itemsToKeep items start from
+			// (next - itemsToKeep) mod currentLen, but we need to handle negative modulo
+			oldestIdx := rb.next % currentLen
+			startIdx = (oldestIdx + (currentLen - itemsToKeep)) % currentLen
+		} else {
+			// Buffer hasn't wrapped: values are stored from 0 to next-1
+			// Most recent itemsToKeep items start from max(0, next - itemsToKeep)
+			if rb.next >= itemsToKeep {
+				startIdx = rb.next - itemsToKeep
+			} else {
+				startIdx = 0
+			}
+		}
+
+		for i := 0; i < itemsToKeep; i++ {
 			sourceIdx := (startIdx + i) % currentLen
 			newValues[i] = rb.values[sourceIdx]
 		}
 
 		rb.values = newValues
-		// After shrinking, next should point to where we'll write next
-		// Since we kept the most recent items and filled positions 0 to capacity-1,
-		// next should be at capacity (which will wrap to 0 on next write)
-		rb.next = capacity
+		// After shrinking, values are stored starting from index 0
+		rb.next = itemsToKeep
+		rb.count = itemsToKeep
 		return
 	}
 	if capacity > currentLen {
-		// Grow: expand the buffer
+		// Grow: expand the buffer and preserve circular order
 		newValues := make([]T, capacity)
-		copy(newValues, rb.values)
-		rb.values = newValues
-		if rb.next >= len(rb.values) {
-			rb.next = len(rb.values)
+		itemsToCopy := 0
+		if currentLen > 0 {
+			// Copy values in FIFO order starting from oldest position
+			var oldestIdx int
+			if rb.count >= currentLen {
+				// Buffer has wrapped, oldest is at next
+				oldestIdx = rb.next % currentLen
+			} else {
+				// Buffer hasn't wrapped, oldest is at 0
+				oldestIdx = 0
+			}
+			itemsToCopy = currentLen
+			if rb.count < currentLen {
+				itemsToCopy = rb.count
+			}
+			for i := 0; i < itemsToCopy; i++ {
+				sourceIdx := (oldestIdx + i) % currentLen
+				newValues[i] = rb.values[sourceIdx]
+			}
 		}
+		rb.values = newValues
+		// After growing, values are stored starting from index 0
+		// Update count to reflect the actual number of values we kept
+		rb.count = itemsToCopy
+		rb.next = itemsToCopy
 		return
 	}
 	if currentLen == 0 {
 		// Initialize: create buffer with specified capacity
 		rb.values = make([]T, capacity)
 		rb.next = 0
+		rb.count = 0
 	}
 }
 
-// Get returns the value at the specified index.
+// Get returns the value at the specified index in FIFO order (oldest at index 0).
 func (rb *RingBuffer[T]) Get(index int) T {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
 	var zero T
-	if index < 0 || index >= len(rb.values) {
+	if len(rb.values) == 0 || index < 0 || index >= len(rb.values) {
 		return zero
 	}
-	return rb.values[index]
+	// Get values in FIFO order
+	// When buffer hasn't wrapped (count < len): oldest is at index 0
+	// When buffer has wrapped (count >= len): oldest is at index next
+	var startIdx int
+	if rb.count >= len(rb.values) {
+		// Buffer has wrapped, oldest is at next
+		startIdx = rb.next
+	} else {
+		// Buffer hasn't wrapped, oldest is at 0
+		startIdx = 0
+	}
+	actualIdx := (startIdx + index) % len(rb.values)
+	return rb.values[actualIdx]
 }
 
 // Len returns the current length of the buffer.
@@ -145,6 +200,7 @@ func (rb *RingBuffer[T]) GetCurrentValue() T {
 }
 
 // GetAllValues returns all values in the buffer in order (oldest to newest).
+// Only returns actual written values, not zero-initialized slots.
 func (rb *RingBuffer[T]) GetAllValues() []T {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
@@ -153,11 +209,32 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 		return nil
 	}
 
-	result := make([]T, len(rb.values))
-	startIdx := rb.next
+	// Determine how many actual values to return
+	// If buffer hasn't wrapped, return count (number of values written)
+	// If buffer has wrapped, return len (all slots contain actual values)
+	numValues := rb.count
+	if numValues > len(rb.values) {
+		numValues = len(rb.values)
+	}
 
-	// Copy values starting from the oldest position
-	for i := 0; i < len(rb.values); i++ {
+	if numValues == 0 {
+		return nil
+	}
+
+	result := make([]T, numValues)
+	// Start from the oldest position
+	// Use same logic as Get(): start from 0 when not wrapped, from next when wrapped
+	var startIdx int
+	if rb.count >= len(rb.values) {
+		// Buffer has wrapped, oldest is at next
+		startIdx = rb.next
+	} else {
+		// Buffer hasn't wrapped, oldest is at 0
+		startIdx = 0
+	}
+
+	// Copy only the actual values starting from the oldest position
+	for i := 0; i < numValues; i++ {
 		idx := (startIdx + i) % len(rb.values)
 		result[i] = rb.values[idx]
 	}
@@ -176,6 +253,7 @@ func (rb *RingBuffer[T]) Copy() *RingBuffer[T] {
 
 	copyRB := &RingBuffer[T]{
 		next:   rb.next,
+		count:  rb.count,
 		values: make([]T, len(rb.values)),
 	}
 	copy(copyRB.values, rb.values)

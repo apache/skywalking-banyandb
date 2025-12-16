@@ -150,16 +150,30 @@ func (ds *Datasource) AddTimestamp(timestamp int64) {
 }
 
 // SetCapacity sets the capacity for the datasource in a thread-safe manner.
+// It also updates all ring buffer capacities based on the new capacity.
 func (ds *Datasource) SetCapacity(capacity int) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	ds.CapacitySize = capacity
+
+	// Compute the actual capacity for ring buffers based on memory constraints
+	computedCapacity := ds.ComputeCapacity(capacity)
+
+	// Update capacity for all metric ring buffers
+	for _, metricBuffer := range ds.metrics {
+		metricBuffer.SetCapacity(computedCapacity)
+	}
+
+	// Update capacity for timestamp ring buffer
+	if ds.timestamps != nil {
+		ds.timestamps.SetCapacity(computedCapacity)
+	}
 }
 
 // ComputeCapacity computes the maximum capacity for ring buffers based on available memory constraints.
 func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	if capacitySize <= 0 {
-		return 0
+		return 1
 	}
 	numMetrics := len(ds.metrics)
 	if numMetrics == 0 {
@@ -204,8 +218,8 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 
 	maxCapacity := availableMemory / bytesPerEntry
 
-	if maxCapacity < 0 {
-		return 0
+	if maxCapacity < 1 {
+		return 1 // Minimum capacity of 1 to avoid division by zero
 	}
 
 	return maxCapacity
