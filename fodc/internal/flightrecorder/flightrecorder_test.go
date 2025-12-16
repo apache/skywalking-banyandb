@@ -168,43 +168,6 @@ func TestFlightRecorder_Update_MultipleUpdates(t *testing.T) {
 	lastMemoryValue := memoryBuffer.GetCurrentValue()
 
 	// If GetCurrentValue returns zero, try finding the last non-zero value in GetAllValues
-	if lastCPUValue == 0 {
-		cpuValues := cpuBuffer.GetAllValues()
-		// Iterate backwards to find the last non-zero value (GetAllValues returns oldest to newest)
-		for i := len(cpuValues) - 1; i >= 0; i-- {
-			if cpuValues[i] != 0 {
-				lastCPUValue = cpuValues[i]
-				break
-			}
-		}
-		// If still zero, try forward iteration to get any non-zero value
-		if lastCPUValue == 0 {
-			for _, val := range cpuValues {
-				if val != 0 {
-					lastCPUValue = val
-				}
-			}
-		}
-	}
-
-	if lastMemoryValue == 0 {
-		memoryValues := memoryBuffer.GetAllValues()
-		// Iterate backwards to find the last non-zero value
-		for i := len(memoryValues) - 1; i >= 0; i-- {
-			if memoryValues[i] != 0 {
-				lastMemoryValue = memoryValues[i]
-				break
-			}
-		}
-		// If still zero, try forward iteration to get any non-zero value
-		if lastMemoryValue == 0 {
-			for _, val := range memoryValues {
-				if val != 0 {
-					lastMemoryValue = val
-				}
-			}
-		}
-	}
 
 	// CPU usage should be updated to the latest value
 	// Since ComputeCapacity always returns >= 1, values should be found
