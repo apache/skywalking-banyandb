@@ -214,8 +214,6 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			GinkgoWriter.Printf("Warning: No descriptions found, but metrics were buffered: %d metrics\n", len(metricsMap))
 		}
 
-		// Verify TotalWritten counter is incremented
-		Expect(ds.GetTotalWritten()).To(BeNumerically(">", 0), "TotalWritten should be greater than 0")
 	})
 
 	It("should handle multiple polling cycles correctly", func() {
@@ -328,7 +326,5 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 		descriptions := ds.GetDescriptions()
 		Expect(descriptions).NotTo(BeNil())
 
-		// Verify TotalWritten is accessible
-		Expect(ds.GetTotalWritten()).To(BeNumerically(">=", 0), "TotalWritten should be accessible")
 	})
 })

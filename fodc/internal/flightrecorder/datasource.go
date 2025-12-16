@@ -21,7 +21,6 @@ package flightrecorder
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
 )
@@ -70,8 +69,7 @@ type Datasource struct {
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
-	TotalWritten uint64 // Total number of values written (wraps around)
-	CapacitySize int    // Memory limit in bytes
+	CapacitySize int // Memory limit in bytes
 }
 
 // NewDatasource creates a new Datasource.
@@ -81,7 +79,6 @@ func NewDatasource() *Datasource {
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
 		CapacitySize: 0,
-		TotalWritten: 0, // Accessed via atomic operations
 	}
 }
 
@@ -107,7 +104,6 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 		ds.descriptions[m.Name] = m.Desc
 	}
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
-	atomic.AddUint64(&ds.TotalWritten, 1)
 
 	return nil
 }
@@ -219,9 +215,4 @@ func (ds *Datasource) GetDescriptions() map[string]string {
 		result[k] = v
 	}
 	return result
-}
-
-// GetTotalWritten returns the total number of values written to the datasource.
-func (ds *Datasource) GetTotalWritten() uint64 {
-	return atomic.LoadUint64(&ds.TotalWritten)
 }
