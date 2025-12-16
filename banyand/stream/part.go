@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -35,17 +36,19 @@ import (
 
 const (
 	// Streaming file names (without extensions).
-	streamPrimaryName       = "primary"
-	streamMetaName          = "meta"
-	streamTimestampsName    = "timestamps"
-	streamTagFamiliesPrefix = "tf:"
-	streamTagMetadataPrefix = "tfm:"
-	streamTagFilterPrefix   = "tff:"
+	streamPrimaryName        = "primary"
+	streamMetaName           = "meta"
+	streamTimestampsName     = "timestamps"
+	streamTagFamiliesPrefix  = "tf:"
+	streamTagMetadataPrefix  = "tfm:"
+	streamTagFilterPrefix    = "tff:"
+	streamSeriesMetadataName = "smeta"
 
 	metadataFilename               = "metadata.json"
 	primaryFilename                = streamPrimaryName + ".bin"
 	metaFilename                   = streamMetaName + ".bin"
 	timestampsFilename             = streamTimestampsName + ".bin"
+	seriesMetadataFilename         = streamSeriesMetadataName + ".bin"
 	elementIndexFilename           = "idx"
 	tagFamiliesMetadataFilenameExt = ".tfm"
 	tagFamiliesFilenameExt         = ".tf"
@@ -59,6 +62,7 @@ type part struct {
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
 	tagFamilyFilter      map[string]fs.Reader
+	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
@@ -67,6 +71,9 @@ type part struct {
 func (p *part) close() {
 	fs.MustClose(p.primary)
 	fs.MustClose(p.timestamps)
+	if p.seriesMetadata != nil {
+		fs.MustClose(p.seriesMetadata)
+	}
 	for _, tf := range p.tagFamilies {
 		fs.MustClose(tf)
 	}
@@ -91,6 +98,9 @@ func openMemPart(mp *memPart) *part {
 	// Open data files
 	p.primary = &mp.primary
 	p.timestamps = &mp.timestamps
+	if len(mp.seriesMetadata.Buf) > 0 {
+		p.seriesMetadata = &mp.seriesMetadata
+	}
 	if mp.tagFamilies != nil {
 		p.tagFamilies = make(map[string]fs.Reader)
 		p.tagFamilyMetadata = make(map[string]fs.Reader)
@@ -111,6 +121,7 @@ type memPart struct {
 	meta              bytes.Buffer
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
+	seriesMetadata    bytes.Buffer
 	partMetadata      partMetadata
 	segmentID         int64
 }
@@ -141,6 +152,7 @@ func (mp *memPart) reset() {
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
+	mp.seriesMetadata.Reset()
 	mp.segmentID = 0
 	if mp.tagFamilies != nil {
 		for k, tf := range mp.tagFamilies {
@@ -209,6 +221,11 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 	for name, tfh := range mp.tagFamilyFilter {
 		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm)
+	}
+
+	// Flush series metadata if available
+	if len(mp.seriesMetadata.Buf) > 0 {
+		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
@@ -304,6 +321,20 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 
 	p.primary = mustOpenReader(path.Join(partPath, primaryFilename), fileSystem)
 	p.timestamps = mustOpenReader(path.Join(partPath, timestampsFilename), fileSystem)
+
+	// Try to open series metadata file (optional, for backward compatibility)
+	seriesMetadataPath := path.Join(partPath, seriesMetadataFilename)
+	reader, err := fileSystem.OpenFile(seriesMetadataPath)
+	if err != nil {
+		var fsErr *fs.FileSystemError
+		// File does not exist is acceptable for backward compatibility
+		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
+			logger.Panicf("cannot open series metadata file %q: %s", seriesMetadataPath, err)
+		}
+	} else {
+		p.seriesMetadata = reader
+	}
+
 	ee := fileSystem.ReadDir(partPath)
 	for _, e := range ee {
 		if e.IsDir() {

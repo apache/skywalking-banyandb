@@ -193,8 +193,20 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
-			es.tsTable.mustAddElementsWithSegmentID(es.elements, es.timeRange.Start.UnixNano())
-			releaseElements(es.elements)
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(es.seriesDocs.docs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = es.seriesDocs.docs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				}
+			}
+			if es.tsTable != nil && es.elements != nil {
+				es.tsTable.mustAddElementsWithSegmentID(es.elements, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
+				releaseElements(es.elements)
+			}
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {
@@ -202,30 +214,25 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				continue
 			}
 			// Process series documents independently
-			if len(es.seriesDocs.docs) > 0 {
-				seriesDocData, marshalErr := es.seriesDocs.docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
-				} else {
-					// Encode group name, start timestamp from timeRange, and prepend to docData
-					combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
-					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
-					combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
-					combinedData = append(combinedData, seriesDocData...)
+			if len(seriesMetadataBytes) > 0 {
+				// Encode group name, start timestamp from timeRange, and prepend to docData
+				combinedData := make([]byte, 0, len(seriesMetadataBytes)+len(g.name)+8)
+				combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
+				combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
+				combinedData = append(combinedData, seriesMetadataBytes...)
 
-					// Send to all nodes for this shard
-					for _, node := range nodes {
-						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
-						if publishErr != nil {
-							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
-							continue
-						}
-						_, err := future.Get()
-						if err != nil {
-							w.l.Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
-							continue
-						}
+				// Send to all nodes for this shard
+				for _, node := range nodes {
+					message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
+					future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
+					if publishErr != nil {
+						w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						continue
+					}
+					_, err := future.Get()
+					if err != nil {
+						w.l.Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
+						continue
 					}
 				}
 			}
