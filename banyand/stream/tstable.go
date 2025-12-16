@@ -342,10 +342,10 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 }
 
 func (tst *tsTable) mustAddElements(es *elements) {
-	tst.mustAddElementsWithSegmentID(es, 0)
+	tst.mustAddElementsWithSegmentID(es, 0, nil)
 }
 
-func (tst *tsTable) mustAddElementsWithSegmentID(es *elements, segmentID int64) {
+func (tst *tsTable) mustAddElementsWithSegmentID(es *elements, segmentID int64, seriesMetadata []byte) {
 	if len(es.seriesIDs) == 0 {
 		return
 	}
@@ -353,6 +353,13 @@ func (tst *tsTable) mustAddElementsWithSegmentID(es *elements, segmentID int64) 
 	mp := generateMemPart()
 	mp.mustInitFromElements(es)
 	mp.segmentID = segmentID
+	if len(seriesMetadata) > 0 {
+		// Write series metadata to buffer to avoid sharing the underlying slice
+		_, err := mp.seriesMetadata.Write(seriesMetadata)
+		if err != nil {
+			logger.Panicf("cannot write series metadata to buffer: %s", err)
+		}
+	}
 	tst.mustAddMemPart(mp)
 }
 
