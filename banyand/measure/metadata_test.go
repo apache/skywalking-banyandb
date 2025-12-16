@@ -529,72 +529,60 @@ var _ = Describe("Schema Change", func() {
 	})
 
 	Context("Measure schema with deleted field", func() {
-		It("querying data should return null for deleted fields", func() {
-			measureName := "schema_change_delete_field"
-			now := timestamp.NowMilli()
+		Context("Measure schema with deleted tag in query", func() {
+			It("querying data should fail if the condition includes a deleted tag", func() {
+				measureName := "schema_change_filter_deleted"
+				now := timestamp.NowMilli()
 
-			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraField: true})
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraField: true})
-			deleteExtraField(svcs, measureName)
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+				env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+				deleteExtraMeasureTag(svcs, measureName)
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-			Eventually(func(innerGm Gomega) {
-				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
-					[]string{"id", "entity_id"}, []string{"total", "extra_field"})
-				innerGm.Expect(dataPoints).To(HaveLen(8))
+				Eventually(func(innerGm Gomega) {
+					err := queryMeasureWithDeletedTagCondition(svcs, measureName, now)
+					innerGm.Expect(err).To(HaveOccurred())
+					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
+				}, flags.EventuallyTimeout).Should(Succeed())
 
-				nullCount := 0
-				for _, dp := range dataPoints {
-					for _, field := range dp.Fields {
-						if field.Name == "extra_field" {
-							if _, isNull := field.Value.GetValue().(*modelv1.FieldValue_Null); isNull {
-								nullCount++
-							}
-						}
-					}
-				}
-				innerGm.Expect(nullCount).To(Equal(8), "all data should return null for deleted field")
-			}, flags.EventuallyTimeout).Should(Succeed())
+				env.cleanup()
+			})
 
-			env.cleanup()
-		})
-	})
+			It("querying data should fail if the projection includes a deleted tag", func() {
+				measureName := "schema_change_projection_deleted"
+				now := timestamp.NowMilli()
 
-	Context("Measure schema with deleted tag in query", func() {
-		It("querying data should fail if the condition includes a deleted tag", func() {
-			measureName := "schema_change_filter_deleted"
-			now := timestamp.NowMilli()
+				env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
+				deleteExtraMeasureTag(svcs, measureName)
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			deleteExtraMeasureTag(svcs, measureName)
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+				Eventually(func(innerGm Gomega) {
+					err := queryMeasureWithDeletedTagProjection(svcs, measureName, now)
+					innerGm.Expect(err).To(HaveOccurred())
+					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
+				}, flags.EventuallyTimeout).Should(Succeed())
 
-			Eventually(func(innerGm Gomega) {
-				err := queryMeasureWithDeletedTagCondition(svcs, measureName, now)
-				innerGm.Expect(err).To(HaveOccurred())
-				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
-			}, flags.EventuallyTimeout).Should(Succeed())
+				env.cleanup()
+			})
 
-			env.cleanup()
-		})
+			It("querying data should fail if the projection includes a deleted field", func() {
+				measureName := "schema_change_delete_field"
+				now := timestamp.NowMilli()
 
-		It("querying data should fail if the projection includes a deleted tag", func() {
-			measureName := "schema_change_projection_deleted"
-			now := timestamp.NowMilli()
+				env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraField: true})
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraField: true})
+				deleteExtraField(svcs, measureName)
+				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5, measureWriteDataOptions{withExtraTag: true})
-			deleteExtraMeasureTag(svcs, measureName)
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
+				Eventually(func(innerGm Gomega) {
+					err := queryMeasureWithDeletedFieldProjection(svcs, measureName, now)
+					innerGm.Expect(err).To(HaveOccurred())
+					innerGm.Expect(err.Error()).To(ContainSubstring("extra_field"))
+				}, flags.EventuallyTimeout).Should(Succeed())
 
-			Eventually(func(innerGm Gomega) {
-				err := queryMeasureWithDeletedTagProjection(svcs, measureName, now)
-				innerGm.Expect(err).To(HaveOccurred())
-				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
-			}, flags.EventuallyTimeout).Should(Succeed())
-
-			env.cleanup()
+				env.cleanup()
+			})
 		})
 	})
 
@@ -989,6 +977,43 @@ func queryMeasureWithDeletedTagProjection(svcs *services, measureName string, no
 		},
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{
 			Names: []string{"total"},
+		},
+	}
+
+	feat, err := svcs.pipeline.Publish(context.Background(), data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req))
+	if err != nil {
+		return err
+	}
+	msg, err := feat.Get()
+	if err != nil {
+		return err
+	}
+
+	switch d := msg.Data().(type) {
+	case *measurev1.QueryResponse:
+		return nil
+	case *common.Error:
+		return errors.New(d.Error())
+	default:
+		return errors.New("unexpected data type")
+	}
+}
+
+func queryMeasureWithDeletedFieldProjection(svcs *services, measureName string, now time.Time) error {
+	req := &measurev1.QueryRequest{
+		Groups: []string{schemaChangeGroupName},
+		Name:   measureName,
+		TimeRange: &modelv1.TimeRange{
+			Begin: timestamppb.New(now.Add(-3 * time.Hour)),
+			End:   timestamppb.New(now),
+		},
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{Name: "default", Tags: []string{"id", "entity_id"}},
+			},
+		},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{
+			Names: []string{"total", "extra_field"},
 		},
 	}
 

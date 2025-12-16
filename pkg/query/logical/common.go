@@ -32,9 +32,8 @@ var (
 	ErrInvalidCriteriaType = errors.New("invalid criteria type")
 	// ErrInvalidLogicalExpression indicates an invalid logical expression.
 	ErrInvalidLogicalExpression = errors.New("invalid logical expression")
-	// ErrTagNotFound is returned when a tag referenced in the query condition does not exist in the schema.
-	ErrTagNotFound             = errors.New("tag not found in schema")
-	errTagNotDefined           = errors.New("tag is not defined")
+	// ErrTagNotDefined is returned when a tag referenced in the query does not exist in the schema.
+	ErrTagNotDefined           = errors.New("tag is not defined")
 	errIndexNotDefined         = errors.New("index is not define for the tag")
 	errIndexSortingUnsupported = errors.New("index does not support sorting")
 )

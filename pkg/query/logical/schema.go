@@ -172,7 +172,7 @@ func (cs *CommonSchema) ValidateProjectionTags(tags ...[]*Tag) error {
 	for _, tagInFamily := range tags {
 		for _, tag := range tagInFamily {
 			if _, ok := cs.TagSpecMap[tag.GetTagName()]; !ok {
-				return errors.Errorf("tag %s not found in schema", tag.GetTagName())
+				return errors.Wrap(ErrTagNotDefined, tag.GetTagName())
 			}
 		}
 	}
