@@ -21,10 +21,13 @@ import "sync"
 
 // RingBuffer is a generic circular buffer that stores values of type T.
 type RingBuffer[T any] struct {
-	values []T          // Fixed-size buffer for values of type T
-	next   int          // Next write position in the circular buffer
-	size   int          // Actual number of values stored (capped at len(values), used to detect wrap)
-	mu     sync.RWMutex // Protects concurrent access to values, next, and size
+	lastVisibleVal T            // Cached last visible value, updated after each Add() completes
+	values         []T          // Fixed-size buffer for values of type T
+	mu             sync.RWMutex // Protects concurrent access to values, next, and size
+	lastVisibleMu  sync.RWMutex // Protects lastVisibleVal updates
+	next           int          // Next write position in the circular buffer
+	size           int          // Actual number of values stored (capped at len(values), used to detect wrap)
+	visibleSize    int          // Number of visible (finalized) values - counts towards capacity
 }
 
 // NewRingBuffer creates a new RingBuffer.
@@ -41,7 +44,6 @@ func (rb *RingBuffer[T]) Add(v T) bool {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	// Initialize buffer with default capacity if empty
 	if len(rb.values) == 0 {
 		rb.values = make([]T, 5) // Default capacity
 		rb.next = 0
@@ -50,10 +52,11 @@ func (rb *RingBuffer[T]) Add(v T) bool {
 
 	rb.values[rb.next%len(rb.values)] = v
 	rb.next = (rb.next + 1) % len(rb.values)
-	// Increment size until it reaches capacity, then keep it at capacity
+
 	if rb.size < len(rb.values) {
 		rb.size++
 	}
+
 	return true
 }
 
@@ -69,25 +72,23 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 	currentLen := len(rb.values)
 
 	if capacity < currentLen {
-		// Shrink: keep the most recent items using FIFO strategy
+		// Shrink: keep the most recent VISIBLE items using FIFO strategy
+		// Only visible values count towards capacity
 		newValues := make([]T, capacity)
 
-		// Calculate how many items to keep (most recent)
-		// We want to keep the last 'capacity' items, or all items if we have fewer
+		// Calculate how many VISIBLE items to keep (most recent)
+		// We want to keep the last 'capacity' visible items, or all visible items if we have fewer
 		itemsToKeep := capacity
-		if rb.size < capacity {
-			itemsToKeep = rb.size
+		if rb.visibleSize < capacity {
+			itemsToKeep = rb.visibleSize
 		}
 
 		// Determine the start index for copying the most recent itemsToKeep items
 		var startIdx int
 		if rb.size >= currentLen {
-			// Buffer has wrapped: oldest is at next, most recent itemsToKeep items start from
-			// (next - itemsToKeep) mod currentLen, but we need to handle negative modulo
 			oldestIdx := rb.next % currentLen
 			startIdx = (oldestIdx + (currentLen - itemsToKeep)) % currentLen
 		} else {
-			// Buffer hasn't wrapped: values are stored from 0 to next-1
 			// Most recent itemsToKeep items start from max(0, next - itemsToKeep)
 			if rb.next >= itemsToKeep {
 				startIdx = rb.next - itemsToKeep
@@ -105,6 +106,7 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 		// After shrinking, values are stored starting from index 0
 		rb.next = itemsToKeep
 		rb.size = itemsToKeep
+		rb.visibleSize = itemsToKeep // All kept items are visible
 		return
 	}
 	if capacity > currentLen {
@@ -128,14 +130,15 @@ func (rb *RingBuffer[T]) SetCapacity(capacity int) {
 			}
 		}
 		rb.values = newValues
-		// After growing, values are stored starting from index 0
-		// Update size to reflect the actual number of values we kept
 		rb.size = itemsToCopy
 		rb.next = itemsToCopy
+		// Preserve visible size (only visible items count towards capacity)
+		if rb.visibleSize > itemsToCopy {
+			rb.visibleSize = itemsToCopy
+		}
 		return
 	}
 	if currentLen == 0 {
-		// Initialize: create buffer with specified capacity
 		rb.values = make([]T, capacity)
 		rb.next = 0
 		rb.size = 0
@@ -157,7 +160,6 @@ func (rb *RingBuffer[T]) Get(index int) T {
 		// Buffer has wrapped, oldest is at next
 		startIdx = rb.next
 	} else {
-		// Buffer hasn't wrapped, oldest is at 0
 		startIdx = 0
 	}
 	actualIdx := (startIdx + index) % len(rb.values)
@@ -178,20 +180,70 @@ func (rb *RingBuffer[T]) Cap() int {
 	return cap(rb.values)
 }
 
-// GetCurrentValue returns the most recently written value.
-func (rb *RingBuffer[T]) GetCurrentValue() T {
+// VisibleSize returns the number of visible (finalized) values that count towards capacity.
+func (rb *RingBuffer[T]) VisibleSize() int {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
+	return rb.visibleSize
+}
 
-	var zero T
+// GetCurrentValue returns the most recently written value.
+func (rb *RingBuffer[T]) GetCurrentValue() T {
+	// Try to acquire read lock - if successful, read the actual current value
+	// If lock is held by a writer (batch update in progress), return cached last visible value
+	acquired := rb.mu.TryRLock()
+	if acquired {
+		defer rb.mu.RUnlock()
+
+		var zero T
+		if len(rb.values) == 0 {
+			return zero
+		}
+		var currentValue T
+		if rb.next == 0 {
+			currentValue = rb.values[len(rb.values)-1]
+		} else {
+			currentValue = rb.values[rb.next-1]
+		}
+
+		rb.lastVisibleMu.Lock()
+		rb.lastVisibleVal = currentValue
+		rb.lastVisibleMu.Unlock()
+
+		return currentValue
+	}
+
+	// Lock is held by writer (batch update in progress), return cached last visible value
+	rb.lastVisibleMu.RLock()
+	defer rb.lastVisibleMu.RUnlock()
+	return rb.lastVisibleVal
+}
+
+// FinalizeLastVisible updates the last visible value to the current value.
+func (rb *RingBuffer[T]) FinalizeLastVisible() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
 	if len(rb.values) == 0 {
-		return zero
+		return
 	}
-	// The most recent value is at (next - 1) mod len, but if next is 0, it's at len-1
+
+	var currentValue T
 	if rb.next == 0 {
-		return rb.values[len(rb.values)-1]
+		currentValue = rb.values[len(rb.values)-1]
+	} else {
+		currentValue = rb.values[rb.next-1]
 	}
-	return rb.values[rb.next-1]
+
+	// Update cached value
+	rb.lastVisibleMu.Lock()
+	rb.lastVisibleVal = currentValue
+	rb.lastVisibleMu.Unlock()
+
+	// Increment visible size - this value now counts towards capacity
+	if rb.visibleSize < rb.size {
+		rb.visibleSize++
+	}
 }
 
 // GetAllValues returns all values in the buffer in order (oldest to newest).
@@ -203,7 +255,8 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 		return nil
 	}
 
-	numValues := rb.size
+	// Return only visible (finalized) values - these count towards capacity
+	numValues := rb.visibleSize
 
 	if numValues == 0 {
 		return nil
@@ -211,35 +264,24 @@ func (rb *RingBuffer[T]) GetAllValues() []T {
 
 	result := make([]T, numValues)
 	var startIdx int
-	if rb.size >= len(rb.values) {
-		startIdx = rb.next
+	// Calculate start index based on visible size
+	if rb.visibleSize >= len(rb.values) {
+		// Buffer has wrapped, oldest visible is at (next - visibleSize) mod len
+		startIdx = (rb.next - rb.visibleSize + len(rb.values)) % len(rb.values)
 	} else {
-		startIdx = 0
+		// Buffer hasn't wrapped, oldest visible is at (next - visibleSize)
+		if rb.next >= rb.visibleSize {
+			startIdx = rb.next - rb.visibleSize
+		} else {
+			startIdx = 0
+		}
 	}
 
-	// Copy only the actual values starting from the oldest position
+	// Copy only the visible values starting from the oldest visible position
 	for i := 0; i < numValues; i++ {
 		idx := (startIdx + i) % len(rb.values)
 		result[i] = rb.values[idx]
 	}
 
 	return result
-}
-
-// Copy creates a deep copy of the RingBuffer.
-func (rb *RingBuffer[T]) Copy() *RingBuffer[T] {
-	if rb == nil {
-		return nil
-	}
-
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
-
-	copyRB := &RingBuffer[T]{
-		next:   rb.next,
-		size:   rb.size,
-		values: make([]T, len(rb.values)),
-	}
-	copy(copyRB.values, rb.values)
-	return copyRB
 }

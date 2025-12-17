@@ -120,10 +120,11 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
-	// Update timestamp first
 	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
 
-	// Update all metrics
+	// Track which RingBuffers were updated in this batch
+	updatedBuffers := make([]*MetricRingBuffer, 0, len(rawMetrics))
+
 	for idx := range rawMetrics {
 		m := &rawMetrics[idx]
 
@@ -139,7 +140,17 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		if m.Desc != "" {
 			ds.descriptions[m.Name] = m.Desc
 		}
-		UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
+		buffer := ds.metrics[metricKey]
+		UpdateMetricRingBuffer(buffer, m.Value)
+		updatedBuffers = append(updatedBuffers, buffer)
+	}
+
+	for _, buffer := range updatedBuffers {
+		buffer.FinalizeLastVisible()
+	}
+
+	if ds.timestamps != nil {
+		ds.timestamps.FinalizeLastVisible()
 	}
 
 	return nil
@@ -188,10 +199,12 @@ func (ds *Datasource) ComputeCapacity(capacitySize int64) int {
 		stringOverhead += stringHeaderSize + len(desc)
 	}
 
-	// For each metric RingBuffer: next field (8 bytes) + size field (8 bytes) + slice header (24 bytes)
-	metricBufferOverhead := numMetrics * (intSize + intSize + sliceHeaderSize)
-	// For timestamp RingBuffer: pointer (8 bytes) + next field (8 bytes) + size field (8 bytes) + slice header (24 bytes) + mutex (24 bytes)
-	timestampBufferOverhead := 8 + intSize + intSize + sliceHeaderSize + 24
+	// For each metric RingBuffer: mutex (24 bytes) + lastVisibleMu (24 bytes) + slice header (24 bytes) +
+	// next field (8 bytes) + size field (8 bytes) + visibleSize field (8 bytes) + lastVisibleVal (8 bytes)
+	metricBufferOverhead := numMetrics * (24 + 24 + sliceHeaderSize + intSize + intSize + intSize + intSize)
+	// For timestamp RingBuffer: pointer (8 bytes) + mutex (24 bytes) + lastVisibleMu (24 bytes) +
+	// slice header (24 bytes) + next (8 bytes) + size (8 bytes) + visibleSize (8 bytes) + lastVisibleVal (8 bytes)
+	timestampBufferOverhead := 8 + 24 + 24 + sliceHeaderSize + intSize + intSize + intSize + intSize
 
 	totalFixedOverhead := int64(metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
 		metricBufferOverhead + timestampBufferOverhead)
@@ -228,11 +241,11 @@ func (ds *Datasource) GetMetrics() map[string]*MetricRingBuffer {
 	return result
 }
 
-// GetTimestamps returns a copy of the timestamps ring buffer.
+// GetTimestamps returns the timestamps ring buffer.
 func (ds *Datasource) GetTimestamps() *TimestampRingBuffer {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
-	return ds.timestamps.Copy()
+	return ds.timestamps
 }
 
 // GetDescriptions returns a copy of the descriptions map.

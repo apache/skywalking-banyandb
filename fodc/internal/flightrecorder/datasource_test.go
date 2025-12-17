@@ -219,7 +219,7 @@ func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 	ds := NewDatasource()
 	ds.CapacitySize = 10000
 
-	// Add some values
+	// Add some values and finalize them (since Update doesn't auto-finalize)
 	values := []float64{70.0, 71.0, 72.0, 73.0, 74.0}
 	for _, val := range values {
 		rawMetric := &metrics.RawMetric{
@@ -229,11 +229,16 @@ func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 		}
 		err := ds.Update(rawMetric)
 		require.NoError(t, err)
+		// Finalize the value to make it visible
+		metricsMap := ds.GetMetrics()
+		buffer := metricsMap["cpu_usage"]
+		buffer.FinalizeLastVisible()
 	}
 
 	metricsMap1 := ds.GetMetrics()
 	buffer1 := metricsMap1["cpu_usage"]
-	_ = buffer1.GetAllValues() // Verify buffer exists before resize
+	valuesBefore := buffer1.GetAllValues()
+	require.NotNil(t, valuesBefore) // Verify buffer exists and has values before resize
 
 	// Change capacity to trigger resize
 	ds.SetCapacity(50000)
@@ -244,10 +249,13 @@ func TestDatasource_Update_BufferResizePreservesValues(t *testing.T) {
 	}
 	err := ds.Update(rawMetric)
 	require.NoError(t, err)
-
+	// Finalize the new value
 	metricsMap2 := ds.GetMetrics()
 	buffer2 := metricsMap2["cpu_usage"]
+	buffer2.FinalizeLastVisible()
+
 	valuesAfter := buffer2.GetAllValues()
+	require.NotNil(t, valuesAfter)
 
 	// All previous values should be preserved
 	for _, val := range values {
