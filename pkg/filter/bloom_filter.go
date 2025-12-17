@@ -124,6 +124,17 @@ func (bf *BloomFilter) MightContain(item []byte) bool {
 	return true
 }
 
+// ContainsAll checks if all items might be in the Bloom filter.
+// Returns true only if ALL items might be present (subject to false positives).
+func (bf *BloomFilter) ContainsAll(items [][]byte) bool {
+	for _, item := range items {
+		if !bf.MightContain(item) {
+			return false
+		}
+	}
+	return true
+}
+
 // Bits returns the underlying bitset.
 func (bf *BloomFilter) Bits() []uint64 {
 	return bf.bits
