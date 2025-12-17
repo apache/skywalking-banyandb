@@ -520,8 +520,11 @@ func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
 	metricsText := testMetricsCPUUsage
 
 	var connectionHeaders []string
+	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		connectionHeaders = append(connectionHeaders, r.Header.Get("Connection"))
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(metricsText))
 	}))
@@ -546,9 +549,11 @@ func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Stop channel not closed within timeout")
 	}
-
 	// Verify multiple requests were made (connection reuse is handled by http.Transport)
-	assert.GreaterOrEqual(t, len(connectionHeaders), 2)
+	mu.Lock()
+	headerCount := len(connectionHeaders)
+	mu.Unlock()
+	assert.GreaterOrEqual(t, headerCount, 2)
 }
 
 func TestWatchdog_MetricsForwardingToFlightRecorder(t *testing.T) {
