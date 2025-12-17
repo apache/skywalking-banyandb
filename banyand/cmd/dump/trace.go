@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -283,6 +285,7 @@ type part struct {
 	tagMetadata          map[string]fs.Reader
 	tags                 map[string]fs.Reader
 	tagType              map[string]pbv1.ValueType
+	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
@@ -414,6 +417,13 @@ func (ctx *traceDumpContext) processParts() error {
 }
 
 func (ctx *traceDumpContext) processPart(partID uint64, p *part) (int, error) {
+	// Parse and display series metadata if available
+	if p.seriesMetadata != nil {
+		if err := ctx.parseAndDisplaySeriesMetadata(partID, p); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error parsing series metadata in part %016x: %v\n", partID, err)
+		}
+	}
+
 	decoder := &encoding.BytesBlockDecoder{}
 	partRowCount := 0
 
@@ -575,6 +585,14 @@ func openFilePart(id uint64, root string, fileSystem fs.FileSystem) (*part, erro
 		return nil, fmt.Errorf("cannot open spans.bin: %w", err)
 	}
 
+	// Try to open series metadata file (optional, for backward compatibility)
+	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
+	reader, err := fileSystem.OpenFile(seriesMetadataPath)
+	if err == nil {
+		p.seriesMetadata = reader
+	}
+	// If file doesn't exist, it's okay - just continue without it
+
 	// Open tag files
 	entries := fileSystem.ReadDir(partPath)
 	p.tags = make(map[string]fs.Reader)
@@ -608,6 +626,9 @@ func closePart(p *part) {
 	}
 	if p.spans != nil {
 		fs.MustClose(p.spans)
+	}
+	if p.seriesMetadata != nil {
+		fs.MustClose(p.seriesMetadata)
 	}
 	for _, r := range p.tags {
 		fs.MustClose(r)
@@ -1296,4 +1317,55 @@ func writeTraceRowAsCSV(writer *csv.Writer, row traceRowData, tagColumns []strin
 	}
 
 	return writer.Write(csvRow)
+}
+
+func (ctx *traceDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *part) error {
+	// Read all data from series metadata file
+	seqReader := p.seriesMetadata.SequentialRead()
+	defer seqReader.Close()
+
+	var readMetadataBytes []byte
+	buf := make([]byte, 1024)
+	for {
+		n, err := seqReader.Read(buf)
+		if n == 0 {
+			if err != nil && !errors.Is(err, io.EOF) {
+				return fmt.Errorf("failed to read series metadata: %w", err)
+			}
+			break
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("failed to read series metadata: %w", err)
+		}
+		readMetadataBytes = append(readMetadataBytes, buf[:n]...)
+	}
+
+	if len(readMetadataBytes) == 0 {
+		return nil // Empty file, nothing to parse
+	}
+
+	// Unmarshal Documents
+	var docs index.Documents
+	if err := docs.Unmarshal(readMetadataBytes); err != nil {
+		return fmt.Errorf("failed to unmarshal series metadata: %w", err)
+	}
+
+	if len(docs) == 0 {
+		return nil // No documents
+	}
+
+	// Display series metadata information
+	if !ctx.opts.csvOutput {
+		fmt.Printf("Part %016x Series Metadata:\n", partID)
+		for i, doc := range docs {
+			seriesID := common.SeriesID(convert.Hash(doc.EntityValues))
+			fmt.Printf("  Series[%d]: SeriesID=%d, EntityValues=%q\n", i, seriesID, string(doc.EntityValues))
+		}
+		fmt.Printf("\n")
+	} else {
+		// For CSV output, we can add series metadata info to stderr
+		fmt.Fprintf(os.Stderr, "Part %016x: Found %d series in smeta\n", partID, len(docs))
+	}
+
+	return nil
 }
