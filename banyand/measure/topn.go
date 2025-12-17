@@ -580,9 +580,15 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		}, nil
 	}
 	groupLocator, removedTags := newGroupLocator(manager.m, groupByNames)
-	for _, removedTag := range removedTags {
-		manager.l.Warn().Str("tagName", removedTag).Str("measure", manager.m.Metadata.GetName()).
-			Msg("TopNAggregation references removed tag which no longer exists in schema, ignoring this tag")
+	if len(removedTags) > 0 {
+		if len(groupLocator) == 0 {
+			manager.l.Warn().Strs("removedTags", removedTags).Str("measure", manager.m.Metadata.GetName()).
+				Msg("TopNAggregation references removed tags which no longer exist in schema, all groupBy tags were removed")
+			return nil, fmt.Errorf("all groupBy tags [%s] no longer exist in %s schema, TopNAggregation is invalid",
+				strings.Join(removedTags, ", "), manager.m.Metadata.GetName())
+		}
+		manager.l.Warn().Strs("removedTags", removedTags).Str("measure", manager.m.Metadata.GetName()).
+			Msg("TopNAggregation references removed tags which no longer exist in schema, ignoring these tags")
 	}
 	return func(_ context.Context, request any) any {
 		dpWithEvs := request.(*dataPointWithEntityValues)
