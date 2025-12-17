@@ -210,7 +210,7 @@ func TestDatasource_ComputeCapacity_EdgeCases(t *testing.T) {
 	// Calculate overhead
 	overhead := ds.ComputeCapacity(1000000)
 	// Use capacity that's just slightly more than overhead
-	result := ds.ComputeCapacity(overhead*8 + 100)
+	result := ds.ComputeCapacity(int64(overhead*8 + 100))
 	assert.Greater(t, result, 0)
 }
 

@@ -65,7 +65,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Create Flight Recorder with reasonable capacity (10MB)
 		capacitySize := 10 * 1024 * 1024 // 10MB
-		fr = flightrecorder.NewFlightRecorder(capacitySize)
+		fr = flightrecorder.NewFlightRecorder(int64(capacitySize))
 
 		// Create Prometheus registry and collector
 		promReg = prometheus.NewRegistry()

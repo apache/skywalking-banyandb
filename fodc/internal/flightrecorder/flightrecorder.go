@@ -29,11 +29,11 @@ import (
 type FlightRecorder struct {
 	datasources  []*Datasource
 	mu           sync.RWMutex
-	capacitySize int // Memory limit in bytes
+	capacitySize int64 // Memory limit in bytes
 }
 
 // NewFlightRecorder creates a new FlightRecorder instance.
-func NewFlightRecorder(capacitySize int) *FlightRecorder {
+func NewFlightRecorder(capacitySize int64) *FlightRecorder {
 	return &FlightRecorder{
 		datasources:  make([]*Datasource, 0),
 		capacitySize: capacitySize,
@@ -79,7 +79,7 @@ func (fr *FlightRecorder) GetDatasources() []*Datasource {
 }
 
 // SetCapacitySize sets the memory limit for the flight recorder.
-func (fr *FlightRecorder) SetCapacitySize(capacitySize int) {
+func (fr *FlightRecorder) SetCapacitySize(capacitySize int64) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
 	fr.capacitySize = capacitySize
@@ -90,7 +90,7 @@ func (fr *FlightRecorder) SetCapacitySize(capacitySize int) {
 }
 
 // GetCapacitySize returns the current memory limit.
-func (fr *FlightRecorder) GetCapacitySize() int {
+func (fr *FlightRecorder) GetCapacitySize() int64 {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
 	return fr.capacitySize

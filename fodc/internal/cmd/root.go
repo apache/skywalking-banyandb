@@ -133,7 +133,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		Int64("capacity-size-bytes", capacitySize).
 		Msg("Flight Recorder capacity configured")
 
-	fr := flightrecorder.NewFlightRecorder(int(capacitySize))
+	fr := flightrecorder.NewFlightRecorder(capacitySize)
 
 	// Create Prometheus registry
 	promReg := prometheus.NewRegistry()

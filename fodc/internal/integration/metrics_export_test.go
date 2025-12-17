@@ -132,7 +132,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Create Flight Recorder with reasonable capacity
 		capacitySize := 10 * 1024 * 1024 // 10MB
-		fr = flightrecorder.NewFlightRecorder(capacitySize)
+		fr = flightrecorder.NewFlightRecorder(int64(capacitySize))
 
 		// Create Prometheus registry and collector
 		promReg = prometheus.NewRegistry()

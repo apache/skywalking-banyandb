@@ -64,7 +64,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		// Create Flight Recorder with SMALL capacity to force buffer overflow
 		// Use 100KB to ensure we can overflow it with multiple polling cycles
 		capacitySize := 100 * 1024 // 100KB - small enough to overflow
-		fr = flightrecorder.NewFlightRecorder(capacitySize)
+		fr = flightrecorder.NewFlightRecorder(int64(capacitySize))
 
 		// Create Prometheus registry and collector
 		promReg = prometheus.NewRegistry()

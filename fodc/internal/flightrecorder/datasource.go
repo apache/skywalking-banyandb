@@ -69,7 +69,7 @@ type Datasource struct {
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
-	CapacitySize int // Memory limit in bytes
+	CapacitySize int64 // Memory limit in bytes
 }
 
 // NewDatasource creates a new Datasource.
@@ -146,7 +146,7 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 }
 
 // SetCapacity sets the capacity for the datasource and updates all ring buffer capacities.
-func (ds *Datasource) SetCapacity(capacity int) {
+func (ds *Datasource) SetCapacity(capacity int64) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	ds.CapacitySize = capacity
@@ -163,7 +163,7 @@ func (ds *Datasource) SetCapacity(capacity int) {
 }
 
 // ComputeCapacity computes the maximum capacity for ring buffers based on available memory constraints.
-func (ds *Datasource) ComputeCapacity(capacitySize int) int {
+func (ds *Datasource) ComputeCapacity(capacitySize int64) int {
 	if capacitySize <= 0 {
 		return 1
 	}
@@ -193,8 +193,8 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	// For timestamp RingBuffer: pointer (8 bytes) + next field (8 bytes) + size field (8 bytes) + slice header (24 bytes) + mutex (24 bytes)
 	timestampBufferOverhead := 8 + intSize + intSize + sliceHeaderSize + 24
 
-	totalFixedOverhead := metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
-		metricBufferOverhead + timestampBufferOverhead
+	totalFixedOverhead := int64(metricsMapOverhead + descriptionsMapOverhead + stringOverhead +
+		metricBufferOverhead + timestampBufferOverhead)
 
 	if totalFixedOverhead >= capacitySize {
 		return 1
@@ -203,7 +203,7 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 	// Variable Costs per entry
 	// Float64 values: numMetrics * 8 bytes
 	// Timestamp: 8 bytes
-	bytesPerEntry := (numMetrics * 8) + 8
+	bytesPerEntry := int64((numMetrics * 8) + 8)
 
 	availableMemory := capacitySize - totalFixedOverhead
 
@@ -213,7 +213,7 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 		return 1 // Minimum capacity of 1 to avoid division by zero
 	}
 
-	return maxCapacity
+	return int(maxCapacity)
 }
 
 // GetMetrics returns a copy of the metrics map.

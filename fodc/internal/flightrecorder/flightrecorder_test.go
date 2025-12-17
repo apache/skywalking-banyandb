@@ -31,7 +31,7 @@ import (
 
 // TestNewFlightRecorder tests the creation of a new FlightRecorder instance.
 func TestNewFlightRecorder(t *testing.T) {
-	capacitySize := 1000000
+	capacitySize := int64(1000000)
 	fr := NewFlightRecorder(capacitySize)
 
 	require.NotNil(t, fr)
@@ -183,7 +183,7 @@ func TestFlightRecorder_Update_MultipleUpdates(t *testing.T) {
 
 // TestFlightRecorder_Update_WithLabels tests Update with metrics that have labels.
 func TestFlightRecorder_Update_WithLabels(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -218,7 +218,7 @@ func TestFlightRecorder_Update_WithLabels(t *testing.T) {
 
 // TestFlightRecorder_Update_WithDescriptions tests Update with metrics that have descriptions.
 func TestFlightRecorder_Update_WithDescriptions(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -242,7 +242,7 @@ func TestFlightRecorder_Update_WithDescriptions(t *testing.T) {
 
 // TestFlightRecorder_GetDatasources_ReturnsCopy tests that GetDatasources returns a copy.
 func TestFlightRecorder_GetDatasources_ReturnsCopy(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -273,7 +273,7 @@ func TestFlightRecorder_GetDatasources_ReturnsCopy(t *testing.T) {
 
 // TestFlightRecorder_SetCapacitySize tests setting capacity size.
 func TestFlightRecorder_SetCapacitySize(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -288,22 +288,22 @@ func TestFlightRecorder_SetCapacitySize(t *testing.T) {
 
 	// Get initial capacity
 	initialCapacity := fr.GetCapacitySize()
-	assert.Equal(t, 1000000, initialCapacity)
+	assert.Equal(t, int64(1000000), initialCapacity)
 
 	// Set new capacity
-	fr.SetCapacitySize(2000000)
+	fr.SetCapacitySize(int64(2000000))
 	newCapacity := fr.GetCapacitySize()
-	assert.Equal(t, 2000000, newCapacity)
+	assert.Equal(t, int64(2000000), newCapacity)
 
 	// Verify datasource capacity was updated
 	datasources := fr.GetDatasources()
 	require.Len(t, datasources, 1)
-	assert.Equal(t, 2000000, datasources[0].CapacitySize)
+	assert.Equal(t, int64(2000000), datasources[0].CapacitySize)
 }
 
 // TestFlightRecorder_SetCapacitySize_MultipleDatasources tests SetCapacitySize with multiple datasources.
 func TestFlightRecorder_SetCapacitySize_MultipleDatasources(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	// Create multiple updates to potentially create multiple datasources
 	// (though current implementation uses only the first datasource)
@@ -328,31 +328,31 @@ func TestFlightRecorder_SetCapacitySize_MultipleDatasources(t *testing.T) {
 	require.NoError(t, err2)
 
 	// Set new capacity
-	fr.SetCapacitySize(3000000)
+	fr.SetCapacitySize(int64(3000000))
 
 	// Verify all datasources have updated capacity
 	datasources := fr.GetDatasources()
 	for _, ds := range datasources {
-		assert.Equal(t, 3000000, ds.CapacitySize)
+		assert.Equal(t, int64(3000000), ds.CapacitySize)
 	}
 }
 
 // TestFlightRecorder_GetCapacitySize tests getting capacity size.
 func TestFlightRecorder_GetCapacitySize(t *testing.T) {
-	fr := NewFlightRecorder(5000000)
+	fr := NewFlightRecorder(int64(5000000))
 
 	capacity := fr.GetCapacitySize()
-	assert.Equal(t, 5000000, capacity)
+	assert.Equal(t, int64(5000000), capacity)
 
 	// Change capacity
-	fr.SetCapacitySize(10000000)
+	fr.SetCapacitySize(int64(10000000))
 	newCapacity := fr.GetCapacitySize()
-	assert.Equal(t, 10000000, newCapacity)
+	assert.Equal(t, int64(10000000), newCapacity)
 }
 
 // TestFlightRecorder_Update_ConcurrentUpdates tests concurrent Update calls.
 func TestFlightRecorder_Update_ConcurrentUpdates(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -385,7 +385,7 @@ func TestFlightRecorder_Update_ConcurrentUpdates(t *testing.T) {
 
 // TestFlightRecorder_Update_ConcurrentCapacityChanges tests concurrent updates with capacity changes.
 func TestFlightRecorder_Update_ConcurrentCapacityChanges(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	var wg sync.WaitGroup
 	numGoroutines := 5
@@ -396,7 +396,7 @@ func TestFlightRecorder_Update_ConcurrentCapacityChanges(t *testing.T) {
 			defer wg.Done()
 			// Change capacity in some goroutines
 			if id%2 == 0 {
-				fr.SetCapacitySize(2000000)
+				fr.SetCapacitySize(int64(2000000))
 			}
 			rawMetrics := []metrics.RawMetric{
 				{
@@ -422,7 +422,7 @@ func TestFlightRecorder_Update_ConcurrentCapacityChanges(t *testing.T) {
 
 // TestFlightRecorder_Update_TimestampAdded tests that timestamps are added correctly.
 func TestFlightRecorder_Update_TimestampAdded(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -477,7 +477,7 @@ func TestFlightRecorder_Update_TimestampAdded(t *testing.T) {
 
 // TestFlightRecorder_Update_CapacityApplied tests that capacity is applied after metrics are added.
 func TestFlightRecorder_Update_CapacityApplied(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := []metrics.RawMetric{
 		{
@@ -500,7 +500,7 @@ func TestFlightRecorder_Update_CapacityApplied(t *testing.T) {
 
 	ds := datasources[0]
 	// Capacity should be set
-	assert.Equal(t, 1000000, ds.CapacitySize)
+	assert.Equal(t, int64(1000000), ds.CapacitySize)
 
 	// Metrics should exist
 	metricsMap := ds.GetMetrics()
@@ -510,7 +510,7 @@ func TestFlightRecorder_Update_CapacityApplied(t *testing.T) {
 
 // TestFlightRecorder_Update_ManyMetrics tests Update with many metrics.
 func TestFlightRecorder_Update_ManyMetrics(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics := make([]metrics.RawMetric, 100)
 	for i := 0; i < 100; i++ {
@@ -534,7 +534,7 @@ func TestFlightRecorder_Update_ManyMetrics(t *testing.T) {
 
 // TestFlightRecorder_Update_ThreadSafety tests thread safety of Update and GetDatasources.
 func TestFlightRecorder_Update_ThreadSafety(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	var wg sync.WaitGroup
 	numGoroutines := 20
@@ -590,12 +590,12 @@ func TestFlightRecorder_Update_ZeroCapacity(t *testing.T) {
 	assert.NoError(t, err)
 	datasources := fr.GetDatasources()
 	require.Len(t, datasources, 1)
-	assert.Equal(t, 0, datasources[0].CapacitySize)
+	assert.Equal(t, int64(0), datasources[0].CapacitySize)
 }
 
 // TestFlightRecorder_Update_ReusesFirstDatasource tests that Update reuses the first datasource.
 func TestFlightRecorder_Update_ReusesFirstDatasource(t *testing.T) {
-	fr := NewFlightRecorder(1000000)
+	fr := NewFlightRecorder(int64(1000000))
 
 	rawMetrics1 := []metrics.RawMetric{
 		{
