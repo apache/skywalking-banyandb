@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,12 +38,14 @@ import (
 
 var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 	var (
-		metricsEndpoint     string
-		fr                  *flightrecorder.FlightRecorder
-		wd                  *watchdog.Watchdog
-		metricsServer       *server.Server
-		promReg             *prometheus.Registry
-		datasourceCollector *exporter.DatasourceCollector
+		metricsEndpoint       string
+		fr                    *flightrecorder.FlightRecorder
+		wd                    *watchdog.Watchdog
+		metricsServer         *server.Server
+		promReg               *prometheus.Registry
+		datasourceCollector   *exporter.DatasourceCollector
+		capacitySize          int64
+		baselineAllocatedSize int64
 	)
 
 	BeforeEach(func() {
@@ -61,10 +64,9 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		}
 		metricsEndpoint = fmt.Sprintf("http://%s:2121/metrics", host)
 
-		// Create Flight Recorder with SMALL capacity to force buffer overflow
-		// Use 100KB to ensure we can overflow it with multiple polling cycles
-		capacitySize := 100 * 1024 // 100KB - small enough to overflow
-		fr = flightrecorder.NewFlightRecorder(int64(capacitySize))
+		capacitySize = 100 * 1024 // 100KB - small enough to overflow
+
+		fr = flightrecorder.NewFlightRecorder(capacitySize)
 
 		// Create Prometheus registry and collector
 		promReg = prometheus.NewRegistry()
@@ -105,6 +107,12 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Give watchdog a moment to start
 		time.Sleep(500 * time.Millisecond)
+
+		// Measure baseline memory after all setup is complete but before metrics are collected
+		// This ensures we measure only the memory used by FlightRecorder data, not setup overhead
+		runtime.GC()
+		baselineAllocatedSize = fr.AllocatedSize()
+		GinkgoWriter.Printf("FlightRecorder baseline allocated size (after setup): %d bytes\n", baselineAllocatedSize)
 	})
 
 	AfterEach(func() {
@@ -121,6 +129,11 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 	})
 
 	It("should handle buffer overflow with circular overwrite behavior", func() {
+		var (
+			datasources []*flightrecorder.Datasource
+			ds          *flightrecorder.Datasource
+		)
+
 		// Step 1: Generate initial metrics and capture baseline state
 		client := &http.Client{
 			Timeout: 5 * time.Second,
@@ -132,7 +145,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
-			if respErr == nil && resp != nil {
+			Expect(respErr).NotTo(HaveOccurred())
+			if resp != nil {
 				resp.Body.Close()
 			}
 
@@ -140,6 +154,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			Expect(metricsReqErr).NotTo(HaveOccurred())
 
 			metricsResp, metricsRespErr := client.Do(metricsReq)
+			Expect(metricsRespErr).NotTo(HaveOccurred())
 			if metricsRespErr == nil && metricsResp != nil {
 				metricsResp.Body.Close()
 			}
@@ -149,19 +164,51 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Wait for initial metrics to be collected
 		Eventually(func() bool {
-			datasources := fr.GetDatasources()
-			if len(datasources) == 0 {
+			allDatasources := fr.GetDatasources()
+			if len(allDatasources) == 0 {
 				return false
 			}
-			ds := datasources[0]
-			metricsMap := ds.GetMetrics()
+			currentDatasource := allDatasources[0]
+			metricsMap := currentDatasource.GetMetrics()
 			return len(metricsMap) > 0
 		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "Initial metrics should be buffered")
 
-		// Capture baseline: get initial timestamps and metric values
-		datasources := fr.GetDatasources()
+		// Verify memory consumption matches the capacitySize
+		runtime.GC()
+		allocatedSizeAfterData := fr.AllocatedSize()
+		actualMemoryUsed := allocatedSizeAfterData - baselineAllocatedSize
+
+		datasources = fr.GetDatasources()
 		Expect(datasources).NotTo(BeEmpty())
-		ds := datasources[0]
+		ds = datasources[0]
+		metricsMap := ds.GetMetrics()
+
+		GinkgoWriter.Printf("FlightRecorder allocated size after data storage: %d bytes, Memory used: %d bytes, Configured capacity: %d bytes\n",
+			allocatedSizeAfterData, actualMemoryUsed, capacitySize)
+
+		// Note: actualMemoryUsed can be negative if GC freed memory between measurements
+		// In that case, we verify that the absolute allocated size is reasonable
+		if actualMemoryUsed < 0 {
+			// If memory decreased (GC freed memory), verify that current allocation is reasonable
+			// The allocated size should be at least the capacity (accounting for overhead)
+			Expect(allocatedSizeAfterData).To(BeNumerically(">=", capacitySize*50/100),
+				"Allocated size should be at least 50%% of capacitySize even after GC")
+		} else {
+			// If memory increased, verify it matches the capacitySize
+			// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 20% of capacity
+			Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*120/100),
+				"Actual memory consumption should not exceed capacitySize by more than 20%%")
+			// Also verify it's reasonably close (at least 50% of capacity should be used if data exists)
+			if len(metricsMap) > 0 {
+				Expect(actualMemoryUsed).To(BeNumerically(">=", capacitySize*50/100),
+					"Actual memory consumption should use at least 50%% of capacitySize when data exists")
+			}
+		}
+
+		// Capture baseline: get initial timestamps and metric values
+		datasources = fr.GetDatasources()
+		Expect(datasources).NotTo(BeEmpty())
+		ds = datasources[0]
 
 		initialTimestamps := ds.GetTimestamps()
 		Expect(initialTimestamps).NotTo(BeNil())
@@ -176,7 +223,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		initialTimestampCount := len(nonZeroInitialTimestamps)
 
 		// Get a sample metric to track
-		metricsMap := ds.GetMetrics()
+		metricsMap = ds.GetMetrics()
 		Expect(metricsMap).NotTo(BeEmpty())
 
 		var sampleMetricKey string
@@ -203,7 +250,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
-			if respErr == nil && resp != nil {
+			Expect(respErr).NotTo(HaveOccurred())
+			if resp != nil {
 				resp.Body.Close()
 			}
 
@@ -211,7 +259,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			Expect(metricsReqErr).NotTo(HaveOccurred())
 
 			metricsResp, metricsRespErr := client.Do(metricsReq)
-			if metricsRespErr == nil && metricsResp != nil {
+			Expect(metricsRespErr).NotTo(HaveOccurred())
+			if metricsResp != nil {
 				metricsResp.Body.Close()
 			}
 

@@ -202,7 +202,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
-			if respErr == nil && resp != nil {
+			Expect(respErr).NotTo(HaveOccurred())
+			if resp != nil {
 				resp.Body.Close()
 			}
 
@@ -210,7 +211,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			Expect(metricsReqErr).NotTo(HaveOccurred())
 
 			metricsResp, metricsRespErr := client.Do(metricsReq)
-			if metricsRespErr == nil && metricsResp != nil {
+			Expect(metricsRespErr).NotTo(HaveOccurred())
+			if metricsResp != nil {
 				metricsResp.Body.Close()
 			}
 
@@ -453,7 +455,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 			resp, respErr := client.Do(req)
 			Expect(respErr).NotTo(HaveOccurred())
-			if respErr == nil && resp != nil {
+			if resp != nil {
 				resp.Body.Close()
 			}
 			time.Sleep(100 * time.Millisecond)

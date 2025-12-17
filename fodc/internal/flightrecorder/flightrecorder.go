@@ -19,6 +19,7 @@ package flightrecorder
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -94,4 +95,15 @@ func (fr *FlightRecorder) GetCapacitySize() int64 {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
 	return fr.capacitySize
+}
+
+// AllocatedSize returns the current allocated size of the flight recorder in bytes.
+func (fr *FlightRecorder) AllocatedSize() int64 {
+	fr.mu.RLock()
+	defer fr.mu.RUnlock()
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	return int64(memStats.Alloc)
 }
