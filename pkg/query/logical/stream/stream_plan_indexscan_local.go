@@ -142,6 +142,10 @@ func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQuery
 			break
 		}
 	}
+	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
+	for idx := range r.TagFamilies {
+		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
+	}
 	for i := range r.Timestamps {
 		e := &streamv1.Element{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
@@ -153,13 +157,7 @@ func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQuery
 				Name: proj.Family,
 			}
 			e.TagFamilies = append(e.TagFamilies, tagFamily)
-			var resultTagFamily *model.TagFamily
-			for idx := range r.TagFamilies {
-				if r.TagFamilies[idx].Name == proj.Family {
-					resultTagFamily = &r.TagFamilies[idx]
-					break
-				}
-			}
+			resultTagFamily := tagFamilyMap[proj.Family]
 			for _, tagName := range proj.Names {
 				var tagValue *modelv1.TagValue
 				if resultTagFamily != nil {
