@@ -48,7 +48,15 @@ func MarshalVarArray(dest, src []byte) []byte {
 }
 
 // UnmarshalVarArray unmarshals a variable-length array from src starting at idx.
-// It decodes in-place and returns:
+//
+// WARNING: This function mutates src. Decoding is performed in-place by
+// overwriting bytes in src[idx:next) to remove escape characters. The decoded
+// value is the view src[idx:end] into the same backing array; copy it (for
+// example, with bytes.Clone or append([]byte(nil), ...)) if you need to
+// preserve the original encoded buffer or keep the decoded value independent of
+// subsequent in-place decoding on the same buffer.
+//
+// It returns:
 //   - end: the index of the first byte after the decoded value (exclusive)
 //   - next: the index of the next element (the byte after the delimiter)
 //

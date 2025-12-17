@@ -40,9 +40,9 @@ type tagFilterOp struct {
 // Filter is an interface for tag filtering.
 type Filter interface {
 	MightContain(item []byte) bool
-	// ContainsAll checks if all elements in the items slice are present.
+	// ContainsAll checks whether all elements in the items slice are present (AND semantics).
 	// For array types (StrArr/Int64Arr), it checks if items is a subset of any stored array.
-	// For non-array types, it checks if any of the items are present.
+	// For non-array types, it checks whether each item exists as a dictionary value (or might exist, depending on implementation).
 	ContainsAll(items [][]byte) bool
 }
 

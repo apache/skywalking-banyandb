@@ -147,7 +147,7 @@ func TestDictionaryFilterStrArr(t *testing.T) {
 	}
 }
 
-func TestDictionaryFilterContainsAll_NonArray_ORSemantics(t *testing.T) {
+func TestDictionaryFilterContainsAll_NonArray_ANDSemantics(t *testing.T) {
 	assert := assert.New(t)
 
 	// Set up filter with some values
@@ -164,17 +164,17 @@ func TestDictionaryFilterContainsAll_NonArray_ORSemantics(t *testing.T) {
 	// Empty items should return true
 	assert.True(df.ContainsAll([][]byte{}), "empty items should return true")
 
-	// Multiple items - should return false (non-array types can't contain multiple items)
-	assert.False(df.ContainsAll([][]byte{
+	// Multiple items that all exist - should return true (AND semantics)
+	assert.True(df.ContainsAll([][]byte{
 		[]byte("skywalking"),
 		[]byte("banyandb"),
-	}), "multiple items should return false for non-array types")
+	}), "multiple existing items should return true for non-array types")
 
-	// Multiple items with some existing - should return false
+	// Multiple items with one missing - should return false
 	assert.False(df.ContainsAll([][]byte{
 		[]byte("skywalking"),
 		[]byte("nonexistent"),
-	}), "multiple items should return false even if some exist")
+	}), "multiple items should return false if any item is missing")
 
 	// Single item exists - should return true
 	assert.True(df.ContainsAll([][]byte{
@@ -542,15 +542,16 @@ func BenchmarkLinearSearch_Max(b *testing.B) {
 	_ = result // Prevent compiler optimization
 }
 
-// generateInt64QueryItems creates query items for int64 array (subset of array elements).
-func generateInt64QueryItems(arrayLen int, percentage int) [][]byte {
+// generateInt64QueryItems creates query items for an int64 array (subset of array elements),
+// starting from the given base value.
+func generateInt64QueryItems(arrayLen int, percentage int, base int64) [][]byte {
 	queryLen := (arrayLen * percentage) / 100
 	if queryLen == 0 {
 		queryLen = 1
 	}
 	items := make([][]byte, queryLen)
 	for i := 0; i < queryLen; i++ {
-		items[i] = convert.Int64ToBytes(int64(i))
+		items[i] = convert.Int64ToBytes(base + int64(i))
 	}
 	return items
 }
@@ -563,21 +564,27 @@ func generateStrQueryItems(arrayLen int, percentage int) [][]byte {
 	}
 	items := make([][]byte, queryLen)
 	for i := 0; i < queryLen; i++ {
-		items[i] = []byte(fmt.Sprintf("element_%d", i))
+		// Must match the stored benchmark pattern used by ValueTypeStrArr:
+		// fmt.Sprintf("element_%d_%d", arrayIdx, elemIdx). For "Existing" queries
+		// we target the first array (arrayIdx=0).
+		items[i] = []byte(fmt.Sprintf("element_%d_%d", 0, i))
 	}
 	return items
 }
 
-// generateInt64QueryItemsNonExisting creates query items that don't exist in the array.
-func generateInt64QueryItemsNonExisting(arrayLen int, percentage int) [][]byte {
+// generateInt64QueryItemsNonExisting creates query items that don't exist in any of the arrays.
+func generateInt64QueryItemsNonExisting(arrayLen int, percentage int, arrayCount int) [][]byte {
 	queryLen := (arrayLen * percentage) / 100
 	if queryLen == 0 {
 		queryLen = 1
 	}
 	items := make([][]byte, queryLen)
-	// Use values that are definitely not in the array (starting from arrayLen)
+	// Arrays are populated with contiguous ranges:
+	// array i holds values [i*arrayLen, i*arrayLen+arrayLen-1].
+	// So values starting at arrayCount*arrayLen are guaranteed to be absent from all arrays.
+	start := int64(arrayCount * arrayLen)
 	for i := 0; i < queryLen; i++ {
-		items[i] = convert.Int64ToBytes(int64(arrayLen + i))
+		items[i] = convert.Int64ToBytes(start + int64(i))
 	}
 	return items
 }
@@ -615,11 +622,11 @@ func benchmarkDictionaryFilterContainsAll(b *testing.B, valueType pbv1.ValueType
 			}
 			arrays[i] = arr
 		}
-		// Query items should match elements from the first array (index 0)
+		// Query items intentionally target the first array (index 0), which contains values [0..arrayLen-1].
 		if existing {
-			queryItems = generateInt64QueryItems(arrayLen, percentage)
+			queryItems = generateInt64QueryItems(arrayLen, percentage, 0)
 		} else {
-			queryItems = generateInt64QueryItemsNonExisting(arrayLen, percentage)
+			queryItems = generateInt64QueryItemsNonExisting(arrayLen, percentage, arrayCount)
 		}
 	case pbv1.ValueTypeStrArr:
 		arrays = make([][]byte, arrayCount)

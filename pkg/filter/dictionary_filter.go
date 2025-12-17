@@ -49,9 +49,9 @@ func (df *DictionaryFilter) MightContain(item []byte) bool {
 	return false
 }
 
-// ContainsAll checks if all items are present in the dictionary.
-// For non-array types: checks if ANY of the items are present (OR semantics).
-// For array types: checks if ALL items form a subset of any stored array (AND semantics).
+// ContainsAll checks if all items are present.
+// For non-array types: returns true only if ALL items exist as dictionary values (AND semantics).
+// For array types: returns true only if ALL items form a subset of ANY stored array (AND semantics).
 func (df *DictionaryFilter) ContainsAll(items [][]byte) bool {
 	if len(items) == 0 {
 		return true
@@ -66,20 +66,20 @@ func (df *DictionaryFilter) ContainsAll(items [][]byte) bool {
 		return false
 	}
 
-	// For non-array types: a single value can only match one item
-	// If multiple items are requested, return false immediately
-	if len(items) != 1 {
-		return false
-	}
-
-	// Check if the single item exists
-	item := items[0]
-	for _, v := range df.values {
-		if bytes.Equal(v, item) {
-			return true
+	// For non-array types, require ALL items to exist as dictionary values.
+	for _, item := range items {
+		found := false
+		for _, v := range df.values {
+			if bytes.Equal(v, item) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // Set sets both the dictionary values and value type.
