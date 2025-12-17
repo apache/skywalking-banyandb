@@ -356,7 +356,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "# HELP ") {
 				// Parse HELP line: # HELP metric_name description
-				// Format: # HELP metric_name description_text
+				// SplitN(line, " ", 3) produces ["#", "HELP", "metric_name description_text"]
 				parts := strings.SplitN(line, " ", 3)
 				if len(parts) >= 3 {
 					metricName := parts[1]
