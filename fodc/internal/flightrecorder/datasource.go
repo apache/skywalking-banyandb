@@ -197,7 +197,7 @@ func (ds *Datasource) ComputeCapacity(capacitySize int) int {
 		metricBufferOverhead + timestampBufferOverhead
 
 	if totalFixedOverhead >= capacitySize {
-		return 0
+		return 1
 	}
 
 	// Variable Costs per entry
