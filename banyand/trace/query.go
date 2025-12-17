@@ -28,10 +28,10 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -561,15 +561,17 @@ func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr
 			}
 			return strArrTagValue(values)
 		}
-		bb := bigValuePool.Generate()
-		defer bigValuePool.Release(bb)
-		var err error
-		for len(value) > 0 {
-			bb.Buf, value, err = encoding.UnmarshalVarArray(bb.Buf[:0], value)
+		var (
+			end  int
+			next int
+			err  error
+		)
+		for idx := 0; idx < len(value); idx = next {
+			end, next, err = encoding.UnmarshalVarArray(value, idx)
 			if err != nil {
 				logger.Panicf("UnmarshalVarArray failed: %v", err)
 			}
-			values = append(values, string(bb.Buf))
+			values = append(values, string(value[idx:end]))
 		}
 		return strArrTagValue(values)
 	case pbv1.ValueTypeTimestamp:
