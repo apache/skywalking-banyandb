@@ -25,10 +25,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -147,4 +149,76 @@ func TestDumpStreamPartFormat(t *testing.T) {
 // It uses the stream package's CreateTestPartForDump function.
 func createTestStreamPartForDump(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
 	return stream.CreateTestPartForDump(tmpPath, fileSystem)
+}
+
+// TestDumpStreamPartWithSeriesMetadata tests that the dump tool can parse smeta file.
+// This test creates a part with series metadata and verifies the dump tool can correctly parse it.
+func TestDumpStreamPartWithSeriesMetadata(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Create a part with series metadata
+	partPath, cleanup := createTestStreamPartWithSeriesMetadata(tmpPath, fileSystem)
+	defer cleanup()
+
+	// Extract part ID from path
+	partName := filepath.Base(partPath)
+	partID, err := strconv.ParseUint(partName, 16, 64)
+	require.NoError(t, err, "part directory should have valid hex name")
+
+	// Parse the part using dump tool functions
+	p, err := openStreamPart(partID, filepath.Dir(partPath), fileSystem)
+	require.NoError(t, err, "should be able to open part with series metadata")
+	defer closeStreamPart(p)
+
+	// Verify series metadata reader is available
+	assert.NotNil(t, p.seriesMetadata, "series metadata reader should be available")
+
+	// Create a dump context to test parsing
+	opts := streamDumpOptions{
+		shardPath:   filepath.Dir(partPath),
+		segmentPath: tmpPath, // Not used for this test
+		verbose:     false,
+		csvOutput:   false,
+	}
+	ctx, err := newStreamDumpContext(opts)
+	require.NoError(t, err)
+	if ctx != nil {
+		defer ctx.close()
+	}
+
+	// Test parsing series metadata
+	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
+	require.NoError(t, err, "should be able to parse series metadata")
+}
+
+// createTestStreamPartWithSeriesMetadata creates a test stream part with series metadata.
+func createTestStreamPartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
+	// Use stream package to create a part
+	partPath, cleanup := stream.CreateTestPartForDump(tmpPath, fileSystem)
+
+	// Create sample series metadata file
+	// This is a simplified version - in real scenarios, smeta is created during flush
+	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
+
+	// Create sample documents
+	docs := index.Documents{
+		{
+			DocID:        1,
+			EntityValues: []byte("test=entity1"),
+		},
+		{
+			DocID:        2,
+			EntityValues: []byte("test=entity2"),
+		},
+	}
+
+	seriesMetadataBytes, err := docs.Marshal()
+	if err == nil {
+		fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+	}
+
+	return partPath, cleanup
 }
