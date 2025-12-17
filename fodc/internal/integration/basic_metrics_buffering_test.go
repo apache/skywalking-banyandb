@@ -144,6 +144,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			Expect(metricsReqErr).NotTo(HaveOccurred())
 
 			metricsResp, metricsRespErr := client.Do(metricsReq)
+			Expect(metricsRespErr).NotTo(HaveOccurred())
 			if metricsRespErr == nil && metricsResp != nil {
 				metricsResp.Body.Close()
 			}
@@ -209,9 +210,10 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Verify descriptions were stored (at least some metrics should have descriptions)
 		descriptions := ds.GetDescriptions()
-		// Note: Not all metrics may have descriptions, but we should have at least some
-		if len(descriptions) == 0 {
-			GinkgoWriter.Printf("Warning: No descriptions found, but metrics were buffered: %d metrics\n", len(metricsMap))
+		Expect(len(descriptions)).To(BeNumerically(">", 0), "Descriptions map should not be empty")
+		for metricName, description := range descriptions {
+			Expect(metricName).NotTo(BeEmpty(), "Metric name should not be empty")
+			Expect(description).NotTo(BeEmpty(), fmt.Sprintf("Description for metric %s should not be empty", metricName))
 		}
 	})
 
@@ -226,6 +228,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
+			Expect(respErr).NotTo(HaveOccurred())
 			if respErr == nil && resp != nil {
 				resp.Body.Close()
 			}
@@ -276,6 +279,8 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			if len(values) > 0 {
 				Expect(len(values)).To(BeNumerically(">=", 1),
 					fmt.Sprintf("Metric %s should have values from polling cycles", metricKey))
+				Expect(len(values)).To(BeNumerically("==", len(timestampValues)),
+					fmt.Sprintf("Metric %s should have values equal to timestamps", metricKey))
 			}
 		}
 	})
