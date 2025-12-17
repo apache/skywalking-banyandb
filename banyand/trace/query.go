@@ -46,11 +46,13 @@ var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
+	schemaTagTypes map[string]pbv1.ValueType
 	traceIDs       []string
 	model.TraceQueryOptions
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
+	tqo.TagProjection = t.filterTagProjection(tqo.TagProjection)
 	if err := validateTraceQueryOptions(tqo); err != nil {
 		return nil, err
 	}
@@ -82,9 +84,20 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	sort.Strings(tqo.TraceIDs)
 
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	if is := t.indexSchema.Load(); is != nil {
+		for name, spec := range is.(indexSchema).tagMap {
+			vt := pbv1.TagValueSpecToValueType(spec.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[name] = vt
+			}
+		}
+	}
+
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
 		traceIDs:          tqo.TraceIDs,
+		schemaTagTypes:    schemaTagTypes,
 	}
 
 	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
@@ -132,6 +145,41 @@ func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
 		return errors.New("invalid query options: either traceIDs or order must be specified")
 	}
 	return nil
+}
+
+func (t *trace) filterTagProjection(tagProjection *model.TagProjection) *model.TagProjection {
+	if tagProjection == nil || len(tagProjection.Names) == 0 {
+		return tagProjection
+	}
+
+	is := t.indexSchema.Load()
+	if is == nil {
+		return tagProjection
+	}
+	tagMap := is.(indexSchema).tagMap
+	if len(tagMap) == 0 {
+		return tagProjection
+	}
+
+	filteredNames := make([]string, 0, len(tagProjection.Names))
+	for _, name := range tagProjection.Names {
+		if _, exists := tagMap[name]; exists {
+			filteredNames = append(filteredNames, name)
+		}
+	}
+
+	if len(filteredNames) == len(tagProjection.Names) {
+		return tagProjection
+	}
+
+	if len(filteredNames) == 0 {
+		return nil
+	}
+
+	return &model.TagProjection{
+		Family: tagProjection.Family,
+		Names:  filteredNames,
+	}
 }
 
 func (t *trace) GetTagValueDecoder() model.TagValueDecoder {

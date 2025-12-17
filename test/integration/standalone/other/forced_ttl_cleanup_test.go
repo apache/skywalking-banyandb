@@ -132,7 +132,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 				TagFamilies: []*modelv1.TagProjection_TagFamily{
 					{
 						Name: "default",
-						Tags: []string{"service_id"},
+						Tags: []string{"id"},
 					},
 				},
 			},
@@ -206,7 +206,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 				TagFamilies: []*modelv1.TagProjection_TagFamily{
 					{
 						Name: "default",
-						Tags: []string{"service_id"},
+						Tags: []string{"id"},
 					},
 				},
 			},
