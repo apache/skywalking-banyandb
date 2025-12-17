@@ -452,6 +452,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
+			Expect(respErr).NotTo(HaveOccurred())
 			if respErr == nil && resp != nil {
 				resp.Body.Close()
 			}

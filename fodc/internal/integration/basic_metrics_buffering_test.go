@@ -135,6 +135,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
+			Expect(respErr).NotTo(HaveOccurred())
 			if respErr == nil && resp != nil {
 				resp.Body.Close()
 			}
@@ -145,7 +146,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 			metricsResp, metricsRespErr := client.Do(metricsReq)
 			Expect(metricsRespErr).NotTo(HaveOccurred())
-			if metricsRespErr == nil && metricsResp != nil {
+			if metricsResp != nil {
 				metricsResp.Body.Close()
 			}
 
@@ -296,6 +297,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			Expect(reqErr).NotTo(HaveOccurred())
 
 			resp, respErr := client.Do(req)
+			Expect(respErr).NotTo(HaveOccurred())
 			if respErr == nil && resp != nil {
 				resp.Body.Close()
 			}
