@@ -21,22 +21,12 @@
 package encoding
 
 import (
-	stdbytes "bytes"
-	"errors"
-
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-)
-
-const (
-	// EntityDelimiter is the delimiter for entities in a variable-length array.
-	EntityDelimiter = '|'
-	// Escape is the escape character for entities in a variable-length array.
-	Escape = '\\'
 )
 
 var (
@@ -94,50 +84,6 @@ func generateDictionary() *encoding.Dictionary {
 func releaseDictionary(d *encoding.Dictionary) {
 	d.Reset()
 	dictionaryPool.Put(d)
-}
-
-// MarshalVarArray marshals a byte slice into a variable-length array format.
-// It escapes delimiter and escape characters within the source slice.
-func MarshalVarArray(dest, src []byte) []byte {
-	if stdbytes.IndexByte(src, EntityDelimiter) < 0 && stdbytes.IndexByte(src, Escape) < 0 {
-		dest = append(dest, src...)
-		dest = append(dest, EntityDelimiter)
-		return dest
-	}
-	for _, b := range src {
-		if b == EntityDelimiter || b == Escape {
-			dest = append(dest, Escape)
-		}
-		dest = append(dest, b)
-	}
-	dest = append(dest, EntityDelimiter)
-	return dest
-}
-
-// UnmarshalVarArray unmarshals a variable-length array into a byte slice.
-func UnmarshalVarArray(dest, src []byte) ([]byte, []byte, error) {
-	if len(src) == 0 {
-		return nil, nil, errors.New("empty entity value")
-	}
-	if src[0] == EntityDelimiter {
-		return dest, src[1:], nil
-	}
-	for len(src) > 0 {
-		switch {
-		case src[0] == Escape:
-			if len(src) < 2 {
-				return nil, nil, errors.New("invalid escape character")
-			}
-			src = src[1:]
-			dest = append(dest, src[0])
-		case src[0] == EntityDelimiter:
-			return dest, src[1:], nil
-		default:
-			dest = append(dest, src[0])
-		}
-		src = src[1:]
-	}
-	return nil, nil, errors.New("invalid variable array")
 }
 
 // EncodeTagValues encodes tag values based on the value type with optimal compression.
