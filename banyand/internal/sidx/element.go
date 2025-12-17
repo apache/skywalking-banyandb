@@ -22,8 +22,7 @@ package sidx
 
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
@@ -60,24 +59,17 @@ func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte
 		return dest, nil
 	}
 	if valueType == pbv1.ValueTypeStrArr {
-		bb := bigValuePool.Get()
-		if bb == nil {
-			bb = &bytes.Buffer{}
-		}
-		defer func() {
-			bb.Buf = bb.Buf[:0]
-			bigValuePool.Put(bb)
-		}()
-		var err error
-		for len(src) > 0 {
-			bb.Buf, src, err = encoding.UnmarshalVarArray(bb.Buf[:0], src)
+		var (
+			end  int
+			next int
+			err  error
+		)
+		for idx := 0; idx < len(src); idx = next {
+			end, next, err = encoding.UnmarshalVarArray(src, idx)
 			if err != nil {
 				return nil, err
 			}
-			// Make a copy since bb.Buf will be reused
-			valueCopy := make([]byte, len(bb.Buf))
-			copy(valueCopy, bb.Buf)
-			dest = append(dest, valueCopy)
+			dest = append(dest, src[idx:end])
 		}
 		return dest, nil
 	}
