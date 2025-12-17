@@ -105,5 +105,5 @@ func (fr *FlightRecorder) AllocatedSize() int64 {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	return int64(memStats.Alloc)
+	return int64(memStats.HeapInuse)
 }
