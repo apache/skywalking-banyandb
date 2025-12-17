@@ -97,8 +97,8 @@ func (fr *FlightRecorder) GetCapacitySize() int64 {
 	return fr.capacitySize
 }
 
-// AllocatedSize returns the current allocated size of the flight recorder in bytes.
-func (fr *FlightRecorder) AllocatedSize() int64 {
+// HeapInuseSize returns the current heap inuse size of the flight recorder in bytes.
+func (fr *FlightRecorder) HeapInuseSize() int64 {
 	fr.mu.RLock()
 	defer fr.mu.RUnlock()
 

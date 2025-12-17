@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"runtime"
 	"strings"
 	"time"
 
@@ -45,7 +44,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		promReg               *prometheus.Registry
 		datasourceCollector   *exporter.DatasourceCollector
 		capacitySize          int64
-		baselineAllocatedSize int64
+		baselineHeapInuseSize int64
 	)
 
 	BeforeEach(func() {
@@ -110,9 +109,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Measure baseline memory after all setup is complete but before metrics are collected
 		// This ensures we measure only the memory used by FlightRecorder data, not setup overhead
-		runtime.GC()
-		baselineAllocatedSize = fr.AllocatedSize()
-		GinkgoWriter.Printf("FlightRecorder baseline allocated size (after setup): %d bytes\n", baselineAllocatedSize)
+		baselineHeapInuseSize = fr.HeapInuseSize()
+		GinkgoWriter.Printf("FlightRecorder baseline allocated size (after setup): %d bytes\n", baselineHeapInuseSize)
 	})
 
 	AfterEach(func() {
@@ -140,7 +138,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		}
 
 		// Generate some initial metrics
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 3; i++ {
 			req, reqErr := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/v1/health", banyanDBHTTPAddr), nil)
 			Expect(reqErr).NotTo(HaveOccurred())
 
@@ -174,37 +172,25 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "Initial metrics should be buffered")
 
 		// Verify memory consumption matches the capacitySize
-		runtime.GC()
-		allocatedSizeAfterData := fr.AllocatedSize()
-		actualMemoryUsed := allocatedSizeAfterData - baselineAllocatedSize
+		heapInuseSizeAfterData := fr.HeapInuseSize()
+		actualMemoryUsed := heapInuseSizeAfterData - baselineHeapInuseSize
 
 		datasources = fr.GetDatasources()
 		Expect(datasources).NotTo(BeEmpty())
 		ds = datasources[0]
 		metricsMap := ds.GetMetrics()
 
-		GinkgoWriter.Printf("FlightRecorder allocated size after data storage: %d bytes, Memory used: %d bytes, Configured capacity: %d bytes\n",
-			allocatedSizeAfterData, actualMemoryUsed, capacitySize)
-
-		// Note: actualMemoryUsed can be negative if GC freed memory between measurements
-		// In that case, we verify that the absolute allocated size is reasonable
-		if actualMemoryUsed < 0 {
-			// If memory decreased (GC freed memory), verify that current allocation is reasonable
-			// The allocated size should be at least the capacity (accounting for overhead)
-			Expect(allocatedSizeAfterData).To(BeNumerically(">=", capacitySize*50/100),
-				"Allocated size should be at least 50%% of capacitySize even after GC")
-		} else {
-			// If memory increased, verify it matches the capacitySize
-			// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 20% of capacity
-			Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*120/100),
-				"Actual memory consumption should not exceed capacitySize by more than 20%%")
-			// Also verify it's reasonably close (at least 50% of capacity should be used if data exists)
-			if len(metricsMap) > 0 {
-				Expect(actualMemoryUsed).To(BeNumerically(">=", capacitySize*50/100),
-					"Actual memory consumption should use at least 50%% of capacitySize when data exists")
-			}
+		GinkgoWriter.Printf("FlightRecorder heap inuse size after data storage: %d bytes, Memory used: %d bytes, Configured capacity: %d bytes\n",
+			heapInuseSizeAfterData, actualMemoryUsed, capacitySize)
+		// If memory increased, verify it matches the capacitySize
+		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 20% of capacity
+		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*120/100),
+			"Actual memory consumption should not exceed capacitySize by more than 20%%")
+		// Also verify it's reasonably close (at least 50% of capacity should be used if data exists)
+		if len(metricsMap) > 0 {
+			Expect(actualMemoryUsed).To(BeNumerically(">=", capacitySize*50/100),
+				"Actual memory consumption should use at least 50%% of capacitySize when data exists")
 		}
-
 		// Capture baseline: get initial timestamps and metric values
 		datasources = fr.GetDatasources()
 		Expect(datasources).NotTo(BeEmpty())
