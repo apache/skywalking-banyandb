@@ -411,7 +411,6 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		// Step 2: Measure baseline heap inuse size (before any data)
 		// Force GC to reduce temporary allocation noise
 		runtime.GC()
-		runtime.GC() // Run twice to ensure cleanup
 		baselineHeapInuseSize := fr.HeapInuseSize()
 		Expect(baselineHeapInuseSize).To(BeNumerically(">", 0), "Baseline heap inuse size should be positive")
 
@@ -438,9 +437,6 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		Expect(metricsMap).NotTo(BeEmpty(), "Datasource should have buffered metrics")
 
 		// Step 6: Measure heap inuse size after data collection
-		// Force GC before measurement to reduce temporary allocation noise
-		runtime.GC()
-		runtime.GC() // Run twice to ensure cleanup
 		heapInuseSizeAfterData := fr.HeapInuseSize()
 		Expect(heapInuseSizeAfterData).To(BeNumerically(">", 0), "Heap inuse size after data should be positive")
 
@@ -454,7 +450,7 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 30% of capacity
 		Expect(actualMemoryUsed).To(BeNumerically(">", 0), "Actual memory consumption should be positive")
 		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*130/100),
-			"Actual memory consumption should not exceed capacitySize by more than 30%%")
+			"Actual memory consumption should not exceed capacitySize by more than 30%")
 
 		// Step 8: Verify capacity size is still correct
 		currentCapacitySize := fr.GetCapacitySize()
