@@ -333,7 +333,7 @@ func BenchmarkFilter(b *testing.B) {
 		b.Run("filter-"+p.scenario, func(b *testing.B) {
 			res, err := s.Query(ctx, sqo)
 			require.NoError(b, err)
-			logicalstream.BuildElementsFromStreamResult(ctx, res)
+			logicalstream.BuildElementsFromStreamResult(ctx, res, sqo.TagProjection)
 		})
 	}
 }
@@ -349,7 +349,7 @@ func BenchmarkSort(b *testing.B) {
 		b.Run("sort-"+p.scenario, func(b *testing.B) {
 			res, err := s.Query(ctx, sqo)
 			require.NoError(b, err)
-			logicalstream.BuildElementsFromStreamResult(ctx, res)
+			logicalstream.BuildElementsFromStreamResult(ctx, res, sqo.TagProjection)
 		})
 	}
 }
