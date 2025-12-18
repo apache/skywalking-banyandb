@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -81,7 +82,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	default:
 	}
 	if i.result != nil {
-		return BuildElementsFromStreamResult(ctx, i.result)
+		return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
 	}
 	var orderBy *index.OrderBy
 	if i.order != nil {
@@ -106,7 +107,7 @@ func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, erro
 	if i.result == nil {
 		return nil, nil
 	}
-	return BuildElementsFromStreamResult(ctx, i.result)
+	return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
 }
 
 func (i *localIndexScan) String() string {
@@ -127,7 +128,7 @@ func (i *localIndexScan) Schema() logical.Schema {
 }
 
 // BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult) (elements []*streamv1.Element, err error) {
+func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult, projectionTags []model.TagProjection) (elements []*streamv1.Element, err error) {
 	var r *model.StreamResult
 	for {
 		r = result.Pull(ctx)
@@ -141,21 +142,38 @@ func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQuery
 			break
 		}
 	}
+	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
+	for idx := range r.TagFamilies {
+		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
+	}
 	for i := range r.Timestamps {
 		e := &streamv1.Element{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
 			ElementId: hex.EncodeToString(convert.Uint64ToBytes(r.ElementIDs[i])),
 		}
 
-		for _, tf := range r.TagFamilies {
+		for _, proj := range projectionTags {
 			tagFamily := &modelv1.TagFamily{
-				Name: tf.Name,
+				Name: proj.Family,
 			}
 			e.TagFamilies = append(e.TagFamilies, tagFamily)
-			for _, t := range tf.Tags {
+			resultTagFamily := tagFamilyMap[proj.Family]
+			for _, tagName := range proj.Names {
+				var tagValue *modelv1.TagValue
+				if resultTagFamily != nil {
+					for _, t := range resultTagFamily.Tags {
+						if t.Name == tagName {
+							tagValue = t.Values[i]
+							break
+						}
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   t.Name,
-					Value: t.Values[i],
+					Key:   tagName,
+					Value: tagValue,
 				})
 			}
 		}

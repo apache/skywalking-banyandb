@@ -71,6 +71,13 @@ func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss 
 		}
 	}
 
+	if len(tagProjection) > 0 {
+		streamSchema := s.(*schema)
+		if err := streamSchema.common.ValidateProjectionTags(tagProjection...); err != nil {
+			return nil, err
+		}
+	}
+
 	// parse limit
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {

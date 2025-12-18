@@ -20,6 +20,7 @@ package partition
 import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -47,14 +48,42 @@ func ParseIndexRuleLocators(entity *databasev1.Entity, families []*databasev1.Ta
 	for i := range entity.TagNames {
 		locators.EntitySet[entity.TagNames[i]] = i + 1
 	}
+
+	availableTags := make(map[string]struct{})
+	for i := range families {
+		for j := range families[i].Tags {
+			availableTags[families[i].Tags[j].Name] = struct{}{}
+		}
+	}
+
+	validIndexRules := make([]*databasev1.IndexRule, 0, len(indexRules))
+	for i := range indexRules {
+		if indexRules[i] == nil {
+			continue
+		}
+		hasInvalidTag := false
+		for j := range indexRules[i].Tags {
+			tagName := indexRules[i].Tags[j]
+			if _, exists := availableTags[tagName]; !exists {
+				logger.Warningf("index rule %q references removed tag %q which no longer exists in schema, removing this index rule",
+					indexRules[i].GetMetadata().GetName(), tagName)
+				hasInvalidTag = true
+				break
+			}
+		}
+		if !hasInvalidTag {
+			validIndexRules = append(validIndexRules, indexRules[i])
+		}
+	}
+
 	findIndexRuleByTagName := func(tagName string) *databasev1.IndexRule {
-		for i := range indexRules {
-			if indexRules[i] == nil {
+		for i := range validIndexRules {
+			if validIndexRules[i] == nil {
 				continue
 			}
-			for j := range indexRules[i].Tags {
-				if indexRules[i].Tags[j] == tagName {
-					return indexRules[i]
+			for j := range validIndexRules[i].Tags {
+				if validIndexRules[i].Tags[j] == tagName {
+					return validIndexRules[i]
 				}
 			}
 		}
