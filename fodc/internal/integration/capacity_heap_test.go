@@ -395,9 +395,7 @@ func getConstantRawMetrics() []metrics.RawMetric {
 }
 
 var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
-	var (
-		fr *flightrecorder.FlightRecorder
-	)
+	var fr *flightrecorder.FlightRecorder
 
 	It("should track HeapInuseSize relative to capacitySize", func() {
 		// Step 1: Create FlightRecorder with a specific capacity size

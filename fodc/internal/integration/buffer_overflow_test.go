@@ -105,7 +105,6 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Give watchdog a moment to start
 		time.Sleep(500 * time.Millisecond)
-
 	})
 
 	AfterEach(func() {
