@@ -53,9 +53,9 @@ Different nodes in BanyanDB are responsible for different parts of the database,
 
 ### 3.1 Meta Nodes
 
-Meta Nodes store all high-level metadata that describes the cluster. This data is kept in an etcd-backed database on disk, including information about the shard allocation of each Data Node. This information is used by the Liaison Nodes to route data to the appropriate Data Nodes, based on the sharding key of the data.
+Meta Nodes store all high-level metadata that describes the cluster. This data is kept in an etcd-backed database on disk, including Group configurations (such as `shard_num` and `replicas`) and Data Node registration information.
 
-By storing shard allocation information, Meta Nodes help ensure that data is routed efficiently and accurately across the cluster. This information is constantly updated as the cluster changes, allowing for dynamic allocation of resources and efficient use of available capacity.
+Liaison Nodes use this metadata to dynamically determine shard-to-node assignments using a deterministic round-robin algorithm. Rather than storing explicit shard allocation mappings, BanyanDB calculates assignments on-the-fly based on the current cluster topology. This design simplifies cluster scaling, as adding or removing nodes automatically triggers recalculation of assignments without manual intervention.
 
 ### 3.2 Data Nodes
 
@@ -113,9 +113,9 @@ Similarly, a stream named `system_log` belonging to `stream-log` with an entity 
 
 > Note: If there are ":" or "|" in the entity, they will be prefixed with a backslash "\\".
 
-Liaison Nodes play a crucial role in this process by retrieving the `Group` list from Meta Nodes. This information is essential for efficient data routing, as it allows Liaison Nodes to direct data to the appropriate Data Nodes based on the sharding key.
+Liaison Nodes play a crucial role in this process by retrieving Group configurations and Data Node information from Meta Nodes. Using this metadata, Liaison Nodes dynamically calculate shard-to-node assignments using a deterministic round-robin algorithm.
 
-This sharding strategy ensures that the write load is evenly distributed across the cluster, thereby enhancing write performance and overall system efficiency. BanyanDB sorts the shards by the `Group` name and the shard ID, then assigns the shards to the Data Nodes in a round-robin fashion. This method guarantees an even distribution of data across the cluster, preventing any single node from becoming a bottleneck.
+This sharding strategy ensures that the write load is evenly distributed across the cluster, thereby enhancing write performance and overall system efficiency. BanyanDB sorts the shards by the `Group` name and the shard ID, then calculates node assignments using the formula: `node = (shard_index + replica_id) % node_count`. This deterministic calculation ensures consistent routing: the same shard always maps to the same nodes as long as the node list remains unchanged. When nodes are added or removed, assignments are automatically recalculated, eliminating the need to maintain explicit shard allocation mappings.
 
 For example, consider a group with 5 shards and a cluster with 3 Data Nodes. The shards are distributed as follows:
 
