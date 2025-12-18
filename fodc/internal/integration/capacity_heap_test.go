@@ -452,17 +452,16 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 
 		// Step 7: Verify that memory usage is within reasonable bounds relative to capacity
 		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 30% of capacity
-		if actualMemoryUsed > 0 {
-			Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*130/100),
-				"Actual memory consumption should not exceed capacitySize by more than 30%%")
-		}
+		Expect(actualMemoryUsed).To(BeNumerically(">", 0), "Actual memory consumption should be positive")
+		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*130/100),
+			"Actual memory consumption should not exceed capacitySize by more than 30%%")
 
 		// Step 8: Verify capacity size is still correct
 		currentCapacitySize := fr.GetCapacitySize()
 		Expect(currentCapacitySize).To(Equal(capacitySize), "Capacity size should remain unchanged")
 
 		// Step 9: Verify that if data exists, memory usage is reasonable
-		if len(metricsMap) > 0 && actualMemoryUsed > 0 {
+		if len(metricsMap) > 0 {
 			// Memory usage should be at least 10% of capacity if data exists
 			// This ensures we're actually using memory for data storage
 			Expect(actualMemoryUsed).To(BeNumerically(">=", capacitySize*10/100),
