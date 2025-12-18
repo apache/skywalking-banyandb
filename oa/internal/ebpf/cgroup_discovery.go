@@ -28,7 +28,7 @@ import (
 )
 
 // detectBanyanDBCgroupPath best-effort discovers the cgroup v2 path of a BanyanDB process.
-// It scans processes whose comm contains "banyandb" and returns the first cgroup v2 path.
+// It scans processes whose comm contains "banyand" (prefix) and returns the first cgroup v2 path.
 func detectBanyanDBCgroupPath() (string, error) {
 	if !isCgroupV2Enabled() {
 		return "", fmt.Errorf("cgroup v2 is not available")
@@ -53,7 +53,7 @@ func detectBanyanDBCgroupPath() (string, error) {
 			continue
 		}
 		comm := strings.TrimSpace(string(commBytes))
-		if !strings.Contains(comm, "banyandb") {
+		if !strings.HasPrefix(comm, "banyand") {
 			continue
 		}
 

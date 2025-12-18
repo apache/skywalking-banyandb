@@ -73,22 +73,35 @@ struct {
     __type(value, __u32);
 } cgroup_filter SEC(".maps");
 
-static __always_inline bool is_cgroup_allowed() {
-    __u32 key = 0;
-    __u32 *cgfd = bpf_map_lookup_elem(&cgroup_filter, &key);
+// Fallback comm match when cgroup filter is unavailable or not applicable.
+static __always_inline bool comm_is_banyandb() {
+    const char target[] = "banyand";
+    char comm[16];
+    if (bpf_get_current_comm(&comm, sizeof(comm)) != 0) {
+        return false;
+    }
+    #pragma unroll
+    for (int i = 0; i < (int)sizeof(target) - 1; i++) {
+        if (comm[i] != target[i]) {
+            return false;
+        }
+    }
+    return true;
+}
 
-    // If cgroup filter map is empty or unset, allow everything.
-    if (!cgfd || *cgfd == 0) {
+static __always_inline bool is_task_allowed() {
+    int ret = bpf_current_task_under_cgroup(&cgroup_filter, 0);
+    if (ret == 1) {
         return true;
     }
 
-    int ret = bpf_current_task_under_cgroup(&cgroup_filter, 0);
-    return ret == 1;
+    // Fallback: allow BanyanDB processes by comm if cgroup filter isn't set/misses
+    return comm_is_banyandb();
 }
 
 SEC("tracepoint/syscalls/sys_enter_fadvise64")
 int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -139,7 +152,7 @@ int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
 
 SEC("tracepoint/syscalls/sys_exit_fadvise64")
 int trace_exit_fadvise64(struct trace_event_raw_sys_exit *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -180,7 +193,7 @@ struct {
 
 SEC("tracepoint/vmscan/mm_vmscan_lru_shrink_inactive")
 int trace_lru_shrink_inactive(struct trace_event_raw_mm_vmscan_lru_shrink_inactive *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 key = 0;
@@ -211,7 +224,7 @@ struct trace_event_raw_mm_vmscan_direct_reclaim_begin;
 
 SEC("tracepoint/vmscan/mm_vmscan_direct_reclaim_begin")
 int trace_direct_reclaim_begin(struct trace_event_raw_mm_vmscan_direct_reclaim_begin *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -258,7 +271,7 @@ struct {
 // This counts TOTAL read attempts (both hits and misses will trigger this)
 SEC("tracepoint/filemap/filemap_get_read_batch")
 int trace_filemap_get_read_batch(void *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -290,7 +303,7 @@ int trace_filemap_get_read_batch(void *ctx) {
 // This is a definitive cache miss event
 SEC("tracepoint/filemap/mm_filemap_add_to_page_cache")
 int trace_mm_filemap_add_to_page_cache(void *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -375,7 +388,7 @@ static __always_inline long get_return_value(struct pt_regs *ctx) {
 // Fentry for ksys_fadvise64_64 - modern kernels with BTF support
 SEC("fentry/ksys_fadvise64_64")
 int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -425,7 +438,7 @@ int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int ad
 // Fexit for ksys_fadvise64_64 - capture return value
 SEC("fexit/ksys_fadvise64_64")
 int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice, long ret) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -446,7 +459,7 @@ int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int adv
 // Fentry for filemap operations
 SEC("fentry/filemap_get_read_batch")
 int BPF_PROG(fentry_filemap_get_read_batch) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -474,7 +487,7 @@ int BPF_PROG(fentry_filemap_get_read_batch) {
 // Fentry for page cache add
 SEC("fentry/add_to_page_cache_lru")
 int BPF_PROG(fentry_add_to_page_cache_lru) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -505,7 +518,7 @@ int BPF_PROG(fentry_add_to_page_cache_lru) {
 // Kprobe fallback for fadvise64 entry
 SEC("kprobe/ksys_fadvise64_64")
 int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -556,7 +569,7 @@ int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
 // Kretprobe fallback for fadvise64 exit
 SEC("kretprobe/ksys_fadvise64_64")
 int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
@@ -578,7 +591,7 @@ int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
 // Kprobe fallback for filemap_get_read_batch
 SEC("kprobe/filemap_get_read_batch")
 int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
@@ -607,7 +620,7 @@ int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
 // Kprobe fallback for add_to_page_cache_lru
 SEC("kprobe/add_to_page_cache_lru")
 int kprobe_add_to_page_cache_lru(struct pt_regs *ctx) {
-    if (!is_cgroup_allowed()) {
+    if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;

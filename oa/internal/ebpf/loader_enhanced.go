@@ -116,14 +116,32 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	return nil
 }
 
+// EnsureCgroupFilter verifies the filter is programmed; if missing, re-applies.
+func (l *EnhancedLoader) EnsureCgroupFilter() error {
+	return l.refreshCgroupFilter(false)
+}
+
+// ForceRefreshCgroupFilter re-applies the filter even if a value exists.
+func (l *EnhancedLoader) ForceRefreshCgroupFilter() error {
+	return l.refreshCgroupFilter(true)
+}
+
 // applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
 func (l *EnhancedLoader) applyCgroupFilter() error {
-	if l.cgroupPath == "" {
-		return nil
-	}
+	return l.refreshCgroupFilter(true)
+}
 
+func (l *EnhancedLoader) refreshCgroupFilter(force bool) error {
 	if l.objects == nil || l.objects.CgroupFilter == nil {
 		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+	}
+
+	key := uint32(0)
+	if !force {
+		var existing uint32
+		if err := l.objects.CgroupFilter.Lookup(key, &existing); err == nil && existing != 0 {
+			return nil
+		}
 	}
 
 	path := l.cgroupPath
@@ -147,7 +165,6 @@ func (l *EnhancedLoader) applyCgroupFilter() error {
 		return err
 	}
 
-	key := uint32(0)
 	val := uint32(fd.Fd())
 	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
 		_ = fd.Close()

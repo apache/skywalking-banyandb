@@ -153,6 +153,9 @@ func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
 	ms := metrics.NewMetricSet()
 
 	// Collect metrics based on strategy
+	if err := m.loader.EnsureCgroupFilter(); err != nil {
+		m.logger.Warn("Failed to ensure cgroup filter", zap.Error(err))
+	}
 	switch m.cleanupStrategy {
 	case ClearAfterRead:
 		// Collect and immediately clear

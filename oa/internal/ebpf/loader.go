@@ -94,10 +94,32 @@ func (l *Loader) LoadPrograms() error {
 	return nil
 }
 
+// EnsureCgroupFilter verifies the filter is programmed; if missing, re-applies.
+func (l *Loader) EnsureCgroupFilter() error {
+	return l.refreshCgroupFilter(false)
+}
+
+// ForceRefreshCgroupFilter re-applies the filter even if a value exists.
+func (l *Loader) ForceRefreshCgroupFilter() error {
+	return l.refreshCgroupFilter(true)
+}
+
 // applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
 func (l *Loader) applyCgroupFilter() error {
+	return l.refreshCgroupFilter(true)
+}
+
+func (l *Loader) refreshCgroupFilter(force bool) error {
 	if l.objects == nil || l.objects.CgroupFilter == nil {
 		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+	}
+
+	key := uint32(0)
+	if !force {
+		var existing uint32
+		if err := l.objects.CgroupFilter.Lookup(key, &existing); err == nil && existing != 0 {
+			return nil
+		}
 	}
 
 	path := l.cgroupPath
@@ -121,13 +143,16 @@ func (l *Loader) applyCgroupFilter() error {
 		return err
 	}
 
-	key := uint32(0)
 	val := uint32(fd.Fd())
 	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
 		_ = fd.Close()
 		return fmt.Errorf("failed to populate cgroup filter map: %w", err)
 	}
 
+	// Close previous fd if any.
+	if l.cgroupFD != nil {
+		_ = l.cgroupFD.Close()
+	}
 	l.cgroupFD = fd
 	return nil
 }
