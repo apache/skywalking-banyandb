@@ -82,6 +82,10 @@ jobs:
     name: Test Bydbctl
     needs: [check]
     uses: ./.github/workflows/test-bydbctl.yml
+  test-fodc:
+    name: Test FODC
+    needs: [check]
+    uses: ./.github/workflows/test-fodc.yml
   test-pkg:
     name: Test Pkg
     needs: [check]
@@ -102,6 +106,6 @@ jobs:
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
-    needs: [test-banyand, test-bydbctl, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
+    needs: [test-banyand, test-bydbctl, test-fodc, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
     steps:
       - run: echo 'success'
