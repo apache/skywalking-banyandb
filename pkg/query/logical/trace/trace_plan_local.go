@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -111,15 +112,20 @@ func (i *localScan) Execute(ctx context.Context) (iter.Iterator[model.TraceResul
 	}
 
 	// Return a custom iterator that continuously pulls from i.result
-	return &traceResultIterator{result: i.result, groupIndex: i.groupIndex}, nil
+	var projectionTagNames []string
+	if i.projectionTags != nil {
+		projectionTagNames = i.projectionTags.Names
+	}
+	return &traceResultIterator{result: i.result, groupIndex: i.groupIndex, projectionTags: projectionTagNames}, nil
 }
 
 // traceResultIterator implements iter.Iterator[model.TraceResult] by continuously
 // calling Pull() on the TraceQueryResult until it returns nil or encounters an error.
 type traceResultIterator struct {
-	result     model.TraceQueryResult
-	err        error
-	groupIndex int
+	result         model.TraceQueryResult
+	err            error
+	projectionTags []string
+	groupIndex     int
 }
 
 func (tri *traceResultIterator) Next() (model.TraceResult, bool) {
@@ -141,6 +147,11 @@ func (tri *traceResultIterator) Next() (model.TraceResult, bool) {
 	// Set the group index
 	traceResult.GroupIndex = tri.groupIndex
 
+	// Ensure all projection tags are present with null values for missing tags
+	if len(tri.projectionTags) > 0 {
+		traceResult.Tags = tri.fillMissingTags(traceResult.Tags)
+	}
+
 	return *traceResult, true
 }
 
@@ -159,4 +170,38 @@ func (i *localScan) Schema() logical.Schema {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagRefs...)
+}
+
+func (tri *traceResultIterator) fillMissingTags(resultTags []model.Tag) []model.Tag {
+	if len(tri.projectionTags) == 0 {
+		return resultTags
+	}
+
+	existingTags := make(map[string]int)
+	for idx, tag := range resultTags {
+		existingTags[tag.Name] = idx
+	}
+
+	numSpans := 0
+	if len(resultTags) > 0 {
+		numSpans = len(resultTags[0].Values)
+	}
+
+	filledTags := make([]model.Tag, 0, len(tri.projectionTags))
+	for _, projTagName := range tri.projectionTags {
+		if idx, exists := existingTags[projTagName]; exists {
+			filledTags = append(filledTags, resultTags[idx])
+		} else {
+			nullValues := make([]*modelv1.TagValue, numSpans)
+			for i := range nullValues {
+				nullValues[i] = pbv1.NullTagValue
+			}
+			filledTags = append(filledTags, model.Tag{
+				Name:   projTagName,
+				Values: nullValues,
+			})
+		}
+	}
+
+	return filledTags
 }

@@ -97,6 +97,9 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 	if prev == nil {
 		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
 	}
+	if err := validate.TraceUpdate(prev, trace); err != nil {
+		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
+	}
 	return e.update(ctx, Metadata{
 		TypeMeta: TypeMeta{
 			Kind:        KindTrace,

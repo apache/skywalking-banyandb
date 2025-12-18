@@ -23,7 +23,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install dependencies
-RUN npm ci --only=production=false
+RUN npm ci
 
 # Copy source files
 COPY tsconfig.json ./
@@ -45,7 +45,7 @@ RUN addgroup -g 1001 appuser && \
 COPY package.json package-lock.json ./
 
 # Install production dependencies only
-RUN npm ci --only=production && \
+RUN npm ci --omit=dev && \
     npm cache clean --force
 
 # Copy built files from builder stage
