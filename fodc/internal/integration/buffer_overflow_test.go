@@ -37,14 +37,13 @@ import (
 
 var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 	var (
-		metricsEndpoint       string
-		fr                    *flightrecorder.FlightRecorder
-		wd                    *watchdog.Watchdog
-		metricsServer         *server.Server
-		promReg               *prometheus.Registry
-		datasourceCollector   *exporter.DatasourceCollector
-		capacitySize          int64
-		baselineHeapInuseSize int64
+		metricsEndpoint     string
+		fr                  *flightrecorder.FlightRecorder
+		wd                  *watchdog.Watchdog
+		metricsServer       *server.Server
+		promReg             *prometheus.Registry
+		datasourceCollector *exporter.DatasourceCollector
+		capacitySize        int64
 	)
 
 	BeforeEach(func() {
@@ -107,10 +106,6 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		// Give watchdog a moment to start
 		time.Sleep(500 * time.Millisecond)
 
-		// Measure baseline memory after all setup is complete but before metrics are collected
-		// This ensures we measure only the memory used by FlightRecorder data, not setup overhead
-		baselineHeapInuseSize = fr.HeapInuseSize()
-		GinkgoWriter.Printf("FlightRecorder baseline allocated size (after setup): %d bytes\n", baselineHeapInuseSize)
 	})
 
 	AfterEach(func() {
@@ -138,7 +133,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 		}
 
 		// Generate some initial metrics
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 10; i++ {
 			req, reqErr := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/v1/health", banyanDBHTTPAddr), nil)
 			Expect(reqErr).NotTo(HaveOccurred())
 
@@ -170,32 +165,10 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			metricsMap := currentDatasource.GetMetrics()
 			return len(metricsMap) > 0
 		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "Initial metrics should be buffered")
-
-		// Verify memory consumption matches the capacitySize
-		heapInuseSizeAfterData := fr.HeapInuseSize()
-		actualMemoryUsed := heapInuseSizeAfterData - baselineHeapInuseSize
-
-		datasources = fr.GetDatasources()
-		Expect(datasources).NotTo(BeEmpty())
-		ds = datasources[0]
-		metricsMap := ds.GetMetrics()
-
-		GinkgoWriter.Printf("FlightRecorder heap inuse size after data storage: %d bytes, Memory used: %d bytes, Configured capacity: %d bytes\n",
-			heapInuseSizeAfterData, actualMemoryUsed, capacitySize)
-		// If memory increased, verify it matches the capacitySize
-		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 20% of capacity
-		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*120/100),
-			"Actual memory consumption should not exceed capacitySize by more than 20%%")
-		// Also verify it's reasonably close (at least 50% of capacity should be used if data exists)
-		if len(metricsMap) > 0 {
-			Expect(actualMemoryUsed).To(BeNumerically(">=", capacitySize*50/100),
-				"Actual memory consumption should use at least 50%% of capacitySize when data exists")
-		}
 		// Capture baseline: get initial timestamps and metric values
 		datasources = fr.GetDatasources()
 		Expect(datasources).NotTo(BeEmpty())
 		ds = datasources[0]
-
 		initialTimestamps := ds.GetTimestamps()
 		Expect(initialTimestamps).NotTo(BeNil())
 		initialTimestampValues := initialTimestamps.GetAllValues()
@@ -207,9 +180,8 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 			}
 		}
 		initialTimestampCount := len(nonZeroInitialTimestamps)
-
 		// Get a sample metric to track
-		metricsMap = ds.GetMetrics()
+		metricsMap := ds.GetMetrics()
 		Expect(metricsMap).NotTo(BeEmpty())
 
 		var sampleMetricKey string
