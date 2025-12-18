@@ -217,6 +217,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	innerGm.Expect(errStrs).To(gm.BeNil())
 	transformer := bydbql.NewTransformer(mockRepo)
 	transform, err := transformer.Transform(context.Background(), query)
+	if args.WantErr && err != nil {
+		return
+	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	qlQuery, ok := transform.QueryRequest.(*streamv1.QueryRequest)
 	innerGm.Expect(ok).To(gm.BeTrue())

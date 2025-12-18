@@ -65,6 +65,7 @@ type Measure interface {
 var _ Measure = (*measure)(nil)
 
 type queryOptions struct {
+	schemaTagTypes map[string]pbv1.ValueType
 	model.MeasureQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -74,9 +75,12 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if mqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
 	}
+	mqo.TagProjection = m.filterTagProjection(mqo.TagProjection)
+	mqo.FieldProjection = m.filterFieldProjection(mqo.FieldProjection)
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
+
 	var tsdb storage.TSDB[*tsTable, option]
 	db := m.tsdb.Load()
 	if db == nil {
@@ -135,9 +139,21 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}()
 	mqo.TagProjection = newTagProjection
+
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	for _, tf := range m.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[tag.GetName()] = vt
+			}
+		}
+	}
+
 	var parts []*part
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
+		schemaTagTypes:      schemaTagTypes,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}
@@ -177,6 +193,70 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	}
 
 	return &result, nil
+}
+
+func (m *measure) filterTagProjection(tagProjection []model.TagProjection) []model.TagProjection {
+	is := m.indexSchema.Load()
+	if is == nil {
+		return tagProjection
+	}
+	tagMap := is.(indexSchema).indexTagMap
+	if len(tagMap) == 0 {
+		return tagProjection
+	}
+
+	schemaTagFamilies := make(map[string]map[string]struct{})
+	for _, tf := range m.schema.GetTagFamilies() {
+		tagNames := make(map[string]struct{})
+		for _, tag := range tf.GetTags() {
+			tagNames[tag.GetName()] = struct{}{}
+		}
+		schemaTagFamilies[tf.GetName()] = tagNames
+	}
+
+	result := make([]model.TagProjection, 0, len(tagProjection))
+	for _, tp := range tagProjection {
+		schemaTags, familyExists := schemaTagFamilies[tp.Family]
+		if !familyExists {
+			continue
+		}
+
+		filteredNames := make([]string, 0, len(tp.Names))
+		for _, name := range tp.Names {
+			if _, tagExists := schemaTags[name]; tagExists {
+				filteredNames = append(filteredNames, name)
+			}
+		}
+
+		if len(filteredNames) > 0 {
+			result = append(result, model.TagProjection{
+				Family: tp.Family,
+				Names:  filteredNames,
+			})
+		}
+	}
+
+	return result
+}
+
+func (m *measure) filterFieldProjection(fieldProjection []string) []string {
+	if len(fieldProjection) == 0 {
+		return fieldProjection
+	}
+
+	schemaFields := make(map[string]struct{})
+	for _, field := range m.schema.GetFields() {
+		schemaFields[field.GetName()] = struct{}{}
+	}
+
+	result := make([]string, 0, len(fieldProjection))
+	for _, name := range fieldProjection {
+		if _, exists := schemaFields[name]; exists {
+			result = append(result, name)
+		}
+	}
+
+	return result
 }
 
 type tagNameWithType struct {
