@@ -18,6 +18,8 @@
 package integration_test
 
 import (
+	"runtime"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -407,6 +409,9 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		Expect(initialCapacitySize).To(Equal(capacitySize), "Initial capacity size should match configured value")
 
 		// Step 2: Measure baseline heap inuse size (before any data)
+		// Force GC to reduce temporary allocation noise
+		runtime.GC()
+		runtime.GC() // Run twice to ensure cleanup
 		baselineHeapInuseSize := fr.HeapInuseSize()
 		Expect(baselineHeapInuseSize).To(BeNumerically(">", 0), "Baseline heap inuse size should be positive")
 
@@ -433,6 +438,9 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		Expect(metricsMap).NotTo(BeEmpty(), "Datasource should have buffered metrics")
 
 		// Step 6: Measure heap inuse size after data collection
+		// Force GC before measurement to reduce temporary allocation noise
+		runtime.GC()
+		runtime.GC() // Run twice to ensure cleanup
 		heapInuseSizeAfterData := fr.HeapInuseSize()
 		Expect(heapInuseSizeAfterData).To(BeNumerically(">", 0), "Heap inuse size after data should be positive")
 
