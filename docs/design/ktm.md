@@ -3,7 +3,7 @@
 
 ## Overview
 
-Kernel Telemetry Module (KTM) is an optional, modular kernel observability component embedded inside the BanyanDB First Occurrence Data Collection (FODC) sidecar. The first built-in module is an eBPF-based I/O monitor ("iomonitor") that focuses on page cache behavior, fadvise() effectiveness, and memory pressure signals and their impact on BanyanDB performance. KTM is not a standalone agent or network-facing service; it runs as a sub-component of the FODC sidecar ("black box") and exposes a Go-native interface to the Flight Recorder for ingesting metrics. Collection scoping defaults to the BanyanDB container’s cgroup v2, with a `banyand` comm fallback.
+Kernel Telemetry Module (KTM) is an optional, modular kernel observability component embedded inside the BanyanDB First Occurrence Data Collection (FODC) sidecar. The first built-in module is an eBPF-based I/O monitor ("iomonitor") that focuses on page cache behavior, fadvise() effectiveness, and memory pressure signals and their impact on BanyanDB performance. KTM is not a standalone agent or network-facing service; it runs as a sub-component of the FODC sidecar ("black box") and exposes a Go-native interface to the Flight Recorder for ingesting metrics. Collection scoping defaults to the BanyanDB container’s cgroup v2, with a configurable comm fallback (default `banyand`).
 
 
 ## Architecture
@@ -50,7 +50,7 @@ Notes:
 - Focus: page cache add/delete, fadvise() calls, I/O counters, and memory reclaim signals.
 - Attachment points: stable tracepoints where possible; fentry/fexit preferred on newer kernels.
 - Data path: kernel events -> BPF maps (monotonic counters) -> userspace collector -> exporters.
-- Scoping: Fixed to the single, co-located BanyanDB process within the same container/pod, using cgroup membership first and a `banyand` comm-prefix fallback.
+- Scoping: Fixed to the single, co-located BanyanDB process within the same container/pod, using cgroup membership first and a configurable comm-prefix fallback (default `banyand`).
 
 
 ## Metrics Model and Collection Strategy
@@ -64,8 +64,9 @@ Notes:
 
 Configuration surface (current):
 - `collector.interval`: Controls the periodic push interval for metrics to Flight Recorder. Defaults to 10s.
-- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2; if unset, KTM autodetects by scanning `/proc/*/comm` for `banyand`.
-- Target discovery heuristic: match `/proc/<pid>/comm` prefix `banyand` to locate BanyanDB and derive its cgroup; this also serves as the runtime fallback if the cgroup filter is unset.
+- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2; if unset, KTM autodetects by scanning `/proc/*/comm` for the configured prefix (default `banyand`).
+- `collector.ebpf.comm_prefix` (optional): comm name prefix used for process discovery and fallback filtering; defaults to `banyand`.
+- Target discovery heuristic: match `/proc/<pid>/comm` against the configured prefix (default `banyand`) to locate BanyanDB and derive its cgroup; this also serves as the runtime fallback if the cgroup filter is unset.
 - Cleanup strategy is monotonic counters only; downstream derives rates. KTM does not clear BPF maps during collection.
 - Configuration is applied via the FODC sidecar; KTM does not define its own standalone process-level configuration surface.
 
@@ -73,37 +74,39 @@ Configuration surface (current):
 ## Scoping and Filtering
 
 - Scoping is not optional; KTM is designed exclusively to monitor the single BanyanDB process it is co-located with in a sidecar deployment.
-- The target container is identified at startup; eBPF programs filter events by cgroup membership first. If the cgroup filter is absent or misses, a comm-prefix match (`banyand`) is used as a narrow fallback.
+- The target container is identified at startup; eBPF programs filter events by cgroup membership first. If the cgroup filter is absent or misses, a configurable comm-prefix match (default `banyand`) is used as a narrow fallback.
 - The design intentionally avoids multi-process or node-level (DaemonSet) monitoring to keep the implementation simple and overhead minimal.
 
 ### Target Process Discovery (Pod / VM)
 
-KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** based on a fixed comm-prefix match (`banyand`).
+KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** based on a configurable comm-prefix match (default `banyand`).
 
 #### Kubernetes Pod (sidecar)
 
 Preconditions:
 - The pod must be configured with `shareProcessNamespace: true` so the monitor sidecar can see the target container’s `/proc` entries.
 - cgroup v2 mounted (typically at `/sys/fs/cgroup`) to enable the primary cgroup filter.
-- If the target process cannot be discovered (for example, `shareProcessNamespace` is off), KTM logs the error and disables the module.
+- If the target process cannot be discovered (for example, `shareProcessNamespace` is off), KTM logs a warning and keeps periodically checking; once the target process appears, KTM enables the module automatically.
 
 Discovery flow (high level):
 - Scan `/proc` for candidate processes.
-- For each PID, read `/proc/<pid>/comm` and match it against the fixed prefix `banyand` (or an explicitly provided cgroup path).
+- For each PID, read `/proc/<pid>/comm` and match it against the configured comm prefix (default `banyand`) (or an explicitly provided cgroup path).
 - Once matched, derive the target cgroup from `/proc/<pid>/cgroup` (cgroup v2) and program the eBPF cgroup filter. The comm match remains as runtime fallback if the cgroup check does not fire.
+- If no matching process is found at startup, KTM continues periodic probing and activates once it is found.
 
 #### VM / bare metal
 
 Discovery flow (high level):
 - Scan `/proc` for candidate processes.
-- Match `/proc/<pid>/comm` against the fixed prefix `banyand`.
+- Match `/proc/<pid>/comm` against the configured prefix (default `banyand`).
 - Use the discovered PID to derive cgroup v2 path and program the filter; keep the comm match as runtime fallback if cgroup filtering is unavailable.
+- If no matching process is found at startup, KTM continues periodic probing and activates once it is found.
 
 ### Scoping Semantics
 
 - The BPF maps use a single-slot structure (e.g., a BPF array map with a single entry) to store global monotonic counters for the target process.
 - This approach eliminates the need for per-pid hash maps, key eviction logic, and complexities related to tracking multiple processes.
-- All kernel events are filtered by the target container’s cgroup ID when available; if the cgroup filter misses (for example, map not populated), a comm-prefix match (`banyand`) is used before any counters are updated.
+- All kernel events are filtered by the target container’s cgroup ID when available; if the cgroup filter misses (for example, map not populated), a comm-prefix match (configurable; default `banyand`) is used before any counters are updated.
 
 Example (YAML):
 ```yaml
@@ -114,6 +117,8 @@ collector:
   ebpf:
     # Optional: absolute or /sys/fs/cgroup-relative path to the BanyanDB cgroup v2.
     # cgroup_path: /sys/fs/cgroup/<banyandb-cgroup>
+    # Optional: comm name prefix used for process discovery and fallback filtering.
+    # comm_prefix: banyand
 ```
 
 
@@ -142,6 +147,9 @@ Prefix: metrics are currently emitted under the `ktm_` namespace to reflect thei
   - `ktm_cache_read_attempts_total`
   - `ktm_cache_misses_total`
   - `ktm_page_cache_adds_total`
+- I/O latency (syscall-level)
+  - `ktm_sys_read_latency_seconds` (histogram family: exposes `_bucket`, `_count`, `_sum`)
+  - `ktm_sys_pread_latency_seconds` (histogram family: exposes `_bucket`, `_count`, `_sum`)
 - fadvise()
   - `ktm_fadvise_calls_total`
   - `ktm_fadvise_advice_total{advice="..."}`
@@ -151,13 +159,7 @@ Prefix: metrics are currently emitted under the `ktm_` namespace to reflect thei
   - `ktm_memory_lru_pages_reclaimed_total`
   - `ktm_memory_direct_reclaim_processes`
 
-Semantics: all counters are monotonic; use Prometheus functions for rates/derivatives; no map clearing between scrapes. KTM does not emit ratio/percentage metrics; derive them upstream.
-
-## Planned Metrics
-
-- I/O latency (syscall level): read/write/pread/pwrite/fsync/fdatasync latency distributions.
-- I/O latency (block level): request issue-to-complete latency for device-level visibility.
-
+Semantics: all counters are monotonic; latency metrics are exported as Prometheus histograms (`_bucket`, `_count`, `_sum`); use Prometheus functions for rates/derivatives; no map clearing between scrapes. KTM does not emit ratio/percentage metrics; derive them upstream.
 
 ## Safety & Overhead Boundary
 
@@ -169,10 +171,7 @@ Loading and managing eBPF programs requires elevated privileges. The FODC sideca
 - `CAP_BPF`: Allows loading, attaching, and managing eBPF programs and maps. This is the preferred, more restrictive capability.
 - `CAP_SYS_ADMIN`: A broader capability that also grants permission to perform eBPF operations. It may be required on older kernels where `CAP_BPF` is not fully supported.
 
-Operational prerequisites and observability:
-- BTF availability and bpffs mounted are expected for fentry/fexit and map pinning where used.
-- Kernel versions must support the chosen tracepoints/fentry paths; kprobe fallbacks apply otherwise.
-- On failure to load/attach, KTM logs an error and disables itself (see Failure Modes).
+Operational prerequisites and observability: see `docs/operation/fodc/ktm_metrics.md`.
 
 The sidecar should be configured with the minimal set of capabilities required for its operation to adhere to the principle of least privilege.
 
@@ -190,7 +189,7 @@ This approach ensures that a failure within the observability module does not im
 ## Restart Semantics
 
 - On sidecar restart, BPF maps are recreated and all counters reset to zero. Downstream systems (e.g., Prometheus via FODC integrations) should treat this as a new counter lifecycle and continue deriving rates/derivatives normally.
-- If BanyanDB restarts (PID changes), the cgroup filter continues to match as long as the container does not change; the comm fallback also still matches `banyand`.
+- If BanyanDB restarts (PID changes), the cgroup filter continues to match as long as the container does not change; the comm fallback still matches the configured prefix (default `banyand`).
 - If the pod/container is recreated (cgroup path changes), KTM re-runs target discovery, re-programs the cgroup filter, and starts counters from zero; metrics from the old container are discarded without reconciliation.
 - KTM performs a lightweight health check during collection to ensure the cgroup filter is still populated; if it is missing (for example, container crash/restart), KTM re-detects and re-programs the filter automatically.
 

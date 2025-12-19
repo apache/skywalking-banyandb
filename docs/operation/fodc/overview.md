@@ -118,17 +118,16 @@ Each FODC Agent collects metrics from:
     - Through an integrated **Kernel Telemetry Module (KTM)** powered by eBPF
     - Examples: OS page cache statistics, system I/O latency, CPU scheduling behavior
 
-Agents pull metrics locally (for example, from database or local Prometheus endpoints)
-and stream aggregated data to the FODC Proxy via gRPC.
-
 ### In-Memory Sliding Window Cache
 
 Agents maintain a **sliding window** of recent metric samples in memory:
 
-- The Agent maintains a fixed-size in-memory ring buffer targeting
-  approximately **30 MB** of storage.
-- Retention duration varies with metric ingestion rate and workload intensity.
-- This still supports:
+- A **wake-up queue** is used to buffer the last **N** collections.
+- The time window is **auto-tuned** at startup based on:
+    - Sample interval
+    - Number of metrics
+    - Available memory constraints
+- Target memory usage is kept low (around **30 MB** per Agent) while still supporting:
     - Short-term trend analysis
     - Correlation during incident triage (e.g. spikes around first occurrence)
 

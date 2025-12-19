@@ -43,12 +43,12 @@ KTM focuses on **user-visible impact first**, followed by kernel-side explanatio
 - Collected at syscall entry/exit for `read` and `pread64`
 
 **Semantic Meaning**
-This metric represents the **time BanyanDB threads spend blocked in the read syscall path**.
+This metric represents the **time BanyanDB threads spend blocked in the read/pread syscall path**.
 
 It is the **primary impact signal** in KTM.
 
 **Key Rule**
-> If syscall-level read latency does **not** increase, the situation is **not considered an incident**, regardless of background cache or reclaim activity.
+> If syscall-level read/pread latency does **not** increase, the situation is **not considered an incident**, regardless of background cache or reclaim activity.
 
 **Why Histogram**
 - Captures long-tail latency (p95 / p99) reliably
@@ -69,7 +69,7 @@ This metric represents **policy intent**, not impact.
 
 **Interpretation Notes**
 - fadvise activity alone is not an anomaly
-- Must be correlated with read latency to assess impact
+- Must be correlated with read/pread latency to assess impact
 
 ---
 
@@ -90,7 +90,7 @@ High page cache add rates are **expected** under LSM workloads.
 Page cache add activity does not necessarily imply disk I/O or cache miss.
 It may increase due to readahead, sequential scans, or compaction reads,
 and should be treated as a **correlated signal**, not a causal indicator,
-unless accompanied by read latency degradation.
+unless accompanied by read/pread latency degradation.
 
 ---
 
@@ -113,7 +113,9 @@ These metrics act as **root-cause hints**, not incident triggers.
 
 All incident detection and analysis is gated on:
 
-> **Syscall-level read latency histogram**
+> **Syscall-level read/pread latency histogram**
+
+This refers to the combined read/pread syscall latency histograms.
 
 Other metrics are used **only to explain why latency increased**, not to decide whether an incident occurred.
 
@@ -126,7 +128,7 @@ High values of:
 - reclaim
 - background scans
 
-are **normal** under LSM-style workloads and **must not** be treated as incidents unless they result in read latency degradation.
+are **normal** under LSM-style workloads and **must not** be treated as incidents unless they result in read/pread latency degradation.
 
 ---
 
@@ -139,7 +141,7 @@ This section defines canonical workload patterns and how KTM metrics should be i
 > **Global Rule — Latency-Gated Evaluation**
 >
 > All workload patterns below are evaluated **only after syscall-level
-> read latency degradation has been detected** (e.g., p95/p99 bucket shift).
+> read/pread latency degradation has been detected** (e.g., p95/p99 bucket shift).
 > Kernel signals such as page cache activity, reclaim, or fadvise **must not**
 > be interpreted as incident triggers on their own.
 
@@ -150,11 +152,11 @@ This section defines canonical workload patterns and how KTM metrics should be i
 **Typical Signals**
 - `page_cache_add ↑`
 - `lru_shrink ↑` (optional)
-- `read syscall latency stable`
+- `read/pread syscall latency stable`
 
 **Interpretation**
 Sequential scans and compaction naturally introduce cache churn.
-As long as read latency remains stable, this workload is benign.
+As long as read/pread latency remains stable, this workload is benign.
 
 **Operational Decision**
 - Do not trigger FODC
@@ -168,7 +170,7 @@ As long as read latency remains stable, this workload is benign.
 - `page_cache_add ↑`
 - `lru_shrink ↑`
 - occasional `direct_reclaim`
-- `read syscall latency stable`
+- `read/pread syscall latency stable`
 
 **Interpretation**
 System memory pressure exists, but foreground reads are not impacted.
@@ -185,7 +187,7 @@ This indicates a tight but stable operating point.
 **Typical Signals**
 - `fadvise_calls ↑` or early reclaim activity
 - `page_cache_add ↑` (repeated refills)
-- `read syscall latency ↑` (long-tail buckets appear)
+- `read/pread syscall latency ↑` (long-tail buckets appear)
 
 **Interpretation**
 Hot pages are evicted too aggressively, causing read amplification.
@@ -202,38 +204,34 @@ Eviction-driven degradation is typically characterized by:
 - Read latency degradation **without sustained compaction throughput
   or disk I/O saturation**
 
+- **Query pattern signal** (optional): continuously scanning an extensive time range.
+
 This pattern indicates policy-induced cache churn rather than workload contention.
 These discriminator signals are typically sourced from DB-level or system-level
 metrics outside KTM.
 
 ---
 
-### Workload 4 — Compaction vs Foreground Read Contention
+### Workload 4 — I/O Contention or Cold Data Access
 
 **Typical Signals**
-- `page_cache_add ↑` (compaction scans)
-- `read syscall latency ↑`
+- `page_cache_add ↑` (due to compaction OR new data reads)
+- `read/pread syscall latency ↑`
 - reclaim may or may not be present
 
 **Interpretation**
-Latency degradation caused by workload-induced I/O contention.
-This is not necessarily a policy bug, but a scheduling and resource contention issue.
+Latency degradation is caused by:
+1. **Resource Contention**: Compaction threads competing with foreground reads for disk I/O.
+2. **Cold Data Access**: The active working set exceeds resident memory, forcing frequent OS page cache misses (synchronous disk reads).
 
 **Operational Decision**
 - Trigger FODC
-- Suggest reducing compaction concurrency or isolating foreground reads
+- Suggest reducing compaction concurrency
+- If compaction is idle but latency remains high, consider scaling up memory (Capacity Planning).
 
 **Discriminator**
-Compaction-driven contention is typically characterized by:
-- Sustained page cache add activity
-- Read latency degradation
-- Concurrent high compaction throughput, background I/O pressure,
-  or elevated compaction thread utilization
-
-This pattern reflects workload-induced resource contention rather than
-explicit cache eviction policy.
-These discriminator signals are typically sourced from DB-level or system-level
-metrics outside KTM.
+This pattern is characterized by elevated read/pread syscall latency **without** the explicit eviction signals of W3 (fadvise) or the system-wide pressure of W5 (reclaim).
+It indicates that the system is physically bound by I/O limits due to contention or capacity cache misses.
 
 ---
 
@@ -242,7 +240,7 @@ metrics outside KTM.
 **Typical Signals**
 - `direct_reclaim ↑`
 - `lru_shrink ↑`
-- `read syscall latency ↑`
+- `read/pread syscall latency ↑`
 - `fadvise` may be absent
 
 **Interpretation**
@@ -252,32 +250,6 @@ Foreground reads stall due to synchronous reclaim.
 **Operational Decision**
 - Trigger FODC
 - Recommend adjusting memory limits or reducing background memory usage
-
----
-
-### Workload 6 — DB Block Cache Miss → OS Fallback
-
-**Typical Signals**
-- DB-level block cache miss (external signal)
-- `page_cache_add ↑`
-- `read syscall latency ↑`
-- reclaim may be present
-
-**Interpretation**
-DB block cache degradation forces fallback to OS page cache and disk.
-Kernel-level read latency confirms user-visible impact.
-
-**Operational Decision**
-- Trigger FODC
-- Recommend tuning DB block cache size or access patterns
-
-**Note**
-This workload cannot be identified by KTM in isolation.
-Confirmation requires correlating kernel-level impact signals
-with database-level block cache metrics via the FODC Proxy.
-KTM provides impact confirmation, while cross-layer aggregation
-determines final classification.
-
 
 ---
 
@@ -300,7 +272,7 @@ Block-layer metrics may be added later as an optional enhancement.
 ## 6. Summary
 
 KTM identifies read-path incidents by:
-1. Gating on **syscall-level read latency histograms**
+1. Gating on **syscall-level read/pread latency histograms**
 2. Explaining impact using:
     - eviction policy actions (fadvise)
     - page cache behavior
@@ -314,22 +286,22 @@ This separation ensures:
 ## 7. Decision Flow Overview
 ```mermaid
 graph TD
-    Start([Start: Metric Analysis]) --> CheckLat{Read Syscall\nLatency Increased?}
+    Start([Start: Metric Analysis]) --> CheckLat{Read/Pread Syscall\nLatency Increased?}
 
     %% Primary Gating Rule
     CheckLat -- No --> Benign[Benign State\nNo User Impact]
     CheckLat -- Yes --> Incident[Incident Detected\nTrigger FODC]
 
     %% Benign Analysis
-    Benign --> CheckChurn{High Page\nCache Add?}
-    CheckChurn -- Yes --> W1[W1: Background Scan/Compaction]
-    CheckChurn -- No --> W2[W2: Stable State]
+    Benign --> CheckPressure{Pressure Signals\nPresent?}
+    CheckPressure -- Yes --> W2[W2: Stable State]
+    CheckPressure -- No --> W1[W1: Background Scan/Compaction]
 
     %% Incident Analysis (Root Cause)
     Incident --> CheckFadvise{High fadvise\ncalls?}
     
     %% Branch: Policy
-    CheckFadvise -- Yes --> W3[W3: Policy-Driven Eviction\nCause: Aggressive DONTNEED]
+    CheckFadvise -- Yes --> W3[W3: Policy-Driven Eviction\nAssociated with aggressive DONTNEED (policy signal)]
     
     %% Branch: Kernel/OS
     CheckFadvise -- No --> CheckReclaim{Direct Reclaim / \nLRU Shrink?}
@@ -338,12 +310,18 @@ graph TD
     CheckReclaim -- Yes --> W5[W5: OS Memory Pressure\nCause: Sync Reclaim]
     
     %% Branch: Contention
-    CheckReclaim -- No --> CheckAdd2{High Page\nCache Add?}
-    CheckAdd2 -- Yes --> W4[W4: I/O Contention\nCause: Compaction vs Read]
-    CheckAdd2 -- No --> W6[W6: Block Cache Miss\nCause: Fallback to OS]
+    CheckReclaim -- No --> W4[W4: I/O Contention / Cold Read\nCause: Compaction or Working Set > RAM]
 
     %% Styling
     style CheckLat fill:#f9f,stroke:#333,stroke-width:2px
     style Incident fill:#f00,stroke:#333,stroke-width:2px,color:#fff
     style Benign fill:#9f9,stroke:#333,stroke-width:2px
 ```
+
+---
+
+## 8. Operational Prerequisites and Observability
+
+- BTF availability and bpffs mounted are expected for fentry/fexit and map pinning where used.
+- Kernel versions must support the chosen tracepoints/fentry paths; kprobe fallbacks apply otherwise.
+- On failure to load/attach, KTM logs an error and disables itself (see Failure Modes in the design document).
