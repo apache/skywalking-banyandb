@@ -16,13 +16,15 @@
 # under the License.
 
 name: "sw"
-groups: ["test-trace-spec"]
-tag_projection: ["trace_id", "state", "duration", "span_id"]
+groups: ["default-spec", "default-spec2"]
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["trace_id", "state", "duration", "status_code", "span_id"]
 criteria:
   condition:
     name: "trace_id"
     op: "BINARY_OP_IN"
     value:
-      str_array:
-        value: ["spec_trace_001", "spec_trace_003"]
-
+      strArray:
+        value: ["schema_trace_1", "schema_trace_3", "spec_trace_2", "spec_trace_5"]
