@@ -18,6 +18,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
@@ -231,6 +233,22 @@ func TestDumpTracePartWithSeriesMetadata(t *testing.T) {
 	// Test parsing series metadata
 	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
 	require.NoError(t, err, "should be able to parse series metadata")
+
+	// Verify EntityValues are stored in partSeriesMap
+	require.NotNil(t, ctx.partSeriesMap, "partSeriesMap should be initialized")
+	partMap, exists := ctx.partSeriesMap[partID]
+	require.True(t, exists, "partSeriesMap should contain entry for partID")
+	require.NotNil(t, partMap, "partMap should not be nil")
+
+	// Verify EntityValues are correctly stored
+	// Calculate expected SeriesIDs from EntityValues
+	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("service.name=test-service")))
+	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("service.name=another-service")))
+
+	assert.Contains(t, partMap, expectedSeriesID1, "partMap should contain first series")
+	assert.Contains(t, partMap, expectedSeriesID2, "partMap should contain second series")
+	assert.Equal(t, "service.name=test-service", partMap[expectedSeriesID1], "EntityValues should match")
+	assert.Equal(t, "service.name=another-service", partMap[expectedSeriesID2], "EntityValues should match")
 }
 
 // createTestTracePartWithSeriesMetadata creates a test trace part with series metadata.
@@ -254,9 +272,10 @@ func createTestTracePartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSys
 	}
 
 	seriesMetadataBytes, err := docs.Marshal()
-	if err == nil {
-		fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
 	}
+	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
 
 	return partPath, cleanup
 }

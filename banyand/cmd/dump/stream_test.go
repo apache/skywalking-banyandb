@@ -18,6 +18,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -25,9 +26,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -192,6 +195,22 @@ func TestDumpStreamPartWithSeriesMetadata(t *testing.T) {
 	// Test parsing series metadata
 	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
 	require.NoError(t, err, "should be able to parse series metadata")
+
+	// Verify EntityValues are stored in partSeriesMap
+	require.NotNil(t, ctx.partSeriesMap, "partSeriesMap should be initialized")
+	partMap, exists := ctx.partSeriesMap[partID]
+	require.True(t, exists, "partSeriesMap should contain entry for partID")
+	require.NotNil(t, partMap, "partMap should not be nil")
+
+	// Verify EntityValues are correctly stored
+	// Calculate expected SeriesIDs from EntityValues
+	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("test=entity1")))
+	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("test=entity2")))
+
+	assert.Contains(t, partMap, expectedSeriesID1, "partMap should contain first series")
+	assert.Contains(t, partMap, expectedSeriesID2, "partMap should contain second series")
+	assert.Equal(t, "test=entity1", partMap[expectedSeriesID1], "EntityValues should match")
+	assert.Equal(t, "test=entity2", partMap[expectedSeriesID2], "EntityValues should match")
 }
 
 // createTestStreamPartWithSeriesMetadata creates a test stream part with series metadata.
@@ -216,9 +235,10 @@ func createTestStreamPartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSy
 	}
 
 	seriesMetadataBytes, err := docs.Marshal()
-	if err == nil {
-		fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
 	}
+	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
 
 	return partPath, cleanup
 }

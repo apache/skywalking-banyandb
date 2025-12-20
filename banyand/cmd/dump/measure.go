@@ -229,6 +229,7 @@ type measureDumpContext struct {
 	tagFilter        logical.TagFilter
 	fileSystem       fs.FileSystem
 	seriesMap        map[common.SeriesID]string
+	partSeriesMap    map[uint64]map[common.SeriesID]string // partID -> SeriesID -> EntityValues from smeta.bin
 	writer           *csv.Writer
 	opts             measureDumpOptions
 	partIDs          []uint64
@@ -241,8 +242,9 @@ type measureDumpContext struct {
 
 func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error) {
 	ctx := &measureDumpContext{
-		opts:       opts,
-		fileSystem: fs.NewLocalFileSystem(),
+		opts:          opts,
+		fileSystem:    fs.NewLocalFileSystem(),
+		partSeriesMap: make(map[uint64]map[common.SeriesID]string),
 	}
 
 	partIDs, err := discoverMeasurePartIDs(opts.shardPath)
@@ -533,7 +535,7 @@ func (ctx *measureDumpContext) shouldSkip(tags map[string][]byte) bool {
 
 func (ctx *measureDumpContext) writeRow(row measureRowData) error {
 	if ctx.opts.csvOutput {
-		if err := writeMeasureRowAsCSV(ctx.writer, row, ctx.fieldColumns, ctx.tagColumns, ctx.seriesMap); err != nil {
+		if err := writeMeasureRowAsCSV(ctx.writer, row, ctx.fieldColumns, ctx.tagColumns, ctx.seriesMap, ctx.partSeriesMap); err != nil {
 			return err
 		}
 	} else {
@@ -602,10 +604,16 @@ func openMeasurePart(id uint64, root string, fileSystem fs.FileSystem) (*measure
 	// Try to open series metadata file (optional, for backward compatibility)
 	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
 	reader, err := fileSystem.OpenFile(seriesMetadataPath)
-	if err == nil {
+	if err != nil {
+		// Only ignore file not found errors; other errors should be reported
+		var fsErr *fs.FileSystemError
+		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to open series metadata file %s: %v\n", seriesMetadataPath, err)
+		}
+		// File doesn't exist, it's okay - just continue without it
+	} else {
 		p.seriesMetadata = reader
 	}
-	// If file doesn't exist, it's okay - just continue without it
 
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
@@ -1172,9 +1180,25 @@ func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []stri
 	fmt.Printf("\n")
 }
 
-func writeMeasureRowAsCSV(writer *csv.Writer, row measureRowData, fieldColumns []string, tagColumns []string, seriesMap map[common.SeriesID]string) error {
+func writeMeasureRowAsCSV(
+	writer *csv.Writer,
+	row measureRowData,
+	fieldColumns []string,
+	tagColumns []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) error {
 	seriesText := ""
-	if seriesMap != nil {
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
+		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
 		if text, ok := seriesMap[row.seriesID]; ok {
 			seriesText = text
 		}
@@ -1321,20 +1345,9 @@ func (ctx *measureDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *m
 	seqReader := p.seriesMetadata.SequentialRead()
 	defer seqReader.Close()
 
-	var readMetadataBytes []byte
-	buf := make([]byte, 1024)
-	for {
-		n, err := seqReader.Read(buf)
-		if n == 0 {
-			if err != nil && !errors.Is(err, io.EOF) {
-				return fmt.Errorf("failed to read series metadata: %w", err)
-			}
-			break
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("failed to read series metadata: %w", err)
-		}
-		readMetadataBytes = append(readMetadataBytes, buf[:n]...)
+	readMetadataBytes, err := io.ReadAll(seqReader)
+	if err != nil {
+		return fmt.Errorf("failed to read series metadata: %w", err)
 	}
 
 	if len(readMetadataBytes) == 0 {
@@ -1351,18 +1364,13 @@ func (ctx *measureDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *m
 		return nil // No documents
 	}
 
-	// Display series metadata information
-	if !ctx.opts.csvOutput {
-		fmt.Printf("Part %016x Series Metadata:\n", partID)
-		for i, doc := range docs {
-			seriesID := common.SeriesID(convert.Hash(doc.EntityValues))
-			fmt.Printf("  Series[%d]: SeriesID=%d, EntityValues=%q\n", i, seriesID, string(doc.EntityValues))
-		}
-		fmt.Printf("\n")
-	} else {
-		// For CSV output, we can add series metadata info to stderr
-		fmt.Fprintf(os.Stderr, "Part %016x: Found %d series in smeta\n", partID, len(docs))
+	// Store EntityValues in partSeriesMap for use in CSV output
+	partMap := make(map[common.SeriesID]string)
+	for _, doc := range docs {
+		seriesID := common.SeriesID(convert.Hash(doc.EntityValues))
+		partMap[seriesID] = string(doc.EntityValues)
 	}
+	ctx.partSeriesMap[partID] = partMap
 
 	return nil
 }
