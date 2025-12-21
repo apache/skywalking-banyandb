@@ -153,6 +153,8 @@ catalog:
         catalog:
           - name: "Overview"
             path: "/operation/fodc/overview"
+          - name: "KTM Metrics"
+            path: "/operation/fodc/ktm_metrics"
       - name: "Property Background Repair"
         path: "/concept/property-repair"
       - name: "Benchmark"
