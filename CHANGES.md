@@ -27,6 +27,7 @@ Release Notes.
 - Add read write benchmark document for 0.9.0 release.
 - Add design of KTM.
 - Add FODC overview doc.
+- Remove Java client doc, and recreate client APIs docs.
 
 ## 0.9.0
 
