@@ -47,7 +47,6 @@ type AgentInfo struct {
 	NodeRole    databasev1.Role          // Node role (liaison, datanode-hot, etc.)
 	Address     string                    // Agent gRPC address
 	Labels      map[string]string        // Node labels/metadata
-	Capabilities []string                 // Agent capabilities (profiling, snapshots, etc.)
 	RegisteredAt time.Time                // Registration timestamp
 	LastHeartbeat time.Time               // Last heartbeat timestamp
 	Status      AgentStatus               // Current agent status
@@ -516,8 +515,6 @@ type ConfigurationFilter struct {
   - Node identity (ID, name, address)
   - Node role
   - Node labels
-  - Agent capabilities
-  - Agent version
   - Agent status (online/offline, last heartbeat)
   - Runtime metrics (optional)
 - Note: Node information is obtained from agent registration data stored in AgentRegistry
@@ -601,12 +598,10 @@ type ProxyClient struct {
 	nodeID         string
 	nodeRole       databasev1.Role
 	labels         map[string]string
-	capabilities   []string
 	conn           *grpc.ClientConn
 	client         fodcv1.FODCServiceClient
 	sessionID      string
 	heartbeatTicker *time.Ticker
-	flightRecorder  *FlightRecorder  // In-memory metrics storage
 	mu             sync.RWMutex
 	logger         *logger.Logger
 }
@@ -627,7 +622,7 @@ type MetricsRequestFilter struct {
 
 **`StartRegistrationStream(ctx context.Context) error`**
 - Establishes bi-directional registration stream with Proxy
-- Sends initial RegisterRequest with node ID, role, labels, and capabilities
+- Sends initial RegisterRequest with node ID, role, and labels
 - Receives RegisterResponse with session ID and heartbeat interval
 - Maintains stream for periodic heartbeat and re-registration
 - Returns error if stream establishment fails
@@ -701,11 +696,6 @@ type MetricsRequestFilter struct {
 - **Type**: `string` (comma-separated key=value pairs)
 - **Default**: (optional)
 - **Description**: Labels/metadata for this node. Format: `key1=value1,key2=value2`. Examples: `zone=us-west-1,env=production`. Used for filtering and grouping nodes in the Proxy.
-
-**`--agent-version`**
-- **Type**: `string`
-- **Default**: (auto-detected from build info)
-- **Description**: Version of the FODC Agent. If not specified, will be auto-detected from build metadata.
 
 **`--heartbeat-interval`**
 - **Type**: `duration`
@@ -830,8 +820,6 @@ message RegisterRequest {
   string node_id = 1;
   string node_role = 2;
   map<string, string> labels = 3;
-  repeated string capabilities = 4;
-  string agent_version = 5;
 }
 
 message RegisterResponse {
@@ -931,8 +919,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
       "labels": {
         "zone": "us-west-1"
       },
-      "capabilities": ["cpu_profile", "heap_snapshot"],
-      "agent_version": "1.0.0",
       "status": "online",
       "last_heartbeat": "2024-01-01T12:00:00Z",
       "runtime_metrics": {
@@ -994,7 +980,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
      * --node-id: Unique node identifier
      * --node-role: Node role (liaison, datanode-hot, etc.)
      * --node-labels: Optional node labels/metadata
-     * --agent-version: Agent version (or auto-detected)
    ↓
 2. Agent Connects to Proxy via gRPC
    - Uses --proxy-addr flag to determine Proxy address
