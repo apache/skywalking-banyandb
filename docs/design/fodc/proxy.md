@@ -179,7 +179,7 @@ type FODCService struct {
 ```go
 type AgentConnection struct {
 	Key         AgentKey              // Agent key (IP+port+role+labels) for registry lookup
-	NodeID      string                // Node ID (for reference, not used as key)
+	NodeID      string
 	Stream      grpc.ServerStream
 	Context     context.Context
 	Cancel      context.CancelFunc
@@ -426,12 +426,12 @@ type APIServer struct {
 ```go
 type ProxyClient struct {
 	proxyAddr      string
-	nodeID         string
+  nodeIP         string
+  nodePort       int
 	nodeRole       databasev1.Role
 	labels         map[string]string
 	conn           *grpc.ClientConn
 	client         fodcv1.FODCServiceClient
-	sessionID      string
 	heartbeatTicker *time.Ticker
 	mu             sync.RWMutex
 	logger         *logger.Logger
@@ -453,8 +453,8 @@ type MetricsRequestFilter struct {
 
 **`StartRegistrationStream(ctx context.Context) error`**
 - Establishes bi-directional registration stream with Proxy
-- Sends initial RegisterRequest with node ID, role, and labels
-- Receives RegisterResponse with session ID and heartbeat interval
+- Sends initial RegisterRequest with node IP, port, role, and labels
+- Receives RegisterResponse with heartbeat interval
 - Maintains stream for periodic heartbeat and re-registration
 - Returns error if stream establishment fails
 
@@ -475,7 +475,6 @@ type MetricsRequestFilter struct {
 - Filters metrics by time window if specified in request
 - Packages metrics in MetricsMessage
 - Sends metrics to Proxy via StreamMetrics() stream
-- Includes node ID, session ID, and timestamp
 - Returns error if retrieval or send fails
 
 **`SendHeartbeat(ctx context.Context) error`**
@@ -495,10 +494,15 @@ type MetricsRequestFilter struct {
 - **Default**: `localhost:17900`
 - **Description**: FODC Proxy gRPC address
 
-**`--node-id`**
+**`--node-ip`**
 - **Type**: `string`
 - **Default**: (required, no default)
-- **Description**: Unique identifier for this BanyanDB node. Must be unique across the cluster. Typically matches the node's identity in the BanyanDB cluster.
+- **Description**: IP address for this BanyanDB node's primary gRPC address. Used as part of AgentKey for registry identification.
+
+**`--node-port`**
+- **Type**: `int`
+- **Default**: (required, no default)
+- **Description**: Port number for this BanyanDB node's primary gRPC address. Used as part of AgentKey for registry identification.
 
 **`--node-role`**
 - **Type**: `string`
@@ -700,7 +704,8 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 ```
 1. FODC Agent Starts
    - Reads node information from configuration flags:
-     * --node-id: Unique node identifier
+     * --node-ip: Node IP
+     * --node-port: Node port
      * --node-role: Node role (liaison, datanode-hot, etc.)
      * --node-labels: Optional node labels/metadata
    ↓
@@ -711,7 +716,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    - Opens stream to Proxy
    ↓
 4. Agent Sends RegisterRequest
-   - Sends node ID, role, labels from configuration flags
+   - Sends node IP, port, role, labels from configuration flags
    ↓
 5. Proxy Validates Registration
    - Checks node ID uniqueness
@@ -722,7 +727,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    - Updates ClusterTopology
    ↓
 7. Proxy Sends RegisterResponse via Stream
-   - Session ID for subsequent requests
    - Heartbeat interval
    ↓
 8. Agent Maintains Registration Stream
