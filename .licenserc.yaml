@@ -82,7 +82,6 @@ header: # `header` section is configurations for source codes license header.
     - '**/.gitignore'
     - '**/buf.lock'
     - '**/ginkgo.report'
-    - 'ui'
     - '.github/PULL_REQUEST_TEMPLATE'
     - '**/*.prof'
 
