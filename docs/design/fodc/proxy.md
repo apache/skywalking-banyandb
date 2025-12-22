@@ -171,8 +171,8 @@ type FODCService struct {
 }
 
 // Example gRPC service methods (to be defined in proto)
-// RegisterAgent(stream RegisterRequest) (stream RegisterResponse) error
-// StreamMetrics(stream MetricsMessage) (stream MetricsRequest) error
+// RegisterAgent(stream RegisterAgentRequest) (stream RegisterAgentResponse) error
+// StreamMetrics(stream StreamMetricsRequest) (stream StreamMetricsResponse) error
 ```
 
 **`AgentConnection`**
@@ -194,16 +194,16 @@ type AgentConnection struct {
 - Receives registration requests from agent (includes primary address, role, labels)
 - Creates AgentKey from primary IP + port + role + labels
 - Validates registration information
-- Registers agent with AgentRegistry using AgentKey (not nodeID)
-- Sends registration responses with assigned session ID
+- Registers agent with AgentRegistry using AgentKey
+- Sends registration responses
 - Maintains stream for heartbeat and re-registration
 
 **`StreamMetrics(stream FODCService_StreamMetricsServer) error`**
 - Handles bi-directional metrics streaming
 - Sends metrics requests from Proxy to agent (on-demand collection)
 - Receives metrics from agent at Proxy in response to requests
-- Proxy initiates by sending a metrics request via MetricsRequest when an external client queries metrics
-- Agent responds with MetricsMessage containing the collected metrics
+- Proxy initiates by sending a metrics request via StreamMetricsResponse when an external client queries metrics
+- Agent responds with StreamMetricsRequest containing the collected metrics
 - Manages stream lifecycle
 
 ##### Connection Lifecycle Management
@@ -283,8 +283,9 @@ type MetricsFilter struct {
 - Requests metrics from all agents (or filtered agents) when external client queries
 - Sends metrics request via StreamMetrics() to each agent with time window filter (if specified)
 - Agents retrieve metrics from Flight Recorder (in-memory storage) filtered by time window and respond
-- Waits for MetricsMessage responses from agents (with timeout)
-- Enriches metrics with node metadata from registry
+- Waits for StreamMetricsRequest responses from agents (with timeout)
+- Identifies agent connection from stream context and looks up AgentKey
+- Enriches metrics with node metadata (IP, port, role, labels) from AgentKey
 - Combines metrics from all agents into a single list
 - Returns aggregated metrics (not stored, only returned)
 - Returns error if collection fails
@@ -349,7 +350,7 @@ type MetricsFilter struct {
   - Node role
   - Node labels
   - Agent status (online/offline, last heartbeat)
-  - Runtime metrics (optional)
+  - Node relationships
 - Note: Node information is obtained from agent registration data stored in AgentRegistry
 
 **`GET /cluster/config`**
@@ -453,8 +454,8 @@ type MetricsRequestFilter struct {
 
 **`StartRegistrationStream(ctx context.Context) error`**
 - Establishes bi-directional registration stream with Proxy
-- Sends initial RegisterRequest with node IP, port, role, and labels
-- Receives RegisterResponse with heartbeat interval
+- Sends initial RegisterAgentRequest with primary address (IP + port), role, and labels
+- Receives RegisterAgentResponse with heartbeat interval
 - Maintains stream for periodic heartbeat and re-registration
 - Returns error if stream establishment fails
 
@@ -473,7 +474,7 @@ type MetricsRequestFilter struct {
   * KTM/OS telemetry collection
   * Other observability sources
 - Filters metrics by time window if specified in request
-- Packages metrics in MetricsMessage
+- Packages metrics in StreamMetricsRequest (includes metrics and timestamp)
 - Sends metrics to Proxy via StreamMetrics() stream
 - Returns error if retrieval or send fails
 
@@ -517,7 +518,7 @@ type MetricsRequestFilter struct {
 **`--heartbeat-interval`**
 - **Type**: `duration`
 - **Default**: `10s`
-- **Description**: Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterResponse.
+- **Description**: Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.
 
 **`--reconnect-interval`**
 - **Type**: `duration`
@@ -531,26 +532,29 @@ type MetricsRequestFilter struct {
 #### Service Definition
 
 ```protobuf
+
 syntax = "proto3";
 
 package banyandb.fodc.v1;
 
 import "google/protobuf/timestamp.proto";
 
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
+
 service FODCService {
   // Bi-directional stream for agent registration and heartbeat
-  rpc RegisterAgent(stream RegisterRequest) returns (stream RegisterResponse);
+  rpc RegisterAgent(stream RegisterAgentRequest) returns (stream RegisterAgentResponse);
   
   // Bi-directional stream for metrics
-  rpc StreamMetrics(stream MetricsMessage) returns (stream MetricsRequest);
+  // Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests)
+  rpc StreamMetrics(stream StreamMetricsRequest) returns (stream StreamMetricsResponse);
 }
 
-message RegisterRequest {
-  string node_id = 1;
-  string node_role = 2;
-  map<string, string> labels = 3;
-  Address primary_address = 4;
-  map<string, Address> secondary_addresses = 5;
+message RegisterAgentRequest {
+  string node_role = 1;
+  map<string, string> labels = 2;
+  Address primary_address = 3;
+  map<string, Address> secondary_addresses = 4;
 }
 
 message Address {
@@ -558,18 +562,15 @@ message Address {
   int32 port = 2;
 }
 
-message RegisterResponse {
-  string session_id = 1;
-  bool success = 2;
-  string message = 3;
-  int64 heartbeat_interval_seconds = 4;
+message RegisterAgentResponse {
+  bool success = 1;
+  string message = 2;
+  int64 heartbeat_interval_seconds = 3;
 }
 
-message MetricsMessage {
-  string node_id = 1;
-  string session_id = 2;
-  repeated Metric metrics = 3;
-  google.protobuf.Timestamp timestamp = 4;
+message StreamMetricsRequest {
+  repeated Metric metrics = 1;
+  google.protobuf.Timestamp timestamp = 2;
 }
 
 message Metric {
@@ -579,7 +580,7 @@ message Metric {
   string description = 4;
 }
 
-message MetricsRequest {
+message StreamMetricsResponse {
   google.protobuf.Timestamp start_time = 1;  // Optional start time for time window
   google.protobuf.Timestamp end_time = 2;    // Optional end time for time window
 }
@@ -715,23 +716,24 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 3. Agent Establishes RegisterAgent() Bi-directional Stream
    - Opens stream to Proxy
    ↓
-4. Agent Sends RegisterRequest
-   - Sends node IP, port, role, labels from configuration flags
+4. Agent Sends RegisterAgentRequest
+   - Sends primary address (IP + port), role, and labels from configuration flags
    ↓
 5. Proxy Validates Registration
-   - Checks node ID uniqueness
-   - Validates role
+   - Creates AgentKey from primary IP + port + role + labels
+   - Checks if agent with same AgentKey already exists
+   - Validates role and primary address
    ↓
 6. Proxy Registers Agent
    - Creates AgentInfo in AgentRegistry
    - Updates ClusterTopology
    ↓
-7. Proxy Sends RegisterResponse via Stream
+7. Proxy Sends RegisterAgentResponse via Stream
    - Heartbeat interval
    ↓
 8. Agent Maintains Registration Stream
-   - Sends periodic heartbeats via RegisterRequest
-   - Receives RegisterResponse updates
+   - Sends periodic heartbeats via RegisterAgentRequest
+   - Receives RegisterAgentResponse updates
    - Stream remains open for re-registration if needed
    ↓
 9. Agent Establishes Metrics Stream
@@ -762,25 +764,27 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    - Flight Recorder continuously collects and stores metrics from:
      * BanyanDB /metrics endpoint scraping
      * KTM/OS telemetry collection
-   - Agent filters metrics by time window if specified in MetricsRequest
-   - Packages filtered metrics in MetricsMessage
+   - Agent filters metrics by time window if specified in StreamMetricsResponse
+   - Packages filtered metrics in StreamMetricsRequest
    ↓
 5. Agents Send Metrics to Proxy
-   - Each agent sends MetricsMessage via StreamMetrics()
-   - Includes node ID, timestamp, and collected metrics
+   - Each agent sends StreamMetricsRequest via StreamMetrics()
+   - Includes metrics and timestamp
    ↓
 6. Proxy Receives Metrics from All Agents
-   - Collects MetricsMessage from each agent
+   - Collects StreamMetricsRequest from each agent
    - Waits for responses from all requested agents (with timeout)
    ↓
 7. Proxy Enriches Metrics
-   - Adds node metadata (role, ID, labels) to each metric
+   - Identifies agent connection from stream context
+   - Looks up AgentKey (IP+port+role+labels) from agent connection
+   - Adds node metadata (IP, port, role, labels) to each metric
    - Normalizes metric format across agents
    ↓
 8. MetricsAggregator Aggregates Metrics
    - Combines metrics from all agents into a single list
    - Filters by time window if specified (agents already filtered by time window from Flight Recorder)
-   - Associates metrics with node ID and role
+   - Associates metrics with agent using AgentKey from stream context (IP+port+role+labels)
    - Does not store metrics (on-demand collection only)
    ↓
 9. Proxy Formats and Returns Response
