@@ -1,0 +1,45 @@
+[
+  {
+    "tags": [
+      { "str": { "value": "schema_trace_1" } },
+      { "int": { "value": 1 } },
+      { "str": { "value": "webapp_id" } },
+      { "str": { "value": "10.0.0.1_id" } },
+      { "str": { "value": "/home_id" } },
+      { "int": { "value": 1100 } },
+      { "int": { "value": 1622933202000000000 } },
+      { "str": { "value": "GET" } },
+      { "str": { "value": "200" } },
+      { "str": { "value": "schema_span_1" } }
+    ]
+  },
+  {
+    "tags": [
+      { "str": { "value": "schema_trace_2" } },
+      { "int": { "value": 0 } },
+      { "str": { "value": "webapp_id" } },
+      { "str": { "value": "10.0.0.2_id" } },
+      { "str": { "value": "/product_id" } },
+      { "int": { "value": 600 } },
+      { "int": { "value": 1622933202000000000 } },
+      { "str": { "value": "POST" } },
+      { "str": { "value": "201" } },
+      { "str": { "value": "schema_span_2" } }
+    ]
+  },
+  {
+    "tags": [
+      { "str": { "value": "schema_trace_3" } },
+      { "int": { "value": 1 } },
+      { "str": { "value": "webapp_id" } },
+      { "str": { "value": "10.0.0.3_id" } },
+      { "str": { "value": "/item_id" } },
+      { "int": { "value": 900 } },
+      { "int": { "value": 1622933202000000000 } },
+      { "str": { "value": "PUT" } },
+      { "str": { "value": "202" } },
+      { "str": { "value": "schema_span_3" } }
+    ]
+  }
+]
+

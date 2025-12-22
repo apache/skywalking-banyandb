@@ -16,7 +16,6 @@
 # under the License.
 
 
-SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_metric
+SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_spec, sw_spec2
 TIME > '-15m'
-WHERE id IN ('id_schema_1', 'id_schema_2', 'id_schema_3', 'id_spec_1', 'id_spec_2', 'id_spec_3')
-
+WHERE id IN ('id_schema_1', 'id_schema_2', 'id_schema_3', 'id_spec_1', 'id_spec_2', 'id_spec_3', 'id_spec_5')

@@ -16,6 +16,6 @@
 # under the License.
 
 
-SELECT trace_id, state, duration, span_id FROM TRACE sw IN test-trace-spec
+SELECT trace_id, state, duration, status_code, span_id FROM STREAM sw IN default-spec, default-spec2
 TIME > '-15m'
-WHERE trace_id IN ('spec_trace_001', 'spec_trace_003')
+WHERE trace_id IN ('schema_trace_1', 'schema_trace_3', 'spec_trace_2', 'spec_trace_5')
