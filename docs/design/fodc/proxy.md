@@ -167,14 +167,12 @@ type AgentKey struct {
 type FODCService struct {
 	registry        *AgentRegistry
 	metricsAggregator *MetricsAggregator
-	configCollector *ConfigurationCollector
 	logger          *logger.Logger
 }
 
 // gRPC service methods (to be defined in proto)
 // RegisterAgent(stream RegisterRequest) (stream RegisterResponse) error
 // StreamMetrics(stream MetricsMessage) (stream MetricsRequest) error
-// StreamNodesConfigurations(stream ConfigurationMessage) (stream ConfigurationRequest) error
 ```
 
 **`AgentConnection`**
@@ -206,15 +204,6 @@ type AgentConnection struct {
 - Sends metrics from agent to Proxy when requested
 - Proxy sends metrics request via MetricsRequest when external client queries metrics
 - Agent responds with MetricsMessage containing collected metrics
-- Manages stream lifecycle
-
-**`StreamNodesConfigurations(stream FODCService_StreamNodesConfigurationsServer) error`**
-- Handles bi-directional configuration streaming
-- Receives configuration requests from Proxy (on-demand collection)
-- Sends configuration from agent to Proxy when requested
-- Proxy sends configuration request via ConfigurationRequest when external client queries configurations
-- Agent responds with ConfigurationMessage containing collected configuration
-- Forwards configuration to ConfigurationCollector for storage
 - Manages stream lifecycle
 
 ##### Connection Lifecycle Management
@@ -382,8 +371,6 @@ type MetricsFilter struct {
 ```go
 type APIServer struct {
 	metricsAggregator   *MetricsAggregator
-	topologyManager     *TopologyManager
-	configCollector     *ConfigurationCollector
 	server              *http.Server
 	logger              *logger.Logger
 }
@@ -492,24 +479,6 @@ type MetricsRequestFilter struct {
 - Includes node ID, session ID, and timestamp
 - Returns error if retrieval or send fails
 
-**`StartConfigurationStream(ctx context.Context) error`**
-- Establishes bi-directional configuration stream with Proxy
-- Maintains stream for on-demand configuration requests
-- Listens for configuration request commands from Proxy
-- When request received, collects configuration from BanyanDB process and sends response
-- Returns error if stream fails
-
-**`RetrieveAndSendConfiguration(ctx context.Context) error`**
-- Collects configuration from BanyanDB process when requested by Proxy
-- Finds BanyanDB process (by PID or process name)
-- Reads `/proc/<pid>/cmdline` for command-line flags
-- Reads `/proc/<pid>/environ` for environment variables
-- Sanitizes sensitive data
-- Packages configuration in ConfigurationMessage
-- Sends configuration to Proxy via StreamNodesConfigurations() stream
-- Includes node ID, session ID, and collected timestamp
-- Returns error if collection or send fails
-
 **`SendHeartbeat(ctx context.Context) error`**
 - Sends heartbeat to Proxy
 - Updates connection status
@@ -552,91 +521,6 @@ type MetricsRequestFilter struct {
 - **Default**: `5s`
 - **Description**: Interval for reconnection attempts when connection to Proxy is lost
 
-#### 2.2 Configuration Collector Component
-
-**Purpose**: Collects configuration from the BanyanDB process running on the same node
-
-##### Core Responsibilities
-
-- **Process Discovery**: Finds the BanyanDB process by PID or process name
-- **Command-Line Collection**: Reads command-line flags from `/proc/<pid>/cmdline`
-- **Environment Collection**: Reads environment variables from `/proc/<pid>/environ`
-- **Data Sanitization**: Sanitizes sensitive data (passwords, tokens, etc.)
-- **Configuration Packaging**: Packages configuration data for transmission to Proxy
-
-##### Core Types
-
-**`ConfigurationCollector`**
-```go
-type ConfigurationCollector struct {
-	banyandbPID    int                    // BanyanDB process ID
-	banyandbProcName string               // BanyanDB process name
-	proxyClient    *ProxyClient
-	logger         *logger.Logger
-}
-```
-
-**`NodeConfiguration`**
-```go
-type NodeConfiguration struct {
-	NodeID        string
-	NodeRole      databasev1.Role
-	StartupParams map[string]string    // Command-line flags from /proc/<pid>/cmdline
-	EnvVars       map[string]string    // Environment variables from /proc/<pid>/environ (sanitized)
-	RuntimeConfig map[string]string    // Runtime configurations (if available)
-	CollectedAt   time.Time
-}
-```
-
-##### Key Functions
-
-**`FindBanyanDBProcess() (int, error)`**
-- Finds BanyanDB process by PID (if known) or process name
-- Searches `/proc` filesystem for matching process
-- Returns process ID or error if not found
-
-**`CollectStartupParams(pid int) (map[string]string, error)`**
-- Reads `/proc/<pid>/cmdline` file
-- Parses null-separated command-line arguments
-- Extracts flags and values into map
-- Returns error if read fails
-
-**`CollectEnvVars(pid int) (map[string]string, error)`**
-- Reads `/proc/<pid>/environ` file
-- Parses null-separated environment variables
-- Sanitizes sensitive data (passwords, tokens, API keys, etc.)
-- Returns sanitized environment variables map
-- Returns error if read fails
-
-**`CollectConfiguration() (*NodeConfiguration, error)`**
-- Finds BanyanDB process
-- Collects startup parameters from `/proc/<pid>/cmdline`
-- Collects environment variables from `/proc/<pid>/environ`
-- Packages configuration into NodeConfiguration struct
-- Returns error if collection fails
-
-**`SendConfiguration(ctx context.Context) error`**
-- Collects configuration from BanyanDB process
-- Sends configuration to Proxy via gRPC
-- Returns error if send fails
-
-##### Configuration Flags
-
-**`--banyandb-pid`**
-- **Type**: `int`
-- **Default**: (optional, auto-detected if not specified)
-- **Description**: BanyanDB process ID. If not specified, agent will search for process by name.
-
-**`--banyandb-proc-name`**
-- **Type**: `string`
-- **Default**: `banyandb`
-- **Description**: BanyanDB process name to search for if PID is not provided
-
-**`--config-collection-interval`**
-- **Type**: `duration`
-- **Default**: `5m`
-- **Description**: Interval for collecting and sending configuration updates to Proxy
-
 ## API Design
 
 ### gRPC API
@@ -656,9 +540,6 @@ service FODCService {
   
   // Bi-directional stream for metrics
   rpc StreamMetrics(stream MetricsMessage) returns (stream MetricsRequest);
-  
-  // Bi-directional stream for node configurations
-  rpc StreamNodesConfigurations(stream ConfigurationMessage) returns (stream ConfigurationRequest);
 }
 
 message RegisterRequest {
@@ -698,26 +579,6 @@ message Metric {
 message MetricsRequest {
   google.protobuf.Timestamp start_time = 1;  // Optional start time for time window
   google.protobuf.Timestamp end_time = 2;    // Optional end time for time window
-}
-
-message ConfigurationMessage {
-  string node_id = 1;
-  string session_id = 2;
-  NodeConfiguration configuration = 3;
-  google.protobuf.Timestamp collected_at = 4;
-}
-
-message NodeConfiguration {
-  string node_id = 1;
-  string node_role = 2;
-  map<string, string> startup_params = 3;  // Command-line flags from /proc/<pid>/cmdline
-  map<string, string> env_vars = 4;         // Environment variables from /proc/<pid>/environ (sanitized)
-  map<string, string> runtime_config = 5;   // Runtime configurations (if available)
-}
-
-message ConfigurationRequest {
-  bool request_all = 1;  // Request configurations from all agents
-  repeated string node_ids = 2;  // Specific node IDs to request (if request_all is false)
 }
 ```
 
@@ -928,55 +789,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    - Returns HTTP 200 response to external client
 ```
 
-### Configuration Collection Flow
-
-```
-1. Agent Establishes Configuration Stream
-   - Agent calls StartConfigurationStream() to establish bi-directional stream
-   - Stream remains open for on-demand configuration requests
-   ↓
-2. External Client Requests Configuration
-   - GET /cluster/config (all configurations)
-   - GET /cluster/config?node_id=X (specific node)
-   - GET /cluster/config?role=Y (role-filtered)
-   ↓
-3. Proxy Requests Configuration from Agents
-   - For each registered agent (or filtered agents), sends configuration request via StreamNodesConfigurations()
-   - Uses bi-directional stream to request current configuration
-   - May filter by node_id or role if specified in query
-   ↓
-4. Agent Collects Configuration from BanyanDB Process
-   - Agent receives configuration request via StreamNodesConfigurations()
-   - Agent calls RetrieveAndSendConfiguration()
-   - Finds BanyanDB process:
-     * By PID (The pod should be configured with `shareProcessNamespace: true` so the agent sidecar can see the target container's `/proc` entries)
-   - Reads /proc/<pid>/cmdline for command-line flags
-     * Parses null-separated command-line arguments
-     * Extracts startup parameters (flags and values)
-   - Reads /proc/<pid>/environ for environment variables
-     * Parses null-separated environment variables
-     * Sanitizes sensitive data (passwords, tokens, etc.)
-   - Captures runtime configuration if available
-   ↓
-5. Agent Sends Configuration to Proxy
-   - Packages configuration in ConfigurationMessage
-   - Sends via StreamNodesConfigurations() stream
-   - Includes node ID, session ID, and collected timestamp
-   ↓
-6. Proxy Receives Configuration from Agents
-   - Collects ConfigurationMessage from each agent
-   - Waits for responses from all requested agents (with timeout)
-   ↓
-7. ConfigurationCollector.CollectConfiguration()
-   - Stores configuration per node
-   - Updates configuration timestamp
-   - Associates configuration with node ID
-   ↓
-8. Proxy Returns Configuration via API
-   - Formats configuration data as JSON
-   - Returns HTTP 200 response to external client
-```
-
 ### Metrics Query Flow
 
 **Note**: This flow is integrated with Metrics Collection Flow. When an external request comes in, the Proxy requests metrics from all agents. Agents retrieve metrics from Flight Recorder (in-memory storage) which continuously collects metrics.
@@ -1041,22 +853,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - Test time window filtering (agents filter from Flight Recorder)
 - Test node and role filtering
 
-**Topology Manager Package**
-- Test `UpdateTopology()` topology building
-- Test `GetTopology()` retrieval
-- Test `GetNodesByRole()` role filtering
-- Test `GetNode()` node lookup
-- Test topology updates on agent changes
-- Test concurrent topology access
-
-**Configuration Collector Package**
-- Test `CollectConfiguration()` storage
-- Test `GetConfiguration()` retrieval
-- Test `GetAllConfigurations()` listing
-- Test `GetConfigurationsByRole()` filtering
-- Test `CompareConfigurations()` diff logic
-- Test concurrent configuration updates
-
 **HTTP/REST API Package**
 - Test all REST endpoints (GET/POST handlers)
 - Test request validation
@@ -1079,14 +875,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - Verify agent appears in `/cluster` endpoint
 - Stop agent and verify offline status
 
-**Test Case 2: Configuration Collection**
-- Start Proxy and Agent
-- Agent sends configuration
-- Query `/cluster/config` endpoint
-- Verify configuration is returned correctly
-- Test filtering by node_id and role
-
-**Test Case 3: Metrics Time Window**
+**Test Case 2: Metrics Time Window**
 - Start Proxy and multiple Agents
 - Query `/metrics-windows` with time range (triggers metrics request)
 - Verify Proxy requests metrics from all agents
@@ -1094,7 +883,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - Verify metrics are filtered by time window if specified
 - Test edge cases (empty window, full window)
 
-**Test Case 4: Agent Reconnection**
+**Test Case 3: Agent Reconnection**
 - Start Proxy and Agent
 - Agent registers with Proxy
 - Query `/metrics-windows` endpoint (triggers metrics collection)
@@ -1107,7 +896,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - Query `/metrics-windows` endpoint again
 - Verify metrics collection resumes successfully
 
-**Test Case 5: Multiple Agents and Roles**
+**Test Case 4: Multiple Agents and Roles**
 - Start Proxy
 - Start multiple Agents with different roles
 - Verify topology shows all nodes correctly
