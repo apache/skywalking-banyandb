@@ -15,17 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "sw"
-groups: ["default-spec"]
-projection:
-  tagFamilies:
-    - name: "searchable"
-      tags: ["trace_id", "state", "duration", "status_code", "span_id"]
-criteria:
-  condition:
-    name: "trace_id"
-    op: "BINARY_OP_IN"
-    value:
-      strArray:
-        value: ["spec_trace_2", "spec_trace_5"]
 
+SELECT trace_id, state, duration, span_id FROM TRACE sw IN test-trace-spec, test-trace-spec2
+TIME > '-15m'
+WHERE trace_id IN ('schema_trace_001', 'spec_trace_001', 'spec_trace_003')

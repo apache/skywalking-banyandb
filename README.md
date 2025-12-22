@@ -29,7 +29,6 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 
 - [Dev version doc](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
 - [Latest release doc](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
-- [Java Client SDK doc](https://skywalking.apache.org/docs/#BanyanDBJavaClient)
 
 
 ## Contributing
