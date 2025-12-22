@@ -15,19 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "service_cpm_minute"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-    - name: "default"
-      tags: ["id", "entity_id"]
-fieldProjection:
-  names: ["total", "value"]
+name: "sw"
+groups: ["test-trace-spec", "test-trace-spec2"]
+tag_projection: ["trace_id", "state", "duration", "span_id"]
 criteria:
   condition:
-    name: "id"
+    name: "trace_id"
     op: "BINARY_OP_IN"
     value:
-      strArray:
-        value: ["id_spec_2", "id_spec_5"]
-
+      str_array:
+        value: ["schema_trace_001", "spec_trace_001", "spec_trace_003"]
