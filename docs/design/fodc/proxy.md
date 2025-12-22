@@ -618,9 +618,6 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 
 **`GET /cluster`**
 - **Description**: Returns cluster topology and node information
-- **Query Parameters**:
-  - `node_id` (optional): Filter by node ID
-  - `role` (optional): Filter by role
 - **Response**: JSON
 - **Example**:
 ```json
