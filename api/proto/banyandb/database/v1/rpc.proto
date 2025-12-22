@@ -22,6 +22,7 @@ package banyandb.database.v1;
 import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/schema.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
@@ -354,10 +355,56 @@ message GroupRegistryServiceUpdateResponse {}
 
 message GroupRegistryServiceDeleteRequest {
   string group = 1;
+  bool dry_run = 2;
+  bool force = 3;
 }
 
 message GroupRegistryServiceDeleteResponse {
   bool deleted = 1;
+  string task_id = 2;
+}
+
+message GroupDeletionProgress {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PHASE_PENDING = 1;
+    PHASE_IN_PROGRESS = 2;
+    PHASE_COMPLETED = 3;
+    PHASE_FAILED = 4;
+  }
+  Phase current_phase = 1;
+  int32 stream_count = 2;
+  int32 measure_count = 3;
+  int32 trace_count = 4;
+  int64 data_size_bytes = 5;
+  string message = 6;
+  bool is_dry_run = 7;
+  int64 deleted_data_bytes = 8;
+  string error_message = 9;
+}
+
+message GroupDeletionTask {
+  string task_id = 1;
+  string group_name = 2;
+  GroupDeletionProgress progress = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message GroupDeletionTaskGetRequest {
+  string task_id = 1;
+}
+
+message GroupDeletionTaskGetResponse {
+  GroupDeletionTask task = 1;
+}
+
+message GroupDeletionTaskListRequest {
+  string group_name = 1;
+  bool include_completed = 2;
+}
+
+message GroupDeletionTaskListResponse {
+  repeated GroupDeletionTask tasks = 1;
 }
 
 message GroupRegistryServiceGetRequest {
@@ -411,6 +458,14 @@ service GroupRegistryService {
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
+
+  rpc GetDeletionTask(GroupDeletionTaskGetRequest) returns (GroupDeletionTaskGetResponse) {
+    option (google.api.http) = {get: "/v1/group/deletion-tasks/{task_id}"};
+  }
+
+  rpc ListDeletionTasks(GroupDeletionTaskListRequest) returns (GroupDeletionTaskListResponse) {
+    option (google.api.http) = {get: "/v1/group/deletion-tasks"};
+  }
 }
 
 message TopNAggregationRegistryServiceCreateRequest {
