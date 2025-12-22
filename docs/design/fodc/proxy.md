@@ -170,7 +170,7 @@ type FODCService struct {
 	logger          *logger.Logger
 }
 
-// gRPC service methods (to be defined in proto)
+// Example gRPC service methods (to be defined in proto)
 // RegisterAgent(stream RegisterRequest) (stream RegisterResponse) error
 // StreamMetrics(stream MetricsMessage) (stream MetricsRequest) error
 ```
@@ -200,10 +200,10 @@ type AgentConnection struct {
 
 **`StreamMetrics(stream FODCService_StreamMetricsServer) error`**
 - Handles bi-directional metrics streaming
-- Receives metrics requests from Proxy (on-demand collection)
-- Sends metrics from agent to Proxy when requested
-- Proxy sends metrics request via MetricsRequest when external client queries metrics
-- Agent responds with MetricsMessage containing collected metrics
+- Sends metrics requests from Proxy to agent (on-demand collection)
+- Receives metrics from agent at Proxy in response to requests
+- Proxy initiates by sending a metrics request via MetricsRequest when an external client queries metrics
+- Agent responds with MetricsMessage containing the collected metrics
 - Manages stream lifecycle
 
 ##### Connection Lifecycle Management
