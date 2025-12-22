@@ -410,11 +410,25 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		Expect(initialCapacitySize).To(Equal(capacitySize), "Initial capacity size should match configured value")
 
 		// Step 2: Measure baseline heap inuse size (before any data)
-		// Force GC to reduce temporary allocation noise
+		// Force GC multiple times and wait for heap size to stabilize
+		var prevHeapSize int64
 		Eventually(func() bool {
 			runtime.GC()
-			return true
-		}, 5*time.Second).Should(BeTrue())
+			time.Sleep(100 * time.Millisecond)
+			currentHeapSize := fr.HeapInuseSize()
+
+			if prevHeapSize > 0 {
+				diff := currentHeapSize - prevHeapSize
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff < 1024 {
+					return true
+				}
+			}
+			prevHeapSize = currentHeapSize
+			return false
+		}, 5*time.Second, 200*time.Millisecond).Should(BeTrue())
 		baselineHeapInuseSize := fr.HeapInuseSize()
 		Expect(baselineHeapInuseSize).To(BeNumerically(">", 0), "Baseline heap inuse size should be positive")
 
