@@ -43,31 +43,43 @@ The Proxy provides:
 **`AgentInfo`**
 ```go
 type AgentInfo struct {
-	NodeID      string                    // Unique node identifier
-	NodeRole    databasev1.Role          // Node role (liaison, datanode-hot, etc.)
-	Address     string                    // Agent gRPC address
-	Labels      map[string]string        // Node labels/metadata
-	RegisteredAt time.Time                // Registration timestamp
-	LastHeartbeat time.Time               // Last heartbeat timestamp
-	Status      AgentStatus               // Current agent status
+	NodeID            string                    // Unique node identifier
+	NodeRole          databasev1.Role          // Node role (liaison, datanode-hot, etc.)
+	PrimaryAddress    Address                  // Primary agent gRPC address
+	SecondaryAddresses map[string]Address      // Secondary addresses with names (e.g., "metrics": Address, "gossip": Address)
+	Labels            map[string]string        // Node labels/metadata
+	RegisteredAt      time.Time                // Registration timestamp
+	LastHeartbeat     time.Time               // Last heartbeat timestamp
+	Status            AgentStatus               // Current agent status
+}
+
+type Address struct {
+	IP   string
+	Port int
 }
 
 type AgentStatus string
 
 const (
 	AgentStatusOnline  AgentStatus = "online"
-	AgentStatusOffline AgentStatus = "offline"
-	AgentStatusUnknown AgentStatus = "unknown"
+	AgentStatusOffline AgentStatus = "unconnected"
 )
 ```
 
 **`AgentRegistry`**
 ```go
 type AgentRegistry struct {
-	agents    map[string]*AgentInfo      // Map from node ID to agent info
-	mu        sync.RWMutex               // Protects agents map
+	agents    map[AgentKey]*AgentInfo      // Map from agent key (IP+port+role+labels) to agent info
+	mu        sync.RWMutex                 // Protects agents map
 	logger    *logger.Logger
 	heartbeatTimeout time.Duration        // Timeout for considering agent offline
+}
+
+type AgentKey struct {
+	IP     string                 // Primary IP address
+	Port   int                    // Primary port
+	Role   databasev1.Role       // Node role
+	Labels map[string]string      // Node labels (used for key matching)
 }
 ```
 
@@ -75,28 +87,32 @@ type AgentRegistry struct {
 
 **`RegisterAgent(ctx context.Context, info *AgentInfo) error`**
 - Registers a new agent or updates existing agent information
-- Validates node ID and role
+- Creates AgentKey from primary IP + port + role + labels
+- Uses AgentKey as the map key (not nodeID)
+- Validates primary address and role
 - Updates topology view
 - Returns error if registration fails
 
-**`UnregisterAgent(nodeID string) error`**
-- Removes agent from registry
+**`UnregisterAgent(key AgentKey) error`**
+- Removes agent from registry using AgentKey
 - Cleans up associated resources
 - Updates topology view
 - Called in the following scenarios:
   - When agent's registration stream closes (connection lost)
   - When agent's all streams are closed and connection is terminated
-  - When agent has been offline for extended period (cleanup after heartbeat timeout)
+  - When agent has been offline longer than `--agent-cleanup-timeout` (detected by heartbeat health check)
   - During graceful shutdown or manual agent removal
   - When agent explicitly requests unregistration via stream
 
-**`UpdateHeartbeat(nodeID string) error`**
-- Updates last heartbeat timestamp for agent
+**`UpdateHeartbeat(key AgentKey) error`**
+- Updates last heartbeat timestamp for agent using AgentKey
 - Marks agent as online if it was offline
 - Returns error if agent not found
 
-**`GetAgent(nodeID string) (*AgentInfo, error)`**
-- Retrieves agent information by node ID
+**`GetAgent(ip string, port int, role databasev1.Role, labels map[string]string) (*AgentInfo, error)`**
+- Retrieves agent information by primary IP + port + role + labels
+- Creates AgentKey from the provided parameters
+- Looks up agent in registry using AgentKey
 - Returns error if agent not found
 
 **`ListAgents() []*AgentInfo`**
@@ -110,7 +126,9 @@ type AgentRegistry struct {
 **`CheckAgentHealth() error`**
 - Periodically checks agent health based on heartbeat timeout
 - Marks agents as offline if heartbeat timeout exceeded
-- Optionally unregisters agents that have been offline for extended period (if `--agent-cleanup-timeout` is configured)
+- Continuously runs heartbeat health checks regardless of cleanup timeout
+- Unregisters agents that have been offline longer than `--agent-cleanup-timeout`
+- Agents that cannot maintain connection will be removed after the cleanup timeout period
 - Returns aggregated health status
 
 ##### Configuration Flags
@@ -127,8 +145,9 @@ type AgentRegistry struct {
 
 **`--agent-cleanup-timeout`**
 - **Type**: `duration`
-- **Default**: `0` (disabled, agents are not auto-unregistered)
-- **Description**: Timeout for automatically unregistering agents that have been offline. If set to 0, agents remain registered even when offline. If set to a positive duration, agents offline longer than this timeout will be unregistered.
+- **Default**: `5m`
+- **Minimum**: Must be greater than `--agent-heartbeat-timeout`
+- **Description**: Timeout for automatically unregistering agents that have been offline. Agents that cannot maintain connection will be removed after being offline longer than this timeout. The heartbeat health check continues running regardless of this timeout. This timeout must be greater than `--agent-heartbeat-timeout` to allow for proper health checking.
 
 #### 1.2 gRPC Server Component
 
@@ -161,7 +180,8 @@ type FODCService struct {
 **`AgentConnection`**
 ```go
 type AgentConnection struct {
-	NodeID      string
+	Key         AgentKey              // Agent key (IP+port+role+labels) for registry lookup
+	NodeID      string                // Node ID (for reference, not used as key)
 	Stream      grpc.ServerStream
 	Context     context.Context
 	Cancel      context.CancelFunc
@@ -173,9 +193,10 @@ type AgentConnection struct {
 
 **`RegisterAgent(stream FODCService_RegisterAgentServer) error`**
 - Handles bi-directional agent registration stream
-- Receives registration requests from agent
+- Receives registration requests from agent (includes primary address, role, labels)
+- Creates AgentKey from primary IP + port + role + labels
 - Validates registration information
-- Registers agent with AgentRegistry
+- Registers agent with AgentRegistry using AgentKey (not nodeID)
 - Sends registration responses with assigned session ID
 - Maintains stream for heartbeat and re-registration
 
@@ -201,14 +222,15 @@ type AgentConnection struct {
 **Stream Closure Handling**
 - When a stream closes (due to network error, agent shutdown, or timeout), the gRPC server should:
   1. Detect stream closure via context cancellation or stream error
-  2. Check if this is the last active stream for the agent
-  3. If all streams are closed, call `AgentRegistry.UnregisterAgent()` to clean up
-  4. Update topology to reflect agent offline status
+  2. Extract agent key (primary IP + port + role + labels) from the connection
+  3. Check if this is the last active stream for the agent
+  4. If all streams are closed, call `AgentRegistry.UnregisterAgent(agentKey)` to clean up
+  5. Update topology to reflect agent offline status
 
 **Graceful vs. Ungraceful Disconnection**
 - **Graceful**: Agent sends explicit disconnect message before closing stream → immediate unregistration
 - **Ungraceful**: Stream closes unexpectedly → unregistration happens after detecting all streams closed
-- **Heartbeat Timeout**: Agent marked offline by `CheckAgentHealth()` → unregistration may occur after extended offline period (configurable)
+- **Heartbeat Timeout**: Agent marked offline by `CheckAgentHealth()` → unregistration occurs after being offline longer than `--agent-cleanup-timeout`. Heartbeat health checks continue running regardless.
 
 ##### Configuration Flags
 
@@ -231,9 +253,8 @@ type AgentConnection struct {
 - **On-Demand Metrics Collection**: Requests metrics from agents via gRPC streams when external clients query metrics
 - **Metrics Request Coordination**: Coordinates metrics requests to multiple agents concurrently
 - **Metadata Enrichment**: Adds node metadata (role, ID, labels) to metrics
-- **Time Window Management**: Maintains sliding window of metrics for `/metrics-windows` endpoint
 - **Normalization**: Normalizes metric formats and labels across agents
-- **Storage**: Stores aggregated metrics with time-series context
+- **Time Window Filtering**: Filters metrics by time window when requested by external clients (agents filter based on Flight Recorder data)
 
 ##### Core Types
 
@@ -255,15 +276,8 @@ type AggregatedMetric struct {
 type MetricsAggregator struct {
 	registry      *AgentRegistry
 	grpcService   *FODCService        // For requesting metrics from agents
-	metricsWindow *MetricsWindow      // Sliding window storage
 	mu            sync.RWMutex
 	logger        *logger.Logger
-}
-
-type MetricsWindow struct {
-	metrics    map[string][]*AggregatedMetric  // Map from metric key to time series
-	windowSize time.Duration                   // Time window size
-	mu         sync.RWMutex
 }
 
 type MetricsFilter struct {
@@ -276,207 +290,36 @@ type MetricsFilter struct {
 
 ##### Key Functions
 
-**`CollectMetricsFromAgents(ctx context.Context, filter *MetricsFilter) (map[string][]*AggregatedMetric, error)`**
+**`CollectMetricsFromAgents(ctx context.Context, filter *MetricsFilter) ([]*AggregatedMetric, error)`**
 - Requests metrics from all agents (or filtered agents) when external client queries
-- Sends metrics request via StreamMetrics() to each agent
-- Agents retrieve metrics from Flight Recorder (in-memory storage) and respond
+- Sends metrics request via StreamMetrics() to each agent with time window filter (if specified)
+- Agents retrieve metrics from Flight Recorder (in-memory storage) filtered by time window and respond
 - Waits for MetricsMessage responses from agents (with timeout)
 - Enriches metrics with node metadata from registry
-- Returns map from node ID to aggregated metrics
+- Combines metrics from all agents into a single list
+- Returns aggregated metrics (not stored, only returned)
 - Returns error if collection fails
-
-**`AggregateMetrics(nodeID string, rawMetrics []*RawMetric) error`**
-- Processes raw metrics received from an agent
-- Enriches metrics with node metadata from registry
-- Stores metrics in time window
-- Returns error if aggregation fails
 
 **`GetLatestMetrics(ctx context.Context) ([]*AggregatedMetric, error)`**
 - Triggers on-demand collection from all agents
-- Calls CollectMetricsFromAgents() to get current metrics
+- Calls CollectMetricsFromAgents() with no time filter to get current metrics
 - Returns latest metrics from all agents
-- Used for `/metrics-windows` endpoint
+- Used for `/metrics-windows` endpoint without time parameters
 - Returns error if collection fails
 
-**`GetMetricsWindow(ctx context.Context, startTime, endTime time.Time) ([]*AggregatedMetric, error)`**
+**`GetMetricsWindow(ctx context.Context, startTime, endTime time.Time, filter *MetricsFilter) ([]*AggregatedMetric, error)`**
 - Triggers on-demand collection from all agents
-- Filters metrics by specified time window
+- Calls CollectMetricsFromAgents() with time window filter
+- Agents filter metrics from Flight Recorder by the specified time range
 - Returns metrics within specified time range
 - Used for `/metrics-windows` endpoint with time parameters
 - Returns error if collection fails
 
-**`GetMetricsByNode(nodeID string) []*AggregatedMetric`**
-- Returns metrics for specific node
-- Useful for node-specific queries
-
-**`GetMetricsByRole(role databasev1.Role) []*AggregatedMetric`**
-- Returns metrics filtered by node role
-- Useful for role-specific analysis
-
-**`CleanupOldMetrics(beforeTime time.Time) error`**
-- Removes metrics older than specified time
-- Prevents memory growth
-- Called periodically
-
 ##### Configuration Flags
 
-**`--metrics-window-size`**
-- **Type**: `duration`
-- **Default**: `5m`
-- **Description**: Time window size for metrics storage
+*Note: No configuration flags needed for MetricsAggregator since metrics are collected on-demand and not stored.*
 
-**`--metrics-cleanup-interval`**
-- **Type**: `duration`
-- **Default**: `1m`
-- **Description**: Interval for cleaning up old metrics
-
-#### 1.4 Topology Manager Component
-
-**Purpose**: Maintains cluster topology view based on agent registrations
-
-##### Core Responsibilities
-
-- **Topology Building**: Constructs cluster hierarchy from agent registrations
-- **Role Management**: Tracks nodes by role (liaison, datanode-hot, etc.)
-- **Status Tracking**: Monitors node status and health
-- **Topology Queries**: Provides topology information via API
-
-##### Core Types
-
-**`ClusterTopology`**
-```go
-type ClusterTopology struct {
-	Nodes      []*NodeInfo              // All nodes in cluster
-	ByRole     map[databasev1.Role][]*NodeInfo  // Nodes grouped by role
-	UpdatedAt  time.Time                // Last update timestamp
-	mu         sync.RWMutex
-}
-
-type NodeInfo struct {
-	NodeID      string
-	NodeRole    databasev1.Role
-	Address     string
-	Labels      map[string]string
-	Status      AgentStatus
-	LastHeartbeat time.Time
-	RuntimeMetrics *RuntimeMetrics  // Optional runtime metrics
-}
-
-type RuntimeMetrics struct {
-	Load    float64  // Optional load indicator
-	Health  string   // Optional health status
-}
-```
-
-**`TopologyManager`**
-```go
-type TopologyManager struct {
-	registry  *AgentRegistry
-	topology  *ClusterTopology
-	logger    *logger.Logger
-}
-```
-
-##### Key Functions
-
-**`UpdateTopology() error`**
-- Rebuilds topology from agent registry
-- Groups nodes by role
-- Updates topology timestamp
-- Called when agents register/unregister
-
-**`GetTopology() *ClusterTopology`**
-- Returns current cluster topology
-- Thread-safe read operation
-
-**`GetNodesByRole(role databasev1.Role) []*NodeInfo`**
-- Returns nodes filtered by role
-- Useful for role-specific operations
-
-**`GetNode(nodeID string) (*NodeInfo, error)`**
-- Returns node information by ID
-- Returns error if node not found
-
-#### 1.5 Configuration Collector Component
-
-**Purpose**: Collects and aggregates node configurations from agents
-
-##### Core Responsibilities
-
-- **Configuration Collection**: Receives configuration data from agents
-- **Storage**: Stores configurations per node
-- **Consistency Checking**: Provides utilities for comparing configurations
-- **Configuration Exposure**: Exposes configurations via REST API
-
-##### Core Types
-
-**`NodeConfiguration`**
-```go
-type NodeConfiguration struct {
-	NodeID           string
-	NodeRole         databasev1.Role
-	StartupParams    map[string]string    // Command-line flags
-	EnvVars          map[string]string    // Environment variables (sanitized)
-	RuntimeConfig    map[string]interface{} // Runtime configurations
-	CollectedAt      time.Time
-}
-```
-
-**`ConfigurationCollector`**
-```go
-type ConfigurationCollector struct {
-	registry  *AgentRegistry
-	configs   map[string]*NodeConfiguration  // Map from node ID to config
-	mu        sync.RWMutex
-	logger    *logger.Logger
-}
-
-type ConfigurationFilter struct {
-	NodeIDs []string              // Filter by specific node IDs (empty = all nodes)
-	Role    databasev1.Role       // Filter by node role (optional)
-}
-```
-
-##### Key Functions
-
-**`CollectConfigurationsFromAgents(ctx context.Context, filter *ConfigurationFilter) (map[string]*NodeConfiguration, error)`**
-- Requests configurations from all agents (or filtered agents) when external client queries
-- Sends configuration request via StreamNodesConfigurations() to each agent
-- Agents collect configuration from BanyanDB process and respond
-- Waits for ConfigurationMessage responses from agents (with timeout)
-- Stores configurations per node
-- Returns map from node ID to configuration
-- Returns error if collection fails
-
-**`CollectConfiguration(nodeID string, config *NodeConfiguration) error`**
-- Stores configuration for a node
-- Updates existing configuration if present
-- Returns error if collection fails
-
-**`GetConfiguration(nodeID string) (*NodeConfiguration, error)`**
-- Retrieves configuration for specific node
-- Triggers on-demand collection from agent if not cached or stale
-- Returns error if not found
-
-**`GetAllConfigurations(ctx context.Context) (map[string]*NodeConfiguration, error)`**
-- Triggers on-demand collection from all agents
-- Calls CollectConfigurationsFromAgents() to get current configurations
-- Returns all node configurations
-- Used for `/cluster/config` endpoint
-- Returns error if collection fails
-
-**`GetConfigurationsByRole(ctx context.Context, role databasev1.Role) ([]*NodeConfiguration, error)`**
-- Triggers on-demand collection from agents filtered by role
-- Returns configurations filtered by role
-- Useful for role-based consistency checks
-- Returns error if collection fails
-
-**`CompareConfigurations(nodeID1, nodeID2 string) ([]string, error)`**
-- Compares configurations between two nodes
-- Returns list of differences
-- Useful for consistency verification
-
-#### 1.6 HTTP/REST API Server Component
+#### 1.4 HTTP/REST API Server Component
 
 **Purpose**: Exposes REST and Prometheus-style endpoints for external consumption
 
@@ -490,26 +333,28 @@ type ConfigurationFilter struct {
 ##### API Endpoints
 
 **`GET /metrics`**
-- Returns proxy's own metrics (health, agent count, RPC latency, etc.)
-- Format: Prometheus text format
-- Used by: Prometheus scrapers, monitoring systems
-
-**`GET /metrics-windows`**
-- Returns metrics within maintained time window for all agents
+- Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
 - Includes node metadata (role, ID, labels)
 - Format: Prometheus text format
 - Query parameters:
-  - `start_time`: Start time for time window (optional)
-  - `end_time`: End time for time window (optional)
+  - `node_id` (optional): Filter by node ID
+  - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
+- Used by: Prometheus scrapers, monitoring systems
+- Note: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
+
+**`GET /metrics-windows`**
+- Returns metrics from all agents (on-demand collection, not stored in Proxy)
+- Includes node metadata (role, ID, labels)
+- Format: Prometheus text format
+- Query parameters:
+  - `start_time`: Start time for time window (optional) - filters metrics by start time (agents filter from Flight Recorder)
+  - `end_time`: End time for time window (optional) - filters metrics by end time (agents filter from Flight Recorder)
   - `node_id`: Filter by node ID (optional)
   - `role`: Filter by node role (optional)
 
 **`GET /cluster`**
 - Returns cluster topology and node status
 - Format: JSON
-- Query parameters:
-  - `node_id`: Filter by node ID (optional)
-  - `role`: Filter by node role (optional)
 - Response includes:
   - List of all registered nodes
   - Node identity (ID, name, address)
@@ -820,6 +665,13 @@ message RegisterRequest {
   string node_id = 1;
   string node_role = 2;
   map<string, string> labels = 3;
+  Address primary_address = 4;
+  map<string, Address> secondary_addresses = 5;
+}
+
+message Address {
+  string ip = 1;
+  int32 port = 2;
 }
 
 message RegisterResponse {
@@ -874,27 +726,28 @@ message ConfigurationRequest {
 #### Endpoints
 
 **`GET /metrics`**
-- **Description**: Returns proxy's own metrics in Prometheus format
-- **Response**: Prometheus text format
-- **Example**:
-```
-# HELP fodc_proxy_agents_total Total number of registered agents
-# TYPE fodc_proxy_agents_total gauge
-fodc_proxy_agents_total 5
-
-# HELP fodc_proxy_grpc_requests_total Total gRPC requests
-# TYPE fodc_proxy_grpc_requests_total counter
-fodc_proxy_grpc_requests_total 1234
-```
-
-**`GET /metrics-windows`**
-- **Description**: Returns metrics within time window from all agents
+- **Description**: Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
 - **Query Parameters**:
-  - `start_time` (optional): RFC3339 timestamp
-  - `end_time` (optional): RFC3339 timestamp
   - `node_id` (optional): Filter by node ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
+- **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
+- **Example**:
+```
+# HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
+# TYPE banyandb_stream_tst_inverted_index_total_doc_count gauge
+banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",node_role="datanode-hot"} 12345
+```
+
+**`GET /metrics-windows`**
+- **Description**: Returns metrics from all agents (on-demand collection, not stored in Proxy)
+- **Query Parameters**:
+  - `start_time` (optional): RFC3339 timestamp - filters metrics by start time (agents filter from Flight Recorder)
+  - `end_time` (optional): RFC3339 timestamp - filters metrics by end time (agents filter from Flight Recorder)
+  - `node_id` (optional): Filter by node ID
+  - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
+- **Response**: Prometheus text format with node metadata labels
+- **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
 - **Example**:
 ```
 # HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
@@ -915,7 +768,20 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
     {
       "node_id": "node1",
       "node_role": "liaison",
-      "address": "192.168.1.1:17900",
+      "primary_address": {
+        "ip": "192.168.1.1",
+        "port": 17900
+      },
+      "secondary_addresses": {
+        "metrics": {
+          "ip": "192.168.1.1",
+          "port": 17901
+        },
+        "admin": {
+          "ip": "192.168.1.1",
+          "port": 17902
+        }
+      },
       "labels": {
         "zone": "us-west-1"
       },
@@ -1015,7 +881,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 
 ```
 1. External Client Requests Metrics
-   - GET /metrics (proxy metrics)
+   - GET /metrics (latest metrics from all agents)
    - GET /metrics-windows (agent metrics with time window)
    ↓
 2. APIServer Receives Request
@@ -1024,16 +890,19 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    ↓
 3. Proxy Requests Metrics from All Agents
    - For each registered agent, sends metrics request via StreamMetrics()
+   - For `/metrics`: requests latest metrics (no time window filter)
+   - For `/metrics-windows`: includes time window filter (start_time, end_time) if specified
    - Uses bi-directional stream to request current metrics
    - May filter by node_id or role if specified in query
    ↓
 4. Agents Retrieve Metrics from Flight Recorder
-   - Each agent receives metrics request via StreamMetrics()
+   - Each agent receives metrics request via StreamMetrics() with time window filter (if specified)
    - Agent retrieves metrics from Flight Recorder (in-memory storage)
    - Flight Recorder continuously collects and stores metrics from:
      * BanyanDB /metrics endpoint scraping
      * KTM/OS telemetry collection
-   - Packages metrics in MetricsMessage
+   - Agent filters metrics by time window if specified in MetricsRequest
+   - Packages filtered metrics in MetricsMessage
    ↓
 5. Agents Send Metrics to Proxy
    - Each agent sends MetricsMessage via StreamMetrics()
@@ -1046,12 +915,12 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 7. Proxy Enriches Metrics
    - Adds node metadata (role, ID, labels) to each metric
    - Normalizes metric format across agents
-   - Filters by time window if specified
    ↓
 8. MetricsAggregator Aggregates Metrics
-   - Combines metrics from all agents
-   - Stores in MetricsWindow for /metrics-windows endpoint
+   - Combines metrics from all agents into a single list
+   - Filters by time window if specified (agents already filtered by time window from Flight Recorder)
    - Associates metrics with node ID and role
+   - Does not store metrics (on-demand collection only)
    ↓
 9. Proxy Formats and Returns Response
    - Converts aggregated metrics to Prometheus text format
@@ -1112,17 +981,19 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 
 **Note**: This flow is integrated with Metrics Collection Flow. When an external request comes in, the Proxy requests metrics from all agents. Agents retrieve metrics from Flight Recorder (in-memory storage) which continuously collects metrics.
 
-**For `/metrics` endpoint (Proxy's own metrics)**:
+**For `/metrics` endpoint (Latest metrics from all agents)**:
 ```
-1. External Client Requests Proxy Metrics
-   - GET /metrics
+1. External Client Requests Latest Metrics
+   - GET /metrics?node_id=X&role=Y (optional filters)
    ↓
-2. APIServer Routes to Proxy Metrics Handler
-   - Returns proxy's own metrics (health, agent count, RPC latency, etc.)
-   - No agent collection needed
+2. Triggers Metrics Collection Flow
+   - Proxy requests latest metrics from all agents (or filtered agents)
+   - No time window filter (returns latest metrics)
+   - See "Metrics Collection Flow" above for detailed steps
    ↓
 3. Response Sent to Client
    - HTTP 200 with Prometheus text format
+   - Includes aggregated latest metrics from all agents with node metadata
 ```
 
 **For `/metrics-windows` endpoint (Agent metrics)**:
@@ -1162,14 +1033,13 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - Test concurrent stream handling
 
 **Metrics Aggregator Package**
-- Test `AggregateMetrics()` enrichment logic
-- Test `GetLatestMetrics()` retrieval
-- Test `GetMetricsWindow()` time filtering
-- Test `GetMetricsByNode()` node filtering
-- Test `GetMetricsByRole()` role filtering
-- Test `CleanupOldMetrics()` expiration
-- Test concurrent metric aggregation
-- Test memory usage with large metric volumes
+- Test `CollectMetricsFromAgents()` on-demand collection
+- Test `GetLatestMetrics()` without time filter
+- Test `GetMetricsWindow()` with time filter
+- Test metrics enrichment with node metadata
+- Test concurrent metrics collection from multiple agents
+- Test time window filtering (agents filter from Flight Recorder)
+- Test node and role filtering
 
 **Topology Manager Package**
 - Test `UpdateTopology()` topology building
@@ -1259,8 +1129,8 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 **Test Case 2: High Availability and Scalability**
 - Deploy Proxy with multiple agent connections (100+)
 - Verify Proxy handles concurrent connections
-- Verify metrics aggregation performance
-- Verify memory usage stays within limits
+- Verify on-demand metrics collection performance
+- Verify Proxy does not store metrics (memory efficient)
 - Test agent reconnection under load
 
 **Test Case 3: Failure Scenarios**
