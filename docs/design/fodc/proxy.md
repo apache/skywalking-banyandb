@@ -30,7 +30,7 @@ The Proxy provides:
 
 **Purpose**: Manages the lifecycle and state of all connected FODC Agents
 
-#### Core Responsibilities
+##### Core Responsibilities
 
 - **Agent Registration**: Accepts agent registration requests via gRPC
 - **Health Monitoring**: Tracks agent heartbeat and connection status
@@ -38,7 +38,7 @@ The Proxy provides:
 - **Topology Building**: Aggregates agent registrations into cluster topology view
 - **Connection Management**: Handles connection failures, reconnections, and cleanup
 
-#### Core Types
+##### Core Types
 
 **`AgentInfo`**
 ```go
@@ -71,7 +71,7 @@ type AgentRegistry struct {
 }
 ```
 
-#### Key Functions
+##### Key Functions
 
 **`RegisterAgent(ctx context.Context, info *AgentInfo) error`**
 - Registers a new agent or updates existing agent information
@@ -113,7 +113,7 @@ type AgentRegistry struct {
 - Optionally unregisters agents that have been offline for extended period (if `--agent-cleanup-timeout` is configured)
 - Returns aggregated health status
 
-#### Configuration Flags
+##### Configuration Flags
 
 **`--agent-heartbeat-timeout`**
 - **Type**: `duration`
@@ -134,14 +134,14 @@ type AgentRegistry struct {
 
 **Purpose**: Handles bi-directional gRPC communication with FODC Agents
 
-#### Core Responsibilities
+##### Core Responsibilities
 
 - **Agent Connection Handling**: Accepts and manages gRPC connections from agents
 - **Streaming Support**: Supports bi-directional streaming for metrics
 - **Protocol Implementation**: Implements FODC gRPC service protocol
 - **Connection Lifecycle**: Manages connection establishment, maintenance, and cleanup
 
-#### Core Types
+##### Core Types
 
 **`FODCService`** (gRPC Service Implementation)
 ```go
@@ -169,7 +169,7 @@ type AgentConnection struct {
 }
 ```
 
-#### Key Functions
+##### Key Functions
 
 **`RegisterAgent(stream FODCService_RegisterAgentServer) error`**
 - Handles bi-directional agent registration stream
@@ -196,7 +196,7 @@ type AgentConnection struct {
 - Forwards configuration to ConfigurationCollector for storage
 - Manages stream lifecycle
 
-#### Connection Lifecycle Management
+##### Connection Lifecycle Management
 
 **Stream Closure Handling**
 - When a stream closes (due to network error, agent shutdown, or timeout), the gRPC server should:
@@ -210,7 +210,7 @@ type AgentConnection struct {
 - **Ungraceful**: Stream closes unexpectedly → unregistration happens after detecting all streams closed
 - **Heartbeat Timeout**: Agent marked offline by `CheckAgentHealth()` → unregistration may occur after extended offline period (configurable)
 
-#### Configuration Flags
+##### Configuration Flags
 
 **`--grpc-listen-addr`**
 - **Type**: `string`
@@ -226,7 +226,7 @@ type AgentConnection struct {
 
 **Purpose**: Aggregates and enriches metrics from all agents
 
-#### Core Responsibilities
+##### Core Responsibilities
 
 - **On-Demand Metrics Collection**: Requests metrics from agents via gRPC streams when external clients query metrics
 - **Metrics Request Coordination**: Coordinates metrics requests to multiple agents concurrently
@@ -235,7 +235,7 @@ type AgentConnection struct {
 - **Normalization**: Normalizes metric formats and labels across agents
 - **Storage**: Stores aggregated metrics with time-series context
 
-#### Core Types
+##### Core Types
 
 **`AggregatedMetric`**
 ```go
@@ -274,7 +274,7 @@ type MetricsFilter struct {
 }
 ```
 
-#### Key Functions
+##### Key Functions
 
 **`CollectMetricsFromAgents(ctx context.Context, filter *MetricsFilter) (map[string][]*AggregatedMetric, error)`**
 - Requests metrics from all agents (or filtered agents) when external client queries
@@ -318,7 +318,7 @@ type MetricsFilter struct {
 - Prevents memory growth
 - Called periodically
 
-#### Configuration Flags
+##### Configuration Flags
 
 **`--metrics-window-size`**
 - **Type**: `duration`
@@ -531,7 +531,7 @@ type ConfigurationFilter struct {
 - Format: JSON
 - Returns proxy health status
 
-#### Core Types
+##### Core Types
 
 **`APIServer`**
 ```go
