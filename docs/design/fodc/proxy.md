@@ -329,7 +329,6 @@ type MetricsFilter struct {
   - `node_id` (optional): Filter by node ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - Used by: Prometheus scrapers, monitoring systems
-- Note: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
 
 **`GET /metrics-windows`**
 - Returns metrics from all agents (on-demand collection, not stored in Proxy)
