@@ -170,7 +170,7 @@ type FODCService struct {
 	logger          *logger.Logger
 }
 
-// gRPC service methods (to be defined in proto)
+// Example gRPC service methods (to be defined in proto)
 // RegisterAgent(stream RegisterRequest) (stream RegisterResponse) error
 // StreamMetrics(stream MetricsMessage) (stream MetricsRequest) error
 ```
