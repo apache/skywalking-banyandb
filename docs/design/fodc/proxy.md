@@ -433,16 +433,16 @@ type APIServer struct {
 **`ProxyClient`**
 ```go
 type ProxyClient struct {
-	proxyAddr      string
-  nodeIP         string
-  nodePort       int
-	nodeRole       databasev1.Role
-	labels         map[string]string
-	conn           *grpc.ClientConn
-	client         fodcv1.FODCServiceClient
+	proxyAddr       string
+	nodeIP          string
+	nodePort        int
+	nodeRole        databasev1.Role
+	labels          map[string]string
+	conn            *grpc.ClientConn
+	client          fodcv1.FODCServiceClient
 	heartbeatTicker *time.Ticker
-	mu             sync.RWMutex
-	logger         *logger.Logger
+	mu              sync.RWMutex
+	logger          *logger.Logger
 }
 
 type MetricsRequestFilter struct {
@@ -600,7 +600,7 @@ message StreamMetricsResponse {
 **`GET /metrics`**
 - **Description**: Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
 - **Query Parameters**:
-  - `agent_id` (optional): Filter by agent ID
+  - `ip` (optional): Filter by IP
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
@@ -616,7 +616,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
 - **Query Parameters**:
   - `start_time` (optional): RFC3339 timestamp - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time` (optional): RFC3339 timestamp - filters metrics by end time (agents filter from Flight Recorder)
-  - `agent_id` (optional): Filter by agent ID
+  - `ip` (optional): Filter by IP
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
@@ -695,7 +695,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
 **`GET /cluster/config`**
 - **Description**: Returns node configurations
 - **Query Parameters**:
-  - `agent_id` (optional): Filter by agent ID
+  - `ip` (optional): Filter by IP
   - `role` (optional): Filter by role
 - **Response**: JSON
 - **Example**:
