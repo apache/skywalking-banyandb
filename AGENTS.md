@@ -73,6 +73,7 @@ Use these specific aliases for protobuf packages:
 4. Avoid unnecessary conversions (unconvert)
 5. Use standard library variables when available (usestdlibvars)
 6. Follow whitespace rules (whitespace linter)
+7. Keep code compact - group related code together with minimal blank lines
 
 ## SECURITY
 1. Follow gosec security guidelines
@@ -83,6 +84,7 @@ Use these specific aliases for protobuf packages:
 2. Follow docStub patterns for documentation
 3. Use proper sentence structure and punctuation
 4. Describe what the function does, not how it does it
+5. Minimize comments - add only when necessary for exported functions/types or complex logic
 
 ## CONSTANTS AND MAGIC NUMBERS
 1. Use goconst for repeated string literals (min-occurrences: 4)
@@ -152,6 +154,13 @@ if x != nil && x.y == true {
 ```go
 // Function does something
 // This function does something
+x := 1  // set x to 1
+for _, v := range items {  // iterate over items
+	doSomething(v)  // process item
+}
+func (r *Request) Data() []byte {  // return data
+	return r.data
+}
 ```
 
 ## PREFERRED PATTERNS
@@ -192,8 +201,23 @@ if x != nil && x.y {
 
 ### Proper Documentation (GOOD):
 ```go
-// DoSomething performs a specific action.
-// DoSomething performs a specific action and returns an error if it fails.
+// ProcessData processes the given data and returns the result.
+func ProcessData(ctx context.Context, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("data cannot be empty")
+	}
+	for idx, item := range data {
+		if processErr := processItem(ctx, item); processErr != nil {
+			return nil, fmt.Errorf("failed to process item at index %d: %w", idx, processErr)
+		}
+	}
+	return finalizeProcessing(ctx, data)
+}
+
+// Data returns the request body.
+func (r *Request) Data() []byte {
+	return r.data
+}
 ```
 
 ## CODE GENERATION GUIDELINES
@@ -226,19 +250,15 @@ func ProcessData(ctx context.Context, data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("data cannot be empty")
 	}
-
-	// Use descriptive variable names to avoid shadowing
 	for idx, item := range data {
 		if processErr := processItem(ctx, item); processErr != nil {
 			return nil, fmt.Errorf("failed to process item at index %d: %w", idx, processErr)
 		}
 	}
-
 	result, err := finalizeProcessing(ctx, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to finalize processing: %w", err)
 	}
-
 	return result, nil
 }
 ```
@@ -281,24 +301,3 @@ When dealing with nested scopes, use these naming patterns:
 - Inner scope: 'innerErr', 'innerCtx', 'item', 'idx'
 - Deep nested: 'deepErr', 'deepCtx', 'subItem', 'subIdx'
 - Or use descriptive prefixes: 'processErr', 'validateErr', 'parseErr'
-
-## USAGE INSTRUCTIONS FOR AI ASSISTANTS
-
-### For Claude:
-- Use this file as a reference when generating Go code
-- Follow all formatting, naming, and error handling patterns
-- Pay special attention to variable shadowing prevention
-- Use the provided import aliases and organization rules
-
-### For Cursor:
-- This file can be used as .cursorrules
-- Follow all the patterns and guidelines specified
-
-### For GitHub Copilot:
-- Use this as a reference for code generation
-- Follow the coding standards and patterns
-
-### For Other LLMs:
-- Use this as a comprehensive coding guide
-- Follow all specified patterns and conventions
-- Pay attention to the project-specific requirements 
