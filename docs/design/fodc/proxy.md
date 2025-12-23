@@ -336,18 +336,16 @@ type MetricsFilter struct {
 - Includes node metadata (role, agent ID, labels)
 - Format: Prometheus text format
 - Query parameters:
-  - `agent_id` (optional): Filter by agent ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - Used by: Prometheus scrapers, monitoring systems
 
 **`GET /metrics-windows`**
 - Returns metrics from all agents (on-demand collection, not stored in Proxy)
 - Includes node metadata (role, agent ID, labels)
-- Format: Prometheus text format
+- Format: JSON
 - Query parameters:
   - `start_time`: Start time for time window (optional) - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time`: End time for time window (optional) - filters metrics by end time (agents filter from Flight Recorder)
-  - `agent_id`: Filter by agent ID (optional)
   - `role`: Filter by node role (optional)
 
 **`GET /cluster`**
