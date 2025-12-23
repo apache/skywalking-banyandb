@@ -43,7 +43,8 @@ The Proxy provides:
 **`AgentInfo`**
 ```go
 type AgentInfo struct {
-	NodeID            string                    // Unique node identifier
+	AgentID           string                    // Unique agent identifier (UUID, used as registry key)
+	AgentKey          AgentKey                  // Agent key (IP+port+role+labels)
 	NodeRole          databasev1.Role          // Node role (liaison, datanode-hot, etc.)
 	PrimaryAddress    Address                  // Primary agent gRPC address
 	SecondaryAddresses map[string]Address      // Secondary addresses with names (e.g., "metrics": Address, "gossip": Address)
@@ -69,32 +70,33 @@ const (
 **`AgentRegistry`**
 ```go
 type AgentRegistry struct {
-	agents    map[AgentKey]*AgentInfo      // Map from agent key (IP+port+role+labels) to agent info
-	mu        sync.RWMutex                 // Protects agents map
+	agents    map[string]*AgentInfo      // Map from unique agent ID to agent info
+	mu        sync.RWMutex               // Protects agents map
 	logger    *logger.Logger
-	heartbeatTimeout time.Duration        // Timeout for considering agent offline
+	heartbeatTimeout time.Duration       // Timeout for considering agent offline
 }
 
 type AgentKey struct {
 	IP     string                 // Primary IP address
 	Port   int                    // Primary port
 	Role   databasev1.Role       // Node role
-	Labels map[string]string      // Node labels (used for key matching)
+	Labels map[string]string      // Node labels (used for lookup, not as map key)
 }
 ```
 
 ##### Key Functions
 
-**`RegisterAgent(ctx context.Context, info *AgentInfo) error`**
+**`RegisterAgent(ctx context.Context, info *AgentInfo) (string, error)`**
 - Registers a new agent or updates existing agent information
-- Creates AgentKey from primary IP + port + role + labels
-- Uses AgentKey as the map key (not nodeID)
+- Generates unique agent ID (UUID) for the agent
+- Creates AgentKey from primary IP + port + role + labels and stores in AgentInfo
+- Uses unique agent ID as the map key
 - Validates primary address and role
 - Updates topology view
-- Returns error if registration fails
+- Returns agent ID and error if registration fails
 
-**`UnregisterAgent(key AgentKey) error`**
-- Removes agent from registry using AgentKey
+**`UnregisterAgent(agentID string) error`**
+- Removes agent from registry using unique agent ID
 - Cleans up associated resources
 - Updates topology view
 - Called in the following scenarios:
@@ -104,15 +106,20 @@ type AgentKey struct {
   - During graceful shutdown or manual agent removal
   - When agent explicitly requests unregistration via stream
 
-**`UpdateHeartbeat(key AgentKey) error`**
-- Updates last heartbeat timestamp for agent using AgentKey
+**`UpdateHeartbeat(agentID string) error`**
+- Updates last heartbeat timestamp for agent using unique agent ID
 - Marks agent as online if it was offline
 - Returns error if agent not found
 
 **`GetAgent(ip string, port int, role databasev1.Role, labels map[string]string) (*AgentInfo, error)`**
 - Retrieves agent information by primary IP + port + role + labels
 - Creates AgentKey from the provided parameters
-- Looks up agent in registry using AgentKey
+- Searches through agents map to find matching AgentKey (since AgentKey is not used as map key)
+- Returns error if agent not found
+
+**`GetAgentByID(agentID string) (*AgentInfo, error)`**
+- Retrieves agent information by unique agent ID
+- Direct lookup in agents map
 - Returns error if agent not found
 
 **`ListAgents() []*AgentInfo`**
@@ -178,8 +185,8 @@ type FODCService struct {
 **`AgentConnection`**
 ```go
 type AgentConnection struct {
-	Key         AgentKey              // Agent key (IP+port+role+labels) for registry lookup
-	NodeID      string
+	AgentID     string                // Unique agent ID for registry lookup
+	Key         AgentKey              // Agent key (IP+port+role+labels) for identification
 	Stream      grpc.ServerStream
 	Context     context.Context
 	Cancel      context.CancelFunc
@@ -194,7 +201,8 @@ type AgentConnection struct {
 - Receives registration requests from agent (includes primary address, role, labels)
 - Creates AgentKey from primary IP + port + role + labels
 - Validates registration information
-- Registers agent with AgentRegistry using AgentKey
+- Registers agent with AgentRegistry (generates unique agent ID)
+- Stores AgentKey in AgentInfo for lookup purposes (not used as map key)
 - Sends registration responses
 - Maintains stream for heartbeat and re-registration
 
@@ -211,9 +219,9 @@ type AgentConnection struct {
 **Stream Closure Handling**
 - When a stream closes (due to network error, agent shutdown, or timeout), the gRPC server should:
   1. Detect stream closure via context cancellation or stream error
-  2. Extract agent key (primary IP + port + role + labels) from the connection
+  2. Extract unique agent ID from the connection
   3. Check if this is the last active stream for the agent
-  4. If all streams are closed, call `AgentRegistry.UnregisterAgent(agentKey)` to clean up
+  4. If all streams are closed, call `AgentRegistry.UnregisterAgent(agentID)` to clean up
   5. Update topology to reflect agent offline status
 
 **Graceful vs. Ungraceful Disconnection**
@@ -241,7 +249,7 @@ type AgentConnection struct {
 
 - **On-Demand Metrics Collection**: Requests metrics from agents via gRPC streams when external clients query metrics
 - **Metrics Request Coordination**: Coordinates metrics requests to multiple agents concurrently
-- **Metadata Enrichment**: Adds node metadata (role, ID, labels) to metrics
+- **Metadata Enrichment**: Adds node metadata (role, agent ID, labels) to metrics
 - **Normalization**: Normalizes metric formats and labels across agents
 - **Time Window Filtering**: Filters metrics by time window when requested by external clients (agents filter based on Flight Recorder data)
 
@@ -254,7 +262,7 @@ type AggregatedMetric struct {
 	Labels      map[string]string      // Metric labels (including node metadata)
 	Value       float64                // Metric value
 	Timestamp   time.Time              // Metric timestamp
-	NodeID      string                 // Source node ID
+	AgentID     string                 // Source agent ID
 	NodeRole    databasev1.Role       // Source node role
 	Description string                 // Metric description/HELP text
 }
@@ -270,7 +278,7 @@ type MetricsAggregator struct {
 }
 
 type MetricsFilter struct {
-	NodeIDs []string              // Filter by specific node IDs (empty = all nodes)
+	AgentIDs []string              // Filter by specific agent IDs (empty = all agents)
 	Role    databasev1.Role       // Filter by node role (optional)
 	StartTime *time.Time          // Start time for time window (optional)
 	EndTime   *time.Time          // End time for time window (optional)
@@ -284,8 +292,9 @@ type MetricsFilter struct {
 - Sends metrics request via StreamMetrics() to each agent with time window filter (if specified)
 - Agents retrieve metrics from Flight Recorder (in-memory storage) filtered by time window and respond
 - Waits for StreamMetricsRequest responses from agents (with timeout)
-- Identifies agent connection from stream context and looks up AgentKey
-- Enriches metrics with node metadata (IP, port, role, labels) from AgentKey
+- Identifies agent connection from stream context and looks up unique agent ID
+- Retrieves AgentInfo using agent ID
+- Enriches metrics with node metadata (IP, port, role, labels) from AgentInfo
 - Combines metrics from all agents into a single list
 - Returns aggregated metrics (not stored, only returned)
 - Returns error if collection fails
@@ -324,21 +333,21 @@ type MetricsFilter struct {
 
 **`GET /metrics`**
 - Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
-- Includes node metadata (role, ID, labels)
+- Includes node metadata (role, agent ID, labels)
 - Format: Prometheus text format
 - Query parameters:
-  - `node_id` (optional): Filter by node ID
+  - `agent_id` (optional): Filter by agent ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - Used by: Prometheus scrapers, monitoring systems
 
 **`GET /metrics-windows`**
 - Returns metrics from all agents (on-demand collection, not stored in Proxy)
-- Includes node metadata (role, ID, labels)
+- Includes node metadata (role, agent ID, labels)
 - Format: Prometheus text format
 - Query parameters:
   - `start_time`: Start time for time window (optional) - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time`: End time for time window (optional) - filters metrics by end time (agents filter from Flight Recorder)
-  - `node_id`: Filter by node ID (optional)
+  - `agent_id`: Filter by agent ID (optional)
   - `role`: Filter by node role (optional)
 
 **`GET /cluster`**
@@ -346,7 +355,7 @@ type MetricsFilter struct {
 - Format: JSON
 - Response includes:
   - List of all registered nodes
-  - Node identity (ID, name, address)
+  - Agent identity (agent ID, address)
   - Node role
   - Node labels
   - Agent status (online/offline, last heartbeat)
@@ -357,7 +366,7 @@ type MetricsFilter struct {
 - Returns node configurations
 - Format: JSON
 - Query parameters:
-  - `node_id`: Filter by node ID (optional)
+  - `agent_id`: Filter by agent ID (optional)
   - `role`: Filter by node role (optional)
 
 **`GET /health`**
@@ -498,12 +507,12 @@ type MetricsRequestFilter struct {
 **`--node-ip`**
 - **Type**: `string`
 - **Default**: (required, no default)
-- **Description**: IP address for this BanyanDB node's primary gRPC address. Used as part of AgentKey for registry identification.
+- **Description**: IP address for this BanyanDB node's primary gRPC address. Used as part of AgentKey for agent identification (AgentKey is stored in AgentInfo but not used as registry key).
 
 **`--node-port`**
 - **Type**: `int`
 - **Default**: (required, no default)
-- **Description**: Port number for this BanyanDB node's primary gRPC address. Used as part of AgentKey for registry identification.
+- **Description**: Port number for this BanyanDB node's primary gRPC address. Used as part of AgentKey for agent identification (AgentKey is stored in AgentInfo but not used as registry key).
 
 **`--node-role`**
 - **Type**: `string`
@@ -593,7 +602,7 @@ message StreamMetricsResponse {
 **`GET /metrics`**
 - **Description**: Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
 - **Query Parameters**:
-  - `node_id` (optional): Filter by node ID
+  - `agent_id` (optional): Filter by agent ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
@@ -601,7 +610,7 @@ message StreamMetricsResponse {
 ```
 # HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
 # TYPE banyandb_stream_tst_inverted_index_total_doc_count gauge
-banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",node_role="datanode-hot"} 12345
+banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-uuid-123",node_role="datanode-hot"} 12345
 ```
 
 **`GET /metrics-windows`**
@@ -609,7 +618,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 - **Query Parameters**:
   - `start_time` (optional): RFC3339 timestamp - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time` (optional): RFC3339 timestamp - filters metrics by end time (agents filter from Flight Recorder)
-  - `node_id` (optional): Filter by node ID
+  - `agent_id` (optional): Filter by agent ID
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
@@ -617,7 +626,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 ```
 # HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
 # TYPE banyandb_stream_tst_inverted_index_total_doc_count gauge
-banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",node_role="datanode-hot"} 12345
+banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-uuid-123",node_role="datanode-hot"} 12345
 ```
 
 **`GET /cluster`**
@@ -649,12 +658,38 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
       },
       "status": "online",
       "last_heartbeat": "2024-01-01T12:00:00Z",
-      "runtime_metrics": {
-        "load": 0.5,
-        "health": "healthy"
-      }
+    },
+    {
+      "node_id": "node2",
+      "node_role": "data-hot",
+      "primary_address": {
+        "ip": "192.168.1.1",
+        "port": 17903
+      },
+      "secondary_addresses": {
+        "metrics": {
+          "ip": "192.168.1.1",
+          "port": 17904
+        },
+        "admin": {
+          "ip": "192.168.1.1",
+          "port": 17905
+        }
+      },
+      "labels": {
+        "zone": "us-west-1"
+      },
+      "status": "online",
+      "last_heartbeat": "2024-01-01T12:00:00Z",
     }
   ],
+  "calls": [
+    {
+      "id": "call1",
+      "source": "node1",
+      "target": "node2",
+    },
+  ]
   "updated_at": "2024-01-01T12:00:00Z"
 }
 ```
@@ -662,7 +697,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 **`GET /cluster/config`**
 - **Description**: Returns node configurations
 - **Query Parameters**:
-  - `node_id` (optional): Filter by node ID
+  - `agent_id` (optional): Filter by agent ID
   - `role` (optional): Filter by role
 - **Response**: JSON
 - **Example**:
@@ -670,7 +705,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 {
   "configurations": [
     {
-      "node_id": "node1",
+      "agent_id": "agent-uuid-123",
       "node_role": "liaison",
       "startup_params": {
         "--listen-addr": ":17900",
@@ -721,8 +756,9 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    ↓
 5. Proxy Validates Registration
    - Creates AgentKey from primary IP + port + role + labels
-   - Checks if agent with same AgentKey already exists
+   - Generates unique agent ID (UUID) for the agent
    - Validates role and primary address
+   - Note: AgentKey may be repetitious, so unique agent ID is used as registry key
    ↓
 6. Proxy Registers Agent
    - Creates AgentInfo in AgentRegistry
@@ -749,14 +785,14 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    ↓
 2. APIServer Receives Request
    - Routes to metrics handler
-   - Extracts query parameters (start_time, end_time, node_id, role)
+   - Extracts query parameters (start_time, end_time, agent_id, role)
    ↓
 3. Proxy Requests Metrics from All Agents
    - For each registered agent, sends metrics request via StreamMetrics()
    - For `/metrics`: requests latest metrics (no time window filter)
    - For `/metrics-windows`: includes time window filter (start_time, end_time) if specified
    - Uses bi-directional stream to request current metrics
-   - May filter by node_id or role if specified in query
+   - May filter by agent_id or role if specified in query
    ↓
 4. Agents Retrieve Metrics from Flight Recorder
    - Each agent receives metrics request via StreamMetrics() with time window filter (if specified)
@@ -777,14 +813,15 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
    ↓
 7. Proxy Enriches Metrics
    - Identifies agent connection from stream context
-   - Looks up AgentKey (IP+port+role+labels) from agent connection
-   - Adds node metadata (IP, port, role, labels) to each metric
+   - Looks up unique agent ID from agent connection
+   - Retrieves AgentInfo using agent ID
+   - Adds node metadata (IP, port, role, labels) from AgentInfo to each metric
    - Normalizes metric format across agents
    ↓
 8. MetricsAggregator Aggregates Metrics
    - Combines metrics from all agents into a single list
    - Filters by time window if specified (agents already filtered by time window from Flight Recorder)
-   - Associates metrics with agent using AgentKey from stream context (IP+port+role+labels)
+   - Associates metrics with agent using unique agent ID from stream context
    - Does not store metrics (on-demand collection only)
    ↓
 9. Proxy Formats and Returns Response
@@ -800,7 +837,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 **For `/metrics` endpoint (Latest metrics from all agents)**:
 ```
 1. External Client Requests Latest Metrics
-   - GET /metrics?node_id=X&role=Y (optional filters)
+   - GET /metrics?role=Y (optional filters)
    ↓
 2. Triggers Metrics Collection Flow
    - Proxy requests latest metrics from all agents (or filtered agents)
@@ -815,7 +852,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",node_id="node1",
 **For `/metrics-windows` endpoint (Agent metrics)**:
 ```
 1. External Client Requests Agent Metrics
-   - GET /metrics-windows?start_time=X&end_time=Y&node_id=Z&role=W
+   - GET /metrics-windows?start_time=X&end_time=Y&role=W
    ↓
 2. Triggers Metrics Collection Flow
    - Proxy requests metrics from all agents (or filtered agents)
