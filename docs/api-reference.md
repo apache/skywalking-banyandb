@@ -276,6 +276,19 @@
     - [TopNAggregationRegistryService](#banyandb-database-v1-TopNAggregationRegistryService)
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
+- [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
+    - [Address](#banyandb-fodc-v1-Address)
+    - [Metric](#banyandb-fodc-v1-Metric)
+    - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
+    - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
+    - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
+    - [RegisterAgentRequest.SecondaryAddressesEntry](#banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry)
+    - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
+    - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
+    - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
+  
+    - [FODCService](#banyandb-fodc-v1-FODCService)
+  
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointSpec](#banyandb-measure-v1-DataPointSpec)
     - [DataPointValue](#banyandb-measure-v1-DataPointValue)
@@ -4220,6 +4233,182 @@ Type determine the index structure under the hood
 | Get | [TraceRegistryServiceGetRequest](#banyandb-database-v1-TraceRegistryServiceGetRequest) | [TraceRegistryServiceGetResponse](#banyandb-database-v1-TraceRegistryServiceGetResponse) |  |
 | List | [TraceRegistryServiceListRequest](#banyandb-database-v1-TraceRegistryServiceListRequest) | [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse) |  |
 | Exist | [TraceRegistryServiceExistRequest](#banyandb-database-v1-TraceRegistryServiceExistRequest) | [TraceRegistryServiceExistResponse](#banyandb-database-v1-TraceRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+ 
+
+
+
+<a name="banyandb_fodc_v1_rpc-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/fodc/v1/rpc.proto
+
+
+
+<a name="banyandb-fodc-v1-Address"></a>
+
+### Address
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ip | [string](#string) |  |  |
+| port | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-Metric"></a>
+
+### Metric
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| labels | [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry) | repeated |  |
+| value | [double](#double) |  |  |
+| description | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-Metric-LabelsEntry"></a>
+
+### Metric.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-RegisterAgentRequest"></a>
+
+### RegisterAgentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node_role | [string](#string) |  |  |
+| labels | [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry) | repeated |  |
+| primary_address | [Address](#banyandb-fodc-v1-Address) |  |  |
+| secondary_addresses | [RegisterAgentRequest.SecondaryAddressesEntry](#banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry"></a>
+
+### RegisterAgentRequest.LabelsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry"></a>
+
+### RegisterAgentRequest.SecondaryAddressesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [Address](#banyandb-fodc-v1-Address) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-RegisterAgentResponse"></a>
+
+### RegisterAgentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| message | [string](#string) |  |  |
+| heartbeat_interval_seconds | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamMetricsRequest"></a>
+
+### StreamMetricsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metrics | [Metric](#banyandb-fodc-v1-Metric) | repeated |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamMetricsResponse"></a>
+
+### StreamMetricsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| start_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Optional start time for time window |
+| end_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Optional end time for time window |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-fodc-v1-FODCService"></a>
+
+### FODCService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| RegisterAgent | [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest) stream | [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse) stream | Bi-directional stream for agent registration and heartbeat |
+| StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
 
  
 

@@ -1,0 +1,69 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.fodc.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
+
+service FODCService {
+	// Bi-directional stream for agent registration and heartbeat
+	rpc RegisterAgent(stream RegisterAgentRequest) returns (stream RegisterAgentResponse);
+
+	// Bi-directional stream for metrics
+	// Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests)
+	rpc StreamMetrics(stream StreamMetricsRequest) returns (stream StreamMetricsResponse);
+}
+
+message RegisterAgentRequest {
+	string node_role = 1;
+	map<string, string> labels = 2;
+	Address primary_address = 3;
+	map<string, Address> secondary_addresses = 4;
+}
+
+message Address {
+	string ip = 1;
+	int32 port = 2;
+}
+
+message RegisterAgentResponse {
+	bool success = 1;
+	string message = 2;
+	int64 heartbeat_interval_seconds = 3;
+}
+
+message StreamMetricsRequest {
+	repeated Metric metrics = 1;
+	google.protobuf.Timestamp timestamp = 2;
+}
+
+message Metric {
+	string name = 1;
+	map<string, string> labels = 2;
+	double value = 3;
+	string description = 4;
+}
+
+message StreamMetricsResponse {
+	google.protobuf.Timestamp start_time = 1; // Optional start time for time window
+	google.protobuf.Timestamp end_time = 2;   // Optional end time for time window
+}
+
