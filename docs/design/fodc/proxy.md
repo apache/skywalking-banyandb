@@ -624,25 +624,66 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
 - **Example**:
 ```json
-{
-  "metrics": [
-    {
-      "name": "banyandb_stream_tst_inverted_index_total_doc_count",
-      "description": "Total document count",
-      "value": 12345,
-      "timestamp": "2024-01-01T12:00:00Z",
-      "labels": {
-        "index": "test",
-        "node_role": "datanode-hot"
+[
+  {
+    "timestamp": "2024-01-01T11:00:00Z",
+    "metrics": [
+      {
+        "name": "banyandb_stream_tst_inverted_index_total_doc_count",
+        "description": "Total document count",
+        "value": 12345,
+        "labels": {
+          "index": "test",
+          "node_role": "datanode-hot"
+        },
+        "agent_id": "agent-uuid-123",
+        "ip": "192.168.1.1",
+        "port": 17900
       },
-      "agent_id": "agent-uuid-123",
-      "ip": "192.168.1.1",
-      "port": 17900
-    }
-  ],
-  "start_time": "2024-01-01T11:00:00Z",
-  "end_time": "2024-01-01T12:00:00Z"
-}
+      {
+        "name": "http_requests_total",
+        "description": "Total requests",
+        "value": 300,
+        "labels": {
+          "index": "test",
+          "node_role": "datanode-hot"
+        },
+        "agent_id": "agent-uuid-123",
+        "ip": "192.168.1.1",
+        "port": 17900
+      }
+    ]
+  },
+  {
+    "timestamp": "2024-01-01T11:05:00Z",
+    "metrics": [
+      {
+        "name": "banyandb_stream_tst_inverted_index_total_doc_count",
+        "description": "Total document count",
+        "value": 12350,
+        "labels": {
+          "index": "test",
+          "node_role": "datanode-hot"
+        },
+        "agent_id": "agent-uuid-123",
+        "ip": "192.168.1.1",
+        "port": 17900
+      },
+      {
+        "name": "http_requests_total",
+        "description": "Total requests",
+        "value": 200,
+        "labels": {
+          "index": "test",
+          "node_role": "datanode-hot"
+        },
+        "agent_id": "agent-uuid-123",
+        "ip": "192.168.1.1",
+        "port": 17900
+      }
+    ]
+  },
+]
 ```
 
 **`GET /cluster`**
