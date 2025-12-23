@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,9 +39,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/dump"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -473,7 +472,7 @@ func (ctx *streamDumpContext) writeRow(row streamRowData) error {
 			return err
 		}
 	} else {
-		writeStreamRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap)
+		writeStreamRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap, ctx.partSeriesMap)
 	}
 	ctx.rowNum++
 	return nil
@@ -529,18 +528,7 @@ func openStreamPart(id uint64, root string, fileSystem fs.FileSystem) (*streamPa
 	}
 
 	// Try to open series metadata file (optional, for backward compatibility)
-	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
-	reader, err := fileSystem.OpenFile(seriesMetadataPath)
-	if err != nil {
-		// Only ignore file not found errors; other errors should be reported
-		var fsErr *fs.FileSystemError
-		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to open series metadata file %s: %v\n", seriesMetadataPath, err)
-		}
-		// File doesn't exist, it's okay - just continue without it
-	} else {
-		p.seriesMetadata = reader
-	}
+	p.seriesMetadata = dump.TryOpenSeriesMetadata(fileSystem, partPath)
 
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
@@ -950,17 +938,37 @@ func discoverStreamTagColumns(partIDs []uint64, shardPath string, fileSystem fs.
 	return result, nil
 }
 
-func writeStreamRowAsText(row streamRowData, rowNum int, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) {
+func writeStreamRowAsText(
+	row streamRowData,
+	rowNum int,
+	verbose bool,
+	projectionTags []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  PartID: %d (0x%016x)\n", row.partID, row.partID)
 	fmt.Printf("  ElementID: %d\n", row.elementID)
 	fmt.Printf("  Timestamp: %s\n", formatTimestamp(row.timestamp))
 	fmt.Printf("  SeriesID: %d\n", row.seriesID)
 
-	if seriesMap != nil {
-		if seriesText, ok := seriesMap[row.seriesID]; ok {
-			fmt.Printf("  Series: %s\n", seriesText)
+	seriesText := ""
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
 		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
+		if text, ok := seriesMap[row.seriesID]; ok {
+			seriesText = text
+		}
+	}
+	if seriesText != "" {
+		fmt.Printf("  Series: %s\n", seriesText)
 	}
 
 	fmt.Printf("  Element Data: %d bytes\n", len(row.elementData))
@@ -1143,36 +1151,5 @@ func streamTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]
 }
 
 func (ctx *streamDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *streamPart) error {
-	// Read all data from series metadata file
-	seqReader := p.seriesMetadata.SequentialRead()
-	defer seqReader.Close()
-
-	readMetadataBytes, err := io.ReadAll(seqReader)
-	if err != nil {
-		return fmt.Errorf("failed to read series metadata: %w", err)
-	}
-
-	if len(readMetadataBytes) == 0 {
-		return nil // Empty file, nothing to parse
-	}
-
-	// Unmarshal Documents
-	var docs index.Documents
-	if err := docs.Unmarshal(readMetadataBytes); err != nil {
-		return fmt.Errorf("failed to unmarshal series metadata: %w", err)
-	}
-
-	if len(docs) == 0 {
-		return nil // No documents
-	}
-
-	// Store EntityValues in partSeriesMap for use in CSV output
-	partMap := make(map[common.SeriesID]string)
-	for _, doc := range docs {
-		seriesID := common.SeriesID(convert.Hash(doc.EntityValues))
-		partMap[seriesID] = string(doc.EntityValues)
-	}
-	ctx.partSeriesMap[partID] = partMap
-
-	return nil
+	return dump.ParseSeriesMetadata(partID, p.seriesMetadata, ctx.partSeriesMap)
 }
