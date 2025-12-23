@@ -75,9 +75,4 @@ gomock_reflect*
 .cursor/
 
 # Claude
-Claude.md
 .claude/
-CLAUDE.md
-
-# Codex
-AGENTS.md
