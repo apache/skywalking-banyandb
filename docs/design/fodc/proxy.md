@@ -620,69 +620,87 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
   - `end_time` (optional): RFC3339 timestamp - filters metrics by end time (agents filter from Flight Recorder)
   - `address` (optional): Filter by ip or ip:port
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
-- **Response**: JSON with node metadata labels
+- **Response**: JSON array of metrics, each with time series data for line charts
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
+- **Format**: Each metric is grouped by name and labels, with a `data` array containing timestamp-value pairs for charting
 - **Example**:
 ```json
 [
   {
-    "timestamp": "2024-01-01T11:00:00Z",
-    "metrics": [
+    "name": "banyandb_stream_tst_inverted_index_total_doc_count",
+    "description": "Total document count",
+    "labels": {
+      "index": "test",
+      "node_role": "datanode-hot"
+    },
+    "agent_id": "agent-uuid-123",
+    "ip": "192.168.1.1",
+    "port": 17900,
+    "data": [
       {
-        "name": "banyandb_stream_tst_inverted_index_total_doc_count",
-        "description": "Total document count",
-        "value": 12345,
-        "labels": {
-          "index": "test",
-          "node_role": "datanode-hot"
-        },
-        "agent_id": "agent-uuid-123",
-        "ip": "192.168.1.1",
-        "port": 17900
+        "timestamp": "2024-01-01T11:00:00Z",
+        "value": 12345
       },
       {
-        "name": "http_requests_total",
-        "description": "Total requests",
-        "value": 300,
-        "labels": {
-          "index": "test",
-          "node_role": "datanode-hot"
-        },
-        "agent_id": "agent-uuid-123",
-        "ip": "192.168.1.1",
-        "port": 17900
+        "timestamp": "2024-01-01T11:05:00Z",
+        "value": 12350
+      },
+      {
+        "timestamp": "2024-01-01T12:00:00Z",
+        "value": 12355
       }
     ]
   },
   {
-    "timestamp": "2024-01-01T11:05:00Z",
-    "metrics": [
+    "name": "http_requests_total",
+    "description": "Total requests",
+    "labels": {
+      "index": "test",
+      "node_role": "datanode-hot"
+    },
+    "agent_id": "agent-uuid-123",
+    "ip": "192.168.1.1",
+    "port": 17900,
+    "data": [
       {
-        "name": "banyandb_stream_tst_inverted_index_total_doc_count",
-        "description": "Total document count",
-        "value": 12350,
-        "labels": {
-          "index": "test",
-          "node_role": "datanode-hot"
-        },
-        "agent_id": "agent-uuid-123",
-        "ip": "192.168.1.1",
-        "port": 17900
+        "timestamp": "2024-01-01T11:00:00Z",
+        "value": 300
       },
       {
-        "name": "http_requests_total",
-        "description": "Total requests",
-        "value": 200,
-        "labels": {
-          "index": "test",
-          "node_role": "datanode-hot"
-        },
-        "agent_id": "agent-uuid-123",
-        "ip": "192.168.1.1",
-        "port": 17900
+        "timestamp": "2024-01-01T11:05:00Z",
+        "value": 200
+      },
+      {
+        "timestamp": "2024-01-01T12:00:00Z",
+        "value": 250
       }
     ]
   },
+  {
+    "name": "banyandb_stream_tst_inverted_index_total_doc_count",
+    "description": "Total document count",
+    "labels": {
+      "index": "test",
+      "node_role": "liaison"
+    },
+    "agent_id": "agent-uuid-456",
+    "ip": "192.168.1.2",
+    "port": 17900,
+    "data": [
+      {
+        "timestamp": "2024-01-01T11:00:00Z",
+        "value": 54321
+      },
+      {
+        "timestamp": "2024-01-01T11:05:00Z",
+        "value": 54330
+      },
+      {
+        "timestamp": "2024-01-01T12:00:00Z",
+        "value": 54340
+      }
+    ]
+  }
 ]
 ```
 
