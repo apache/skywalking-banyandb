@@ -44,7 +44,7 @@ The Proxy provides:
 ```go
 type AgentInfo struct {
 	AgentID           string                    // Unique agent identifier (UUID, used as registry key)
-	AgentKey          AgentKey                  // Agent key (IP+port+role+labels)
+	AgentIdentity     AgentIdentity              // Agent identity (IP+port+role+labels)
 	NodeRole          databasev1.Role          // Node role (liaison, datanode-hot, etc.)
 	PrimaryAddress    Address                  // Primary agent gRPC address
 	SecondaryAddresses map[string]Address      // Secondary addresses with names (e.g., "metrics": Address, "gossip": Address)
@@ -76,11 +76,11 @@ type AgentRegistry struct {
 	heartbeatTimeout time.Duration       // Timeout for considering agent offline
 }
 
-type AgentKey struct {
+type AgentIdentity struct {
 	IP     string                 // Primary IP address
 	Port   int                    // Primary port
 	Role   databasev1.Role       // Node role
-	Labels map[string]string      // Node labels (used for lookup, not as map key)
+	Labels map[string]string      // Node labels (used for lookup and identification)
 }
 ```
 
@@ -89,7 +89,7 @@ type AgentKey struct {
 **`RegisterAgent(ctx context.Context, info *AgentInfo) (string, error)`**
 - Registers a new agent or updates existing agent information
 - Generates unique agent ID (UUID) for the agent
-- Creates AgentKey from primary IP + port + role + labels and stores in AgentInfo
+- Creates AgentIdentity from primary IP + port + role + labels and stores in AgentInfo
 - Uses unique agent ID as the map key
 - Validates primary address and role
 - Updates topology view
@@ -113,8 +113,8 @@ type AgentKey struct {
 
 **`GetAgent(ip string, port int, role databasev1.Role, labels map[string]string) (*AgentInfo, error)`**
 - Retrieves agent information by primary IP + port + role + labels
-- Creates AgentKey from the provided parameters
-- Searches through agents map to find matching AgentKey (since AgentKey is not used as map key)
+- Creates AgentIdentity from the provided parameters
+- Searches through agents map to find matching AgentIdentity
 - Returns error if agent not found
 
 **`GetAgentByID(agentID string) (*AgentInfo, error)`**
@@ -186,7 +186,7 @@ type FODCService struct {
 ```go
 type AgentConnection struct {
 	AgentID     string                // Unique agent ID for registry lookup
-	Key         AgentKey              // Agent key (IP+port+role+labels) for identification
+	Identity    AgentIdentity         // Agent identity (IP+port+role+labels)
 	Stream      grpc.ServerStream
 	Context     context.Context
 	Cancel      context.CancelFunc
@@ -199,10 +199,10 @@ type AgentConnection struct {
 **`RegisterAgent(stream FODCService_RegisterAgentServer) error`**
 - Handles bi-directional agent registration stream
 - Receives registration requests from agent (includes primary address, role, labels)
-- Creates AgentKey from primary IP + port + role + labels
+- Creates AgentIdentity from primary IP + port + role + labels
 - Validates registration information
 - Registers agent with AgentRegistry (generates unique agent ID)
-- Stores AgentKey in AgentInfo for lookup purposes (not used as map key)
+- Stores AgentIdentity in AgentInfo for lookup and identification purposes
 - Sends registration responses
 - Maintains stream for heartbeat and re-registration
 
@@ -507,12 +507,12 @@ type MetricsRequestFilter struct {
 **`--node-ip`**
 - **Type**: `string`
 - **Default**: (required, no default)
-- **Description**: IP address for this BanyanDB node's primary gRPC address. Used as part of AgentKey for agent identification (AgentKey is stored in AgentInfo but not used as registry key).
+- **Description**: IP address for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.
 
 **`--node-port`**
 - **Type**: `int`
 - **Default**: (required, no default)
-- **Description**: Port number for this BanyanDB node's primary gRPC address. Used as part of AgentKey for agent identification (AgentKey is stored in AgentInfo but not used as registry key).
+- **Description**: Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.
 
 **`--node-role`**
 - **Type**: `string`
@@ -812,10 +812,10 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
    - Sends primary address (IP + port), role, and labels from configuration flags
    ↓
 5. Proxy Validates Registration
-   - Creates AgentKey from primary IP + port + role + labels
+   - Creates AgentIdentity from primary IP + port + role + labels
    - Generates unique agent ID (UUID) for the agent
    - Validates role and primary address
-   - Note: AgentKey may be repetitious, so unique agent ID is used as registry key
+   - Note: AgentIdentity may be repetitious, so unique agent ID is used as registry key
    ↓
 6. Proxy Registers Agent
    - Creates AgentInfo in AgentRegistry
