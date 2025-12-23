@@ -616,15 +616,31 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
 - **Query Parameters**:
   - `start_time` (optional): RFC3339 timestamp - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time` (optional): RFC3339 timestamp - filters metrics by end time (agents filter from Flight Recorder)
-  - `ip` (optional): Filter by IP
+  - `address` (optional): Filter by ip or ip:port
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
-- **Response**: Prometheus text format with node metadata labels
+- **Response**: JSON with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
 - **Example**:
-```
-# HELP banyandb_stream_tst_inverted_index_total_doc_count Total document count
-# TYPE banyandb_stream_tst_inverted_index_total_doc_count gauge
-banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-uuid-123",node_role="datanode-hot"} 12345
+```json
+{
+  "metrics": [
+    {
+      "name": "banyandb_stream_tst_inverted_index_total_doc_count",
+      "description": "Total document count",
+      "value": 12345,
+      "timestamp": "2024-01-01T12:00:00Z",
+      "labels": {
+        "index": "test",
+        "node_role": "datanode-hot"
+      },
+      "agent_id": "agent-uuid-123",
+      "ip": "192.168.1.1",
+      "port": 17900
+    }
+  ],
+  "start_time": "2024-01-01T11:00:00Z",
+  "end_time": "2024-01-01T12:00:00Z"
+}
 ```
 
 **`GET /cluster`**
