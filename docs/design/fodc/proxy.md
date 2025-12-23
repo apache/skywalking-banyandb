@@ -337,6 +337,7 @@ type MetricsFilter struct {
 - Format: Prometheus text format
 - Query parameters:
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
+  - `address` (optional): Filter by ip or ip:port
 - Used by: Prometheus scrapers, monitoring systems
 
 **`GET /metrics-windows`**
@@ -347,6 +348,7 @@ type MetricsFilter struct {
   - `start_time`: Start time for time window (optional) - filters metrics by start time (agents filter from Flight Recorder)
   - `end_time`: End time for time window (optional) - filters metrics by end time (agents filter from Flight Recorder)
   - `role`: Filter by node role (optional)
+  - `address` (optional): Filter by ip or ip:port
 
 **`GET /cluster`**
 - Returns cluster topology and node status
@@ -600,7 +602,7 @@ message StreamMetricsResponse {
 **`GET /metrics`**
 - **Description**: Returns latest metrics from all agents (on-demand collection, not stored in Proxy)
 - **Query Parameters**:
-  - `ip` (optional): Filter by IP
+  - `address` (optional): Filter by ip or ip:port
   - `role` (optional): Filter by role (liaison, datanode-hot, etc.)
 - **Response**: Prometheus text format with node metadata labels
 - **Note**: Metrics are collected on-demand from agents' Flight Recorder. No metrics are stored in the Proxy.
@@ -711,7 +713,7 @@ banyandb_stream_tst_inverted_index_total_doc_count{index="test",agent_id="agent-
 **`GET /cluster/config`**
 - **Description**: Returns node configurations
 - **Query Parameters**:
-  - `ip` (optional): Filter by IP
+  - `address` (optional): Filter by ip or ip:port
   - `role` (optional): Filter by role
 - **Response**: JSON
 - **Example**:
