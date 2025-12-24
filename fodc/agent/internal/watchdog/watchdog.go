@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 

@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // TestDatasource_Update_TimestampBufferCapacity tests timestamp buffer capacity adjustment.
