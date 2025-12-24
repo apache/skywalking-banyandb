@@ -50,12 +50,12 @@ type MetricsFilter struct {
 
 // Aggregator aggregates and enriches metrics from all agents.
 type Aggregator struct {
-	registry    *registry.AgentRegistry
-	grpcService MetricsRequestSender
-	mu          sync.RWMutex
-	logger      *logger.Logger
-	metricsCh   chan *AggregatedMetric
-	collecting  map[string]chan []*AggregatedMetric
+	registry     *registry.AgentRegistry
+	grpcService  MetricsRequestSender
+	mu           sync.RWMutex
+	logger       *logger.Logger
+	metricsCh    chan *AggregatedMetric
+	collecting   map[string]chan []*AggregatedMetric
 	collectingMu sync.RWMutex
 }
 
@@ -67,11 +67,11 @@ type MetricsRequestSender interface {
 // NewAggregator creates a new MetricsAggregator instance.
 func NewAggregator(registry *registry.AgentRegistry, grpcService MetricsRequestSender, logger *logger.Logger) *Aggregator {
 	return &Aggregator{
-		registry:     registry,
-		grpcService:  grpcService,
-		logger:       logger,
-		metricsCh:    make(chan *AggregatedMetric, 1000),
-		collecting:   make(map[string]chan []*AggregatedMetric),
+		registry:    registry,
+		grpcService: grpcService,
+		logger:      logger,
+		metricsCh:   make(chan *AggregatedMetric, 1000),
+		collecting:  make(map[string]chan []*AggregatedMetric),
 	}
 }
 
@@ -258,4 +258,3 @@ func (ma *Aggregator) matchesAddress(agentInfo *registry.AgentInfo, address stri
 	}
 	return false
 }
-
