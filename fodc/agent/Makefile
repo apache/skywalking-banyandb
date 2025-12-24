@@ -21,6 +21,9 @@ BINARIES := $(NAME)-cli
 
 IMG_NAME := skywalking-fodc-agent
 
+# Override SOURCE_DIR to match the actual Go module path structure
+SOURCE_DIR := fodc/agent
+
 include ../../scripts/build/version.mk
 include ../../scripts/build/base.mk
 include ../../scripts/build/generate_go.mk
