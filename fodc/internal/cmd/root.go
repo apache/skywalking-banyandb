@@ -33,6 +33,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -45,6 +46,9 @@ const (
 	defaultMetricsEndpoint              = "http://localhost:2121/metrics"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
+	defaultProxyAddr                    = "localhost:17900"
+	defaultHeartbeatInterval            = 10 * time.Second
+	defaultReconnectInterval            = 5 * time.Second
 )
 
 var (
@@ -52,6 +56,13 @@ var (
 	metricsEndpoint              string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
+	proxyAddr                    string
+	nodeIP                       string
+	nodePort                     int
+	nodeRole                     string
+	nodeLabels                   string
+	heartbeatInterval            time.Duration
+	reconnectInterval            time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -77,6 +88,20 @@ func init() {
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
 	rootCmd.Flags().StringVar(&prometheusListenAddr, "prometheus-listen-addr", defaultPrometheusListenAddr,
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
+	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
+		"FODC Proxy gRPC address")
+	rootCmd.Flags().StringVar(&nodeIP, "node-ip", "",
+		"IP address for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
+	rootCmd.Flags().IntVar(&nodePort, "node-port", 0,
+		"Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
+	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
+		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
+		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
+	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
+		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
+	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
+		"Interval for reconnection attempts when connection to Proxy is lost")
 }
 
 // runFODC is the main function for the FODC agent.
@@ -164,6 +189,40 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	stopCh := wd.Serve()
 
+	var proxyClient *proxy.ProxyClient
+	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
+		labelsMap := proxy.ParseLabels(nodeLabels)
+		proxyClient = proxy.NewProxyClient(
+			proxyAddr,
+			nodeIP,
+			nodePort,
+			nodeRole,
+			labelsMap,
+			heartbeatInterval,
+			reconnectInterval,
+			fr,
+			log,
+		)
+
+		proxyCtx, proxyCancel := context.WithCancel(ctx)
+		defer proxyCancel()
+
+		go func() {
+			if startErr := proxyClient.Start(proxyCtx); startErr != nil {
+				log.Error().Err(startErr).Msg("Proxy client error")
+			}
+		}()
+
+		log.Info().
+			Str("proxy_addr", proxyAddr).
+			Str("node_ip", nodeIP).
+			Int("node_port", nodePort).
+			Str("node_role", nodeRole).
+			Msg("Proxy client started")
+	} else {
+		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --node-ip, --node-port, --node-role)")
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -178,6 +237,12 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	// Graceful shutdown
 	wd.GracefulStop()
+
+	if proxyClient != nil {
+		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
+			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
+		}
+	}
 
 	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
