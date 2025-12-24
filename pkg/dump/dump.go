@@ -63,7 +63,7 @@ func ParseSeriesMetadata(partID uint64, seriesMetadata fs.Reader, partSeriesMap 
 	}
 
 	if len(readMetadataBytes) == 0 {
-		return nil // Empty file, nothing to parse
+		return nil
 	}
 
 	// Unmarshal Documents
