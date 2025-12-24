@@ -29,10 +29,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/exporter"
-	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/internal/server"
-	"github.com/apache/skywalking-banyandb/fodc/internal/watchdog"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 )
 
 var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {

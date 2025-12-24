@@ -30,8 +30,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
-	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
