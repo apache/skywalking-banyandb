@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // FlightRecorder buffers metrics data using fixed-size circular buffers with in-memory storage.

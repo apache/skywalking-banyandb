@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 const testMetricsCPUUsage = "cpu_usage 75.5"

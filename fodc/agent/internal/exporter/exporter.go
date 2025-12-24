@@ -28,8 +28,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 var (
