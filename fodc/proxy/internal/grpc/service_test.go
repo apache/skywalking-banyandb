@@ -298,6 +298,7 @@ func TestRegisterAgent_Success(t *testing.T) {
 	assert.True(t, stream.sentResponses[0].Success)
 	assert.Contains(t, stream.sentResponses[0].Message, "successfully")
 	assert.Greater(t, stream.sentResponses[0].HeartbeatIntervalSeconds, int64(0))
+	assert.NotEmpty(t, stream.sentResponses[0].AgentId, "AgentId should be present in registration response")
 
 	service.connectionsMu.RLock()
 	assert.Equal(t, 0, len(service.connections))
@@ -375,6 +376,11 @@ func TestRegisterAgent_HeartbeatUpdate(t *testing.T) {
 	err := service.RegisterAgent(stream)
 
 	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(stream.sentResponses), 1)
+	if len(stream.sentResponses) > 0 {
+		assert.True(t, stream.sentResponses[0].Success)
+		assert.NotEmpty(t, stream.sentResponses[0].AgentId, "AgentId should be present in registration response")
+	}
 }
 
 func TestStreamMetrics_Success(t *testing.T) {
