@@ -64,6 +64,8 @@ type MeasureQueryOptions struct {
 	Entities        [][]*modelv1.TagValue
 	TagProjection   []TagProjection
 	FieldProjection []string
+	Sort            modelv1.Sort
+	Number          int32
 }
 
 // MeasureResult is the result of a query.

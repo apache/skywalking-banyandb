@@ -53,6 +53,7 @@ type unresolvedLocalScan struct {
 	conditions  []*modelv1.Condition
 	groupByTags []string
 	sort        modelv1.Sort
+	number      int32
 }
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -103,6 +104,8 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 				},
 			},
 			FieldProjection: fieldProjection,
+			Sort:            uls.sort,
+			Number:          uls.number,
 		},
 		ec: uls.ec,
 	}, nil

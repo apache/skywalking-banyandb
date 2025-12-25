@@ -35,6 +35,7 @@ message TopNList {
   message Item {
     repeated model.v1.Tag entity = 1;
     model.v1.FieldValue value = 2;
+    int64 version = 3;
   }
   // items contains top-n items in a list
   repeated Item items = 2;

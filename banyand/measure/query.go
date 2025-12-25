@@ -71,6 +71,11 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
+type topNQueryOptions struct {
+	sortDirection modelv1.Sort
+	number        int32
+}
+
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	if mqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
@@ -189,6 +194,13 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 			result.orderByTS = false
 		case index.OrderByTypeSeries:
 			result.orderByTS = false
+		}
+	}
+
+	if mqo.Name == "_top_n_result" {
+		result.topNQueryOptions = &topNQueryOptions{
+			sortDirection: mqo.Sort,
+			number:        mqo.Number,
 		}
 	}
 
@@ -751,6 +763,7 @@ type queryResult struct {
 	loaded           bool
 	orderByTS        bool
 	ascTS            bool
+	topNQueryOptions *topNQueryOptions
 }
 
 func (qr *queryResult) Pull() *model.MeasureResult {
