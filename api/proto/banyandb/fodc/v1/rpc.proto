@@ -48,6 +48,7 @@ message RegisterAgentResponse {
 	bool success = 1;
 	string message = 2;
 	int64 heartbeat_interval_seconds = 3;
+	string agent_id = 4;
 }
 
 message StreamMetricsRequest {

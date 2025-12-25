@@ -158,6 +158,7 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 				Success:                  true,
 				Message:                  "Agent registered successfully",
 				HeartbeatIntervalSeconds: int64(s.heartbeatInterval.Seconds()),
+				AgentId:                  agentID,
 			}
 
 			if sendErr := stream.Send(resp); sendErr != nil {

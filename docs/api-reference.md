@@ -4356,6 +4356,7 @@ Type determine the index structure under the hood
 | success | [bool](#bool) |  |  |
 | message | [string](#string) |  |  |
 | heartbeat_interval_seconds | [int64](#int64) |  |  |
+| agent_id | [string](#string) |  |  |
 
 
 

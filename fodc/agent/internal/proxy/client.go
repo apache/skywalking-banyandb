@@ -27,6 +27,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
@@ -57,6 +58,7 @@ type ProxyClient struct {
 	mu                 sync.RWMutex
 	logger             *logger.Logger
 	stopCh             chan struct{}
+	agentID            string
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 }
@@ -153,14 +155,18 @@ func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("registration failed: %s", resp.Message)
 	}
 
-	if resp.HeartbeatIntervalSeconds > 0 {
-		pc.mu.Lock()
-		pc.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
-		pc.mu.Unlock()
+	pc.mu.Lock()
+	if resp.AgentId != "" {
+		pc.agentID = resp.AgentId
 	}
+	if resp.HeartbeatIntervalSeconds > 0 {
+		pc.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
+	}
+	pc.mu.Unlock()
 
 	pc.logger.Info().
 		Str("proxy_addr", pc.proxyAddr).
+		Str("agent_id", resp.AgentId).
 		Dur("heartbeat_interval", pc.heartbeatInterval).
 		Msg("Agent registered with Proxy")
 
@@ -171,15 +177,23 @@ func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
 
 // StartMetricsStream establishes bi-directional metrics stream with Proxy.
 func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
-	pc.mu.Lock()
+	pc.mu.RLock()
 	if pc.client == nil {
-		pc.mu.Unlock()
+		pc.mu.RUnlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
 	client := pc.client
-	pc.mu.Unlock()
+	agentID := pc.agentID
+	pc.mu.RUnlock()
 
-	stream, streamErr := client.StreamMetrics(ctx)
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamMetrics(ctxWithMetadata)
 	if streamErr != nil {
 		return fmt.Errorf("failed to create metrics stream: %w", streamErr)
 	}
