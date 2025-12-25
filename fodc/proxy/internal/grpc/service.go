@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -97,7 +98,7 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 
 	for {
 		req, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			s.logger.Debug().Str("agent_id", agentID).Msg("Registration stream closed by agent")
 			break
 		}
@@ -227,7 +228,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	go func() {
 		for {
 			req, recvErr := stream.Recv()
-			if recvErr == io.EOF {
+			if errors.Is(recvErr, io.EOF) {
 				recvErrCh <- nil
 				return
 			}
