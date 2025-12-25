@@ -666,7 +666,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	}
 }
 
-func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue) {
+func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, tqo *topNQueryOptions) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
 	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
@@ -704,8 +704,40 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			}
 		}
 	}
-	for i, c := range bc.fields.columns {
-		r.Fields[i].Values[len(r.Fields[i].Values)-1] = mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+
+	if tqo != nil {
+		topNValue := GenerateTopNValue()
+		defer ReleaseTopNValue(topNValue)
+
+		for i, c := range bc.fields.columns {
+			srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
+			destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+			topNValue.Reset()
+			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
+				continue
+			}
+
+			values, strings, int64s, i2 := topNValue.Values()
+			fmt.Println(values)
+			fmt.Println(strings)
+			fmt.Println(int64s)
+			fmt.Println(i2)
+
+			topNValue.Reset()
+			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
+				continue
+			}
+
+			s, i3, i4, i5 := topNValue.Values()
+			fmt.Println(s)
+			fmt.Println(i3)
+			fmt.Println(i4)
+			fmt.Println(i5)
+		}
+	} else {
+		for i, c := range bc.fields.columns {
+			r.Fields[i].Values[len(r.Fields[i].Values)-1] = mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+		}
 	}
 }
 
