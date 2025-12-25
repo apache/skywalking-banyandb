@@ -75,4 +75,14 @@ gomock_reflect*
 .cursor/
 
 # Claude
+Claude.md
 .claude/
+CLAUDE.md
+
+# eBPF generated files and binaries
+oa/internal/ebpf/generated/
+oa/sidecar
+oa/build/
+
+# Codex
+AGENTS.md

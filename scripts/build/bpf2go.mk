@@ -16,37 +16,22 @@
 # under the License.
 #
 
-NAME := stress
+BPF2GO := $(tool_bin)/bpf2go
+IS_LINUX := $(shell uname -s | grep -i linux)
 
-mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
-mk_dir   := $(dir $(mk_path))
-
-root_dir := $(mk_dir)../../..
-
-CLI_ARGS :=
-
-ifdef PROFILE
-	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
-endif
-
-cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
-
-.PHONY: clean
-clean:
-	rm -rf /tmp/banyandb-stress-agent
-
-.PHONY: build-server
-build-server:
-	(cd $(root_dir) && TARGET_OS=linux PLATFORMS="linux/amd64 linux/arm64" make release)
-
-.PHONY: dev-up
-dev-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --profile ebpf --env-file ./env.dev up --build
-
-.PHONY: up
-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env up --build
-
-.PHONY: down
-down:
-	docker compose down
+$(BPF2GO):
+	@echo "Installing bpf2go..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION)
+	@if [ ! -f "$(BPF2GO)" ]; then \
+		echo "WARNING: Failed to install bpf2go at $(BPF2GO)"; \
+		if [ "$(IS_LINUX)" = "Linux" ]; then \
+			echo "ERROR: bpf2go is required on Linux"; \
+			exit 1; \
+		fi; \
+		echo "Creating a stub bpf2go executable for non-Linux platform"; \
+		echo '#!/bin/sh' > $(BPF2GO); \
+		echo 'echo "bpf2go stub: eBPF code generation only works on Linux"' >> $(BPF2GO); \
+		echo 'exit 0' >> $(BPF2GO); \
+		chmod +x $(BPF2GO); \
+	fi

@@ -16,37 +16,18 @@
 # under the License.
 #
 
-NAME := stress
+# Define the bpftool location - use 'which bpftool' if available on system
+BPFTL := $(shell which bpftool 2>/dev/null)
+IS_LINUX := $(shell uname -s | grep -i linux)
 
-mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
-mk_dir   := $(dir $(mk_path))
-
-root_dir := $(mk_dir)../../..
-
-CLI_ARGS :=
-
-ifdef PROFILE
-	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
+$(BPFTL):
+ifeq ($(IS_LINUX),Linux)
+	@echo "Installing bpftool (Linux detected)..."
+	@sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev
+	@echo "Verifying bpftool installation..."
+	@which bpftool || (echo "Failed to install bpftool" && exit 1)
+	$(eval BPFTL := $(shell which bpftool))
+else
+	@echo "Non-Linux OS detected, switching to Docker for eBPF generation..."
+	@echo "Please ensure Docker is installed and running"
 endif
-
-cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
-
-.PHONY: clean
-clean:
-	rm -rf /tmp/banyandb-stress-agent
-
-.PHONY: build-server
-build-server:
-	(cd $(root_dir) && TARGET_OS=linux PLATFORMS="linux/amd64 linux/arm64" make release)
-
-.PHONY: dev-up
-dev-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --profile ebpf --env-file ./env.dev up --build
-
-.PHONY: up
-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env up --build
-
-.PHONY: down
-down:
-	docker compose down

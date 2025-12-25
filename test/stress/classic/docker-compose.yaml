@@ -23,7 +23,7 @@ services:
       - /tmp/banyandb-stress-agent:/tmp/change-ownership
     command: chown -R ${USER_ID}:${GROUP_ID} /tmp/change-ownership
   banyandb:
-    user: "${USER_ID}:${GROUP_ID}"
+    user: "root"
     extends:
       file: ../../docker/base-compose.yml
       service: banyandb
@@ -33,7 +33,7 @@ services:
       dockerfile: ./test/docker/Dockerfile
       context: ../../..
     volumes:
-    - /tmp/banyandb-stress-agent:/tmp:rw,delgated
+      - /tmp/banyandb-stress-agent:/tmp:rw,delegated
     ports:
     - 17913:17913
     - 6060:6060
@@ -44,6 +44,40 @@ services:
     depends_on:
       change-vol-ownership:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:17913/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ebpf-sidecar:
+    build:
+      dockerfile: ./oa/Dockerfile.dev
+      context: ../../..
+    image: banyandb/ebpf-sidecar:dev
+    container_name: ebpf-sidecar
+    privileged: true
+    pid: "service:banyandb"  # Share PID namespace with BanyanDB to monitor it
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /lib/modules:/lib/modules:ro
+      - ../../../oa/configs/config-prometheus.yaml:/etc/ebpf-sidecar/config.yaml:ro
+    ports:
+      - 18080:18080  # eBPF sidecar HTTP metrics
+      - 19090:19090  # eBPF sidecar gRPC
+    networks:
+      - test
+      - monitoring
+    environment:
+      - EBPF_SIDECAR_EXPORT_TYPE=prometheus
+      - EBPF_SIDECAR_COLLECTOR_INTERVAL=10s
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - "ebpf"
 
   oap:
     extends:

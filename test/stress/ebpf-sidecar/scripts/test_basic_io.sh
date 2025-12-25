@@ -1,3 +1,4 @@
+#!/bin/bash
 # Licensed to Apache Software Foundation (ASF) under one or more contributor
 # license agreements. See the NOTICE file distributed with
 # this work for additional information regarding copyright
@@ -14,39 +15,40 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
 
-NAME := stress
+set -e
 
-mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
-mk_dir   := $(dir $(mk_path))
+echo "=== Basic I/O Test ==="
 
-root_dir := $(mk_dir)../../..
+TEST_DIR="/data/basic_io_test"
+mkdir -p $TEST_DIR
+cd $TEST_DIR
 
-CLI_ARGS :=
+# Test 1: Simple file operations
+echo "Test 1: Simple file operations"
+for i in {1..100}; do
+    echo "Test data $i" > file_$i.txt
+    cat file_$i.txt > /dev/null
+    rm file_$i.txt
+done
 
-ifdef PROFILE
-	CLI_ARGS := $(CLI_ARGS) --profile $(PROFILE)
-endif
+# Test 2: Sequential reads
+echo "Test 2: Sequential reads"
+dd if=/dev/urandom of=sequential.dat bs=1M count=10 2>/dev/null
+for i in {1..10}; do
+    dd if=sequential.dat of=/dev/null bs=1M 2>/dev/null
+done
 
-cli_env := DOCKER_BUILDKIT=1 USER_ID=$(shell id -u) GROUP_ID=$(shell id -g)
+# Test 3: Multiple file descriptors
+echo "Test 3: Multiple file descriptors"
+for i in {1..10}; do
+    exec {fd}<>multi_fd_$i.txt
+    echo "FD test $i" >&$fd
+    exec {fd}>&-
+done
 
-.PHONY: clean
-clean:
-	rm -rf /tmp/banyandb-stress-agent
+# Cleanup
+cd /
+rm -rf $TEST_DIR
 
-.PHONY: build-server
-build-server:
-	(cd $(root_dir) && TARGET_OS=linux PLATFORMS="linux/amd64 linux/arm64" make release)
-
-.PHONY: dev-up
-dev-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --profile ebpf --env-file ./env.dev up --build
-
-.PHONY: up
-up: clean
-	$(cli_env) docker compose $(CLI_ARGS) --env-file ./env up --build
-
-.PHONY: down
-down:
-	docker compose down
+echo "Basic I/O test completed"

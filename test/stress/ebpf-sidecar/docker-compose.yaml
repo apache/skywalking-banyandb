@@ -1,0 +1,115 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+services:
+  # BanyanDB instance to receive metrics
+  banyandb:
+    image: apache/skywalking-banyandb:latest
+    container_name: banyandb-ebpf-test
+    environment:
+      - BYDB_OBSERVABILITY_MODES=prometheus,native
+      - BYDB_METRICS_GRPC_BIND_ADDR=0.0.0.0:17912
+      - BYDB_HTTP_BIND_ADDR=0.0.0.0:17913
+    ports:
+      - "17912:17912"  # gRPC port
+      - "17913:17913"  # HTTP port
+    volumes:
+      - banyandb-data:/tmp/banyandb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:17913/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # eBPF sidecar container (privileged for eBPF)
+  ebpf-sidecar:
+    build:
+      context: ../../../ebpf-sidecar
+      dockerfile: Dockerfile
+    container_name: ebpf-sidecar-test
+    privileged: true  # Required for eBPF
+    pid: host         # Access host PID namespace
+    network_mode: host # Use host network to monitor all traffic
+    environment:
+      - EXPORT_MODE=${EXPORT_MODE:-file}
+      - EXPORT_INTERVAL=${COLLECTION_INTERVAL:-10s}
+      - OUTPUT_DIR=/output
+      - BANYANDB_ENDPOINT=localhost:17912
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - LOG_LEVEL=debug
+      - CLEANUP_STRATEGY=periodic
+      - CLEANUP_INTERVAL=60s
+    volumes:
+      - /sys:/sys:ro
+      - /proc:/proc:ro
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /tmp/ebpf-sidecar-test:/output:rw
+      - type: bind
+        source: ../../../ebpf-sidecar/build/bin/ebpf-sidecar
+        target: /usr/local/bin/ebpf-sidecar
+        read_only: true
+    command: ["/usr/local/bin/ebpf-sidecar"]
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    cap_add:
+      - SYS_ADMIN     # Required for eBPF
+      - SYS_RESOURCE  # Required for increasing memlock
+      - NET_ADMIN     # For network eBPF programs
+      - PERFMON       # For performance monitoring
+      - BPF           # For eBPF operations
+
+  # Load generator to create I/O patterns
+  load-generator:
+    image: ubuntu:22.04
+    container_name: load-generator
+    environment:
+      - LOAD_DURATION=${LOAD_DURATION:-60}
+      - LOAD_CONCURRENCY=${LOAD_CONCURRENCY:-10}
+      - TEST_DATA_SIZE=${TEST_DATA_SIZE:-100M}
+    volumes:
+      - ./scripts:/scripts:ro
+      - /tmp/load-test:/data:rw
+    working_dir: /data
+    command: |
+      bash -c "
+        apt-get update && apt-get install -y stress-ng fio curl jq &&
+        echo 'Load generator ready. Run make generate-load to start.' &&
+        tail -f /dev/null
+      "
+    depends_on:
+      - ebpf-sidecar
+
+  # Optional: Prometheus for scraping metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-ebpf-test
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prom/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    profiles:
+      - monitoring
+
+volumes:
+  banyandb-data:
+  prometheus-data:

@@ -13,18 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-global:
-  scrape_interval: 1m
+# Environment configuration for eBPF sidecar testing
 
-scrape_configs:
-  - job_name: "banyandb"
-    static_configs:
-    - targets: ["banyandb:2121"]
-  
-  - job_name: "ebpf-sidecar"
-    scrape_interval: 10s
-    static_configs:
-    - targets: ["banyandb:18080"]
-      labels:
-        service: "ebpf-sidecar"
+# Export mode: banyandb, file, or prometheus
+EXPORT_MODE=file
 
+# BanyanDB configuration
+BYDB_ENDPOINT=localhost:17912
+
+# Collection settings
+COLLECTION_INTERVAL=10s
+CLEANUP_INTERVAL=60s
+
+# Load generation settings
+LOAD_DURATION=60
+LOAD_CONCURRENCY=10
+TEST_DATA_SIZE=100M
+
+# Logging
+LOG_LEVEL=debug
