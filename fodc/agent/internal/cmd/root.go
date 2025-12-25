@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
-	ktmconfig "github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/config"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/collector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -178,7 +178,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 			Enabled:  true,
 			Interval: ktmInterval,
 			Modules:  ktmModules,
-			EBPF: ktmconfig.EBPFConfig{
+			EBPF: collector.EBPFConfig{
 				PinPath:      ktmEBPFPinPath,
 				MapSizeLimit: 10240,
 			},

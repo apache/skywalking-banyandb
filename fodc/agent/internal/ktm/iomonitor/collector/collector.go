@@ -26,7 +26,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/config"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
 
@@ -37,7 +36,7 @@ type Collector struct {
 	metrics  *metrics.Store
 	ticker   *time.Ticker
 	stopChan chan struct{}
-	config   config.CollectorConfig
+	config   CollectorConfig
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
 }
@@ -51,7 +50,7 @@ type Module interface {
 }
 
 // New creates a new collector instance.
-func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
+func New(cfg CollectorConfig, logger *zap.Logger) (*Collector, error) {
 	c := &Collector{
 		config:   cfg,
 		logger:   logger,
@@ -73,7 +72,7 @@ func New(cfg config.CollectorConfig, logger *zap.Logger) (*Collector, error) {
 }
 
 // createModule creates a module instance by name.
-func (c *Collector) createModule(name string, ebpfCfg config.EBPFConfig) (Module, error) {
+func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error) {
 	switch name {
 	case "iomonitor":
 		// Create the comprehensive I/O monitor module

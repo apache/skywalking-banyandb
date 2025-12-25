@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/collector"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/config"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
 
@@ -27,7 +26,7 @@ func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
 	}
 
 	// Convert KTM config to Collector config
-	collectorConfig := config.CollectorConfig{
+	collectorConfig := collector.CollectorConfig{
 		Modules:         cfg.Modules,
 		EBPF:            cfg.EBPF,
 		Interval:        cfg.Interval,

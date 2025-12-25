@@ -27,7 +27,6 @@ import (
 	"github.com/cilium/ebpf"
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/config"
 	loader "github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
@@ -62,7 +61,7 @@ type IOMonitorModule struct {
 }
 
 // NewIOMonitorModule creates a new I/O monitoring module with cleanup.
-func NewIOMonitorModule(logger *zap.Logger, ebpfCfg config.EBPFConfig) (*IOMonitorModule, error) {
+func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModule, error) {
 	ebpfLoader, err := loader.NewLoader()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)

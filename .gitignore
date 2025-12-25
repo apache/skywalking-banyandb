@@ -80,9 +80,7 @@ Claude.md
 CLAUDE.md
 
 # eBPF generated files and binaries
-oa/internal/ebpf/generated/
-oa/sidecar
-oa/build/
+fodc/agent/internal/ktm/iomonitor/ebpf/generated/
 
 # Codex
 AGENTS.md

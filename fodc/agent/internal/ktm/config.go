@@ -3,15 +3,15 @@ package ktm
 import (
 	"time"
 
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/config"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/collector"
 )
 
 // Config represents the configuration for the KTM module.
 type Config struct {
-	Enabled  bool              `mapstructure:"enabled"`
-	Interval time.Duration     `mapstructure:"interval"`
-	Modules  []string          `mapstructure:"modules"`
-	EBPF     config.EBPFConfig `mapstructure:"ebpf"`
+	Enabled  bool                 `mapstructure:"enabled"`
+	Interval time.Duration        `mapstructure:"interval"`
+	Modules  []string             `mapstructure:"modules"`
+	EBPF     collector.EBPFConfig `mapstructure:"ebpf"`
 }
 
 // DefaultConfig returns the default configuration for KTM.
@@ -20,7 +20,7 @@ func DefaultConfig() Config {
 		Enabled:  false,
 		Interval: 10 * time.Second,
 		Modules:  []string{"iomonitor"},
-		EBPF: config.EBPFConfig{
+		EBPF: collector.EBPFConfig{
 			PinPath:      "/sys/fs/bpf/ebpf-sidecar",
 			MapSizeLimit: 10240,
 		},
