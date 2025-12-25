@@ -35,3 +35,9 @@ include ../../scripts/build/vendor.mk
 include ../../scripts/build/help.mk
 
 prepare-build: generate
+
+.PHONY: generate-ebpf
+generate-ebpf:
+	$(MAKE) -C internal/ktm generate
+
+generate: generate-ebpf
