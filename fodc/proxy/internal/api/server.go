@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package api provides functionality for the API server.
 package api
 
 import (
@@ -32,8 +33,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// APIServer exposes REST and Prometheus-style endpoints for external consumption.
-type APIServer struct {
+// Server exposes REST and Prometheus-style endpoints for external consumption.
+type Server struct {
 	metricsAggregator *metrics.Aggregator
 	registry          *registry.AgentRegistry
 	server            *http.Server
@@ -41,9 +42,9 @@ type APIServer struct {
 	startTime         time.Time
 }
 
-// NewAPIServer creates a new APIServer instance.
-func NewAPIServer(metricsAggregator *metrics.Aggregator, registry *registry.AgentRegistry, logger *logger.Logger) *APIServer {
-	return &APIServer{
+// NewServer creates a new Server instance.
+func NewServer(metricsAggregator *metrics.Aggregator, registry *registry.AgentRegistry, logger *logger.Logger) *Server {
+	return &Server{
 		metricsAggregator: metricsAggregator,
 		registry:          registry,
 		logger:            logger,
@@ -52,7 +53,7 @@ func NewAPIServer(metricsAggregator *metrics.Aggregator, registry *registry.Agen
 }
 
 // Start starts the HTTP server.
-func (s *APIServer) Start(listenAddr string, readTimeout, writeTimeout time.Duration) error {
+func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duration) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/metrics", s.handleMetrics)
@@ -80,7 +81,7 @@ func (s *APIServer) Start(listenAddr string, readTimeout, writeTimeout time.Dura
 }
 
 // Stop gracefully stops the HTTP server.
-func (s *APIServer) Stop() error {
+func (s *Server) Stop() error {
 	if s.server == nil {
 		return nil
 	}
@@ -92,13 +93,13 @@ func (s *APIServer) Stop() error {
 }
 
 // handleMetrics handles GET /metrics endpoint.
-func (s *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	filter := &metrics.MetricsFilter{
+	filter := &metrics.Filter{
 		Role:    r.URL.Query().Get("role"),
 		Address: r.URL.Query().Get("address"),
 	}
@@ -137,7 +138,7 @@ func (s *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMetricsWindows handles GET /metrics-windows endpoint.
-func (s *APIServer) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -164,7 +165,7 @@ func (s *APIServer) handleMetricsWindows(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	filter := &metrics.MetricsFilter{
+	filter := &metrics.Filter{
 		Role:    r.URL.Query().Get("role"),
 		Address: r.URL.Query().Get("address"),
 	}
@@ -213,7 +214,7 @@ func (s *APIServer) handleMetricsWindows(w http.ResponseWriter, r *http.Request)
 }
 
 // handleCluster handles GET /cluster endpoint.
-func (s *APIServer) handleCluster(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -224,7 +225,7 @@ func (s *APIServer) handleCluster(w http.ResponseWriter, r *http.Request) {
 	nodes := make([]map[string]interface{}, 0, len(agents))
 	for _, agentInfo := range agents {
 		node := map[string]interface{}{
-			"node_id": agentInfo.AgentID,
+			"node_id":   agentInfo.AgentID,
 			"node_role": agentInfo.NodeRole,
 			"primary_address": map[string]interface{}{
 				"ip":   agentInfo.PrimaryAddress.IP,
@@ -249,7 +250,7 @@ func (s *APIServer) handleCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"nodes":     nodes,
+		"nodes":      nodes,
 		"updated_at": time.Now().Format(time.RFC3339),
 	}
 
@@ -261,7 +262,7 @@ func (s *APIServer) handleCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClusterConfig handles GET /cluster/config endpoint.
-func (s *APIServer) handleClusterConfig(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleClusterConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -271,24 +272,25 @@ func (s *APIServer) handleClusterConfig(w http.ResponseWriter, r *http.Request) 
 	role := r.URL.Query().Get("role")
 
 	var agents []*registry.AgentInfo
-	if agentID != "" {
+	switch {
+	case agentID != "":
 		agentInfo, getErr := s.registry.GetAgentByID(agentID)
 		if getErr != nil {
 			http.Error(w, fmt.Sprintf("Agent not found: %v", getErr), http.StatusNotFound)
 			return
 		}
 		agents = []*registry.AgentInfo{agentInfo}
-	} else if role != "" {
+	case role != "":
 		agents = s.registry.ListAgentsByRole(role)
-	} else {
+	default:
 		agents = s.registry.ListAgents()
 	}
 
 	configurations := make([]map[string]interface{}, 0, len(agents))
 	for _, agentInfo := range agents {
 		config := map[string]interface{}{
-			"agent_id":  agentInfo.AgentID,
-			"node_role": agentInfo.NodeRole,
+			"agent_id":     agentInfo.AgentID,
+			"node_role":    agentInfo.NodeRole,
 			"collected_at": time.Now().Format(time.RFC3339),
 		}
 		configurations = append(configurations, config)
@@ -306,7 +308,7 @@ func (s *APIServer) handleClusterConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleHealth handles GET /health endpoint.
-func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -335,7 +337,7 @@ func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // formatPrometheusText formats aggregated metrics as Prometheus text format.
-func (s *APIServer) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMetric) string {
+func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMetric) string {
 	if len(aggregatedMetrics) == 0 {
 		return ""
 	}
@@ -389,7 +391,7 @@ func (s *APIServer) formatPrometheusText(aggregatedMetrics []*metrics.Aggregated
 }
 
 // formatMetricsWindowJSON formats aggregated metrics as JSON for metrics-windows endpoint.
-func (s *APIServer) formatMetricsWindowJSON(aggregatedMetrics []*metrics.AggregatedMetric) []map[string]interface{} {
+func (s *Server) formatMetricsWindowJSON(aggregatedMetrics []*metrics.AggregatedMetric) []map[string]interface{} {
 	metricMap := make(map[string]*timeSeriesMetric)
 
 	for _, metric := range aggregatedMetrics {
@@ -452,7 +454,7 @@ func (s *APIServer) formatMetricsWindowJSON(aggregatedMetrics []*metrics.Aggrega
 }
 
 // getMetricKey generates a unique key for a metric based on name, labels, and agent ID.
-func (s *APIServer) getMetricKey(metric *metrics.AggregatedMetric) string {
+func (s *Server) getMetricKey(metric *metrics.AggregatedMetric) string {
 	labelParts := make([]string, 0, len(metric.Labels))
 	for key, value := range metric.Labels {
 		if key != "ip" && key != "port" {
@@ -483,4 +485,3 @@ type timeSeriesMetric struct {
 	port        string
 	data        []map[string]interface{}
 }
-

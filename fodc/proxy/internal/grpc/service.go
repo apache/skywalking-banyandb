@@ -41,13 +41,13 @@ import (
 
 // AgentConnection represents a connection to an agent.
 type AgentConnection struct {
-	AgentID       string
-	Identity      registry.AgentIdentity
-	Stream        grpc.ServerStream
 	MetricsStream fodcv1.FODCService_StreamMetricsServer
 	Context       context.Context
+	Stream        grpc.ServerStream
 	Cancel        context.CancelFunc
 	LastActivity  time.Time
+	AgentID       string
+	Identity      registry.AgentIdentity
 	mu            sync.RWMutex
 }
 
@@ -273,7 +273,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 }
 
 // RequestMetrics requests metrics from an agent via the metrics stream.
-func (s *FODCService) RequestMetrics(ctx context.Context, agentID string, startTime, endTime *time.Time) error {
+func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTime, endTime *time.Time) error {
 	s.connectionsMu.RLock()
 	agentConn, exists := s.connections[agentID]
 	s.connectionsMu.RUnlock()

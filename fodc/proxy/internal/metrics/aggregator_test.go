@@ -38,22 +38,22 @@ func initTestLogger(t *testing.T) {
 	require.NoError(t, initErr)
 }
 
-// mockMetricsRequestSender is a mock implementation of MetricsRequestSender for testing.
-type mockMetricsRequestSender struct {
-	mu                sync.Mutex
-	requestCallCount  int
+// mockRequestSender is a mock implementation of RequestSender for testing.
+type mockRequestSender struct {
 	requestErrors     map[string]error
 	requestedAgentIDs []string
+	mu                sync.Mutex
+	requestCallCount  int
 }
 
-func newMockMetricsRequestSender() *mockMetricsRequestSender {
-	return &mockMetricsRequestSender{
-		requestErrors: make(map[string]error),
+func newMockRequestSender() *mockRequestSender {
+	return &mockRequestSender{
+		requestErrors:     make(map[string]error),
 		requestedAgentIDs: make([]string, 0),
 	}
 }
 
-func (m *mockMetricsRequestSender) RequestMetrics(ctx context.Context, agentID string, startTime, endTime *time.Time) error {
+func (m *mockRequestSender) RequestMetrics(_ context.Context, agentID string, _ *time.Time, _ *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requestCallCount++
@@ -64,13 +64,13 @@ func (m *mockMetricsRequestSender) RequestMetrics(ctx context.Context, agentID s
 	return nil
 }
 
-func (m *mockMetricsRequestSender) GetRequestCallCount() int {
+func (m *mockRequestSender) GetRequestCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.requestCallCount
 }
 
-func (m *mockMetricsRequestSender) GetRequestedAgentIDs() []string {
+func (m *mockRequestSender) GetRequestedAgentIDs() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := make([]string, len(m.requestedAgentIDs))
@@ -78,13 +78,13 @@ func (m *mockMetricsRequestSender) GetRequestedAgentIDs() []string {
 	return result
 }
 
-func (m *mockMetricsRequestSender) SetRequestError(agentID string, err error) {
+func (m *mockRequestSender) SetRequestError(agentID string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requestErrors[agentID] = err
 }
 
-func (m *mockMetricsRequestSender) Reset() {
+func (m *mockRequestSender) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requestCallCount = 0
@@ -92,16 +92,17 @@ func (m *mockMetricsRequestSender) Reset() {
 	m.requestErrors = make(map[string]error)
 }
 
-func newTestAggregator(t *testing.T) (*Aggregator, *registry.AgentRegistry, *mockMetricsRequestSender) {
+func newTestAggregator(t *testing.T) (*Aggregator, *registry.AgentRegistry, *mockRequestSender) {
 	t.Helper()
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "metrics")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
-	mockSender := newMockMetricsRequestSender()
+	mockSender := newMockRequestSender()
 	aggregator := NewAggregator(testRegistry, mockSender, testLogger)
 	return aggregator, testRegistry, mockSender
 }
 
+//nolint:unparam // port parameter kept for flexibility in future tests
 func createTestAgent(t *testing.T, reg *registry.AgentRegistry, ip string, port int, role string, labels map[string]string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -138,7 +139,7 @@ func TestNewAggregator(t *testing.T) {
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "metrics")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
-	mockSender := newMockMetricsRequestSender()
+	mockSender := newMockRequestSender()
 
 	aggregator := NewAggregator(testRegistry, mockSender, testLogger)
 
@@ -153,7 +154,7 @@ func TestNewAggregator(t *testing.T) {
 func TestSetGRPCService(t *testing.T) {
 	aggregator, _, _ := newTestAggregator(t)
 
-	newSender := newMockMetricsRequestSender()
+	newSender := newMockRequestSender()
 	aggregator.SetGRPCService(newSender)
 
 	assert.Equal(t, newSender, aggregator.grpcService)
@@ -346,7 +347,7 @@ func TestCollectMetricsFromAgents_NoAgents(t *testing.T) {
 	aggregator, _, _ := newTestAggregator(t)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{}
+	filter := &Filter{}
 
 	metrics, err := aggregator.CollectMetricsFromAgents(ctx, filter)
 
@@ -361,7 +362,7 @@ func TestCollectMetricsFromAgents_Success(t *testing.T) {
 	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "worker", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{}
+	filter := &Filter{}
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -401,7 +402,7 @@ func TestCollectMetricsFromAgents_FilterByAgentIDs(t *testing.T) {
 	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "master", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{
+	filter := &Filter{
 		AgentIDs: []string{agentID1, agentID3},
 	}
 
@@ -444,7 +445,7 @@ func TestCollectMetricsFromAgents_FilterByRole(t *testing.T) {
 	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "master", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Role: "worker",
 	}
 
@@ -486,7 +487,7 @@ func TestCollectMetricsFromAgents_FilterByAddress(t *testing.T) {
 	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "worker", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Address: "192.168.1.1:8080",
 	}
 
@@ -519,7 +520,7 @@ func TestCollectMetricsFromAgents_FilterByIP(t *testing.T) {
 	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "worker", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Address: "192.168.1.1",
 	}
 
@@ -554,7 +555,7 @@ func TestCollectMetricsFromAgents_RequestError(t *testing.T) {
 	mockSender.SetRequestError(agentID1, assert.AnError)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{}
+	filter := &Filter{}
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -581,7 +582,7 @@ func TestCollectMetricsFromAgents_Timeout(t *testing.T) {
 	createTestAgent(t, testRegistry, "192.168.1.1", 8080, "worker", nil)
 
 	ctx := context.Background()
-	filter := &MetricsFilter{}
+	filter := &Filter{}
 
 	metrics, err := aggregator.CollectMetricsFromAgents(ctx, filter)
 
@@ -597,7 +598,7 @@ func TestCollectMetricsFromAgents_WithTimeWindow(t *testing.T) {
 	ctx := context.Background()
 	startTime := time.Now().Add(-1 * time.Hour)
 	endTime := time.Now()
-	filter := &MetricsFilter{
+	filter := &Filter{
 		StartTime: &startTime,
 		EndTime:   &endTime,
 	}
@@ -655,7 +656,7 @@ func TestGetMetricsWindow(t *testing.T) {
 	ctx := context.Background()
 	startTime := time.Now().Add(-1 * time.Hour)
 	endTime := time.Now()
-	filter := &MetricsFilter{Role: "worker"}
+	filter := &Filter{Role: "worker"}
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -722,7 +723,7 @@ func TestGetFilteredAgents_ByAgentIDs(t *testing.T) {
 	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "master", nil)
 	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "worker", nil)
 
-	filter := &MetricsFilter{
+	filter := &Filter{
 		AgentIDs: []string{agentID1, agentID3},
 	}
 
@@ -745,7 +746,7 @@ func TestGetFilteredAgents_ByRole(t *testing.T) {
 	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "master", nil)
 	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "worker", nil)
 
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Role: "worker",
 	}
 
@@ -768,7 +769,7 @@ func TestGetFilteredAgents_ByAddress(t *testing.T) {
 	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "worker", nil)
 	_ = createTestAgent(t, testRegistry, "192.168.1.2", 8080, "worker", nil)
 
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Address: "192.168.1.1:8080",
 	}
 
@@ -784,7 +785,7 @@ func TestGetFilteredAgents_ByIP(t *testing.T) {
 	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "worker", nil)
 	_ = createTestAgent(t, testRegistry, "192.168.1.2", 8080, "worker", nil)
 
-	filter := &MetricsFilter{
+	filter := &Filter{
 		Address: "192.168.1.1",
 	}
 
@@ -799,7 +800,7 @@ func TestGetFilteredAgents_InvalidAgentID(t *testing.T) {
 
 	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "worker", nil)
 
-	filter := &MetricsFilter{
+	filter := &Filter{
 		AgentIDs: []string{agentID1, "invalid-id"},
 	}
 
@@ -856,4 +857,3 @@ func TestMatchesAddress_PortMismatch(t *testing.T) {
 
 	assert.False(t, result)
 }
-

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package metrics provides functionality for aggregating and enriching metrics from all agents.
 package metrics
 
 import (
@@ -30,42 +31,42 @@ import (
 
 // AggregatedMetric represents an aggregated metric with node metadata.
 type AggregatedMetric struct {
-	Name        string
 	Labels      map[string]string
-	Value       float64
 	Timestamp   time.Time
+	Name        string
 	AgentID     string
 	NodeRole    string
 	Description string
+	Value       float64
 }
 
-// MetricsFilter defines filters for metrics collection.
-type MetricsFilter struct {
-	AgentIDs  []string
-	Role      string
+// Filter defines filters for metrics collection.
+type Filter struct {
 	StartTime *time.Time
 	EndTime   *time.Time
+	Role      string
 	Address   string
+	AgentIDs  []string
 }
 
 // Aggregator aggregates and enriches metrics from all agents.
 type Aggregator struct {
 	registry     *registry.AgentRegistry
-	grpcService  MetricsRequestSender
-	mu           sync.RWMutex
 	logger       *logger.Logger
+	grpcService  RequestSender
 	metricsCh    chan *AggregatedMetric
 	collecting   map[string]chan []*AggregatedMetric
+	mu           sync.RWMutex
 	collectingMu sync.RWMutex
 }
 
-// MetricsRequestSender is an interface for sending metrics requests to agents.
-type MetricsRequestSender interface {
+// RequestSender is an interface for sending metrics requests to agents.
+type RequestSender interface {
 	RequestMetrics(ctx context.Context, agentID string, startTime, endTime *time.Time) error
 }
 
 // NewAggregator creates a new MetricsAggregator instance.
-func NewAggregator(registry *registry.AgentRegistry, grpcService MetricsRequestSender, logger *logger.Logger) *Aggregator {
+func NewAggregator(registry *registry.AgentRegistry, grpcService RequestSender, logger *logger.Logger) *Aggregator {
 	return &Aggregator{
 		registry:    registry,
 		grpcService: grpcService,
@@ -76,7 +77,7 @@ func NewAggregator(registry *registry.AgentRegistry, grpcService MetricsRequestS
 }
 
 // SetGRPCService sets the gRPC service for sending metrics requests.
-func (ma *Aggregator) SetGRPCService(grpcService MetricsRequestSender) {
+func (ma *Aggregator) SetGRPCService(grpcService RequestSender) {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
 	ma.grpcService = grpcService
@@ -139,7 +140,7 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 }
 
 // CollectMetricsFromAgents requests metrics from all agents (or filtered agents) when external client queries.
-func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *MetricsFilter) ([]*AggregatedMetric, error) {
+func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filter) ([]*AggregatedMetric, error) {
 	agents := ma.getFilteredAgents(filter)
 	if len(agents) == 0 {
 		return []*AggregatedMetric{}, nil
@@ -198,14 +199,14 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Metr
 
 // GetLatestMetrics triggers on-demand collection from all agents.
 func (ma *Aggregator) GetLatestMetrics(ctx context.Context) ([]*AggregatedMetric, error) {
-	filter := &MetricsFilter{}
+	filter := &Filter{}
 	return ma.CollectMetricsFromAgents(ctx, filter)
 }
 
 // GetMetricsWindow triggers on-demand collection from all agents with time window filter.
-func (ma *Aggregator) GetMetricsWindow(ctx context.Context, startTime, endTime time.Time, filter *MetricsFilter) ([]*AggregatedMetric, error) {
+func (ma *Aggregator) GetMetricsWindow(ctx context.Context, startTime, endTime time.Time, filter *Filter) ([]*AggregatedMetric, error) {
 	if filter == nil {
-		filter = &MetricsFilter{}
+		filter = &Filter{}
 	}
 	filter.StartTime = &startTime
 	filter.EndTime = &endTime
@@ -213,14 +214,15 @@ func (ma *Aggregator) GetMetricsWindow(ctx context.Context, startTime, endTime t
 }
 
 // getFilteredAgents returns agents filtered by the provided filter.
-func (ma *Aggregator) getFilteredAgents(filter *MetricsFilter) []*registry.AgentInfo {
+func (ma *Aggregator) getFilteredAgents(filter *Filter) []*registry.AgentInfo {
 	if filter == nil {
 		return ma.registry.ListAgents()
 	}
 
 	var agents []*registry.AgentInfo
 
-	if len(filter.AgentIDs) > 0 {
+	switch {
+	case len(filter.AgentIDs) > 0:
 		agents = make([]*registry.AgentInfo, 0, len(filter.AgentIDs))
 		for _, agentID := range filter.AgentIDs {
 			agentInfo, getErr := ma.registry.GetAgentByID(agentID)
@@ -228,9 +230,9 @@ func (ma *Aggregator) getFilteredAgents(filter *MetricsFilter) []*registry.Agent
 				agents = append(agents, agentInfo)
 			}
 		}
-	} else if filter.Role != "" {
+	case filter.Role != "":
 		agents = ma.registry.ListAgentsByRole(filter.Role)
-	} else {
+	default:
 		agents = ma.registry.ListAgents()
 	}
 

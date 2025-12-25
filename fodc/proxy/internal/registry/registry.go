@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package registry provides functionality for managing and tracking FODC agents.
 package registry
 
 import (
@@ -23,8 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/google/uuid"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // AgentStatus represents the current status of an agent.
@@ -45,35 +47,35 @@ type Address struct {
 
 // AgentIdentity represents the identity of an agent.
 type AgentIdentity struct {
-	IP     string
-	Port   int
-	Role   string
 	Labels map[string]string
+	IP     string
+	Role   string
+	Port   int
 }
 
 // AgentInfo contains information about a registered agent.
 type AgentInfo struct {
-	AgentID            string
-	AgentIdentity      AgentIdentity
-	NodeRole           string
-	PrimaryAddress     Address
 	SecondaryAddresses map[string]Address
 	Labels             map[string]string
+	AgentID            string
+	NodeRole           string
 	RegisteredAt       time.Time
 	LastHeartbeat      time.Time
 	Status             AgentStatus
+	AgentIdentity      AgentIdentity
+	PrimaryAddress     Address
 }
 
 // AgentRegistry manages the lifecycle and state of all connected FODC Agents.
 type AgentRegistry struct {
 	agents            map[string]*AgentInfo
-	mu                sync.RWMutex
 	logger            *logger.Logger
-	heartbeatTimeout  time.Duration
-	maxAgents         int
-	cleanupTimeout    time.Duration
 	healthCheckTicker *time.Ticker
 	healthCheckStopCh chan struct{}
+	mu                sync.RWMutex
+	heartbeatTimeout  time.Duration
+	cleanupTimeout    time.Duration
+	maxAgents         int
 }
 
 // NewAgentRegistry creates a new AgentRegistry instance.
@@ -91,7 +93,7 @@ func NewAgentRegistry(logger *logger.Logger, heartbeatTimeout, cleanupTimeout ti
 }
 
 // RegisterAgent registers a new agent or updates existing agent information.
-func (ar *AgentRegistry) RegisterAgent(ctx context.Context, identity AgentIdentity, primaryAddr Address, secondaryAddrs map[string]Address) (string, error) {
+func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity, primaryAddr Address, secondaryAddrs map[string]Address) (string, error) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
 

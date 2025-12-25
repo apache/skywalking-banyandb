@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package grpc provides functionality for the gRPC server.
 package grpc
 
 import (
@@ -31,8 +32,8 @@ import (
 type Server struct {
 	service    *FODCService
 	server     *grpclib.Server
-	listenAddr string
 	logger     *logger.Logger
+	listenAddr string
 }
 
 // NewServer creates a new gRPC server instance.

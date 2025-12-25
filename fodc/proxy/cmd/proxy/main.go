@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main is the main package for the FODC Proxy.
 package main
 
 import (
@@ -131,7 +132,7 @@ func runProxy(_ *cobra.Command, _ []string) error {
 	}
 	defer grpcServer.Stop()
 
-	apiServer := api.NewAPIServer(metricsAggregator, agentRegistry, log)
+	apiServer := api.NewServer(metricsAggregator, agentRegistry, log)
 	if startErr := apiServer.Start(httpListenAddr, httpReadTimeout, httpWriteTimeout); startErr != nil {
 		return fmt.Errorf("failed to start HTTP API server: %w", startErr)
 	}
