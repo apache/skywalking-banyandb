@@ -155,10 +155,12 @@ func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("registration failed: %s", resp.Message)
 	}
 
-	pc.mu.Lock()
-	if resp.AgentId != "" {
-		pc.agentID = resp.AgentId
+	if resp.AgentId == "" {
+		return fmt.Errorf("registration response missing agent ID")
 	}
+
+	pc.mu.Lock()
+	pc.agentID = resp.AgentId
 	if resp.HeartbeatIntervalSeconds > 0 {
 		pc.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
 	}
@@ -204,7 +206,9 @@ func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
 
 	go pc.handleMetricsStream(ctx, stream)
 
-	pc.logger.Info().Msg("Metrics stream established with Proxy")
+	pc.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Metrics stream established with Proxy")
 
 	return nil
 }

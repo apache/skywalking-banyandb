@@ -198,9 +198,15 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	agentID := s.getAgentIDFromContext(ctx)
 	if agentID == "" {
 		agentID = s.getAgentIDFromPeer(ctx)
+		if agentID != "" {
+			s.logger.Warn().
+				Str("agent_id", agentID).
+				Msg("Agent ID not found in metadata, using peer address fallback (this may be unreliable)")
+		}
 	}
 
 	if agentID == "" {
+		s.logger.Error().Msg("Agent ID not found in context metadata or peer address")
 		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
 	}
 
@@ -338,20 +344,32 @@ func (s *FODCService) getAgentIDFromContext(ctx context.Context) string {
 
 // getAgentIDFromPeer extracts agent ID by matching peer address with registered agents.
 func (s *FODCService) getAgentIDFromPeer(ctx context.Context) string {
-	peer, ok := peer.FromContext(ctx)
+	peerInfo, ok := peer.FromContext(ctx)
 	if !ok {
 		return ""
 	}
 
-	peerAddr := peer.Addr.String()
+	peerAddr := peerInfo.Addr.String()
 	agents := s.registry.ListAgents()
 
+	// Parse peer address to extract IP (peer.Addr.String() format is typically "IP:port" or "[IP]:port")
+	peerIP := peerAddr
+	if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
+		peerIP = peerAddr[:idx]
+		// Remove brackets for IPv6 addresses
+		if len(peerIP) > 0 && peerIP[0] == '[' && peerIP[len(peerIP)-1] == ']' {
+			peerIP = peerIP[1 : len(peerIP)-1]
+		}
+	}
+
 	for _, agentInfo := range agents {
-		if strings.Contains(peerAddr, agentInfo.PrimaryAddress.IP) {
+		// Exact match on primary address IP
+		if agentInfo.PrimaryAddress.IP == peerIP {
 			return agentInfo.AgentID
 		}
+		// Check secondary addresses
 		for _, secondaryAddr := range agentInfo.SecondaryAddresses {
-			if strings.Contains(peerAddr, secondaryAddr.IP) {
+			if secondaryAddr.IP == peerIP {
 				return agentInfo.AgentID
 			}
 		}
