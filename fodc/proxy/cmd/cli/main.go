@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	defaultGRPCListenAddr    = ":17907"
-	defaultHTTPListenAddr    = ":17908"
+	defaultGRPCListenAddr    = ":17912"
+	defaultHTTPListenAddr    = ":17913"
 	defaultHeartbeatTimeout  = 30 * time.Second
 	defaultCleanupTimeout    = 5 * time.Minute
 	defaultMaxAgents         = 1000

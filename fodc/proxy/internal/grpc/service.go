@@ -164,6 +164,10 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			if sendErr := stream.Send(resp); sendErr != nil {
 				s.logger.Error().Err(sendErr).Str("agent_id", agentID).Msg("Failed to send registration response")
 				s.cleanupConnection(agentID)
+				// Unregister agent since we couldn't send confirmation
+				if unregisterErr := s.registry.UnregisterAgent(agentID); unregisterErr != nil {
+					s.logger.Error().Err(unregisterErr).Str("agent_id", agentID).Msg("Failed to unregister agent after send error")
+				}
 				return sendErr
 			}
 
@@ -257,7 +261,21 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			return ctx.Err()
 		case recvErr := <-recvErrCh:
 			if recvErr != nil {
-				s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
+				// Check if it's a context cancellation or deadline exceeded (expected errors)
+				if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+					s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
+				} else if st, ok := status.FromError(recvErr); ok {
+					// Check if it's a gRPC status error with expected codes
+					code := st.Code()
+					if code == codes.Canceled || code == codes.DeadlineExceeded {
+						s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
+					} else {
+						s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
+					}
+				} else {
+					// Other errors are logged as errors
+					s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
+				}
 				return recvErr
 			}
 			return nil

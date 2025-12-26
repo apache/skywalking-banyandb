@@ -330,7 +330,7 @@ func TestRegisterAgent_RegistrationError(t *testing.T) {
 }
 
 func TestRegisterAgent_SendError(t *testing.T) {
-	service, _ := newTestService(t)
+	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
 	stream := newMockRegisterAgentServer(ctx)
@@ -349,6 +349,13 @@ func TestRegisterAgent_SendError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "send error")
+	// Verify agent was unregistered after send error
+	agents := testRegistry.ListAgents()
+	assert.Equal(t, 0, len(agents), "Agent should be unregistered after send error")
+	// Verify connection was cleaned up
+	service.connectionsMu.RLock()
+	assert.Equal(t, 0, len(service.connections))
+	service.connectionsMu.RUnlock()
 }
 
 func TestRegisterAgent_HeartbeatUpdate(t *testing.T) {
