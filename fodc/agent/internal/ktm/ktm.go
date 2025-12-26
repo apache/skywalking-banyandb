@@ -3,8 +3,6 @@ package ktm
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/collector"
@@ -27,11 +25,9 @@ func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
 
 	// Convert KTM config to Collector config
 	collectorConfig := collector.CollectorConfig{
-		Modules:         cfg.Modules,
-		EBPF:            cfg.EBPF,
-		Interval:        cfg.Interval,
-		CleanupStrategy: "no_cleanup", // Per user preference
-		CleanupInterval: 60 * time.Second,
+		Modules:  cfg.Modules,
+		EBPF:     cfg.EBPF,
+		Interval: cfg.Interval,
 	}
 
 	col, err := collector.New(collectorConfig, logger)

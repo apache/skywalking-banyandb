@@ -80,25 +80,6 @@ func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error
 		if err != nil {
 			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
 		}
-		// Configure cleanup strategy for Prometheus (clear after read)
-		strategy := ClearAfterRead
-		switch c.config.CleanupStrategy {
-		case string(ClearAfterRead), "":
-			strategy = ClearAfterRead
-		case string(KeepRecent):
-			strategy = KeepRecent
-		case string(NoCleanup):
-			strategy = NoCleanup
-		default:
-			c.logger.Warn("Unknown cleanup strategy, fallback to clear_after_read",
-				zap.String("cleanup_strategy", c.config.CleanupStrategy))
-			strategy = ClearAfterRead
-		}
-		interval := c.config.CleanupInterval
-		if interval <= 0 {
-			interval = 60 * time.Second
-		}
-		module.SetCleanupStrategy(strategy, interval)
 		return module, nil
 	case "fadvise", "memory", "cache":
 		// These are all handled by iomonitor now

@@ -19,6 +19,8 @@
 package metrics
 
 import (
+	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -84,6 +86,55 @@ func (ms *MetricSet) AddGauge(name string, value float64, labels map[string]stri
 		Labels:    labels,
 		Timestamp: time.Now(),
 	})
+}
+
+// AddHistogram adds a histogram metric (expands to bucket, sum, and count metrics).
+// buckets is a map of upper bound (le) to cumulative count.
+func (ms *MetricSet) AddHistogram(name string, buckets map[float64]uint64, sum float64, count uint64, labels map[string]string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	timestamp := time.Now()
+
+	// Add sum
+	ms.metrics = append(ms.metrics, Metric{
+		Name:      name + "_sum",
+		Type:      MetricTypeCounter,
+		Value:     sum,
+		Labels:    labels,
+		Timestamp: timestamp,
+	})
+
+	// Add count
+	ms.metrics = append(ms.metrics, Metric{
+		Name:      name + "_count",
+		Type:      MetricTypeCounter,
+		Value:     float64(count),
+		Labels:    labels,
+		Timestamp: timestamp,
+	})
+
+	// Add buckets
+	for le, val := range buckets {
+		bucketLabels := make(map[string]string)
+		for k, v := range labels {
+			bucketLabels[k] = v
+		}
+		
+		if math.IsInf(le, 1) {
+			bucketLabels["le"] = "+Inf"
+		} else {
+			bucketLabels["le"] = fmt.Sprintf("%g", le)
+		}
+
+		ms.metrics = append(ms.metrics, Metric{
+			Name:      name + "_bucket",
+			Type:      MetricTypeCounter,
+			Value:     float64(val),
+			Labels:    bucketLabels,
+			Timestamp: timestamp,
+		})
+	}
 }
 
 // GetMetrics returns all metrics.

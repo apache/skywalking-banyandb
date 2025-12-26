@@ -24,6 +24,7 @@ package ebpf
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -38,9 +39,8 @@ const (
 	// attachModeTracepoint indicates attachment via tracepoint.
 	attachModeTracepoint = "tracepoint"
 	// attachModeFentry indicates attachment via fentry.
-	attachModeFentry = "fentry"
-	// attachModeKprobe indicates attachment via kprobe.
-	attachModeKprobe = "kprobe"
+	attachModeFentry  = "fentry"
+	targetCommDefault = "banyand"
 )
 
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
@@ -52,7 +52,6 @@ type EnhancedLoader struct {
 	attachmentModes map[string]string
 	links           []link.Link
 	cgroupPath      string
-	cgroupFD        *os.File
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -109,71 +108,20 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	}
 
 	// Configure cgroup filter if requested.
-	if err := l.applyCgroupFilter(); err != nil {
-		return fmt.Errorf("failed to apply cgroup filter: %w", err)
+	if err := l.ConfigureFilters("banyand"); err != nil {
+		l.logger.Warn("Failed to configure filters", zap.Error(err))
 	}
 
 	return nil
 }
 
-// EnsureCgroupFilter verifies the filter is programmed; if missing, re-applies.
-func (l *EnhancedLoader) EnsureCgroupFilter() error {
-	return l.refreshCgroupFilter(false)
-}
-
-// ForceRefreshCgroupFilter re-applies the filter even if a value exists.
-func (l *EnhancedLoader) ForceRefreshCgroupFilter() error {
-	return l.refreshCgroupFilter(true)
-}
-
-// applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
-func (l *EnhancedLoader) applyCgroupFilter() error {
-	return l.refreshCgroupFilter(true)
-}
-
-func (l *EnhancedLoader) refreshCgroupFilter(force bool) error {
-	if l.objects == nil || l.objects.CgroupFilter == nil {
-		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+// ConfigureFilters sets cgroup id and allowed pids.
+func (l *EnhancedLoader) ConfigureFilters(targetComm string) error {
+	if l.objects == nil {
+		return fmt.Errorf("eBPF objects not loaded")
 	}
 
-	key := uint32(0)
-	if !force {
-		var existing uint32
-		if err := l.objects.CgroupFilter.Lookup(key, &existing); err == nil && existing != 0 {
-			return nil
-		}
-	}
-
-	path := l.cgroupPath
-	if path == "" {
-		var err error
-		path, err = detectBanyanDBCgroupPath()
-		if err != nil {
-			l.logger.Warn("Cgroup filter disabled (auto-detect failed)", zap.Error(err))
-			return nil
-		}
-		l.logger.Info("Auto-detected BanyanDB cgroup", zap.String("cgroup_path", path))
-	}
-
-	resolved, err := resolveCgroupPath(path)
-	if err != nil {
-		return err
-	}
-
-	fd, err := openCgroupPath(resolved)
-	if err != nil {
-		return err
-	}
-
-	val := uint32(fd.Fd())
-	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
-		_ = fd.Close()
-		return fmt.Errorf("failed to populate cgroup filter map: %w", err)
-	}
-
-	l.cgroupFD = fd
-	l.logger.Info("Enabled cgroup filter for eBPF programs", zap.String("cgroup_path", path))
-	return nil
+	return configureFilters(l.objects, l.cgroupPath, targetComm)
 }
 
 // AttachPrograms attaches the eBPF programs with intelligent fallback.
@@ -188,11 +136,20 @@ func (l *EnhancedLoader) AttachPrograms() error {
 		return err
 	}
 
+	// Attach read latency monitoring
+	if err := l.attachReadLatencyWithFallback(); err != nil {
+		l.logger.Error("Failed to attach read latency monitoring", zap.Error(err))
+		return err
+	}
+
 	// Attach memory monitoring (optional, continue on failure)
 	l.attachMemoryTracepoints()
 
 	// Attach cache monitoring
 	l.attachCacheWithFallback()
+
+	// Start background pid refresh
+	go l.refreshAllowedPIDsLoop(targetCommDefault)
 
 	// Log attachment summary
 	l.logger.Info("eBPF programs attached successfully",
@@ -204,32 +161,6 @@ func (l *EnhancedLoader) AttachPrograms() error {
 // attachFadviseWithFallback tries fentry -> tracepoint -> kprobe.
 func (l *EnhancedLoader) attachFadviseWithFallback() error {
 	funcName := "fadvise64"
-
-	// Try fentry/fexit first (best performance)
-	if l.features.HasFentry {
-		if l.objects.FentryKsysFadvise6464 != nil && l.objects.FexitKsysFadvise6464 != nil {
-			fentryLink, err := link.AttachTracing(link.TracingOptions{
-				Program: l.objects.FentryKsysFadvise6464,
-			})
-			if err == nil {
-				l.links = append(l.links, fentryLink)
-
-				fexitLink, fexitErr := link.AttachTracing(link.TracingOptions{
-					Program: l.objects.FexitKsysFadvise6464,
-				})
-				if fexitErr == nil {
-					l.links = append(l.links, fexitLink)
-					l.attachmentModes[funcName] = "fentry/fexit"
-					l.logger.Info("Attached fadvise monitoring using fentry/fexit")
-					return nil
-				}
-				// Cleanup fentry if fexit fails
-				fentryLink.Close()
-				l.links = l.links[:len(l.links)-1]
-			}
-			l.logger.Debug("fentry/fexit attachment failed, trying tracepoint", zap.Error(err))
-		}
-	}
 
 	// Try tracepoints (stable API)
 	if l.objects.TraceEnterFadvise64 != nil && l.objects.TraceExitFadvise64 != nil {
@@ -253,130 +184,128 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 		l.logger.Debug("Tracepoint attachment failed, trying kprobe", zap.Error(err))
 	}
 
-	// Fallback to kprobes with multiple symbol attempts
-	return l.attachFadviseKprobesWithSymbolFallback()
+	return fmt.Errorf("failed to attach fadvise monitoring")
 }
 
-// attachFadviseKprobesWithSymbolFallback tries multiple kernel symbols.
-func (l *EnhancedLoader) attachFadviseKprobesWithSymbolFallback() error {
-	symbolNames := GetFadviseFunctionNames(l.features.KernelVersion)
-
-	for _, symbol := range symbolNames {
-		l.logger.Debug("Trying kprobe attachment", zap.String("symbol", symbol))
-
-		if l.objects.KprobeKsysFadvise6464 == nil || l.objects.KretprobeKsysFadvise6464 == nil {
-			continue
-		}
-
-		kpEnter, err := link.Kprobe(symbol, l.objects.KprobeKsysFadvise6464, nil)
-		if err != nil {
-			l.logger.Debug("Kprobe attachment failed",
-				zap.String("symbol", symbol),
-				zap.Error(err))
-			continue
-		}
-
-		kpExit, err := link.Kretprobe(symbol, l.objects.KretprobeKsysFadvise6464, nil)
-		if err != nil {
-			kpEnter.Close()
-			l.logger.Debug("Kretprobe attachment failed",
-				zap.String("symbol", symbol),
-				zap.Error(err))
-			continue
-		}
-
-		// Success!
-		l.links = append(l.links, kpEnter, kpExit)
-		l.attachmentModes["fadvise64"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
-		l.logger.Info("Attached fadvise monitoring using kprobe",
-			zap.String("symbol", symbol))
-		return nil
+// attachReadLatencyWithFallback tries fentry -> tracepoint for read and pread64.
+func (l *EnhancedLoader) attachReadLatencyWithFallback() error {
+	if err := l.attachSyscallLatencyWithFallback("read",
+		l.objects.FentryRead, l.objects.FexitRead,
+		l.objects.TraceEnterRead, l.objects.TraceExitRead); err != nil {
+		return err
 	}
 
-	return fmt.Errorf("failed to attach fadvise monitoring: tried %d symbols", len(symbolNames))
+	if err := l.attachSyscallLatencyWithFallback("pread64",
+		l.objects.FentryPread64, l.objects.FexitPread64,
+		l.objects.TraceEnterPread64, l.objects.TraceExitPread64); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-// attachCacheWithFallback tries fentry -> tracepoint -> kprobe for cache monitoring.
+func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fentryProg, fexitProg, tpEnterProg, tpExitProg *ebpf.Program) error {
+	attachmentKey := "syscall_" + syscallName
+
+	if l.features.HasFentry && fentryProg != nil && fexitProg != nil {
+		fentryLink, err := link.AttachTracing(link.TracingOptions{
+			Program: fentryProg,
+		})
+		if err == nil {
+			fexitLink, exitErr := link.AttachTracing(link.TracingOptions{
+				Program: fexitProg,
+			})
+			if exitErr == nil {
+				l.links = append(l.links, fentryLink, fexitLink)
+				l.attachmentModes[attachmentKey] = "fentry/fexit"
+				l.logger.Info("Attached syscall latency using fentry/fexit", zap.String("syscall", syscallName))
+				return nil
+			}
+			_ = fentryLink.Close()
+			l.logger.Debug("fexit attachment failed, falling back to tracepoint",
+				zap.String("syscall", syscallName),
+				zap.Error(exitErr))
+		} else {
+			l.logger.Debug("fentry attachment failed, falling back to tracepoint",
+				zap.String("syscall", syscallName),
+				zap.Error(err))
+		}
+	}
+
+	if tpEnterProg != nil && tpExitProg != nil {
+		tpEnter, err := link.Tracepoint("syscalls", "sys_enter_"+syscallName, tpEnterProg, nil)
+		if err == nil {
+			tpExit, exitErr := link.Tracepoint("syscalls", "sys_exit_"+syscallName, tpExitProg, nil)
+			if exitErr == nil {
+				l.links = append(l.links, tpEnter, tpExit)
+				l.attachmentModes[attachmentKey] = attachModeTracepoint
+				l.logger.Info("Attached syscall latency using tracepoints", zap.String("syscall", syscallName))
+				return nil
+			}
+			_ = tpEnter.Close()
+			l.logger.Debug("Tracepoint exit attachment failed",
+				zap.String("syscall", syscallName),
+				zap.Error(exitErr))
+		} else {
+			l.logger.Debug("Tracepoint enter attachment failed",
+				zap.String("syscall", syscallName),
+				zap.Error(err))
+		}
+	}
+
+	return fmt.Errorf("failed to attach latency probes for syscall %s", syscallName)
+}
+
+func (l *EnhancedLoader) RefreshAllowedPIDs(prefix string) error {
+	if l.objects == nil {
+		return fmt.Errorf("eBPF objects not loaded")
+	}
+	return refreshAllowedPIDs(l.objects, prefix)
+}
+
+func (l *EnhancedLoader) refreshAllowedPIDsLoop(prefix string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := l.RefreshAllowedPIDs(prefix); err != nil {
+			l.logger.Debug("Refresh allowed pids failed", zap.Error(err))
+		}
+	}
+}
+
+// attachCacheWithFallback attaches cache monitoring tracepoints.
 func (l *EnhancedLoader) attachCacheWithFallback() {
-	// Try fentry first for filemap operations
-	if l.features.HasFentry && l.objects.FentryFilemapGetReadBatch != nil {
-		fentryLink, err := link.AttachTracing(link.TracingOptions{
-			Program: l.objects.FentryFilemapGetReadBatch,
-		})
+	if l.objects.TraceMmFilemapGetPages != nil {
+		tp, err := link.Tracepoint("filemap", "mm_filemap_get_pages", l.objects.TraceMmFilemapGetPages, nil)
 		if err == nil {
-			l.links = append(l.links, fentryLink)
-			l.attachmentModes["filemap_read"] = attachModeFentry
-			l.logger.Info("Attached cache read monitoring using fentry")
+			l.links = append(l.links, tp)
+			l.attachmentModes["filemap_lookup"] = attachModeTracepoint
+			l.logger.Info("Attached cache lookup monitoring using tracepoint")
+		} else {
+			l.logger.Debug("Failed to attach mm_filemap_get_pages", zap.Error(err))
 		}
 	}
 
-	// If fentry failed, try tracepoint
-	if _, ok := l.attachmentModes["filemap_read"]; !ok {
-		if l.objects.TraceFilemapGetReadBatch != nil {
-			tp, err := link.Tracepoint("filemap", "filemap_get_read_batch",
-				l.objects.TraceFilemapGetReadBatch, nil)
-			if err == nil {
-				l.links = append(l.links, tp)
-				l.attachmentModes["filemap_read"] = attachModeTracepoint
-				l.logger.Info("Attached cache read monitoring using tracepoint")
-			}
-		}
-	}
-
-	// If both failed, try kprobe with multiple symbols
-	if _, ok := l.attachmentModes["filemap_read"]; !ok {
-		readFuncs, _ := GetFilemapFunctionNames(l.features.KernelVersion)
-		for _, symbol := range readFuncs {
-			if l.objects.KprobeFilemapGetReadBatch != nil {
-				kp, err := link.Kprobe(symbol, l.objects.KprobeFilemapGetReadBatch, nil)
-				if err == nil {
-					l.links = append(l.links, kp)
-					l.attachmentModes["filemap_read"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
-					l.logger.Info("Attached cache read monitoring using kprobe",
-						zap.String("symbol", symbol))
-					break
-				}
-			}
-		}
-	}
-
-	// Similar logic for page cache add operations
-	if l.features.HasFentry && l.objects.FentryAddToPageCacheLru != nil {
-		fentryLink, err := link.AttachTracing(link.TracingOptions{
-			Program: l.objects.FentryAddToPageCacheLru,
-		})
-		if err == nil {
-			l.links = append(l.links, fentryLink)
-			l.attachmentModes["page_cache_add"] = attachModeFentry
-			l.logger.Info("Attached page cache add monitoring using fentry")
-			return
-		}
-	}
-
-	// Fallback to tracepoint and then kprobe
 	if l.objects.TraceMmFilemapAddToPageCache != nil {
-		tp, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache",
-			l.objects.TraceMmFilemapAddToPageCache, nil)
+		tp, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", l.objects.TraceMmFilemapAddToPageCache, nil)
 		if err == nil {
 			l.links = append(l.links, tp)
 			l.attachmentModes["page_cache_add"] = attachModeTracepoint
-			l.logger.Info("Attached page cache add monitoring using tracepoint")
-			return
+			l.logger.Info("Attached cache fill monitoring using tracepoint")
+		} else {
+			l.logger.Debug("Failed to attach mm_filemap_add_to_page_cache", zap.Error(err))
 		}
 	}
 
-	// Final fallback to kprobe
-	_, addFuncs := GetFilemapFunctionNames(l.features.KernelVersion)
-	for _, symbol := range addFuncs {
-		if l.objects.KprobeAddToPageCacheLru != nil {
-			kp, err := link.Kprobe(symbol, l.objects.KprobeAddToPageCacheLru, nil)
-			if err == nil {
-				l.links = append(l.links, kp)
-				l.attachmentModes["page_cache_add"] = fmt.Sprintf("%s/%s", attachModeKprobe, symbol)
-				l.logger.Info("Attached page cache add monitoring using kprobe",
-					zap.String("symbol", symbol))
-				return
-			}
+	if l.objects.TraceMmFilemapDeleteFromPageCache != nil {
+		tp, err := link.Tracepoint("filemap", "mm_filemap_delete_from_page_cache", l.objects.TraceMmFilemapDeleteFromPageCache, nil)
+		if err == nil {
+			l.links = append(l.links, tp)
+			l.attachmentModes["page_cache_delete"] = attachModeTracepoint
+			l.logger.Info("Attached cache delete monitoring using tracepoint")
+		} else {
+			l.logger.Debug("Failed to attach mm_filemap_delete_from_page_cache", zap.Error(err))
 		}
 	}
 }
@@ -435,14 +364,6 @@ func (l *EnhancedLoader) Close() error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close eBPF objects: %v\n", err)
 		}
 		l.objects = nil
-	}
-
-	// Close cgroup FD if opened
-	if l.cgroupFD != nil {
-		if err := l.cgroupFD.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to close cgroup fd: %v\n", err)
-		}
-		l.cgroupFD = nil
 	}
 
 	return nil

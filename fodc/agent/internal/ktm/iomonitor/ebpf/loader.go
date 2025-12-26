@@ -38,9 +38,7 @@ type Loader struct {
 	spec    *ebpf.CollectionSpec
 	objects *generated.IomonitorObjects
 	links   []link.Link
-	// Optional cgroup filter support
 	cgroupPath string
-	cgroupFD   *os.File
 }
 
 // NewLoader creates a new eBPF program loader.
@@ -55,8 +53,7 @@ func NewLoader() (*Loader, error) {
 	}, nil
 }
 
-// SetCgroupPath enables cgroup-based PID filtering using a cgroup v2 path.
-// An empty path disables the filter.
+// SetCgroupPath configures the target cgroup path for filtering.
 func (l *Loader) SetCgroupPath(path string) {
 	l.cgroupPath = path
 }
@@ -86,81 +83,33 @@ func (l *Loader) LoadPrograms() error {
 		return fmt.Errorf("failed to load eBPF objects: %w", err)
 	}
 
-	// Configure cgroup filter if requested.
-	if err := l.applyCgroupFilter(); err != nil {
-		return fmt.Errorf("failed to apply cgroup filter: %w", err)
-	}
-
 	return nil
 }
 
-// EnsureCgroupFilter verifies the filter is programmed; if missing, re-applies.
-func (l *Loader) EnsureCgroupFilter() error {
-	return l.refreshCgroupFilter(false)
+// ConfigureFilters populates the cgroup id and allowed pid map.
+func (l *Loader) ConfigureFilters(targetComm string) error {
+	if l.objects == nil {
+		return fmt.Errorf("eBPF objects not loaded")
+	}
+	return configureFilters(l.objects, l.cgroupPath, targetComm)
 }
 
-// ForceRefreshCgroupFilter re-applies the filter even if a value exists.
-func (l *Loader) ForceRefreshCgroupFilter() error {
-	return l.refreshCgroupFilter(true)
-}
-
-// applyCgroupFilter writes the configured cgroup into the BPF cgroup array.
-func (l *Loader) applyCgroupFilter() error {
-	return l.refreshCgroupFilter(true)
-}
-
-func (l *Loader) refreshCgroupFilter(force bool) error {
-	if l.objects == nil || l.objects.CgroupFilter == nil {
-		return fmt.Errorf("cgroup filter map not available in eBPF objects")
+// RefreshAllowedPIDs updates the allowed pid map using the given comm prefix.
+func (l *Loader) RefreshAllowedPIDs(prefix string) error {
+	if l.objects == nil {
+		return fmt.Errorf("eBPF objects not loaded")
 	}
-
-	key := uint32(0)
-	if !force {
-		var existing uint32
-		if err := l.objects.CgroupFilter.Lookup(key, &existing); err == nil && existing != 0 {
-			return nil
-		}
-	}
-
-	path := l.cgroupPath
-	if path == "" {
-		var err error
-		path, err = detectBanyanDBCgroupPath()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: cgroup filter disabled (auto-detect failed): %v\n", err)
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "Auto-detected BanyanDB cgroup: %s\n", path)
-	}
-
-	resolved, err := resolveCgroupPath(path)
-	if err != nil {
-		return err
-	}
-
-	fd, err := openCgroupPath(resolved)
-	if err != nil {
-		return err
-	}
-
-	val := uint32(fd.Fd())
-	if err := l.objects.CgroupFilter.Update(key, val, ebpf.UpdateAny); err != nil {
-		_ = fd.Close()
-		return fmt.Errorf("failed to populate cgroup filter map: %w", err)
-	}
-
-	// Close previous fd if any.
-	if l.cgroupFD != nil {
-		_ = l.cgroupFD.Close()
-	}
-	l.cgroupFD = fd
-	return nil
+	return refreshAllowedPIDs(l.objects, prefix)
 }
 
 // removeFentryPrograms removes fentry/fexit programs from the spec.
 func removeFentryPrograms(spec *ebpf.CollectionSpec) {
 	// Remove fentry/fexit programs that require BTF
 	programsToRemove := []string{
+		"fentry_read",
+		"fexit_read",
+		"fentry_pread64",
+		"fexit_pread64",
 		"fentry_ksys_fadvise64_64",
 		"fexit_ksys_fadvise64_64",
 		"fentry_filemap_get_read_batch",
@@ -178,6 +127,11 @@ func (l *Loader) AttachTracepoints() error {
 		return fmt.Errorf("eBPF objects not loaded")
 	}
 
+	// Attach read/pread latency
+	if err := l.attachReadLatency(); err != nil {
+		return fmt.Errorf("failed to attach read latency probes: %w", err)
+	}
+
 	// Attach fadvise tracepoints
 	if err := l.attachFadviseTracepoints(); err != nil {
 		return fmt.Errorf("failed to attach fadvise tracepoints: %w", err)
@@ -192,63 +146,85 @@ func (l *Loader) AttachTracepoints() error {
 	return nil
 }
 
-// attachFadviseTracepoints attaches fadvise-related tracepoints.
-func (l *Loader) attachFadviseTracepoints() error {
-	// Try fentry/fexit first (requires BTF)
-	if l.objects.FentryKsysFadvise6464 != nil && l.objects.FexitKsysFadvise6464 != nil {
+// attachReadLatency attaches read/pread latency probes with fentry preference.
+func (l *Loader) attachReadLatency() error {
+	if err := l.attachSyscallLatency("read",
+		l.objects.FentryRead, l.objects.FexitRead,
+		l.objects.TraceEnterRead, l.objects.TraceExitRead,
+	); err != nil {
+		return err
+	}
+
+	if err := l.attachSyscallLatency("pread64",
+		l.objects.FentryPread64, l.objects.FexitPread64,
+		l.objects.TraceEnterPread64, l.objects.TraceExitPread64,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (l *Loader) attachSyscallLatency(syscallName string, fentryProg, fexitProg, tpEnterProg, tpExitProg *ebpf.Program) error {
+	// Prefer fentry/fexit when available
+	if fentryProg != nil && fexitProg != nil {
 		fentry, err := link.AttachTracing(link.TracingOptions{
-			Program: l.objects.FentryKsysFadvise6464,
+			Program: fentryProg,
 		})
 		if err == nil {
 			l.links = append(l.links, fentry)
 
 			fexit, errExit := link.AttachTracing(link.TracingOptions{
-				Program: l.objects.FexitKsysFadvise6464,
+				Program: fexitProg,
 			})
 			if errExit == nil {
 				l.links = append(l.links, fexit)
 				return nil
 			}
 
-			// Cleanup partial attachment before fallback
 			_ = fentry.Close()
 			l.links = l.links[:len(l.links)-1]
 		}
 	}
 
-	// Try tracepoints next
-	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64", l.objects.TraceEnterFadvise64, nil)
+	// Fallback to tracepoints
+	if tpEnterProg == nil || tpExitProg == nil {
+		return fmt.Errorf("no programs available for syscall %s", syscallName)
+	}
+
+	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_"+syscallName, tpEnterProg, nil)
 	if err != nil {
-		// Fallback to kprobe
-		return l.attachFadviseKprobes()
+		return fmt.Errorf("failed to attach sys_enter_%s tracepoint: %w", syscallName, err)
 	}
 	l.links = append(l.links, tpEnter)
 
-	tpExit, err := link.Tracepoint("syscalls", "sys_exit_fadvise64", l.objects.TraceExitFadvise64, nil)
+	tpExit, err := link.Tracepoint("syscalls", "sys_exit_"+syscallName, tpExitProg, nil)
 	if err != nil {
-		// Cleanup partial attachment before fallback
 		_ = tpEnter.Close()
 		l.links = l.links[:len(l.links)-1]
-		return l.attachFadviseKprobes()
+		return fmt.Errorf("failed to attach sys_exit_%s tracepoint: %w", syscallName, err)
 	}
 	l.links = append(l.links, tpExit)
 
 	return nil
 }
 
-// attachFadviseKprobes attaches fadvise kprobes as fallback.
-func (l *Loader) attachFadviseKprobes() error {
-	kpEnter, err := link.Kprobe("ksys_fadvise64_64", l.objects.KprobeKsysFadvise6464, nil)
+// attachFadviseTracepoints attaches fadvise-related tracepoints.
+func (l *Loader) attachFadviseTracepoints() error {
+	// Try tracepoints next
+	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64", l.objects.TraceEnterFadvise64, nil)
 	if err != nil {
-		return fmt.Errorf("failed to attach fadvise kprobe: %w", err)
+		return fmt.Errorf("failed to attach sys_enter_fadvise64 tracepoint: %w", err)
 	}
-	l.links = append(l.links, kpEnter)
+	l.links = append(l.links, tpEnter)
 
-	kpExit, err := link.Kretprobe("ksys_fadvise64_64", l.objects.KretprobeKsysFadvise6464, nil)
+	tpExit, err := link.Tracepoint("syscalls", "sys_exit_fadvise64", l.objects.TraceExitFadvise64, nil)
 	if err != nil {
-		return fmt.Errorf("failed to attach fadvise kretprobe: %w", err)
+		_ = tpEnter.Close()
+		l.links = l.links[:len(l.links)-1]
+		return fmt.Errorf("failed to attach sys_exit_fadvise64 tracepoint: %w", err)
 	}
-	l.links = append(l.links, kpExit)
+	l.links = append(l.links, tpExit)
 
 	return nil
 }
@@ -274,70 +250,37 @@ func (l *Loader) attachMemoryTracepoints() {
 	}
 }
 
-// attachCacheTracepoints attaches cache-related tracepoints with kprobe fallback.
+// attachCacheTracepoints attaches cache-related tracepoints.
 func (l *Loader) attachCacheTracepoints() {
-	// Track whether attachments succeed to avoid double attaching the same point.
-	attachedRead := false
-	attachedAdd := false
-
-	// Try filemap fentry first
-	if l.objects.FentryFilemapGetReadBatch != nil {
-		fentry, err := link.AttachTracing(link.TracingOptions{
-			Program: l.objects.FentryFilemapGetReadBatch,
-		})
-		if err == nil {
-			l.links = append(l.links, fentry)
-			attachedRead = true
-		}
-	}
-
-	// Try filemap tracepoint if fentry not attached
-	if !attachedRead {
-		tpReadBatch, err := link.Tracepoint("filemap", "filemap_get_read_batch", l.objects.TraceFilemapGetReadBatch, nil)
+	// mm_filemap_get_pages
+	if l.objects.TraceMmFilemapGetPages != nil {
+		tp, err := link.Tracepoint("filemap", "mm_filemap_get_pages", l.objects.TraceMmFilemapGetPages, nil)
 		if err != nil {
-			// Fallback to kprobe
-			kpReadBatch, kpErr := link.Kprobe("filemap_get_read_batch", l.objects.KprobeFilemapGetReadBatch, nil)
-			if kpErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to attach read batch probe: %v\n", kpErr)
-			} else {
-				l.links = append(l.links, kpReadBatch)
-				attachedRead = true
-			}
+			fmt.Fprintf(os.Stderr, "Warning: failed to attach mm_filemap_get_pages tracepoint: %v\n", err)
 		} else {
-			l.links = append(l.links, tpReadBatch)
-			attachedRead = true
+			l.links = append(l.links, tp)
 		}
 	}
 
-	// Try page cache add fentry first
-	if l.objects.FentryAddToPageCacheLru != nil {
-		fentry, err := link.AttachTracing(link.TracingOptions{
-			Program: l.objects.FentryAddToPageCacheLru,
-		})
-		if err == nil {
-			l.links = append(l.links, fentry)
-			attachedAdd = true
-		}
-	}
-
-	// Try page cache add tracepoint if fentry not attached
-	if !attachedAdd {
-		tpPageAdd, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", l.objects.TraceMmFilemapAddToPageCache, nil)
+	// mm_filemap_add_to_page_cache
+	if l.objects.TraceMmFilemapAddToPageCache != nil {
+		tp, err := link.Tracepoint("filemap", "mm_filemap_add_to_page_cache", l.objects.TraceMmFilemapAddToPageCache, nil)
 		if err != nil {
-			// Fallback to kprobe
-			kpPageAdd, kpErr := link.Kprobe("add_to_page_cache_lru", l.objects.KprobeAddToPageCacheLru, nil)
-			if kpErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to attach page cache add probe: %v\n", kpErr)
-			} else {
-				l.links = append(l.links, kpPageAdd)
-				attachedAdd = true
-			}
+			fmt.Fprintf(os.Stderr, "Warning: failed to attach mm_filemap_add_to_page_cache tracepoint: %v\n", err)
 		} else {
-			l.links = append(l.links, tpPageAdd)
-			attachedAdd = true
+			l.links = append(l.links, tp)
 		}
 	}
 
+	// mm_filemap_delete_from_page_cache
+	if l.objects.TraceMmFilemapDeleteFromPageCache != nil {
+		tp, err := link.Tracepoint("filemap", "mm_filemap_delete_from_page_cache", l.objects.TraceMmFilemapDeleteFromPageCache, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to attach mm_filemap_delete_from_page_cache tracepoint: %v\n", err)
+		} else {
+			l.links = append(l.links, tp)
+		}
+	}
 }
 
 // GetObjects returns the loaded eBPF objects.
@@ -361,14 +304,6 @@ func (l *Loader) Close() error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to close eBPF objects: %v\n", err)
 		}
 		l.objects = nil
-	}
-
-	// Close cgroup FD if opened
-	if l.cgroupFD != nil {
-		if err := l.cgroupFD.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to close cgroup fd: %v\n", err)
-		}
-		l.cgroupFD = nil
 	}
 
 	return nil

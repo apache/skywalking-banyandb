@@ -9,8 +9,6 @@ type CollectorConfig struct {
 	Modules         []string      `mapstructure:"modules"`
 	EBPF            EBPFConfig    `mapstructure:"ebpf"`
 	Interval        time.Duration `mapstructure:"interval"`
-	CleanupStrategy string        `mapstructure:"cleanup_strategy"`
-	CleanupInterval time.Duration `mapstructure:"cleanup_interval"`
 }
 
 // EBPFConfig defines eBPF-specific configuration.

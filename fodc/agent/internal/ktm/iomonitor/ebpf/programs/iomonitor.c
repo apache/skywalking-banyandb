@@ -22,14 +22,20 @@
 #include <stdbool.h>
 
 // POSIX_FADV_* constants (man 2 posix_fadvise)
-#define POSIX_FADV_NORMAL     0 /* No further special treatment.  */
-#define POSIX_FADV_RANDOM     1 /* Expect random page references.  */
-#define POSIX_FADV_SEQUENTIAL 2 /* Expect sequential page references.  */
-#define POSIX_FADV_WILLNEED   3 /* Will need these pages.  */
-#define POSIX_FADV_DONTNEED   4 /* Don't need these pages.  */
-#define POSIX_FADV_NOREUSE    5 /* Data will be accessed once.  */
+#define POSIX_FADV_NORMAL     0
+#define POSIX_FADV_RANDOM     1
+#define POSIX_FADV_SEQUENTIAL 2
+#define POSIX_FADV_WILLNEED   3
+#define POSIX_FADV_DONTNEED   4
+#define POSIX_FADV_NOREUSE    5
+
+#define MAX_LATENCY_BUCKETS 32
 
 char __license[] SEC("license") = "Dual BSD/GPL";
+
+// =========================================================================================
+// Structs
+// =========================================================================================
 
 struct fadvise_args_t {
     int fd;
@@ -38,18 +44,55 @@ struct fadvise_args_t {
     int advice;
 };
 
-struct fadvise_stats_t {
-    __u64 total_calls;
-    __u64 success_calls;
-    __u64 advice_dontneed;
-    __u64 advice_sequential;
-    __u64 advice_normal;
-    __u64 advice_random;
-    __u64 advice_willneed;
-    __u64 advice_noreuse;
+struct read_latency_stats_t {
+    __u64 buckets[MAX_LATENCY_BUCKETS]; // log2 histogram of latency in microseconds
+    __u64 sum_latency_ns;
+    __u64 count;
+    __u64 read_bytes_total;
 };
 
-// TID -> syscall 参数临时保存
+struct fadvise_stats_t {
+    __u64 total_calls;
+    __u64 advice_dontneed;
+};
+
+struct cache_stats_t {
+    __u64 lookups; // mm_filemap_get_pages
+    __u64 adds;    // mm_filemap_add_to_page_cache
+    __u64 deletes; // mm_filemap_delete_from_page_cache
+};
+
+struct shrink_counters_t {
+    __u64 nr_scanned_total;
+    __u64 nr_reclaimed_total;
+    __u64 events_total;
+};
+
+struct reclaim_counters_t {
+    __u64 direct_reclaim_begin_total;
+};
+
+// =========================================================================================
+// Maps
+// =========================================================================================
+
+// PID allowlist (fast path)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, __u32);  // PID/TGID
+    __type(value, __u8); // presence flag
+} allowed_pids SEC(".maps");
+
+// Target cgroup ID
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} config_map SEC(".maps");
+
+// Fadvise maps
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 8192);
@@ -57,7 +100,6 @@ struct {
     __type(value, struct fadvise_args_t);
 } fadvise_args_map SEC(".maps");
 
-// PID -> 累计统计信息
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 8192);
@@ -65,15 +107,51 @@ struct {
     __type(value, struct fadvise_stats_t);
 } fadvise_stats_map SEC(".maps");
 
-// Cgroup filter map (index 0 holds target cgroup fd)
+// Read/Pread Latency maps
 struct {
-    __uint(type, BPF_MAP_TYPE_CGROUP_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, __u32);
-} cgroup_filter SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u64); // TID
+    __type(value, __u64); // Start Timestamp (ns)
+} read_args_map SEC(".maps");
 
-// Fallback comm match when cgroup filter is unavailable or not applicable.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u32); // PID
+    __type(value, struct read_latency_stats_t);
+} read_latency_stats_map SEC(".maps");
+
+// Memory/Cache maps
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, __u32); // always 0
+    __type(value, struct shrink_counters_t);
+} shrink_stats_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, __u32); // always 0
+    __type(value, struct reclaim_counters_t);
+} reclaim_counters_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u32); // PID
+    __type(value, struct cache_stats_t);
+} cache_stats_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+} events SEC(".maps");
+
+// =========================================================================================
+// Helpers
+// =========================================================================================
+
 static __always_inline bool comm_is_banyandb() {
     const char target[] = "banyand";
     char comm[16];
@@ -90,14 +168,150 @@ static __always_inline bool comm_is_banyandb() {
 }
 
 static __always_inline bool is_task_allowed() {
-    int ret = bpf_current_task_under_cgroup(&cgroup_filter, 0);
-    if (ret == 1) {
+    __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+    __u64 curr_cgroup_id = bpf_get_current_cgroup_id();
+
+    __u32 key = 0;
+    __u64 *target_id = bpf_map_lookup_elem(&config_map, &key);
+    if (!target_id || curr_cgroup_id != *target_id) {
+        return false;
+    }
+
+    if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
         return true;
     }
 
-    // Fallback: allow BanyanDB processes by comm if cgroup filter isn't set/misses
-    return comm_is_banyandb();
+    if (comm_is_banyandb()) {
+        __u8 one = 1;
+        bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
+        return true;
+    }
+
+    return false;
 }
+
+static __always_inline __u64 log2l(__u64 v) {
+    __u64 r;
+    __u64 shift;
+    r = (v > 0xFFFFFFFF) << 5; v >>= r;
+    shift = (v > 0xFFFF) << 4; v >>= shift; r |= shift;
+    shift = (v > 0xFF) << 3; v >>= shift; r |= shift;
+    shift = (v > 0xF) << 2; v >>= shift; r |= shift;
+    shift = (v > 0x3) << 1; v >>= shift; r |= shift;
+    r |= (v >> 1);
+    return r;
+}
+
+static __always_inline int trace_enter_read_common() {
+    if (!is_task_allowed()) {
+        return 0;
+    }
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u64 ts = bpf_ktime_get_ns();
+    bpf_map_update_elem(&read_args_map, &tid, &ts, BPF_ANY);
+    return 0;
+}
+
+static __always_inline int trace_exit_read_common(int ret) {
+    if (!is_task_allowed()) {
+        return 0;
+    }
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u64 *tsp = bpf_map_lookup_elem(&read_args_map, &tid);
+    if (!tsp) {
+        return 0;
+    }
+    
+    // Only record successful reads
+    if (ret >= 0) {
+        __u64 delta = bpf_ktime_get_ns() - *tsp;
+        __u32 pid = tid >> 32;
+        
+        struct read_latency_stats_t *stats = bpf_map_lookup_elem(&read_latency_stats_map, &pid);
+        if (!stats) {
+            struct read_latency_stats_t new_stats = {};
+            bpf_map_update_elem(&read_latency_stats_map, &pid, &new_stats, BPF_ANY);
+            stats = bpf_map_lookup_elem(&read_latency_stats_map, &pid);
+        }
+        
+        if (stats) {
+            stats->sum_latency_ns += delta;
+            stats->count++;
+            if (ret > 0) {
+                stats->read_bytes_total += (__u64)ret;
+            }
+            
+            // Log2 histogram (microseconds)
+            // delta is ns. delta / 1000 is us.
+            __u64 lat_us = delta / 1000;
+            __u64 bucket = 0;
+            if (lat_us > 0) {
+                bucket = log2l(lat_us);
+                if (bucket >= MAX_LATENCY_BUCKETS) {
+                    bucket = MAX_LATENCY_BUCKETS - 1;
+                }
+            }
+            stats->buckets[bucket]++;
+        }
+    }
+    
+    bpf_map_delete_elem(&read_args_map, &tid);
+    return 0;
+}
+
+// =========================================================================================
+// Fentry/Fexit: Read / Pread Latency
+// =========================================================================================
+
+SEC("fentry/__x64_sys_read")
+int BPF_PROG(fentry_read, unsigned int fd, const char *buf, size_t count) {
+    return trace_enter_read_common();
+}
+
+SEC("fexit/__x64_sys_read")
+int BPF_PROG(fexit_read, unsigned int fd, const char *buf, size_t count, long ret) {
+    return trace_exit_read_common((int)ret);
+}
+
+SEC("fentry/__x64_sys_pread64")
+int BPF_PROG(fentry_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos) {
+    return trace_enter_read_common();
+}
+
+SEC("fexit/__x64_sys_pread64")
+int BPF_PROG(fexit_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos, long ret) {
+    return trace_exit_read_common((int)ret);
+}
+
+// =========================================================================================
+// Tracepoints: Read / Pread Latency (fallback)
+// =========================================================================================
+
+SEC("tracepoint/syscalls/sys_enter_read")
+int trace_enter_read(struct trace_event_raw_sys_enter *ctx) {
+    return trace_enter_read_common();
+}
+
+SEC("tracepoint/syscalls/sys_exit_read")
+int trace_exit_read(struct trace_event_raw_sys_exit *ctx) {
+    long ret = BPF_CORE_READ(ctx, ret);
+    return trace_exit_read_common((int)ret);
+}
+
+SEC("tracepoint/syscalls/sys_enter_pread64")
+int trace_enter_pread64(struct trace_event_raw_sys_enter *ctx) {
+    return trace_enter_read_common();
+}
+
+SEC("tracepoint/syscalls/sys_exit_pread64")
+int trace_exit_pread64(struct trace_event_raw_sys_exit *ctx) {
+    long ret = BPF_CORE_READ(ctx, ret);
+    return trace_exit_read_common((int)ret);
+}
+
+// =========================================================================================
+// Tracepoints: Fadvise
+// =========================================================================================
 
 SEC("tracepoint/syscalls/sys_enter_fadvise64")
 int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
@@ -107,7 +321,6 @@ int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
     struct fadvise_args_t args = {};
 
-    // Use CO-RE for portable struct access
     args.fd     = BPF_CORE_READ(ctx, args[0]);
     args.offset = BPF_CORE_READ(ctx, args[1]);
     args.len    = BPF_CORE_READ(ctx, args[2]);
@@ -117,35 +330,18 @@ int trace_enter_fadvise64(struct trace_event_raw_sys_enter *ctx) {
 
     __u32 pid = tid >> 32;
     struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-    struct fadvise_stats_t new_stats = {};
     if (!stats) {
-        stats = &new_stats;
+        struct fadvise_stats_t new_stats = {};
+        bpf_map_update_elem(&fadvise_stats_map, &pid, &new_stats, BPF_ANY);
+        stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
     }
 
-    stats->total_calls++;
-
-    switch (args.advice) {
-        case POSIX_FADV_DONTNEED:
+    if (stats) {
+        stats->total_calls++;
+        if (args.advice == POSIX_FADV_DONTNEED) {
             stats->advice_dontneed++;
-            break;
-        case POSIX_FADV_SEQUENTIAL:
-            stats->advice_sequential++;
-            break;
-        case POSIX_FADV_NORMAL:
-            stats->advice_normal++;
-            break;
-        case POSIX_FADV_RANDOM:
-            stats->advice_random++;
-            break;
-        case POSIX_FADV_WILLNEED:
-            stats->advice_willneed++;
-            break;
-        case POSIX_FADV_NOREUSE:
-            stats->advice_noreuse++;
-            break;
+        }
     }
-
-    bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
 
     return 0;
 }
@@ -156,40 +352,14 @@ int trace_exit_fadvise64(struct trace_event_raw_sys_exit *ctx) {
         return 0;
     }
     __u64 tid = bpf_get_current_pid_tgid();
-    __u32 pid = tid >> 32;
-
-    // Use CO-RE for portable access to return value
-    long ret = BPF_CORE_READ(ctx, ret);
-    if (ret == 0) {
-        struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-        if (stats) {
-            stats->success_calls++;
-            bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
-        }
-    }
 
     bpf_map_delete_elem(&fadvise_args_map, &tid);
     return 0;
 }
 
-struct lru_shrink_info_t {
-    __u64 nr_scanned;
-    __u64 nr_reclaimed;
-    __u32 caller_pid;
-    char caller_comm[16];
-};
-
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-} events SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1);
-    __type(key, __u32); // always 0
-    __type(value, struct lru_shrink_info_t);
-} shrink_stats_map SEC(".maps");
+// =========================================================================================
+// Tracepoints: Memory Pressure
+// =========================================================================================
 
 SEC("tracepoint/vmscan/mm_vmscan_lru_shrink_inactive")
 int trace_lru_shrink_inactive(struct trace_event_raw_mm_vmscan_lru_shrink_inactive *ctx) {
@@ -197,450 +367,103 @@ int trace_lru_shrink_inactive(struct trace_event_raw_mm_vmscan_lru_shrink_inacti
         return 0;
     }
     __u32 key = 0;
-    struct lru_shrink_info_t info = {};
-
-    info.nr_scanned = ctx->nr_scanned;
-    info.nr_reclaimed = ctx->nr_reclaimed;
-    info.caller_pid = bpf_get_current_pid_tgid() >> 32;
-    bpf_get_current_comm(&info.caller_comm, sizeof(info.caller_comm));
-
-    bpf_map_update_elem(&shrink_stats_map, &key, &info, BPF_ANY);
+    struct shrink_counters_t *counters = bpf_map_lookup_elem(&shrink_stats_map, &key);
+    if (!counters) {
+        struct shrink_counters_t zero = {};
+        bpf_map_update_elem(&shrink_stats_map, &key, &zero, BPF_ANY);
+        counters = bpf_map_lookup_elem(&shrink_stats_map, &key);
+    }
+    if (counters) {
+        counters->nr_scanned_total += ctx->nr_scanned;
+        counters->nr_reclaimed_total += ctx->nr_reclaimed;
+        counters->events_total++;
+    }
     return 0;
 }
 
-struct reclaim_info_t {
-    __u32 pid;
-    char comm[16];
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 128);
-    __type(key, __u32);
-    __type(value, struct reclaim_info_t);
-} direct_reclaim_map SEC(".maps");
-
-struct trace_event_raw_mm_vmscan_direct_reclaim_begin;
-
+// Use a generic context pointer to avoid build warnings on kernels where the
+// trace_event_raw_mm_vmscan_direct_reclaim_begin type is not exposed.
 SEC("tracepoint/vmscan/mm_vmscan_direct_reclaim_begin")
-int trace_direct_reclaim_begin(struct trace_event_raw_mm_vmscan_direct_reclaim_begin *ctx) {
+int trace_direct_reclaim_begin(void *ctx) {
     if (!is_task_allowed()) {
         return 0;
     }
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct reclaim_info_t info = {};
-    info.pid = pid;
-    bpf_get_current_comm(&info.comm, sizeof(info.comm));
-    bpf_map_update_elem(&direct_reclaim_map, &pid, &info, BPF_ANY);
-    return 0;
-}
-
-// ========= Cache Miss Statistics =========
-
-struct cache_event_t {
-    __u32 pid;
-    char comm[16];
-    __u64 page_count;     // for read_batch
-    __u64 timestamp;
-};
-
-struct cache_stats_t {
-    __u64 total_read_attempts;    // Total read operations attempted
-    __u64 cache_misses;          // Direct measurement from add_to_page_cache
-    __u64 read_batch_calls;      // Count of filemap_get_read_batch calls
-    __u64 page_cache_adds;       // Same as cache_misses (for verification)
-};
-
-// PID -> cache statistics
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 8192);
-    __type(key, __u32); // PID
-    __type(value, struct cache_stats_t);
-} cache_stats_map SEC(".maps");
-
-// Event ring buffer for cache events
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1);
-    __type(key, __u32); // always 0
-    __type(value, struct cache_event_t);
-} cache_event_map SEC(".maps");
-
-// Tracepoint for page cache reads
-// This counts TOTAL read attempts (both hits and misses will trigger this)
-SEC("tracepoint/filemap/filemap_get_read_batch")
-int trace_filemap_get_read_batch(void *ctx) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    // Count total read attempts - this includes both cache hits and misses
-    stats->total_read_attempts++;
-    stats->read_batch_calls++;
-    
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    // Log the event
     __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
+    struct reclaim_counters_t *counters = bpf_map_lookup_elem(&reclaim_counters_map, &key);
+    if (!counters) {
+        struct reclaim_counters_t zero = {};
+        bpf_map_update_elem(&reclaim_counters_map, &key, &zero, BPF_ANY);
+        counters = bpf_map_lookup_elem(&reclaim_counters_map, &key);
+    }
+    if (counters) {
+        counters->direct_reclaim_begin_total++;
+    }
+    return 0;
+}
+
+// =========================================================================================
+// Tracepoints: Page Cache Adds
+// =========================================================================================
+
+SEC("tracepoint/filemap/mm_filemap_get_pages")
+int trace_mm_filemap_get_pages(void *ctx) {
+    if (!is_task_allowed()) {
+        return 0;
+    }
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    if (!stats) {
+        struct cache_stats_t new_stats = {};
+        bpf_map_update_elem(&cache_stats_map, &pid, &new_stats, BPF_ANY);
+        stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
+    }
+
+    if (stats) {
+        stats->lookups++;
+    }
 
     return 0;
 }
 
-// Tracepoint for page cache additions
-// This is called when a new page is loaded from disk and added to page cache
-// This is a definitive cache miss event
 SEC("tracepoint/filemap/mm_filemap_add_to_page_cache")
 int trace_mm_filemap_add_to_page_cache(void *ctx) {
     if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    // This is a definitive cache miss - page had to be loaded from disk
-    stats->cache_misses++;
-    stats->page_cache_adds++;
     
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    // Log the event
-    __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
-
-    return 0;
-}
-
-// ========= Kprobe Fallbacks =========
-
-// Helper functions for different architectures
-static __always_inline long get_arg1(struct pt_regs *ctx) {
-#ifdef __x86_64__
-    return ctx->di;
-#elif defined(__aarch64__)
-    return ctx->regs[0];
-#else
-    return 0;
-#endif
-}
-
-static __always_inline long get_arg2(struct pt_regs *ctx) {
-#ifdef __x86_64__
-    return ctx->si;
-#elif defined(__aarch64__)
-    return ctx->regs[1];
-#else
-    return 0;
-#endif
-}
-
-static __always_inline long get_arg3(struct pt_regs *ctx) {
-#ifdef __x86_64__
-    return ctx->dx;
-#elif defined(__aarch64__)
-    return ctx->regs[2];
-#else
-    return 0;
-#endif
-}
-
-static __always_inline long get_arg4(struct pt_regs *ctx) {
-#ifdef __x86_64__
-    return ctx->cx;
-#elif defined(__aarch64__)
-    return ctx->regs[3];
-#else
-    return 0;
-#endif
-}
-
-static __always_inline long get_return_value(struct pt_regs *ctx) {
-#ifdef __x86_64__
-    return ctx->ax;
-#elif defined(__aarch64__)
-    return ctx->regs[0];
-#else
-    return 0;
-#endif
-}
-
-// ========== FENTRY/FEXIT Programs (Best Performance - Kernel 5.5+) ==========
-
-// Fentry for ksys_fadvise64_64 - modern kernels with BTF support
-SEC("fentry/ksys_fadvise64_64")
-int BPF_PROG(fentry_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u64 tid = bpf_get_current_pid_tgid();
-    struct fadvise_args_t args = {};
-
-    args.fd = fd;
-    args.offset = offset;
-    args.len = len;
-    args.advice = advice;
-
-    bpf_map_update_elem(&fadvise_args_map, &tid, &args, BPF_ANY);
-
-    __u32 pid = tid >> 32;
-    struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-    struct fadvise_stats_t new_stats = {};
+    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     if (!stats) {
-        stats = &new_stats;
+        struct cache_stats_t new_stats = {};
+        bpf_map_update_elem(&cache_stats_map, &pid, &new_stats, BPF_ANY);
+        stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     }
 
-    stats->total_calls++;
-
-    switch (advice) {
-        case POSIX_FADV_DONTNEED:
-            stats->advice_dontneed++;
-            break;
-        case POSIX_FADV_SEQUENTIAL:
-            stats->advice_sequential++;
-            break;
-        case POSIX_FADV_NORMAL:
-            stats->advice_normal++;
-            break;
-        case POSIX_FADV_RANDOM:
-            stats->advice_random++;
-            break;
-        case POSIX_FADV_WILLNEED:
-            stats->advice_willneed++;
-            break;
-        case POSIX_FADV_NOREUSE:
-            stats->advice_noreuse++;
-            break;
+    if (stats) {
+        stats->adds++;
     }
 
-    bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
     return 0;
 }
 
-// Fexit for ksys_fadvise64_64 - capture return value
-SEC("fexit/ksys_fadvise64_64")
-int BPF_PROG(fexit_ksys_fadvise64_64, int fd, loff_t offset, loff_t len, int advice, long ret) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u64 tid = bpf_get_current_pid_tgid();
-    __u32 pid = tid >> 32;
-
-    if (ret == 0) {
-        struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-        if (stats) {
-            stats->success_calls++;
-            bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
-        }
-    }
-
-    bpf_map_delete_elem(&fadvise_args_map, &tid);
-    return 0;
-}
-
-// Fentry for filemap operations
-SEC("fentry/filemap_get_read_batch")
-int BPF_PROG(fentry_filemap_get_read_batch) {
+SEC("tracepoint/filemap/mm_filemap_delete_from_page_cache")
+int trace_mm_filemap_delete_from_page_cache(void *ctx) {
     if (!is_task_allowed()) {
         return 0;
     }
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
     struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
     if (!stats) {
-        stats = &new_stats;
+        struct cache_stats_t new_stats = {};
+        bpf_map_update_elem(&cache_stats_map, &pid, &new_stats, BPF_ANY);
+        stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
     }
 
-    stats->total_read_attempts++;
-    stats->read_batch_calls++;
-    
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
-
-    return 0;
-}
-
-// Fentry for page cache add
-SEC("fentry/add_to_page_cache_lru")
-int BPF_PROG(fentry_add_to_page_cache_lru) {
-    if (!is_task_allowed()) {
-        return 0;
+    if (stats) {
+        stats->deletes++;
     }
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    stats->cache_misses++;
-    stats->page_cache_adds++;
-    
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.page_count = 1;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
-
-    return 0;
-}
-
-// ========== KPROBE Programs (Fallback for older kernels) ==========
-
-// Kprobe fallback for fadvise64 entry
-SEC("kprobe/ksys_fadvise64_64")
-int kprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u64 tid = bpf_get_current_pid_tgid();
-    struct fadvise_args_t args = {};
-
-    // Extract arguments from registers
-    args.fd = (int)get_arg1(ctx);
-    args.offset = (__u64)get_arg2(ctx);
-    args.len = (__u64)get_arg3(ctx);
-    args.advice = (int)get_arg4(ctx);
-
-    bpf_map_update_elem(&fadvise_args_map, &tid, &args, BPF_ANY);
-
-    __u32 pid = tid >> 32;
-    struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-    struct fadvise_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    stats->total_calls++;
-
-    switch (args.advice) {
-        case POSIX_FADV_DONTNEED:
-            stats->advice_dontneed++;
-            break;
-        case POSIX_FADV_SEQUENTIAL:
-            stats->advice_sequential++;
-            break;
-        case POSIX_FADV_NORMAL:
-            stats->advice_normal++;
-            break;
-        case POSIX_FADV_RANDOM:
-            stats->advice_random++;
-            break;
-        case POSIX_FADV_WILLNEED:
-            stats->advice_willneed++;
-            break;
-        case POSIX_FADV_NOREUSE:
-            stats->advice_noreuse++;
-            break;
-    }
-
-    bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
-    return 0;
-}
-
-// Kretprobe fallback for fadvise64 exit
-SEC("kretprobe/ksys_fadvise64_64")
-int kretprobe_ksys_fadvise64_64(struct pt_regs *ctx) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u64 tid = bpf_get_current_pid_tgid();
-    __u32 pid = tid >> 32;
-    long ret = get_return_value(ctx);
-
-    if (ret == 0) {
-        struct fadvise_stats_t *stats = bpf_map_lookup_elem(&fadvise_stats_map, &pid);
-        if (stats) {
-            stats->success_calls++;
-            bpf_map_update_elem(&fadvise_stats_map, &pid, stats, BPF_ANY);
-        }
-    }
-
-    bpf_map_delete_elem(&fadvise_args_map, &tid);
-    return 0;
-}
-
-// Kprobe fallback for filemap_get_read_batch
-SEC("kprobe/filemap_get_read_batch")
-int kprobe_filemap_get_read_batch(struct pt_regs *ctx) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    // Count total read attempts
-    stats->total_read_attempts++;
-    stats->read_batch_calls++;
-    
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
-
-    return 0;
-}
-
-// Kprobe fallback for add_to_page_cache_lru
-SEC("kprobe/add_to_page_cache_lru")
-int kprobe_add_to_page_cache_lru(struct pt_regs *ctx) {
-    if (!is_task_allowed()) {
-        return 0;
-    }
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    struct cache_stats_t *stats = bpf_map_lookup_elem(&cache_stats_map, &pid);
-    struct cache_stats_t new_stats = {};
-    if (!stats) {
-        stats = &new_stats;
-    }
-
-    stats->page_cache_adds++;
-    stats->cache_misses++;
-    
-    bpf_map_update_elem(&cache_stats_map, &pid, stats, BPF_ANY);
-
-    __u32 key = 0;
-    struct cache_event_t event = {};
-    event.pid = pid;
-    event.timestamp = bpf_ktime_get_ns();
-    bpf_get_current_comm(&event.comm, sizeof(event.comm));
-    bpf_map_update_elem(&cache_event_map, &key, &event, BPF_ANY);
 
     return 0;
 }

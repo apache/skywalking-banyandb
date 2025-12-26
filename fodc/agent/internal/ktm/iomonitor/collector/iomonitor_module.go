@@ -20,11 +20,10 @@
 package collector
 
 import (
-	"errors"
 	"fmt"
+	"math"
 	"time"
 
-	"github.com/cilium/ebpf"
 	"go.uber.org/zap"
 
 	loader "github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
@@ -32,35 +31,16 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
 
-// CleanupStrategy defines how to manage eBPF map memory.
-type CleanupStrategy string
-
-const (
-	// ClearAfterRead deletes entries after reading (best for counters).
-	ClearAfterRead CleanupStrategy = "clear_after_read"
-	// KeepRecent only keeps entries updated in last N minutes.
-	KeepRecent CleanupStrategy = "keep_recent"
-	// NoCleanup never cleans up (for debugging).
-	NoCleanup CleanupStrategy = "no_cleanup"
-)
-
 // IOMonitorModule collects I/O, cache, and memory statistics from eBPF.
 type IOMonitorModule struct {
-	lastCleanup     time.Time
-	logger          *zap.Logger
-	loader          *loader.Loader
-	objs            *generated.IomonitorObjects
-	activePIDs      map[uint32]time.Time
-	name            string
-	cleanupStrategy CleanupStrategy
-	cleanupInterval time.Duration
-	staleThreshold  time.Duration
-	cgroupPath      string
-	// Simple cumulative counter for debugging (not in struct)
-	debugCumulativeCacheMisses uint64
+	logger     *zap.Logger
+	loader     *loader.Loader
+	objs       *generated.IomonitorObjects
+	name       string
+	cgroupPath string
 }
 
-// NewIOMonitorModule creates a new I/O monitoring module with cleanup.
+// NewIOMonitorModule creates a new I/O monitoring module.
 func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModule, error) {
 	ebpfLoader, err := loader.NewLoader()
 	if err != nil {
@@ -68,25 +48,11 @@ func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModul
 	}
 
 	return &IOMonitorModule{
-		name:            "iomonitor",
-		logger:          logger,
-		loader:          ebpfLoader,
-		cleanupStrategy: ClearAfterRead, // Default strategy
-		cleanupInterval: 60 * time.Second,
-		lastCleanup:     time.Now(),
-		activePIDs:      make(map[uint32]time.Time),
-		staleThreshold:  5 * time.Minute,
-		cgroupPath:      ebpfCfg.CgroupPath,
+		name:       "iomonitor",
+		logger:     logger,
+		loader:     ebpfLoader,
+		cgroupPath: ebpfCfg.CgroupPath,
 	}, nil
-}
-
-// SetCleanupStrategy configures the cleanup behavior.
-func (m *IOMonitorModule) SetCleanupStrategy(strategy CleanupStrategy, interval time.Duration) {
-	m.cleanupStrategy = strategy
-	m.cleanupInterval = interval
-	m.logger.Info("Set cleanup strategy",
-		zap.String("strategy", string(strategy)),
-		zap.Duration("interval", interval))
 }
 
 // Name returns the module name.
@@ -110,6 +76,10 @@ func (m *IOMonitorModule) Start() error {
 		return fmt.Errorf("failed to load eBPF programs: %w", err)
 	}
 
+	if err := m.loader.ConfigureFilters("banyand"); err != nil {
+		m.logger.Warn("Failed to configure filters", zap.Error(err))
+	}
+
 	// Attach to tracepoints/kprobes
 	if err := m.loader.AttachTracepoints(); err != nil {
 		return fmt.Errorf("failed to attach tracepoints: %w", err)
@@ -121,6 +91,8 @@ func (m *IOMonitorModule) Start() error {
 		return fmt.Errorf("failed to get eBPF objects")
 	}
 
+	go m.refreshAllowedPIDsLoop()
+
 	m.logger.Info("I/O monitor module started successfully")
 	return nil
 }
@@ -128,11 +100,6 @@ func (m *IOMonitorModule) Start() error {
 // Stop cleans up the module.
 func (m *IOMonitorModule) Stop() error {
 	m.logger.Info("Stopping I/O monitor module")
-
-	// Final cleanup of all maps
-	if m.objs != nil {
-		m.cleanupAllMaps()
-	}
 
 	if m.loader != nil {
 		if err := m.loader.Close(); err != nil {
@@ -143,7 +110,7 @@ func (m *IOMonitorModule) Stop() error {
 	return nil
 }
 
-// Collect gathers all metrics from eBPF maps with cleanup.
+// Collect gathers all metrics from eBPF maps.
 func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
 	if m.objs == nil {
 		return nil, fmt.Errorf("eBPF objects not initialized")
@@ -151,282 +118,50 @@ func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
 
 	ms := metrics.NewMetricSet()
 
-	// Collect metrics based on strategy
-	if err := m.loader.EnsureCgroupFilter(); err != nil {
-		m.logger.Warn("Failed to ensure cgroup filter", zap.Error(err))
-	}
-	switch m.cleanupStrategy {
-	case ClearAfterRead:
-		// Collect and immediately clear
-		m.collectWithClear(ms)
-	case KeepRecent:
-		// Collect and cleanup stale entries
-		m.collectWithStaleCleanup(ms)
-	case NoCleanup:
-		// Just collect, no cleanup
-		m.collectNoCleanup(ms)
-	}
-
-	// Periodic maintenance cleanup
-	if time.Since(m.lastCleanup) > m.cleanupInterval {
-		m.performMaintenanceCleanup()
-		m.lastCleanup = time.Now()
-	}
+	// Collect metrics (cumulative)
+	m.collectMetrics(ms)
 
 	return ms, nil
 }
 
-// collectWithClear collects metrics and clears maps (best for Prometheus).
-func (m *IOMonitorModule) collectWithClear(ms *metrics.MetricSet) {
-	// Collect fadvise stats
-	m.collectAndClearFadviseStats(ms)
-
-	// Collect cache stats
-	m.collectAndClearCacheStats(ms)
-
-	// Collect memory stats
-	m.collectAndClearMemoryStats(ms)
-}
-
-// collectAndClearFadviseStats collects fadvise metrics and clears the map.
-func (m *IOMonitorModule) collectAndClearFadviseStats(ms *metrics.MetricSet) {
-	var pid uint32
-	var stats generated.IomonitorFadviseStatsT
-	iter := m.objs.FadviseStatsMap.Iterate()
-
-	// Aggregate stats
-	var totalCalls, successCalls uint64
-	adviceCounts := make(map[string]uint64)
-
-	// Collect PIDs to delete
-	var pidsToDelete []uint32
-
-	for iter.Next(&pid, &stats) {
-		totalCalls += stats.TotalCalls
-		successCalls += stats.SuccessCalls
-		adviceCounts["dontneed"] += stats.AdviceDontneed
-		adviceCounts["sequential"] += stats.AdviceSequential
-		adviceCounts["normal"] += stats.AdviceNormal
-		adviceCounts["random"] += stats.AdviceRandom
-		adviceCounts["willneed"] += stats.AdviceWillneed
-		adviceCounts["noreuse"] += stats.AdviceNoreuse
-
-		// Mark for deletion
-		pidsToDelete = append(pidsToDelete, pid)
-
-		// Track active PID
-		m.activePIDs[pid] = time.Now()
-	}
-
-	if err := iter.Err(); err != nil {
-		m.logger.Warn("Failed to iterate fadvise stats", zap.Error(err))
-		return
-	}
-
-	// Add metrics (window-based counters - aggregation done in Prometheus)
-	ms.AddCounter("ebpf_fadvise_calls_total", float64(totalCalls), nil)
-	ms.AddCounter("ebpf_fadvise_success_total", float64(successCalls), nil)
-
-	for advice, count := range adviceCounts {
-		ms.AddCounter("ebpf_fadvise_advice_total", float64(count), map[string]string{
-			"advice": advice,
-		})
-	}
-
-	if totalCalls > 0 {
-		successRate := float64(successCalls) / float64(totalCalls) * 100
-		ms.AddGauge("ebpf_fadvise_success_rate_percent", successRate, nil)
-	}
-
-	// Clear the map entries
-	for _, p := range pidsToDelete {
-		if err := m.objs.FadviseStatsMap.Delete(p); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.logger.Debug("Failed to delete fadvise stats entry",
-				zap.Uint32("pid", p),
-				zap.Error(err))
-		}
-	}
-
-	m.logger.Debug("Collected and cleared fadvise stats",
-		zap.Int("entries_cleared", len(pidsToDelete)),
-		zap.Uint64("total_calls", totalCalls))
-}
-
-// collectAndClearCacheStats collects cache metrics and clears the map.
-func (m *IOMonitorModule) collectAndClearCacheStats(ms *metrics.MetricSet) {
-	var pid uint32
-	var stats generated.IomonitorCacheStatsT
-	iter := m.objs.CacheStatsMap.Iterate()
-
-	var totalReadAttempts, cacheMisses, readBatchCalls, pageCacheAdds uint64
-	var pidsToDelete []uint32
-
-	for iter.Next(&pid, &stats) {
-		totalReadAttempts += stats.TotalReadAttempts
-		cacheMisses += stats.CacheMisses
-		readBatchCalls += stats.ReadBatchCalls
-		pageCacheAdds += stats.PageCacheAdds
-
-		pidsToDelete = append(pidsToDelete, pid)
-		m.activePIDs[pid] = time.Now()
-	}
-
-	if err := iter.Err(); err != nil {
-		m.logger.Warn("Failed to iterate cache stats", zap.Error(err))
-		return
-	}
-
-	// Add metrics (window-based counters - aggregation done in Prometheus)
-	ms.AddCounter("ebpf_cache_read_attempts_total", float64(totalReadAttempts), nil)
-	ms.AddCounter("ebpf_cache_misses_total", float64(cacheMisses), nil)
-	ms.AddCounter("ebpf_page_cache_adds_total", float64(pageCacheAdds), nil)
-
-	// Debug: simple cumulative counter to verify Prometheus is working
-	m.debugCumulativeCacheMisses += cacheMisses
-	ms.AddGauge("ebpf_cache_misses_cumulative_debug", float64(m.debugCumulativeCacheMisses), nil)
-
-	// Sanity check for logging purposes
-	if cacheMisses > totalReadAttempts {
-		m.logger.Warn("Cache misses exceed read attempts (possible race condition)",
-			zap.Uint64("cache_misses", cacheMisses),
-			zap.Uint64("total_read_attempts", totalReadAttempts))
-	}
-
-	// Clear entries
-	for _, p := range pidsToDelete {
-		if err := m.objs.CacheStatsMap.Delete(p); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.logger.Debug("Failed to delete cache stats entry",
-				zap.Uint32("pid", p),
-				zap.Error(err))
-		}
-	}
-
-	m.logger.Debug("Collected and cleared cache stats",
-		zap.Int("entries_cleared", len(pidsToDelete)),
-		zap.Uint64("cache_misses", cacheMisses))
-}
-
-// collectAndClearMemoryStats collects memory metrics and clears maps.
-func (m *IOMonitorModule) collectAndClearMemoryStats(ms *metrics.MetricSet) {
-	// LRU shrink stats (single entry)
-	var key uint32
-	var shrinkInfo generated.IomonitorLruShrinkInfoT
-
-	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkInfo); err == nil {
-		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(shrinkInfo.NrScanned), nil)
-		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(shrinkInfo.NrReclaimed), nil)
-
-		if shrinkInfo.NrScanned > 0 {
-			efficiency := float64(shrinkInfo.NrReclaimed) / float64(shrinkInfo.NrScanned) * 100
-			ms.AddGauge("ebpf_memory_reclaim_efficiency_percent", efficiency, nil)
-		}
-
-		// Clear after read
-		_ = m.objs.ShrinkStatsMap.Delete(key) // Ignore delete errors for map cleanup
-	}
-
-	// Direct reclaim map
-	var reclaimPid uint32
-	var reclaimInfo generated.IomonitorReclaimInfoT
-	iter := m.objs.DirectReclaimMap.Iterate()
-
-	var pidsToDelete []uint32
-	directReclaimCount := 0
-
-	for iter.Next(&reclaimPid, &reclaimInfo) {
-		directReclaimCount++
-		pidsToDelete = append(pidsToDelete, reclaimPid)
-	}
-
-	ms.AddGauge("ebpf_memory_direct_reclaim_processes", float64(directReclaimCount), nil)
-
-	// Clear direct reclaim entries
-	for _, p := range pidsToDelete {
-		if err := m.objs.DirectReclaimMap.Delete(p); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			m.logger.Debug("Failed to delete reclaim entry",
-				zap.Uint32("pid", p),
-				zap.Error(err))
-		}
-	}
-}
-
-// collectWithStaleCleanup collects metrics and removes stale entries.
-func (m *IOMonitorModule) collectWithStaleCleanup(ms *metrics.MetricSet) {
-	// Similar to collectNoCleanup but tracks PIDs
-	m.collectNoCleanup(ms)
-
-	// Clean up stale PIDs (not seen in last 5 minutes)
-	now := time.Now()
-	var stalePIDs []uint32
-
-	for pid, lastSeen := range m.activePIDs {
-		if now.Sub(lastSeen) > m.staleThreshold {
-			stalePIDs = append(stalePIDs, pid)
-		}
-	}
-
-	// Remove stale entries from all maps
-	for _, pid := range stalePIDs {
-		_ = m.objs.FadviseStatsMap.Delete(pid)  // Ignore delete errors for map cleanup
-		_ = m.objs.CacheStatsMap.Delete(pid)    // Ignore delete errors for map cleanup
-		_ = m.objs.DirectReclaimMap.Delete(pid) // Ignore delete errors for map cleanup
-		delete(m.activePIDs, pid)
-	}
-
-	if len(stalePIDs) > 0 {
-		m.logger.Info("Cleaned up stale PIDs",
-			zap.Int("count", len(stalePIDs)))
-	}
-}
-
-// collectNoCleanup just collects without any cleanup.
-func (m *IOMonitorModule) collectNoCleanup(ms *metrics.MetricSet) {
-	// Collect without clearing
+// collectMetrics collects metrics from all maps without clearing them.
+func (m *IOMonitorModule) collectMetrics(ms *metrics.MetricSet) {
 	if err := m.collectFadviseStats(ms); err != nil {
-		m.logger.Warn("Failed to collect fadvise stats", zap.Error(err))
+		m.logger.Debug("Failed to collect fadvise stats", zap.Error(err))
 	}
 
 	if err := m.collectCacheStats(ms); err != nil {
-		m.logger.Warn("Failed to collect cache stats", zap.Error(err))
+		m.logger.Debug("Failed to collect cache stats", zap.Error(err))
 	}
 
 	if err := m.collectMemoryStats(ms); err != nil {
-		m.logger.Warn("Failed to collect memory stats", zap.Error(err))
+		m.logger.Debug("Failed to collect memory stats", zap.Error(err))
+	}
+
+	if err := m.collectReadLatencyStats(ms); err != nil {
+		m.logger.Debug("Failed to collect read latency stats", zap.Error(err))
 	}
 }
 
-// Standard collection methods (no cleanup).
+
+// Standard collection methods.
 func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
 	// Same as before but without deletion
 	var pid uint32
 	var stats generated.IomonitorFadviseStatsT
 	iter := m.objs.FadviseStatsMap.Iterate()
 
-	var totalCalls, successCalls uint64
-	adviceCounts := make(map[string]uint64)
+	var totalCalls uint64
+	var dontneed uint64
 
 	for iter.Next(&pid, &stats) {
 		totalCalls += stats.TotalCalls
-		successCalls += stats.SuccessCalls
-		adviceCounts["dontneed"] += stats.AdviceDontneed
-		adviceCounts["sequential"] += stats.AdviceSequential
-		adviceCounts["normal"] += stats.AdviceNormal
-		adviceCounts["random"] += stats.AdviceRandom
-		adviceCounts["willneed"] += stats.AdviceWillneed
-		adviceCounts["noreuse"] += stats.AdviceNoreuse
-
-		m.activePIDs[pid] = time.Now()
+		dontneed += stats.AdviceDontneed
 	}
 
 	// Add metrics without clearing
 	ms.AddCounter("ebpf_fadvise_calls_total", float64(totalCalls), nil)
-	ms.AddCounter("ebpf_fadvise_success_total", float64(successCalls), nil)
-
-	for advice, count := range adviceCounts {
-		ms.AddCounter("ebpf_fadvise_advice_total", float64(count), map[string]string{
-			"advice": advice,
-		})
-	}
+	ms.AddCounter("ebpf_fadvise_dontneed_total", float64(dontneed), nil)
 
 	return iter.Err()
 }
@@ -436,23 +171,19 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 	var stats generated.IomonitorCacheStatsT
 	iter := m.objs.CacheStatsMap.Iterate()
 
-	var totalReadAttempts, cacheMisses uint64
+	var lookups uint64
+	var adds uint64
+	var deletes uint64
 
 	for iter.Next(&pid, &stats) {
-		totalReadAttempts += stats.TotalReadAttempts
-		cacheMisses += stats.CacheMisses
-		m.activePIDs[pid] = time.Now()
+		lookups += stats.Lookups
+		adds += stats.Adds
+		deletes += stats.Deletes
 	}
 
-	ms.AddCounter("ebpf_cache_read_attempts_total", float64(totalReadAttempts), nil)
-	ms.AddCounter("ebpf_cache_misses_total", float64(cacheMisses), nil)
-
-	// Sanity check for logging purposes
-	if cacheMisses > totalReadAttempts {
-		m.logger.Warn("Cache misses exceed read attempts (possible race condition)",
-			zap.Uint64("cache_misses", cacheMisses),
-			zap.Uint64("total_read_attempts", totalReadAttempts))
-	}
+	ms.AddCounter("ebpf_cache_lookups_total", float64(lookups), nil)
+	ms.AddCounter("ebpf_cache_fills_total", float64(adds), nil)
+	ms.AddCounter("ebpf_cache_deletes_total", float64(deletes), nil)
 
 	return iter.Err()
 }
@@ -460,86 +191,78 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
 	// LRU shrink stats
 	var key uint32
-	var shrinkInfo generated.IomonitorLruShrinkInfoT
+	var shrinkCounters generated.IomonitorShrinkCountersT
 
-	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkInfo); err == nil {
-		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(shrinkInfo.NrScanned), nil)
-		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(shrinkInfo.NrReclaimed), nil)
-
-		if shrinkInfo.NrScanned > 0 {
-			efficiency := float64(shrinkInfo.NrReclaimed) / float64(shrinkInfo.NrScanned) * 100
-			ms.AddGauge("ebpf_memory_reclaim_efficiency_percent", efficiency, nil)
-		}
+	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkCounters); err == nil {
+		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(shrinkCounters.NrScannedTotal), nil)
+		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(shrinkCounters.NrReclaimedTotal), nil)
+		ms.AddCounter("ebpf_memory_lru_shrink_events_total", float64(shrinkCounters.EventsTotal), nil)
 	}
 
 	// Direct reclaim stats
-	iter := m.objs.DirectReclaimMap.Iterate()
-	var pid uint32
-	var reclaimInfo generated.IomonitorReclaimInfoT
-	var directReclaimCount int
-
-	for iter.Next(&pid, &reclaimInfo) {
-		directReclaimCount++
+	var reclaimKey uint32
+	var reclaimCounters generated.IomonitorReclaimCountersT
+	if err := m.objs.ReclaimCountersMap.Lookup(reclaimKey, &reclaimCounters); err == nil {
+		ms.AddCounter("ebpf_memory_direct_reclaim_begin_total", float64(reclaimCounters.DirectReclaimBeginTotal), nil)
 	}
-
-	ms.AddGauge("ebpf_memory_direct_reclaim_processes", float64(directReclaimCount), nil)
 
 	return nil
 }
 
-// performMaintenanceCleanup does periodic maintenance.
-func (m *IOMonitorModule) performMaintenanceCleanup() {
-	// Log map sizes for monitoring
-	fadviseCount := 0
-	cacheCount := 0
+func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
+	var pid uint32
+	var stats generated.IomonitorReadLatencyStatsT
+	iter := m.objs.ReadLatencyStatsMap.Iterate()
 
-	iter := m.objs.FadviseStatsMap.Iterate()
-	for iter.Next(nil, nil) {
-		fadviseCount++
+	var aggBuckets [32]uint64
+	var totalSumNs uint64
+	var totalCount uint64
+	var totalBytes uint64
+
+	for iter.Next(&pid, &stats) {
+		totalCount += stats.Count
+		totalSumNs += stats.SumLatencyNs
+		totalBytes += stats.ReadBytesTotal
+		for i, v := range stats.Buckets {
+			aggBuckets[i] += v
+		}
 	}
 
-	iter = m.objs.CacheStatsMap.Iterate()
-	for iter.Next(nil, nil) {
-		cacheCount++
+	if err := iter.Err(); err != nil {
+		return err
 	}
 
-	m.logger.Info("eBPF map sizes",
-		zap.Int("fadvise_entries", fadviseCount),
-		zap.Int("cache_entries", cacheCount),
-		zap.Int("tracked_pids", len(m.activePIDs)))
+	// Convert to cumulative map for Prometheus
+	promBuckets := make(map[float64]uint64)
+	var cumulative uint64
 
-	// Warn if maps are getting too large
-	if fadviseCount > 1000 || cacheCount > 1000 {
-		m.logger.Warn("eBPF maps are large, consider more aggressive cleanup",
-			zap.Int("fadvise_entries", fadviseCount),
-			zap.Int("cache_entries", cacheCount))
+	for i := 0; i < 32; i++ {
+		count := aggBuckets[i]
+		cumulative += count
+
+		// Upper bound in seconds
+		// Bucket i upper bound: 2^(i+1) microseconds
+		upperBoundUs := math.Pow(2, float64(i+1))
+		upperBoundSec := upperBoundUs / 1e6
+
+		promBuckets[upperBoundSec] = cumulative
 	}
+	// Add +Inf bucket
+	promBuckets[math.Inf(1)] = cumulative
+
+	ms.AddHistogram("ebpf_read_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
+	ms.AddCounter("ebpf_read_bytes_total", float64(totalBytes), nil)
+
+	return nil
 }
 
-// cleanupAllMaps removes all entries from all maps.
-func (m *IOMonitorModule) cleanupAllMaps() {
-	m.logger.Info("Performing final cleanup of all eBPF maps")
+func (m *IOMonitorModule) refreshAllowedPIDsLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
-	// Clear all fadvise stats
-	var pid uint32
-	iter := m.objs.FadviseStatsMap.Iterate()
-	for iter.Next(&pid, nil) {
-		_ = m.objs.FadviseStatsMap.Delete(pid) // Ignore delete errors for map cleanup
+	for range ticker.C {
+		if err := m.loader.RefreshAllowedPIDs("banyand"); err != nil {
+			m.logger.Debug("Refresh allowed pids failed", zap.Error(err))
+		}
 	}
-
-	// Clear all cache stats
-	iter = m.objs.CacheStatsMap.Iterate()
-	for iter.Next(&pid, nil) {
-		_ = m.objs.CacheStatsMap.Delete(pid) // Ignore delete errors for map cleanup
-	}
-
-	// Clear direct reclaim map
-	iter = m.objs.DirectReclaimMap.Iterate()
-	for iter.Next(&pid, nil) {
-		_ = m.objs.DirectReclaimMap.Delete(pid) // Ignore delete errors for map cleanup
-	}
-
-	// Clear shrink stats
-	var key uint32
-	_ = m.objs.ShrinkStatsMap.Delete(key) // Ignore delete errors for map cleanup
 }

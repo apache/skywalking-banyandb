@@ -58,10 +58,10 @@ ebpf-bindings: check-ebpf-deps
 			-go-package generated \
 			-type fadvise_stats_t \
 			-type fadvise_args_t \
-			-type lru_shrink_info_t \
-			-type reclaim_info_t \
+			-type shrink_counters_t \
+			-type reclaim_counters_t \
 			-type cache_stats_t \
-			-type cache_event_t \
+			-type read_latency_stats_t \
 			Iomonitor ../programs/iomonitor.c -- -I.)
 	@echo "Building for arm64..."
 	@(cd iomonitor/ebpf/generated && \
@@ -72,14 +72,18 @@ ebpf-bindings: check-ebpf-deps
 			-go-package generated \
 			-type fadvise_stats_t \
 			-type fadvise_args_t \
-			-type lru_shrink_info_t \
-			-type reclaim_info_t \
+			-type shrink_counters_t \
+			-type reclaim_counters_t \
 			-type cache_stats_t \
-			-type cache_event_t \
+			-type read_latency_stats_t \
 			Iomonitor ../programs/iomonitor.c -- -I.)
 	@echo "eBPF bindings generated in iomonitor/ebpf/generated"
 	@# Verify build tags are present
 	@grep -l "//go:build" iomonitor/ebpf/generated/*.go 2>/dev/null | head -5 || true
+
+.PHONY: iomonitor-ebpf
+iomonitor-ebpf: vmlinux ebpf-bindings
+	@echo "iomonitor eBPF objects and bindings generated"
 
 .PHONY: vmlinux
 vmlinux: install-bpftool
