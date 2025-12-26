@@ -21,7 +21,6 @@ on:
   pull_request:
     # 触发条件：当 PR 被打开、重新打开或同步时
     types: [opened, reopened, synchronize]
-    # 可选：指定特定路径或文件
     paths:
       - '**'
 
@@ -37,10 +36,8 @@ jobs:
       - name: Echo test message
         run: echo "This is a test PR to trigger license checks"
         
-      # 如果需要模拟真实的测试步骤
       - name: Run dummy test
         run: |
           echo "Running tests under Node.js $(node --version)"
-          # 这里可以添加一些简单的测试命令
-          # 比如检查 LICENSE 文件是否存在
+
           test -f LICENSE && echo "LICENSE file found" || echo "LICENSE file not found"
