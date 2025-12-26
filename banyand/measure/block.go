@@ -666,7 +666,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	}
 }
 
-func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, tqo *topNQueryOptions) {
+func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, tqo *topNQueryOptions, aggregator PostProcessor) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
 	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
@@ -717,22 +717,29 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				continue
 			}
 
-			values, strings, int64s, i2 := topNValue.Values()
-			fmt.Println(values)
-			fmt.Println(strings)
-			fmt.Println(int64s)
-			fmt.Println(i2)
+			entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
+			for j, entityList := range topNValue.entities {
+				for _, e := range entityList {
+					entityValues = append(entityValues, e)
+				}
+				aggregator.Load(entityValues, topNValue.values[j])
+			}
 
 			topNValue.Reset()
 			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
 				continue
 			}
 
-			s, i3, i4, i5 := topNValue.Values()
-			fmt.Println(s)
-			fmt.Println(i3)
-			fmt.Println(i4)
-			fmt.Println(i5)
+			for j, entityList := range topNValue.entities {
+				for _, e := range entityList {
+					entityValues = append(entityValues, e)
+				}
+				aggregator.Load(entityValues, topNValue.values[j])
+			}
+
+			topNValue.Reset()
+
+			r.Fields[i].Values[len(r.Fields[i].Values)-1] = mustDecodeFieldValue(c.valueType, c.values[bc.idx])
 		}
 	} else {
 		for i, c := range bc.fields.columns {
