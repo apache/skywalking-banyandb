@@ -19,6 +19,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -26,8 +27,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
@@ -58,6 +61,7 @@ type ProxyClient struct {
 	mu                 sync.RWMutex
 	logger             *logger.Logger
 	stopCh             chan struct{}
+	disconnected       bool
 	agentID            string
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
@@ -403,6 +407,12 @@ func (pc *ProxyClient) Disconnect() error {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 
+	// Make Disconnect idempotent - check if already disconnected
+	if pc.disconnected {
+		return nil
+	}
+
+	pc.disconnected = true
 	close(pc.stopCh)
 
 	if pc.heartbeatTicker != nil {
@@ -498,6 +508,19 @@ func (pc *ProxyClient) handleRegistrationStream(ctx context.Context, stream fodc
 			return
 		}
 		if recvErr != nil {
+			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
+			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+				pc.logger.Debug().Err(recvErr).Msg("Registration stream closed")
+				return
+			}
+			if st, ok := status.FromError(recvErr); ok {
+				// Check if it's a gRPC status error with expected codes
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
+					pc.logger.Debug().Err(recvErr).Msg("Registration stream closed")
+					return
+				}
+			}
 			pc.logger.Error().Err(recvErr).Msg("Error receiving from registration stream")
 			return
 		}
@@ -532,6 +555,19 @@ func (pc *ProxyClient) handleMetricsStream(ctx context.Context, stream fodcv1.FO
 			return
 		}
 		if recvErr != nil {
+			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
+			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+				pc.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
+				return
+			}
+			if st, ok := status.FromError(recvErr); ok {
+				// Check if it's a gRPC status error with expected codes
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
+					pc.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
+					return
+				}
+			}
 			pc.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream")
 			return
 		}
