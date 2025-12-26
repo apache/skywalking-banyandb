@@ -718,6 +718,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			}
 
 			entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
+
 			for j, entityList := range topNValue.entities {
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
@@ -737,9 +738,25 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				aggregator.Load(entityValues, topNValue.values[j])
 			}
 
+			topNValueItems := aggregator.GetTopNValueItem()
+			for _, item := range topNValueItems {
+				topNValue.addValue(item.value, item.entityValues)
+			}
+
+			buf := make([]byte, 0, 128)
+			buf, err := topNValue.marshal(buf)
+			if err != nil {
+				log.Error().Err(err).Msg("failed to marshal topN value")
+				continue
+			}
+
 			topNValue.Reset()
 
-			r.Fields[i].Values[len(r.Fields[i].Values)-1] = mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+			r.Fields[i].Values[len(r.Fields[i].Values)-1] = &modelv1.FieldValue{
+				Value: &modelv1.FieldValue_BinaryData{
+					BinaryData: buf,
+				},
+			}
 		}
 	} else {
 		for i, c := range bc.fields.columns {

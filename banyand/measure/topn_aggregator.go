@@ -42,6 +42,7 @@ type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
 	Val([]string) []*measurev1.TopNList
 	Load(entityValues pbv1.EntityValues, val int64)
+	GetTopNValueItem() []*topNValueItem
 }
 
 // CreateTopNPostAggregator creates a Top-N post processor with or without aggregation.
@@ -52,7 +53,7 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 			topN:      topN,
 			sort:      sort,
 			timelines: make(map[uint64]*flow.DedupPriorityQueue),
-			items:     make(map[string]int64),
+			topNCache: make(map[string]*topNValueItem),
 		}
 	}
 	aggregator := &postAggregationProcessor{
@@ -224,7 +225,7 @@ type postNonAggregationProcessor struct {
 	timelines map[uint64]*flow.DedupPriorityQueue
 	topN      int32
 	sort      modelv1.Sort
-	items     map[string]int64
+	topNCache map[string]*topNValueItem
 }
 
 func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
@@ -297,11 +298,39 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	return nil
 }
 
+type topNValueItem struct {
+	value        int64
+	entityValues pbv1.EntityValues
+}
+
 func (naggr *postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64) {
 	//TODO implement me
 	panic("implement me")
 }
 
+func (naggr *postAggregationProcessor) GetTopNValueItem() []*topNValueItem {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64) {
-	naggr.items[entityValues.String()] = val
+	key := entityValues.String()
+
+	if item, ok := naggr.topNCache[key]; ok {
+		item.value = val
+		return
+	}
+
+	naggr.topNCache[key] = &topNValueItem{
+		value:        val,
+		entityValues: entityValues,
+	}
+}
+
+func (naggr *postNonAggregationProcessor) GetTopNValueItem() []*topNValueItem {
+	items := make([]*topNValueItem, 0, len(naggr.topNCache))
+	for _, v := range naggr.topNCache {
+		items = append(items, v)
+	}
+	return items
 }
