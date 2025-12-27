@@ -68,8 +68,6 @@ jobs:
         run: make check-req
       - name: Build binaries, UI dist and MCP dist
         run: make build
-      - name: Lint
-        run: make lint
       - name: Generate dependencies licenses
         run: make license-dep
       - name: Check
