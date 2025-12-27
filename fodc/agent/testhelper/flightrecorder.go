@@ -75,6 +75,48 @@ func UpdateMetrics(fr interface{}, rawMetrics []RawMetric) error {
 	return frTyped.Update(internalMetrics)
 }
 
+// ValidateMetricsBufferAlignment validates that the timestamps buffer length equals each metric buffer length.
+func ValidateMetricsBufferAlignment(fr interface{}) error {
+	frTyped, ok := fr.(*flightrecorder.FlightRecorder)
+	if !ok {
+		return fmt.Errorf("invalid FlightRecorder type")
+	}
+
+	datasources := frTyped.GetDatasources()
+	if len(datasources) == 0 {
+		return fmt.Errorf("no datasources")
+	}
+
+	ds := datasources[0]
+	timestamps := ds.GetTimestamps()
+	if timestamps == nil {
+		return fmt.Errorf("timestamps ring buffer is nil")
+	}
+
+	timestampValues := timestamps.GetAllValues()
+	timestampValuesLen := len(timestampValues)
+	if timestampValuesLen == 0 {
+		return fmt.Errorf("timestamps ring buffer has no values")
+	}
+
+	metricsMap := ds.GetMetrics()
+	if len(metricsMap) == 0 {
+		return fmt.Errorf("metrics map is empty")
+	}
+
+	for metricKey, metricBuffer := range metricsMap {
+		if metricBuffer == nil {
+			return fmt.Errorf("metric buffer is nil for key %q", metricKey)
+		}
+		metricValuesLen := len(metricBuffer.GetAllValues())
+		if metricValuesLen != timestampValuesLen {
+			return fmt.Errorf("metric buffer %q length %d != timestamps length %d", metricKey, metricValuesLen, timestampValuesLen)
+		}
+	}
+
+	return nil
+}
+
 // NewProxyClient creates a new ProxyClient instance for testing.
 func NewProxyClient(
 	proxyAddr string,
