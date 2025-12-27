@@ -165,6 +165,12 @@
     - [TagType](#banyandb-database-v1-TagType)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
+    - [GroupDeletionProgress](#banyandb-database-v1-GroupDeletionProgress)
+    - [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask)
+    - [GroupDeletionTaskGetRequest](#banyandb-database-v1-GroupDeletionTaskGetRequest)
+    - [GroupDeletionTaskGetResponse](#banyandb-database-v1-GroupDeletionTaskGetResponse)
+    - [GroupDeletionTaskListRequest](#banyandb-database-v1-GroupDeletionTaskListRequest)
+    - [GroupDeletionTaskListResponse](#banyandb-database-v1-GroupDeletionTaskListResponse)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
     - [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse)
     - [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest)
@@ -265,6 +271,8 @@
     - [TraceRegistryServiceListResponse](#banyandb-database-v1-TraceRegistryServiceListResponse)
     - [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest)
     - [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse)
+  
+    - [GroupDeletionProgress.Phase](#banyandb-database-v1-GroupDeletionProgress-Phase)
   
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
@@ -2621,6 +2629,108 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-GroupDeletionProgress"></a>
+
+### GroupDeletionProgress
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| current_phase | [GroupDeletionProgress.Phase](#banyandb-database-v1-GroupDeletionProgress-Phase) |  |  |
+| stream_count | [int32](#int32) |  |  |
+| measure_count | [int32](#int32) |  |  |
+| trace_count | [int32](#int32) |  |  |
+| data_size_bytes | [int64](#int64) |  |  |
+| message | [string](#string) |  |  |
+| is_dry_run | [bool](#bool) |  |  |
+| deleted_data_bytes | [int64](#int64) |  |  |
+| error_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTask"></a>
+
+### GroupDeletionTask
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| task_id | [string](#string) |  |  |
+| group_name | [string](#string) |  |  |
+| progress | [GroupDeletionProgress](#banyandb-database-v1-GroupDeletionProgress) |  |  |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTaskGetRequest"></a>
+
+### GroupDeletionTaskGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| task_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTaskGetResponse"></a>
+
+### GroupDeletionTaskGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| task | [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTaskListRequest"></a>
+
+### GroupDeletionTaskListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group_name | [string](#string) |  |  |
+| include_completed | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTaskListResponse"></a>
+
+### GroupDeletionTaskListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tasks | [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-GroupRegistryServiceCreateRequest"></a>
 
 ### GroupRegistryServiceCreateRequest
@@ -2655,6 +2765,8 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  |  |
+| dry_run | [bool](#bool) |  |  |
+| force | [bool](#bool) |  |  |
 
 
 
@@ -2670,6 +2782,7 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| task_id | [string](#string) |  |  |
 
 
 
@@ -4087,6 +4200,21 @@ Type determine the index structure under the hood
 
  
 
+
+<a name="banyandb-database-v1-GroupDeletionProgress-Phase"></a>
+
+### GroupDeletionProgress.Phase
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PHASE_UNSPECIFIED | 0 |  |
+| PHASE_PENDING | 1 |  |
+| PHASE_IN_PROGRESS | 2 |  |
+| PHASE_COMPLETED | 3 |  |
+| PHASE_FAILED | 4 |  |
+
+
  
 
  
@@ -4105,6 +4233,8 @@ Type determine the index structure under the hood
 | Get | [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest) | [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse) |  |
 | List | [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest) | [GroupRegistryServiceListResponse](#banyandb-database-v1-GroupRegistryServiceListResponse) |  |
 | Exist | [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest) | [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+| GetDeletionTask | [GroupDeletionTaskGetRequest](#banyandb-database-v1-GroupDeletionTaskGetRequest) | [GroupDeletionTaskGetResponse](#banyandb-database-v1-GroupDeletionTaskGetResponse) |  |
+| ListDeletionTasks | [GroupDeletionTaskListRequest](#banyandb-database-v1-GroupDeletionTaskListRequest) | [GroupDeletionTaskListResponse](#banyandb-database-v1-GroupDeletionTaskListResponse) |  |
 
 
 <a name="banyandb-database-v1-IndexRuleBindingRegistryService"></a>
