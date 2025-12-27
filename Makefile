@@ -135,7 +135,7 @@ check: ## Check that the status is consistent with CI
 		echo "Following files are not consistent with CI:"; \
 		git status -s; \
 		echo "--- DEBUG: Full content of dist/LICENSE start ---"; \
-		cat dist/LICENSE; \
+		cat -e dist/LICENSE | tail -n 5
 		echo "--- DEBUG: Full content of dist/LICENSE end ---"; \
 		echo "--- DEBUG: Git Diff Details ---"; \
 		cat /tmp/artifacts/check.diff; \
