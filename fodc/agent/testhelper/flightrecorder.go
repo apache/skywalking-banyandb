@@ -36,10 +36,10 @@ func NewFlightRecorder(capacitySize int64) *flightrecorder.FlightRecorder {
 
 // RawMetric represents a metric for testing.
 type RawMetric struct {
-	Name   string
-	Value  float64
 	Desc   string
+	Name   string
 	Labels []Label
+	Value  float64
 }
 
 // Label represents a metric label.
@@ -86,13 +86,13 @@ func NewProxyClient(
 	reconnectInterval time.Duration,
 	flightRecorder interface{},
 	logger *logger.Logger,
-) *proxy.ProxyClient {
+) *proxy.Client {
 	frTyped, ok := flightRecorder.(*flightrecorder.FlightRecorder)
 	if !ok {
 		// This should not happen in normal usage, but handle gracefully
 		return nil
 	}
-	return proxy.NewProxyClient(
+	return proxy.NewClient(
 		proxyAddr,
 		nodeIP,
 		nodePort,
@@ -107,7 +107,7 @@ func NewProxyClient(
 
 // ProxyClientWrapper wraps ProxyClient methods for testing.
 type ProxyClientWrapper struct {
-	client *proxy.ProxyClient
+	client *proxy.Client
 }
 
 // Connect establishes a gRPC connection to Proxy.
@@ -158,4 +158,3 @@ func NewProxyClientWrapper(
 	}
 	return &ProxyClientWrapper{client: client}
 }
-

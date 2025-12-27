@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package proxy provides a client for communicating with the FODC Proxy.
 package proxy
 
 import (
@@ -45,30 +46,32 @@ type MetricsRequestFilter struct {
 	EndTime   *time.Time
 }
 
-// ProxyClient manages connection and communication with the FODC Proxy.
-type ProxyClient struct {
-	proxyAddr          string
-	nodeIP             string
-	nodePort           int
-	nodeRole           string
-	labels             map[string]string
+// Client manages connection and communication with the FODC Proxy.
+type Client struct {
 	conn               *grpc.ClientConn
-	client             fodcv1.FODCServiceClient
 	heartbeatTicker    *time.Ticker
-	heartbeatInterval  time.Duration
-	reconnectInterval  time.Duration
 	flightRecorder     *flightrecorder.FlightRecorder
-	mu                 sync.RWMutex
 	logger             *logger.Logger
 	stopCh             chan struct{}
-	disconnected       bool
-	agentID            string
+	labels             map[string]string
+	client             fodcv1.FODCServiceClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
+
+	proxyAddr string
+	nodeIP    string
+	nodeRole  string
+	agentID   string
+
+	nodePort          int
+	heartbeatInterval time.Duration
+	reconnectInterval time.Duration
+	disconnected      bool
+	mu                sync.RWMutex
 }
 
-// NewProxyClient creates a new ProxyClient instance.
-func NewProxyClient(
+// NewClient creates a new Client instance.
+func NewClient(
 	proxyAddr string,
 	nodeIP string,
 	nodePort int,
@@ -78,8 +81,8 @@ func NewProxyClient(
 	reconnectInterval time.Duration,
 	flightRecorder *flightrecorder.FlightRecorder,
 	logger *logger.Logger,
-) *ProxyClient {
-	return &ProxyClient{
+) *Client {
+	return &Client{
 		proxyAddr:         proxyAddr,
 		nodeIP:            nodeIP,
 		nodePort:          nodePort,
@@ -94,60 +97,60 @@ func NewProxyClient(
 }
 
 // Connect establishes a gRPC connection to Proxy.
-func (pc *ProxyClient) Connect(ctx context.Context) error {
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
+func (c *Client) Connect(_ context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if pc.conn != nil {
+	if c.conn != nil {
 		return nil
 	}
 
 	// Reset disconnected state and recreate stopCh for reconnection
-	if pc.disconnected {
-		pc.disconnected = false
-		pc.stopCh = make(chan struct{})
+	if c.disconnected {
+		c.disconnected = false
+		c.stopCh = make(chan struct{})
 	}
 
-	conn, dialErr := grpc.NewClient(pc.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, dialErr := grpc.NewClient(c.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if dialErr != nil {
 		return fmt.Errorf("failed to create proxy client: %w", dialErr)
 	}
 
-	pc.conn = conn
-	pc.client = fodcv1.NewFODCServiceClient(conn)
+	c.conn = conn
+	c.client = fodcv1.NewFODCServiceClient(conn)
 
-	pc.logger.Info().
-		Str("proxy_addr", pc.proxyAddr).
+	c.logger.Info().
+		Str("proxy_addr", c.proxyAddr).
 		Msg("Connected to FODC Proxy")
 
 	return nil
 }
 
 // StartRegistrationStream establishes bi-directional registration stream with Proxy.
-func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
-	pc.mu.Lock()
-	if pc.client == nil {
-		pc.mu.Unlock()
+func (c *Client) StartRegistrationStream(ctx context.Context) error {
+	c.mu.Lock()
+	if c.client == nil {
+		c.mu.Unlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
-	client := pc.client
-	pc.mu.Unlock()
+	client := c.client
+	c.mu.Unlock()
 
 	stream, streamErr := client.RegisterAgent(ctx)
 	if streamErr != nil {
 		return fmt.Errorf("failed to create registration stream: %w", streamErr)
 	}
 
-	pc.mu.Lock()
-	pc.registrationStream = stream
-	pc.mu.Unlock()
+	c.mu.Lock()
+	c.registrationStream = stream
+	c.mu.Unlock()
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: pc.nodeRole,
-		Labels:   pc.labels,
+		NodeRole: c.nodeRole,
+		Labels:   c.labels,
 		PrimaryAddress: &fodcv1.Address{
-			Ip:   pc.nodeIP,
-			Port: int32(pc.nodePort),
+			Ip:   c.nodeIP,
+			Port: int32(c.nodePort),
 		},
 		SecondaryAddresses: make(map[string]*fodcv1.Address),
 	}
@@ -169,36 +172,36 @@ func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("registration response missing agent ID")
 	}
 
-	pc.mu.Lock()
-	pc.agentID = resp.AgentId
+	c.mu.Lock()
+	c.agentID = resp.AgentId
 	if resp.HeartbeatIntervalSeconds > 0 {
-		pc.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
+		c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
 	}
-	pc.mu.Unlock()
+	c.mu.Unlock()
 
-	pc.logger.Info().
-		Str("proxy_addr", pc.proxyAddr).
+	c.logger.Info().
+		Str("proxy_addr", c.proxyAddr).
 		Str("agent_id", resp.AgentId).
-		Dur("heartbeat_interval", pc.heartbeatInterval).
+		Dur("heartbeat_interval", c.heartbeatInterval).
 		Msg("Agent registered with Proxy")
 
-	pc.startHeartbeat(ctx)
+	c.startHeartbeat(ctx)
 
-	go pc.handleRegistrationStream(ctx, stream)
+	go c.handleRegistrationStream(ctx, stream)
 
 	return nil
 }
 
 // StartMetricsStream establishes bi-directional metrics stream with Proxy.
-func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
-	pc.mu.RLock()
-	if pc.client == nil {
-		pc.mu.RUnlock()
+func (c *Client) StartMetricsStream(ctx context.Context) error {
+	c.mu.RLock()
+	if c.client == nil {
+		c.mu.RUnlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
-	client := pc.client
-	agentID := pc.agentID
-	pc.mu.RUnlock()
+	client := c.client
+	agentID := c.agentID
+	c.mu.RUnlock()
 
 	if agentID == "" {
 		return fmt.Errorf("agent ID not available, register agent first")
@@ -212,13 +215,13 @@ func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
 		return fmt.Errorf("failed to create metrics stream: %w", streamErr)
 	}
 
-	pc.mu.Lock()
-	pc.metricsStream = stream
-	pc.mu.Unlock()
+	c.mu.Lock()
+	c.metricsStream = stream
+	c.mu.Unlock()
 
-	go pc.handleMetricsStream(ctx, stream)
+	go c.handleMetricsStream(ctx, stream)
 
-	pc.logger.Info().
+	c.logger.Info().
 		Str("agent_id", agentID).
 		Msg("Metrics stream established with Proxy")
 
@@ -226,16 +229,16 @@ func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
 }
 
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
-func (pc *ProxyClient) RetrieveAndSendMetrics(ctx context.Context, filter *MetricsRequestFilter) error {
-	pc.mu.RLock()
-	metricsStream := pc.metricsStream
-	pc.mu.RUnlock()
+func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsRequestFilter) error {
+	c.mu.RLock()
+	metricsStream := c.metricsStream
+	c.mu.RUnlock()
 
 	if metricsStream == nil {
 		return fmt.Errorf("metrics stream not established")
 	}
 
-	datasources := pc.flightRecorder.GetDatasources()
+	datasources := c.flightRecorder.GetDatasources()
 	if len(datasources) == 0 {
 		// Always send a response even if no datasources exist
 		req := &fodcv1.StreamMetricsRequest{
@@ -280,15 +283,15 @@ func (pc *ProxyClient) RetrieveAndSendMetrics(ctx context.Context, filter *Metri
 			return nil
 		}
 
-		return pc.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
 	}
 
 	// For latest metrics (no time filter), we can send even without timestamps
-	return pc.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
-func (pc *ProxyClient) sendLatestMetrics(
+func (c *Client) sendLatestMetrics(
 	stream fodcv1.FODCService_StreamMetricsClient,
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	descriptions map[string]string,
@@ -313,14 +316,11 @@ func (pc *ProxyClient) sendLatestMetrics(
 				continue
 			}
 			// GetCurrentValue() has a non-zero value (might be unfinalized), include it
-		} else {
-			// There are finalized values - use GetCurrentValue() for the most recent
-			// (GetCurrentValue() should match the last value in GetAllValues() after finalization)
 		}
 
-		parsedKey, parseErr := pc.parseMetricKey(metricKey)
+		parsedKey, parseErr := c.parseMetricKey(metricKey)
 		if parseErr != nil {
-			pc.logger.Warn().Err(parseErr).Str("metric_key", metricKey).Msg("Failed to parse metric key")
+			c.logger.Warn().Err(parseErr).Str("metric_key", metricKey).Msg("Failed to parse metric key")
 			continue
 		}
 
@@ -352,7 +352,7 @@ func (pc *ProxyClient) sendLatestMetrics(
 }
 
 // sendFilteredMetrics sends metrics filtered by time window.
-func (pc *ProxyClient) sendFilteredMetrics(
+func (c *Client) sendFilteredMetrics(
 	stream fodcv1.FODCService_StreamMetricsClient,
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	timestampValues []int64,
@@ -367,9 +367,9 @@ func (pc *ProxyClient) sendFilteredMetrics(
 			continue
 		}
 
-		parsedKey, parseErr := pc.parseMetricKey(metricKey)
+		parsedKey, parseErr := c.parseMetricKey(metricKey)
 		if parseErr != nil {
-			pc.logger.Warn().Err(parseErr).Str("metric_key", metricKey).Msg("Failed to parse metric key")
+			c.logger.Warn().Err(parseErr).Str("metric_key", metricKey).Msg("Failed to parse metric key")
 			continue
 		}
 
@@ -420,21 +420,21 @@ func (pc *ProxyClient) sendFilteredMetrics(
 }
 
 // SendHeartbeat sends heartbeat to Proxy.
-func (pc *ProxyClient) SendHeartbeat(ctx context.Context) error {
-	pc.mu.RLock()
-	stream := pc.registrationStream
-	pc.mu.RUnlock()
+func (c *Client) SendHeartbeat(_ context.Context) error {
+	c.mu.RLock()
+	stream := c.registrationStream
+	c.mu.RUnlock()
 
 	if stream == nil {
 		return fmt.Errorf("registration stream not established")
 	}
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: pc.nodeRole,
-		Labels:   pc.labels,
+		NodeRole: c.nodeRole,
+		Labels:   c.labels,
 		PrimaryAddress: &fodcv1.Address{
-			Ip:   pc.nodeIP,
-			Port: int32(pc.nodePort),
+			Ip:   c.nodeIP,
+			Port: int32(c.nodePort),
 		},
 	}
 
@@ -446,172 +446,176 @@ func (pc *ProxyClient) SendHeartbeat(ctx context.Context) error {
 }
 
 // Disconnect closes connection to Proxy.
-func (pc *ProxyClient) Disconnect() error {
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
+func (c *Client) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Make Disconnect idempotent - check if already disconnected
-	if pc.disconnected {
+	if c.disconnected {
 		return nil
 	}
 
-	pc.disconnected = true
-	close(pc.stopCh)
+	c.disconnected = true
+	close(c.stopCh)
 
-	if pc.heartbeatTicker != nil {
-		pc.heartbeatTicker.Stop()
-		pc.heartbeatTicker = nil
+	if c.heartbeatTicker != nil {
+		c.heartbeatTicker.Stop()
+		c.heartbeatTicker = nil
 	}
 
-	if pc.registrationStream != nil {
-		if closeErr := pc.registrationStream.CloseSend(); closeErr != nil {
-			pc.logger.Warn().Err(closeErr).Msg("Error closing registration stream")
+	if c.registrationStream != nil {
+		if closeErr := c.registrationStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing registration stream")
 		}
-		pc.registrationStream = nil
+		c.registrationStream = nil
 	}
 
-	if pc.metricsStream != nil {
-		if closeErr := pc.metricsStream.CloseSend(); closeErr != nil {
-			pc.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
+	if c.metricsStream != nil {
+		if closeErr := c.metricsStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
 		}
-		pc.metricsStream = nil
+		c.metricsStream = nil
 	}
 
-	if pc.conn != nil {
-		if closeErr := pc.conn.Close(); closeErr != nil {
-			pc.logger.Warn().Err(closeErr).Msg("Error closing connection")
+	if c.conn != nil {
+		if closeErr := c.conn.Close(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing connection")
 		}
-		pc.conn = nil
-		pc.client = nil
+		c.conn = nil
+		c.client = nil
 	}
 
-	pc.logger.Info().Msg("Disconnected from FODC Proxy")
+	c.logger.Info().Msg("Disconnected from FODC Proxy")
 
 	return nil
 }
 
 // Start starts the proxy client with automatic reconnection.
-func (pc *ProxyClient) Start(ctx context.Context) error {
+func (c *Client) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-pc.stopCh:
+		case <-c.stopCh:
 			return nil
 		default:
 		}
 
-		if connectErr := pc.Connect(ctx); connectErr != nil {
-			pc.logger.Error().Err(connectErr).Msg("Failed to connect to Proxy, retrying...")
-			time.Sleep(pc.reconnectInterval)
+		if connectErr := c.Connect(ctx); connectErr != nil {
+			c.logger.Error().Err(connectErr).Msg("Failed to connect to Proxy, retrying...")
+			time.Sleep(c.reconnectInterval)
 			continue
 		}
 
-		if regErr := pc.StartRegistrationStream(ctx); regErr != nil {
-			pc.logger.Error().Err(regErr).Msg("Failed to start registration stream, reconnecting...")
-			pc.Disconnect()
-			time.Sleep(pc.reconnectInterval)
+		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
+			c.logger.Error().Err(regErr).Msg("Failed to start registration stream, reconnecting...")
+			if disconnectErr := c.Disconnect(); disconnectErr != nil {
+				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
+			}
+			time.Sleep(c.reconnectInterval)
 			continue
 		}
 
-		if metricsErr := pc.StartMetricsStream(ctx); metricsErr != nil {
-			pc.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
-			pc.Disconnect()
-			time.Sleep(pc.reconnectInterval)
+		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
+			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
+			if disconnectErr := c.Disconnect(); disconnectErr != nil {
+				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
+			}
+			time.Sleep(c.reconnectInterval)
 			continue
 		}
 
-		pc.startHeartbeat(ctx)
+		c.startHeartbeat(ctx)
 
-		pc.logger.Info().Msg("Proxy client started successfully")
+		c.logger.Info().Msg("Proxy client started successfully")
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-pc.stopCh:
+		case <-c.stopCh:
 			return nil
 		}
 	}
 }
 
 // handleRegistrationStream handles the registration stream.
-func (pc *ProxyClient) handleRegistrationStream(ctx context.Context, stream fodcv1.FODCService_RegisterAgentClient) {
+func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FODCService_RegisterAgentClient) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-pc.stopCh:
+		case <-c.stopCh:
 			return
 		default:
 		}
 
 		resp, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			pc.logger.Info().Msg("Registration stream closed by Proxy")
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Info().Msg("Registration stream closed by Proxy")
 			return
 		}
 		if recvErr != nil {
 			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
 			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
-				pc.logger.Debug().Err(recvErr).Msg("Registration stream closed")
+				c.logger.Debug().Err(recvErr).Msg("Registration stream closed")
 				return
 			}
 			if st, ok := status.FromError(recvErr); ok {
 				// Check if it's a gRPC status error with expected codes
 				code := st.Code()
 				if code == codes.Canceled || code == codes.DeadlineExceeded {
-					pc.logger.Debug().Err(recvErr).Msg("Registration stream closed")
+					c.logger.Debug().Err(recvErr).Msg("Registration stream closed")
 					return
 				}
 			}
-			pc.logger.Error().Err(recvErr).Msg("Error receiving from registration stream")
+			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream")
 			return
 		}
 
 		if resp.HeartbeatIntervalSeconds > 0 {
-			pc.mu.Lock()
-			pc.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
-			pc.mu.Unlock()
+			c.mu.Lock()
+			c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
+			c.mu.Unlock()
 
-			if pc.heartbeatTicker != nil {
-				pc.heartbeatTicker.Stop()
-				pc.startHeartbeat(ctx)
+			if c.heartbeatTicker != nil {
+				c.heartbeatTicker.Stop()
+				c.startHeartbeat(ctx)
 			}
 		}
 	}
 }
 
 // handleMetricsStream handles the metrics stream.
-func (pc *ProxyClient) handleMetricsStream(ctx context.Context, stream fodcv1.FODCService_StreamMetricsClient) {
+func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCService_StreamMetricsClient) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-pc.stopCh:
+		case <-c.stopCh:
 			return
 		default:
 		}
 
 		resp, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			pc.logger.Info().Msg("Metrics stream closed by Proxy")
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Info().Msg("Metrics stream closed by Proxy")
 			return
 		}
 		if recvErr != nil {
 			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
 			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
-				pc.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
+				c.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
 				return
 			}
 			if st, ok := status.FromError(recvErr); ok {
 				// Check if it's a gRPC status error with expected codes
 				code := st.Code()
 				if code == codes.Canceled || code == codes.DeadlineExceeded {
-					pc.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
+					c.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
 					return
 				}
 			}
-			pc.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream")
+			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream")
 			return
 		}
 
@@ -625,33 +629,33 @@ func (pc *ProxyClient) handleMetricsStream(ctx context.Context, stream fodcv1.FO
 			filter.EndTime = &endTime
 		}
 
-		if retrieveErr := pc.RetrieveAndSendMetrics(ctx, filter); retrieveErr != nil {
-			pc.logger.Error().Err(retrieveErr).Msg("Failed to retrieve and send metrics")
+		if retrieveErr := c.RetrieveAndSendMetrics(ctx, filter); retrieveErr != nil {
+			c.logger.Error().Err(retrieveErr).Msg("Failed to retrieve and send metrics")
 		}
 	}
 }
 
 // startHeartbeat starts the heartbeat ticker.
-func (pc *ProxyClient) startHeartbeat(ctx context.Context) {
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
+func (c *Client) startHeartbeat(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if pc.heartbeatTicker != nil {
-		pc.heartbeatTicker.Stop()
+	if c.heartbeatTicker != nil {
+		c.heartbeatTicker.Stop()
 	}
 
-	pc.heartbeatTicker = time.NewTicker(pc.heartbeatInterval)
+	c.heartbeatTicker = time.NewTicker(c.heartbeatInterval)
 
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-pc.stopCh:
+			case <-c.stopCh:
 				return
-			case <-pc.heartbeatTicker.C:
-				if heartbeatErr := pc.SendHeartbeat(ctx); heartbeatErr != nil {
-					pc.logger.Error().Err(heartbeatErr).Msg("Failed to send heartbeat")
+			case <-c.heartbeatTicker.C:
+				if heartbeatErr := c.SendHeartbeat(ctx); heartbeatErr != nil {
+					c.logger.Error().Err(heartbeatErr).Msg("Failed to send heartbeat")
 				}
 			}
 		}
@@ -659,7 +663,7 @@ func (pc *ProxyClient) startHeartbeat(ctx context.Context) {
 }
 
 // parseMetricKey parses a metric key string into a MetricKey struct.
-func (pc *ProxyClient) parseMetricKey(key string) (metrics.MetricKey, error) {
+func (c *Client) parseMetricKey(key string) (metrics.MetricKey, error) {
 	if !strings.Contains(key, "{") {
 		return metrics.MetricKey{
 			Name:   key,
@@ -674,6 +678,9 @@ func (pc *ProxyClient) parseMetricKey(key string) (metrics.MetricKey, error) {
 
 	name := parts[0]
 	labelStr := strings.TrimSuffix(parts[1], "}")
+	if !strings.HasSuffix(parts[1], "}") {
+		return metrics.MetricKey{}, fmt.Errorf("invalid metric key format: %s", key)
+	}
 
 	labelParts := strings.Split(labelStr, ",")
 	labels := make([]metrics.Label, 0, len(labelParts))

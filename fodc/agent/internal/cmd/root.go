@@ -189,10 +189,10 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	stopCh := wd.Serve()
 
-	var proxyClient *proxy.ProxyClient
+	var proxyClient *proxy.Client
 	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
 		labelsMap := proxy.ParseLabels(nodeLabels)
-		proxyClient = proxy.NewProxyClient(
+		proxyClient = proxy.NewClient(
 			proxyAddr,
 			nodeIP,
 			nodePort,
