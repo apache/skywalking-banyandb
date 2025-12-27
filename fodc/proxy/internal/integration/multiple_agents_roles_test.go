@@ -413,8 +413,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		By("Querying /metrics-windows with role filter")
 		var metricsList []map[string]interface{}
 		Eventually(func() error {
-			url := fmt.Sprintf("http://%s/metrics-windows?role=liaison", proxyHTTPAddr)
-			metricsResp, metricsHTTPErr := http.Get(url)
+			metricsResp, metricsHTTPErr := http.Get(fmt.Sprintf("http://%s/metrics-windows?role=liaison", proxyHTTPAddr))
 			if metricsHTTPErr != nil {
 				return metricsHTTPErr
 			}
@@ -530,8 +529,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		By("Querying /metrics-windows with address filter")
 		var metricsList []map[string]interface{}
 		Eventually(func() error {
-			url := fmt.Sprintf("http://%s/metrics-windows?address=127.0.0.2", proxyHTTPAddr)
-			metricsResp, metricsHTTPErr := http.Get(url)
+			metricsResp, metricsHTTPErr := http.Get(fmt.Sprintf("http://%s/metrics-windows?address=127.0.0.2", proxyHTTPAddr))
 			if metricsHTTPErr != nil {
 				return metricsHTTPErr
 			}
@@ -576,4 +574,3 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		Expect(foundWarmMetric).To(BeFalse(), "datanode_warm_metric should not be found")
 	})
 })
-
