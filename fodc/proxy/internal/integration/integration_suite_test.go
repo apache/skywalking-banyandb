@@ -33,9 +33,7 @@ func TestFODCProxyIntegration(t *testing.T) {
 	RunSpecs(t, "FODC Proxy Integration Test Suite")
 }
 
-var (
-	goods []gleak.Goroutine
-)
+var goods []gleak.Goroutine
 
 var _ = BeforeSuite(func() {
 	goods = gleak.Goroutines()
@@ -52,4 +50,3 @@ var _ = ReportAfterSuite("FODC Proxy Integration Test Suite", func(report Report
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}
 })
-
