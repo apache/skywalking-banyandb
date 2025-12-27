@@ -86,7 +86,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
 	}
 
-	return s.executeIndexedQuery(ctx, segments, series, sqo, &tr)
+	return s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
 }
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {
@@ -210,9 +210,10 @@ func (s *stream) executeIndexedQuery(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (model.StreamQueryResult, error) {
-	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, tr)
+	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, schemaTagTypes, tr)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +251,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (idxResult, posting.List, posting.List, error) {
 	var result idxResult
@@ -258,6 +260,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	result.sm = s
 	result.qo = queryOptions{
 		StreamQueryOptions: sqo,
+		schemaTagTypes:     schemaTagTypes,
 		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
 	}
 

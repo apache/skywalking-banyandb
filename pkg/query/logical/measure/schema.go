@@ -154,7 +154,16 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 		for name, spec := range mSchema.fieldMap {
 			if existing, exists := fieldMap[name]; exists {
 				if existing.Spec.FieldType != spec.Spec.FieldType {
-					existing.Spec.FieldType = databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+					// Create a copy to avoid modifying the original schema.
+					fieldMap[name] = &logical.FieldSpec{
+						FieldIdx: existing.FieldIdx,
+						Spec: &databasev1.FieldSpec{
+							Name:              existing.Spec.Name,
+							FieldType:         databasev1.FieldType_FIELD_TYPE_UNSPECIFIED,
+							EncodingMethod:    existing.Spec.EncodingMethod,
+							CompressionMethod: existing.Spec.CompressionMethod,
+						},
+					}
 				}
 			} else {
 				fieldMap[name] = &logical.FieldSpec{

@@ -238,8 +238,11 @@ func MergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
 			if d.Name == s.Name {
 				if d.Type != s.Type {
 					// If the type is different, the tag spec is not compatible.
-					// We need to set the type to unspecified.
-					res[i].Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
+					// Create a copy with type set to unspecified to avoid modifying the original schema.
+					res[i] = &databasev1.TagSpec{
+						Name: d.Name,
+						Type: databasev1.TagType_TAG_TYPE_UNSPECIFIED,
+					}
 				}
 				found = true
 				break
@@ -260,7 +263,11 @@ func MergeTagFamilySpecs(dst []*databasev1.TagFamilySpec, src []*databasev1.TagF
 		found := false
 		for i, d := range dst {
 			if d.Name == s.Name {
-				res[i].Tags = MergeTagSpecs(d.Tags, s.Tags)
+				// Create a copy to avoid modifying the original schema.
+				res[i] = &databasev1.TagFamilySpec{
+					Name: d.Name,
+					Tags: MergeTagSpecs(d.Tags, s.Tags),
+				}
 				found = true
 				break
 			}
