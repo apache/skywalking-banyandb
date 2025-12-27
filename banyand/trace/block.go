@@ -468,7 +468,7 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 		schemaType, hasSchemaType := bc.schemaTagTypes[t.name]
 		for k := range bc.spans {
 			if len(t.values) > k {
-				if !hasSchemaType || t.valueType == schemaType {
+				if hasSchemaType && t.valueType == schemaType {
 					values[k] = mustDecodeTagValue(t.valueType, t.values[k])
 				} else {
 					values[k] = pbv1.NullTagValue

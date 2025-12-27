@@ -282,6 +282,16 @@ var allTagProjections = []model.TagProjection{
 	{Family: "singleTag", Names: []string{"strTag", "intTag", "strTag1", "strTag2"}},
 }
 
+var testSchemaTagTypes = map[string]pbv1.ValueType{
+	"strArrTag": pbv1.ValueTypeStrArr,
+	"intArrTag": pbv1.ValueTypeInt64Arr,
+	"binaryTag": pbv1.ValueTypeBinaryData,
+	"strTag":    pbv1.ValueTypeStr,
+	"intTag":    pbv1.ValueTypeInt64,
+	"strTag1":   pbv1.ValueTypeStr,
+	"strTag2":   pbv1.ValueTypeStr,
+}
+
 var fieldProjections = map[int][]string{
 	1: {"strField", "intField", "floatField", "binaryField"},
 	3: {"intField"},
