@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/dump"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -207,6 +208,7 @@ type measurePart struct {
 	fileSystem           fs.FileSystem
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
+	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []measurePrimaryBlockMetadata
 	partMetadata         measurePartMetadata
@@ -226,6 +228,7 @@ type measureDumpContext struct {
 	tagFilter        logical.TagFilter
 	fileSystem       fs.FileSystem
 	seriesMap        map[common.SeriesID]string
+	partSeriesMap    map[uint64]map[common.SeriesID]string // partID -> SeriesID -> EntityValues from smeta.bin
 	writer           *csv.Writer
 	opts             measureDumpOptions
 	partIDs          []uint64
@@ -238,8 +241,9 @@ type measureDumpContext struct {
 
 func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error) {
 	ctx := &measureDumpContext{
-		opts:       opts,
-		fileSystem: fs.NewLocalFileSystem(),
+		opts:          opts,
+		fileSystem:    fs.NewLocalFileSystem(),
+		partSeriesMap: make(map[uint64]map[common.SeriesID]string),
 	}
 
 	partIDs, err := discoverMeasurePartIDs(opts.shardPath)
@@ -363,6 +367,13 @@ func (ctx *measureDumpContext) processParts() error {
 }
 
 func (ctx *measureDumpContext) processPart(partID uint64, p *measurePart) (int, error) {
+	// Parse and display series metadata if available
+	if p.seriesMetadata != nil {
+		if err := ctx.parseAndDisplaySeriesMetadata(partID, p); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error parsing series metadata in part %016x: %v\n", partID, err)
+		}
+	}
+
 	decoder := &encoding.BytesBlockDecoder{}
 	partRowCount := 0
 
@@ -523,11 +534,11 @@ func (ctx *measureDumpContext) shouldSkip(tags map[string][]byte) bool {
 
 func (ctx *measureDumpContext) writeRow(row measureRowData) error {
 	if ctx.opts.csvOutput {
-		if err := writeMeasureRowAsCSV(ctx.writer, row, ctx.fieldColumns, ctx.tagColumns, ctx.seriesMap); err != nil {
+		if err := writeMeasureRowAsCSV(ctx.writer, row, ctx.fieldColumns, ctx.tagColumns, ctx.seriesMap, ctx.partSeriesMap); err != nil {
 			return err
 		}
 	} else {
-		writeMeasureRowAsText(row, ctx.rowNum+1, ctx.projectionTags, ctx.projectionFields, ctx.seriesMap)
+		writeMeasureRowAsText(row, ctx.rowNum+1, ctx.projectionTags, ctx.projectionFields, ctx.seriesMap, ctx.partSeriesMap)
 	}
 	ctx.rowNum++
 	return nil
@@ -589,6 +600,9 @@ func openMeasurePart(id uint64, root string, fileSystem fs.FileSystem) (*measure
 		return nil, fmt.Errorf("cannot open fv.bin: %w", err)
 	}
 
+	// Try to open series metadata file (optional, for backward compatibility)
+	p.seriesMetadata = dump.TryOpenSeriesMetadata(fileSystem, partPath)
+
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
 	p.tagFamilies = make(map[string]fs.Reader)
@@ -626,6 +640,9 @@ func closeMeasurePart(p *measurePart) {
 	}
 	if p.fieldValues != nil {
 		fs.MustClose(p.fieldValues)
+	}
+	if p.seriesMetadata != nil {
+		fs.MustClose(p.seriesMetadata)
 	}
 	for _, r := range p.tagFamilies {
 		fs.MustClose(r)
@@ -1084,17 +1101,37 @@ func discoverMeasureColumns(partIDs []uint64, shardPath string, fileSystem fs.Fi
 	return tagResult, fieldResult, nil
 }
 
-func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []string, projectionFields []string, seriesMap map[common.SeriesID]string) {
+func writeMeasureRowAsText(
+	row measureRowData,
+	rowNum int,
+	projectionTags []string,
+	projectionFields []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  PartID: %d (0x%016x)\n", row.partID, row.partID)
 	fmt.Printf("  Timestamp: %s\n", formatTimestamp(row.timestamp))
 	fmt.Printf("  Version: %d\n", row.version)
 	fmt.Printf("  SeriesID: %d\n", row.seriesID)
 
-	if seriesMap != nil {
-		if seriesText, ok := seriesMap[row.seriesID]; ok {
-			fmt.Printf("  Series: %s\n", seriesText)
+	seriesText := ""
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
 		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
+		if text, ok := seriesMap[row.seriesID]; ok {
+			seriesText = text
+		}
+	}
+	if seriesText != "" {
+		fmt.Printf("  Series: %s\n", seriesText)
 	}
 
 	if len(row.fields) > 0 {
@@ -1151,9 +1188,25 @@ func writeMeasureRowAsText(row measureRowData, rowNum int, projectionTags []stri
 	fmt.Printf("\n")
 }
 
-func writeMeasureRowAsCSV(writer *csv.Writer, row measureRowData, fieldColumns []string, tagColumns []string, seriesMap map[common.SeriesID]string) error {
+func writeMeasureRowAsCSV(
+	writer *csv.Writer,
+	row measureRowData,
+	fieldColumns []string,
+	tagColumns []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) error {
 	seriesText := ""
-	if seriesMap != nil {
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
+		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
 		if text, ok := seriesMap[row.seriesID]; ok {
 			seriesText = text
 		}
@@ -1293,4 +1346,8 @@ func measureTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][
 		}
 		return pbv1.NullTagValue
 	}
+}
+
+func (ctx *measureDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *measurePart) error {
+	return dump.ParseSeriesMetadata(partID, p.seriesMetadata, ctx.partSeriesMap)
 }
