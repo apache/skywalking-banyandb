@@ -756,7 +756,7 @@ MIT licenses
     toidentifier 1.0.1 MIT
     tr46 0.0.3 MIT
     type-is 2.0.1 MIT
-    undici-types 6.21.0 MIT
+    undici-types 7.16.0 MIT
     unpipe 1.0.0 MIT
     vary 1.1.2 MIT
     web-streams-polyfill 4.0.0-beta.3 MIT
