@@ -197,31 +197,17 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 			return len(agentRegistry.ListAgents())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(3))
 
-		By("Verifying topology shows all nodes correctly")
-		clusterResp, clusterErr := http.Get(fmt.Sprintf("http://%s/cluster", proxyHTTPAddr))
-		Expect(clusterErr).NotTo(HaveOccurred())
-		Expect(clusterResp.StatusCode).To(Equal(http.StatusOK))
-		defer clusterResp.Body.Close()
-
-		var clusterData map[string]interface{}
-		decodeErr := json.NewDecoder(clusterResp.Body).Decode(&clusterData)
-		Expect(decodeErr).NotTo(HaveOccurred())
-		Expect(clusterData).To(HaveKey("nodes"))
-		nodes := clusterData["nodes"].([]interface{})
-		Expect(len(nodes)).To(Equal(3))
+		By("Verifying all agents are registered")
+		agents := agentRegistry.ListAgents()
+		Expect(len(agents)).To(Equal(3))
 
 		rolesFound := make(map[string]bool)
 		addressesFound := make(map[string]bool)
-		for _, nodeInterface := range nodes {
-			node := nodeInterface.(map[string]interface{})
-			role := node["node_role"].(string)
-			rolesFound[role] = true
-			primaryAddr := node["primary_address"].(map[string]interface{})
-			ip := primaryAddr["ip"].(string)
-			port := int(primaryAddr["port"].(float64))
-			addressKey := fmt.Sprintf("%s:%d", ip, port)
+		for _, agentInfo := range agents {
+			rolesFound[agentInfo.NodeRole] = true
+			addressKey := fmt.Sprintf("%s:%d", agentInfo.PrimaryAddress.IP, agentInfo.PrimaryAddress.Port)
 			addressesFound[addressKey] = true
-			Expect(node["status"]).To(Equal("online"))
+			Expect(agentInfo.Status).To(Equal(registry.AgentStatusOnline))
 		}
 
 		Expect(rolesFound["liaison"]).To(BeTrue(), "liaison role should be found")

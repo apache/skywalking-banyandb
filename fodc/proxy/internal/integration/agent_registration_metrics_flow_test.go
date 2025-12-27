@@ -148,21 +148,11 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 			return len(agentRegistry.ListAgents())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(1))
 
-		By("Verifying agent appears in /cluster endpoint")
-		clusterResp, clusterErr := http.Get(fmt.Sprintf("http://%s/cluster", proxyHTTPAddr))
-		Expect(clusterErr).NotTo(HaveOccurred())
-		Expect(clusterResp.StatusCode).To(Equal(http.StatusOK))
-		defer clusterResp.Body.Close()
-
-		var clusterData map[string]interface{}
-		decodeErr := json.NewDecoder(clusterResp.Body).Decode(&clusterData)
-		Expect(decodeErr).NotTo(HaveOccurred())
-		Expect(clusterData).To(HaveKey("nodes"))
-		nodes := clusterData["nodes"].([]interface{})
-		Expect(len(nodes)).To(Equal(1))
-		node := nodes[0].(map[string]interface{})
-		Expect(node["node_role"]).To(Equal("datanode-hot"))
-		Expect(node["status"]).To(Equal("online"))
+		By("Verifying agent is registered")
+		agents := agentRegistry.ListAgents()
+		Expect(len(agents)).To(Equal(1))
+		Expect(agents[0].NodeRole).To(Equal("datanode-hot"))
+		Expect(agents[0].Status).To(Equal(registry.AgentStatusOnline))
 
 		By("Starting metrics stream")
 		metricsErr := proxyClient.StartMetricsStream(agentCtx)

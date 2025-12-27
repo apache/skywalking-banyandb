@@ -207,21 +207,6 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 			return string(agents[0].Status)
 		}, 10*time.Second, 500*time.Millisecond).Should(Equal("unconnected"))
 
-		By("Verifying agent appears offline in /cluster endpoint")
-		clusterResp, clusterErr := http.Get(fmt.Sprintf("http://%s/cluster", proxyHTTPAddr))
-		Expect(clusterErr).NotTo(HaveOccurred())
-		Expect(clusterResp.StatusCode).To(Equal(http.StatusOK))
-		defer clusterResp.Body.Close()
-
-		var clusterData map[string]interface{}
-		decodeErr := json.NewDecoder(clusterResp.Body).Decode(&clusterData)
-		Expect(decodeErr).NotTo(HaveOccurred())
-		Expect(clusterData).To(HaveKey("nodes"))
-		nodes := clusterData["nodes"].([]interface{})
-		Expect(len(nodes)).To(Equal(1))
-		node := nodes[0].(map[string]interface{})
-		Expect(node["status"]).To(Equal("unconnected"))
-
 		By("Querying /metrics-windows endpoint after disconnection")
 		var metricsListAfter []map[string]interface{}
 		Eventually(func() error {
@@ -348,21 +333,5 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 			}
 		}
 		Expect(foundMetricReconnected).To(BeTrue(), "metric_after_reconnect should be found after reconnection")
-
-		By("Verifying agent appears online in /cluster endpoint")
-		clusterRespAfter, clusterErrAfter := http.Get(fmt.Sprintf("http://%s/cluster", proxyHTTPAddr))
-		Expect(clusterErrAfter).NotTo(HaveOccurred())
-		Expect(clusterRespAfter.StatusCode).To(Equal(http.StatusOK))
-		defer clusterRespAfter.Body.Close()
-
-		var clusterDataAfter map[string]interface{}
-		decodeErrAfter := json.NewDecoder(clusterRespAfter.Body).Decode(&clusterDataAfter)
-		Expect(decodeErrAfter).NotTo(HaveOccurred())
-		Expect(clusterDataAfter).To(HaveKey("nodes"))
-		nodesAfter := clusterDataAfter["nodes"].([]interface{})
-		Expect(len(nodesAfter)).To(Equal(1))
-		nodeAfter := nodesAfter[0].(map[string]interface{})
-		Expect(nodeAfter["status"]).To(Equal("online"))
 	})
 })
-

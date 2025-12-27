@@ -58,8 +58,6 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/metrics-windows", s.handleMetricsWindows)
-	mux.HandleFunc("/cluster", s.handleCluster)
-	mux.HandleFunc("/cluster/config", s.handleClusterConfig)
 	mux.HandleFunc("/health", s.handleHealth)
 
 	s.server = &http.Server{
@@ -205,100 +203,6 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := s.formatMetricsWindowJSON(aggregatedMetrics)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
-		s.logger.Error().Err(encodeErr).Msg("Failed to encode JSON response")
-	}
-}
-
-// handleCluster handles GET /cluster endpoint.
-func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	agents := s.registry.ListAgents()
-
-	nodes := make([]map[string]interface{}, 0, len(agents))
-	for _, agentInfo := range agents {
-		node := map[string]interface{}{
-			"node_id":   agentInfo.AgentID,
-			"node_role": agentInfo.NodeRole,
-			"primary_address": map[string]interface{}{
-				"ip":   agentInfo.PrimaryAddress.IP,
-				"port": agentInfo.PrimaryAddress.Port,
-			},
-			"secondary_addresses": make(map[string]interface{}),
-			"labels":              agentInfo.Labels,
-			"status":              string(agentInfo.Status),
-			"last_heartbeat":      agentInfo.LastHeartbeat.Format(time.RFC3339),
-		}
-
-		secondaryAddrs := make(map[string]interface{})
-		for name, addr := range agentInfo.SecondaryAddresses {
-			secondaryAddrs[name] = map[string]interface{}{
-				"ip":   addr.IP,
-				"port": addr.Port,
-			}
-		}
-		node["secondary_addresses"] = secondaryAddrs
-
-		nodes = append(nodes, node)
-	}
-
-	response := map[string]interface{}{
-		"nodes":      nodes,
-		"updated_at": time.Now().Format(time.RFC3339),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
-		s.logger.Error().Err(encodeErr).Msg("Failed to encode JSON response")
-	}
-}
-
-// handleClusterConfig handles GET /cluster/config endpoint.
-func (s *Server) handleClusterConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	agentID := r.URL.Query().Get("agent_id")
-	role := r.URL.Query().Get("role")
-
-	var agents []*registry.AgentInfo
-	switch {
-	case agentID != "":
-		agentInfo, getErr := s.registry.GetAgentByID(agentID)
-		if getErr != nil {
-			http.Error(w, fmt.Sprintf("Agent not found: %v", getErr), http.StatusNotFound)
-			return
-		}
-		agents = []*registry.AgentInfo{agentInfo}
-	case role != "":
-		agents = s.registry.ListAgentsByRole(role)
-	default:
-		agents = s.registry.ListAgents()
-	}
-
-	configurations := make([]map[string]interface{}, 0, len(agents))
-	for _, agentInfo := range agents {
-		config := map[string]interface{}{
-			"agent_id":     agentInfo.AgentID,
-			"node_role":    agentInfo.NodeRole,
-			"collected_at": time.Now().Format(time.RFC3339),
-		}
-		configurations = append(configurations, config)
-	}
-
-	response := map[string]interface{}{
-		"configurations": configurations,
-	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

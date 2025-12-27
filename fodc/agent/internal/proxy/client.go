@@ -339,8 +339,6 @@ func (pc *ProxyClient) sendLatestMetrics(
 		protoMetrics = append(protoMetrics, protoMetric)
 	}
 
-	// Always acknowledge the request so the proxy doesn’t block when no metrics are present.
-	// Always acknowledge the request even if the filter yields no metrics.
 	req := &fodcv1.StreamMetricsRequest{
 		Metrics:   protoMetrics,
 		Timestamp: timestamppb.Now(),

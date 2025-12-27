@@ -262,157 +262,6 @@ func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
 	require.NoError(t, decodeErr)
 }
 
-func TestHandleCluster_Success(t *testing.T) {
-	server, testRegistry := newTestServer(t)
-
-	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: map[string]string{"env": "test"}}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", Labels: map[string]string{"env": "prod"}}
-
-	agentID1, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
-	require.NoError(t, err1)
-	agentID2, err2 := testRegistry.RegisterAgent(ctx, identity2, registry.Address{IP: "192.168.1.2", Port: 8080}, nil)
-	require.NoError(t, err2)
-
-	req := httptest.NewRequest(http.MethodGet, "/cluster", nil)
-	w := httptest.NewRecorder()
-
-	server.handleCluster(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	var response map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-	assert.Contains(t, response, "nodes")
-	assert.Contains(t, response, "updated_at")
-
-	nodes, ok := response["nodes"].([]interface{})
-	require.True(t, ok)
-	assert.Equal(t, 2, len(nodes))
-
-	node1 := nodes[0].(map[string]interface{})
-	node2 := nodes[1].(map[string]interface{})
-	nodeIDs := []string{node1["node_id"].(string), node2["node_id"].(string)}
-	assert.Contains(t, nodeIDs, agentID1)
-	assert.Contains(t, nodeIDs, agentID2)
-}
-
-func TestHandleCluster_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/cluster", nil)
-	w := httptest.NewRecorder()
-
-	server.handleCluster(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestHandleCluster_Empty(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/cluster", nil)
-	w := httptest.NewRecorder()
-
-	server.handleCluster(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var response map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-	nodes, ok := response["nodes"].([]interface{})
-	require.True(t, ok)
-	assert.Equal(t, 0, len(nodes))
-}
-
-func TestHandleClusterConfig_ByAgentID(t *testing.T) {
-	server, testRegistry := newTestServer(t)
-
-	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
-	require.NoError(t, registerErr)
-
-	req := httptest.NewRequest(http.MethodGet, "/cluster/config?agent_id="+agentID, nil)
-	w := httptest.NewRecorder()
-
-	server.handleClusterConfig(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	var response map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-	assert.Contains(t, response, "configurations")
-
-	configs, ok := response["configurations"].([]interface{})
-	require.True(t, ok)
-	assert.Equal(t, 1, len(configs))
-
-	config := configs[0].(map[string]interface{})
-	assert.Equal(t, agentID, config["agent_id"])
-	assert.Equal(t, "worker", config["node_role"])
-}
-
-func TestHandleClusterConfig_ByRole(t *testing.T) {
-	server, testRegistry := newTestServer(t)
-
-	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master"}
-
-	agentID1, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
-	require.NoError(t, err1)
-	_, err2 := testRegistry.RegisterAgent(ctx, identity2, registry.Address{IP: "192.168.1.2", Port: 8080}, nil)
-	require.NoError(t, err2)
-
-	req := httptest.NewRequest(http.MethodGet, "/cluster/config?role=worker", nil)
-	w := httptest.NewRecorder()
-
-	server.handleClusterConfig(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var response map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-
-	configs, ok := response["configurations"].([]interface{})
-	require.True(t, ok)
-	assert.Equal(t, 1, len(configs))
-
-	config := configs[0].(map[string]interface{})
-	assert.Equal(t, agentID1, config["agent_id"])
-	assert.Equal(t, "worker", config["node_role"])
-}
-
-func TestHandleClusterConfig_AgentNotFound(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/cluster/config?agent_id=non-existent", nil)
-	w := httptest.NewRecorder()
-
-	server.handleClusterConfig(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Contains(t, w.Body.String(), "Agent not found")
-}
-
-func TestHandleClusterConfig_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/cluster/config", nil)
-	w := httptest.NewRecorder()
-
-	server.handleClusterConfig(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
 func TestHandleHealth_Success(t *testing.T) {
 	server, testRegistry := newTestServer(t)
 
@@ -592,18 +441,11 @@ func TestFormatFloat(t *testing.T) {
 }
 
 func TestServer_Integration(t *testing.T) {
-	server, testRegistry := newTestServer(t)
-
-	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
-	require.NoError(t, registerErr)
+	server, _ := newTestServer(t)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", server.handleMetrics)
 	mux.HandleFunc("/metrics-windows", server.handleMetricsWindows)
-	mux.HandleFunc("/cluster", server.handleCluster)
-	mux.HandleFunc("/cluster/config", server.handleClusterConfig)
 	mux.HandleFunc("/health", server.handleHealth)
 
 	testServer := httptest.NewServer(mux)
@@ -615,16 +457,6 @@ func TestServer_Integration(t *testing.T) {
 	require.NoError(t, healthErr)
 	assert.Equal(t, http.StatusOK, healthResp.StatusCode)
 	healthResp.Body.Close()
-
-	clusterResp, clusterErr := client.Get(testServer.URL + "/cluster")
-	require.NoError(t, clusterErr)
-	assert.Equal(t, http.StatusOK, clusterResp.StatusCode)
-	clusterResp.Body.Close()
-
-	clusterConfigResp, configErr := client.Get(testServer.URL + "/cluster/config?agent_id=" + agentID)
-	require.NoError(t, configErr)
-	assert.Equal(t, http.StatusOK, clusterConfigResp.StatusCode)
-	clusterConfigResp.Body.Close()
 
 	metricsResp, metricsErr := client.Get(testServer.URL + "/metrics")
 	if metricsErr == nil {
