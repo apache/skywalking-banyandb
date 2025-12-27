@@ -213,13 +213,6 @@ func MergeSchemas(schemas []*CommonSchema) (*CommonSchema, error) {
 	indexRuleMap := make(map[string]*databasev1.IndexRule)
 
 	for _, s := range schemas {
-		for tagName, tagSpec := range s.TagSpecMap {
-			if existingSpec, exists := merged.TagSpecMap[tagName]; !exists {
-				merged.TagSpecMap[tagName] = tagSpec
-			} else if existingSpec.Spec.Type != tagSpec.Spec.Type {
-				existingSpec.Spec.Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
-			}
-		}
 		for _, rule := range s.IndexRules {
 			if existedRule := indexRuleMap[rule.Metadata.Name]; existedRule == nil {
 				indexRuleMap[rule.Metadata.Name] = rule
@@ -235,7 +228,8 @@ func MergeSchemas(schemas []*CommonSchema) (*CommonSchema, error) {
 	return merged, nil
 }
 
-func mergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
+// MergeTagSpecs merges two slices of TagSpec.
+func MergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
 	res := make([]*databasev1.TagSpec, 0, len(dst)+len(src))
 	res = append(res, dst...)
 	for _, s := range src {
@@ -244,7 +238,7 @@ func mergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
 			if d.Name == s.Name {
 				if d.Type != s.Type {
 					// If the type is different, the tag spec is not compatible.
-					// We need to set the type to unspecifed.
+					// We need to set the type to unspecified.
 					res[i].Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
 				}
 				found = true
@@ -266,7 +260,7 @@ func MergeTagFamilySpecs(dst []*databasev1.TagFamilySpec, src []*databasev1.TagF
 		found := false
 		for i, d := range dst {
 			if d.Name == s.Name {
-				res[i].Tags = mergeTagSpecs(d.Tags, s.Tags)
+				res[i].Tags = MergeTagSpecs(d.Tags, s.Tags)
 				found = true
 				break
 			}

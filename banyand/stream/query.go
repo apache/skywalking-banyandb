@@ -70,11 +70,11 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	series := prepareSeriesData(sqo)
 
 	schemaTagTypes := make(map[string]pbv1.ValueType)
-	if is := s.indexSchema.Load(); is != nil {
-		for name, spec := range is.(indexSchema).tagMap {
-			vt := pbv1.TagValueSpecToValueType(spec.GetType())
+	for _, tf := range s.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
 			if vt != pbv1.ValueTypeUnknown {
-				schemaTagTypes[name] = vt
+				schemaTagTypes[tag.GetName()] = vt
 			}
 		}
 	}
