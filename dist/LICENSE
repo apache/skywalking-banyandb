@@ -659,7 +659,7 @@ MIT licenses
 ========================================================================
 
     @modelcontextprotocol/sdk 1.24.1 MIT
-    @types/node 20.19.25 MIT
+    @types/node 24.10.4 MIT
     @types/node-fetch 2.6.13 MIT
     abort-controller 3.0.0 MIT
     accepts 2.0.0 MIT
