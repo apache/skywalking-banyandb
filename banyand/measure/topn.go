@@ -862,3 +862,18 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 func GroupName(groupTags []string) string {
 	return strings.Join(groupTags, "|")
 }
+
+func GenerateTopNValuesDecoder() *encoding.BytesBlockDecoder {
+	v := topNValuesDecoderPool.Get()
+	if v == nil {
+		return &encoding.BytesBlockDecoder{}
+	}
+	return v
+}
+
+func ReleaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
+	d.Reset()
+	topNValuesDecoderPool.Put(d)
+}
+
+var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder2")

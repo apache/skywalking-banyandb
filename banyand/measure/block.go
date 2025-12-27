@@ -708,18 +708,19 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 	if tqo != nil {
 		topNValue := GenerateTopNValue()
 		defer ReleaseTopNValue(topNValue)
+		decoder := GenerateTopNValuesDecoder()
+		defer ReleaseTopNValuesDecoder(decoder)
 
 		for i, c := range bc.fields.columns {
 			srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
 			destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
 			topNValue.Reset()
-			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
+			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
 				continue
 			}
 
-			entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
-
 			for j, entityList := range topNValue.entities {
+				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
@@ -727,11 +728,12 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			}
 
 			topNValue.Reset()
-			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
+			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
 				continue
 			}
 
 			for j, entityList := range topNValue.entities {
+				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
@@ -739,6 +741,13 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			}
 
 			topNValueItems := aggregator.GetTopNValueItem()
+
+			valueName := topNValue.valueName
+			entityTagNames := topNValue.entityTagNames
+
+			topNValue.Reset()
+			topNValue.setMetadata(valueName, entityTagNames)
+
 			for _, item := range topNValueItems {
 				topNValue.addValue(item.value, item.entityValues)
 			}
