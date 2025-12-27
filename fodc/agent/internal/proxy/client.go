@@ -102,6 +102,12 @@ func (pc *ProxyClient) Connect(ctx context.Context) error {
 		return nil
 	}
 
+	// Reset disconnected state and recreate stopCh for reconnection
+	if pc.disconnected {
+		pc.disconnected = false
+		pc.stopCh = make(chan struct{})
+	}
+
 	conn, dialErr := grpc.NewClient(pc.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if dialErr != nil {
 		return fmt.Errorf("failed to create proxy client: %w", dialErr)
@@ -176,6 +182,8 @@ func (pc *ProxyClient) StartRegistrationStream(ctx context.Context) error {
 		Dur("heartbeat_interval", pc.heartbeatInterval).
 		Msg("Agent registered with Proxy")
 
+	pc.startHeartbeat(ctx)
+
 	go pc.handleRegistrationStream(ctx, stream)
 
 	return nil
@@ -219,25 +227,6 @@ func (pc *ProxyClient) StartMetricsStream(ctx context.Context) error {
 
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
 func (pc *ProxyClient) RetrieveAndSendMetrics(ctx context.Context, filter *MetricsRequestFilter) error {
-	datasources := pc.flightRecorder.GetDatasources()
-	if len(datasources) == 0 {
-		return nil
-	}
-
-	ds := datasources[0]
-	allMetrics := ds.GetMetrics()
-	timestamps := ds.GetTimestamps()
-	descriptions := ds.GetDescriptions()
-
-	if timestamps == nil {
-		return nil
-	}
-
-	timestampValues := timestamps.GetAllValues()
-	if len(timestampValues) == 0 {
-		return nil
-	}
-
 	pc.mu.RLock()
 	metricsStream := pc.metricsStream
 	pc.mu.RUnlock()
@@ -246,11 +235,56 @@ func (pc *ProxyClient) RetrieveAndSendMetrics(ctx context.Context, filter *Metri
 		return fmt.Errorf("metrics stream not established")
 	}
 
-	if filter == nil || (filter.StartTime == nil && filter.EndTime == nil) {
-		return pc.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	datasources := pc.flightRecorder.GetDatasources()
+	if len(datasources) == 0 {
+		// Always send a response even if no datasources exist
+		req := &fodcv1.StreamMetricsRequest{
+			Metrics:   []*fodcv1.Metric{},
+			Timestamp: timestamppb.Now(),
+		}
+		if sendErr := metricsStream.Send(req); sendErr != nil {
+			return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
+		}
+		return nil
 	}
 
-	return pc.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+	ds := datasources[0]
+	allMetrics := ds.GetMetrics()
+	timestamps := ds.GetTimestamps()
+	descriptions := ds.GetDescriptions()
+
+	// If filtering by time window is requested, we need timestamps
+	if filter != nil && (filter.StartTime != nil || filter.EndTime != nil) {
+		if timestamps == nil {
+			// Send empty response if timestamps are required but not available
+			req := &fodcv1.StreamMetricsRequest{
+				Metrics:   []*fodcv1.Metric{},
+				Timestamp: timestamppb.Now(),
+			}
+			if sendErr := metricsStream.Send(req); sendErr != nil {
+				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
+			}
+			return nil
+		}
+
+		timestampValues := timestamps.GetAllValues()
+		if len(timestampValues) == 0 {
+			// Send empty response if no timestamps available for filtering
+			req := &fodcv1.StreamMetricsRequest{
+				Metrics:   []*fodcv1.Metric{},
+				Timestamp: timestamppb.Now(),
+			}
+			if sendErr := metricsStream.Send(req); sendErr != nil {
+				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
+			}
+			return nil
+		}
+
+		return pc.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+	}
+
+	// For latest metrics (no time filter), we can send even without timestamps
+	return pc.sendLatestMetrics(metricsStream, allMetrics, descriptions)
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -262,9 +296,26 @@ func (pc *ProxyClient) sendLatestMetrics(
 	protoMetrics := make([]*fodcv1.Metric, 0)
 
 	for metricKey, metricBuffer := range allMetrics {
+		// Get the most recent value (may include unfinalized values)
 		metricValue := metricBuffer.GetCurrentValue()
-		if metricValue == 0 && len(metricBuffer.GetAllValues()) == 0 {
-			continue
+		allValues := metricBuffer.GetAllValues()
+
+		// For latest metrics, we want to include metrics if:
+		// 1. There are finalized values (GetAllValues() has entries), OR
+		// 2. GetCurrentValue() returns a non-zero value (even if not finalized)
+		// We only skip if both GetAllValues() is empty AND GetCurrentValue() is zero
+		// This ensures we include metrics that were just added but not yet finalized
+		var zero float64
+		if len(allValues) == 0 {
+			// No finalized values - check if GetCurrentValue() has a value
+			if metricValue == zero {
+				// Both are empty/zero, skip this metric
+				continue
+			}
+			// GetCurrentValue() has a non-zero value (might be unfinalized), include it
+		} else {
+			// There are finalized values - use GetCurrentValue() for the most recent
+			// (GetCurrentValue() should match the last value in GetAllValues() after finalization)
 		}
 
 		parsedKey, parseErr := pc.parseMetricKey(metricKey)
@@ -288,10 +339,8 @@ func (pc *ProxyClient) sendLatestMetrics(
 		protoMetrics = append(protoMetrics, protoMetric)
 	}
 
-	if len(protoMetrics) == 0 {
-		return nil
-	}
-
+	// Always acknowledge the request so the proxy doesn’t block when no metrics are present.
+	// Always acknowledge the request even if the filter yields no metrics.
 	req := &fodcv1.StreamMetricsRequest{
 		Metrics:   protoMetrics,
 		Timestamp: timestamppb.Now(),
@@ -358,10 +407,6 @@ func (pc *ProxyClient) sendFilteredMetrics(
 
 			protoMetrics = append(protoMetrics, protoMetric)
 		}
-	}
-
-	if len(protoMetrics) == 0 {
-		return nil
 	}
 
 	req := &fodcv1.StreamMetricsRequest{
