@@ -197,6 +197,13 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	return allMetrics, nil
 }
 
+// ActiveCollections returns the number of agents currently being collected.
+func (ma *Aggregator) ActiveCollections() int {
+	ma.collectingMu.RLock()
+	defer ma.collectingMu.RUnlock()
+	return len(ma.collecting)
+}
+
 // GetLatestMetrics triggers on-demand collection from all agents.
 func (ma *Aggregator) GetLatestMetrics(ctx context.Context) ([]*AggregatedMetric, error) {
 	filter := &Filter{}
