@@ -101,7 +101,7 @@ struct {
 } fadvise_args_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 8192);
     __type(key, __u32); // PID
     __type(value, struct fadvise_stats_t);
@@ -116,7 +116,7 @@ struct {
 } read_args_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 8192);
     __type(key, __u32); // PID
     __type(value, struct read_latency_stats_t);
@@ -124,21 +124,21 @@ struct {
 
 // Memory/Cache maps
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 1);
     __type(key, __u32); // always 0
     __type(value, struct shrink_counters_t);
 } shrink_stats_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 1);
     __type(key, __u32); // always 0
     __type(value, struct reclaim_counters_t);
 } reclaim_counters_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 8192);
     __type(key, __u32); // PID
     __type(value, struct cache_stats_t);

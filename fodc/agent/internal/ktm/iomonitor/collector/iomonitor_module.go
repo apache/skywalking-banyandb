@@ -146,20 +146,21 @@ func (m *IOMonitorModule) collectMetrics(ms *metrics.MetricSet) {
 
 // Standard collection methods.
 func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
-	// Same as before but without deletion
 	var pid uint32
-	var stats generated.IomonitorFadviseStatsT
+	var perCpuStats []generated.IomonitorFadviseStatsT
 	iter := m.objs.FadviseStatsMap.Iterate()
 
 	var totalCalls uint64
 	var dontneed uint64
 
-	for iter.Next(&pid, &stats) {
-		totalCalls += stats.TotalCalls
-		dontneed += stats.AdviceDontneed
+	for iter.Next(&pid, &perCpuStats) {
+		// Fold per-CPU values
+		for _, cpuStats := range perCpuStats {
+			totalCalls += cpuStats.TotalCalls
+			dontneed += cpuStats.AdviceDontneed
+		}
 	}
 
-	// Add metrics without clearing
 	ms.AddCounter("ebpf_fadvise_calls_total", float64(totalCalls), nil)
 	ms.AddCounter("ebpf_fadvise_dontneed_total", float64(dontneed), nil)
 
@@ -168,17 +169,20 @@ func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
 
 func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 	var pid uint32
-	var stats generated.IomonitorCacheStatsT
+	var perCpuStats []generated.IomonitorCacheStatsT
 	iter := m.objs.CacheStatsMap.Iterate()
 
 	var lookups uint64
 	var adds uint64
 	var deletes uint64
 
-	for iter.Next(&pid, &stats) {
-		lookups += stats.Lookups
-		adds += stats.Adds
-		deletes += stats.Deletes
+	for iter.Next(&pid, &perCpuStats) {
+		// Fold per-CPU values
+		for _, cpuStats := range perCpuStats {
+			lookups += cpuStats.Lookups
+			adds += cpuStats.Adds
+			deletes += cpuStats.Deletes
+		}
 	}
 
 	ms.AddCounter("ebpf_cache_lookups_total", float64(lookups), nil)
@@ -189,21 +193,31 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 }
 
 func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
-	// LRU shrink stats
+	// LRU shrink stats (per-CPU)
 	var key uint32
-	var shrinkCounters generated.IomonitorShrinkCountersT
+	var perCpuShrink []generated.IomonitorShrinkCountersT
 
-	if err := m.objs.ShrinkStatsMap.Lookup(key, &shrinkCounters); err == nil {
-		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(shrinkCounters.NrScannedTotal), nil)
-		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(shrinkCounters.NrReclaimedTotal), nil)
-		ms.AddCounter("ebpf_memory_lru_shrink_events_total", float64(shrinkCounters.EventsTotal), nil)
+	if err := m.objs.ShrinkStatsMap.Lookup(key, &perCpuShrink); err == nil {
+		var totalScanned, totalReclaimed, totalEvents uint64
+		for _, cpuCounters := range perCpuShrink {
+			totalScanned += cpuCounters.NrScannedTotal
+			totalReclaimed += cpuCounters.NrReclaimedTotal
+			totalEvents += cpuCounters.EventsTotal
+		}
+		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(totalScanned), nil)
+		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(totalReclaimed), nil)
+		ms.AddCounter("ebpf_memory_lru_shrink_events_total", float64(totalEvents), nil)
 	}
 
-	// Direct reclaim stats
+	// Direct reclaim stats (per-CPU)
 	var reclaimKey uint32
-	var reclaimCounters generated.IomonitorReclaimCountersT
-	if err := m.objs.ReclaimCountersMap.Lookup(reclaimKey, &reclaimCounters); err == nil {
-		ms.AddCounter("ebpf_memory_direct_reclaim_begin_total", float64(reclaimCounters.DirectReclaimBeginTotal), nil)
+	var perCpuReclaim []generated.IomonitorReclaimCountersT
+	if err := m.objs.ReclaimCountersMap.Lookup(reclaimKey, &perCpuReclaim); err == nil {
+		var totalBegin uint64
+		for _, cpuCounters := range perCpuReclaim {
+			totalBegin += cpuCounters.DirectReclaimBeginTotal
+		}
+		ms.AddCounter("ebpf_memory_direct_reclaim_begin_total", float64(totalBegin), nil)
 	}
 
 	return nil
@@ -211,7 +225,7 @@ func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
 
 func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	var pid uint32
-	var stats generated.IomonitorReadLatencyStatsT
+	var perCpuStats []generated.IomonitorReadLatencyStatsT
 	iter := m.objs.ReadLatencyStatsMap.Iterate()
 
 	var aggBuckets [32]uint64
@@ -219,12 +233,15 @@ func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	var totalCount uint64
 	var totalBytes uint64
 
-	for iter.Next(&pid, &stats) {
-		totalCount += stats.Count
-		totalSumNs += stats.SumLatencyNs
-		totalBytes += stats.ReadBytesTotal
-		for i, v := range stats.Buckets {
-			aggBuckets[i] += v
+	for iter.Next(&pid, &perCpuStats) {
+		// Fold per-CPU values
+		for _, cpuStats := range perCpuStats {
+			totalCount += cpuStats.Count
+			totalSumNs += cpuStats.SumLatencyNs
+			totalBytes += cpuStats.ReadBytesTotal
+			for i, v := range cpuStats.Buckets {
+				aggBuckets[i] += v
+			}
 		}
 	}
 
