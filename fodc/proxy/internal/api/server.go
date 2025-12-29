@@ -331,8 +331,20 @@ func (s *Server) formatMetricsWindowJSON(aggregatedMetrics []*metrics.Aggregated
 	result := make([]map[string]interface{}, 0, len(metricMap))
 	for _, tsMetric := range metricMap {
 		sort.Slice(tsMetric.data, func(i, j int) bool {
-			timeI, _ := time.Parse(time.RFC3339, tsMetric.data[i]["timestamp"].(string))
-			timeJ, _ := time.Parse(time.RFC3339, tsMetric.data[j]["timestamp"].(string))
+			timeI, errI := time.Parse(time.RFC3339, tsMetric.data[i]["timestamp"].(string))
+			timeJ, errJ := time.Parse(time.RFC3339, tsMetric.data[j]["timestamp"].(string))
+			if errI != nil {
+				s.logger.Warn().
+					Err(errI).
+					Str("timestamp", tsMetric.data[i]["timestamp"].(string)).
+					Msg("Failed to parse timestamp for sorting")
+			}
+			if errJ != nil {
+				s.logger.Warn().
+					Err(errJ).
+					Str("timestamp", tsMetric.data[j]["timestamp"].(string)).
+					Msg("Failed to parse timestamp for sorting")
+			}
 			return timeI.Before(timeJ)
 		})
 
