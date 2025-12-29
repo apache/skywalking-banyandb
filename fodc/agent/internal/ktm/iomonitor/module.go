@@ -17,7 +17,7 @@
 
 //go:build linux
 
-package collector
+package iomonitor
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 
-	loader "github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
@@ -34,7 +34,7 @@ import (
 // IOMonitorModule collects I/O, cache, and memory statistics from eBPF.
 type IOMonitorModule struct {
 	logger     *zap.Logger
-	loader     *loader.Loader
+	loader     *ebpf.Loader
 	objs       *generated.IomonitorObjects
 	name       string
 	cgroupPath string
@@ -42,7 +42,7 @@ type IOMonitorModule struct {
 
 // NewIOMonitorModule creates a new I/O monitoring module.
 func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModule, error) {
-	ebpfLoader, err := loader.NewLoader()
+	ebpfLoader, err := ebpf.NewLoader(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
@@ -76,13 +76,9 @@ func (m *IOMonitorModule) Start() error {
 		return fmt.Errorf("failed to load eBPF programs: %w", err)
 	}
 
-	if err := m.loader.ConfigureFilters("banyand"); err != nil {
-		m.logger.Warn("Failed to configure filters", zap.Error(err))
-	}
-
 	// Attach to tracepoints/kprobes
-	if err := m.loader.AttachTracepoints(); err != nil {
-		return fmt.Errorf("failed to attach tracepoints: %w", err)
+	if err := m.loader.AttachPrograms(); err != nil {
+		return fmt.Errorf("failed to attach programs: %w", err)
 	}
 
 	// Get loaded objects
@@ -90,8 +86,6 @@ func (m *IOMonitorModule) Start() error {
 	if m.objs == nil {
 		return fmt.Errorf("failed to get eBPF objects")
 	}
-
-	go m.refreshAllowedPIDsLoop()
 
 	m.logger.Info("I/O monitor module started successfully")
 	return nil
@@ -143,8 +137,6 @@ func (m *IOMonitorModule) collectMetrics(ms *metrics.MetricSet) {
 	}
 }
 
-
-// Standard collection methods.
 func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
 	var pid uint32
 	var perCpuStats []generated.IomonitorFadviseStatsT
@@ -271,24 +263,4 @@ func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	ms.AddCounter("ebpf_read_bytes_total", float64(totalBytes), nil)
 
 	return nil
-}
-
-// refreshAllowedPIDsLoop periodically updates the PID cache for health monitoring.
-// This is primarily for observability rather than correctness:
-// - Provides a health signal (detects if target process disappeared)
-// - Maintains PID cache for performance optimization
-// - Clears stale PIDs when target process disappears
-// - Does NOT affect filtering correctness (cgroup filter is the primary boundary)
-func (m *IOMonitorModule) refreshAllowedPIDsLoop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if err := m.loader.RefreshAllowedPIDs("banyand"); err != nil {
-			// Health signal: target process not detected or scan failed
-			// The PID cache will be cleared automatically by RefreshAllowedPIDs
-			// This is a warning condition but not fatal (cgroup filter still works)
-			m.logger.Warn("Target process not detected during PID refresh", zap.Error(err))
-		}
-	}
 }

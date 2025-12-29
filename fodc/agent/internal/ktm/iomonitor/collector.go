@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package collector implements metrics collection from eBPF programs.
-package collector
+// Package iomonitor implements I/O monitoring using eBPF.
+package iomonitor
 
 import (
 	"context"
@@ -28,6 +28,20 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
+
+// CollectorConfig defines the collector configuration.
+type CollectorConfig struct {
+	Modules  []string      `mapstructure:"modules"`
+	EBPF     EBPFConfig    `mapstructure:"ebpf"`
+	Interval time.Duration `mapstructure:"interval"`
+}
+
+// EBPFConfig defines eBPF-specific configuration.
+type EBPFConfig struct {
+	PinPath      string `mapstructure:"pin_path"`       // Path to pin eBPF maps
+	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
+	CgroupPath   string `mapstructure:"cgroup_path"`    // Optional cgroup v2 path to filter PIDs
+}
 
 // Collector manages eBPF program lifecycle and metrics collection.
 type Collector struct {

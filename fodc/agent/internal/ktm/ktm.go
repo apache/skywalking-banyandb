@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/collector"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
 
@@ -13,7 +13,7 @@ import (
 type KTM struct {
 	config    Config
 	logger    *zap.Logger
-	collector *collector.Collector
+	collector *iomonitor.Collector
 	stopCh    chan struct{}
 }
 
@@ -24,13 +24,13 @@ func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
 	}
 
 	// Convert KTM config to Collector config
-	collectorConfig := collector.CollectorConfig{
+	collectorConfig := iomonitor.CollectorConfig{
 		Modules:  cfg.Modules,
 		EBPF:     cfg.EBPF,
 		Interval: cfg.Interval,
 	}
 
-	col, err := collector.New(collectorConfig, logger)
+	col, err := iomonitor.New(collectorConfig, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create collector: %w", err)
 	}
