@@ -29,6 +29,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+const (
+	// defaultCollectionTimeout is the default timeout for collecting metrics from agents.
+	defaultCollectionTimeout = 10 * time.Second
+	// maxCollectionTimeout is the maximum timeout allowed for collecting metrics,
+	// preventing excessively long waits for wide time windows.
+	maxCollectionTimeout = 5 * time.Minute
+)
+
 // AggregatedMetric represents an aggregated metric with node metadata.
 type AggregatedMetric struct {
 	Labels      map[string]string
@@ -177,9 +185,14 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	}
 
 	allMetrics := make([]*AggregatedMetric, 0)
-	timeout := 10 * time.Second
+	timeout := defaultCollectionTimeout
 	if filter.StartTime != nil && filter.EndTime != nil {
-		timeout = filter.EndTime.Sub(*filter.StartTime) + 5*time.Second
+		windowDuration := filter.EndTime.Sub(*filter.StartTime) + 5*time.Second
+		if windowDuration < maxCollectionTimeout {
+			timeout = windowDuration
+		} else {
+			timeout = maxCollectionTimeout
+		}
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)

@@ -206,19 +206,19 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
 	}
 
-	agentConn := &AgentConnection{
-		AgentID:       agentID,
-		Stream:        stream,
-		MetricsStream: stream,
-		Context:       ctx,
-		LastActivity:  time.Now(),
-	}
-
 	s.connectionsMu.Lock()
 	existingConn, exists := s.connections[agentID]
 	if exists {
 		existingConn.MetricsStream = stream
+		existingConn.LastActivity = time.Now()
 	} else {
+		agentConn := &AgentConnection{
+			AgentID:       agentID,
+			Stream:        stream,
+			MetricsStream: stream,
+			Context:       ctx,
+			LastActivity:  time.Now(),
+		}
 		s.connections[agentID] = agentConn
 	}
 	s.connectionsMu.Unlock()
@@ -270,7 +270,12 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			return nil
 		case req := <-recvCh:
 			if req != nil {
-				agentConn.UpdateActivity()
+				s.connectionsMu.Lock()
+				conn, connExists := s.connections[agentID]
+				s.connectionsMu.Unlock()
+				if connExists {
+					conn.UpdateActivity()
+				}
 
 				agentInfo, getErr := s.registry.GetAgentByID(agentID)
 				if getErr != nil {
