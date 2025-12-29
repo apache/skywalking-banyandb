@@ -20,6 +20,8 @@ package measure
 import (
 	"container/heap"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -32,10 +34,12 @@ import (
 )
 
 type aggregatorItem struct {
-	int64Func aggregation.Func[int64]
-	key       string
-	values    pbv1.EntityValues
-	index     int
+	int64Func       aggregation.Func[int64]
+	key             string
+	values          pbv1.EntityValues
+	index           int
+	timestampMillis uint64
+	val             int64
 }
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
@@ -44,7 +48,6 @@ type PostProcessor interface {
 	Val([]string) []*measurev1.TopNList
 	Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64)
 	Flush() (map[uint64][]*nonAggregatorItem, error)
-
 	Reset()
 }
 
@@ -78,6 +81,7 @@ type postAggregationProcessor struct {
 	topN            int32
 	sort            modelv1.Sort
 	aggrFunc        modelv1.AggregationFunction
+	dedupMap        map[string]int64
 }
 
 func (aggr postAggregationProcessor) Reset() {
@@ -86,7 +90,17 @@ func (aggr postAggregationProcessor) Reset() {
 }
 
 func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) {
+	entityStr := entityValues.String()
 
+	var sb strings.Builder
+	sb.Grow(len(entityStr) + 21)
+
+	sb.WriteString(entityStr)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.FormatUint(timestampMillis, 10))
+
+	key := sb.String()
+	aggr.dedupMap[key] = val
 }
 
 func (aggr postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
