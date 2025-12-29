@@ -395,7 +395,7 @@ func TestStreamMetrics_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -430,7 +430,7 @@ func TestStreamMetrics_AgentIDFromContext(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -464,7 +464,7 @@ func TestStreamMetrics_AgentIDFromPeer(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	addr := &mockAddr{addr: "192.168.1.1:8080"}
@@ -514,7 +514,7 @@ func TestStreamMetrics_ContextCancelled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -537,7 +537,7 @@ func TestStreamMetrics_RecvError(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -556,7 +556,7 @@ func TestRequestMetrics_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -583,7 +583,7 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -622,7 +622,7 @@ func TestRequestMetrics_NoMetricsStream(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	service.connectionsMu.Lock()
@@ -643,7 +643,7 @@ func TestRequestMetrics_SendError(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	md := metadata.New(map[string]string{"agent_id": agentID})
@@ -701,7 +701,7 @@ func TestGetAgentIDFromPeer_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	addr := &mockAddr{addr: "192.168.1.1:8080"}
@@ -718,13 +718,10 @@ func TestGetAgentIDFromPeer_SecondaryAddress(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	secondaryAddrs := map[string]registry.Address{
-		"metrics": {IP: "192.168.1.2", Port: 9090},
-	}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, secondaryAddrs)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
-	addr := &mockAddr{addr: "192.168.1.2:9090"}
+	addr := &mockAddr{addr: "192.168.1.1:8080"}
 	peerInfo := &peer.Peer{Addr: addr}
 	ctxWithPeer := peer.NewContext(ctx, peerInfo)
 
@@ -748,7 +745,7 @@ func TestGetAgentIDFromPeer_NoMatch(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	_, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	_, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	addr := &mockAddr{addr: "192.168.1.99:8080"}
@@ -765,7 +762,7 @@ func TestCleanupConnection(t *testing.T) {
 
 	ctx := context.Background()
 	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
 	service.connectionsMu.Lock()

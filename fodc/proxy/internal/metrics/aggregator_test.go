@@ -113,7 +113,7 @@ func createTestAgent(t *testing.T, reg *registry.AgentRegistry, ip string, port 
 		Labels: labels,
 	}
 	primaryAddr := registry.Address{IP: ip, Port: port}
-	agentID, registerErr := reg.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := reg.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 	return agentID
 }

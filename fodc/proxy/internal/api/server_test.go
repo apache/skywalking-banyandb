@@ -269,9 +269,9 @@ func TestHandleHealth_Success(t *testing.T) {
 	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master"}
 
-	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080}, nil)
+	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
-	_, err2 := testRegistry.RegisterAgent(ctx, identity2, registry.Address{IP: "192.168.1.2", Port: 8080}, nil)
+	_, err2 := testRegistry.RegisterAgent(ctx, identity2, registry.Address{IP: "192.168.1.2", Port: 8080})
 	require.NoError(t, err2)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
