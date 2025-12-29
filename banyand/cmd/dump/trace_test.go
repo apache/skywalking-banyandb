@@ -18,6 +18,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -25,11 +26,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -186,4 +190,92 @@ func decodeStringArray(data []byte) []string {
 		}
 	}
 	return values
+}
+
+// TestDumpTracePartWithSeriesMetadata tests that the dump tool can parse smeta file.
+// This test creates a part with series metadata and verifies the dump tool can correctly parse it.
+func TestDumpTracePartWithSeriesMetadata(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Create a part with series metadata
+	partPath, cleanup := createTestTracePartWithSeriesMetadata(tmpPath, fileSystem)
+	defer cleanup()
+
+	// Extract part ID from path
+	partName := filepath.Base(partPath)
+	partID, err := strconv.ParseUint(partName, 16, 64)
+	require.NoError(t, err, "part directory should have valid hex name")
+
+	// Parse the part using dump tool functions
+	p, err := openFilePart(partID, filepath.Dir(partPath), fileSystem)
+	require.NoError(t, err, "should be able to open part with series metadata")
+	defer closePart(p)
+
+	// Verify series metadata reader is available
+	assert.NotNil(t, p.seriesMetadata, "series metadata reader should be available")
+
+	// Create a dump context to test parsing
+	opts := traceDumpOptions{
+		shardPath:   filepath.Dir(partPath),
+		segmentPath: tmpPath, // Not used for this test
+		verbose:     false,
+		csvOutput:   false,
+	}
+	ctx, err := newTraceDumpContext(opts)
+	require.NoError(t, err)
+	if ctx != nil {
+		defer ctx.close()
+	}
+
+	// Test parsing series metadata
+	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
+	require.NoError(t, err, "should be able to parse series metadata")
+
+	// Verify EntityValues are stored in partSeriesMap
+	require.NotNil(t, ctx.partSeriesMap, "partSeriesMap should be initialized")
+	partMap, exists := ctx.partSeriesMap[partID]
+	require.True(t, exists, "partSeriesMap should contain entry for partID")
+	require.NotNil(t, partMap, "partMap should not be nil")
+
+	// Verify EntityValues are correctly stored
+	// Calculate expected SeriesIDs from EntityValues
+	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("service.name=test-service")))
+	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("service.name=another-service")))
+
+	assert.Contains(t, partMap, expectedSeriesID1, "partMap should contain first series")
+	assert.Contains(t, partMap, expectedSeriesID2, "partMap should contain second series")
+	assert.Equal(t, "service.name=test-service", partMap[expectedSeriesID1], "EntityValues should match")
+	assert.Equal(t, "service.name=another-service", partMap[expectedSeriesID2], "EntityValues should match")
+}
+
+// createTestTracePartWithSeriesMetadata creates a test trace part with series metadata.
+func createTestTracePartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
+	// Use trace package to create a part
+	partPath, cleanup := trace.CreateTestPartForDump(tmpPath, fileSystem)
+
+	// Create sample series metadata file
+	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
+
+	// Create sample documents
+	docs := index.Documents{
+		{
+			DocID:        1,
+			EntityValues: []byte("service.name=test-service"),
+		},
+		{
+			DocID:        2,
+			EntityValues: []byte("service.name=another-service"),
+		},
+	}
+
+	seriesMetadataBytes, err := docs.Marshal()
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
+	}
+	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+
+	return partPath, cleanup
 }

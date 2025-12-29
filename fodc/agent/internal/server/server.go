@@ -27,7 +27,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/exporter"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 

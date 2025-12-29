@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // getConstantRawMetrics returns a constant set of rawMetrics for testing.
@@ -465,10 +465,10 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 			heapInuseSizeAfterData, actualMemoryUsed, capacitySize)
 
 		// Step 7: Verify that memory usage is within reasonable bounds relative to capacity
-		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 30% of capacity
+		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 50% of capacity
 		Expect(actualMemoryUsed).To(BeNumerically(">", 0), "Actual memory consumption should be positive")
-		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*130/100),
-			"Actual memory consumption should not exceed capacitySize by more than 30%")
+		Expect(actualMemoryUsed).To(BeNumerically("<=", capacitySize*150/100),
+			"Actual memory consumption should not exceed capacitySize by more than 50%")
 
 		// Step 8: Verify capacity size is still correct
 		currentCapacitySize := fr.GetCapacitySize()

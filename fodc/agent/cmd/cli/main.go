@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/cmd"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cmd"
 )
 
 func main() {
