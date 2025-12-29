@@ -138,12 +138,12 @@ install-deps:
 	@echo "Installing eBPF build dependencies..."
 	@if [ -f /etc/debian_version ]; then \
 		sudo apt-get update && \
-		sudo apt-get install -y clang llvm linux-tools-common linux-tools-generic; \
+		sudo apt-get install -y clang llvm libbpf-dev linux-tools-common linux-tools-generic; \
 	elif [ -f /etc/redhat-release ]; then \
-		sudo dnf install -y clang llvm bpftool kernel-devel || \
-		sudo yum install -y clang llvm bpftool kernel-devel; \
+		sudo dnf install -y clang llvm libbpf-devel bpftool kernel-devel || \
+		sudo yum install -y clang llvm libbpf-devel bpftool kernel-devel; \
 	else \
-		echo "ERROR: Unknown distro. Install manually: clang, llvm, bpftool"; \
+		echo "ERROR: Unknown distro. Install manually: clang, llvm, libbpf-dev, bpftool"; \
 		exit 1; \
 	fi
 	@echo "✓ Dependencies installed"
