@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/dump"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -187,6 +188,7 @@ type streamPart struct {
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
 	tagFamilyFilter      map[string]fs.Reader
+	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []streamPrimaryBlockMetadata
 	partMetadata         streamPartMetadata
@@ -205,6 +207,7 @@ type streamDumpContext struct {
 	tagFilter      logical.TagFilter
 	fileSystem     fs.FileSystem
 	seriesMap      map[common.SeriesID]string
+	partSeriesMap  map[uint64]map[common.SeriesID]string // partID -> SeriesID -> EntityValues from smeta.bin
 	writer         *csv.Writer
 	opts           streamDumpOptions
 	partIDs        []uint64
@@ -215,8 +218,9 @@ type streamDumpContext struct {
 
 func newStreamDumpContext(opts streamDumpOptions) (*streamDumpContext, error) {
 	ctx := &streamDumpContext{
-		opts:       opts,
-		fileSystem: fs.NewLocalFileSystem(),
+		opts:          opts,
+		fileSystem:    fs.NewLocalFileSystem(),
+		partSeriesMap: make(map[uint64]map[common.SeriesID]string),
 	}
 
 	partIDs, err := discoverStreamPartIDs(opts.shardPath)
@@ -318,6 +322,13 @@ func (ctx *streamDumpContext) processParts() error {
 }
 
 func (ctx *streamDumpContext) processPart(partID uint64, p *streamPart) (int, error) {
+	// Parse and display series metadata if available
+	if p.seriesMetadata != nil {
+		if err := ctx.parseAndDisplaySeriesMetadata(partID, p); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Error parsing series metadata in part %016x: %v\n", partID, err)
+		}
+	}
+
 	decoder := &encoding.BytesBlockDecoder{}
 	partRowCount := 0
 
@@ -457,11 +468,11 @@ func (ctx *streamDumpContext) shouldSkip(tags map[string][]byte) bool {
 
 func (ctx *streamDumpContext) writeRow(row streamRowData) error {
 	if ctx.opts.csvOutput {
-		if err := writeStreamRowAsCSV(ctx.writer, row, ctx.tagColumns, ctx.seriesMap); err != nil {
+		if err := writeStreamRowAsCSV(ctx.writer, row, ctx.tagColumns, ctx.seriesMap, ctx.partSeriesMap); err != nil {
 			return err
 		}
 	} else {
-		writeStreamRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap)
+		writeStreamRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap, ctx.partSeriesMap)
 	}
 	ctx.rowNum++
 	return nil
@@ -516,6 +527,9 @@ func openStreamPart(id uint64, root string, fileSystem fs.FileSystem) (*streamPa
 		return nil, fmt.Errorf("cannot open timestamps.bin: %w", err)
 	}
 
+	// Try to open series metadata file (optional, for backward compatibility)
+	p.seriesMetadata = dump.TryOpenSeriesMetadata(fileSystem, partPath)
+
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
 	p.tagFamilies = make(map[string]fs.Reader)
@@ -558,6 +572,9 @@ func closeStreamPart(p *streamPart) {
 	}
 	if p.timestamps != nil {
 		fs.MustClose(p.timestamps)
+	}
+	if p.seriesMetadata != nil {
+		fs.MustClose(p.seriesMetadata)
 	}
 	for _, r := range p.tagFamilies {
 		fs.MustClose(r)
@@ -921,17 +938,37 @@ func discoverStreamTagColumns(partIDs []uint64, shardPath string, fileSystem fs.
 	return result, nil
 }
 
-func writeStreamRowAsText(row streamRowData, rowNum int, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) {
+func writeStreamRowAsText(
+	row streamRowData,
+	rowNum int,
+	verbose bool,
+	projectionTags []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  PartID: %d (0x%016x)\n", row.partID, row.partID)
 	fmt.Printf("  ElementID: %d\n", row.elementID)
 	fmt.Printf("  Timestamp: %s\n", formatTimestamp(row.timestamp))
 	fmt.Printf("  SeriesID: %d\n", row.seriesID)
 
-	if seriesMap != nil {
-		if seriesText, ok := seriesMap[row.seriesID]; ok {
-			fmt.Printf("  Series: %s\n", seriesText)
+	seriesText := ""
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
 		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
+		if text, ok := seriesMap[row.seriesID]; ok {
+			seriesText = text
+		}
+	}
+	if seriesText != "" {
+		fmt.Printf("  Series: %s\n", seriesText)
 	}
 
 	fmt.Printf("  Element Data: %d bytes\n", len(row.elementData))
@@ -968,9 +1005,24 @@ func writeStreamRowAsText(row streamRowData, rowNum int, verbose bool, projectio
 	fmt.Printf("\n")
 }
 
-func writeStreamRowAsCSV(writer *csv.Writer, row streamRowData, tagColumns []string, seriesMap map[common.SeriesID]string) error {
+func writeStreamRowAsCSV(
+	writer *csv.Writer,
+	row streamRowData,
+	tagColumns []string,
+	seriesMap map[common.SeriesID]string,
+	partSeriesMap map[uint64]map[common.SeriesID]string,
+) error {
 	seriesText := ""
-	if seriesMap != nil {
+	// First try to get EntityValues from smeta.bin (part-level)
+	if partSeriesMap != nil {
+		if partMap, ok := partSeriesMap[row.partID]; ok {
+			if text, ok := partMap[row.seriesID]; ok {
+				seriesText = text
+			}
+		}
+	}
+	// Fallback to segment-level seriesMap if not found in smeta
+	if seriesText == "" && seriesMap != nil {
 		if text, ok := seriesMap[row.seriesID]; ok {
 			seriesText = text
 		}
@@ -1096,4 +1148,8 @@ func streamTagValueDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]
 		}
 		return pbv1.NullTagValue
 	}
+}
+
+func (ctx *streamDumpContext) parseAndDisplaySeriesMetadata(partID uint64, p *streamPart) error {
+	return dump.ParseSeriesMetadata(partID, p.seriesMetadata, ctx.partSeriesMap)
 }
