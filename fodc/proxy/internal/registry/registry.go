@@ -242,7 +242,6 @@ func (ar *AgentRegistry) CheckAgentHealth() error {
 	defer ar.mu.Unlock()
 
 	now := time.Now()
-	agentsToUnregister := make([]string, 0)
 
 	for agentID, agentInfo := range ar.agents {
 		timeSinceHeartbeat := now.Sub(agentInfo.LastHeartbeat)
@@ -257,21 +256,16 @@ func (ar *AgentRegistry) CheckAgentHealth() error {
 			}
 
 			if timeSinceHeartbeat > ar.cleanupTimeout {
-				agentsToUnregister = append(agentsToUnregister, agentID)
+				delete(ar.agents, agentID)
+				ar.logger.Info().
+					Str("agent_id", agentID).
+					Str("ip", agentInfo.PrimaryAddress.IP).
+					Int("port", agentInfo.PrimaryAddress.Port).
+					Str("role", agentInfo.NodeRole).
+					Msg("Agent unregistered")
 			}
 		}
 	}
-
-	ar.mu.Unlock()
-	for _, agentID := range agentsToUnregister {
-		if unregisterErr := ar.UnregisterAgent(agentID); unregisterErr != nil {
-			ar.logger.Error().
-				Err(unregisterErr).
-				Str("agent_id", agentID).
-				Msg("Failed to unregister agent during health check")
-		}
-	}
-	ar.mu.Lock()
 
 	return nil
 }
