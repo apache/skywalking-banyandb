@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = Describe("Agent Registration and Metrics Flow", func() {
+var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 	var (
 		proxyGRPCAddr     string
 		proxyHTTPAddr     string

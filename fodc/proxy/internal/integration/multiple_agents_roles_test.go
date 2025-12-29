@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = Describe("Multiple Agents and Roles", func() {
+var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 	var (
 		proxyGRPCAddr     string
 		proxyHTTPAddr     string

@@ -38,7 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = Describe("Metrics Time Window", func() {
+var _ = Describe("Test Case 2: Metrics Time Window", func() {
 	var (
 		proxyGRPCAddr     string
 		proxyHTTPAddr     string

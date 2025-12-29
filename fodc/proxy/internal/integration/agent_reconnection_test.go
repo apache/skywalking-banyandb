@@ -37,7 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = Describe("Agent Reconnection", func() {
+var _ = Describe("Test Case 3: Agent Reconnection", func() {
 	var (
 		proxyGRPCAddr     string
 		proxyHTTPAddr     string
