@@ -637,13 +637,13 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 // startHeartbeat starts the heartbeat ticker.
 func (c *Client) startHeartbeat(ctx context.Context) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 	}
 
 	c.heartbeatTicker = time.NewTicker(c.heartbeatInterval)
+	tickerCh := c.heartbeatTicker.C
+	c.mu.Unlock()
 
 	go func() {
 		for {
@@ -652,7 +652,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 				return
 			case <-c.stopCh:
 				return
-			case <-c.heartbeatTicker.C:
+			case <-tickerCh:
 				if heartbeatErr := c.SendHeartbeat(ctx); heartbeatErr != nil {
 					c.logger.Error().Err(heartbeatErr).Msg("Failed to send heartbeat")
 				}
