@@ -748,7 +748,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				aggregator.Load(entityValues, topNValue.values[j], bc.timestamps[bc.idx])
 			}
 
-			m := aggregator.Flush()
+			m, err := aggregator.Flush()
 			nonAggregatorItems := m[bc.timestamps[bc.idx]]
 
 			topNValue.Reset()
@@ -758,8 +758,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				topNValue.addValue(item.val, item.values)
 			}
 
-			buf := make([]byte, 0, 128)
-			buf, err := topNValue.marshal(buf)
+			buf, err := topNValue.marshal(make([]byte, 0, 128))
 			if err != nil {
 				log.Error().Err(err).Msg("failed to marshal topN value")
 				continue

@@ -276,7 +276,7 @@ func (naggr *postNonAggregationProcessor) Flush() (map[int64][]*nonAggregatorIte
 		m[timeline] = nonAggregatorItems
 	}
 
-	return m
+	return m, nil
 }
 
 func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
