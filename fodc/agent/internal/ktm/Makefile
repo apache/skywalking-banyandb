@@ -26,17 +26,40 @@ export PATH := /usr/local/bin:$(PATH)
 
 # Build variables
 GO := go
-NAME := ebpf-agent
-BUILD_DIR := build/bin
 UNAME_R := $(shell uname -r)
 ARCH := $(shell uname -m)
 CLANG ?= clang
 
 .PHONY: all
-all: generate build
+all: generate
 
 .PHONY: generate
-generate: vmlinux ebpf-bindings
+generate: check-deps vmlinux ebpf-bindings
+
+# Quick dependency check - fails fast if critical tools are missing
+.PHONY: check-deps
+check-deps:
+	@echo "Checking build dependencies..."
+	@# Check clang (required for eBPF compilation)
+	@if ! command -v clang >/dev/null 2>&1; then \
+		echo "ERROR: clang not found. Install it first:"; \
+		echo "  Ubuntu/Debian: sudo apt-get install -y clang llvm"; \
+		echo "  RedHat/Fedora: sudo dnf install -y clang llvm"; \
+		exit 1; \
+	fi
+	@# Check llvm-strip (required for eBPF)
+	@if ! command -v llvm-strip >/dev/null 2>&1; then \
+		echo "ERROR: llvm-strip not found. Install it with clang/llvm package."; \
+		exit 1; \
+	fi
+	@# Check BTF support (required for vmlinux.h)
+	@if [ ! -r "/sys/kernel/btf/vmlinux" ]; then \
+		echo "ERROR: /sys/kernel/btf/vmlinux not readable."; \
+		echo "Your kernel may not have CONFIG_DEBUG_INFO_BTF=y."; \
+		echo "Try: sudo apt install linux-image-$$(uname -r) linux-modules-extra-$$(uname -r)"; \
+		exit 1; \
+	fi
+	@echo "✓ All critical dependencies available"
 
 # eBPF compilation flags
 BPF_CFLAGS := -O2 -g -Wall -Werror -D__TARGET_ARCH_$(ARCH)
@@ -46,7 +69,7 @@ LLVM_STRIP := $(shell command -v llvm-strip 2> /dev/null)
 BPF2GO := $(shell command -v bpf2go 2> /dev/null)
 
 .PHONY: ebpf-bindings
-ebpf-bindings: check-ebpf-deps
+ebpf-bindings:
 	@echo "Generating eBPF Go bindings..."
 	@mkdir -p iomonitor/ebpf/generated
 	@echo "Building for amd64..."
@@ -77,107 +100,54 @@ ebpf-bindings: check-ebpf-deps
 			-type cache_stats_t \
 			-type read_latency_stats_t \
 			Iomonitor ../programs/iomonitor.c -- -I.)
-	@echo "eBPF bindings generated in iomonitor/ebpf/generated"
-	@# Verify build tags are present
-	@grep -l "//go:build" iomonitor/ebpf/generated/*.go 2>/dev/null | head -5 || true
+	@echo "✓ eBPF bindings generated successfully"
 
 .PHONY: iomonitor-ebpf
 iomonitor-ebpf: vmlinux ebpf-bindings
 	@echo "iomonitor eBPF objects and bindings generated"
 
 .PHONY: vmlinux
-vmlinux: install-bpftool
+vmlinux: ensure-bpftool
 	@echo "Generating vmlinux.h..."
-	@# Check if BTF is available
-	@if [ ! -r "/sys/kernel/btf/vmlinux" ]; then \
-		echo "ERROR: /sys/kernel/btf/vmlinux not readable. Your kernel may not have CONFIG_DEBUG_INFO_BTF=y."; \
-		echo "Try: sudo apt install linux-image-$(UNAME_R) linux-modules-$(UNAME_R) linux-modules-extra-$(UNAME_R)"; \
-		exit 1; \
-	fi
 	@mkdir -p iomonitor/ebpf/generated
-	@echo "Generating vmlinux.h from /sys/kernel/btf/vmlinux..."
 	@bpftool btf dump file /sys/kernel/btf/vmlinux format c > iomonitor/ebpf/generated/vmlinux.h
-	@# Verify the file was generated and is not empty
 	@test -s iomonitor/ebpf/generated/vmlinux.h || { echo "ERROR: vmlinux.h generation failed"; exit 1; }
+	@echo "✓ vmlinux.h generated successfully"
 
-.PHONY: check-bpftool
-check-bpftool:
-	@echo "Checking for bpftool..."
+# Ensure bpftool is available (install if needed)
+.PHONY: ensure-bpftool
+ensure-bpftool:
 	@if ! command -v bpftool >/dev/null 2>&1; then \
-		echo "bpftool not found. Installing..."; \
-		if [ "$$(id -u)" = "0" ]; then \
-			$(MAKE) install-bpftool-auto; \
-		else \
-			sudo $(MAKE) install-bpftool-auto; \
-		fi; \
+		echo "bpftool not found, attempting to install..."; \
+		$(MAKE) install-bpftool; \
 	fi
-	@# Check for Ubuntu wrapper script issues
-	@ver="$$(bpftool version 2>&1 || true)"; \
-	if echo "$$ver" | grep -q "not found for kernel"; then \
-		echo "WARNING: bpftool wrapper detected (mismatched linux-tools for kernel $(UNAME_R))."; \
-		echo "Either install matching linux-tools-$(UNAME_R) or use custom-built bpftool in /usr/local/bin"; \
-		if [ -x /usr/local/bin/bpftool ]; then \
-			echo "Using /usr/local/bin/bpftool instead"; \
-		else \
-			echo "Building bpftool from source..."; \
-			$(MAKE) install-bpftool-source; \
-		fi; \
-	fi
-	@if ! bpftool version 2>&1 | grep -q "bpftool v"; then \
+	@# Verify bpftool works
+	@if ! bpftool version >/dev/null 2>&1; then \
 		echo "ERROR: bpftool not working properly"; \
 		exit 1; \
 	fi
-	@echo "bpftool OK: $$(command -v bpftool)"; bpftool version
 
+# Install bpftool (tries package manager first, then source)
 .PHONY: install-bpftool
-install-bpftool: check-bpftool
-
-.PHONY: install-bpftool-auto
-install-bpftool-auto:
-	@echo "Detecting Linux distribution..."
+install-bpftool:
+	@echo "Installing bpftool..."
 	@if [ -f /etc/debian_version ]; then \
-		echo "Debian/Ubuntu detected, installing bpftools..."; \
-		if command -v apt-get >/dev/null 2>&1; then \
-			apt-get update 2>/dev/null && apt-get install -y linux-tools-common linux-tools-generic bpftools || \
-			apt-get install -y linux-tools-$$(uname -r) || \
-			apt-get install -y bpftools; \
-		else \
-			echo "Error: apt-get not available"; \
-			exit 1; \
-		fi; \
-	elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
-		echo "RedHat/CentOS/Fedora detected, installing bpftool..."; \
-		if command -v dnf >/dev/null 2>&1; then \
-			dnf install -y bpftool kernel-devel; \
-		elif command -v yum >/dev/null 2>&1; then \
-			yum install -y bpftool kernel-devel; \
-		else \
-			echo "Error: Neither dnf nor yum available"; \
-			exit 1; \
-		fi; \
-	elif [ -f /etc/alpine-release ]; then \
-		echo "Alpine Linux detected, installing bpftool..."; \
-		if command -v apk >/dev/null 2>&1; then \
-			apk add --no-cache bpftool linux-headers; \
-		else \
-			echo "Error: apk not available"; \
-			exit 1; \
-		fi; \
+		echo "Debian/Ubuntu detected"; \
+		sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic || \
+		sudo apt-get install -y linux-tools-$$(uname -r) || \
+		$(MAKE) install-bpftool-from-source; \
+	elif [ -f /etc/redhat-release ]; then \
+		echo "RedHat/Fedora detected"; \
+		sudo dnf install -y bpftool || sudo yum install -y bpftool || \
+		$(MAKE) install-bpftool-from-source; \
 	else \
-		echo "Unknown Linux distribution, trying to install from source..."; \
-		$(MAKE) install-bpftool-source; \
+		echo "Unknown distro, building from source..."; \
+		$(MAKE) install-bpftool-from-source; \
 	fi
-	@echo "Verifying bpftool installation..."
-	@if command -v bpftool >/dev/null 2>&1; then \
-		echo "bpftool successfully installed: $$(command -v bpftool)"; \
-		bpftool version; \
-	else \
-		echo "Error: bpftool installation failed"; \
-		exit 1; \
-	fi
+	@echo "✓ bpftool installed: $$(command -v bpftool)"
 
-.PHONY: install-bpftool-source
-install-bpftool-source:
+.PHONY: install-bpftool-from-source
+install-bpftool-from-source:
 	@echo "Installing bpftool from kernel source..."
 	@mkdir -p /tmp/bpftool-build
 	@cd /tmp/bpftool-build && \
@@ -198,46 +168,28 @@ install-bpftool-source:
 	echo "bpftool installed to /usr/local/bin/bpftool"
 	@rm -rf /tmp/bpftool-build
 
+# Install all dependencies (for first-time setup)
 .PHONY: install-deps
-install-deps: install-bpftool
-	@echo "Installing additional eBPF dependencies..."
+install-deps:
+	@echo "Installing all eBPF build dependencies..."
 	@if [ -f /etc/debian_version ]; then \
-		apt-get update && \
-		apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r) || \
-		apt-get install -y clang llvm linux-headers-generic; \
-	elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
-		if command -v dnf >/dev/null 2>&1; then \
-			dnf install -y clang llvm libbpf-devel kernel-headers kernel-devel; \
-		else \
-			yum install -y clang llvm libbpf-devel kernel-headers kernel-devel; \
-		fi; \
-	elif [ -f /etc/alpine-release ]; then \
-		apk add --no-cache clang llvm libbpf-dev linux-headers; \
-	fi
-
-.PHONY: build
-build: generate
-	@echo "Building $(NAME)..."
-	@# Check if someone accidentally created a binary in the wrong place
-	@if [ -f "./sidecar" ] || [ -f "./$(NAME)" ]; then \
-		echo "ERROR: Found binary in wrong location. Please remove it and use 'make build' instead."; \
-		echo "The binary should only be created in $(BUILD_DIR)/"; \
+		sudo apt-get update && \
+		sudo apt-get install -y clang llvm linux-tools-common linux-tools-generic; \
+	elif [ -f /etc/redhat-release ]; then \
+		sudo dnf install -y clang llvm bpftool kernel-devel || \
+		sudo yum install -y clang llvm bpftool kernel-devel; \
+	else \
+		echo "Unknown distro. Please install: clang, llvm, bpftool manually."; \
 		exit 1; \
 	fi
-	@mkdir -p $(BUILD_DIR)
-	$(GO) build -o $(BUILD_DIR)/$(NAME) ./cmd/sidecar
+	@echo "✓ All dependencies installed"
 
-.PHONY: release
-release: generate
-	@echo "Building release binary for $(NAME)..."
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux $(GO) build -ldflags="-s -w" -o $(BUILD_DIR)/$(NAME)-static ./cmd/sidecar
-	@echo "Release binary built: $(BUILD_DIR)/$(NAME)-static"
+# Note: Binary building is handled by fodc/agent/Makefile
+# This Makefile only handles eBPF generation
 
 .PHONY: clean
 clean:
-	@echo "Cleaning $(NAME)..."
-	@rm -rf $(BUILD_DIR)
+	@echo "Cleaning KTM eBPF artifacts..."
 	@rm -f iomonitor/ebpf/generated/*.go iomonitor/ebpf/generated/*.o 2>/dev/null || true
 	@# Keep vmlinux.h during clean (expensive to regenerate)
 	@echo "Note: vmlinux.h preserved. Use 'make distclean' to remove everything."
@@ -273,102 +225,32 @@ test-ebpf:
 	fi
 	$(GO) test -v -tags=ebpf ./iomonitor/ebpf/...
 
-.PHONY: docker
-docker:
-	@echo "Building Docker image for $(NAME)..."
-	docker build -t skywalking-banyandb/$(NAME):latest .
+# Docker and run targets are handled by fodc/agent/Makefile
 
-.PHONY: run
-run: build
-	@echo "Running $(NAME)..."
-	./$(BUILD_DIR)/$(NAME)
-
-.PHONY: check-ebpf-deps
-check-ebpf-deps:
-	@echo "Checking for eBPF build dependencies..."
-	@# Test if we can use sudo without password (CI environment)
-	@CAN_SUDO=0; \
-	if sudo -n true 2>/dev/null; then \
-		CAN_SUDO=1; \
-	fi; \
-	# Check and install clang
-	if ! command -v clang >/dev/null 2>&1; then \
-		if [ $$CAN_SUDO -eq 1 ]; then \
-			echo "clang not found. Installing..."; \
-			if [ -f /etc/debian_version ]; then \
-				sudo apt-get update && sudo apt-get install -y clang; \
-			elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
-				sudo dnf install -y clang || sudo yum install -y clang; \
-			elif [ -f /etc/alpine-release ]; then \
-				sudo apk add --no-cache clang; \
-			fi; \
-		else \
-			echo "ERROR: clang not found. Please install manually:"; \
-			echo "  Ubuntu/Debian: sudo apt-get install -y clang"; \
-			echo "  RedHat/Fedora: sudo dnf install -y clang"; \
-			exit 1; \
-		fi; \
-	fi; \
-	# Check and install llvm-strip
-	if ! command -v llvm-strip >/dev/null 2>&1; then \
-		if [ $$CAN_SUDO -eq 1 ]; then \
-			echo "llvm-strip not found. Installing..."; \
-			if [ -f /etc/debian_version ]; then \
-				sudo apt-get install -y llvm; \
-			elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
-				sudo dnf install -y llvm || sudo yum install -y llvm; \
-			elif [ -f /etc/alpine-release ]; then \
-				sudo apk add --no-cache llvm; \
-			fi; \
-		else \
-			echo "ERROR: llvm-strip not found. Please install manually:"; \
-			echo "  Ubuntu/Debian: sudo apt-get install -y llvm"; \
-			echo "  RedHat/Fedora: sudo dnf install -y llvm"; \
-			exit 1; \
-		fi; \
-	fi; \
-	# Install libbpf-dev and linux-headers if we can
-	if [ $$CAN_SUDO -eq 1 ]; then \
-		echo "Installing libbpf and kernel headers..."; \
-		if [ -f /etc/debian_version ]; then \
-			sudo apt-get install -y libbpf-dev linux-headers-$$(uname -r) 2>/dev/null || \
-			sudo apt-get install -y libbpf-dev linux-headers-generic || true; \
-		elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ] || [ -f /etc/fedora-release ]; then \
-			sudo dnf install -y libbpf-devel kernel-headers kernel-devel || \
-			sudo yum install -y libbpf-devel kernel-headers kernel-devel || true; \
-		elif [ -f /etc/alpine-release ]; then \
-			sudo apk add --no-cache libbpf-dev linux-headers || true; \
-		fi; \
-	fi; \
-	# Final check for critical dependencies
-	if ! command -v clang >/dev/null 2>&1 || ! command -v llvm-strip >/dev/null 2>&1; then \
-		echo "ERROR: Missing critical dependencies"; \
-		exit 1; \
-	fi; \
-	echo "All eBPF build dependencies are installed"
 
 .PHONY: help
 help:
+	@echo "KTM eBPF Generation Makefile"
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  make install-deps  # First time setup (installs clang, llvm, bpftool)"
+	@echo "  make generate      # Generate eBPF bindings"
+	@echo ""
 	@echo "Available targets:"
-	@echo "  all             - Generate and build"
-	@echo "  install-deps    - Install all eBPF dependencies (bpftool, clang, etc)"
-	@echo "  check-bpftool   - Verify bpftool is working correctly"
-	@echo "  install-bpftool - Check and install bpftool if needed"
-	@echo "  vmlinux         - Generate vmlinux.h header (checks BTF support)"
-	@echo "  ebpf-bindings   - Generate eBPF Go bindings for multiple architectures"
-	@echo "  generate        - Generate vmlinux.h and eBPF bindings"
-	@echo "  build           - Build the sidecar binary"
-	@echo "  release         - Build static release binary"
-	@echo "  clean           - Clean build artifacts (preserves vmlinux.h)"
-	@echo "  distclean       - Deep clean including vmlinux.h"
-	@echo "  lint            - Run linting checks"
-	@echo "  test            - Run unit tests"
-	@echo "  test-ebpf       - Run eBPF tests (requires root)"
-	@echo "  docker          - Build Docker image"
-	@echo "  run             - Build and run the sidecar"
-	@echo "  help            - Show this help message"
+	@echo "  all              - Generate eBPF bindings (default)"
+	@echo "  generate         - Generate vmlinux.h and eBPF bindings"
+	@echo "  check-deps       - Verify all required tools are available"
+	@echo "  install-deps     - Install all eBPF dependencies"
+	@echo "  clean            - Clean eBPF artifacts (preserves vmlinux.h)"
+	@echo "  distclean        - Deep clean including vmlinux.h"
+	@echo "  test             - Run unit tests"
+	@echo "  test-ebpf        - Run eBPF tests (requires root)"
+	@echo "  help             - Show this help message"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  Required: clang, llvm-strip, bpftool, BTF-enabled kernel"
+	@echo "  Auto-installed: bpf2go (via 'go run')"
 	@echo ""
 	@echo "Environment:"
 	@echo "  Kernel: $(UNAME_R)"
 	@echo "  Arch:   $(ARCH)"
-	@echo "  PATH:   $(PATH)"
