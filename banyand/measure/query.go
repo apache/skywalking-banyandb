@@ -753,6 +753,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 
 type queryResult struct {
 	ctx              context.Context
+	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	tagProjection    []model.TagProjection
@@ -763,7 +764,6 @@ type queryResult struct {
 	loaded           bool
 	orderByTS        bool
 	ascTS            bool
-	topNQueryOptions *topNQueryOptions
 }
 
 func (qr *queryResult) Pull() *model.MeasureResult {

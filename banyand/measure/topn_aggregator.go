@@ -86,8 +86,7 @@ func (aggr postAggregationProcessor) Reset() {
 }
 
 func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) {
-	// TODO implement me
-	panic("implement me")
+
 }
 
 func (aggr postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
@@ -249,12 +248,17 @@ type postNonAggregationProcessor struct {
 }
 
 func (naggr *postNonAggregationProcessor) Reset() {
-	for k := range naggr.timelines {
-		delete(naggr.timelines, k)
+
+	if naggr.topNCache == nil {
+		naggr.topNCache = make(map[string]*nonAggregatorItem)
+	} else {
+		clear(naggr.topNCache)
 	}
 
-	for k := range naggr.topNCache {
-		delete(naggr.topNCache, k)
+	if naggr.timelines == nil {
+		naggr.timelines = make(map[uint64]*flow.DedupPriorityQueue)
+	} else {
+		clear(naggr.timelines)
 	}
 }
 
@@ -347,12 +351,6 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})
 
 	return nil
-}
-
-type topNValueItem struct {
-	value           int64
-	entityValues    pbv1.EntityValues
-	timestampMillis int64
 }
 
 func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) {
