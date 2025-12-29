@@ -188,7 +188,8 @@ func (ar *AgentRegistry) GetAgent(ip string, port int, role string, labels map[s
 
 	for _, agentInfo := range ar.agents {
 		if ar.matchesIdentity(agentInfo.AgentIdentity, identity) {
-			return agentInfo, nil
+			infoCopy := *agentInfo
+			return &infoCopy, nil
 		}
 	}
 
@@ -205,7 +206,8 @@ func (ar *AgentRegistry) GetAgentByID(agentID string) (*AgentInfo, error) {
 		return nil, fmt.Errorf("agent %s not found", agentID)
 	}
 
-	return agentInfo, nil
+	infoCopy := *agentInfo
+	return &infoCopy, nil
 }
 
 // ListAgents returns a list of all registered agents.
@@ -215,7 +217,8 @@ func (ar *AgentRegistry) ListAgents() []*AgentInfo {
 
 	agents := make([]*AgentInfo, 0, len(ar.agents))
 	for _, agentInfo := range ar.agents {
-		agents = append(agents, agentInfo)
+		infoCopy := *agentInfo
+		agents = append(agents, &infoCopy)
 	}
 
 	return agents
@@ -229,7 +232,8 @@ func (ar *AgentRegistry) ListAgentsByRole(role string) []*AgentInfo {
 	agents := make([]*AgentInfo, 0)
 	for _, agentInfo := range ar.agents {
 		if agentInfo.NodeRole == role {
-			agents = append(agents, agentInfo)
+			infoCopy := *agentInfo
+			agents = append(agents, &infoCopy)
 		}
 	}
 

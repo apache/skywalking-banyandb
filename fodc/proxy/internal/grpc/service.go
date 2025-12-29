@@ -210,7 +210,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	existingConn, exists := s.connections[agentID]
 	if exists {
 		existingConn.MetricsStream = stream
-		existingConn.LastActivity = time.Now()
+		existingConn.UpdateActivity()
 	} else {
 		agentConn := &AgentConnection{
 			AgentID:       agentID,

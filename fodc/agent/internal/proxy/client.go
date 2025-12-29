@@ -230,10 +230,9 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
 func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsRequestFilter) error {
 	c.mu.RLock()
-	metricsStream := c.metricsStream
-	c.mu.RUnlock()
+	defer c.mu.RUnlock()
 
-	if metricsStream == nil {
+	if c.disconnected || c.metricsStream == nil {
 		return fmt.Errorf("metrics stream not established")
 	}
 
@@ -244,7 +243,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			Metrics:   []*fodcv1.Metric{},
 			Timestamp: timestamppb.Now(),
 		}
-		if sendErr := metricsStream.Send(req); sendErr != nil {
+		if sendErr := c.metricsStream.Send(req); sendErr != nil {
 			return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 		}
 		return nil
@@ -263,7 +262,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			if sendErr := c.metricsStream.Send(req); sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
@@ -276,17 +275,17 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			if sendErr := c.metricsStream.Send(req); sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
 		}
 
-		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		return c.sendFilteredMetrics(c.metricsStream, allMetrics, timestampValues, descriptions, filter)
 	}
 
 	// For latest metrics (no time filter), we can send even without timestamps
-	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	return c.sendLatestMetrics(c.metricsStream, allMetrics, descriptions)
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -421,10 +420,9 @@ func (c *Client) sendFilteredMetrics(
 // SendHeartbeat sends heartbeat to Proxy.
 func (c *Client) SendHeartbeat(_ context.Context) error {
 	c.mu.RLock()
-	stream := c.registrationStream
-	c.mu.RUnlock()
+	defer c.mu.RUnlock()
 
-	if stream == nil {
+	if c.disconnected || c.registrationStream == nil {
 		return fmt.Errorf("registration stream not established")
 	}
 
@@ -437,7 +435,7 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		},
 	}
 
-	if sendErr := stream.Send(req); sendErr != nil {
+	if sendErr := c.registrationStream.Send(req); sendErr != nil {
 		return fmt.Errorf("failed to send heartbeat: %w", sendErr)
 	}
 
@@ -449,7 +447,6 @@ func (c *Client) Disconnect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Make Disconnect idempotent - check if already disconnected
 	if c.disconnected {
 		return nil
 	}
@@ -643,6 +640,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 
 	c.heartbeatTicker = time.NewTicker(c.heartbeatInterval)
 	tickerCh := c.heartbeatTicker.C
+	stopCh := c.stopCh
 	c.mu.Unlock()
 
 	go func() {
@@ -650,7 +648,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-c.stopCh:
+			case <-stopCh:
 				return
 			case <-tickerCh:
 				if heartbeatErr := c.SendHeartbeat(ctx); heartbeatErr != nil {
