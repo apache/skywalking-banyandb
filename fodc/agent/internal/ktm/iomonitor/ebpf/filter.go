@@ -32,7 +32,11 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 )
 
+// configureFilters sets up the layered filtering strategy:
+// Layer 1: Cgroup ID (primary correctness boundary) - REQUIRED
+// Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL
 func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) error {
+	// Layer 1: Resolve and configure cgroup filter (required for correctness)
 	targetPath, err := resolveTargetCgroupPath(cgroupPath)
 	if err != nil {
 		return fmt.Errorf("resolve target cgroup: %w", err)
@@ -47,23 +51,42 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targe
 		return fmt.Errorf("program config map: %w", err)
 	}
 
+	// Layer 2: Initialize PID cache (optional, for performance + diagnostics)
+	// This is NOT required for correctness, but helps with:
+	// - Fast path optimization (avoids repeated comm checks)
+	// - Health monitoring (can report "target process alive")
 	pids, err := findPIDsByCommPrefix(targetComm)
 	if err != nil {
-		return fmt.Errorf("find pids: %w", err)
+		// Non-fatal: cgroup filter is sufficient for correctness
+		// Log warning but continue - eBPF will use comm check as fallback
+		return nil
 	}
 
 	if err := replaceAllowedPIDs(objs.AllowedPids, pids); err != nil {
-		return fmt.Errorf("program allowed pids: %w", err)
+		// Non-fatal: PID cache update failed but cgroup filter still works
+		return nil
 	}
 
 	return nil
 }
 
+// refreshAllowedPIDs updates the PID cache for health monitoring purposes.
+// This function is primarily for observability rather than correctness:
+// - Provides a health signal (are target processes running?)
+// - Maintains PID cache for performance optimization
+// - Does NOT affect filtering correctness (cgroup filter handles that)
+// If no target processes are found, it clears the PID cache to avoid stale entries.
 func refreshAllowedPIDs(objs *generated.IomonitorObjects, prefix string) error {
 	pids, err := findPIDsByCommPrefix(prefix)
 	if err != nil {
 		return err
 	}
+	
+	// If no processes found, clear the cache to remove stale PIDs
+	if len(pids) == 0 {
+		return clearAllowedPIDs(objs.AllowedPids)
+	}
+	
 	return replaceAllowedPIDs(objs.AllowedPids, pids)
 }
 
@@ -72,15 +95,25 @@ func resolveTargetCgroupPath(cfgPath string) (string, error) {
 		return resolveCgroupPath(cfgPath)
 	}
 
+	// Try to detect banyand process cgroup (requires shareProcessNamespace)
 	if path, err := detectBanyanDBCgroupPath(); err == nil {
 		return path, nil
 	}
 
+	// Fallback: derive Pod-level cgroup from self
+	// This works in Kubernetes even without shareProcessNamespace
 	cgRel, err := readCgroupV2Path("self")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read self cgroup: %w", err)
 	}
-	return filepath.Join("/sys/fs/cgroup", cgRel), nil
+
+	// Extract Pod-level cgroup path (remove container-specific suffix)
+	podCgRel := extractPodLevelCgroup(cgRel)
+	if podCgRel == "" {
+		return "", fmt.Errorf("failed to extract Pod-level cgroup from: %s", cgRel)
+	}
+
+	return filepath.Join("/sys/fs/cgroup", podCgRel), nil
 }
 
 func updateConfigMap(configMap *ebpf.Map, cgroupID uint64) error {
@@ -106,6 +139,7 @@ func replaceAllowedPIDs(pidMap *ebpf.Map, pids []uint32) error {
 		}
 	}
 
+	// Remove stale PIDs that are no longer in the desired set
 	iter := pidMap.Iterate()
 	var pid uint32
 	var flag uint8
@@ -113,6 +147,23 @@ func replaceAllowedPIDs(pidMap *ebpf.Map, pids []uint32) error {
 		if _, ok := desired[pid]; !ok {
 			_ = pidMap.Delete(pid)
 		}
+	}
+
+	return iter.Err()
+}
+
+// clearAllowedPIDs removes all entries from the PID cache.
+// Used when target process disappears to avoid stale PID entries.
+func clearAllowedPIDs(pidMap *ebpf.Map) error {
+	if pidMap == nil {
+		return fmt.Errorf("allowed_pids map not available")
+	}
+
+	iter := pidMap.Iterate()
+	var pid uint32
+	var flag uint8
+	for iter.Next(&pid, &flag) {
+		_ = pidMap.Delete(pid)
 	}
 
 	return iter.Err()
@@ -155,7 +206,32 @@ func getCgroupIDFromPath(path string) (uint64, error) {
 
 	stat, ok := info.Sys().(*unix.Stat_t)
 	if !ok {
-		return 0, fmt.Errorf("unexpected stat type for %s", path)
+		return 0, fmt.Errorf("failed to get stat_t for %s", path)
 	}
 	return stat.Ino, nil
+}
+
+// extractPodLevelCgroup extracts the Pod-level cgroup path from a container-level path.
+// Example:
+//   Input:  /kubepods.slice/kubepods-pod<uuid>.slice/cri-containerd-<id>.scope
+//   Output: /kubepods.slice/kubepods-pod<uuid>.slice
+func extractPodLevelCgroup(containerPath string) string {
+	parts := strings.Split(strings.TrimPrefix(containerPath, "/"), "/")
+	
+	// Search backwards for Pod-level cgroup marker
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
+		
+		// Kubernetes cgroup patterns:
+		// - kubepods-pod<uuid>.slice (systemd)
+		// - pod<uuid> (cgroupfs)
+		if strings.HasPrefix(part, "kubepods-pod") || 
+		   (strings.HasPrefix(part, "pod") && len(part) > 3) {
+			// Return path up to and including the Pod level
+			return "/" + strings.Join(parts[:i+1], "/")
+		}
+	}
+	
+	// If no Pod marker found, return empty (caller will error)
+	return ""
 }

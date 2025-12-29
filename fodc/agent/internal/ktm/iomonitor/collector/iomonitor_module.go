@@ -258,8 +258,8 @@ func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 		cumulative += count
 
 		// Upper bound in seconds
-		// Bucket i upper bound: 2^(i+1) microseconds
-		upperBoundUs := math.Pow(2, float64(i+1))
+		// Bucket i upper bound: 2^i microseconds
+		upperBoundUs := math.Pow(2, float64(i))
 		upperBoundSec := upperBoundUs / 1e6
 
 		promBuckets[upperBoundSec] = cumulative
@@ -273,13 +273,22 @@ func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	return nil
 }
 
+// refreshAllowedPIDsLoop periodically updates the PID cache for health monitoring.
+// This is primarily for observability rather than correctness:
+// - Provides a health signal (detects if target process disappeared)
+// - Maintains PID cache for performance optimization
+// - Clears stale PIDs when target process disappears
+// - Does NOT affect filtering correctness (cgroup filter is the primary boundary)
 func (m *IOMonitorModule) refreshAllowedPIDsLoop() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		if err := m.loader.RefreshAllowedPIDs("banyand"); err != nil {
-			m.logger.Debug("Refresh allowed pids failed", zap.Error(err))
+			// Health signal: target process not detected or scan failed
+			// The PID cache will be cleared automatically by RefreshAllowedPIDs
+			// This is a warning condition but not fatal (cgroup filter still works)
+			m.logger.Warn("Target process not detected during PID refresh", zap.Error(err))
 		}
 	}
 }

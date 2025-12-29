@@ -171,16 +171,27 @@ static __always_inline bool is_task_allowed() {
     __u32 tgid = bpf_get_current_pid_tgid() >> 32;
     __u64 curr_cgroup_id = bpf_get_current_cgroup_id();
 
+    // Layer 1: Cgroup hard boundary (correctness guarantee)
+    // This is the ONLY source of truth for "is this the target Pod?"
+    // Prevents cross-Pod data contamination on multi-tenant nodes.
     __u32 key = 0;
     __u64 *target_id = bpf_map_lookup_elem(&config_map, &key);
     if (!target_id || curr_cgroup_id != *target_id) {
         return false;
     }
 
+    // Layer 2: PID cache (performance optimization)
+    // Fast path for known PIDs, avoids repeated comm checks.
+    // This is purely for performance and does not affect correctness.
     if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
         return true;
     }
 
+    // Layer 3: Comm verification (defense + observability)
+    // - Sanity check: ensure matched cgroup actually runs banyand
+    // - Diagnostic aid: provides secondary signal for troubleshooting
+    // - Graceful degradation: allows data collection if cgroup config fails
+    // This check is only executed once per new PID (amortized O(1)).
     if (comm_is_banyandb()) {
         __u8 one = 1;
         bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
