@@ -68,6 +68,15 @@ jobs:
         run: make check-req
       - name: Build binaries, UI dist and MCP dist
         run: make build
+      - name: Setup buf
+        uses: bufbuild/buf-setup-action@v1
+      - name: Link buf into ./bin for Makefile
+        run: |
+            mkdir -p ./bin
+            cp "$(which buf)" ./bin/buf
+            chmod +x ./bin/buf
+      - name: Check buf installed
+        run: ./bin/buf --version
       - name: Lint
         run: make lint
       - name: Generate dependencies licenses
