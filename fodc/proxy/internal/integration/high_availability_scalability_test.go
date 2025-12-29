@@ -176,10 +176,7 @@ var _ = Describe("High Availability and Scalability", func() {
 
 		By("connecting and registering all agents")
 		connectConcurrently(func(a *agentFixture) error {
-			if err := a.client.Connect(a.ctx); err != nil {
-				return err
-			}
-			return nil
+			return a.client.Connect(a.ctx)
 		})
 
 		connectConcurrently(func(a *agentFixture) error {
