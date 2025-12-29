@@ -81,17 +81,17 @@ type postAggregationProcessor struct {
 }
 
 func (aggr postAggregationProcessor) Reset() {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis int64) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (aggr postAggregationProcessor) Flush() map[int64][]*nonAggregatorItem {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -278,7 +278,6 @@ func (naggr *postNonAggregationProcessor) Flush() map[int64][]*nonAggregatorItem
 }
 
 func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
-
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.Len())

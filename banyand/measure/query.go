@@ -931,7 +931,7 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 		lastSid = topBC.bm.seriesID
 
 		if len(result.Timestamps) > 0 {
-			//if len(result.Timestamps) > 0 &&
+			// if len(result.Timestamps) > 0 &&
 			//	topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
 			if topBC.versions[topBC.idx] > lastVersion {
 				topBC.replace(result, storedIndexValue, qr.topNQueryOptions, aggregator)

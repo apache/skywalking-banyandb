@@ -221,7 +221,6 @@ func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
 	Val([]string) []*measurev1.TopNList
-	Load(entityValues pbv1.EntityValues, val int64)
 }
 
 // CreateTopNPostAggregator creates a Top-N post processor with or without aggregation.
@@ -463,13 +462,4 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})
 
 	return nil
-}
-
-func (naggr *postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64) {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64) {
-	naggr.items[entityValues.String()] = val
 }
