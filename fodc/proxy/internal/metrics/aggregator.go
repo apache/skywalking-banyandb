@@ -147,17 +147,19 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	}
 
 	collectChs := make(map[string]chan []*AggregatedMetric)
+	agentIDs := make([]string, 0, len(agents))
 	ma.collectingMu.Lock()
 	for _, agentInfo := range agents {
 		collectCh := make(chan []*AggregatedMetric, 1)
 		collectChs[agentInfo.AgentID] = collectCh
 		ma.collecting[agentInfo.AgentID] = collectCh
+		agentIDs = append(agentIDs, agentInfo.AgentID)
 	}
 	ma.collectingMu.Unlock()
 
 	defer func() {
 		ma.collectingMu.Lock()
-		for agentID := range collectChs {
+		for _, agentID := range agentIDs {
 			delete(ma.collecting, agentID)
 		}
 		ma.collectingMu.Unlock()

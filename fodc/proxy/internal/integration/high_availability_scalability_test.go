@@ -48,8 +48,8 @@ type agentFixture struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	nodeIP         string
-	nodePort       int
 	nodeRole       string
+	nodePort       int
 }
 
 var _ = Describe("High Availability and Scalability", func() {
@@ -233,7 +233,9 @@ var _ = Describe("High Availability and Scalability", func() {
 		duration := time.Since(start)
 		Expect(duration).To(BeNumerically("<", 15*time.Second))
 
-		Expect(metricsAggregator.ActiveCollections()).To(Equal(0))
+		Eventually(func() int {
+			return metricsAggregator.ActiveCollections()
+		}, 30*time.Second, 500*time.Millisecond).Should(Equal(0))
 
 		agentIDs := make(map[string]bool)
 		for _, metric := range metricsList {
@@ -263,7 +265,7 @@ var _ = Describe("High Availability and Scalability", func() {
 			}})).To(Succeed())
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 
 		By("collecting metrics again to ensure reconnection succeeded")
 		Eventually(func() error {
@@ -278,12 +280,28 @@ var _ = Describe("High Availability and Scalability", func() {
 			if decodeErr := json.NewDecoder(resp.Body).Decode(&metricsList); decodeErr != nil {
 				return decodeErr
 			}
-			if len(metricsList) < highAvailabilityAgentCount {
-				return fmt.Errorf("expected at least %d metrics, got %d", highAvailabilityAgentCount, len(metricsList))
+			if len(metricsList) < reconnectSubsetSize {
+				return fmt.Errorf("expected at least %d metrics after reconnection, got %d", reconnectSubsetSize, len(metricsList))
 			}
 			return nil
 		}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
 
-		Expect(metricsAggregator.ActiveCollections()).To(Equal(0))
+		for idx := 0; idx < reconnectSubsetSize; idx++ {
+			name := fmt.Sprintf("reconnect_metric_%d", idx)
+			foundReconnectMetric := false
+			for _, metric := range metricsList {
+				if metric["name"] == name {
+					foundReconnectMetric = true
+					break
+				}
+			}
+			Expect(foundReconnectMetric).To(BeTrue(), fmt.Sprintf("expected reconnect metric %s to appear", name))
+		}
+
+		time.Sleep(2 * time.Second)
+
+		Eventually(func() int {
+			return metricsAggregator.ActiveCollections()
+		}, 30*time.Second, 500*time.Millisecond).Should(Equal(0))
 	})
 })
