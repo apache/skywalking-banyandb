@@ -36,20 +36,26 @@ all: generate
 .PHONY: generate
 generate: check-deps vmlinux ebpf-bindings
 
-# Quick dependency check - fails fast if critical tools are missing
+# Quick dependency check - auto-install in CI, fail fast locally
 .PHONY: check-deps
 check-deps:
 	@echo "Checking build dependencies..."
+	@# Check if running in CI
+	@if [ -n "$$CI" ] || [ -n "$$GITHUB_ACTIONS" ]; then \
+		echo "CI environment detected, auto-installing dependencies..."; \
+		$(MAKE) install-deps; \
+	fi
 	@# Check clang (required for eBPF compilation)
 	@if ! command -v clang >/dev/null 2>&1; then \
 		echo "ERROR: clang not found. Install it first:"; \
-		echo "  Ubuntu/Debian: sudo apt-get install -y clang llvm"; \
-		echo "  RedHat/Fedora: sudo dnf install -y clang llvm"; \
+		echo "  Run: make install-deps"; \
+		echo "  Or manually: sudo apt-get install -y clang llvm"; \
 		exit 1; \
 	fi
 	@# Check llvm-strip (required for eBPF)
 	@if ! command -v llvm-strip >/dev/null 2>&1; then \
-		echo "ERROR: llvm-strip not found. Install it with clang/llvm package."; \
+		echo "ERROR: llvm-strip not found."; \
+		echo "  Run: make install-deps"; \
 		exit 1; \
 	fi
 	@# Check BTF support (required for vmlinux.h)
