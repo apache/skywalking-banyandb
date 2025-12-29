@@ -37,9 +37,6 @@ func DefaultConfig() Config {
 		Enabled:  false,
 		Interval: 10 * time.Second,
 		Modules:  []string{"iomonitor"},
-		EBPF: iomonitor.EBPFConfig{
-			PinPath:      "/sys/fs/bpf/ebpf-sidecar",
-			MapSizeLimit: 10240,
-		},
+		EBPF:     iomonitor.EBPFConfig{},
 	}
 }

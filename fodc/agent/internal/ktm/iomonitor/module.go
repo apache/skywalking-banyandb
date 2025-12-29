@@ -36,6 +36,7 @@ type module struct {
 	objs       *generated.IomonitorObjects
 	name       string
 	cgroupPath string
+	targetComm string
 }
 
 func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
@@ -44,11 +45,18 @@ func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
 
+	// Apply default target comm if not specified
+	targetComm := ebpfCfg.TargetComm
+	if targetComm == "" {
+		targetComm = "banyand"
+	}
+
 	return &module{
 		name:       "iomonitor",
 		logger:     logger,
 		loader:     ebpfLoader,
 		cgroupPath: ebpfCfg.CgroupPath,
+		targetComm: targetComm,
 	}, nil
 }
 
@@ -67,6 +75,11 @@ func (m *module) Start() error {
 			zap.String("cgroup_path", m.cgroupPath))
 		m.loader.SetCgroupPath(m.cgroupPath)
 	}
+
+	// Configure target process comm name
+	m.loader.SetTargetComm(m.targetComm)
+	m.logger.Info("Configured target process filter",
+		zap.String("target_comm", m.targetComm))
 
 	// Load eBPF programs
 	if err := m.loader.LoadPrograms(); err != nil {
@@ -130,6 +143,10 @@ func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	if err := m.collectReadLatencyStats(ms); err != nil {
 		m.logger.Debug("Failed to collect read latency stats", zap.Error(err))
 	}
+
+	if err := m.collectPreadLatencyStats(ms); err != nil {
+		m.logger.Debug("Failed to collect pread latency stats", zap.Error(err))
+	}
 }
 
 func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
@@ -148,8 +165,8 @@ func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
 		}
 	}
 
-	ms.AddCounter("ebpf_fadvise_calls_total", float64(totalCalls), nil)
-	ms.AddCounter("ebpf_fadvise_dontneed_total", float64(dontneed), nil)
+	ms.AddCounter("ktm_fadvise_calls_total", float64(totalCalls), nil)
+	ms.AddCounter("ktm_fadvise_dontneed_total", float64(dontneed), nil)
 
 	return iter.Err()
 }
@@ -172,9 +189,9 @@ func (m *module) collectCacheStats(ms *metrics.MetricSet) error {
 		}
 	}
 
-	ms.AddCounter("ebpf_cache_lookups_total", float64(lookups), nil)
-	ms.AddCounter("ebpf_cache_fills_total", float64(adds), nil)
-	ms.AddCounter("ebpf_cache_deletes_total", float64(deletes), nil)
+	ms.AddCounter("ktm_cache_lookups_total", float64(lookups), nil)
+	ms.AddCounter("ktm_cache_fills_total", float64(adds), nil)
+	ms.AddCounter("ktm_cache_deletes_total", float64(deletes), nil)
 
 	return iter.Err()
 }
@@ -191,9 +208,9 @@ func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
 			totalReclaimed += cpuCounters.NrReclaimedTotal
 			totalEvents += cpuCounters.EventsTotal
 		}
-		ms.AddCounter("ebpf_memory_lru_pages_scanned_total", float64(totalScanned), nil)
-		ms.AddCounter("ebpf_memory_lru_pages_reclaimed_total", float64(totalReclaimed), nil)
-		ms.AddCounter("ebpf_memory_lru_shrink_events_total", float64(totalEvents), nil)
+		ms.AddCounter("ktm_memory_lru_pages_scanned_total", float64(totalScanned), nil)
+		ms.AddCounter("ktm_memory_lru_pages_reclaimed_total", float64(totalReclaimed), nil)
+		ms.AddCounter("ktm_memory_lru_shrink_events_total", float64(totalEvents), nil)
 	}
 
 	// Direct reclaim stats (per-CPU)
@@ -204,7 +221,7 @@ func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
 		for _, cpuCounters := range perCPUReclaim {
 			totalBegin += cpuCounters.DirectReclaimBeginTotal
 		}
-		ms.AddCounter("ebpf_memory_direct_reclaim_begin_total", float64(totalBegin), nil)
+		ms.AddCounter("ktm_memory_direct_reclaim_begin_total", float64(totalBegin), nil)
 	}
 }
 
@@ -252,8 +269,58 @@ func (m *module) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	// Add +Inf bucket
 	promBuckets[math.Inf(1)] = cumulative
 
-	ms.AddHistogram("ebpf_read_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
-	ms.AddCounter("ebpf_read_bytes_total", float64(totalBytes), nil)
+	ms.AddHistogram("ktm_sys_read_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
+	ms.AddCounter("ktm_sys_read_bytes_total", float64(totalBytes), nil)
+
+	return nil
+}
+
+func (m *module) collectPreadLatencyStats(ms *metrics.MetricSet) error {
+	var pid uint32
+	var perCPUStats []generated.IomonitorReadLatencyStatsT
+	iter := m.objs.PreadLatencyStatsMap.Iterate()
+
+	var aggBuckets [32]uint64
+	var totalSumNs uint64
+	var totalCount uint64
+	var totalBytes uint64
+
+	for iter.Next(&pid, &perCPUStats) {
+		// Fold per-CPU values
+		for _, cpuStats := range perCPUStats {
+			totalCount += cpuStats.Count
+			totalSumNs += cpuStats.SumLatencyNs
+			totalBytes += cpuStats.ReadBytesTotal
+			for i, v := range cpuStats.Buckets {
+				aggBuckets[i] += v
+			}
+		}
+	}
+
+	if err := iter.Err(); err != nil {
+		return err
+	}
+
+	// Convert to cumulative map for Prometheus
+	promBuckets := make(map[float64]uint64)
+	var cumulative uint64
+
+	for i := 0; i < 32; i++ {
+		count := aggBuckets[i]
+		cumulative += count
+
+		// Upper bound in seconds
+		// Bucket i upper bound: 2^i microseconds
+		upperBoundUs := math.Pow(2, float64(i))
+		upperBoundSec := upperBoundUs / 1e6
+
+		promBuckets[upperBoundSec] = cumulative
+	}
+	// Add +Inf bucket
+	promBuckets[math.Inf(1)] = cumulative
+
+	ms.AddHistogram("ktm_sys_pread_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
+	ms.AddCounter("ktm_sys_pread_bytes_total", float64(totalBytes), nil)
 
 	return nil
 }

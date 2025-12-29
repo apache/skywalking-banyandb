@@ -38,9 +38,8 @@ type CollectorConfig struct {
 
 // EBPFConfig defines eBPF-specific configuration.
 type EBPFConfig struct {
-	PinPath      string `mapstructure:"pin_path"`       // Path to pin eBPF maps
-	CgroupPath   string `mapstructure:"cgroup_path"`    // Optional cgroup v2 path to filter PIDs
-	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
+	CgroupPath string `mapstructure:"cgroup_path"` // Optional cgroup v2 path to filter PIDs
+	TargetComm string `mapstructure:"target_comm"` // Target process comm name prefix (default: "banyand")
 }
 
 // Collector manages eBPF program lifecycle and metrics collection.
@@ -65,6 +64,10 @@ type Module interface {
 
 // New creates a new collector instance.
 func New(cfg CollectorConfig, logger *zap.Logger) (*Collector, error) {
+	if cfg.Interval <= 0 {
+		return nil, fmt.Errorf("collector interval must be positive, got %v", cfg.Interval)
+	}
+
 	c := &Collector{
 		config:   cfg,
 		logger:   logger,

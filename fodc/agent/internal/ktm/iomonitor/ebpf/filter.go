@@ -33,37 +33,47 @@ import (
 )
 
 // configureFilters sets up the layered filtering strategy:
-// Layer 1: Cgroup ID (primary correctness boundary) - REQUIRED.
+// Layer 1: Cgroup ID (primary correctness boundary) - PREFERRED but optional.
 // Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL.
+// If cgroup resolution fails, falls back to comm-only filtering (degraded mode).
 func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) error {
-	// Layer 1: Resolve and configure cgroup filter (required for correctness)
+	// Layer 1: Resolve and configure cgroup filter (preferred for correctness)
 	targetPath, err := resolveTargetCgroupPath(cgroupPath)
 	if err != nil {
-		return fmt.Errorf("resolve target cgroup: %w", err)
-	}
-
-	cgID, err := getCgroupIDFromPath(targetPath)
-	if err != nil {
-		return fmt.Errorf("read cgroup id: %w", err)
-	}
-
-	if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
-		return fmt.Errorf("program config map: %w", updateErr)
+		// Cgroup resolution failed - fall back to comm-only filtering
+		// Set config_map to 0 to signal eBPF to skip cgroup check
+		if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
+			return fmt.Errorf("failed to configure degraded mode: %w", updateErr)
+		}
+		// Continue to initialize PID cache for comm-based filtering
+	} else {
+		// Cgroup resolution succeeded - configure strict cgroup filtering
+		cgID, err := getCgroupIDFromPath(targetPath)
+		if err != nil {
+			// Failed to get cgroup ID - fall back to comm-only
+			if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
+				return fmt.Errorf("failed to configure degraded mode: %w", updateErr)
+			}
+		} else {
+			// Successfully got cgroup ID - enable strict filtering
+			if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
+				return fmt.Errorf("failed to program config map: %w", updateErr)
+			}
+		}
 	}
 
 	// Layer 2: Initialize PID cache (optional, for performance + diagnostics)
-	// This is NOT required for correctness, but helps with:
-	// - Fast path optimization (avoids repeated comm checks)
-	// - Health monitoring (can report "target process alive")
+	// This is helpful in both strict and degraded modes:
+	// - Strict mode: fast path optimization (avoids repeated comm checks)
+	// - Degraded mode: primary filtering mechanism
 	pids, err := findPIDsByCommPrefix(targetComm)
 	if err != nil {
-		// Non-fatal: cgroup filter is sufficient for correctness
-		// Log warning but continue - eBPF will use comm check as fallback
+		// Non-fatal: eBPF will use comm check as fallback
 		return nil
 	}
 
 	if err := replaceAllowedPIDs(objs.AllowedPids, pids); err != nil {
-		// Non-fatal: PID cache update failed but cgroup filter still works
+		// Non-fatal: PID cache update failed but filtering still works
 		return nil
 	}
 

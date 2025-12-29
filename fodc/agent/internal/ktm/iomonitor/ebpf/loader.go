@@ -39,8 +39,7 @@ const (
 	// attachModeTracepoint indicates attachment via tracepoint.
 	attachModeTracepoint = "tracepoint"
 	// attachModeFentry indicates attachment via fentry.
-	attachModeFentry  = "fentry"
-	targetCommDefault = "banyand"
+	attachModeFentry = "fentry"
 )
 
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
@@ -51,7 +50,9 @@ type EnhancedLoader struct {
 	features        *KernelFeatures
 	logger          *zap.Logger
 	cgroupPath      string
+	targetComm      string
 	links           []link.Link
+	stopCh          chan struct{}
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -82,6 +83,8 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 		features:        features,
 		logger:          logger,
 		attachmentModes: make(map[string]string),
+		stopCh:          make(chan struct{}),
+		targetComm:      "banyand", // default value
 	}, nil
 }
 
@@ -89,6 +92,13 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 // An empty path disables the filter.
 func (l *EnhancedLoader) SetCgroupPath(path string) {
 	l.cgroupPath = path
+}
+
+// SetTargetComm sets the target process comm name prefix for filtering.
+func (l *EnhancedLoader) SetTargetComm(comm string) {
+	if comm != "" {
+		l.targetComm = comm
+	}
 }
 
 // LoadPrograms loads the eBPF programs.
@@ -108,7 +118,7 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	}
 
 	// Configure cgroup filter if requested.
-	if err := l.ConfigureFilters("banyand"); err != nil {
+	if err := l.ConfigureFilters(l.targetComm); err != nil {
 		l.logger.Warn("Failed to configure filters", zap.Error(err))
 	}
 
@@ -149,7 +159,7 @@ func (l *EnhancedLoader) AttachPrograms() error {
 	l.attachCacheWithFallback()
 
 	// Start background pid refresh
-	go l.refreshAllowedPIDsLoop(targetCommDefault)
+	go l.refreshAllowedPIDsLoop(l.targetComm)
 
 	// Log attachment summary
 	l.logger.Info("eBPF programs attached successfully",
@@ -191,13 +201,13 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 func (l *EnhancedLoader) attachReadLatencyWithFallback() error {
 	if err := l.attachSyscallLatencyWithFallback("read",
 		l.objects.FentryRead, l.objects.FexitRead,
-		l.objects.TraceEnterRead, l.objects.TraceExitRead); err != nil {
+		l.objects.TraceEnterReadTp, l.objects.TraceExitReadTp); err != nil {
 		return err
 	}
 
 	return l.attachSyscallLatencyWithFallback("pread64",
 		l.objects.FentryPread64, l.objects.FexitPread64,
-		l.objects.TraceEnterPread64, l.objects.TraceExitPread64)
+		l.objects.TraceEnterPread64Tp, l.objects.TraceExitPread64Tp)
 }
 
 func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fentryProg, fexitProg, tpEnterProg, tpExitProg *ebpf.Program) error {
@@ -263,9 +273,14 @@ func (l *EnhancedLoader) refreshAllowedPIDsLoop(prefix string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if err := l.refreshAllowedPIDs(prefix); err != nil {
-			l.logger.Debug("Refresh allowed pids failed", zap.Error(err))
+	for {
+		select {
+		case <-ticker.C:
+			if err := l.refreshAllowedPIDs(prefix); err != nil {
+				l.logger.Debug("Refresh allowed pids failed", zap.Error(err))
+			}
+		case <-l.stopCh:
+			return
 		}
 	}
 }
@@ -346,6 +361,11 @@ func (l *EnhancedLoader) GetKernelFeatures() *KernelFeatures {
 
 // Close cleans up all resources.
 func (l *EnhancedLoader) Close() error {
+	// Stop background goroutine
+	if l.stopCh != nil {
+		close(l.stopCh)
+	}
+
 	// Close all links
 	for _, lnk := range l.links {
 		if err := lnk.Close(); err != nil {

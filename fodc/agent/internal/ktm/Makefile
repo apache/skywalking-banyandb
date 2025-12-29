@@ -41,7 +41,7 @@ generate: check-deps vmlinux ebpf-bindings
 check-deps:
 	@echo "Checking build dependencies..."
 	@# Check if running in CI
-	@if [ -n "$$CI" ] || [ -n "$$GITHUB_ACTIONS" ]; then \
+	@if [ -n "$${CI:-}" ] || [ -n "$${GITHUB_ACTIONS:-}" ]; then \
 		echo "CI environment detected, auto-installing dependencies..."; \
 		$(MAKE) install-deps; \
 	fi

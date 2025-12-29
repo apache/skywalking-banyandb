@@ -107,7 +107,7 @@ struct {
     __type(value, struct fadvise_stats_t);
 } fadvise_stats_map SEC(".maps");
 
-// Read/Pread Latency maps
+// Read Latency maps
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
@@ -121,6 +121,21 @@ struct {
     __type(key, __u32); // PID
     __type(value, struct read_latency_stats_t);
 } read_latency_stats_map SEC(".maps");
+
+// Pread Latency maps
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u64); // TID
+    __type(value, __u64); // Start Timestamp (ns)
+} pread_args_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u32); // PID
+    __type(value, struct read_latency_stats_t);
+} pread_latency_stats_map SEC(".maps");
 
 // Memory/Cache maps
 struct {
@@ -171,26 +186,29 @@ static __always_inline bool is_task_allowed() {
     __u32 tgid = bpf_get_current_pid_tgid() >> 32;
     __u64 curr_cgroup_id = bpf_get_current_cgroup_id();
 
-    // Layer 1: Cgroup hard boundary (correctness guarantee)
-    // This is the ONLY source of truth for "is this the target Pod?"
-    // Prevents cross-Pod data contamination on multi-tenant nodes.
+    // Layer 1: Cgroup boundary (preferred correctness guarantee)
+    // If cgroup filter is configured (target_id != 0), enforce it strictly.
+    // If not configured (target_id == 0), fall back to comm-only filtering.
     __u32 key = 0;
     __u64 *target_id = bpf_map_lookup_elem(&config_map, &key);
-    if (!target_id || curr_cgroup_id != *target_id) {
-        return false;
+    if (target_id && *target_id != 0) {
+        // Cgroup filter is active - enforce strict matching
+        if (curr_cgroup_id != *target_id) {
+            return false;
+        }
+        // Cgroup matched, continue to PID cache and comm checks
     }
+    // If target_id is NULL or 0, cgroup filter is disabled - skip to comm check
 
     // Layer 2: PID cache (performance optimization)
     // Fast path for known PIDs, avoids repeated comm checks.
-    // This is purely for performance and does not affect correctness.
     if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
         return true;
     }
 
-    // Layer 3: Comm verification (defense + observability)
-    // - Sanity check: ensure matched cgroup actually runs banyand
-    // - Diagnostic aid: provides secondary signal for troubleshooting
-    // - Graceful degradation: allows data collection if cgroup config fails
+    // Layer 3: Comm verification (primary filter when cgroup unavailable)
+    // - When cgroup is configured: sanity check for matched cgroup
+    // - When cgroup is unavailable: primary filtering mechanism
     // This check is only executed once per new PID (amortized O(1)).
     if (comm_is_banyandb()) {
         __u8 one = 1;
@@ -213,7 +231,7 @@ static __always_inline __u64 log2l(__u64 v) {
     return r;
 }
 
-static __always_inline int trace_enter_read_common() {
+static __always_inline int trace_enter_read() {
     if (!is_task_allowed()) {
         return 0;
     }
@@ -223,7 +241,7 @@ static __always_inline int trace_enter_read_common() {
     return 0;
 }
 
-static __always_inline int trace_exit_read_common(int ret) {
+static __always_inline int trace_exit_read(int ret) {
     if (!is_task_allowed()) {
         return 0;
     }
@@ -270,28 +288,84 @@ static __always_inline int trace_exit_read_common(int ret) {
     return 0;
 }
 
+static __always_inline int trace_enter_pread() {
+    if (!is_task_allowed()) {
+        return 0;
+    }
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u64 ts = bpf_ktime_get_ns();
+    bpf_map_update_elem(&pread_args_map, &tid, &ts, BPF_ANY);
+    return 0;
+}
+
+static __always_inline int trace_exit_pread(int ret) {
+    if (!is_task_allowed()) {
+        return 0;
+    }
+    __u64 tid = bpf_get_current_pid_tgid();
+    __u64 *tsp = bpf_map_lookup_elem(&pread_args_map, &tid);
+    if (!tsp) {
+        return 0;
+    }
+    
+    // Only record successful reads
+    if (ret >= 0) {
+        __u64 delta = bpf_ktime_get_ns() - *tsp;
+        __u32 pid = tid >> 32;
+        
+        struct read_latency_stats_t *stats = bpf_map_lookup_elem(&pread_latency_stats_map, &pid);
+        if (!stats) {
+            struct read_latency_stats_t new_stats = {};
+            bpf_map_update_elem(&pread_latency_stats_map, &pid, &new_stats, BPF_ANY);
+            stats = bpf_map_lookup_elem(&pread_latency_stats_map, &pid);
+        }
+        
+        if (stats) {
+            stats->sum_latency_ns += delta;
+            stats->count++;
+            if (ret > 0) {
+                stats->read_bytes_total += (__u64)ret;
+            }
+            
+            // Log2 histogram (microseconds)
+            __u64 lat_us = delta / 1000;
+            __u64 bucket = 0;
+            if (lat_us > 0) {
+                bucket = log2l(lat_us);
+                if (bucket >= MAX_LATENCY_BUCKETS) {
+                    bucket = MAX_LATENCY_BUCKETS - 1;
+                }
+            }
+            stats->buckets[bucket]++;
+        }
+    }
+    
+    bpf_map_delete_elem(&pread_args_map, &tid);
+    return 0;
+}
+
 // =========================================================================================
 // Fentry/Fexit: Read / Pread Latency
 // =========================================================================================
 
 SEC("fentry/__x64_sys_read")
 int BPF_PROG(fentry_read, unsigned int fd, const char *buf, size_t count) {
-    return trace_enter_read_common();
+    return trace_enter_read();
 }
 
 SEC("fexit/__x64_sys_read")
 int BPF_PROG(fexit_read, unsigned int fd, const char *buf, size_t count, long ret) {
-    return trace_exit_read_common((int)ret);
+    return trace_exit_read((int)ret);
 }
 
 SEC("fentry/__x64_sys_pread64")
 int BPF_PROG(fentry_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos) {
-    return trace_enter_read_common();
+    return trace_enter_pread();
 }
 
 SEC("fexit/__x64_sys_pread64")
 int BPF_PROG(fexit_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos, long ret) {
-    return trace_exit_read_common((int)ret);
+    return trace_exit_pread((int)ret);
 }
 
 // =========================================================================================
@@ -299,25 +373,25 @@ int BPF_PROG(fexit_pread64, unsigned int fd, const char *buf, size_t count, loff
 // =========================================================================================
 
 SEC("tracepoint/syscalls/sys_enter_read")
-int trace_enter_read(struct trace_event_raw_sys_enter *ctx) {
-    return trace_enter_read_common();
+int trace_enter_read_tp(struct trace_event_raw_sys_enter *ctx) {
+    return trace_enter_read();
 }
 
 SEC("tracepoint/syscalls/sys_exit_read")
-int trace_exit_read(struct trace_event_raw_sys_exit *ctx) {
+int trace_exit_read_tp(struct trace_event_raw_sys_exit *ctx) {
     long ret = BPF_CORE_READ(ctx, ret);
-    return trace_exit_read_common((int)ret);
+    return trace_exit_read((int)ret);
 }
 
 SEC("tracepoint/syscalls/sys_enter_pread64")
-int trace_enter_pread64(struct trace_event_raw_sys_enter *ctx) {
-    return trace_enter_read_common();
+int trace_enter_pread64_tp(struct trace_event_raw_sys_enter *ctx) {
+    return trace_enter_pread();
 }
 
 SEC("tracepoint/syscalls/sys_exit_pread64")
-int trace_exit_pread64(struct trace_event_raw_sys_exit *ctx) {
+int trace_exit_pread64_tp(struct trace_event_raw_sys_exit *ctx) {
     long ret = BPF_CORE_READ(ctx, ret);
-    return trace_exit_read_common((int)ret);
+    return trace_exit_pread((int)ret);
 }
 
 // =========================================================================================

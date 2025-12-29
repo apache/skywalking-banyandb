@@ -58,7 +58,6 @@ var (
 	ktmEnabled                   bool
 	ktmInterval                  time.Duration
 	ktmModules                   []string
-	ktmEBPFPinPath               string
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -87,7 +86,6 @@ func init() {
 	rootCmd.Flags().BoolVar(&ktmEnabled, "ktm-enabled", false, "Enable Kernel Trace Module (eBPF)")
 	rootCmd.Flags().DurationVar(&ktmInterval, "ktm-interval", 10*time.Second, "Interval for KTM metrics collection")
 	rootCmd.Flags().StringSliceVar(&ktmModules, "ktm-modules", []string{"iomonitor"}, "KTM modules to enable")
-	rootCmd.Flags().StringVar(&ktmEBPFPinPath, "ktm-ebpf-pin-path", "/sys/fs/bpf/ebpf-sidecar", "Path to pin eBPF maps")
 }
 
 // runFODC is the main function for the FODC agent.
@@ -173,14 +171,15 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	var bridgeStopCh chan struct{}
 
 	if ktmEnabled {
+		if ktmInterval <= 0 {
+			return fmt.Errorf("ktm-interval must be positive, got %v", ktmInterval)
+		}
+
 		ktmCfg := ktm.Config{
 			Enabled:  true,
 			Interval: ktmInterval,
 			Modules:  ktmModules,
-			EBPF: iomonitor.EBPFConfig{
-				PinPath:      ktmEBPFPinPath,
-				MapSizeLimit: 10240,
-			},
+			EBPF:     iomonitor.EBPFConfig{},
 		}
 
 		zapLog, zapErr := zap.NewProduction()
