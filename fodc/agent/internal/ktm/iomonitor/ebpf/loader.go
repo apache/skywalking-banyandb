@@ -45,13 +45,13 @@ const (
 
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
 type EnhancedLoader struct {
+	attachmentModes map[string]string
 	spec            *ebpf.CollectionSpec
 	objects         *generated.IomonitorObjects
 	features        *KernelFeatures
 	logger          *zap.Logger
-	attachmentModes map[string]string
-	links           []link.Link
 	cgroupPath      string
+	links           []link.Link
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -195,13 +195,9 @@ func (l *EnhancedLoader) attachReadLatencyWithFallback() error {
 		return err
 	}
 
-	if err := l.attachSyscallLatencyWithFallback("pread64",
+	return l.attachSyscallLatencyWithFallback("pread64",
 		l.objects.FentryPread64, l.objects.FexitPread64,
-		l.objects.TraceEnterPread64, l.objects.TraceExitPread64); err != nil {
-		return err
-	}
-
-	return nil
+		l.objects.TraceEnterPread64, l.objects.TraceExitPread64)
 }
 
 func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fentryProg, fexitProg, tpEnterProg, tpExitProg *ebpf.Program) error {
@@ -256,7 +252,7 @@ func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fe
 	return fmt.Errorf("failed to attach latency probes for syscall %s", syscallName)
 }
 
-func (l *EnhancedLoader) RefreshAllowedPIDs(prefix string) error {
+func (l *EnhancedLoader) refreshAllowedPIDs(prefix string) error {
 	if l.objects == nil {
 		return fmt.Errorf("eBPF objects not loaded")
 	}
@@ -268,7 +264,7 @@ func (l *EnhancedLoader) refreshAllowedPIDsLoop(prefix string) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if err := l.RefreshAllowedPIDs(prefix); err != nil {
+		if err := l.refreshAllowedPIDs(prefix); err != nil {
 			l.logger.Debug("Refresh allowed pids failed", zap.Error(err))
 		}
 	}

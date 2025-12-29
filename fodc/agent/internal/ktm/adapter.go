@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Adapter converts KTM metrics to FODC RawMetrics.
+// Package ktm provides adapters for KTM metrics.
 package ktm
 
 import (

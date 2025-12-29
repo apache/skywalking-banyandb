@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // isCgroupV2Enabled returns true if a cgroup v2 hierarchy is available.
@@ -50,18 +49,4 @@ func resolveCgroupPath(cfgPath string) (string, error) {
 
 	// Treat relative paths as under the default mountpoint.
 	return filepath.Join("/sys/fs/cgroup", cfgPath), nil
-}
-
-// openCgroupPath opens the cgroup directory so it can be stored in a BPF cgroup array map.
-func openCgroupPath(path string) (*os.File, error) {
-	normalized := filepath.Clean(path)
-	if !strings.HasPrefix(normalized, "/") {
-		return nil, fmt.Errorf("cgroup path must be absolute: %s", normalized)
-	}
-
-	f, err := os.Open(normalized)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open cgroup path %s: %w", normalized, err)
-	}
-	return f, nil
 }

@@ -25,10 +25,10 @@ import (
 
 // Config represents the configuration for the KTM module.
 type Config struct {
-	Enabled  bool                 `mapstructure:"enabled"`
-	Interval time.Duration        `mapstructure:"interval"`
 	Modules  []string             `mapstructure:"modules"`
 	EBPF     iomonitor.EBPFConfig `mapstructure:"ebpf"`
+	Interval time.Duration        `mapstructure:"interval"`
+	Enabled  bool                 `mapstructure:"enabled"`
 }
 
 // DefaultConfig returns the default configuration for KTM.

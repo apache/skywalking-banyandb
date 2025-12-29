@@ -96,23 +96,23 @@ func (ms *MetricSet) AddHistogram(name string, buckets map[float64]uint64, sum f
 
 	timestamp := time.Now()
 
-	// Add sum
-	ms.metrics = append(ms.metrics, Metric{
-		Name:      name + "_sum",
-		Type:      MetricTypeCounter,
-		Value:     sum,
-		Labels:    labels,
-		Timestamp: timestamp,
-	})
-
-	// Add count
-	ms.metrics = append(ms.metrics, Metric{
-		Name:      name + "_count",
-		Type:      MetricTypeCounter,
-		Value:     float64(count),
-		Labels:    labels,
-		Timestamp: timestamp,
-	})
+	// Add sum and count
+	ms.metrics = append(ms.metrics,
+		Metric{
+			Name:      name + "_sum",
+			Type:      MetricTypeCounter,
+			Value:     sum,
+			Labels:    labels,
+			Timestamp: timestamp,
+		},
+		Metric{
+			Name:      name + "_count",
+			Type:      MetricTypeCounter,
+			Value:     float64(count),
+			Labels:    labels,
+			Timestamp: timestamp,
+		},
+	)
 
 	// Add buckets
 	for le, val := range buckets {

@@ -33,8 +33,8 @@ import (
 )
 
 // configureFilters sets up the layered filtering strategy:
-// Layer 1: Cgroup ID (primary correctness boundary) - REQUIRED
-// Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL
+// Layer 1: Cgroup ID (primary correctness boundary) - REQUIRED.
+// Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL.
 func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) error {
 	// Layer 1: Resolve and configure cgroup filter (required for correctness)
 	targetPath, err := resolveTargetCgroupPath(cgroupPath)
@@ -47,8 +47,8 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targe
 		return fmt.Errorf("read cgroup id: %w", err)
 	}
 
-	if err := updateConfigMap(objs.ConfigMap, cgID); err != nil {
-		return fmt.Errorf("program config map: %w", err)
+	if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
+		return fmt.Errorf("program config map: %w", updateErr)
 	}
 
 	// Layer 2: Initialize PID cache (optional, for performance + diagnostics)

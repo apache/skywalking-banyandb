@@ -30,8 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
 
-// IOMonitorModule collects I/O, cache, and memory statistics from eBPF.
-type IOMonitorModule struct {
+type module struct {
 	logger     *zap.Logger
 	loader     *ebpf.EnhancedLoader
 	objs       *generated.IomonitorObjects
@@ -39,14 +38,13 @@ type IOMonitorModule struct {
 	cgroupPath string
 }
 
-// NewIOMonitorModule creates a new I/O monitoring module.
-func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModule, error) {
+func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
 	ebpfLoader, err := ebpf.NewEnhancedLoader(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
 
-	return &IOMonitorModule{
+	return &module{
 		name:       "iomonitor",
 		logger:     logger,
 		loader:     ebpfLoader,
@@ -55,12 +53,12 @@ func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModul
 }
 
 // Name returns the module name.
-func (m *IOMonitorModule) Name() string {
+func (m *module) Name() string {
 	return m.name
 }
 
 // Start loads and attaches the eBPF programs.
-func (m *IOMonitorModule) Start() error {
+func (m *module) Start() error {
 	m.logger.Info("Starting I/O monitor module")
 
 	// Configure cgroup filtering if requested.
@@ -91,7 +89,7 @@ func (m *IOMonitorModule) Start() error {
 }
 
 // Stop cleans up the module.
-func (m *IOMonitorModule) Stop() error {
+func (m *module) Stop() error {
 	m.logger.Info("Stopping I/O monitor module")
 
 	if m.loader != nil {
@@ -104,7 +102,7 @@ func (m *IOMonitorModule) Stop() error {
 }
 
 // Collect gathers all metrics from eBPF maps.
-func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
+func (m *module) Collect() (*metrics.MetricSet, error) {
 	if m.objs == nil {
 		return nil, fmt.Errorf("eBPF objects not initialized")
 	}
@@ -118,7 +116,7 @@ func (m *IOMonitorModule) Collect() (*metrics.MetricSet, error) {
 }
 
 // collectMetrics collects metrics from all maps without clearing them.
-func (m *IOMonitorModule) collectMetrics(ms *metrics.MetricSet) {
+func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	if err := m.collectFadviseStats(ms); err != nil {
 		m.logger.Debug("Failed to collect fadvise stats", zap.Error(err))
 	}
@@ -127,26 +125,24 @@ func (m *IOMonitorModule) collectMetrics(ms *metrics.MetricSet) {
 		m.logger.Debug("Failed to collect cache stats", zap.Error(err))
 	}
 
-	if err := m.collectMemoryStats(ms); err != nil {
-		m.logger.Debug("Failed to collect memory stats", zap.Error(err))
-	}
+	m.collectMemoryStats(ms)
 
 	if err := m.collectReadLatencyStats(ms); err != nil {
 		m.logger.Debug("Failed to collect read latency stats", zap.Error(err))
 	}
 }
 
-func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
+func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
 	var pid uint32
-	var perCpuStats []generated.IomonitorFadviseStatsT
+	var perCPUStats []generated.IomonitorFadviseStatsT
 	iter := m.objs.FadviseStatsMap.Iterate()
 
 	var totalCalls uint64
 	var dontneed uint64
 
-	for iter.Next(&pid, &perCpuStats) {
+	for iter.Next(&pid, &perCPUStats) {
 		// Fold per-CPU values
-		for _, cpuStats := range perCpuStats {
+		for _, cpuStats := range perCPUStats {
 			totalCalls += cpuStats.TotalCalls
 			dontneed += cpuStats.AdviceDontneed
 		}
@@ -158,18 +154,18 @@ func (m *IOMonitorModule) collectFadviseStats(ms *metrics.MetricSet) error {
 	return iter.Err()
 }
 
-func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
+func (m *module) collectCacheStats(ms *metrics.MetricSet) error {
 	var pid uint32
-	var perCpuStats []generated.IomonitorCacheStatsT
+	var perCPUStats []generated.IomonitorCacheStatsT
 	iter := m.objs.CacheStatsMap.Iterate()
 
 	var lookups uint64
 	var adds uint64
 	var deletes uint64
 
-	for iter.Next(&pid, &perCpuStats) {
+	for iter.Next(&pid, &perCPUStats) {
 		// Fold per-CPU values
-		for _, cpuStats := range perCpuStats {
+		for _, cpuStats := range perCPUStats {
 			lookups += cpuStats.Lookups
 			adds += cpuStats.Adds
 			deletes += cpuStats.Deletes
@@ -183,14 +179,14 @@ func (m *IOMonitorModule) collectCacheStats(ms *metrics.MetricSet) error {
 	return iter.Err()
 }
 
-func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
+func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
 	// LRU shrink stats (per-CPU)
 	var key uint32
-	var perCpuShrink []generated.IomonitorShrinkCountersT
+	var perCPUShrink []generated.IomonitorShrinkCountersT
 
-	if err := m.objs.ShrinkStatsMap.Lookup(key, &perCpuShrink); err == nil {
+	if err := m.objs.ShrinkStatsMap.Lookup(key, &perCPUShrink); err == nil {
 		var totalScanned, totalReclaimed, totalEvents uint64
-		for _, cpuCounters := range perCpuShrink {
+		for _, cpuCounters := range perCPUShrink {
 			totalScanned += cpuCounters.NrScannedTotal
 			totalReclaimed += cpuCounters.NrReclaimedTotal
 			totalEvents += cpuCounters.EventsTotal
@@ -202,21 +198,19 @@ func (m *IOMonitorModule) collectMemoryStats(ms *metrics.MetricSet) error {
 
 	// Direct reclaim stats (per-CPU)
 	var reclaimKey uint32
-	var perCpuReclaim []generated.IomonitorReclaimCountersT
-	if err := m.objs.ReclaimCountersMap.Lookup(reclaimKey, &perCpuReclaim); err == nil {
+	var perCPUReclaim []generated.IomonitorReclaimCountersT
+	if err := m.objs.ReclaimCountersMap.Lookup(reclaimKey, &perCPUReclaim); err == nil {
 		var totalBegin uint64
-		for _, cpuCounters := range perCpuReclaim {
+		for _, cpuCounters := range perCPUReclaim {
 			totalBegin += cpuCounters.DirectReclaimBeginTotal
 		}
 		ms.AddCounter("ebpf_memory_direct_reclaim_begin_total", float64(totalBegin), nil)
 	}
-
-	return nil
 }
 
-func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
+func (m *module) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	var pid uint32
-	var perCpuStats []generated.IomonitorReadLatencyStatsT
+	var perCPUStats []generated.IomonitorReadLatencyStatsT
 	iter := m.objs.ReadLatencyStatsMap.Iterate()
 
 	var aggBuckets [32]uint64
@@ -224,9 +218,9 @@ func (m *IOMonitorModule) collectReadLatencyStats(ms *metrics.MetricSet) error {
 	var totalCount uint64
 	var totalBytes uint64
 
-	for iter.Next(&pid, &perCpuStats) {
+	for iter.Next(&pid, &perCPUStats) {
 		// Fold per-CPU values
-		for _, cpuStats := range perCpuStats {
+		for _, cpuStats := range perCPUStats {
 			totalCount += cpuStats.Count
 			totalSumNs += cpuStats.SumLatencyNs
 			totalBytes += cpuStats.ReadBytesTotal

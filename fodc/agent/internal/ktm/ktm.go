@@ -29,10 +29,10 @@ import (
 
 // KTM represents the Kernel Trace Module.
 type KTM struct {
-	config    Config
 	logger    *zap.Logger
 	collector *iomonitor.Collector
 	stopCh    chan struct{}
+	config    Config
 }
 
 // NewKTM creates a new KTM instance.

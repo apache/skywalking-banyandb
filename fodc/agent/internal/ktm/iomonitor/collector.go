@@ -39,8 +39,8 @@ type CollectorConfig struct {
 // EBPFConfig defines eBPF-specific configuration.
 type EBPFConfig struct {
 	PinPath      string `mapstructure:"pin_path"`       // Path to pin eBPF maps
-	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
 	CgroupPath   string `mapstructure:"cgroup_path"`    // Optional cgroup v2 path to filter PIDs
+	MapSizeLimit int    `mapstructure:"map_size_limit"` // Maximum map size
 }
 
 // Collector manages eBPF program lifecycle and metrics collection.
@@ -90,7 +90,7 @@ func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error
 	switch name {
 	case "iomonitor":
 		// Create the comprehensive I/O monitor module
-		module, err := NewIOMonitorModule(c.logger, ebpfCfg)
+		module, err := newModule(c.logger, ebpfCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
 		}
