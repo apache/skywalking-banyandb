@@ -282,7 +282,6 @@
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
-    - [RegisterAgentRequest.SecondaryAddressesEntry](#banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
@@ -4306,7 +4305,6 @@ Type determine the index structure under the hood
 | node_role | [string](#string) |  |  |
 | labels | [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry) | repeated |  |
 | primary_address | [Address](#banyandb-fodc-v1-Address) |  |  |
-| secondary_addresses | [RegisterAgentRequest.SecondaryAddressesEntry](#banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry) | repeated |  |
 
 
 
@@ -4323,22 +4321,6 @@ Type determine the index structure under the hood
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-fodc-v1-RegisterAgentRequest-SecondaryAddressesEntry"></a>
-
-### RegisterAgentRequest.SecondaryAddressesEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [Address](#banyandb-fodc-v1-Address) |  |  |
 
 
 
