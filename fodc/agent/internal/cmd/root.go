@@ -191,7 +191,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	var proxyClient *proxy.Client
 	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
-		labelsMap, parseErr := proxy.ParseLabels(nodeLabels)
+		labelsMap, parseErr := parseLabels(nodeLabels)
 		if parseErr != nil {
 			_ = metricsServer.Stop()
 			return fmt.Errorf("failed to parse node labels: %w", parseErr)
@@ -253,4 +253,38 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+// parseLabels parses a comma-separated labels string into a map.
+// Format: key1=value1,key2=value2.
+func parseLabels(labelsStr string) (map[string]string, error) {
+	labels := make(map[string]string)
+	if labelsStr == "" {
+		return labels, nil
+	}
+
+	pairs := strings.Split(labelsStr, ",")
+	for idx, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid label format at position %d: %q (expected key=value)", idx, pair)
+		}
+
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		if key == "" {
+			return nil, fmt.Errorf("empty label key at position %d: %q", idx, pair)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("empty label value at position %d: %q", idx, pair)
+		}
+		labels[key] = value
+	}
+
+	return labels, nil
 }
