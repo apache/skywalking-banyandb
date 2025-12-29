@@ -711,6 +711,8 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 		decoder := GenerateTopNValuesDecoder()
 		defer ReleaseTopNValuesDecoder(decoder)
 
+		uTimestamps := uint64(bc.timestamps[bc.idx])
+
 		for i, c := range bc.fields.columns {
 			srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
 			destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
@@ -719,7 +721,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			aggregator.Reset()
 
 			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
-				log.Error().Err(err).Msg("failed to unmarshal topN value")
+				log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
 				continue
 			}
 
@@ -731,12 +733,12 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				aggregator.Load(entityValues, topNValue.values[j], bc.timestamps[bc.idx])
+				aggregator.Load(entityValues, topNValue.values[j], uTimestamps)
 			}
 
 			topNValue.Reset()
 			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
-				log.Error().Err(err).Msg("failed to unmarshal topN value")
+				log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
 				continue
 			}
 
@@ -745,11 +747,16 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				aggregator.Load(entityValues, topNValue.values[j], bc.timestamps[bc.idx])
+				aggregator.Load(entityValues, topNValue.values[j], uTimestamps)
 			}
 
 			m, err := aggregator.Flush()
-			nonAggregatorItems := m[bc.timestamps[bc.idx]]
+			if err != nil {
+				log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
+				continue
+			}
+
+			nonAggregatorItems := m[uTimestamps]
 
 			topNValue.Reset()
 			topNValue.setMetadata(valueName, entityTagNames)
@@ -760,7 +767,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 
 			buf, err := topNValue.marshal(make([]byte, 0, 128))
 			if err != nil {
-				log.Error().Err(err).Msg("failed to marshal topN value")
+				log.Error().Err(err).Msg("failed to marshal topN value, skip current batch")
 				continue
 			}
 
