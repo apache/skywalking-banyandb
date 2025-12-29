@@ -191,7 +191,11 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	var proxyClient *proxy.Client
 	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
-		labelsMap := proxy.ParseLabels(nodeLabels)
+		labelsMap, parseErr := proxy.ParseLabels(nodeLabels)
+		if parseErr != nil {
+			_ = metricsServer.Stop()
+			return fmt.Errorf("failed to parse node labels: %w", parseErr)
+		}
 		proxyClient = proxy.NewClient(
 			proxyAddr,
 			nodeIP,

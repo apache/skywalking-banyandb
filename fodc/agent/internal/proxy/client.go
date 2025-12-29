@@ -711,14 +711,17 @@ func (c *Client) parseMetricKey(key string) (metrics.MetricKey, error) {
 }
 
 // ParseLabels parses comma-separated key=value pairs into a map.
-func ParseLabels(labelsStr string) map[string]string {
+// ParseLabels parses a comma-separated label string into a map.
+// Returns an error if any label pair is malformed.
+// Format: key1=value1,key2=value2
+func ParseLabels(labelsStr string) (map[string]string, error) {
 	labels := make(map[string]string)
 	if labelsStr == "" {
-		return labels
+		return labels, nil
 	}
 
 	pairs := strings.Split(labelsStr, ",")
-	for _, pair := range pairs {
+	for idx, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
 			continue
@@ -726,15 +729,19 @@ func ParseLabels(labelsStr string) map[string]string {
 
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) != 2 {
-			continue
+			return nil, fmt.Errorf("invalid label format at position %d: %q (expected key=value)", idx, pair)
 		}
 
 		key := strings.TrimSpace(kv[0])
 		value := strings.TrimSpace(kv[1])
-		if key != "" && value != "" {
-			labels[key] = value
+		if key == "" {
+			return nil, fmt.Errorf("empty label key at position %d: %q", idx, pair)
 		}
+		if value == "" {
+			return nil, fmt.Errorf("empty label value at position %d: %q", idx, pair)
+		}
+		labels[key] = value
 	}
 
-	return labels
+	return labels, nil
 }
