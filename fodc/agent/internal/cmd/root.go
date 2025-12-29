@@ -30,7 +30,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
-
 	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"

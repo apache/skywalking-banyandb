@@ -81,12 +81,12 @@ func refreshAllowedPIDs(objs *generated.IomonitorObjects, prefix string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// If no processes found, clear the cache to remove stale PIDs
 	if len(pids) == 0 {
 		return clearAllowedPIDs(objs.AllowedPids)
 	}
-	
+
 	return replaceAllowedPIDs(objs.AllowedPids, pids)
 }
 
@@ -213,25 +213,26 @@ func getCgroupIDFromPath(path string) (uint64, error) {
 
 // extractPodLevelCgroup extracts the Pod-level cgroup path from a container-level path.
 // Example:
-//   Input:  /kubepods.slice/kubepods-pod<uuid>.slice/cri-containerd-<id>.scope
-//   Output: /kubepods.slice/kubepods-pod<uuid>.slice
+//
+//	Input:  /kubepods.slice/kubepods-pod<uuid>.slice/cri-containerd-<id>.scope
+//	Output: /kubepods.slice/kubepods-pod<uuid>.slice
 func extractPodLevelCgroup(containerPath string) string {
 	parts := strings.Split(strings.TrimPrefix(containerPath, "/"), "/")
-	
+
 	// Search backwards for Pod-level cgroup marker
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
-		
+
 		// Kubernetes cgroup patterns:
 		// - kubepods-pod<uuid>.slice (systemd)
 		// - pod<uuid> (cgroupfs)
-		if strings.HasPrefix(part, "kubepods-pod") || 
-		   (strings.HasPrefix(part, "pod") && len(part) > 3) {
+		if strings.HasPrefix(part, "kubepods-pod") ||
+			(strings.HasPrefix(part, "pod") && len(part) > 3) {
 			// Return path up to and including the Pod level
 			return "/" + strings.Join(parts[:i+1], "/")
 		}
 	}
-	
+
 	// If no Pod marker found, return empty (caller will error)
 	return ""
 }

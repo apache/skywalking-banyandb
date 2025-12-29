@@ -120,7 +120,7 @@ func (ms *MetricSet) AddHistogram(name string, buckets map[float64]uint64, sum f
 		for k, v := range labels {
 			bucketLabels[k] = v
 		}
-		
+
 		if math.IsInf(le, 1) {
 			bucketLabels["le"] = "+Inf"
 		} else {
