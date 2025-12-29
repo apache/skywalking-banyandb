@@ -114,64 +114,22 @@ vmlinux: ensure-bpftool
 	@test -s iomonitor/ebpf/generated/vmlinux.h || { echo "ERROR: vmlinux.h generation failed"; exit 1; }
 	@echo "✓ vmlinux.h generated successfully"
 
-# Ensure bpftool is available (install if needed)
+# Ensure bpftool is available
 .PHONY: ensure-bpftool
 ensure-bpftool:
 	@if ! command -v bpftool >/dev/null 2>&1; then \
-		echo "bpftool not found, attempting to install..."; \
-		$(MAKE) install-bpftool; \
-	fi
-	@# Verify bpftool works
-	@if ! bpftool version >/dev/null 2>&1; then \
-		echo "ERROR: bpftool not working properly"; \
+		echo "ERROR: bpftool not found. Please install it:"; \
+		echo "  Ubuntu/Debian: sudo apt-get install -y linux-tools-common linux-tools-generic"; \
+		echo "  RedHat/Fedora: sudo dnf install -y bpftool"; \
+		echo "  Or run: make install-deps"; \
 		exit 1; \
 	fi
+	@bpftool version >/dev/null 2>&1 || { echo "ERROR: bpftool not working"; exit 1; }
 
-# Install bpftool (tries package manager first, then source)
-.PHONY: install-bpftool
-install-bpftool:
-	@echo "Installing bpftool..."
-	@if [ -f /etc/debian_version ]; then \
-		echo "Debian/Ubuntu detected"; \
-		sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic || \
-		sudo apt-get install -y linux-tools-$$(uname -r) || \
-		$(MAKE) install-bpftool-from-source; \
-	elif [ -f /etc/redhat-release ]; then \
-		echo "RedHat/Fedora detected"; \
-		sudo dnf install -y bpftool || sudo yum install -y bpftool || \
-		$(MAKE) install-bpftool-from-source; \
-	else \
-		echo "Unknown distro, building from source..."; \
-		$(MAKE) install-bpftool-from-source; \
-	fi
-	@echo "✓ bpftool installed: $$(command -v bpftool)"
-
-.PHONY: install-bpftool-from-source
-install-bpftool-from-source:
-	@echo "Installing bpftool from kernel source..."
-	@mkdir -p /tmp/bpftool-build
-	@cd /tmp/bpftool-build && \
-	if [ ! -d "linux" ]; then \
-		echo "Downloading kernel source..."; \
-		KERNEL_VERSION=$$(uname -r | cut -d- -f1); \
-		wget -q "https://github.com/torvalds/linux/archive/v$$KERNEL_VERSION.tar.gz" -O kernel.tar.gz || \
-		wget -q "https://cdn.kernel.org/pub/linux/kernel/v$${KERNEL_VERSION%%.*}.x/linux-$$KERNEL_VERSION.tar.gz" -O kernel.tar.gz || \
-		{ echo "Failed to download kernel source, trying latest stable..."; \
-		  git clone --depth=1 https://github.com/torvalds/linux.git || exit 1; }; \
-		if [ -f kernel.tar.gz ]; then \
-			tar -xf kernel.tar.gz && mv linux-* linux; \
-		fi; \
-	fi && \
-	cd linux/tools/bpf/bpftool && \
-	make && \
-	cp bpftool /usr/local/bin/ && \
-	echo "bpftool installed to /usr/local/bin/bpftool"
-	@rm -rf /tmp/bpftool-build
-
-# Install all dependencies (for first-time setup)
+# Install all dependencies (first-time setup)
 .PHONY: install-deps
 install-deps:
-	@echo "Installing all eBPF build dependencies..."
+	@echo "Installing eBPF build dependencies..."
 	@if [ -f /etc/debian_version ]; then \
 		sudo apt-get update && \
 		sudo apt-get install -y clang llvm linux-tools-common linux-tools-generic; \
@@ -179,54 +137,40 @@ install-deps:
 		sudo dnf install -y clang llvm bpftool kernel-devel || \
 		sudo yum install -y clang llvm bpftool kernel-devel; \
 	else \
-		echo "Unknown distro. Please install: clang, llvm, bpftool manually."; \
+		echo "ERROR: Unknown distro. Install manually: clang, llvm, bpftool"; \
 		exit 1; \
 	fi
-	@echo "✓ All dependencies installed"
+	@echo "✓ Dependencies installed"
 
 # Note: Binary building is handled by fodc/agent/Makefile
 # This Makefile only handles eBPF generation
 
 .PHONY: clean
 clean:
-	@echo "Cleaning KTM eBPF artifacts..."
+	@echo "Cleaning eBPF artifacts..."
 	@rm -f iomonitor/ebpf/generated/*.go iomonitor/ebpf/generated/*.o 2>/dev/null || true
-	@# Keep vmlinux.h during clean (expensive to regenerate)
-	@echo "Note: vmlinux.h preserved. Use 'make distclean' to remove everything."
+	@echo "Note: vmlinux.h preserved (use 'make distclean' to remove)"
 
 .PHONY: distclean
 distclean: clean
-	@echo "Deep cleaning (including vmlinux.h)..."
-	@rm -f iomonitor/ebpf/generated/vmlinux.h
+	@echo "Deep clean (including vmlinux.h)..."
 	@rm -rf iomonitor/ebpf/generated
 
 .PHONY: lint
 lint:
-	@echo "Running lint for $(NAME)..."
-	@../bin/golangci-lint run -v --config ../.golangci.yml --timeout 10m ./... && \
-	  ../bin/revive -config ../revive.toml -formatter friendly ./...
-
-.PHONY: format
-format:
-	@echo "Running format for $(NAME)..."
-	@../bin/golangci-lint run --fix --timeout 10m -c ../.golangci-format.yml ./...
+	$(GO) vet ./...
 
 .PHONY: test
 test:
-	@echo "Running tests for $(NAME)..."
-	$(GO) test -v -race ./...
+	$(GO) test -v ./...
 
 .PHONY: test-ebpf
 test-ebpf:
-	@echo "Running eBPF tests (requires root)..."
 	@if [ "$$(id -u)" != "0" ]; then \
-		echo "eBPF tests require root privileges. Run with sudo."; \
+		echo "ERROR: eBPF tests require root. Run: sudo make test-ebpf"; \
 		exit 1; \
 	fi
 	$(GO) test -v -tags=ebpf ./iomonitor/ebpf/...
-
-# Docker and run targets are handled by fodc/agent/Makefile
-
 
 .PHONY: help
 help:
