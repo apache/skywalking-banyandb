@@ -714,42 +714,48 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 		for i, c := range bc.fields.columns {
 			srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
 			destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+
 			topNValue.Reset()
+			aggregator.Reset()
+
 			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
+				log.Error().Err(err).Msg("failed to unmarshal topN value")
 				continue
 			}
-
-			for j, entityList := range topNValue.entities {
-				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
-				for _, e := range entityList {
-					entityValues = append(entityValues, e)
-				}
-				aggregator.Load(entityValues, topNValue.values[j])
-			}
-
-			topNValue.Reset()
-			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
-				continue
-			}
-
-			for j, entityList := range topNValue.entities {
-				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
-				for _, e := range entityList {
-					entityValues = append(entityValues, e)
-				}
-				aggregator.Load(entityValues, topNValue.values[j])
-			}
-
-			topNValueItems := aggregator.GetTopNValueItem()
 
 			valueName := topNValue.valueName
 			entityTagNames := topNValue.entityTagNames
 
+			for j, entityList := range topNValue.entities {
+				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
+				for _, e := range entityList {
+					entityValues = append(entityValues, e)
+				}
+				aggregator.Load(entityValues, topNValue.values[j], bc.timestamps[bc.idx])
+			}
+
+			topNValue.Reset()
+			if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
+				log.Error().Err(err).Msg("failed to unmarshal topN value")
+				continue
+			}
+
+			for j, entityList := range topNValue.entities {
+				entityValues := make(pbv1.EntityValues, 0, len(topNValue.entityValues))
+				for _, e := range entityList {
+					entityValues = append(entityValues, e)
+				}
+				aggregator.Load(entityValues, topNValue.values[j], bc.timestamps[bc.idx])
+			}
+
+			m := aggregator.Flush()
+			nonAggregatorItems := m[bc.timestamps[bc.idx]]
+
 			topNValue.Reset()
 			topNValue.setMetadata(valueName, entityTagNames)
 
-			for _, item := range topNValueItems {
-				topNValue.addValue(item.value, item.entityValues)
+			for _, item := range nonAggregatorItems {
+				topNValue.addValue(item.val, item.values)
 			}
 
 			buf := make([]byte, 0, 128)
@@ -758,8 +764,6 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				log.Error().Err(err).Msg("failed to marshal topN value")
 				continue
 			}
-
-			topNValue.Reset()
 
 			r.Fields[i].Values[len(r.Fields[i].Values)-1] = &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_BinaryData{
