@@ -22,7 +22,6 @@ package iomonitor
 import (
 	"fmt"
 	"math"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -34,7 +33,7 @@ import (
 // IOMonitorModule collects I/O, cache, and memory statistics from eBPF.
 type IOMonitorModule struct {
 	logger     *zap.Logger
-	loader     *ebpf.Loader
+	loader     *ebpf.EnhancedLoader
 	objs       *generated.IomonitorObjects
 	name       string
 	cgroupPath string
@@ -42,7 +41,7 @@ type IOMonitorModule struct {
 
 // NewIOMonitorModule creates a new I/O monitoring module.
 func NewIOMonitorModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*IOMonitorModule, error) {
-	ebpfLoader, err := ebpf.NewLoader(logger)
+	ebpfLoader, err := ebpf.NewEnhancedLoader(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
