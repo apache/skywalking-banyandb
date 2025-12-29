@@ -22,12 +22,13 @@ import (
 	"slices"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type aggregatorItem struct {
@@ -42,8 +43,7 @@ type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis int64) error
 	Val([]string) []*measurev1.TopNList
 	Load(entityValues pbv1.EntityValues, val int64, timestampMillis int64)
-	GetTopNValueItem() []*nonAggregatorItem
-	Flush() map[int64][]*nonAggregatorItem
+	Flush() (map[int64][]*nonAggregatorItem, error)
 
 	Reset()
 }
@@ -90,7 +90,7 @@ func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val in
 	panic("implement me")
 }
 
-func (aggr postAggregationProcessor) Flush() map[int64][]*nonAggregatorItem {
+func (aggr postAggregationProcessor) Flush() (map[int64][]*nonAggregatorItem, error) {
 	// TODO implement me
 	panic("implement me")
 }
@@ -206,7 +206,7 @@ func (aggr *postAggregationProcessor) Val(tagNames []string) []*measurev1.TopNLi
 	}
 	return []*measurev1.TopNList{
 		{
-			Timestamp: timestamppb.New(time.Unix(0, int64(aggr.latestTimestamp))),
+			Timestamp: timestamppb.New(time.Unix(0, aggr.latestTimestamp)),
 			Items:     topNItems,
 		},
 	}
@@ -258,9 +258,11 @@ func (naggr *postNonAggregationProcessor) Reset() {
 	}
 }
 
-func (naggr *postNonAggregationProcessor) Flush() map[int64][]*nonAggregatorItem {
+func (naggr *postNonAggregationProcessor) Flush() (map[int64][]*nonAggregatorItem, error) {
 	for _, item := range naggr.topNCache {
-		naggr.Put(item.values, item.val, item.timestampMillis)
+		if err := naggr.Put(item.values, item.val, item.timestampMillis); err != nil {
+			return nil, err
+		}
 	}
 
 	m := make(map[int64][]*nonAggregatorItem)
@@ -353,11 +355,6 @@ type topNValueItem struct {
 	timestampMillis int64
 }
 
-func (naggr *postAggregationProcessor) GetTopNValueItem() []*nonAggregatorItem {
-	// TODO implement me
-	panic("implement me")
-}
-
 func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis int64) {
 	key := entityValues.String()
 
@@ -371,12 +368,4 @@ func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, v
 		values:          entityValues,
 		timestampMillis: timestampMillis,
 	}
-}
-
-func (naggr *postNonAggregationProcessor) GetTopNValueItem() []*nonAggregatorItem {
-	items := make([]*nonAggregatorItem, 0, len(naggr.topNCache))
-	for _, v := range naggr.topNCache {
-		items = append(items, v)
-	}
-	return items
 }
