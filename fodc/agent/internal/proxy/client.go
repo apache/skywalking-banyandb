@@ -710,10 +710,8 @@ func (c *Client) parseMetricKey(key string) (metrics.MetricKey, error) {
 	}, nil
 }
 
-// ParseLabels parses comma-separated key=value pairs into a map.
-// ParseLabels parses a comma-separated label string into a map.
-// Returns an error if any label pair is malformed.
-// Format: key1=value1,key2=value2
+// ParseLabels parses a comma-separated labels string into a map.
+// Format: key1=value1,key2=value2.
 func ParseLabels(labelsStr string) (map[string]string, error) {
 	labels := make(map[string]string)
 	if labelsStr == "" {
