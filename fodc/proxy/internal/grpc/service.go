@@ -120,15 +120,7 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 				Port: int(req.PrimaryAddress.Port),
 			}
 
-			secondaryAddrs := make(map[string]registry.Address)
-			for name, addr := range req.SecondaryAddresses {
-				secondaryAddrs[name] = registry.Address{
-					IP:   addr.Ip,
-					Port: int(addr.Port),
-				}
-			}
-
-			registeredAgentID, registerErr := s.registry.RegisterAgent(ctx, identity, primaryAddr, secondaryAddrs)
+			registeredAgentID, registerErr := s.registry.RegisterAgent(ctx, identity, primaryAddr)
 			if registerErr != nil {
 				resp := &fodcv1.RegisterAgentResponse{
 					Success: false,
@@ -261,11 +253,9 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			return ctx.Err()
 		case recvErr := <-recvErrCh:
 			if recvErr != nil {
-				// Check if it's a context cancellation or deadline exceeded (expected errors)
 				if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
 					s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
 				} else if st, ok := status.FromError(recvErr); ok {
-					// Check if it's a gRPC status error with expected codes
 					code := st.Code()
 					if code == codes.Canceled || code == codes.DeadlineExceeded {
 						s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
@@ -273,7 +263,6 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 						s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
 					}
 				} else {
-					// Other errors are logged as errors
 					s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
 				}
 				return recvErr
@@ -384,12 +373,6 @@ func (s *FODCService) getAgentIDFromPeer(ctx context.Context) string {
 		// Exact match on primary address IP
 		if agentInfo.PrimaryAddress.IP == peerIP {
 			return agentInfo.AgentID
-		}
-		// Check secondary addresses
-		for _, secondaryAddr := range agentInfo.SecondaryAddresses {
-			if secondaryAddr.IP == peerIP {
-				return agentInfo.AgentID
-			}
 		}
 	}
 

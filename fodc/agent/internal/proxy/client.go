@@ -152,7 +152,6 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 			Ip:   c.nodeIP,
 			Port: int32(c.nodePort),
 		},
-		SecondaryAddresses: make(map[string]*fodcv1.Address),
 	}
 
 	if sendErr := stream.Send(req); sendErr != nil {

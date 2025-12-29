@@ -47,7 +47,6 @@ type AgentInfo struct {
 	AgentIdentity     AgentIdentity              // Agent identity (IP+port+role+labels)
 	NodeRole          databasev1.Role          // Node role (liaison, datanode-hot, etc.)
 	PrimaryAddress    Address                  // Primary agent gRPC address
-	SecondaryAddresses map[string]Address      // Secondary addresses with names (e.g., "metrics": Address, "gossip": Address)
 	Labels            map[string]string        // Node labels/metadata
 	RegisteredAt      time.Time                // Registration timestamp
 	LastHeartbeat     time.Time               // Last heartbeat timestamp

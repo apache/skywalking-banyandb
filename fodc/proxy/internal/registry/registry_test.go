@@ -74,11 +74,8 @@ func TestRegisterAgent_Success(t *testing.T) {
 		Labels: map[string]string{"env": "test"},
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
-	secondaryAddrs := map[string]Address{
-		"metrics": {IP: "192.168.1.1", Port: 9090},
-	}
 
-	agentID, err := ar.RegisterAgent(ctx, identity, primaryAddr, secondaryAddrs)
+	agentID, err := ar.RegisterAgent(ctx, identity, primaryAddr)
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, agentID)
@@ -90,7 +87,6 @@ func TestRegisterAgent_Success(t *testing.T) {
 	assert.Equal(t, identity.Role, agentInfo.AgentIdentity.Role)
 	assert.Equal(t, identity.Labels, agentInfo.Labels)
 	assert.Equal(t, primaryAddr, agentInfo.PrimaryAddress)
-	assert.Equal(t, secondaryAddrs, agentInfo.SecondaryAddresses)
 	assert.Equal(t, AgentStatusOnline, agentInfo.Status)
 	assert.WithinDuration(t, time.Now(), agentInfo.RegisteredAt, time.Second)
 	assert.WithinDuration(t, time.Now(), agentInfo.LastHeartbeat, time.Second)
@@ -104,17 +100,17 @@ func TestRegisterAgent_MaxAgentsReached(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID1, err1 := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, err1)
 	assert.NotEmpty(t, agentID1)
 
 	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker"}
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080}, nil)
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
 	require.NoError(t, err2)
 	assert.NotEmpty(t, agentID2)
 
 	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker"}
-	_, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080}, nil)
+	_, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
 	assert.Error(t, err3)
 	assert.Contains(t, err3.Error(), "maximum number of agents")
 }
@@ -127,7 +123,7 @@ func TestRegisterAgent_EmptyPrimaryIP(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "", Port: 8080}
 
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "primary address IP cannot be empty")
@@ -141,7 +137,7 @@ func TestRegisterAgent_InvalidPort(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 0}
 
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "primary address port must be greater than 0")
@@ -155,7 +151,7 @@ func TestRegisterAgent_EmptyRole(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: ""}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "node role cannot be empty")
@@ -169,7 +165,7 @@ func TestUnregisterAgent_Success(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	err := ar.UnregisterAgent(agentID)
@@ -198,7 +194,7 @@ func TestUpdateHeartbeat_Success(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	agentInfoBefore, getErrBefore := ar.GetAgentByID(agentID)
@@ -239,7 +235,7 @@ func TestGetAgent_Success(t *testing.T) {
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	agentInfo, err := ar.GetAgent("192.168.1.1", 8080, "worker", map[string]string{"env": "test", "zone": "us-east"})
@@ -274,7 +270,7 @@ func TestGetAgent_LabelMismatch(t *testing.T) {
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	_, err := ar.GetAgent("192.168.1.1", 8080, "worker", map[string]string{"env": "prod"})
@@ -291,7 +287,7 @@ func TestGetAgentByID_Success(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	agentInfo, err := ar.GetAgentByID(agentID)
@@ -332,11 +328,11 @@ func TestListAgents_Multiple(t *testing.T) {
 	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master"}
 	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker"}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080}, nil)
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
 	require.NoError(t, err2)
-	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080}, nil)
+	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
 	require.NoError(t, err3)
 
 	agents := ar.ListAgents()
@@ -360,11 +356,11 @@ func TestListAgentsByRole_Success(t *testing.T) {
 	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master"}
 	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker"}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080}, nil)
+	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080}, nil)
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
 	require.NoError(t, err2)
-	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080}, nil)
+	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
 	require.NoError(t, err3)
 
 	workerAgents := ar.ListAgentsByRole("worker")
@@ -404,7 +400,7 @@ func TestCheckAgentHealth_HeartbeatTimeout(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	agentInfoBefore, getErrBefore := ar.GetAgentByID(agentID)
@@ -431,7 +427,7 @@ func TestCheckAgentHealth_CleanupTimeout(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	time.Sleep(cleanupTimeout + 10*time.Millisecond)
@@ -454,7 +450,7 @@ func TestCheckAgentHealth_HeartbeatKeepsOnline(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	time.Sleep(30 * time.Millisecond)
@@ -612,7 +608,7 @@ func TestConcurrentRegisterAndList(t *testing.T) {
 				Labels: map[string]string{"idx": "test"},
 			}
 			primaryAddr := Address{IP: "192.168.1.1", Port: 8080 + agentIdx}
-			_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+			_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 			if registerErr != nil {
 				t.Errorf("Failed to register agent %d: %v", agentIdx, registerErr)
 			}
@@ -636,7 +632,7 @@ func TestConcurrentUpdateHeartbeat(t *testing.T) {
 	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr, nil)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, registerErr)
 
 	numUpdates := 20

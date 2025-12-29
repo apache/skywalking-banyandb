@@ -55,7 +55,6 @@ type AgentIdentity struct {
 
 // AgentInfo contains information about a registered agent.
 type AgentInfo struct {
-	SecondaryAddresses map[string]Address
 	Labels             map[string]string
 	AgentID            string
 	NodeRole           string
@@ -93,7 +92,7 @@ func NewAgentRegistry(logger *logger.Logger, heartbeatTimeout, cleanupTimeout ti
 }
 
 // RegisterAgent registers a new agent or updates existing agent information.
-func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity, primaryAddr Address, secondaryAddrs map[string]Address) (string, error) {
+func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity, primaryAddr Address) (string, error) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
 
@@ -115,15 +114,14 @@ func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity
 	now := time.Now()
 
 	agentInfo := &AgentInfo{
-		AgentID:            agentID,
-		AgentIdentity:      identity,
-		NodeRole:           identity.Role,
-		PrimaryAddress:     primaryAddr,
-		SecondaryAddresses: secondaryAddrs,
-		Labels:             identity.Labels,
-		RegisteredAt:       now,
-		LastHeartbeat:      now,
-		Status:             AgentStatusOnline,
+		AgentID:        agentID,
+		AgentIdentity:  identity,
+		NodeRole:       identity.Role,
+		PrimaryAddress: primaryAddr,
+		Labels:         identity.Labels,
+		RegisteredAt:   now,
+		LastHeartbeat:  now,
+		Status:         AgentStatusOnline,
 	}
 
 	ar.agents[agentID] = agentInfo

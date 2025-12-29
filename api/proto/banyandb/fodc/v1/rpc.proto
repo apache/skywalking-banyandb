@@ -36,7 +36,6 @@ message RegisterAgentRequest {
 	string node_role = 1;
 	map<string, string> labels = 2;
 	Address primary_address = 3;
-	map<string, Address> secondary_addresses = 4;
 }
 
 message Address {
@@ -67,4 +66,3 @@ message StreamMetricsResponse {
 	google.protobuf.Timestamp start_time = 1; // Optional start time for time window
 	google.protobuf.Timestamp end_time = 2;   // Optional end time for time window
 }
-
