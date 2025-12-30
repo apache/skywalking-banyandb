@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -167,60 +168,14 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	ctx := context.Background()
 
-	var ktmSvc *ktm.KTM
-	var bridgeStopCh chan struct{}
+	var stopKTM func()
 
 	if ktmEnabled {
-		if ktmInterval <= 0 {
-			return fmt.Errorf("ktm-interval must be positive, got %v", ktmInterval)
+		startStop, startErr := startKTM(ctx, *log.Logger, fr)
+		if startErr != nil {
+			return startErr
 		}
-
-		ktmCfg := ktm.Config{
-			Enabled:  true,
-			Interval: ktmInterval,
-			Modules:  ktmModules,
-			EBPF:     iomonitor.EBPFConfig{},
-		}
-
-		zapLog, zapErr := zap.NewProduction()
-		if zapErr != nil {
-			return fmt.Errorf("failed to create zap logger: %w", zapErr)
-		}
-
-		var err error
-		ktmSvc, err = ktm.NewKTM(ktmCfg, zapLog)
-		if err != nil {
-			return fmt.Errorf("failed to create KTM: %w", err)
-		}
-
-		if err := ktmSvc.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start KTM: %w", err)
-		}
-
-		bridgeStopCh = make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(ktmInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-bridgeStopCh:
-					return
-				case <-ticker.C:
-					store := ktmSvc.GetMetrics()
-					if store != nil {
-						rawMetrics := ktm.ToRawMetrics(store)
-						if len(rawMetrics) > 0 {
-							if err := fr.Update(rawMetrics); err != nil {
-								log.Warn().Err(err).Msg("Failed to update FlightRecorder with KTM metrics")
-							}
-						}
-					}
-				}
-			}
-		}()
+		stopKTM = startStop
 	}
 
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
@@ -245,11 +200,8 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	// Graceful shutdown
 	wd.GracefulStop()
 
-	if bridgeStopCh != nil {
-		close(bridgeStopCh)
-	}
-	if ktmSvc != nil {
-		_ = ktmSvc.Stop()
+	if stopKTM != nil {
+		stopKTM()
 	}
 
 	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
@@ -257,4 +209,63 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.FlightRecorder) (func(), error) {
+	if ktmInterval <= 0 {
+		return nil, fmt.Errorf("ktm-interval must be positive, got %v", ktmInterval)
+	}
+
+	ktmCfg := ktm.Config{
+		Enabled:  true,
+		Interval: ktmInterval,
+		Modules:  ktmModules,
+		EBPF:     iomonitor.EBPFConfig{},
+	}
+
+	zapLog, zapErr := zap.NewProduction()
+	if zapErr != nil {
+		return nil, fmt.Errorf("failed to create zap logger: %w", zapErr)
+	}
+
+	ktmSvc, err := ktm.NewKTM(ktmCfg, zapLog)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create KTM: %w", err)
+	}
+
+	if err := ktmSvc.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start KTM: %w", err)
+	}
+
+	stopBridgeCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(ktmInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopBridgeCh:
+				return
+			case <-ticker.C:
+				store := ktmSvc.GetMetrics()
+				if store == nil {
+					continue
+				}
+				rawMetrics := ktm.ToRawMetrics(store)
+				if len(rawMetrics) == 0 {
+					continue
+				}
+				if err := fr.Update(rawMetrics); err != nil {
+					log.Warn().Err(err).Msg("Failed to update FlightRecorder with KTM metrics")
+				}
+			}
+		}
+	}()
+
+	return func() {
+		close(stopBridgeCh)
+		_ = ktmSvc.Stop()
+	}, nil
 }

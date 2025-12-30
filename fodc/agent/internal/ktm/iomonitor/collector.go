@@ -30,9 +30,10 @@ import (
 )
 
 // CollectorConfig defines the collector configuration.
+// Field order chosen to minimize padding (large -> small).
 type CollectorConfig struct {
-	Modules  []string      `mapstructure:"modules"`
 	EBPF     EBPFConfig    `mapstructure:"ebpf"`
+	Modules  []string      `mapstructure:"modules"`
 	Interval time.Duration `mapstructure:"interval"`
 }
 

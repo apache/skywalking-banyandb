@@ -37,8 +37,6 @@ import (
 const (
 	// attachModeTracepoint indicates attachment via tracepoint.
 	attachModeTracepoint = "tracepoint"
-	// attachModeFentry indicates attachment via fentry.
-	attachModeFentry = "fentry"
 )
 
 // EnhancedLoader handles loading and managing eBPF programs with intelligent fallback.
@@ -103,7 +101,7 @@ func (l *EnhancedLoader) LoadPrograms() error {
 
 	// Load eBPF objects
 	l.objects = &generated.IomonitorObjects{}
-	if err := l.spec.LoadAndAssign(l.objects, nil); err != nil {
+	if err = l.spec.LoadAndAssign(l.objects, nil); err != nil {
 		return fmt.Errorf("failed to load eBPF objects: %w", err)
 	}
 
