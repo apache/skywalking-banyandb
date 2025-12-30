@@ -301,19 +301,9 @@ func (c *Client) sendLatestMetrics(
 		metricValue := metricBuffer.GetCurrentValue()
 		allValues := metricBuffer.GetAllValues()
 
-		// For latest metrics, we want to include metrics if:
-		// 1. There are finalized values (GetAllValues() has entries), OR
-		// 2. GetCurrentValue() returns a non-zero value (even if not finalized)
-		// We only skip if both GetAllValues() is empty AND GetCurrentValue() is zero
-		// This ensures we include metrics that were just added but not yet finalized
-		var zero float64
-		if len(allValues) == 0 {
-			// No finalized values - check if GetCurrentValue() has a value
-			if metricValue == zero {
-				// Both are empty/zero, skip this metric
-				continue
-			}
-			// GetCurrentValue() has a non-zero value (might be unfinalized), include it
+		// Skip metrics with no finalized values and zero current value
+		if len(allValues) == 0 && metricValue == 0 {
+			continue
 		}
 
 		parsedKey, parseErr := c.parseMetricKey(metricKey)
