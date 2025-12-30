@@ -720,7 +720,6 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
 
 			topNValue.Reset()
-			aggregator.Reset()
 
 			if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
 				log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
