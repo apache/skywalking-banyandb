@@ -4272,6 +4272,7 @@ Type determine the index structure under the hood
 | labels | [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry) | repeated |  |
 | value | [double](#double) |  |  |
 | description | [string](#string) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 

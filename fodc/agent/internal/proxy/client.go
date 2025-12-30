@@ -399,6 +399,7 @@ func (c *Client) sendFilteredMetrics(
 				Labels:      labelsMap,
 				Value:       metricValues[idx],
 				Description: description,
+				Timestamp:   timestamppb.New(timestamp),
 			}
 
 			protoMetrics = append(protoMetrics, protoMetric)

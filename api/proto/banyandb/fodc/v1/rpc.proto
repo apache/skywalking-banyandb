@@ -60,6 +60,7 @@ message Metric {
   map<string, string> labels = 2;
   double value = 3;
   string description = 4;
+  google.protobuf.Timestamp timestamp = 5;
 }
 
 message StreamMetricsResponse {

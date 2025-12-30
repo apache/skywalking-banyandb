@@ -111,9 +111,12 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 		}
 
 		var timestamp time.Time
-		if req.Timestamp != nil {
+		switch {
+		case metric.Timestamp != nil:
+			timestamp = metric.Timestamp.AsTime()
+		case req.Timestamp != nil:
 			timestamp = req.Timestamp.AsTime()
-		} else {
+		default:
 			timestamp = time.Now()
 		}
 
