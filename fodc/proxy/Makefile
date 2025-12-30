@@ -16,7 +16,7 @@
 # under the License.
 #
 
-NAME := fodc-proxy
+NAME := fodc
 BINARIES := $(NAME)-proxy
 
 IMG_NAME := skywalking-fodc-proxy
