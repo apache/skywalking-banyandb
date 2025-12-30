@@ -42,6 +42,12 @@ type aggregatorItem struct {
 	val             int64
 }
 
+type topNValueItem struct {
+	values          pbv1.EntityValues
+	timestampMillis uint64
+	val             int64
+}
+
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
@@ -76,12 +82,12 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 // postAggregationProcessor is an implementation of postProcessor with aggregation.
 type postAggregationProcessor struct {
 	cache           map[string]*aggregatorItem
+	dedupMap        map[string]*topNValueItem
 	items           []*aggregatorItem
 	latestTimestamp uint64
 	topN            int32
 	sort            modelv1.Sort
 	aggrFunc        modelv1.AggregationFunction
-	dedupMap        map[string]int64
 }
 
 func (aggr postAggregationProcessor) Reset() {
@@ -100,12 +106,19 @@ func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val in
 	sb.WriteString(strconv.FormatUint(timestampMillis, 10))
 
 	key := sb.String()
-	aggr.dedupMap[key] = val
+	aggr.dedupMap[key] = &topNValueItem{
+		values:          entityValues,
+		val:             val,
+		timestampMillis: timestampMillis,
+	}
 }
 
 func (aggr postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
-	// TODO implement me
-	panic("implement me")
+	for _, v := range aggr.dedupMap {
+		aggr.Put(v.values, v.val, v.timestampMillis)
+	}
+
+	return nil, nil
 }
 
 func (aggr postAggregationProcessor) Len() int {
@@ -262,7 +275,6 @@ type postNonAggregationProcessor struct {
 }
 
 func (naggr *postNonAggregationProcessor) Reset() {
-
 	if naggr.topNCache == nil {
 		naggr.topNCache = make(map[string]*nonAggregatorItem)
 	} else {
