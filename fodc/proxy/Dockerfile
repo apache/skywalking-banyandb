@@ -25,12 +25,6 @@ ARG TARGETARCH
 COPY build/bin/linux/${TARGETARCH}/fodc-proxy-static /fodc-proxy
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
-FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
-
-ARG TARGETARCH
-
-COPY build/bin/windows/${TARGETARCH}/fodc-proxy-static "/fodc-proxy"
-
-FROM build-${TARGETOS} AS final
+FROM build-linux AS final
 
 ENTRYPOINT ["/fodc-proxy"]
