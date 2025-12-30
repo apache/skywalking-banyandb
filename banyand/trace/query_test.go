@@ -91,7 +91,9 @@ func TestQueryResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{}
+				queryOpts := queryOptions{
+					schemaTagTypes: testSchemaTagTypes,
+				}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()
@@ -338,7 +340,9 @@ func TestQueryResultMultipleBatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
-				queryOpts := queryOptions{}
+				queryOpts := queryOptions{
+					schemaTagTypes: testSchemaTagTypes,
+				}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
 				defer s.decRef()

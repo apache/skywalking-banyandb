@@ -191,6 +191,7 @@ func (qr *idxResult) loadSortingData(ctx context.Context) *model.StreamResult {
 	qo.StreamQueryOptions = qr.qo.StreamQueryOptions
 	qo.elementFilter = roaring.NewPostingList()
 	qo.seriesToEntity = qr.qo.seriesToEntity
+	qo.schemaTagTypes = qr.qo.schemaTagTypes
 	qr.elementIDsSorted = qr.elementIDsSorted[:0]
 	count, searchedSize := 1, 0
 	tracer := query.GetTracer(ctx)

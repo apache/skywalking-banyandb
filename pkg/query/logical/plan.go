@@ -34,9 +34,8 @@ type Parent struct {
 
 // OrderBy is the sorting operator.
 type OrderBy struct {
-	Index     *databasev1.IndexRule
-	fieldRefs []*TagRef
-	Sort      modelv1.Sort
+	Index *databasev1.IndexRule
+	Sort  modelv1.Sort
 }
 
 // Equal reports whether o and other has the same sorting order and name.
@@ -79,14 +78,8 @@ func ParseOrderBy(s Schema, indexRuleName string, sort modelv1.Sort) (*OrderBy, 
 		return nil, errors.Wrap(errIndexSortingUnsupported, indexRuleName)
 	}
 
-	projFieldSpecs, err := s.CreateTagRef(NewTags("", indexRule.GetTags()...))
-	if err != nil {
-		return nil, errors.Wrap(ErrTagNotDefined, indexRuleName)
-	}
-
 	return &OrderBy{
-		Sort:      sort,
-		Index:     indexRule,
-		fieldRefs: projFieldSpecs[0],
+		Sort:  sort,
+		Index: indexRule,
 	}, nil
 }

@@ -121,6 +121,7 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 		return schemas[0], nil
 	}
 	var commonSchemas []*logical.CommonSchema
+	var allTags []*databasev1.TagSpec
 	for _, sm := range schemas {
 		if sm == nil {
 			continue
@@ -129,6 +130,15 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 		if s == nil {
 			continue
 		}
+		traceTags := s.trace.GetTags()
+		tagSpecs := make([]*databasev1.TagSpec, len(traceTags))
+		for i, tt := range traceTags {
+			tagSpecs[i] = &databasev1.TagSpec{
+				Name: tt.GetName(),
+				Type: tt.GetType(),
+			}
+		}
+		allTags = logical.MergeTagSpecs(allTags, tagSpecs)
 		commonSchemas = append(commonSchemas, s.common)
 	}
 	merged, err := logical.MergeSchemas(commonSchemas)
@@ -138,6 +148,9 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 	ret := &schema{
 		common:   merged,
 		children: schemas,
+	}
+	for i, tag := range allTags {
+		ret.common.RegisterTag(0, i, tag)
 	}
 	return ret, nil
 }
