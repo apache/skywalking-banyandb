@@ -31,12 +31,11 @@ import (
 )
 
 type module struct {
-	logger        *zap.Logger
-	loader        *ebpf.EnhancedLoader
-	objs          *generated.IomonitorObjects
-	name          string
-	cgroupPath    string
-	discoveryComm string
+	logger     *zap.Logger
+	loader     *ebpf.EnhancedLoader
+	objs       *generated.IomonitorObjects
+	name       string
+	cgroupPath string
 }
 
 func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
@@ -45,20 +44,11 @@ func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
 
-	// Apply default discovery comm if not specified
-	// Note: This only affects userspace PID discovery.
-	// Kernel-side comm filtering is always hardcoded to "banyand".
-	discoveryComm := ebpfCfg.DiscoveryComm
-	if discoveryComm == "" {
-		discoveryComm = "banyand"
-	}
-
 	return &module{
-		name:          "iomonitor",
-		logger:        logger,
-		loader:        ebpfLoader,
-		cgroupPath:    ebpfCfg.CgroupPath,
-		discoveryComm: discoveryComm,
+		name:       "iomonitor",
+		logger:     logger,
+		loader:     ebpfLoader,
+		cgroupPath: ebpfCfg.CgroupPath,
 	}, nil
 }
 
@@ -77,13 +67,6 @@ func (m *module) Start() error {
 			zap.String("cgroup_path", m.cgroupPath))
 		m.loader.SetCgroupPath(m.cgroupPath)
 	}
-
-	// Configure discovery comm for userspace PID scanning
-	// Note: Kernel-side filtering is always "banyand" regardless of this setting
-	m.loader.SetTargetComm(m.discoveryComm)
-	m.logger.Info("Configured process discovery filter",
-		zap.String("discovery_comm", m.discoveryComm),
-		zap.String("note", "kernel filtering is always 'banyand'"))
 
 	// Load eBPF programs
 	if err := m.loader.LoadPrograms(); err != nil {

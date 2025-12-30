@@ -76,14 +76,6 @@ struct reclaim_counters_t {
 // Maps
 // =========================================================================================
 
-// PID allowlist (fast path)
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1024);
-    __type(key, __u32);  // PID/TGID
-    __type(value, __u8); // presence flag
-} allowed_pids SEC(".maps");
-
 // Target cgroup ID
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -183,7 +175,6 @@ static __always_inline bool comm_is_banyandb() {
 }
 
 static __always_inline bool is_task_allowed() {
-    __u32 tgid = bpf_get_current_pid_tgid() >> 32;
     __u64 curr_cgroup_id = bpf_get_current_cgroup_id();
 
     // Layer 1: Cgroup boundary (preferred correctness guarantee)
@@ -200,29 +191,13 @@ static __always_inline bool is_task_allowed() {
         }
         // Cgroup matched, continue to comm check (always required)
         
-        // Layer 2: Comm verification (ALWAYS enforced, even if PID cache hits)
+        // Layer 2: Comm verification (ALWAYS enforced)
         // This ensures kernel always filters by comm="banyand" as documented
-        if (!comm_is_banyandb()) {
-            return false;
-        }
-        
-        // Layer 3: PID cache (performance optimization only, not a security boundary)
-        // Update cache for future reference, but comm check is authoritative
-        __u8 one = 1;
-        bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
-        return true;
+        return comm_is_banyandb();
     } else {
-        // Comm-only mode (degraded): check comm FIRST to prevent PID reuse pollution
+        // Comm-only mode (degraded): comm check only
         // Layer 2: Comm verification (primary filter in degraded mode)
-        if (!comm_is_banyandb()) {
-            return false;
-        }
-        
-        // Layer 3: PID cache (optional optimization, but comm is authoritative)
-        // Update cache for future fast-path, but comm check is the source of truth
-        __u8 one = 1;
-        bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
-        return true;
+        return comm_is_banyandb();
     }
 }
 

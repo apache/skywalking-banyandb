@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/cilium/ebpf"
@@ -32,12 +31,10 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 )
 
-// configureFilters sets up the layered filtering strategy:
-// Layer 1: Cgroup ID (primary correctness boundary) - PREFERRED but optional.
-// Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL.
+// configureFilters sets up the cgroup filtering strategy.
 // If cgroup resolution fails, falls back to comm-only filtering (degraded mode).
 // Returns (degraded bool, degradedReason string, error) where degraded=true means cgroup filtering is disabled.
-func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) (bool, string, error) {
+func configureFilters(objs *generated.IomonitorObjects, cgroupPath string) (bool, string, error) {
 	// Layer 1: Resolve and configure cgroup filter (preferred for correctness)
 	degraded := false
 	degradedReason := ""
@@ -69,47 +66,9 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targe
 		}
 	}
 
-	// Layer 2: Initialize PID cache (optional, for performance + diagnostics)
-	// This is helpful in both strict and degraded modes:
-	// - Strict mode: fast path optimization (avoids repeated comm checks)
-	// - Degraded mode: primary filtering mechanism
-	pids, err := findPIDsByCommPrefix(targetComm)
-	if err != nil {
-		// Non-fatal: eBPF will use comm check as fallback
-		return degraded, degradedReason, nil
-	}
-
-	if err := replaceAllowedPIDs(objs.AllowedPids, pids); err != nil {
-		// Non-fatal: PID cache update failed but filtering still works
-		return degraded, degradedReason, nil
-	}
-
+	// PID cache (allowed_pids map) is not used for performance optimization.
+	// Filtering relies solely on cgroup ID + comm checks in the kernel.
 	return degraded, degradedReason, nil
-}
-
-// refreshAllowedPIDs updates the PID cache for health monitoring purposes.
-// This function is primarily for observability rather than correctness:
-// - Provides a health signal (are target processes running?)
-// - Maintains PID cache for performance optimization
-// - Does NOT affect filtering correctness (cgroup filter handles that)
-// If no target processes are found or scan fails, it clears the PID cache to avoid stale entries
-// and prevent PID reuse pollution (fail-closed behavior).
-func refreshAllowedPIDs(objs *generated.IomonitorObjects, prefix string) error {
-	pids, err := findPIDsByCommPrefix(prefix)
-	if err != nil {
-		// Fail-closed: clear PID cache on scan failure to prevent PID reuse pollution
-		if clearErr := replaceAllowedPIDs(objs.AllowedPids, []uint32{}); clearErr != nil {
-			return fmt.Errorf("scan failed and cache clear failed: %w (original: %v)", clearErr, err)
-		}
-		return err
-	}
-
-	// If no processes found, clear the cache to remove stale PIDs
-	if len(pids) == 0 {
-		return clearAllowedPIDs(objs.AllowedPids)
-	}
-
-	return replaceAllowedPIDs(objs.AllowedPids, pids)
 }
 
 func resolveTargetCgroupPath(cfgPath string) (string, error) {
@@ -145,79 +104,6 @@ func updateConfigMap(configMap *ebpf.Map, cgroupID uint64) error {
 
 	key := uint32(0)
 	return configMap.Update(key, cgroupID, ebpf.UpdateAny)
-}
-
-func replaceAllowedPIDs(pidMap *ebpf.Map, pids []uint32) error {
-	if pidMap == nil {
-		return fmt.Errorf("allowed_pids map not available")
-	}
-
-	desired := make(map[uint32]struct{}, len(pids))
-	for _, pid := range pids {
-		desired[pid] = struct{}{}
-		val := uint8(1)
-		if err := pidMap.Update(pid, val, ebpf.UpdateAny); err != nil {
-			return fmt.Errorf("update allowed pid %d: %w", pid, err)
-		}
-	}
-
-	// Remove stale PIDs that are no longer in the desired set
-	iter := pidMap.Iterate()
-	var pid uint32
-	var flag uint8
-	for iter.Next(&pid, &flag) {
-		if _, ok := desired[pid]; !ok {
-			_ = pidMap.Delete(pid)
-		}
-	}
-
-	return iter.Err()
-}
-
-// clearAllowedPIDs removes all entries from the PID cache.
-// Used when target process disappears to avoid stale PID entries.
-func clearAllowedPIDs(pidMap *ebpf.Map) error {
-	if pidMap == nil {
-		return fmt.Errorf("allowed_pids map not available")
-	}
-
-	iter := pidMap.Iterate()
-	var pid uint32
-	var flag uint8
-	for iter.Next(&pid, &flag) {
-		_ = pidMap.Delete(pid)
-	}
-
-	return iter.Err()
-}
-
-func findPIDsByCommPrefix(prefix string) ([]uint32, error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil, fmt.Errorf("read /proc: %w", err)
-	}
-
-	var pids []uint32
-	for _, ent := range entries {
-		if !ent.IsDir() {
-			continue
-		}
-		pidVal, err := strconv.Atoi(ent.Name())
-		if err != nil || pidVal <= 0 {
-			continue
-		}
-
-		commBytes, err := os.ReadFile(filepath.Join("/proc", ent.Name(), "comm"))
-		if err != nil {
-			continue
-		}
-		comm := strings.TrimSpace(string(commBytes))
-		if strings.HasPrefix(comm, prefix) {
-			pids = append(pids, uint32(pidVal))
-		}
-	}
-
-	return pids, nil
 }
 
 func getCgroupIDFromPath(path string) (uint64, error) {

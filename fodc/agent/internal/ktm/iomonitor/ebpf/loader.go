@@ -24,8 +24,6 @@ package ebpf
 import (
 	"fmt"
 	"os"
-	"sync"
-	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -51,10 +49,7 @@ type EnhancedLoader struct {
 	features        *KernelFeatures
 	logger          *zap.Logger
 	cgroupPath      string
-	targetComm      string
 	links           []link.Link
-	stopCh          chan struct{}
-	closeOnce       sync.Once
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -85,8 +80,7 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 		features:        features,
 		logger:          logger,
 		attachmentModes: make(map[string]string),
-		stopCh:          make(chan struct{}),
-		targetComm:      "banyand", // default value
+		cgroupPath:      "",
 	}, nil
 }
 
@@ -94,15 +88,6 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 // An empty path disables the filter.
 func (l *EnhancedLoader) SetCgroupPath(path string) {
 	l.cgroupPath = path
-}
-
-// SetTargetComm sets the process comm name prefix for userspace PID discovery.
-// Note: This does NOT affect kernel-side filtering, which is hardcoded to "banyand".
-// This setting only controls which processes are scanned in /proc for the PID cache.
-func (l *EnhancedLoader) SetTargetComm(comm string) {
-	if comm != "" {
-		l.targetComm = comm
-	}
 }
 
 // LoadPrograms loads the eBPF programs.
@@ -122,13 +107,12 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	}
 
 	// Configure cgroup filter if requested.
-	degraded, degradedReason, err := l.ConfigureFilters(l.targetComm)
+	degraded, degradedReason, err := l.ConfigureFilters()
 	if err != nil {
 		l.logger.Warn("Failed to configure filters", zap.Error(err))
 	}
 	if degraded {
 		l.logger.Warn("Running in DEGRADED MODE: comm-only filtering (cgroup unavailable)",
-			zap.String("discovery_comm", l.targetComm),
 			zap.String("cgroup_path", l.cgroupPath),
 			zap.String("reason", degradedReason),
 			zap.String("risk", "metrics may mix across pods if multiple processes match comm prefix"))
@@ -137,14 +121,14 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	return nil
 }
 
-// ConfigureFilters sets cgroup id and allowed pids.
+// ConfigureFilters sets cgroup id for filtering.
 // Returns (degraded bool, degradedReason string, error) where degraded=true means cgroup filtering is disabled.
-func (l *EnhancedLoader) ConfigureFilters(targetComm string) (bool, string, error) {
+func (l *EnhancedLoader) ConfigureFilters() (bool, string, error) {
 	if l.objects == nil {
 		return false, "", fmt.Errorf("eBPF objects not loaded")
 	}
 
-	return configureFilters(l.objects, l.cgroupPath, targetComm)
+	return configureFilters(l.objects, l.cgroupPath)
 }
 
 // AttachPrograms attaches the eBPF programs with intelligent fallback.
@@ -170,9 +154,6 @@ func (l *EnhancedLoader) AttachPrograms() error {
 
 	// Attach cache monitoring
 	l.attachCacheWithFallback()
-
-	// Start background pid refresh
-	go l.refreshAllowedPIDsLoop(l.targetComm)
 
 	// Log attachment summary
 	l.logger.Info("eBPF programs attached successfully",
@@ -275,29 +256,6 @@ func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fe
 	return fmt.Errorf("failed to attach latency probes for syscall %s", syscallName)
 }
 
-func (l *EnhancedLoader) refreshAllowedPIDs(prefix string) error {
-	if l.objects == nil {
-		return fmt.Errorf("eBPF objects not loaded")
-	}
-	return refreshAllowedPIDs(l.objects, prefix)
-}
-
-func (l *EnhancedLoader) refreshAllowedPIDsLoop(prefix string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := l.refreshAllowedPIDs(prefix); err != nil {
-				l.logger.Debug("Refresh allowed pids failed", zap.Error(err))
-			}
-		case <-l.stopCh:
-			return
-		}
-	}
-}
-
 // attachCacheWithFallback attaches cache monitoring tracepoints.
 func (l *EnhancedLoader) attachCacheWithFallback() {
 	if l.objects.TraceMmFilemapGetPages != nil {
@@ -374,13 +332,6 @@ func (l *EnhancedLoader) GetKernelFeatures() *KernelFeatures {
 
 // Close cleans up all resources.
 func (l *EnhancedLoader) Close() error {
-	// Stop background goroutine (safe for multiple calls)
-	l.closeOnce.Do(func() {
-		if l.stopCh != nil {
-			close(l.stopCh)
-		}
-	})
-
 	// Close all links
 	for _, lnk := range l.links {
 		if err := lnk.Close(); err != nil {

@@ -65,8 +65,6 @@ Notes:
 Configuration surface (current):
 - `collector.interval`: Controls the periodic push interval for metrics to Flight Recorder. Defaults to 10s.
 - `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2. If not explicitly configured, KTM attempts to auto-detect the target cgroup. Only when auto-detection fails does it fall back to comm-only filtering (degraded mode with cross-pod risk).
-- `collector.ebpf.discovery_comm` (optional): comm name prefix used for userspace PID discovery in `/proc`; defaults to `banyand`. **Important**: This setting only affects userspace process discovery. Kernel-side filtering always enforces `comm="banyand"` regardless of this configuration.
-- Target discovery heuristic: match `/proc/<pid>/comm` against `discovery_comm` to populate the PID cache for performance optimization. The kernel always filters by comm="banyand".
 - Cleanup strategy is monotonic counters only; downstream derives rates. KTM does not clear BPF maps during collection.
 - Configuration is applied via the FODC sidecar; KTM does not define its own standalone process-level configuration surface.
 
@@ -83,34 +81,33 @@ Configuration surface (current):
 
 ### Target Process Discovery (Pod / VM)
 
-KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** for userspace PID discovery (configurable via `discovery_comm`, default `banyand`). Kernel-side filtering always uses comm="banyand" and is not configurable.
+KTM needs to resolve the single "target" BanyanDB process before enabling filters and attaching eBPF programs. The discovery process scans `/proc` for processes with `comm="banyand"` to derive the target cgroup path. Kernel-side filtering always uses `comm="banyand"` and is not configurable.
 
 #### Kubernetes Pod (sidecar)
 
 Preconditions:
 - The pod must be configured with `shareProcessNamespace: true` so the monitor sidecar can see the target container’s `/proc` entries.
 - cgroup v2 mounted (typically at `/sys/fs/cgroup`) to enable the primary cgroup filter.
-- If the target process cannot be discovered (for example, `shareProcessNamespace` is off), KTM logs a warning and keeps periodically checking; once the target process appears, KTM enables the module automatically.
+- If the target process cannot be discovered at startup (for example, `shareProcessNamespace` is off), KTM falls back to comm-only filtering (degraded mode).
 
 Discovery flow (high level):
-- Scan `/proc` for candidate processes.
-- For each PID, read `/proc/<pid>/comm` and match it against the configured comm prefix (default `banyand`) (or an explicitly provided cgroup path).
-- Once matched, derive the target cgroup from `/proc/<pid>/cgroup` (cgroup v2) and program the eBPF cgroup filter. The comm match remains as runtime fallback if the cgroup check does not fire.
-- If no matching process is found at startup, KTM continues periodic probing and activates once it is found.
+- If `cgroup_path` is explicitly configured, use it directly.
+- Otherwise, attempt to auto-detect by scanning `/proc` for processes with `comm="banyand"` and deriving their cgroup path.
+- Program the eBPF cgroup filter with the resolved cgroup ID.
 
 #### VM / bare metal
 
 Discovery flow (high level):
-- Scan `/proc` for candidate processes.
-- Match `/proc/<pid>/comm` against the configured prefix (default `banyand`).
-- Use the discovered PID to derive cgroup v2 path and program the filter; keep the comm match as runtime fallback if cgroup filtering is unavailable.
-- If no matching process is found at startup, KTM continues periodic probing and activates once it is found.
+- If `cgroup_path` is explicitly configured, use it directly.
+- Otherwise, attempt to auto-detect by scanning `/proc` for processes with `comm="banyand"` and deriving their cgroup path.
+- Program the eBPF cgroup filter with the resolved cgroup ID.
+- If auto-detection fails, fall back to comm-only filtering (degraded mode).
 
 ### Scoping Semantics
 
 - The BPF maps use a single-slot structure (e.g., a BPF array map with a single entry) to store global monotonic counters for the target process.
 - This approach eliminates the need for per-pid hash maps, key eviction logic, and complexities related to tracking multiple processes.
-- All kernel events are filtered by the target container’s cgroup ID when available; if the cgroup filter misses (for example, map not populated), a comm-prefix match (configurable; default `banyand`) is used before any counters are updated.
+- **Kernel-side filtering**: All kernel events are filtered by checking `comm="banyand"` (hardcoded, non-configurable). When cgroup filtering is available, both cgroup ID and comm are enforced. When cgroup is unavailable (degraded mode), only comm filtering is used.
 
 Example (YAML):
 ```yaml
@@ -120,9 +117,9 @@ collector:
     - iomonitor
   ebpf:
     # Optional: absolute or /sys/fs/cgroup-relative path to the BanyanDB cgroup v2.
+    # If not set, KTM attempts auto-detection by scanning /proc for comm="banyand".
+    # Falls back to comm-only mode on failure.
     # cgroup_path: /sys/fs/cgroup/<banyandb-cgroup>
-    # Optional: comm name prefix used for process discovery and fallback filtering.
-    # comm_prefix: banyand
 ```
 
 
