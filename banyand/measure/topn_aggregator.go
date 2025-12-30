@@ -40,7 +40,7 @@ type aggregatorItem struct {
 	index     int
 }
 
-type topNValueItem struct {
+type dedupItem struct {
 	values          pbv1.EntityValues
 	timestampMillis uint64
 	val             int64
@@ -81,7 +81,7 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 // postAggregationProcessor is an implementation of postProcessor with aggregation.
 type postAggregationProcessor struct {
 	cache           map[string]*aggregatorItem
-	dedupMap        map[string]*topNValueItem
+	dedupMap        map[string]*dedupItem
 	items           []*aggregatorItem
 	latestTimestamp uint64
 	topN            int32
@@ -89,12 +89,12 @@ type postAggregationProcessor struct {
 	aggrFunc        modelv1.AggregationFunction
 }
 
-func (aggr postAggregationProcessor) Reset() {
+func (aggr *postAggregationProcessor) Reset() {
 	// TODO implement me
 	panic("implement me")
 }
 
-func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
+func (aggr *postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
 	entityStr := entityValues.String()
 
 	var sb strings.Builder
@@ -114,7 +114,7 @@ func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val in
 		return
 	}
 
-	aggr.dedupMap[key] = &topNValueItem{
+	aggr.dedupMap[key] = &dedupItem{
 		values:          entityValues,
 		val:             val,
 		timestampMillis: timestampMillis,
@@ -122,7 +122,7 @@ func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val in
 	}
 }
 
-func (aggr postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
+func (aggr *postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
 	for _, v := range aggr.dedupMap {
 		aggr.Put(v.values, v.val, v.timestampMillis)
 	}

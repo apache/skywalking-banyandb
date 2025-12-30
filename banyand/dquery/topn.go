@@ -141,7 +141,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					aggregator.Load(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()))
+					aggregator.Load(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()), tn.Version)
 				}
 			}
 		}
