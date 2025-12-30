@@ -17,7 +17,7 @@
 #
 
 NAME := fodc-agent
-BINARIES := $(NAME)-cli
+BINARIES := $(NAME)
 
 IMG_NAME := skywalking-fodc-agent
 

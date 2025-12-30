@@ -17,7 +17,7 @@
 #
 
 NAME := fodc-proxy
-BINARIES := $(NAME)-cli
+BINARIES := $(NAME)
 
 IMG_NAME := skywalking-fodc-proxy
 
