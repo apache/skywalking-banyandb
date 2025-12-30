@@ -24,6 +24,7 @@ package ebpf
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -53,6 +54,7 @@ type EnhancedLoader struct {
 	targetComm      string
 	links           []link.Link
 	stopCh          chan struct{}
+	closeOnce       sync.Once
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -94,7 +96,9 @@ func (l *EnhancedLoader) SetCgroupPath(path string) {
 	l.cgroupPath = path
 }
 
-// SetTargetComm sets the target process comm name prefix for filtering.
+// SetTargetComm sets the process comm name prefix for userspace PID discovery.
+// Note: This does NOT affect kernel-side filtering, which is hardcoded to "banyand".
+// This setting only controls which processes are scanned in /proc for the PID cache.
 func (l *EnhancedLoader) SetTargetComm(comm string) {
 	if comm != "" {
 		l.targetComm = comm
@@ -118,17 +122,25 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	}
 
 	// Configure cgroup filter if requested.
-	if err := l.ConfigureFilters(l.targetComm); err != nil {
+	degraded, err := l.ConfigureFilters(l.targetComm)
+	if err != nil {
 		l.logger.Warn("Failed to configure filters", zap.Error(err))
+	}
+	if degraded {
+		l.logger.Warn("Running in DEGRADED MODE: comm-only filtering (cgroup unavailable)",
+			zap.String("target_comm", l.targetComm),
+			zap.String("cgroup_path", l.cgroupPath),
+			zap.String("risk", "metrics may mix across pods if multiple processes match comm prefix"))
 	}
 
 	return nil
 }
 
 // ConfigureFilters sets cgroup id and allowed pids.
-func (l *EnhancedLoader) ConfigureFilters(targetComm string) error {
+// Returns (degraded bool, error) where degraded=true means cgroup filtering is disabled.
+func (l *EnhancedLoader) ConfigureFilters(targetComm string) (bool, error) {
 	if l.objects == nil {
-		return fmt.Errorf("eBPF objects not loaded")
+		return false, fmt.Errorf("eBPF objects not loaded")
 	}
 
 	return configureFilters(l.objects, l.cgroupPath, targetComm)
@@ -361,10 +373,12 @@ func (l *EnhancedLoader) GetKernelFeatures() *KernelFeatures {
 
 // Close cleans up all resources.
 func (l *EnhancedLoader) Close() error {
-	// Stop background goroutine
-	if l.stopCh != nil {
-		close(l.stopCh)
-	}
+	// Stop background goroutine (safe for multiple calls)
+	l.closeOnce.Do(func() {
+		if l.stopCh != nil {
+			close(l.stopCh)
+		}
+	})
 
 	// Close all links
 	for _, lnk := range l.links {

@@ -36,28 +36,32 @@ import (
 // Layer 1: Cgroup ID (primary correctness boundary) - PREFERRED but optional.
 // Layer 2: PID allowlist (performance cache + health signal) - OPTIONAL.
 // If cgroup resolution fails, falls back to comm-only filtering (degraded mode).
-func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) error {
+// Returns (degraded bool, error) where degraded=true means cgroup filtering is disabled.
+func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targetComm string) (bool, error) {
 	// Layer 1: Resolve and configure cgroup filter (preferred for correctness)
+	degraded := false
 	targetPath, err := resolveTargetCgroupPath(cgroupPath)
 	if err != nil {
 		// Cgroup resolution failed - fall back to comm-only filtering
 		// Set config_map to 0 to signal eBPF to skip cgroup check
 		if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
-			return fmt.Errorf("failed to configure degraded mode: %w", updateErr)
+			return false, fmt.Errorf("failed to configure degraded mode: %w", updateErr)
 		}
+		degraded = true
 		// Continue to initialize PID cache for comm-based filtering
 	} else {
 		// Cgroup resolution succeeded - configure strict cgroup filtering
-		cgID, err := getCgroupIDFromPath(targetPath)
-		if err != nil {
+		cgID, cgErr := getCgroupIDFromPath(targetPath)
+		if cgErr != nil {
 			// Failed to get cgroup ID - fall back to comm-only
 			if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
-				return fmt.Errorf("failed to configure degraded mode: %w", updateErr)
+				return false, fmt.Errorf("failed to configure degraded mode: %w", updateErr)
 			}
+			degraded = true
 		} else {
 			// Successfully got cgroup ID - enable strict filtering
 			if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
-				return fmt.Errorf("failed to program config map: %w", updateErr)
+				return false, fmt.Errorf("failed to program config map: %w", updateErr)
 			}
 		}
 	}
@@ -69,15 +73,15 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targe
 	pids, err := findPIDsByCommPrefix(targetComm)
 	if err != nil {
 		// Non-fatal: eBPF will use comm check as fallback
-		return nil
+		return degraded, nil
 	}
 
 	if err := replaceAllowedPIDs(objs.AllowedPids, pids); err != nil {
 		// Non-fatal: PID cache update failed but filtering still works
-		return nil
+		return degraded, nil
 	}
 
-	return nil
+	return degraded, nil
 }
 
 // refreshAllowedPIDs updates the PID cache for health monitoring purposes.
@@ -85,10 +89,15 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string, targe
 // - Provides a health signal (are target processes running?)
 // - Maintains PID cache for performance optimization
 // - Does NOT affect filtering correctness (cgroup filter handles that)
-// If no target processes are found, it clears the PID cache to avoid stale entries.
+// If no target processes are found or scan fails, it clears the PID cache to avoid stale entries
+// and prevent PID reuse pollution (fail-closed behavior).
 func refreshAllowedPIDs(objs *generated.IomonitorObjects, prefix string) error {
 	pids, err := findPIDsByCommPrefix(prefix)
 	if err != nil {
+		// Fail-closed: clear PID cache on scan failure to prevent PID reuse pollution
+		if clearErr := replaceAllowedPIDs(objs.AllowedPids, []uint32{}); clearErr != nil {
+			return fmt.Errorf("scan failed and cache clear failed: %w (original: %v)", clearErr, err)
+		}
 		return err
 	}
 

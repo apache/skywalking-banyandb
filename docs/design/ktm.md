@@ -64,9 +64,9 @@ Notes:
 
 Configuration surface (current):
 - `collector.interval`: Controls the periodic push interval for metrics to Flight Recorder. Defaults to 10s.
-- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2; if unset, KTM autodetects by scanning `/proc/*/comm` for the configured prefix (default `banyand`).
-- `collector.ebpf.comm_prefix` (optional): comm name prefix used for process discovery and fallback filtering; defaults to `banyand`.
-- Target discovery heuristic: match `/proc/<pid>/comm` against the configured prefix (default `banyand`) to locate BanyanDB and derive its cgroup; this also serves as the runtime fallback if the cgroup filter is unset.
+- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2; if unset, KTM falls back to comm-only filtering (degraded mode with cross-pod risk).
+- `collector.ebpf.discovery_comm` (optional): comm name prefix used for userspace PID discovery in `/proc`; defaults to `banyand`. Note: kernel-side filtering is always hardcoded to `banyand` regardless of this setting.
+- Target discovery heuristic: match `/proc/<pid>/comm` against `discovery_comm` to populate the PID cache for performance optimization. The kernel always filters by comm="banyand".
 - Cleanup strategy is monotonic counters only; downstream derives rates. KTM does not clear BPF maps during collection.
 - Configuration is applied via the FODC sidecar; KTM does not define its own standalone process-level configuration surface.
 
@@ -74,12 +74,12 @@ Configuration surface (current):
 ## Scoping and Filtering
 
 - Scoping is not optional; KTM is designed exclusively to monitor the single BanyanDB process it is co-located with in a sidecar deployment.
-- The target container is identified at startup; eBPF programs filter events by cgroup membership first. If the cgroup filter is absent or misses, a configurable comm-prefix match (default `banyand`) is used as a narrow fallback.
+- The target container is identified at startup; eBPF programs filter events by cgroup membership first (preferred). If the cgroup filter is unavailable, KTM falls back to comm-only filtering (degraded mode) with a hardcoded comm check for `banyand`. **Warning**: comm-only mode may mix metrics across pods if multiple processes match the comm prefix.
 - The design intentionally avoids multi-process or node-level (DaemonSet) monitoring to keep the implementation simple and overhead minimal.
 
 ### Target Process Discovery (Pod / VM)
 
-KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** based on a configurable comm-prefix match (default `banyand`).
+KTM needs to resolve the single “target” BanyanDB process before enabling filters and attaching eBPF programs. In both Kubernetes pods and VM/bare-metal deployments, KTM uses a **process matcher** for userspace PID discovery (configurable via `discovery_comm`, default `banyand`). Kernel-side filtering always uses comm="banyand" and is not configurable.
 
 #### Kubernetes Pod (sidecar)
 
@@ -144,20 +144,22 @@ KTM itself has no direct network exporters. All metrics collected by KTM are per
 Prefix: metrics are currently emitted under the `ktm_` namespace to reflect their kernel eBPF origin (e.g., `ktm_cache_misses_total`).
 
 - I/O & Cache
-  - `ktm_cache_read_attempts_total`
-  - `ktm_cache_misses_total`
-  - `ktm_page_cache_adds_total`
+  - `ktm_cache_lookups_total`
+  - `ktm_cache_fills_total`
+  - `ktm_cache_deletes_total`
 - I/O latency (syscall-level)
   - `ktm_sys_read_latency_seconds` (histogram family: exposes `_bucket`, `_count`, `_sum`)
   - `ktm_sys_pread_latency_seconds` (histogram family: exposes `_bucket`, `_count`, `_sum`)
+  - `ktm_sys_read_bytes_total`
+  - `ktm_sys_pread_bytes_total`
 - fadvise()
   - `ktm_fadvise_calls_total`
-  - `ktm_fadvise_advice_total{advice="..."}`
-  - `ktm_fadvise_success_total`
+  - `ktm_fadvise_dontneed_total`
 - Memory
   - `ktm_memory_lru_pages_scanned_total`
   - `ktm_memory_lru_pages_reclaimed_total`
-  - `ktm_memory_direct_reclaim_processes`
+  - `ktm_memory_lru_shrink_events_total`
+  - `ktm_memory_direct_reclaim_begin_total`
 
 Semantics: all counters are monotonic; latency metrics are exported as Prometheus histograms (`_bucket`, `_count`, `_sum`); use Prometheus functions for rates/derivatives; no map clearing between scrapes. KTM does not emit ratio/percentage metrics; derive them upstream.
 

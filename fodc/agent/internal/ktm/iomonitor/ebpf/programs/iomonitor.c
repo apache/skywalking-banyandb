@@ -191,32 +191,41 @@ static __always_inline bool is_task_allowed() {
     // If not configured (target_id == 0), fall back to comm-only filtering.
     __u32 key = 0;
     __u64 *target_id = bpf_map_lookup_elem(&config_map, &key);
-    if (target_id && *target_id != 0) {
+    bool cgroup_enabled = (target_id && *target_id != 0);
+    
+    if (cgroup_enabled) {
         // Cgroup filter is active - enforce strict matching
         if (curr_cgroup_id != *target_id) {
             return false;
         }
         // Cgroup matched, continue to PID cache and comm checks
-    }
-    // If target_id is NULL or 0, cgroup filter is disabled - skip to comm check
-
-    // Layer 2: PID cache (performance optimization)
-    // Fast path for known PIDs, avoids repeated comm checks.
-    if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
-        return true;
-    }
-
-    // Layer 3: Comm verification (primary filter when cgroup unavailable)
-    // - When cgroup is configured: sanity check for matched cgroup
-    // - When cgroup is unavailable: primary filtering mechanism
-    // This check is only executed once per new PID (amortized O(1)).
-    if (comm_is_banyandb()) {
+        
+        // Layer 2: PID cache (performance optimization in strict mode)
+        if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
+            return true;
+        }
+        
+        // Layer 3: Comm verification (sanity check for matched cgroup)
+        if (comm_is_banyandb()) {
+            __u8 one = 1;
+            bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
+            return true;
+        }
+        
+        return false;
+    } else {
+        // Comm-only mode (degraded): check comm FIRST to prevent PID reuse pollution
+        // Layer 2: Comm verification (primary filter in degraded mode)
+        if (!comm_is_banyandb()) {
+            return false;
+        }
+        
+        // Layer 3: PID cache (optional optimization, but comm is authoritative)
+        // Update cache for future fast-path, but comm check is the source of truth
         __u8 one = 1;
         bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
         return true;
     }
-
-    return false;
 }
 
 static __always_inline __u64 log2l(__u64 v) {

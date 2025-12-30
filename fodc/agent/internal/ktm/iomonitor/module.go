@@ -31,12 +31,12 @@ import (
 )
 
 type module struct {
-	logger     *zap.Logger
-	loader     *ebpf.EnhancedLoader
-	objs       *generated.IomonitorObjects
-	name       string
-	cgroupPath string
-	targetComm string
+	logger        *zap.Logger
+	loader        *ebpf.EnhancedLoader
+	objs          *generated.IomonitorObjects
+	name          string
+	cgroupPath    string
+	discoveryComm string
 }
 
 func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
@@ -45,18 +45,20 @@ func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
 
-	// Apply default target comm if not specified
-	targetComm := ebpfCfg.TargetComm
-	if targetComm == "" {
-		targetComm = "banyand"
+	// Apply default discovery comm if not specified
+	// Note: This only affects userspace PID discovery.
+	// Kernel-side comm filtering is always hardcoded to "banyand".
+	discoveryComm := ebpfCfg.DiscoveryComm
+	if discoveryComm == "" {
+		discoveryComm = "banyand"
 	}
 
 	return &module{
-		name:       "iomonitor",
-		logger:     logger,
-		loader:     ebpfLoader,
-		cgroupPath: ebpfCfg.CgroupPath,
-		targetComm: targetComm,
+		name:          "iomonitor",
+		logger:        logger,
+		loader:        ebpfLoader,
+		cgroupPath:    ebpfCfg.CgroupPath,
+		discoveryComm: discoveryComm,
 	}, nil
 }
 
@@ -76,10 +78,12 @@ func (m *module) Start() error {
 		m.loader.SetCgroupPath(m.cgroupPath)
 	}
 
-	// Configure target process comm name
-	m.loader.SetTargetComm(m.targetComm)
-	m.logger.Info("Configured target process filter",
-		zap.String("target_comm", m.targetComm))
+	// Configure discovery comm for userspace PID scanning
+	// Note: Kernel-side filtering is always "banyand" regardless of this setting
+	m.loader.SetTargetComm(m.discoveryComm)
+	m.logger.Info("Configured process discovery filter",
+		zap.String("discovery_comm", m.discoveryComm),
+		zap.String("note", "kernel filtering is always 'banyand'"))
 
 	// Load eBPF programs
 	if err := m.loader.LoadPrograms(); err != nil {
