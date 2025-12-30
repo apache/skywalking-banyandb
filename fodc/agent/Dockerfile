@@ -22,14 +22,14 @@ FROM busybox:stable-glibc AS build-linux
 
 ARG TARGETARCH
 
-COPY build/bin/linux/${TARGETARCH}/fodc-agent-cli-static /fodc-agent
+COPY build/bin/linux/${TARGETARCH}/fodc-agent-static /fodc-agent
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
 
 ARG TARGETARCH
 
-COPY build/bin/windows/${TARGETARCH}/fodc-agent-cli-static "/fodc-agent"
+COPY build/bin/windows/${TARGETARCH}/fodc-agent-static "/fodc-agent"
 
 FROM build-${TARGETOS} AS final
 
