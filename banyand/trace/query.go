@@ -84,12 +84,10 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	sort.Strings(tqo.TraceIDs)
 
 	schemaTagTypes := make(map[string]pbv1.ValueType)
-	if is := t.indexSchema.Load(); is != nil {
-		for name, spec := range is.(indexSchema).tagMap {
-			vt := pbv1.TagValueSpecToValueType(spec.GetType())
-			if vt != pbv1.ValueTypeUnknown {
-				schemaTagTypes[name] = vt
-			}
+	for _, tag := range t.schema.GetTags() {
+		vt := pbv1.TagValueSpecToValueType(tag.GetType())
+		if vt != pbv1.ValueTypeUnknown {
+			schemaTagTypes[tag.GetName()] = vt
 		}
 	}
 
