@@ -17,7 +17,7 @@
 #
 
 NAME := fodc-agent
-BINARIES := $(NAME)
+BINARIES := $(NAME)-agent
 
 IMG_NAME := skywalking-fodc-agent
 

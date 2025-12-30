@@ -22,14 +22,14 @@ FROM busybox:stable-glibc AS build-linux
 
 ARG TARGETARCH
 
-COPY build/bin/linux/${TARGETARCH}/fodc-proxy-static /fodc-proxy
+COPY build/bin/linux/${TARGETARCH}/fodc-proxy-proxy-static /fodc-proxy
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS build-windows
 
 ARG TARGETARCH
 
-COPY build/bin/windows/${TARGETARCH}/fodc-proxy-static "/fodc-proxy"
+COPY build/bin/windows/${TARGETARCH}/fodc-proxy-proxy-static "/fodc-proxy"
 
 FROM build-${TARGETOS} AS final
 
