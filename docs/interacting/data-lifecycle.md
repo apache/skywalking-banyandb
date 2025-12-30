@@ -46,7 +46,7 @@ EOF
 
 More ttl units can be found in the [IntervalRule.Unit](../api-reference.md#intervalruleunit).
 
-You can also manage the Group by other clients such as [Web-UI](./web-ui/schema/group.md) or [Java-Client](java-client.md).
+You can also manage the Group by other clients such as [Web-UI](./web-ui/schema/group.md) or [Client APIs](client.md).
 
 For more details about how they works, please refer to the [data rotation](../concept/rotation.md).
 
@@ -96,7 +96,7 @@ bydbctl property keepalive --lease_id 7587880824757265022
 
 "General-Service" lives another 1 hour.
 
-You can also manage the Property by other clients such as [Web-UI](./web-ui/property.md) or [Java-Client](java-client.md).
+You can also manage the Property by other clients such as [Web-UI](./web-ui/property.md) or [Client APIs](client.md).
 
 ## The API reference 
 - [Group Registration Operations](../api-reference.md#groupregistryservice)

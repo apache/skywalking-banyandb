@@ -167,6 +167,18 @@ func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	return tagRefs, nil
 }
 
+// ValidateProjectionTags checks if all tags in the projection exist in the schema.
+func (cs *CommonSchema) ValidateProjectionTags(tags ...[]*Tag) error {
+	for _, tagInFamily := range tags {
+		for _, tag := range tagInFamily {
+			if _, ok := cs.TagSpecMap[tag.GetTagName()]; !ok {
+				return errors.Wrap(ErrTagNotDefined, tag.GetTagName())
+			}
+		}
+	}
+	return nil
+}
+
 func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -216,7 +228,8 @@ func MergeSchemas(schemas []*CommonSchema) (*CommonSchema, error) {
 	return merged, nil
 }
 
-func mergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
+// MergeTagSpecs merges two slices of TagSpec.
+func MergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
 	res := make([]*databasev1.TagSpec, 0, len(dst)+len(src))
 	res = append(res, dst...)
 	for _, s := range src {
@@ -225,8 +238,11 @@ func mergeTagSpecs(dst, src []*databasev1.TagSpec) []*databasev1.TagSpec {
 			if d.Name == s.Name {
 				if d.Type != s.Type {
 					// If the type is different, the tag spec is not compatible.
-					// We need to set the type to unspecifed.
-					res[i].Type = databasev1.TagType_TAG_TYPE_UNSPECIFIED
+					// Create a copy with type set to unspecified to avoid modifying the original schema.
+					res[i] = &databasev1.TagSpec{
+						Name: d.Name,
+						Type: databasev1.TagType_TAG_TYPE_UNSPECIFIED,
+					}
 				}
 				found = true
 				break
@@ -247,7 +263,11 @@ func MergeTagFamilySpecs(dst []*databasev1.TagFamilySpec, src []*databasev1.TagF
 		found := false
 		for i, d := range dst {
 			if d.Name == s.Name {
-				res[i].Tags = mergeTagSpecs(d.Tags, s.Tags)
+				// Create a copy to avoid modifying the original schema.
+				res[i] = &databasev1.TagFamilySpec{
+					Name: d.Name,
+					Tags: MergeTagSpecs(d.Tags, s.Tags),
+				}
 				found = true
 				break
 			}

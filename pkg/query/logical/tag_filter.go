@@ -90,6 +90,11 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 	switch criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
 		cond := criteria.GetCondition()
+		if schema != nil {
+			if tagSpec := schema.FindTagSpecByName(cond.Name); tagSpec == nil {
+				return nil, errors.WithMessagef(ErrTagNotDefined, "tag %q does not exist in the current schema", cond.Name)
+			}
+		}
 		var expr ComparableExpr
 		var err error
 		_, indexRule := indexChecker.IndexRuleDefined(cond.Name)
@@ -532,7 +537,7 @@ func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName s
 			return parseExpr(tagVal, analyzer)
 		}
 	}
-	return nil, errTagNotDefined
+	return nil, ErrTagNotDefined
 }
 
 type matchTag struct {

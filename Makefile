@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl mcp
+PROJECTS := ui banyand bydbctl mcp fodc/agent
 
 TEST_CI_OPTS ?=
 
@@ -175,11 +175,11 @@ license-dep: default ## Fix license header issues
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: PROJECTS:= banyand bydbctl mcp
+docker.build: PROJECTS:= banyand bydbctl mcp fodc/agent
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:= banyand bydbctl mcp
+docker.push: PROJECTS:= banyand bydbctl mcp fodc/agent
 docker.push: default ## Push docker images
 
 default:
@@ -210,6 +210,7 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k mcp
+	${RELEASE_SCRIPTS} -k fodc
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Generate release package

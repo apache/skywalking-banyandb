@@ -42,6 +42,26 @@ dataPoints:
           - key: id
             value:
               str:
+                value: id_spec_5
+          - key: entity_id
+            value:
+              str:
+                value: entity_spec_5
+    fields:
+      - name: total
+        value:
+          int:
+            value: "50"
+      - name: value
+        value:
+          int:
+            value: "500"
+  - tagFamilies:
+      - name: default
+        tags:
+          - key: id
+            value:
+              str:
                 value: id_schema_1
           - key: entity_id
             value:
@@ -136,4 +156,3 @@ dataPoints:
         value:
           int:
             value: "100"
-

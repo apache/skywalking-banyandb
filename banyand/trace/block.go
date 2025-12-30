@@ -421,6 +421,7 @@ type blockCursor struct {
 	tags             []tag
 	tagValuesDecoder encoding.BytesBlockDecoder
 	tagProjection    *model.TagProjection
+	schemaTagTypes   map[string]pbv1.ValueType
 	bm               blockMetadata
 }
 
@@ -428,6 +429,7 @@ func (bc *blockCursor) reset() {
 	bc.p = nil
 	bc.bm.reset()
 	bc.tagProjection = nil
+	bc.schemaTagTypes = nil
 
 	for i := range bc.spans {
 		bc.spans[i] = nil
@@ -446,6 +448,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.p = p
 	bc.bm.copyFrom(bm)
 	bc.tagProjection = opts.TagProjection
+	bc.schemaTagTypes = opts.schemaTagTypes
 }
 
 func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
@@ -462,9 +465,14 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 	}
 	for i, t := range bc.tags {
 		values := make([]*modelv1.TagValue, len(bc.spans))
+		schemaType, hasSchemaType := bc.schemaTagTypes[t.name]
 		for k := range bc.spans {
 			if len(t.values) > k {
-				values[k] = mustDecodeTagValue(t.valueType, t.values[k])
+				if hasSchemaType && t.valueType == schemaType {
+					values[k] = mustDecodeTagValue(t.valueType, t.values[k])
+				} else {
+					values[k] = pbv1.NullTagValue
+				}
 			} else {
 				values[k] = pbv1.NullTagValue
 			}

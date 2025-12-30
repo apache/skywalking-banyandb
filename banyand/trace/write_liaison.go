@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
@@ -70,12 +71,15 @@ func (w *writeQueueCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (map[string]*tracesInQueue, error) {
-	stm, ok := w.schemaRepo.loadTrace(writeEvent.GetRequest().GetMetadata())
+func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest,
+	metadata *commonv1.Metadata, spec *tracev1.TagSpec,
+) (map[string]*tracesInQueue, error) {
+	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find trace definition: %s", writeEvent.GetRequest().GetMetadata())
+		return nil, fmt.Errorf("cannot find trace definition: %s", metadata)
 	}
-	idx, err := getTagIndex(stm, stm.schema.TimestampTagName)
+	specMap := buildSpecMap(spec)
+	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +88,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 		return nil, fmt.Errorf("invalid timestamp: %w", err)
 	}
 	ts := t.UnixNano()
-	eq, err := w.prepareElementsInQueue(dst, writeEvent)
+	eq, err := w.prepareElementsInQueue(dst, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -92,15 +96,15 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 	if err != nil {
 		return nil, err
 	}
-	err = processTraces(w.schemaRepo, et, writeEvent)
+	err = processTraces(w.schemaRepo, et, writeEvent, metadata, spec)
 	if err != nil {
 		return nil, err
 	}
 	return dst, nil
 }
 
-func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueue, writeEvent *tracev1.InternalWriteRequest) (*tracesInQueue, error) {
-	gn := writeEvent.Request.Metadata.Group
+func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueue, metadata *commonv1.Metadata) (*tracesInQueue, error) {
+	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
@@ -165,6 +169,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	groups := make(map[string]*tracesInQueue)
+	var metadata *commonv1.Metadata
+	var spec *tracev1.TagSpec
 	for i := range events {
 		var writeEvent *tracev1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -180,8 +186,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			w.l.Warn().Msg("invalid event data type")
 			continue
 		}
+		req := writeEvent.Request
+		if req != nil && req.GetMetadata() != nil {
+			metadata = req.GetMetadata()
+		}
+		if req != nil && req.GetTagSpec() != nil {
+			spec = req.GetTagSpec()
+		}
 		var err error
-		if groups, err = w.handle(groups, writeEvent); err != nil {
+		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
 			w.l.Error().Err(err).Msg("cannot handle write event")
 			groups = make(map[string]*tracesInQueue)
 			continue
@@ -191,6 +204,16 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		g := groups[i]
 		for j := range g.tables {
 			es := g.tables[j]
+			// Marshal series metadata for persistence in part folder
+			var seriesMetadataBytes []byte
+			if len(es.seriesDocs.docs) > 0 {
+				var marshalErr error
+				seriesMetadataBytes, marshalErr = es.seriesDocs.docs.Marshal()
+				if marshalErr != nil {
+					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					// Continue without series metadata, but log the error
+				}
+			}
 			var sidxMemPartMap map[string]*sidx.MemPart
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
@@ -210,8 +233,10 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					sidxMemPartMap[sidxName] = siMemPart
 				}
 			}
-			es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano(), sidxMemPartMap)
-			releaseTraces(es.traces)
+			if es.tsTable != nil && es.traces != nil {
+				es.tsTable.mustAddTracesWithSegmentID(es.traces, es.timeRange.Start.UnixNano(), sidxMemPartMap, seriesMetadataBytes)
+				releaseTraces(es.traces)
+			}
 
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {
@@ -220,24 +245,19 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			}
 
 			// Handle series index writing
-			if len(es.seriesDocs.docs) > 0 {
-				seriesDocData, marshalErr := es.seriesDocs.docs.Marshal()
-				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series documents")
-				} else {
-					// Encode group name, start timestamp from timeRange, and prepend to docData
-					combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
-					combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
-					combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
-					combinedData = append(combinedData, seriesDocData...)
+			if len(seriesMetadataBytes) > 0 {
+				// Encode group name, start timestamp from timeRange, and prepend to docData
+				combinedData := make([]byte, 0, len(seriesMetadataBytes)+len(g.name)+8)
+				combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
+				combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
+				combinedData = append(combinedData, seriesMetadataBytes...)
 
-					// Send to all nodes for this shard
-					for _, node := range nodes {
-						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						_, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
-						if publishErr != nil {
-							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
-						}
+				// Send to all nodes for this shard
+				for _, node := range nodes {
+					message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
+					_, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
+					if publishErr != nil {
+						w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
 					}
 				}
 			}

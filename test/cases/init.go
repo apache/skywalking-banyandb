@@ -25,7 +25,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	caseproperty "github.com/apache/skywalking-banyandb/test/cases/property/data"
@@ -43,6 +46,38 @@ func Initialize(addr string, now time.Time) {
 	casesstreamdata.Write(conn, "sw", now, interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
 	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
+	casesstreamdata.WriteMixed(conn, now.Add(2*time.Minute), interval,
+		casesstreamdata.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec"},
+			DataFile: "sw_schema_order.json",
+		},
+		casesstreamdata.WriteSpec{
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+				{
+					Name:     "searchable",
+					TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "start_time", "http.method", "status_code", "span_id"},
+				},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		casesstreamdata.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec2"},
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "searchable",
+					TagNames: []string{"span_id", "status_code", "http.method", "duration", "state", "endpoint_id", "service_instance_id", "start_time", "service_id", "trace_id"},
+				},
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
 	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
@@ -63,8 +98,12 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "endpoint_traffic", "sw_metric", "endpoint_traffic.json", now, interval)
 	casesmeasuredata.Write(conn, "duplicated", "exception", "duplicated.json", now, 0)
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
-	casesmeasuredata.WriteWithSpec(conn, "service_cpm_minute", "sw_metric", now.Add(20*time.Minute), interval,
-		casesmeasuredata.SpecWithData{
+	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
+		casesmeasuredata.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},
+			DataFile: "service_cpm_minute_schema_order.json",
+		},
+		casesmeasuredata.WriteSpec{
 			Spec: &measurev1.DataPointSpec{
 				TagFamilySpec: []*measurev1.TagFamilySpec{
 					{
@@ -76,7 +115,8 @@ func Initialize(addr string, now time.Time) {
 			},
 			DataFile: "service_cpm_minute_spec_order.json",
 		},
-		casesmeasuredata.SpecWithData{
+		casesmeasuredata.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec2"},
 			Spec: &measurev1.DataPointSpec{
 				TagFamilySpec: []*measurev1.TagFamilySpec{
 					{
@@ -88,18 +128,6 @@ func Initialize(addr string, now time.Time) {
 			},
 			DataFile: "service_cpm_minute_spec_order2.json",
 		})
-	casesmeasuredata.WriteMixed(conn, "service_cpm_minute", "sw_metric",
-		"service_cpm_minute_schema_order.json", "service_cpm_minute_spec_order.json",
-		now.Add(30*time.Minute), interval, 2*time.Minute,
-		&measurev1.DataPointSpec{
-			TagFamilySpec: []*measurev1.TagFamilySpec{
-				{
-					Name:     "default",
-					TagNames: []string{"entity_id", "id"},
-				},
-			},
-			FieldNames: []string{"value", "total"},
-		})
 	time.Sleep(5 * time.Second)
 	// trace
 	interval = 500 * time.Millisecond
@@ -108,6 +136,24 @@ func Initialize(addr string, now time.Time) {
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
 	time.Sleep(5 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
+	casestrace.WriteMixed(conn, now.Add(2*time.Minute), interval,
+		casestrace.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec"},
+			DataFile: "sw_schema_order.json",
+		},
+		casestrace.WriteSpec{
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "span_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		casestrace.WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec2"},
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"span_id", "duration", "endpoint_id", "service_instance_id", "service_id", "state", "trace_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
 	// property
 	caseproperty.Write(conn, "sw1")
 	caseproperty.Write(conn, "sw2")

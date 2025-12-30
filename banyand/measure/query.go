@@ -65,6 +65,7 @@ type Measure interface {
 var _ Measure = (*measure)(nil)
 
 type queryOptions struct {
+	schemaTagTypes map[string]pbv1.ValueType
 	model.MeasureQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -77,6 +78,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
 		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
 	}
+
 	var tsdb storage.TSDB[*tsTable, option]
 	db := m.tsdb.Load()
 	if db == nil {
@@ -135,9 +137,21 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}()
 	mqo.TagProjection = newTagProjection
+
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	for _, tf := range m.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[tag.GetName()] = vt
+			}
+		}
+	}
+
 	var parts []*part
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
+		schemaTagTypes:      schemaTagTypes,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
 	}

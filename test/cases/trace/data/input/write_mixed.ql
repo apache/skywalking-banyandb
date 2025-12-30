@@ -16,7 +16,6 @@
 # under the License.
 
 
-SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_metric
+SELECT trace_id, state, duration, span_id FROM TRACE sw IN test-trace-spec, test-trace-spec2
 TIME > '-15m'
-WHERE id IN ('id_spec_2', 'id_spec_5')
-
+WHERE trace_id IN ('schema_trace_001', 'spec_trace_001', 'spec_trace_003')

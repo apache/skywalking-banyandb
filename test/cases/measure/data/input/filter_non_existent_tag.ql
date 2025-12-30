@@ -15,19 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "service_cpm_minute"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-    - name: "default"
-      tags: ["id", "entity_id"]
-fieldProjection:
-  names: ["total", "value"]
-criteria:
-  condition:
-    name: "id"
-    op: "BINARY_OP_IN"
-    value:
-      strArray:
-        value: ["id_spec_2", "id_spec_5"]
-
+SELECT id, total, value FROM service_cpm_minute IN sw_metric
+TIME > '-15m'
+WHERE nonexistent_tag = 'test_value'

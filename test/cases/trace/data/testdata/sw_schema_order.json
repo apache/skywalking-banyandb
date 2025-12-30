@@ -1,0 +1,123 @@
+[
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "schema_trace_001"
+        }
+      },
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_1"
+        }
+      },
+      {
+        "str": {
+          "value": "/home_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 1200
+        }
+      },
+      {
+        "str": {
+          "value": "schema_span_001_1"
+        }
+      }
+    ],
+    "span": "schema_trace_001_span_1"
+  },
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "schema_trace_001"
+        }
+      },
+      {
+        "int": {
+          "value": 0
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_service"
+        }
+      },
+      {
+        "str": {
+          "value": "webapp_instance_2"
+        }
+      },
+      {
+        "str": {
+          "value": "/product_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 800
+        }
+      },
+      {
+        "str": {
+          "value": "schema_span_001_2"
+        }
+      }
+    ],
+    "span": "schema_trace_001_span_2"
+  },
+  {
+    "tags": [
+      {
+        "str": {
+          "value": "schema_trace_002"
+        }
+      },
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "str": {
+          "value": "api_service"
+        }
+      },
+      {
+        "str": {
+          "value": "api_instance_1"
+        }
+      },
+      {
+        "str": {
+          "value": "/api_endpoint"
+        }
+      },
+      {
+        "int": {
+          "value": 650
+        }
+      },
+      {
+        "str": {
+          "value": "schema_span_002_1"
+        }
+      }
+    ],
+    "span": "schema_trace_002_span_1"
+  }
+]
+

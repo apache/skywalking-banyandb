@@ -136,21 +136,24 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
 }
 
-func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration) {
+func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration, elementCounter *int) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	gm.Expect(elementCounter).NotTo(gm.BeNil(), "elementCounter must be provided")
 	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
 
-	for i, template := range templates {
+	for _, template := range templates {
 		rawSearchTagFamily, errMarshal := json.Marshal(template)
 		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
 		searchTagFamily := &modelv1.TagFamilyForWrite{}
 		gm.Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(gm.HaveOccurred())
+		elementID := *elementCounter
+		*elementCounter++
 		e := &streamv1.ElementValue{
-			ElementId: strconv.Itoa(i),
-			Timestamp: timestamppb.New(baseTime.Add(interval * time.Duration(i))),
+			ElementId: strconv.Itoa(elementID),
+			Timestamp: timestamppb.New(baseTime.Add(interval * time.Duration(elementID))),
 			TagFamilies: []*modelv1.TagFamilyForWrite{
 				{
 					Tags: []*modelv1.TagValue{
@@ -170,6 +173,35 @@ func loadData(stream streamv1.StreamService_WriteClient, metadata *commonv1.Meta
 			MessageId: uint64(time.Now().UnixNano()),
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
+	}
+}
+
+func loadDataWithSpec(stream streamv1.StreamService_WriteClient, md *commonv1.Metadata, dataFile string,
+	baseTime time.Time, interval time.Duration, spec []*streamv1.TagFamilySpec, elementCounter *int,
+) {
+	var templates []interface{}
+	content, err := dataFS.ReadFile("testdata/" + dataFile)
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	gm.Expect(elementCounter).NotTo(gm.BeNil(), "elementCounter must be provided")
+
+	isFirst := true
+	for _, template := range templates {
+		rawElementValue, errMarshal := json.Marshal(template)
+		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+		elementValue := &streamv1.ElementValue{}
+		gm.Expect(protojson.Unmarshal(rawElementValue, elementValue)).ShouldNot(gm.HaveOccurred())
+		elementID := *elementCounter
+		*elementCounter++
+		elementValue.ElementId = strconv.Itoa(elementID)
+		elementValue.Timestamp = timestamppb.New(baseTime.Add(time.Duration(elementID) * interval))
+		req := &streamv1.WriteRequest{Element: elementValue, MessageId: uint64(time.Now().UnixNano())}
+		if isFirst {
+			req.Metadata = md
+			req.TagFamilySpec = spec
+			isFirst = false
+		}
+		gm.Expect(stream.Send(req)).Should(gm.Succeed())
 	}
 }
 
@@ -217,6 +249,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	innerGm.Expect(errStrs).To(gm.BeNil())
 	transformer := bydbql.NewTransformer(mockRepo)
 	transform, err := transformer.Transform(context.Background(), query)
+	if args.WantErr && err != nil {
+		return
+	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	qlQuery, ok := transform.QueryRequest.(*streamv1.QueryRequest)
 	innerGm.Expect(ok).To(gm.BeTrue())
@@ -267,10 +302,61 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval)
+	elementCounter := 0
+	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &elementCounter)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()
 		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}
+
+// WriteSpec defines the specification for writing stream data.
+type WriteSpec struct {
+	Metadata *commonv1.Metadata
+	DataFile string
+	Spec     []*streamv1.TagFamilySpec
+}
+
+// WriteMixed writes stream data in schema order first, and then in spec order.
+func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
+	ctx := context.Background()
+	schemaClient := databasev1.NewStreamRegistryServiceClient(conn)
+	c := streamv1.NewStreamServiceClient(conn)
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+
+	var currentMd *commonv1.Metadata
+	elementCounter := 0
+	currentTime := baseTime
+	for idx, ws := range writeSpecs {
+		if ws.Metadata != nil {
+			resp, getErr := schemaClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: ws.Metadata})
+			gm.Expect(getErr).NotTo(gm.HaveOccurred())
+			currentMd = resp.GetStream().GetMetadata()
+		}
+		gm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
+
+		var templates []interface{}
+		content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
+		gm.Expect(readErr).ShouldNot(gm.HaveOccurred())
+		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+		if idx == 0 {
+			loadData(writeClient, currentMd, ws.DataFile, currentTime, interval, &elementCounter)
+		} else {
+			var mdToSend *commonv1.Metadata
+			if ws.Metadata != nil {
+				mdToSend = currentMd
+			}
+			loadDataWithSpec(writeClient, mdToSend, ws.DataFile, currentTime, interval, ws.Spec, &elementCounter)
+		}
+		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+	}
+
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, recvErr := writeClient.Recv()
+		return recvErr
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
