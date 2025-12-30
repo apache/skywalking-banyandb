@@ -64,6 +64,9 @@ func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan,
 	if err != nil {
 		return nil, err
 	}
+	if len(groupByTagRefs) == 0 {
+		return nil, errors.Wrap(logical.ErrTagNotDefined, "groupBy schema")
+	}
 	return &groupBy{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
