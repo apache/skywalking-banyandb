@@ -43,7 +43,6 @@ import (
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
-	sqo.TagProjection = s.filterTagProjection(sqo.TagProjection)
 	if err = validateQueryInput(sqo); err != nil {
 		return nil, err
 	}
@@ -97,50 +96,6 @@ func validateQueryInput(sqo model.StreamQueryOptions) error {
 		return errors.New("invalid query options: tagProjection is required")
 	}
 	return nil
-}
-
-func (s *stream) filterTagProjection(tagProjection []model.TagProjection) []model.TagProjection {
-	is := s.indexSchema.Load()
-	if is == nil {
-		return tagProjection
-	}
-	tagMap := is.(indexSchema).tagMap
-	if len(tagMap) == 0 {
-		return tagProjection
-	}
-
-	schemaTagFamilies := make(map[string]map[string]struct{})
-	for _, tf := range s.schema.GetTagFamilies() {
-		tagNames := make(map[string]struct{})
-		for _, tag := range tf.GetTags() {
-			tagNames[tag.GetName()] = struct{}{}
-		}
-		schemaTagFamilies[tf.GetName()] = tagNames
-	}
-
-	result := make([]model.TagProjection, 0, len(tagProjection))
-	for _, tp := range tagProjection {
-		schemaTags, familyExists := schemaTagFamilies[tp.Family]
-		if !familyExists {
-			continue
-		}
-
-		filteredNames := make([]string, 0, len(tp.Names))
-		for _, name := range tp.Names {
-			if _, tagExists := schemaTags[name]; tagExists {
-				filteredNames = append(filteredNames, name)
-			}
-		}
-
-		if len(filteredNames) > 0 {
-			result = append(result, model.TagProjection{
-				Family: tp.Family,
-				Names:  filteredNames,
-			})
-		}
-	}
-
-	return result
 }
 
 func (s *stream) getTSDB() (storage.TSDB[*tsTable, option], error) {
