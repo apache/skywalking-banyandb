@@ -34,25 +34,24 @@ import (
 )
 
 type aggregatorItem struct {
-	int64Func       aggregation.Func[int64]
-	key             string
-	values          pbv1.EntityValues
-	index           int
-	timestampMillis uint64
-	val             int64
+	int64Func aggregation.Func[int64]
+	key       string
+	values    pbv1.EntityValues
+	index     int
 }
 
 type topNValueItem struct {
 	values          pbv1.EntityValues
 	timestampMillis uint64
 	val             int64
+	version         int64
 }
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
 	Val([]string) []*measurev1.TopNList
-	Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64)
+	Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64)
 	Flush() (map[uint64][]*nonAggregatorItem, error)
 	Reset()
 }
@@ -95,7 +94,7 @@ func (aggr postAggregationProcessor) Reset() {
 	panic("implement me")
 }
 
-func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) {
+func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
 	entityStr := entityValues.String()
 
 	var sb strings.Builder
@@ -106,10 +105,20 @@ func (aggr postAggregationProcessor) Load(entityValues pbv1.EntityValues, val in
 	sb.WriteString(strconv.FormatUint(timestampMillis, 10))
 
 	key := sb.String()
+
+	if current, ok := aggr.dedupMap[key]; ok {
+		if version > current.version {
+			current.version = version
+			current.val = val
+		}
+		return
+	}
+
 	aggr.dedupMap[key] = &topNValueItem{
 		values:          entityValues,
 		val:             val,
 		timestampMillis: timestampMillis,
+		version:         version,
 	}
 }
 
@@ -246,6 +255,7 @@ type nonAggregatorItem struct {
 	val             int64
 	index           int
 	timestampMillis uint64
+	version         int64
 }
 
 func (n *nonAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
@@ -379,11 +389,14 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	return nil
 }
 
-func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) {
+func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
 	key := entityValues.String()
 
 	if item, ok := naggr.topNCache[key]; ok {
-		item.val = val
+		if version > item.version {
+			item.version = version
+			item.val = val
+		}
 		return
 	}
 
@@ -391,5 +404,6 @@ func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, v
 		val:             val,
 		values:          entityValues,
 		timestampMillis: timestampMillis,
+		version:         version,
 	}
 }
