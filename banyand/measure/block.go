@@ -666,8 +666,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	}
 }
 
-func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
-	tqo *topNQueryOptions, aggregator PostProcessor,
+func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, topNPostAggregator PostProcessor,
 ) {
 	r.SID = bc.bm.seriesID
 	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
@@ -707,7 +706,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 		}
 	}
 
-	if tqo != nil {
+	if topNPostAggregator != nil {
 		topNValue := GenerateTopNValue()
 		defer ReleaseTopNValue(topNValue)
 		decoder := GenerateTopNValuesDecoder()
@@ -734,7 +733,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				aggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+				topNPostAggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
 			}
 
 			topNValue.Reset()
@@ -748,10 +747,10 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				aggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+				topNPostAggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
 			}
 
-			m, err := aggregator.Flush()
+			m, err := topNPostAggregator.Flush()
 			if err != nil {
 				log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
 				continue

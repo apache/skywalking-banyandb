@@ -921,7 +921,7 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var lastVersion int64
 	var lastSid common.SeriesID
 
-	aggregator := CreateTopNPostAggregator(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, qr.topNQueryOptions.sortDirection)
+	topNPostAggregator := CreateTopNPostAggregator(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, qr.topNQueryOptions.sortDirection)
 
 	for qr.Len() > 0 {
 		topBC := qr.data[0]
@@ -934,7 +934,7 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 			// if len(result.Timestamps) > 0 &&
 			//	topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
 			if topBC.versions[topBC.idx] > lastVersion {
-				topBC.replace(result, storedIndexValue, qr.topNQueryOptions, aggregator)
+				topBC.replace(result, storedIndexValue, topNPostAggregator)
 			}
 		} else {
 			topBC.copyTo(result, storedIndexValue, tagProjection)

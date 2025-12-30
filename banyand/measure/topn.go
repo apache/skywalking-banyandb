@@ -863,6 +863,7 @@ func GroupName(groupTags []string) string {
 	return strings.Join(groupTags, "|")
 }
 
+// GenerateTopNValuesDecoder returns a new decoder instance of TopNValues.
 func GenerateTopNValuesDecoder() *encoding.BytesBlockDecoder {
 	v := topNValuesDecoderPool.Get()
 	if v == nil {
@@ -871,9 +872,10 @@ func GenerateTopNValuesDecoder() *encoding.BytesBlockDecoder {
 	return v
 }
 
+// ReleaseTopNValuesDecoder releases a decoder instance of TopNValues.
 func ReleaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
 	d.Reset()
 	topNValuesDecoderPool.Put(d)
 }
 
-var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder2")
+var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder")
