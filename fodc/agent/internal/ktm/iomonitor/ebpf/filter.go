@@ -83,7 +83,8 @@ func resolveTargetCgroupPath(cfgPath string) (string, error) {
 	// Extract Pod-level cgroup path (remove container-specific suffix)
 	podCgRel := extractPodLevelCgroup(cgRel)
 	if podCgRel == "" {
-		return "", fmt.Errorf("failed to extract Pod-level cgroup from: %s", cgRel)
+		// Fallback for non-Kubernetes environments: use self cgroup path.
+		return filepath.Join("/sys/fs/cgroup", cgRel), nil
 	}
 
 	return filepath.Join("/sys/fs/cgroup", podCgRel), nil

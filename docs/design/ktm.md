@@ -81,7 +81,7 @@ Configuration surface (current):
 
 ### Target Process Discovery (Pod / VM)
 
-KTM resolves the target cgroup before enabling filters and attaching eBPF programs. If `cgroup_path` is not provided, it derives a Pod-level cgroup from `/proc/self/cgroup`. Kernel-side filtering always uses `comm="banyand"` and is not configurable.
+KTM resolves the target cgroup before enabling filters and attaching eBPF programs. If `cgroup_path` is not provided, it derives a Pod-level cgroup from `/proc/self/cgroup` (and falls back to the self cgroup for non-Kubernetes environments). Kernel-side filtering always uses `comm="banyand"` and is not configurable.
 
 #### Kubernetes Pod (sidecar)
 
