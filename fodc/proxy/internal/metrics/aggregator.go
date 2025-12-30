@@ -193,7 +193,6 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 		}
 	}
 
-	allMetrics := make([]*AggregatedMetric, 0)
 	timeout := defaultCollectionTimeout
 	if filter.StartTime != nil && filter.EndTime != nil {
 		windowDuration := filter.EndTime.Sub(*filter.StartTime) + 5*time.Second
@@ -204,20 +203,31 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 		}
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	allMetrics := make([]*AggregatedMetric, 0)
+	var metricsMu sync.Mutex
+	var wg sync.WaitGroup
 
 	for agentID, collectCh := range collectChs {
-		select {
-		case <-timeoutCtx.Done():
-			ma.logger.Warn().
-				Str("agent_id", agentID).
-				Msg("Timeout waiting for metrics from agent")
-		case metrics := <-collectCh:
-			allMetrics = append(allMetrics, metrics...)
-		}
+		wg.Add(1)
+		go func(id string, ch chan []*AggregatedMetric) {
+			defer wg.Done()
+			agentCtx, agentCancel := context.WithTimeout(ctx, timeout)
+			defer agentCancel()
+
+			select {
+			case <-agentCtx.Done():
+				ma.logger.Warn().
+					Str("agent_id", id).
+					Msg("Timeout waiting for metrics from agent")
+			case metrics := <-ch:
+				metricsMu.Lock()
+				allMetrics = append(allMetrics, metrics...)
+				metricsMu.Unlock()
+			}
+		}(agentID, collectCh)
 	}
 
+	wg.Wait()
 	return allMetrics, nil
 }
 
