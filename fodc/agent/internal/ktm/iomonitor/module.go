@@ -111,6 +111,7 @@ func (m *module) Collect() (*metrics.MetricSet, error) {
 
 	// Collect metrics (cumulative)
 	m.collectMetrics(ms)
+	m.addDegradedMetric(ms)
 
 	return ms, nil
 }
@@ -134,6 +135,14 @@ func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	if err := m.collectPreadLatencyStats(ms); err != nil {
 		m.logger.Debug("Failed to collect pread latency stats", zap.Error(err))
 	}
+}
+
+func (m *module) addDegradedMetric(ms *metrics.MetricSet) {
+	degraded := 0.0
+	if m.loader != nil && m.loader.Degraded() {
+		degraded = 1.0
+	}
+	ms.AddGauge("ktm_degraded", degraded, nil)
 }
 
 func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {

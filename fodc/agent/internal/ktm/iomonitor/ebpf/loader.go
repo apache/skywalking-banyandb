@@ -50,6 +50,7 @@ type EnhancedLoader struct {
 	logger          *zap.Logger
 	cgroupPath      string
 	links           []link.Link
+	degraded        bool
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
@@ -111,12 +112,7 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	if err != nil {
 		l.logger.Warn("Failed to configure filters", zap.Error(err))
 	}
-	if degraded {
-		l.logger.Warn("Running in DEGRADED MODE: comm-only filtering (cgroup unavailable)",
-			zap.String("cgroup_path", l.cgroupPath),
-			zap.String("reason", degradedReason),
-			zap.String("risk", "metrics may mix across pods if multiple processes match comm prefix"))
-	}
+	l.setDegradedState(degraded, degradedReason)
 
 	return nil
 }
@@ -129,6 +125,11 @@ func (l *EnhancedLoader) ConfigureFilters() (bool, string, error) {
 	}
 
 	return configureFilters(l.objects, l.cgroupPath)
+}
+
+// Degraded reports whether KTM is running in comm-only (degraded) mode.
+func (l *EnhancedLoader) Degraded() bool {
+	return l.degraded
 }
 
 // AttachPrograms attaches the eBPF programs with intelligent fallback.
@@ -328,6 +329,21 @@ func (l *EnhancedLoader) GetAttachmentModes() map[string]string {
 // GetKernelFeatures returns detected kernel features.
 func (l *EnhancedLoader) GetKernelFeatures() *KernelFeatures {
 	return l.features
+}
+
+func (l *EnhancedLoader) setDegradedState(degraded bool, reason string) {
+	if degraded == l.degraded {
+		return
+	}
+	l.degraded = degraded
+	if degraded {
+		l.logger.Warn("KTM degraded: failed to resolve target cgroup, falling back to comm-only",
+			zap.String("cgroup_path", l.cgroupPath),
+			zap.String("reason", reason),
+			zap.String("risk", "metrics may mix across pods if multiple processes match comm"))
+		return
+	}
+	l.logger.Info("KTM recovered: cgroup scoping restored")
 }
 
 // Close cleans up all resources.

@@ -47,7 +47,6 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string) (bool
 		}
 		degraded = true
 		degradedReason = fmt.Sprintf("cgroup path resolution failed: %v", err)
-		// Continue to initialize PID cache for comm-based filtering
 	} else {
 		// Cgroup resolution succeeded - configure strict cgroup filtering
 		cgID, cgErr := getCgroupIDFromPath(targetPath)
@@ -66,8 +65,6 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string) (bool
 		}
 	}
 
-	// PID cache (allowed_pids map) is not used for performance optimization.
-	// Filtering relies solely on cgroup ID + comm checks in the kernel.
 	return degraded, degradedReason, nil
 }
 
@@ -76,13 +73,8 @@ func resolveTargetCgroupPath(cfgPath string) (string, error) {
 		return resolveCgroupPath(cfgPath)
 	}
 
-	// Try to detect banyand process cgroup (requires shareProcessNamespace)
-	if path, err := detectBanyanDBCgroupPath(); err == nil {
-		return path, nil
-	}
-
-	// Fallback: derive Pod-level cgroup from self
-	// This works in Kubernetes even without shareProcessNamespace
+	// Derive Pod-level cgroup from self.
+	// This works in Kubernetes even without shareProcessNamespace.
 	cgRel, err := readCgroupV2Path("self")
 	if err != nil {
 		return "", fmt.Errorf("failed to read self cgroup: %w", err)

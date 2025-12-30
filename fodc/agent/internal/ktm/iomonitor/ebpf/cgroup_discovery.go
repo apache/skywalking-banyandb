@@ -23,50 +23,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
-
-// detectBanyanDBCgroupPath best-effort discovers the cgroup v2 path of a BanyanDB process.
-// It scans processes whose comm contains "banyand" (prefix) and returns the first cgroup v2 path.
-func detectBanyanDBCgroupPath() (string, error) {
-	if !isCgroupV2Enabled() {
-		return "", fmt.Errorf("cgroup v2 is not available")
-	}
-
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return "", fmt.Errorf("failed to read /proc: %w", err)
-	}
-
-	for _, ent := range entries {
-		if !ent.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(ent.Name())
-		if err != nil || pid <= 0 {
-			continue
-		}
-
-		commBytes, err := os.ReadFile(filepath.Join("/proc", ent.Name(), "comm"))
-		if err != nil {
-			continue
-		}
-		comm := strings.TrimSpace(string(commBytes))
-		if !strings.HasPrefix(comm, "banyand") {
-			continue
-		}
-
-		cgPath, err := readCgroupV2Path(ent.Name())
-		if err != nil {
-			continue
-		}
-
-		return filepath.Join("/sys/fs/cgroup", cgPath), nil
-	}
-
-	return "", fmt.Errorf("no banyandb process cgroup found")
-}
 
 // readCgroupV2Path returns the cgroup v2 relative path for a pid.
 func readCgroupV2Path(pid string) (string, error) {
