@@ -183,6 +183,12 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 				Err(requestErr).
 				Str("agent_id", agentInfo.AgentID).
 				Msg("Failed to request metrics from agent")
+			ma.collectingMu.Lock()
+			if collectCh, exists := ma.collecting[agentInfo.AgentID]; exists {
+				close(collectCh)
+				delete(ma.collecting, agentInfo.AgentID)
+			}
+			ma.collectingMu.Unlock()
 			delete(collectChs, agentInfo.AgentID)
 		}
 	}
