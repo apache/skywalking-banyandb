@@ -38,8 +38,10 @@ type CollectorConfig struct {
 
 // EBPFConfig defines eBPF-specific configuration.
 type EBPFConfig struct {
-	CgroupPath   string `mapstructure:"cgroup_path"`   // Optional cgroup v2 path to filter PIDs
-	DiscoveryComm string `mapstructure:"discovery_comm"` // Process comm prefix for userspace PID discovery (default: "banyand"). Note: kernel-side filtering is always "banyand" regardless of this setting.
+	CgroupPath string `mapstructure:"cgroup_path"` // Optional cgroup v2 path to filter PIDs
+	// Process comm prefix for userspace PID discovery (default: "banyand").
+	// Note: kernel-side filtering is always "banyand" regardless of this setting.
+	DiscoveryComm string `mapstructure:"discovery_comm"`
 }
 
 // Collector manages eBPF program lifecycle and metrics collection.

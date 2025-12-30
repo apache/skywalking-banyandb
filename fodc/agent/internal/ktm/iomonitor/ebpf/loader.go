@@ -122,14 +122,15 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	}
 
 	// Configure cgroup filter if requested.
-	degraded, err := l.ConfigureFilters(l.targetComm)
+	degraded, degradedReason, err := l.ConfigureFilters(l.targetComm)
 	if err != nil {
 		l.logger.Warn("Failed to configure filters", zap.Error(err))
 	}
 	if degraded {
 		l.logger.Warn("Running in DEGRADED MODE: comm-only filtering (cgroup unavailable)",
-			zap.String("target_comm", l.targetComm),
+			zap.String("discovery_comm", l.targetComm),
 			zap.String("cgroup_path", l.cgroupPath),
+			zap.String("reason", degradedReason),
 			zap.String("risk", "metrics may mix across pods if multiple processes match comm prefix"))
 	}
 
@@ -137,10 +138,10 @@ func (l *EnhancedLoader) LoadPrograms() error {
 }
 
 // ConfigureFilters sets cgroup id and allowed pids.
-// Returns (degraded bool, error) where degraded=true means cgroup filtering is disabled.
-func (l *EnhancedLoader) ConfigureFilters(targetComm string) (bool, error) {
+// Returns (degraded bool, degradedReason string, error) where degraded=true means cgroup filtering is disabled.
+func (l *EnhancedLoader) ConfigureFilters(targetComm string) (bool, string, error) {
 	if l.objects == nil {
-		return false, fmt.Errorf("eBPF objects not loaded")
+		return false, "", fmt.Errorf("eBPF objects not loaded")
 	}
 
 	return configureFilters(l.objects, l.cgroupPath, targetComm)

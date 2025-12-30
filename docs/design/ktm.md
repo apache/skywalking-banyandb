@@ -64,8 +64,8 @@ Notes:
 
 Configuration surface (current):
 - `collector.interval`: Controls the periodic push interval for metrics to Flight Recorder. Defaults to 10s.
-- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2; if unset, KTM falls back to comm-only filtering (degraded mode with cross-pod risk).
-- `collector.ebpf.discovery_comm` (optional): comm name prefix used for userspace PID discovery in `/proc`; defaults to `banyand`. Note: kernel-side filtering is always hardcoded to `banyand` regardless of this setting.
+- `collector.ebpf.cgroup_path` (optional): absolute or `/sys/fs/cgroup`-relative path to the BanyanDB cgroup v2. If not explicitly configured, KTM attempts to auto-detect the target cgroup. Only when auto-detection fails does it fall back to comm-only filtering (degraded mode with cross-pod risk).
+- `collector.ebpf.discovery_comm` (optional): comm name prefix used for userspace PID discovery in `/proc`; defaults to `banyand`. **Important**: This setting only affects userspace process discovery. Kernel-side filtering always enforces `comm="banyand"` regardless of this configuration.
 - Target discovery heuristic: match `/proc/<pid>/comm` against `discovery_comm` to populate the PID cache for performance optimization. The kernel always filters by comm="banyand".
 - Cleanup strategy is monotonic counters only; downstream derives rates. KTM does not clear BPF maps during collection.
 - Configuration is applied via the FODC sidecar; KTM does not define its own standalone process-level configuration surface.
@@ -74,7 +74,11 @@ Configuration surface (current):
 ## Scoping and Filtering
 
 - Scoping is not optional; KTM is designed exclusively to monitor the single BanyanDB process it is co-located with in a sidecar deployment.
-- The target container is identified at startup; eBPF programs filter events by cgroup membership first (preferred). If the cgroup filter is unavailable, KTM falls back to comm-only filtering (degraded mode) with a hardcoded comm check for `banyand`. **Warning**: comm-only mode may mix metrics across pods if multiple processes match the comm prefix.
+- **Kernel-side filtering**: eBPF programs always enforce `comm="banyand"` in addition to any cgroup filtering. This is hardcoded and not configurable to ensure only BanyanDB processes are monitored.
+- **Filtering strategy**: 
+  - Preferred mode (strict): cgroup membership + comm="banyand" (both enforced)
+  - Degraded mode (comm-only): comm="banyand" only (when cgroup unavailable)
+  - **Warning**: comm-only mode may mix metrics across pods if multiple processes match the comm prefix.
 - The design intentionally avoids multi-process or node-level (DaemonSet) monitoring to keep the implementation simple and overhead minimal.
 
 ### Target Process Discovery (Pod / VM)

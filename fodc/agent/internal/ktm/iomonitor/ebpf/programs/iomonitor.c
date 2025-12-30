@@ -198,21 +198,19 @@ static __always_inline bool is_task_allowed() {
         if (curr_cgroup_id != *target_id) {
             return false;
         }
-        // Cgroup matched, continue to PID cache and comm checks
+        // Cgroup matched, continue to comm check (always required)
         
-        // Layer 2: PID cache (performance optimization in strict mode)
-        if (bpf_map_lookup_elem(&allowed_pids, &tgid)) {
-            return true;
+        // Layer 2: Comm verification (ALWAYS enforced, even if PID cache hits)
+        // This ensures kernel always filters by comm="banyand" as documented
+        if (!comm_is_banyandb()) {
+            return false;
         }
         
-        // Layer 3: Comm verification (sanity check for matched cgroup)
-        if (comm_is_banyandb()) {
-            __u8 one = 1;
-            bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
-            return true;
-        }
-        
-        return false;
+        // Layer 3: PID cache (performance optimization only, not a security boundary)
+        // Update cache for future reference, but comm check is authoritative
+        __u8 one = 1;
+        bpf_map_update_elem(&allowed_pids, &tgid, &one, BPF_ANY);
+        return true;
     } else {
         // Comm-only mode (degraded): check comm FIRST to prevent PID reuse pollution
         // Layer 2: Comm verification (primary filter in degraded mode)
