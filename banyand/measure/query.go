@@ -921,7 +921,8 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var lastVersion int64
 	var lastSid common.SeriesID
 
-	topNPostAggregator := CreateTopNPostAggregator(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, qr.topNQueryOptions.sortDirection)
+	topNPostAggregator := CreateTopNPostAggregator(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
+		qr.topNQueryOptions.sortDirection)
 
 	for qr.Len() > 0 {
 		topBC := qr.data[0]

@@ -179,9 +179,10 @@ func toTopNResponse(dps []*measurev1.DataPoint) *measurev1.TopNResponse {
 	topNItems := make([]*measurev1.TopNList_Item, len(dps))
 	for i, dp := range dps {
 		topNItems[i] = &measurev1.TopNList_Item{
-			Entity:  dp.GetTagFamilies()[0].GetTags(),
-			Value:   dp.GetFields()[0].GetValue(),
-			Version: dp.GetVersion(),
+			Entity:    dp.GetTagFamilies()[0].GetTags(),
+			Value:     dp.GetFields()[0].GetValue(),
+			Version:   dp.GetVersion(),
+			Timestamp: dp.GetTimestamp(),
 		}
 	}
 	topNList = append(topNList, &measurev1.TopNList{
