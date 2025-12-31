@@ -247,7 +247,7 @@ func TestNewFODCService(t *testing.T) {
 }
 
 func TestAgentConnection_UpdateActivity(t *testing.T) {
-	conn := &AgentConnection{
+	conn := &agentConnection{
 		LastActivity: time.Now().Add(-1 * time.Hour),
 	}
 
@@ -259,7 +259,7 @@ func TestAgentConnection_UpdateActivity(t *testing.T) {
 
 func TestAgentConnection_GetLastActivity(t *testing.T) {
 	now := time.Now()
-	conn := &AgentConnection{
+	conn := &agentConnection{
 		LastActivity: now,
 	}
 
@@ -564,7 +564,7 @@ func TestRequestMetrics_Success(t *testing.T) {
 	stream := newMockStreamMetricsServer(ctxWithMD)
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &AgentConnection{
+	service.connections[agentID] = &agentConnection{
 		AgentID:       agentID,
 		MetricsStream: stream,
 	}
@@ -591,7 +591,7 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 	stream := newMockStreamMetricsServer(ctxWithMD)
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &AgentConnection{
+	service.connections[agentID] = &agentConnection{
 		AgentID:       agentID,
 		MetricsStream: stream,
 	}
@@ -626,7 +626,7 @@ func TestRequestMetrics_NoMetricsStream(t *testing.T) {
 	require.NoError(t, registerErr)
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &AgentConnection{
+	service.connections[agentID] = &agentConnection{
 		AgentID:       agentID,
 		MetricsStream: nil,
 	}
@@ -652,7 +652,7 @@ func TestRequestMetrics_SendError(t *testing.T) {
 	stream.SetSendError(errors.New("send error"))
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &AgentConnection{
+	service.connections[agentID] = &agentConnection{
 		AgentID:       agentID,
 		MetricsStream: stream,
 	}
@@ -766,7 +766,7 @@ func TestCleanupConnection(t *testing.T) {
 	require.NoError(t, registerErr)
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &AgentConnection{AgentID: agentID}
+	service.connections[agentID] = &agentConnection{AgentID: agentID}
 	service.connectionsMu.Unlock()
 
 	service.cleanupConnection(agentID)

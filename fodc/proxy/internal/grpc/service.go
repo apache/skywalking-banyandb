@@ -39,8 +39,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// AgentConnection represents a connection to an agent.
-type AgentConnection struct {
+// agentConnection represents a connection to an agent.
+type agentConnection struct {
 	MetricsStream fodcv1.FODCService_StreamMetricsServer
 	Context       context.Context
 	Stream        grpc.ServerStream
@@ -52,14 +52,14 @@ type AgentConnection struct {
 }
 
 // UpdateActivity updates the last activity time.
-func (ac *AgentConnection) UpdateActivity() {
+func (ac *agentConnection) UpdateActivity() {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	ac.LastActivity = time.Now()
 }
 
 // GetLastActivity returns the last activity time.
-func (ac *AgentConnection) GetLastActivity() time.Time {
+func (ac *agentConnection) GetLastActivity() time.Time {
 	ac.mu.RLock()
 	defer ac.mu.RUnlock()
 	return ac.LastActivity
@@ -71,7 +71,7 @@ type FODCService struct {
 	registry          *registry.AgentRegistry
 	metricsAggregator *metrics.Aggregator
 	logger            *logger.Logger
-	connections       map[string]*AgentConnection
+	connections       map[string]*agentConnection
 	connectionsMu     sync.RWMutex
 	heartbeatInterval time.Duration
 }
@@ -82,7 +82,7 @@ func NewFODCService(registry *registry.AgentRegistry, metricsAggregator *metrics
 		registry:          registry,
 		metricsAggregator: metricsAggregator,
 		logger:            logger,
-		connections:       make(map[string]*AgentConnection),
+		connections:       make(map[string]*agentConnection),
 		heartbeatInterval: heartbeatInterval,
 	}
 }
@@ -93,7 +93,7 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 	defer cancel()
 
 	var agentID string
-	var agentConn *AgentConnection
+	var agentConn *agentConnection
 	initialRegistration := true
 
 	for {
@@ -133,9 +133,9 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			}
 
 			agentID = registeredAgentID
-			defer s.cleanupConnection(agentID)
+			defer s.cleanupConnection(registeredAgentID)
 
-			agentConn = &AgentConnection{
+			agentConn = &agentConnection{
 				AgentID:      agentID,
 				Identity:     identity,
 				Stream:       stream,
@@ -213,7 +213,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		existingConn.MetricsStream = stream
 		existingConn.UpdateActivity()
 	} else {
-		agentConn := &AgentConnection{
+		agentConn := &agentConnection{
 			AgentID:       agentID,
 			Stream:        stream,
 			MetricsStream: stream,
