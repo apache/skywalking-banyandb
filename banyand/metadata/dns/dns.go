@@ -41,6 +41,7 @@ import (
 
 // Service implements DNS-based node discovery.
 type Service struct {
+	lastQueryTime     time.Time
 	resolver          Resolver
 	caCertReloader    *pkgtls.Reloader
 	nodeCache         map[string]*databasev1.Node
@@ -55,7 +56,6 @@ type Service struct {
 	initInterval      time.Duration
 	initDuration      time.Duration
 	grpcTimeout       time.Duration
-	lastQueryTime     time.Time
 	cacheMutex        sync.RWMutex
 	lastSuccessMutex  sync.RWMutex
 	handlersMutex     sync.RWMutex
@@ -447,9 +447,11 @@ func (s *Service) Close() error {
 
 // ListNode list all existing nodes from cache.
 func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	// if the service is haven't begin/finished, then try to query and update DNS first
+	// if the service is haven't begun/finished, then try to query and update DNS first
 	if s.lastQueryTime.IsZero() {
-		s.queryDNSAndUpdateNodes(ctx)
+		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
+			return nil, err
+		}
 	}
 	s.cacheMutex.RLock()
 	defer s.cacheMutex.RUnlock()
