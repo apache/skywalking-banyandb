@@ -40,6 +40,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+const (
+	// maxRetryInterval is the maximum interval between reconnection attempts.
+	maxRetryInterval = 30 * time.Second
+)
+
 // MetricsRequestFilter defines filters for metrics requests.
 type MetricsRequestFilter struct {
 	StartTime *time.Time
@@ -538,7 +543,8 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
-			c.logger.Info().Msg("Registration stream closed by Proxy")
+			c.logger.Warn().Msg("Registration stream closed by Proxy, reconnecting...")
+			go c.reconnect(ctx)
 			return
 		}
 		if recvErr != nil {
@@ -555,7 +561,8 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 					return
 				}
 			}
-			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream")
+			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream, reconnecting...")
+			go c.reconnect(ctx)
 			return
 		}
 
@@ -585,7 +592,8 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
-			c.logger.Info().Msg("Metrics stream closed by Proxy")
+			c.logger.Warn().Msg("Metrics stream closed by Proxy, reconnecting...")
+			go c.reconnect(ctx)
 			return
 		}
 		if recvErr != nil {
@@ -602,7 +610,8 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 					return
 				}
 			}
-			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream")
+			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
+			go c.reconnect(ctx)
 			return
 		}
 
@@ -619,6 +628,91 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 		if retrieveErr := c.RetrieveAndSendMetrics(ctx, filter); retrieveErr != nil {
 			c.logger.Error().Err(retrieveErr).Msg("Failed to retrieve and send metrics")
 		}
+	}
+}
+
+// reconnect handles automatic reconnection when streams break.
+func (c *Client) reconnect(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.disconnected {
+		c.logger.Warn().Msg("Already disconnected intentionally, skipping reconnection...")
+		return
+	}
+
+	c.logger.Info().Msg("Starting reconnection process...")
+
+	// Clean up existing streams and connection
+	if c.heartbeatTicker != nil {
+		c.heartbeatTicker.Stop()
+		c.heartbeatTicker = nil
+	}
+	if c.registrationStream != nil {
+		_ = c.registrationStream.CloseSend()
+		c.registrationStream = nil
+	}
+	if c.metricsStream != nil {
+		_ = c.metricsStream.CloseSend()
+		c.metricsStream = nil
+	}
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+		c.client = nil
+	}
+
+	// Retry loop with exponential backoff
+	retryInterval := c.reconnectInterval
+	sleepWithBackoff := func() bool {
+		select {
+		case <-ctx.Done():
+			c.logger.Info().Msg("Reconnection cancelled due to context cancellation")
+			return false
+		case <-c.stopCh:
+			c.logger.Info().Msg("Reconnection cancelled due to stop signal")
+			return false
+		case <-time.After(retryInterval):
+			retryInterval *= 2
+			if retryInterval > maxRetryInterval {
+				retryInterval = maxRetryInterval
+			}
+			return true
+		}
+	}
+
+	for {
+		c.logger.Info().Dur("retry_interval", retryInterval).Msg("Attempting to reconnect...")
+
+		// Try to reconnect
+		if connectErr := c.Connect(ctx); connectErr != nil {
+			c.logger.Error().Err(connectErr).Msg("Failed to reconnect to Proxy, retrying...")
+			if !sleepWithBackoff() {
+				return
+			}
+			continue
+		}
+
+		// Try to re-establish registration stream
+		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
+			c.logger.Error().Err(regErr).Msg("Failed to restart registration stream, retrying...")
+			if !sleepWithBackoff() {
+				return
+			}
+			continue
+		}
+
+		// Try to re-establish metrics stream
+		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
+			c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream, retrying...")
+			if !sleepWithBackoff() {
+				return
+			}
+			continue
+		}
+
+		c.logger.Info().Msg("Successfully reconnected to Proxy")
+		return
 	}
 }
 
