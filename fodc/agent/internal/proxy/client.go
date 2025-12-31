@@ -511,8 +511,6 @@ func (c *Client) Start(ctx context.Context) error {
 			continue
 		}
 
-		c.startHeartbeat(ctx)
-
 		c.logger.Info().Msg("Proxy client started successfully")
 
 		select {
@@ -661,10 +659,10 @@ func (c *Client) reconnect(ctx context.Context) {
 	sleepWithBackoff := func() bool {
 		select {
 		case <-ctx.Done():
-			c.logger.Info().Msg("Reconnection cancelled due to context cancellation")
+			c.logger.Info().Msg("Reconnection canceled due to context cancellation")
 			return false
 		case <-c.stopCh:
-			c.logger.Info().Msg("Reconnection cancelled due to stop signal")
+			c.logger.Info().Msg("Reconnection canceled due to stop signal")
 			return false
 		case <-time.After(retryInterval):
 			retryInterval *= 2
