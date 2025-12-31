@@ -225,68 +225,43 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 
 	defer s.cleanupConnection(agentID)
 
-	recvCh := make(chan *fodcv1.StreamMetricsRequest, 1)
-	recvErrCh := make(chan error, 1)
-
-	go func() {
-		for {
-			req, recvErr := stream.Recv()
-			if errors.Is(recvErr, io.EOF) {
-				recvErrCh <- nil
-				return
-			}
-			if recvErr != nil {
-				recvErrCh <- recvErr
-				return
-			}
-			select {
-			case recvCh <- req:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case recvErr := <-recvErrCh:
-			if recvErr != nil {
-				if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+		req, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			s.logger.Debug().Str("agent_id", agentID).Msg("Metrics stream closed by agent")
+			return nil
+		}
+		if recvErr != nil {
+			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+				s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
+			} else if st, ok := status.FromError(recvErr); ok {
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
 					s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
-				} else if st, ok := status.FromError(recvErr); ok {
-					code := st.Code()
-					if code == codes.Canceled || code == codes.DeadlineExceeded {
-						s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Metrics stream closed")
-					} else {
-						s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
-					}
 				} else {
 					s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
 				}
-				return recvErr
+			} else {
+				s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving metrics")
 			}
-			return nil
-		case req := <-recvCh:
-			if req != nil {
-				s.connectionsMu.Lock()
-				conn, connExists := s.connections[agentID]
-				s.connectionsMu.Unlock()
-				if connExists {
-					conn.UpdateActivity()
-				}
+			return recvErr
+		}
 
-				agentInfo, getErr := s.registry.GetAgentByID(agentID)
-				if getErr != nil {
-					s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info")
-					continue
-				}
+		s.connectionsMu.Lock()
+		conn, connExists := s.connections[agentID]
+		s.connectionsMu.Unlock()
+		if connExists {
+			conn.UpdateActivity()
+		}
 
-				if processErr := s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, req); processErr != nil {
-					s.logger.Error().Err(processErr).Str("agent_id", agentID).Msg("Failed to process metrics")
-				}
-			}
+		agentInfo, getErr := s.registry.GetAgentByID(agentID)
+		if getErr != nil {
+			s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info")
+			continue
+		}
+
+		if processErr := s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, req); processErr != nil {
+			s.logger.Error().Err(processErr).Str("agent_id", agentID).Msg("Failed to process metrics")
 		}
 	}
 }

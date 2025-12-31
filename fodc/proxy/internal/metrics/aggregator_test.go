@@ -146,7 +146,6 @@ func TestNewAggregator(t *testing.T) {
 	assert.NotNil(t, aggregator)
 	assert.Equal(t, testRegistry, aggregator.registry)
 	assert.Equal(t, mockSender, aggregator.grpcService)
-	assert.NotNil(t, aggregator.metricsCh)
 	assert.NotNil(t, aggregator.collecting)
 	assert.Equal(t, 0, len(aggregator.collecting))
 }
