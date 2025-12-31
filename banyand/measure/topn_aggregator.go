@@ -321,7 +321,17 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 }
 
 func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
-	key := entityValues.String()
+
+	entityValuesStr := entityValues.String()
+
+	var sb strings.Builder
+	sb.Grow(len(entityValuesStr) + 21)
+
+	sb.WriteString(entityValuesStr)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.FormatUint(timestampMillis, 10))
+
+	key := sb.String()
 
 	if item, ok := naggr.topNCache[key]; ok {
 		if version > item.version {
