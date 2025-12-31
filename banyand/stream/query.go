@@ -67,14 +67,25 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	}()
 
 	series := prepareSeriesData(sqo)
-	qo := prepareQueryOptions(sqo)
+
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	for _, tf := range s.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
+			if vt != pbv1.ValueTypeUnknown {
+				schemaTagTypes[tag.GetName()] = vt
+			}
+		}
+	}
+
+	qo := prepareQueryOptions(sqo, schemaTagTypes)
 	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
 
 	if sqo.Order == nil || sqo.Order.Index == nil {
 		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
 	}
 
-	return s.executeIndexedQuery(ctx, segments, series, sqo, &tr)
+	return s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
 }
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {
@@ -114,9 +125,10 @@ func prepareSeriesData(sqo model.StreamQueryOptions) []*pbv1.Series {
 	return series
 }
 
-func prepareQueryOptions(sqo model.StreamQueryOptions) queryOptions {
+func prepareQueryOptions(sqo model.StreamQueryOptions, schemaTagTypes map[string]pbv1.ValueType) queryOptions {
 	return queryOptions{
 		StreamQueryOptions: sqo,
+		schemaTagTypes:     schemaTagTypes,
 		minTimestamp:       sqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:       sqo.TimeRange.End.UnixNano(),
 	}
@@ -153,9 +165,10 @@ func (s *stream) executeIndexedQuery(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (model.StreamQueryResult, error) {
-	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, tr)
+	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, schemaTagTypes, tr)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +206,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (idxResult, posting.List, posting.List, error) {
 	var result idxResult
@@ -201,6 +215,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	result.sm = s
 	result.qo = queryOptions{
 		StreamQueryOptions: sqo,
+		schemaTagTypes:     schemaTagTypes,
 		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
 	}
 
@@ -256,6 +271,7 @@ type queryOptions struct {
 	elementFilter  posting.List
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
 	sortedSids     []common.SeriesID
+	schemaTagTypes map[string]pbv1.ValueType
 	model.StreamQueryOptions
 	minTimestamp int64
 	maxTimestamp int64
@@ -266,6 +282,7 @@ func (qo *queryOptions) reset() {
 	qo.elementFilter = nil
 	qo.seriesToEntity = nil
 	qo.sortedSids = nil
+	qo.schemaTagTypes = nil
 	qo.minTimestamp = 0
 	qo.maxTimestamp = 0
 }
@@ -275,6 +292,7 @@ func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.elementFilter = other.elementFilter
 	qo.seriesToEntity = other.seriesToEntity
 	qo.sortedSids = other.sortedSids
+	qo.schemaTagTypes = other.schemaTagTypes
 	qo.minTimestamp = other.minTimestamp
 	qo.maxTimestamp = other.maxTimestamp
 }

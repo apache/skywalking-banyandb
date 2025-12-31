@@ -285,10 +285,10 @@ func (tst *tsTable) Close() error {
 }
 
 func (tst *tsTable) mustAddDataPoints(dps *dataPoints) {
-	tst.mustAddDataPointsWithSegmentID(dps, 0)
+	tst.mustAddDataPointsWithSegmentID(dps, 0, nil)
 }
 
-func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID int64) {
+func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID int64, seriesMetadata []byte) {
 	if len(dps.seriesIDs) == 0 {
 		return
 	}
@@ -296,6 +296,13 @@ func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID in
 	mp := generateMemPart()
 	mp.mustInitFromDataPoints(dps)
 	mp.segmentID = segmentID
+	if len(seriesMetadata) > 0 {
+		// Write series metadata to buffer to avoid sharing the underlying slice
+		_, err := mp.seriesMetadata.Write(seriesMetadata)
+		if err != nil {
+			logger.Panicf("cannot write series metadata to buffer: %s", err)
+		}
+	}
 	tst.mustAddMemPart(mp)
 }
 

@@ -230,8 +230,10 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
 	return &resultMIterator{
-		result:     result,
-		hiddenTags: i.hiddenTags,
+		result:           result,
+		projectionTags:   i.projectionTags,
+		projectionFields: i.projectionFields,
+		hiddenTags:       i.hiddenTags,
 	}, nil
 }
 
@@ -274,11 +276,13 @@ func indexScan(startTime, endTime time.Time, metadata *commonv1.Metadata, projec
 }
 
 type resultMIterator struct {
-	result     model.MeasureQueryResult
-	hiddenTags logical.HiddenTagSet
-	err        error
-	current    []*measurev1.DataPoint
-	i          int
+	result           model.MeasureQueryResult
+	hiddenTags       logical.HiddenTagSet
+	err              error
+	current          []*measurev1.DataPoint
+	projectionTags   []model.TagProjection
+	projectionFields []string
+	i                int
 }
 
 func (ei *resultMIterator) Next() bool {
@@ -300,6 +304,10 @@ func (ei *resultMIterator) Next() bool {
 	}
 	ei.current = ei.current[:0]
 	ei.i = 0
+	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
+	for idx := range r.TagFamilies {
+		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
+	}
 	for i := range r.Timestamps {
 		dp := &measurev1.DataPoint{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
@@ -307,26 +315,54 @@ func (ei *resultMIterator) Next() bool {
 			Version:   r.Versions[i],
 		}
 
-		for _, tf := range r.TagFamilies {
+		for _, proj := range ei.projectionTags {
 			tagFamily := &modelv1.TagFamily{
-				Name: tf.Name,
+				Name: proj.Family,
 			}
 			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
-			for _, t := range tf.Tags {
+			resultTagFamily := tagFamilyMap[proj.Family]
+			for _, tagName := range proj.Names {
+				var tagValue *modelv1.TagValue
+				if resultTagFamily != nil {
+					for _, t := range resultTagFamily.Tags {
+						if t.Name == tagName {
+							tagValue = t.Values[i]
+							break
+						}
+					}
+				}
+				if tagValue == nil {
+					tagValue = pbv1.NullTagValue
+				}
 				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   t.Name,
-					Value: t.Values[i],
+					Key:   tagName,
+					Value: tagValue,
 				})
 			}
 		}
+
 		// Strip hidden tags from the result
 		dp.TagFamilies = ei.hiddenTags.StripHiddenTags(dp.TagFamilies)
 
-		for _, f := range r.Fields {
-			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name:  f.Name,
-				Value: f.Values[i],
-			})
+		for _, pf := range ei.projectionFields {
+			foundIdx := -1
+			for idx := range r.Fields {
+				if r.Fields[idx].Name == pf {
+					foundIdx = idx
+					break
+				}
+			}
+			if foundIdx != -1 {
+				dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+					Name:  r.Fields[foundIdx].Name,
+					Value: r.Fields[foundIdx].Values[i],
+				})
+			} else {
+				dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+					Name:  pf,
+					Value: pbv1.NullFieldValue,
+				})
+			}
 		}
 		ei.current = append(ei.current, dp)
 	}

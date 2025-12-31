@@ -42,7 +42,7 @@ Once we've discussed your changes and you've got your code ready, make sure that
 Users who want to build a binary from sources have to set up:
 
 * Go 1.25
-* Node 20.12
+* Node 24.6.0
 * Git >= 2.30
 * Linux, macOS or Windows + WSL2
 * GNU make
@@ -115,7 +115,7 @@ If you found some errors in the output of the above command, try to `make format
 
 ## AI-Assisted Development
 
-If you're using AI assistants (like Claude, Cursor, GitHub Copilot, etc.) to help with code generation, please refer to our [AI Coding Guidelines](AI_CODING_GUIDELINES.md) to ensure the generated code follows our project's coding standards and linting rules.
+If you're using AI assistants (like Claude, Cursor, GitHub Copilot, etc.) to help with code generation, please refer to our [AI Coding Guidelines](AGENTS.md) to ensure the generated code follows our project's coding standards and linting rules.
 
 The guidelines cover:
 - Variable shadowing prevention

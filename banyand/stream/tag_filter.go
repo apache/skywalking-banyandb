@@ -165,8 +165,7 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 					logger.Panicf("failed to extract dictionary values: %v", err)
 				}
 				df := generateDictionaryFilter()
-				df.SetValues(dictValues)
-				df.SetValueType(tm.valueType)
+				df.Set(dictValues, tm.valueType)
 				tf.filter = df
 			}
 		}

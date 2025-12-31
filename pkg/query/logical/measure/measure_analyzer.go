@@ -93,6 +93,19 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 		}
 	}
 
+	ms := s.(*schema)
+	if len(tagProjection) > 0 {
+		if err := ms.common.ValidateProjectionTags(tagProjection...); err != nil {
+			return nil, err
+		}
+	}
+	fieldProjection := criteria.GetFieldProjection().GetNames()
+	if len(fieldProjection) > 0 {
+		if err := ms.ValidateProjectionFields(fieldProjection...); err != nil {
+			return nil, err
+		}
+	}
+
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {

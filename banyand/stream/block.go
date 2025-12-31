@@ -416,6 +416,7 @@ type blockCursor struct {
 	tagFamilies      []tagFamily
 	tagValuesDecoder encoding.BytesBlockDecoder
 	tagProjection    []model.TagProjection
+	schemaTagTypes   map[string]pbv1.ValueType
 	bm               blockMetadata
 	idx              int
 	minTimestamp     int64
@@ -429,6 +430,7 @@ func (bc *blockCursor) reset() {
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
 	bc.tagProjection = bc.tagProjection[:0]
+	bc.schemaTagTypes = nil
 
 	bc.timestamps = bc.timestamps[:0]
 	bc.elementIDs = bc.elementIDs[:0]
@@ -447,6 +449,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.minTimestamp = opts.minTimestamp
 	bc.maxTimestamp = opts.maxTimestamp
 	bc.tagProjection = opts.TagProjection
+	bc.schemaTagTypes = opts.schemaTagTypes
 	bc.elementFilter = opts.elementFilter
 }
 
@@ -485,9 +488,14 @@ func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
 	for i, cf := range bc.tagFamilies {
 		for j, c := range cf.tags {
 			values := make([]*modelv1.TagValue, end-start)
+			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
 			for k := start; k < end; k++ {
 				if len(c.values) > k {
-					values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
+					if hasSchemaType && c.valueType == schemaType {
+						values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
+					} else {
+						values[k-start] = pbv1.NullTagValue
+					}
 				} else {
 					values[k-start] = pbv1.NullTagValue
 				}
@@ -526,8 +534,13 @@ func (bc *blockCursor) copyTo(r *model.StreamResult) {
 			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
 		}
 		for i2, c := range cf.tags {
+			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
 			if len(c.values) > bc.idx {
-				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+				if hasSchemaType && c.valueType == schemaType {
+					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+				} else {
+					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
+				}
 			} else {
 				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
 			}

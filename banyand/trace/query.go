@@ -28,10 +28,10 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -46,6 +46,7 @@ var nilResult = model.TraceQueryResult(nil)
 
 type queryOptions struct {
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
+	schemaTagTypes map[string]pbv1.ValueType
 	traceIDs       []string
 	model.TraceQueryOptions
 }
@@ -82,9 +83,18 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	sort.Strings(tqo.TraceIDs)
 
+	schemaTagTypes := make(map[string]pbv1.ValueType)
+	for _, tag := range t.schema.GetTags() {
+		vt := pbv1.TagValueSpecToValueType(tag.GetType())
+		if vt != pbv1.ValueTypeUnknown {
+			schemaTagTypes[tag.GetName()] = vt
+		}
+	}
+
 	qo := queryOptions{
 		TraceQueryOptions: tqo,
 		traceIDs:          tqo.TraceIDs,
+		schemaTagTypes:    schemaTagTypes,
 	}
 
 	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
@@ -561,15 +571,17 @@ func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr
 			}
 			return strArrTagValue(values)
 		}
-		bb := bigValuePool.Generate()
-		defer bigValuePool.Release(bb)
-		var err error
-		for len(value) > 0 {
-			bb.Buf, value, err = encoding.UnmarshalVarArray(bb.Buf[:0], value)
+		var (
+			end  int
+			next int
+			err  error
+		)
+		for idx := 0; idx < len(value); idx = next {
+			end, next, err = encoding.UnmarshalVarArray(value, idx)
 			if err != nil {
 				logger.Panicf("UnmarshalVarArray failed: %v", err)
 			}
-			values = append(values, string(bb.Buf))
+			values = append(values, string(value[idx:end]))
 		}
 		return strArrTagValue(values)
 	case pbv1.ValueTypeTimestamp:

@@ -440,6 +440,7 @@ type blockCursor struct {
 	columnValuesDecoder encoding.BytesBlockDecoder
 	tagProjection       []model.TagProjection
 	fieldProjection     []string
+	schemaTagTypes      map[string]pbv1.ValueType
 	bm                  blockMetadata
 	idx                 int
 	minTimestamp        int64
@@ -454,6 +455,7 @@ func (bc *blockCursor) reset() {
 	bc.maxTimestamp = 0
 	bc.tagProjection = bc.tagProjection[:0]
 	bc.fieldProjection = bc.fieldProjection[:0]
+	bc.schemaTagTypes = nil
 
 	bc.timestamps = bc.timestamps[:0]
 	bc.versions = bc.versions[:0]
@@ -474,6 +476,7 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, queryOpts queryOptions) 
 	bc.maxTimestamp = queryOpts.maxTimestamp
 	bc.tagProjection = queryOpts.TagProjection
 	bc.fieldProjection = queryOpts.FieldProjection
+	bc.schemaTagTypes = queryOpts.schemaTagTypes
 }
 
 func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
@@ -545,8 +548,16 @@ OUTER:
 			var foundTag bool
 			for i := range cf.columns {
 				if cf.columns[i].name == tagName {
-					for _, v := range cf.columns[i].values[idx:offset] {
-						t.Values = append(t.Values, mustDecodeTagValue(cf.columns[i].valueType, v))
+					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
+					if hasSchemaType && cf.columns[i].valueType == schemaType {
+						for _, v := range cf.columns[i].values[idx:offset] {
+							t.Values = append(t.Values, mustDecodeTagValue(cf.columns[i].valueType, v))
+						}
+					} else {
+						t.Values = make([]*modelv1.TagValue, len(cf.columns[i].values[idx:offset]))
+						for j := range t.Values {
+							t.Values[j] = pbv1.NullTagValue
+						}
 					}
 					foundTag = true
 					break
@@ -626,7 +637,12 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 			var foundTag bool
 			for _, c := range cf.columns {
 				if c.name == tagName {
-					r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
+					if hasSchemaType && c.valueType == schemaType {
+						r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
+					} else {
+						r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, pbv1.NullTagValue)
+					}
 					foundTag = true
 					break
 				}
@@ -677,7 +693,12 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			}
 			for _, c := range cf.columns {
 				if c.name == tagName {
-					r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = mustDecodeTagValue(c.valueType, c.values[bc.idx])
+					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
+					if hasSchemaType && c.valueType == schemaType {
+						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = mustDecodeTagValue(c.valueType, c.values[bc.idx])
+					} else {
+						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = pbv1.NullTagValue
+					}
 					break
 				}
 			}
