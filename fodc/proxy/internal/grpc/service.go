@@ -133,6 +133,8 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			}
 
 			agentID = registeredAgentID
+			defer s.cleanupConnection(agentID)
+
 			agentConn = &AgentConnection{
 				AgentID:      agentID,
 				Identity:     identity,
@@ -155,7 +157,6 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 
 			if sendErr := stream.Send(resp); sendErr != nil {
 				s.logger.Error().Err(sendErr).Str("agent_id", agentID).Msg("Failed to send registration response")
-				s.cleanupConnection(agentID)
 				// Unregister agent since we couldn't send confirmation
 				if unregisterErr := s.registry.UnregisterAgent(agentID); unregisterErr != nil {
 					s.logger.Error().Err(unregisterErr).Str("agent_id", agentID).Msg("Failed to unregister agent after send error")
@@ -173,7 +174,6 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 		} else {
 			if updateErr := s.registry.UpdateHeartbeat(agentID); updateErr != nil {
 				s.logger.Error().Err(updateErr).Str("agent_id", agentID).Msg("Failed to update heartbeat")
-				s.cleanupConnection(agentID)
 				return updateErr
 			}
 
@@ -183,7 +183,6 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 		}
 	}
 
-	s.cleanupConnection(agentID)
 	return nil
 }
 
@@ -206,6 +205,8 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
 	}
 
+	defer s.cleanupConnection(agentID)
+
 	s.connectionsMu.Lock()
 	existingConn, exists := s.connections[agentID]
 	if exists {
@@ -222,8 +223,6 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		s.connections[agentID] = agentConn
 	}
 	s.connectionsMu.Unlock()
-
-	defer s.cleanupConnection(agentID)
 
 	for {
 		req, recvErr := stream.Recv()
