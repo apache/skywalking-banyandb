@@ -59,6 +59,7 @@ type Service struct {
 	cacheMutex        sync.RWMutex
 	lastSuccessMutex  sync.RWMutex
 	handlersMutex     sync.RWMutex
+	lastQueryMutex    sync.RWMutex
 	tlsEnabled        bool
 }
 
@@ -236,7 +237,9 @@ func (s *Service) queryDNSAndUpdateNodes(ctx context.Context) error {
 	if updateErr != nil && s.metrics != nil {
 		s.metrics.discoveryFailedCount.Inc(1)
 	}
+	s.lastQueryMutex.Lock()
 	s.lastQueryTime = time.Now()
+	s.lastQueryMutex.Unlock()
 	return updateErr
 }
 
@@ -448,7 +451,10 @@ func (s *Service) Close() error {
 // ListNode list all existing nodes from cache.
 func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
 	// if the service is haven't begun/finished, then try to query and update DNS first
-	if s.lastQueryTime.IsZero() {
+	s.lastQueryMutex.RLock()
+	notQueried := s.lastQueryTime.IsZero()
+	s.lastQueryMutex.RUnlock()
+	if notQueried {
 		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
 			return nil, err
 		}
