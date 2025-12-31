@@ -45,12 +45,13 @@ type dedupItem struct {
 	timestampMillis uint64
 	val             int64
 	version         int64
+	entityValuesStr string
 }
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
 	Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64)
-	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error
+	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, key string) error
 	Flush() (map[uint64][]*nonAggregatorItem, error)
 	Val([]string) []*measurev1.TopNList
 }
@@ -63,7 +64,7 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 			topN:      topN,
 			sort:      sort,
 			timelines: make(map[uint64]*flow.DedupPriorityQueue),
-			topNCache: make(map[string]*nonAggregatorItem),
+			dedupMap:  make(map[string]*dedupItem),
 		}
 	}
 	aggregator := &postAggregationProcessor{
@@ -127,12 +128,12 @@ func (aggr *postAggregationProcessor) Pop() any {
 }
 
 func (aggr *postAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
-	entityStr := entityValues.String()
+	entityValuesStr := entityValues.String()
 
 	var sb strings.Builder
-	sb.Grow(len(entityStr) + 21)
+	sb.Grow(len(entityValuesStr) + 21)
 
-	sb.WriteString(entityStr)
+	sb.WriteString(entityValuesStr)
 	sb.WriteByte('|')
 	sb.WriteString(strconv.FormatUint(timestampMillis, 10))
 
@@ -151,15 +152,15 @@ func (aggr *postAggregationProcessor) Load(entityValues pbv1.EntityValues, val i
 		val:             val,
 		timestampMillis: timestampMillis,
 		version:         version,
+		entityValuesStr: entityValuesStr,
 	}
 }
 
-func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error {
+func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, key string) error {
 	// update latest ts
 	if aggr.latestTimestamp < timestampMillis {
 		aggr.latestTimestamp = timestampMillis
 	}
-	key := entityValues.String()
 	if item, found := aggr.cache[key]; found {
 		item.int64Func.In(val)
 		return nil
@@ -187,8 +188,14 @@ func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val in
 }
 
 func (aggr *postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
-	for _, v := range aggr.dedupMap {
-		if err := aggr.Put(v.values, v.val, v.timestampMillis); err != nil {
+	defer func() {
+		if aggr.dedupMap != nil {
+			clear(aggr.dedupMap)
+		}
+	}()
+
+	for _, item := range aggr.dedupMap {
+		if err := aggr.Put(item.values, item.val, item.timestampMillis, item.entityValuesStr); err != nil {
 			return nil, err
 		}
 	}
@@ -276,13 +283,12 @@ func (n *nonAggregatorItem) SetIndex(i int) {
 
 type postNonAggregationProcessor struct {
 	timelines map[uint64]*flow.DedupPriorityQueue
-	topNCache map[string]*nonAggregatorItem
+	dedupMap  map[string]*dedupItem
 	topN      int32
 	sort      modelv1.Sort
 }
 
-func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64) error {
-	key := entityValues.String()
+func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, key string) error {
 	if timeline, ok := naggr.timelines[timestampMillis]; ok {
 		if timeline.Len() < int(naggr.topN) {
 			heap.Push(timeline, &nonAggregatorItem{val: val, key: key, values: entityValues})
@@ -332,7 +338,7 @@ func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, v
 
 	key := sb.String()
 
-	if item, ok := naggr.topNCache[key]; ok {
+	if item, ok := naggr.dedupMap[key]; ok {
 		if version > item.version {
 			item.version = version
 			item.val = val
@@ -340,23 +346,24 @@ func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, v
 		return
 	}
 
-	naggr.topNCache[key] = &nonAggregatorItem{
+	naggr.dedupMap[key] = &dedupItem{
 		val:             val,
 		values:          entityValues,
 		timestampMillis: timestampMillis,
 		version:         version,
+		entityValuesStr: entityValuesStr,
 	}
 }
 
 func (naggr *postNonAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
 	defer func() {
-		if naggr.topNCache != nil {
-			clear(naggr.topNCache)
+		if naggr.dedupMap != nil {
+			clear(naggr.dedupMap)
 		}
 	}()
 
-	for _, item := range naggr.topNCache {
-		if err := naggr.Put(item.values, item.val, item.timestampMillis); err != nil {
+	for _, item := range naggr.dedupMap {
+		if err := naggr.Put(item.values, item.val, item.timestampMillis, item.entityValuesStr); err != nil {
 			return nil, err
 		}
 	}
