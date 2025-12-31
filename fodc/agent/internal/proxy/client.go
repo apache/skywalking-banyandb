@@ -533,7 +533,7 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 		default:
 		}
 
-		resp, recvErr := stream.Recv()
+		_, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Registration stream closed by Proxy, reconnecting...")
 			go c.reconnect(ctx)
@@ -556,17 +556,6 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream, reconnecting...")
 			go c.reconnect(ctx)
 			return
-		}
-
-		if resp.HeartbeatIntervalSeconds > 0 {
-			c.mu.Lock()
-			c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
-			shouldRestartHeartbeat := c.heartbeatTicker != nil
-			c.mu.Unlock()
-
-			if shouldRestartHeartbeat {
-				c.startHeartbeat(ctx)
-			}
 		}
 	}
 }

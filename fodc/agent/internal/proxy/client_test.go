@@ -911,37 +911,6 @@ func TestProxyClient_handleRegistrationStream_ContextCanceled(t *testing.T) {
 	// Should return without error
 }
 
-func TestProxyClient_handleRegistrationStream_UpdateHeartbeatInterval(t *testing.T) {
-	testLogger := initTestLogger(t)
-	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	mockStream := newMockRegisterAgentClient(ctx)
-	ticker := time.NewTicker(5 * time.Second)
-	pc.mu.Lock()
-	pc.heartbeatTicker = ticker
-	pc.mu.Unlock()
-
-	// Add response with new heartbeat interval
-	mockStream.AddResponse(&fodcv1.RegisterAgentResponse{
-		HeartbeatIntervalSeconds: 15,
-	})
-
-	go pc.handleRegistrationStream(ctx, mockStream)
-
-	// Wait a bit for the handler to process
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	pc.mu.RLock()
-	heartbeatInterval := pc.heartbeatInterval
-	pc.mu.RUnlock()
-	assert.Equal(t, 15*time.Second, heartbeatInterval)
-}
-
 func TestProxyClient_handleMetricsStream_EOF(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
