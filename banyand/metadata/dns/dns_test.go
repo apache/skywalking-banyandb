@@ -1452,7 +1452,7 @@ type mockNodeQueryServer struct {
 	returnErr error // For injecting errors in tests
 }
 
-func (m *mockNodeQueryServer) GetCurrentNode(ctx context.Context, req *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
+func (m *mockNodeQueryServer) GetCurrentNode(_ context.Context, _ *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
 	if m.returnErr != nil {
 		return nil, m.returnErr
 	}
@@ -1482,7 +1482,7 @@ func newTestEventHandler() *testEventHandler {
 	}
 }
 
-func (h *testEventHandler) OnInit(kinds []schema.Kind) (bool, []int64) {
+func (h *testEventHandler) OnInit(_ []schema.Kind) (bool, []int64) {
 	return false, nil
 }
 
