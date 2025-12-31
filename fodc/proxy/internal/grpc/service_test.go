@@ -251,9 +251,9 @@ func TestAgentConnection_UpdateActivity(t *testing.T) {
 		LastActivity: time.Now().Add(-1 * time.Hour),
 	}
 
-	conn.UpdateActivity()
+	conn.updateActivity()
 
-	lastActivity := conn.GetLastActivity()
+	lastActivity := conn.getLastActivity()
 	assert.WithinDuration(t, time.Now(), lastActivity, time.Second)
 }
 
@@ -263,7 +263,7 @@ func TestAgentConnection_GetLastActivity(t *testing.T) {
 		LastActivity: now,
 	}
 
-	result := conn.GetLastActivity()
+	result := conn.getLastActivity()
 
 	assert.Equal(t, now, result)
 }

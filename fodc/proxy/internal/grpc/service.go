@@ -51,15 +51,15 @@ type agentConnection struct {
 	mu            sync.RWMutex
 }
 
-// UpdateActivity updates the last activity time.
-func (ac *agentConnection) UpdateActivity() {
+// updateActivity updates the last activity time.
+func (ac *agentConnection) updateActivity() {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	ac.LastActivity = time.Now()
 }
 
-// GetLastActivity returns the last activity time.
-func (ac *agentConnection) GetLastActivity() time.Time {
+// getLastActivity returns the last activity time.
+func (ac *agentConnection) getLastActivity() time.Time {
 	ac.mu.RLock()
 	defer ac.mu.RUnlock()
 	return ac.LastActivity
@@ -178,7 +178,7 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			}
 
 			if agentConn != nil {
-				agentConn.UpdateActivity()
+				agentConn.updateActivity()
 			}
 		}
 	}
@@ -211,7 +211,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	existingConn, exists := s.connections[agentID]
 	if exists {
 		existingConn.MetricsStream = stream
-		existingConn.UpdateActivity()
+		existingConn.updateActivity()
 	} else {
 		agentConn := &agentConnection{
 			AgentID:       agentID,
@@ -250,7 +250,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		conn, connExists := s.connections[agentID]
 		s.connectionsMu.Unlock()
 		if connExists {
-			conn.UpdateActivity()
+			conn.updateActivity()
 		}
 
 		agentInfo, getErr := s.registry.GetAgentByID(agentID)
