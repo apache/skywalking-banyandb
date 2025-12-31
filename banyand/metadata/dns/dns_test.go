@@ -1312,10 +1312,9 @@ var _ = Describe("DNS Discovery Service", func() {
 			callCount := mockResolver.getCallCount("_grpc._tcp.test.local")
 			Expect(callCount).To(BeNumerically(">=", 2))
 
-			// Verify no nodes were discovered (cache should be empty)
-			nodes, err := svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(nodes).To(BeEmpty())
+			// Verify list nodes should be failure
+			_, err = svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
+			Expect(err).To(HaveOccurred())
 
 			// Verify lastSuccessfulDNS cache is also empty
 			cachedAddresses := svc.GetLastSuccessfulDNS()

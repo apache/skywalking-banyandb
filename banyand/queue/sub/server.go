@@ -144,16 +144,16 @@ func (s *server) PreRun(ctx context.Context) error {
 		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Initialized TLS reloader for queue server")
 	}
 
-	val := ctx.Value(common.ContextNodeKey)
-	if val == nil {
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	if nodeVal == nil {
 		return errors.New("node id is empty")
 	}
-	val = ctx.Value(common.ContextNodeRolesKey)
-	if val == nil {
+	roleVal := ctx.Value(common.ContextNodeRolesKey)
+	if roleVal == nil {
 		return errors.New("node roles is empty")
 	}
-	nodeRoles := val.([]databasev1.Role)
-	node := val.(common.Node)
+	nodeRoles := roleVal.([]databasev1.Role)
+	node := nodeVal.(common.Node)
 	s.curNode = &databasev1.Node{
 		Metadata: &commonv1.Metadata{
 			Name: node.NodeID,
