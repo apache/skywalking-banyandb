@@ -321,7 +321,6 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 }
 
 func (naggr *postNonAggregationProcessor) Load(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
-
 	entityValuesStr := entityValues.String()
 
 	var sb strings.Builder
