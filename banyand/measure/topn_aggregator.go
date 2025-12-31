@@ -41,11 +41,11 @@ type aggregatorItem struct {
 }
 
 type dedupItem struct {
+	entityValuesStr string
 	values          pbv1.EntityValues
 	timestampMillis uint64
 	val             int64
 	version         int64
-	entityValuesStr string
 }
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
@@ -254,12 +254,10 @@ func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 var _ flow.Element = (*nonAggregatorItem)(nil)
 
 type nonAggregatorItem struct {
-	key             string
-	values          pbv1.EntityValues
-	val             int64
-	index           int
-	timestampMillis uint64
-	version         int64
+	key    string
+	values pbv1.EntityValues
+	val    int64
+	index  int
 }
 
 func (n *nonAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
