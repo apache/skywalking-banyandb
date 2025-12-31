@@ -19,6 +19,7 @@ package metadata
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -32,7 +33,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/dns"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -65,20 +68,29 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 
 type clientService struct {
 	schemaRegistry       schema.Registry
+	dnsDiscovery         *dns.Service
 	closer               *run.Closer
 	nodeInfo             *databasev1.Node
 	etcdTLSCertFile      string
+	dnsCACertPath        string
 	etcdPassword         string
 	etcdTLSCAFile        string
 	etcdUsername         string
 	etcdTLSKeyFile       string
 	namespace            string
+	dnsSRVAddresses      []string
 	endpoints            []string
 	registryTimeout      time.Duration
+	dnsFetchInitInterval time.Duration
+	dnsFetchInitDuration time.Duration
+	dnsFetchInterval     time.Duration
+	grpcTimeout          time.Duration
 	etcdFullSyncInterval time.Duration
 	nodeInfoMux          sync.Mutex
 	forceRegisterNode    bool
 	toRegisterNode       bool
+	dnsRegistryEnabled   bool
+	dnsTLSEnabled        bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -96,12 +108,34 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.etcdTLSKeyFile, flagEtcdTLSKeyFile, "", "Private key for the etcd client certificate.")
 	fs.DurationVar(&s.registryTimeout, "node-registry-timeout", 2*time.Minute, "The timeout for the node registry")
 	fs.DurationVar(&s.etcdFullSyncInterval, "etcd-full-sync-interval", 30*time.Minute, "The interval for full sync etcd")
+
+	// DNS-based node discovery configuration
+	fs.BoolVar(&s.dnsRegistryEnabled, "node-registry-dns-enabled", false,
+		"Is DNS registry enabled")
+	fs.StringSliceVar(&s.dnsSRVAddresses, "node-registry-dns-srv-addresses", []string{},
+		"DNS SRV addresses for node discovery (e.g., _grpc._tcp.banyandb.svc.cluster.local)")
+	fs.DurationVar(&s.dnsFetchInitInterval, "node-registry-dns-fetch-init-interval", 1*time.Second,
+		"DNS query interval during initialization phase")
+	fs.DurationVar(&s.dnsFetchInitDuration, "node-registry-dns-fetch-init-duration", 30*time.Second,
+		"Duration of the initialization phase for DNS discovery")
+	fs.DurationVar(&s.dnsFetchInterval, "node-registry-dns-fetch-interval", 10*time.Second,
+		"DNS query interval after initialization phase")
+	fs.DurationVar(&s.grpcTimeout, "node-registry-grpc-timeout", 5*time.Second,
+		"Timeout for gRPC calls to fetch node metadata")
+	fs.BoolVar(&s.dnsTLSEnabled, "node-registry-dns-tls", false,
+		"Enable TLS for DNS discovery gRPC connections")
+	fs.StringVar(&s.dnsCACertPath, "node-registry-dns-ca-cert", "",
+		"CA certificate file to verify DNS discovered nodes")
+
 	return fs
 }
 
 func (s *clientService) Validate() error {
 	if s.endpoints == nil {
 		return errors.New("endpoints is empty")
+	}
+	if s.dnsRegistryEnabled && s.dnsTLSEnabled && s.dnsCACertPath == "" {
+		return fmt.Errorf("DNS TLS is enabled, but no CA certificate file was provided")
 	}
 	return nil
 }
@@ -151,10 +185,28 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		}
 		return err
 	}
-	if !s.toRegisterNode {
-		return nil
+
+	if s.dnsRegistryEnabled {
+		l.Info().Strs("srv-addresses", s.dnsSRVAddresses).Msg("Initializing DNS-based node discovery")
+
+		var createErr error
+		s.dnsDiscovery, createErr = dns.NewService(dns.Config{
+			SRVAddresses: s.dnsSRVAddresses,
+			InitInterval: s.dnsFetchInitInterval,
+			InitDuration: s.dnsFetchInitDuration,
+			PollInterval: s.dnsFetchInterval,
+			GRPCTimeout:  s.grpcTimeout,
+			TLSEnabled:   s.dnsTLSEnabled,
+			CACertPath:   s.dnsCACertPath,
+		})
+		if createErr != nil {
+			return fmt.Errorf("failed to create DNS discovery service: %w", createErr)
+		}
 	}
 
+	if !s.toRegisterNode || s.dnsRegistryEnabled {
+		return nil
+	}
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")
@@ -212,12 +264,27 @@ func (s *clientService) Serve() run.StopNotify {
 	if s.schemaRegistry != nil {
 		s.schemaRegistry.StartWatcher()
 	}
+
+	// Start DNS discovery
+	if s.dnsDiscovery != nil {
+		if err := s.dnsDiscovery.Start(s.closer.Ctx()); err != nil {
+			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to start DNS discovery")
+		}
+	}
+
 	return s.closer.CloseNotify()
 }
 
 func (s *clientService) GracefulStop() {
 	s.closer.Done()
 	s.closer.CloseThenWait()
+
+	if s.dnsDiscovery != nil {
+		if err := s.dnsDiscovery.Close(); err != nil {
+			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close DNS discovery")
+		}
+	}
+
 	if s.schemaRegistry != nil {
 		if err := s.schemaRegistry.Close(); err != nil {
 			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
@@ -226,6 +293,10 @@ func (s *clientService) GracefulStop() {
 }
 
 func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
+	if kind == schema.KindNode && s.dnsDiscovery != nil {
+		s.dnsDiscovery.RegisterHandler(name, handler)
+		return
+	}
 	s.schemaRegistry.RegisterHandler(name, kind, handler)
 }
 
@@ -258,11 +329,24 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) NodeRegistry() schema.Node {
+	// If DNS discovery is enabled, use it instead of etcd
+	if s.dnsDiscovery != nil {
+		return s.dnsDiscovery
+	}
+	// Otherwise use etcd schema registry
 	return s.schemaRegistry
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
 	return s.schemaRegistry
+}
+
+func (s *clientService) SetMetricsRegistry(omr observability.MetricsRegistry) {
+	// initialize DNS discovery with metrics if it exists
+	if s.dnsDiscovery != nil {
+		factory := observability.RootScope.SubScope("metadata").SubScope("dns_discovery")
+		s.dnsDiscovery.SetMetrics(omr.With(factory))
+	}
 }
 
 func (s *clientService) Name() string {

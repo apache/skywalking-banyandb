@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
@@ -58,7 +59,8 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	measureLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
 	measureLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, tire1Client, measureLiaisonNodeSel)
 	measureDataNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)
-	metricSvc := observability.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
+	metricSvc := services.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
+	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
 	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
 	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)

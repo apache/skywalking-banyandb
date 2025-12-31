@@ -43,10 +43,54 @@ func (b *bypassRegistry) Serve() run.StopNotify {
 func (b *bypassRegistry) GracefulStop() {
 }
 
-func (b *bypassRegistry) With(_ meter.Scope) *Factory {
-	return &Factory{}
+func (b *bypassRegistry) With(_ meter.Scope) Factory {
+	return &bypassFactory{}
 }
 
 func (b *bypassRegistry) NativeEnabled() bool {
 	return false
+}
+
+// bypassFactory is a Factory implementation that does nothing.
+type bypassFactory struct{}
+
+func (b *bypassFactory) NewCounter(_ string, _ ...string) meter.Counter {
+	return &bypassCounter{}
+}
+
+func (b *bypassFactory) NewGauge(_ string, _ ...string) meter.Gauge {
+	return &bypassGauge{}
+}
+
+func (b *bypassFactory) NewHistogram(_ string, _ meter.Buckets, _ ...string) meter.Histogram {
+	return &bypassHistogram{}
+}
+
+// bypassCounter is a Counter that does nothing.
+type bypassCounter struct{}
+
+func (b *bypassCounter) Inc(_ float64, _ ...string) {}
+
+func (b *bypassCounter) Delete(_ ...string) bool {
+	return true
+}
+
+// bypassGauge is a Gauge that does nothing.
+type bypassGauge struct{}
+
+func (b *bypassGauge) Set(_ float64, _ ...string) {}
+
+func (b *bypassGauge) Add(_ float64, _ ...string) {}
+
+func (b *bypassGauge) Delete(_ ...string) bool {
+	return true
+}
+
+// bypassHistogram is a Histogram that does nothing.
+type bypassHistogram struct{}
+
+func (b *bypassHistogram) Observe(_ float64, _ ...string) {}
+
+func (b *bypassHistogram) Delete(_ ...string) bool {
+	return true
 }

@@ -25,6 +25,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -60,4 +61,5 @@ type Service interface {
 	run.Service
 	run.Config
 	SchemaRegistry() schema.Registry
+	SetMetricsRegistry(omr observability.MetricsRegistry)
 }

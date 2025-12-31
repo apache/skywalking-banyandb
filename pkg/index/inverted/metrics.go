@@ -56,7 +56,7 @@ type Metrics struct {
 }
 
 // NewMetrics creates a new metrics for the inverted index.
-func NewMetrics(factory *observability.Factory, labelNames ...string) *Metrics {
+func NewMetrics(factory observability.Factory, labelNames ...string) *Metrics {
 	return &Metrics{
 		totalUpdates: factory.NewGauge("inverted_index_total_updates", labelNames...),
 		totalDeletes: factory.NewGauge("inverted_index_total_deletes", labelNames...),

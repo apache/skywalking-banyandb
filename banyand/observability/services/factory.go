@@ -15,31 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package services
 
 import (
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
-	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 )
 
-// Factory is the factory for creating metrics.
-type Factory struct {
-	promProvider   meter.Provider
-	nativeProvider meter.Provider
-	nCollection    *native.MetricCollection
+// factory is the concrete implementation of observability.Factory interface.
+type factory struct {
+	PromProvider   meter.Provider
+	NativeProvider meter.Provider
+	NCollection    *native.MetricCollection
 }
 
-func (p *metricService) With(scope meter.Scope) *Factory {
-	f := &Factory{}
-	if containsMode(p.modes, flagPromethusMode) {
-		f.promProvider = prom.NewProvider(scope, p.promReg)
+// NewFactory creates a new factory instance.
+// The nCollection parameter should be *native.MetricCollection or nil.
+func NewFactory(promProvider, nativeProvider meter.Provider, nCollection interface{}) observability.Factory {
+	var nCol *native.MetricCollection
+	if nCollection != nil {
+		nCol = nCollection.(*native.MetricCollection)
 	}
-	if containsMode(p.modes, flagNativeMode) {
-		f.nativeProvider = p.npf.provider(scope)
-		f.nCollection = p.nCollection
+	return &factory{
+		PromProvider:   promProvider,
+		NativeProvider: nativeProvider,
+		NCollection:    nCol,
 	}
-	return f
 }
 
 type counterCollection struct {
@@ -47,14 +49,14 @@ type counterCollection struct {
 }
 
 // NewCounter init and return the counterCollection.
-func (f *Factory) NewCounter(name string, labelNames ...string) meter.Counter {
+func (f *factory) NewCounter(name string, labelNames ...string) meter.Counter {
 	var counters []meter.Counter
-	if f.promProvider != nil {
-		counters = append(counters, f.promProvider.Counter(name, labelNames...))
+	if f.PromProvider != nil {
+		counters = append(counters, f.PromProvider.Counter(name, labelNames...))
 	}
-	if f.nativeProvider != nil {
-		counter := f.nativeProvider.Counter(name, labelNames...)
-		f.nCollection.AddCollector(counter.(*native.Counter))
+	if f.NativeProvider != nil {
+		counter := f.NativeProvider.Counter(name, labelNames...)
+		f.NCollection.AddCollector(counter.(*native.Counter))
 		counters = append(counters, counter)
 	}
 	return &counterCollection{
@@ -81,14 +83,14 @@ type gaugeCollection struct {
 }
 
 // NewGauge init and return the gaugeCollection.
-func (f *Factory) NewGauge(name string, labelNames ...string) meter.Gauge {
+func (f *factory) NewGauge(name string, labelNames ...string) meter.Gauge {
 	var gauges []meter.Gauge
-	if f.promProvider != nil {
-		gauges = append(gauges, f.promProvider.Gauge(name, labelNames...))
+	if f.PromProvider != nil {
+		gauges = append(gauges, f.PromProvider.Gauge(name, labelNames...))
 	}
-	if f.nativeProvider != nil {
-		gauge := f.nativeProvider.Gauge(name, labelNames...)
-		f.nCollection.AddCollector(gauge.(*native.Gauge))
+	if f.NativeProvider != nil {
+		gauge := f.NativeProvider.Gauge(name, labelNames...)
+		f.NCollection.AddCollector(gauge.(*native.Gauge))
 		gauges = append(gauges, gauge)
 	}
 	return &gaugeCollection{
@@ -121,14 +123,14 @@ type histogramCollection struct {
 }
 
 // NewHistogram init and return the histogramCollection.
-func (f *Factory) NewHistogram(name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
+func (f *factory) NewHistogram(name string, buckets meter.Buckets, labelNames ...string) meter.Histogram {
 	var histograms []meter.Histogram
-	if f.promProvider != nil {
-		histograms = append(histograms, f.promProvider.Histogram(name, buckets, labelNames...))
+	if f.PromProvider != nil {
+		histograms = append(histograms, f.PromProvider.Histogram(name, buckets, labelNames...))
 	}
-	if f.nativeProvider != nil {
-		histogram := f.nativeProvider.Histogram(name, buckets, labelNames...)
-		f.nCollection.AddCollector(histogram.(*native.Histogram))
+	if f.NativeProvider != nil {
+		histogram := f.NativeProvider.Histogram(name, buckets, labelNames...)
+		f.NCollection.AddCollector(histogram.(*native.Histogram))
 		histograms = append(histograms, histogram)
 	}
 	return &histogramCollection{

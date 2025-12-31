@@ -34,7 +34,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -58,7 +58,7 @@ func (h *updateListener) CheckHealth() *common.Error {
 	if h.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "property is readonly because \"property-max-disk-usage-percent\" is 0")
 	}
-	diskPercent := observability.GetPathUsedPercent(h.path)
+	diskPercent := obsservice.GetPathUsedPercent(h.path)
 	if diskPercent < h.maxDiskUsagePercent {
 		return nil
 	}

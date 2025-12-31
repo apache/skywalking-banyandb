@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -120,7 +121,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
-	observability.UpdatePath(path)
+	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")
@@ -129,7 +130,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 		s.dataPath = filepath.Join(path, storage.DataDir)
 	}
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
-		observability.UpdatePath(s.dataPath)
+		obsservice.UpdatePath(s.dataPath)
 	}
 	s.lfs.MkdirIfNotExist(s.dataPath, storage.DirPerm)
 

@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -388,7 +389,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 	// Wait a bit for metadata service to be ready
 	time.Sleep(200 * time.Millisecond)
 
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "test", nil)
+	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 
 	nr := NewLocalNodeRegistry()
 	grpcServer := NewServer(ctx, pipeline, pipeline, pipeline, metaSvc, NodeRegistries{

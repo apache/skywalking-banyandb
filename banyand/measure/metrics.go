@@ -295,7 +295,7 @@ func (m *metrics) DeleteAll() {
 	m.totalMerged.Delete("file")
 }
 
-func (s *supplier) newMetrics(p common.Position) (storage.Metrics, *observability.Factory) {
+func (s *supplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),

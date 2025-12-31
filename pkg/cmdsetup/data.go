@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -47,7 +48,8 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	metricsPipeline := queue.Local()
-	metricSvc := observability.NewMetricService(metaSvc, metricsPipeline, "data", nil)
+	metricSvc := services.NewMetricService(metaSvc, metricsPipeline, "data", nil)
+	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
 	pipeline := sub.NewServer(metricSvc)
 	propertyStreamPipeline := queue.Local()
