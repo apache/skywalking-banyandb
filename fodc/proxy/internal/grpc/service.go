@@ -41,13 +41,13 @@ import (
 
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
-	MetricsStream fodcv1.FODCService_StreamMetricsServer
-	Context       context.Context
-	Stream        grpc.ServerStream
-	Cancel        context.CancelFunc
-	LastActivity  time.Time
-	AgentID       string
-	Identity      registry.AgentIdentity
+	metricsStream fodcv1.FODCService_StreamMetricsServer
+	context       context.Context
+	stream        grpc.ServerStream
+	cancel        context.CancelFunc
+	lastActivity  time.Time
+	agentID       string
+	identity      registry.AgentIdentity
 	mu            sync.RWMutex
 }
 
@@ -55,14 +55,14 @@ type agentConnection struct {
 func (ac *agentConnection) updateActivity() {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
-	ac.LastActivity = time.Now()
+	ac.lastActivity = time.Now()
 }
 
 // getLastActivity returns the last activity time.
 func (ac *agentConnection) getLastActivity() time.Time {
 	ac.mu.RLock()
 	defer ac.mu.RUnlock()
-	return ac.LastActivity
+	return ac.lastActivity
 }
 
 // FODCService implements the FODC gRPC service.
@@ -136,12 +136,12 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			defer s.cleanupConnection(registeredAgentID)
 
 			agentConn = &agentConnection{
-				AgentID:      agentID,
-				Identity:     identity,
-				Stream:       stream,
-				Context:      ctx,
-				Cancel:       cancel,
-				LastActivity: time.Now(),
+				agentID:      agentID,
+				identity:     identity,
+				stream:       stream,
+				context:      ctx,
+				cancel:       cancel,
+				lastActivity: time.Now(),
 			}
 
 			s.connectionsMu.Lock()
@@ -210,15 +210,15 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	s.connectionsMu.Lock()
 	existingConn, exists := s.connections[agentID]
 	if exists {
-		existingConn.MetricsStream = stream
+		existingConn.metricsStream = stream
 		existingConn.updateActivity()
 	} else {
 		agentConn := &agentConnection{
-			AgentID:       agentID,
-			Stream:        stream,
-			MetricsStream: stream,
-			Context:       ctx,
-			LastActivity:  time.Now(),
+			agentID:       agentID,
+			stream:        stream,
+			metricsStream: stream,
+			context:       ctx,
+			lastActivity:  time.Now(),
 		}
 		s.connections[agentID] = agentConn
 	}
@@ -275,7 +275,7 @@ func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTim
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
 	}
 
-	if agentConn.MetricsStream == nil {
+	if agentConn.metricsStream == nil {
 		return fmt.Errorf("metrics stream not established for agent ID: %s", agentID)
 	}
 
@@ -293,7 +293,7 @@ func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTim
 		}
 	}
 
-	if sendErr := agentConn.MetricsStream.Send(resp); sendErr != nil {
+	if sendErr := agentConn.metricsStream.Send(resp); sendErr != nil {
 		return fmt.Errorf("failed to send metrics request: %w", sendErr)
 	}
 

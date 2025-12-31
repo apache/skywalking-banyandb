@@ -248,7 +248,7 @@ func TestNewFODCService(t *testing.T) {
 
 func TestAgentConnection_UpdateActivity(t *testing.T) {
 	conn := &agentConnection{
-		LastActivity: time.Now().Add(-1 * time.Hour),
+		lastActivity: time.Now().Add(-1 * time.Hour),
 	}
 
 	conn.updateActivity()
@@ -260,7 +260,7 @@ func TestAgentConnection_UpdateActivity(t *testing.T) {
 func TestAgentConnection_GetLastActivity(t *testing.T) {
 	now := time.Now()
 	conn := &agentConnection{
-		LastActivity: now,
+		lastActivity: now,
 	}
 
 	result := conn.getLastActivity()
@@ -443,7 +443,7 @@ func TestStreamMetrics_AgentIDFromContext(t *testing.T) {
 		service.connectionsMu.RLock()
 		conn, exists := service.connections[agentID]
 		service.connectionsMu.RUnlock()
-		if exists && conn != nil && conn.MetricsStream != nil {
+		if exists && conn != nil && conn.metricsStream != nil {
 			connectionChecked <- true
 		} else {
 			connectionChecked <- false
@@ -478,7 +478,7 @@ func TestStreamMetrics_AgentIDFromPeer(t *testing.T) {
 		service.connectionsMu.RLock()
 		conn, exists := service.connections[agentID]
 		service.connectionsMu.RUnlock()
-		if exists && conn != nil && conn.MetricsStream != nil {
+		if exists && conn != nil && conn.metricsStream != nil {
 			connectionChecked <- true
 		} else {
 			connectionChecked <- false
@@ -565,8 +565,8 @@ func TestRequestMetrics_Success(t *testing.T) {
 
 	service.connectionsMu.Lock()
 	service.connections[agentID] = &agentConnection{
-		AgentID:       agentID,
-		MetricsStream: stream,
+		agentID:       agentID,
+		metricsStream: stream,
 	}
 	service.connectionsMu.Unlock()
 
@@ -592,8 +592,8 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 
 	service.connectionsMu.Lock()
 	service.connections[agentID] = &agentConnection{
-		AgentID:       agentID,
-		MetricsStream: stream,
+		agentID:       agentID,
+		metricsStream: stream,
 	}
 	service.connectionsMu.Unlock()
 
@@ -627,8 +627,8 @@ func TestRequestMetrics_NoMetricsStream(t *testing.T) {
 
 	service.connectionsMu.Lock()
 	service.connections[agentID] = &agentConnection{
-		AgentID:       agentID,
-		MetricsStream: nil,
+		agentID:       agentID,
+		metricsStream: nil,
 	}
 	service.connectionsMu.Unlock()
 
@@ -653,8 +653,8 @@ func TestRequestMetrics_SendError(t *testing.T) {
 
 	service.connectionsMu.Lock()
 	service.connections[agentID] = &agentConnection{
-		AgentID:       agentID,
-		MetricsStream: stream,
+		agentID:       agentID,
+		metricsStream: stream,
 	}
 	service.connectionsMu.Unlock()
 
@@ -766,7 +766,7 @@ func TestCleanupConnection(t *testing.T) {
 	require.NoError(t, registerErr)
 
 	service.connectionsMu.Lock()
-	service.connections[agentID] = &agentConnection{AgentID: agentID}
+	service.connections[agentID] = &agentConnection{agentID: agentID}
 	service.connectionsMu.Unlock()
 
 	service.cleanupConnection(agentID)
