@@ -145,12 +145,10 @@ func (s *server) PreRun(ctx context.Context) error {
 	}
 
 	nodeVal := ctx.Value(common.ContextNodeKey)
-	if nodeVal == nil {
-		return errors.New("node id is empty")
-	}
 	roleVal := ctx.Value(common.ContextNodeRolesKey)
-	if roleVal == nil {
-		return errors.New("node roles is empty")
+	if nodeVal == nil || roleVal == nil {
+		s.log.Warn().Msg("node or role value not found in context")
+		return nil
 	}
 	nodeRoles := roleVal.([]databasev1.Role)
 	node := nodeVal.(common.Node)
