@@ -246,9 +246,9 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			return recvErr
 		}
 
-		s.connectionsMu.Lock()
+		s.connectionsMu.RLock()
 		conn, connExists := s.connections[agentID]
-		s.connectionsMu.Unlock()
+		s.connectionsMu.RUnlock()
 		if connExists {
 			conn.updateActivity()
 		}
@@ -268,8 +268,8 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 // RequestMetrics requests metrics from an agent via the metrics stream.
 func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTime, endTime *time.Time) error {
 	s.connectionsMu.RLock()
-	agentConn, exists := s.connections[agentID]
 	defer s.connectionsMu.RUnlock()
+	agentConn, exists := s.connections[agentID]
 
 	if !exists {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
@@ -307,8 +307,8 @@ func (s *FODCService) cleanupConnection(agentID string) {
 	}
 
 	s.connectionsMu.Lock()
+	defer s.connectionsMu.Unlock()
 	delete(s.connections, agentID)
-	s.connectionsMu.Unlock()
 
 	s.logger.Debug().Str("agent_id", agentID).Msg("Cleaned up agent connection")
 }

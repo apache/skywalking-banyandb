@@ -139,16 +139,14 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
 	client := c.client
-	c.mu.Unlock()
 
 	stream, streamErr := client.RegisterAgent(ctx)
 	if streamErr != nil {
+		c.mu.Unlock()
 		return fmt.Errorf("failed to create registration stream: %w", streamErr)
 	}
 
-	c.mu.Lock()
 	c.registrationStream = stream
-	c.mu.Unlock()
 
 	req := &fodcv1.RegisterAgentRequest{
 		NodeRole: c.nodeRole,
@@ -176,18 +174,17 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("registration response missing agent ID")
 	}
 
-	c.mu.Lock()
 	c.agentID = resp.AgentId
 	if resp.HeartbeatIntervalSeconds > 0 {
 		c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
 	}
-	c.mu.Unlock()
 
 	c.logger.Info().
 		Str("proxy_addr", c.proxyAddr).
 		Str("agent_id", resp.AgentId).
 		Dur("heartbeat_interval", c.heartbeatInterval).
 		Msg("Agent registered with Proxy")
+	c.mu.Unlock()
 
 	c.startHeartbeat(ctx)
 
@@ -198,14 +195,13 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 
 // StartMetricsStream establishes bi-directional metrics stream with Proxy.
 func (c *Client) StartMetricsStream(ctx context.Context) error {
-	c.mu.RLock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.client == nil {
-		c.mu.RUnlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
 	client := c.client
 	agentID := c.agentID
-	c.mu.RUnlock()
 
 	if agentID == "" {
 		return fmt.Errorf("agent ID not available, register agent first")
@@ -219,9 +215,7 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 		return fmt.Errorf("failed to create metrics stream: %w", streamErr)
 	}
 
-	c.mu.Lock()
 	c.metricsStream = stream
-	c.mu.Unlock()
 
 	go c.handleMetricsStream(ctx, stream)
 
@@ -569,10 +563,10 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 		if resp.HeartbeatIntervalSeconds > 0 {
 			c.mu.Lock()
 			c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
+			shouldRestartHeartbeat := c.heartbeatTicker != nil
 			c.mu.Unlock()
 
-			if c.heartbeatTicker != nil {
-				c.heartbeatTicker.Stop()
+			if shouldRestartHeartbeat {
 				c.startHeartbeat(ctx)
 			}
 		}
@@ -634,9 +628,8 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 // reconnect handles automatic reconnection when streams break.
 func (c *Client) reconnect(ctx context.Context) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.disconnected {
+		c.mu.Unlock()
 		c.logger.Warn().Msg("Already disconnected intentionally, skipping reconnection...")
 		return
 	}
@@ -661,6 +654,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.conn = nil
 		c.client = nil
 	}
+	c.mu.Unlock()
 
 	// Retry loop with exponential backoff
 	retryInterval := c.reconnectInterval

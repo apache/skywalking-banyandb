@@ -132,8 +132,9 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 	}
 
 	ma.collectingMu.RLock()
-	collectCh, exists := ma.collecting[agentID]
 	defer ma.collectingMu.RUnlock()
+
+	collectCh, exists := ma.collecting[agentID]
 
 	if exists {
 		select {
