@@ -165,6 +165,8 @@
     - [TagType](#banyandb-database-v1-TagType)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
+    - [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest)
+    - [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
     - [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse)
     - [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest)
@@ -270,6 +272,7 @@
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
     - [MeasureRegistryService](#banyandb-database-v1-MeasureRegistryService)
+    - [NodeQueryService](#banyandb-database-v1-NodeQueryService)
     - [PropertyRegistryService](#banyandb-database-v1-PropertyRegistryService)
     - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
@@ -2625,6 +2628,31 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-GetCurrentNodeRequest"></a>
+
+### GetCurrentNodeRequest
+
+
+
+
+
+
+
+<a name="banyandb-database-v1-GetCurrentNodeResponse"></a>
+
+### GetCurrentNodeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node | [Node](#banyandb-database-v1-Node) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-GroupRegistryServiceCreateRequest"></a>
 
 ### GroupRegistryServiceCreateRequest
@@ -4154,6 +4182,16 @@ Type determine the index structure under the hood
 | Get | [MeasureRegistryServiceGetRequest](#banyandb-database-v1-MeasureRegistryServiceGetRequest) | [MeasureRegistryServiceGetResponse](#banyandb-database-v1-MeasureRegistryServiceGetResponse) |  |
 | List | [MeasureRegistryServiceListRequest](#banyandb-database-v1-MeasureRegistryServiceListRequest) | [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse) |  |
 | Exist | [MeasureRegistryServiceExistRequest](#banyandb-database-v1-MeasureRegistryServiceExistRequest) | [MeasureRegistryServiceExistResponse](#banyandb-database-v1-MeasureRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
+
+
+<a name="banyandb-database-v1-NodeQueryService"></a>
+
+### NodeQueryService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetCurrentNode | [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest) | [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse) |  |
 
 
 <a name="banyandb-database-v1-PropertyRegistryService"></a>

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package services
 
 import (
 	"context"
@@ -30,10 +30,12 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -44,10 +46,17 @@ const (
 )
 
 var (
+	errNoAddr         = errors.New("no address")
+	errNoMode         = errors.New("no observability mode")
+	errInvalidMode    = errors.New("invalid observability mode")
+	errDuplicatedMode = errors.New("duplicated observability mode")
+)
+
+var (
 	_ run.Service = (*metricService)(nil)
 	_ run.Config  = (*metricService)(nil)
 
-	obScope = RootScope.SubScope("observability")
+	obScope = observability.RootScope.SubScope("observability")
 )
 
 // Service type for Metric Service.
@@ -57,7 +66,7 @@ type Service interface {
 }
 
 // NewMetricService returns a metric service.
-func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) MetricsRegistry {
+func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) observability.MetricsRegistry {
 	return &metricService{
 		closer:       run.NewCloser(1),
 		metadata:     metadata,
@@ -231,7 +240,7 @@ type SchedulerMetrics struct {
 }
 
 // NewSchedulerMetrics creates a new scheduler metrics.
-func NewSchedulerMetrics(factory *Factory) *SchedulerMetrics {
+func NewSchedulerMetrics(factory observability.Factory) *SchedulerMetrics {
 	return &SchedulerMetrics{
 		totalJobsStarted:   factory.NewGauge("scheduler_jobs_started", "job"),
 		totalJobsFinished:  factory.NewGauge("scheduler_jobs_finished", "job"),
@@ -250,4 +259,15 @@ func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
 	sm.totalTasksFinished.Set(float64(m.TotalTasksFinished.Load()), job)
 	sm.totalTasksPanic.Set(float64(m.TotalTasksPanic.Load()), job)
 	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load())/float64(time.Second), job)
+}
+
+func (p *metricService) With(scope meter.Scope) observability.Factory {
+	var promProvider, nativeProvider meter.Provider
+	if containsMode(p.modes, flagPromethusMode) {
+		promProvider = prom.NewProvider(scope, p.promReg)
+	}
+	if containsMode(p.modes, flagNativeMode) {
+		nativeProvider = p.npf.provider(scope)
+	}
+	return NewFactory(promProvider, nativeProvider, p.nCollection)
 }
