@@ -295,7 +295,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTime, endTime *time.Time) error {
 	s.connectionsMu.RLock()
 	agentConn, exists := s.connections[agentID]
-	s.connectionsMu.RUnlock()
+	defer s.connectionsMu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)

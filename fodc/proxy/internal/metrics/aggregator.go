@@ -62,7 +62,6 @@ type Aggregator struct {
 	registry     *registry.AgentRegistry
 	logger       *logger.Logger
 	grpcService  RequestSender
-	metricsCh    chan *AggregatedMetric
 	collecting   map[string]chan []*AggregatedMetric
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
@@ -79,7 +78,6 @@ func NewAggregator(registry *registry.AgentRegistry, grpcService RequestSender, 
 		registry:    registry,
 		grpcService: grpcService,
 		logger:      logger,
-		metricsCh:   make(chan *AggregatedMetric, 1000),
 		collecting:  make(map[string]chan []*AggregatedMetric),
 	}
 }
@@ -135,7 +133,7 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 
 	ma.collectingMu.RLock()
 	collectCh, exists := ma.collecting[agentID]
-	ma.collectingMu.RUnlock()
+	defer ma.collectingMu.RUnlock()
 
 	if exists {
 		select {
@@ -145,6 +143,8 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 		default:
 			ma.logger.Warn().Str("agent_id", agentID).Msg("Metrics collection channel full, dropping metrics")
 		}
+	} else {
+		ma.logger.Warn().Str("agent_id", agentID).Msg("Metrics collection channel not found, dropping metrics")
 	}
 
 	return nil
