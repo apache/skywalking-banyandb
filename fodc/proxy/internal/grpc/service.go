@@ -26,7 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -42,12 +41,8 @@ import (
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
 	metricsStream fodcv1.FODCService_StreamMetricsServer
-	context       context.Context
-	stream        grpc.ServerStream
-	cancel        context.CancelFunc
 	lastActivity  time.Time
 	agentID       string
-	identity      registry.AgentIdentity
 	mu            sync.RWMutex
 }
 
@@ -95,6 +90,9 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 	var agentID string
 	var agentConn *agentConnection
 	initialRegistration := true
+	defer func() {
+		s.cleanupConnection(agentID)
+	}()
 
 	for {
 		req, recvErr := stream.Recv()
@@ -133,14 +131,9 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			}
 
 			agentID = registeredAgentID
-			defer s.cleanupConnection(registeredAgentID)
 
 			agentConn = &agentConnection{
 				agentID:      agentID,
-				identity:     identity,
-				stream:       stream,
-				context:      ctx,
-				cancel:       cancel,
 				lastActivity: time.Now(),
 			}
 
@@ -215,9 +208,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	} else {
 		agentConn := &agentConnection{
 			agentID:       agentID,
-			stream:        stream,
 			metricsStream: stream,
-			context:       ctx,
 			lastActivity:  time.Now(),
 		}
 		s.connections[agentID] = agentConn
