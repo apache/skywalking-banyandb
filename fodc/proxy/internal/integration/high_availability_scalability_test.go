@@ -147,6 +147,7 @@ var _ = Describe("High Availability and Scalability", func() {
 		for _, agent := range agents {
 			if agent != nil {
 				agent.cancel()
+				time.Sleep(100 * time.Millisecond)
 				_ = agent.client.Disconnect()
 			}
 		}
@@ -247,6 +248,7 @@ var _ = Describe("High Availability and Scalability", func() {
 		for idx := 0; idx < reconnectSubsetSize; idx++ {
 			agent := agents[idx]
 			agent.cancel()
+			time.Sleep(100 * time.Millisecond)
 			Expect(agent.client.Disconnect()).To(Succeed())
 
 			agent.ctx, agent.cancel = context.WithCancel(context.Background())
