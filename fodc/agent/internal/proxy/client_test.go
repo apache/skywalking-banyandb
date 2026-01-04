@@ -288,10 +288,10 @@ func TestProxyClient_Connect_Success(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to create proxy client")
 	} else {
 		// If connection succeeds, verify connection is set
-		pc.mu.RLock()
+		pc.streamsMu.RLock()
 		conn := pc.conn
 		client := pc.client
-		pc.mu.RUnlock()
+		pc.streamsMu.RUnlock()
 		assert.NotNil(t, conn)
 		assert.NotNil(t, client)
 	}
@@ -305,10 +305,10 @@ func TestProxyClient_Connect_AlreadyConnected(t *testing.T) {
 	// Mock connection
 	mockConn := &grpc.ClientConn{}
 	mockClient := &mockFODCServiceClient{}
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.conn = mockConn
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	ctx := context.Background()
 	err := pc.Connect(ctx)
@@ -322,26 +322,26 @@ func TestProxyClient_Connect_Reconnection(t *testing.T) {
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
 	// Set disconnected state
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.disconnected = true
 	pc.stopCh = make(chan struct{})
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	ctx := context.Background()
 	err := pc.Connect(ctx)
 
 	// Verify disconnected state is reset regardless of connection success/failure
-	pc.mu.RLock()
+	pc.streamsMu.RLock()
 	disconnected := pc.disconnected
-	pc.mu.RUnlock()
+	pc.streamsMu.RUnlock()
 	assert.False(t, disconnected)
 
 	// Connection may succeed or fail depending on whether server is running
 	// The important part is that disconnected state is reset
 	if err == nil {
-		pc.mu.RLock()
+		pc.streamsMu.RLock()
 		conn := pc.conn
-		pc.mu.RUnlock()
+		pc.streamsMu.RUnlock()
 		assert.NotNil(t, conn)
 	}
 }
@@ -371,9 +371,9 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	// Add successful response
 	mockStream.AddResponse(&fodcv1.RegisterAgentResponse{
@@ -386,10 +386,8 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 	err := pc.StartRegistrationStream(ctx)
 
 	require.NoError(t, err)
-	pc.mu.RLock()
 	agentID := pc.agentID
 	heartbeatInterval := pc.heartbeatInterval
-	pc.mu.RUnlock()
 	assert.Equal(t, "test-agent-id", agentID)
 	assert.Equal(t, 10*time.Second, heartbeatInterval)
 }
@@ -405,9 +403,9 @@ func TestProxyClient_StartRegistrationStream_StreamError(t *testing.T) {
 		return nil, errors.New("stream creation failed")
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.StartRegistrationStream(ctx)
 
@@ -429,9 +427,9 @@ func TestProxyClient_StartRegistrationStream_SendError(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.StartRegistrationStream(ctx)
 
@@ -453,9 +451,9 @@ func TestProxyClient_StartRegistrationStream_RecvError(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.StartRegistrationStream(ctx)
 
@@ -476,9 +474,9 @@ func TestProxyClient_StartRegistrationStream_RegistrationFailed(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	// Add failed response
 	mockStream.AddResponse(&fodcv1.RegisterAgentResponse{
@@ -505,9 +503,9 @@ func TestProxyClient_StartRegistrationStream_MissingAgentID(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	// Add response without agent ID
 	mockStream.AddResponse(&fodcv1.RegisterAgentResponse{
@@ -539,9 +537,9 @@ func TestProxyClient_StartMetricsStream_NoAgentID(t *testing.T) {
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
 	mockClient := &mockFODCServiceClient{}
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	ctx := context.Background()
 	err := pc.StartMetricsStream(ctx)
@@ -569,17 +567,17 @@ func TestProxyClient_StartMetricsStream_Success(t *testing.T) {
 		return mockStream, nil
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
 	pc.agentID = "test-agent-id"
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.StartMetricsStream(ctx)
 
 	require.NoError(t, err)
-	pc.mu.RLock()
+	pc.streamsMu.RLock()
 	metricsStream := pc.metricsStream
-	pc.mu.RUnlock()
+	pc.streamsMu.RUnlock()
 	assert.NotNil(t, metricsStream)
 }
 
@@ -594,10 +592,10 @@ func TestProxyClient_StartMetricsStream_StreamError(t *testing.T) {
 		return nil, errors.New("stream creation failed")
 	}
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.client = mockClient
 	pc.agentID = "test-agent-id"
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.StartMetricsStream(ctx)
 
@@ -625,9 +623,9 @@ func TestProxyClient_SendHeartbeat_Success(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockRegisterAgentClient(ctx)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.registrationStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.SendHeartbeat(ctx)
 
@@ -647,9 +645,9 @@ func TestProxyClient_SendHeartbeat_SendError(t *testing.T) {
 	mockStream := newMockRegisterAgentClient(ctx)
 	mockStream.SetSendError(errors.New("send failed"))
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.registrationStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.SendHeartbeat(ctx)
 
@@ -677,9 +675,9 @@ func TestProxyClient_RetrieveAndSendMetrics_NoDatasources(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.metricsStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.RetrieveAndSendMetrics(ctx, nil)
 
@@ -719,9 +717,9 @@ func TestProxyClient_RetrieveAndSendMetrics_LatestMetrics(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.metricsStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.RetrieveAndSendMetrics(ctx, nil)
 
@@ -761,9 +759,9 @@ func TestProxyClient_RetrieveAndSendMetrics_FilteredMetrics(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.metricsStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	startTime := now.Add(-90 * time.Minute)
 	endTime := now.Add(-30 * time.Minute)
@@ -801,9 +799,9 @@ func TestProxyClient_RetrieveAndSendMetrics_FilteredNoTimestamps(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.metricsStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	// Filter for a future time window that won't match any timestamps
 	// This tests the filtering logic when timestamps exist but don't match
@@ -838,24 +836,24 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	// Set conn to nil to avoid panic - Disconnect handles nil gracefully
 	pc.conn = nil
 	pc.client = mockClient
 	pc.registrationStream = mockRegStream
 	pc.metricsStream = mockMetricsStream
 	pc.heartbeatTicker = ticker
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.Disconnect()
 
 	require.NoError(t, err)
-	pc.mu.RLock()
+	pc.streamsMu.RLock()
 	disconnected := pc.disconnected
 	conn := pc.conn
 	registrationStream := pc.registrationStream
 	metricsStream := pc.metricsStream
-	pc.mu.RUnlock()
+	pc.streamsMu.RUnlock()
 	assert.True(t, disconnected)
 	assert.Nil(t, conn)
 	assert.Nil(t, registrationStream)
@@ -867,9 +865,9 @@ func TestProxyClient_Disconnect_Idempotent(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.disconnected = true
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	err := pc.Disconnect()
 
@@ -947,9 +945,9 @@ func TestProxyClient_handleMetricsStream_RequestMetrics(t *testing.T) {
 	defer cancel()
 
 	mockStream := newMockStreamMetricsClient(ctx)
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.metricsStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	now := time.Now()
 	startTime := timestamppb.New(now.Add(-1 * time.Hour))
@@ -1193,18 +1191,18 @@ func TestProxyClient_startHeartbeat_Success(t *testing.T) {
 	defer cancel()
 
 	mockStream := newMockRegisterAgentClient(ctx)
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.registrationStream = mockStream
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	pc.startHeartbeat(ctx)
 
 	// Wait for at least one heartbeat
 	time.Sleep(150 * time.Millisecond)
 
-	pc.mu.RLock()
+	pc.streamsMu.RLock()
 	ticker := pc.heartbeatTicker
-	pc.mu.RUnlock()
+	pc.streamsMu.RUnlock()
 	assert.NotNil(t, ticker)
 
 	mockStream.mu.Lock()
@@ -1226,17 +1224,17 @@ func TestProxyClient_startHeartbeat_ReplacesExistingTicker(t *testing.T) {
 	defer cancel()
 
 	mockStream := newMockRegisterAgentClient(ctx)
-	pc.mu.Lock()
+	pc.streamsMu.Lock()
 	pc.registrationStream = mockStream
 	oldTicker := time.NewTicker(200 * time.Millisecond)
 	pc.heartbeatTicker = oldTicker
-	pc.mu.Unlock()
+	pc.streamsMu.Unlock()
 
 	pc.startHeartbeat(ctx)
 
-	pc.mu.RLock()
+	pc.streamsMu.RLock()
 	newTicker := pc.heartbeatTicker
-	pc.mu.RUnlock()
+	pc.streamsMu.RUnlock()
 	assert.NotNil(t, newTicker)
 	assert.NotEqual(t, oldTicker, newTicker)
 

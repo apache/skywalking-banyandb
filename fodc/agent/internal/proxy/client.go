@@ -29,7 +29,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -40,11 +39,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const (
-	// maxRetryInterval is the maximum interval between reconnection attempts.
-	maxRetryInterval = 30 * time.Second
-)
-
 // MetricsRequestFilter defines filters for metrics requests.
 type MetricsRequestFilter struct {
 	StartTime *time.Time
@@ -53,6 +47,7 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
+	connManager        *ConnManager
 	conn               *grpc.ClientConn
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
@@ -72,7 +67,7 @@ type Client struct {
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
 	disconnected      bool
-	mu                sync.RWMutex
+	streamsMu         sync.RWMutex // Protects streams only
 }
 
 // NewClient creates a new Client instance.
@@ -88,6 +83,7 @@ func NewClient(
 	logger *logger.Logger,
 ) *Client {
 	return &Client{
+		connManager:       NewConnManager(proxyAddr, reconnectInterval, logger),
 		proxyAddr:         proxyAddr,
 		nodeIP:            nodeIP,
 		nodePort:          nodePort,
@@ -102,13 +98,18 @@ func NewClient(
 }
 
 // Connect establishes a gRPC connection to Proxy.
-func (c *Client) Connect(_ context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.conn != nil {
-		return nil
+func (c *Client) Connect(ctx context.Context) error {
+	resultCh := c.connManager.RequestConnect(ctx)
+	result := <-resultCh
+	if result.Error != nil {
+		return result.Error
 	}
+
+	c.conn = result.Conn
+
+	c.streamsMu.Lock()
+	c.client = fodcv1.NewFODCServiceClient(result.Conn)
+	c.streamsMu.Unlock()
 
 	// Reset disconnected state and recreate stopCh for reconnection
 	if c.disconnected {
@@ -116,37 +117,23 @@ func (c *Client) Connect(_ context.Context) error {
 		c.stopCh = make(chan struct{})
 	}
 
-	conn, dialErr := grpc.NewClient(c.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if dialErr != nil {
-		return fmt.Errorf("failed to create proxy client: %w", dialErr)
-	}
-
-	c.conn = conn
-	c.client = fodcv1.NewFODCServiceClient(conn)
-
-	c.logger.Info().
-		Str("proxy_addr", c.proxyAddr).
-		Msg("Connected to FODC Proxy")
-
 	return nil
 }
 
 // StartRegistrationStream establishes bi-directional registration stream with Proxy.
 func (c *Client) StartRegistrationStream(ctx context.Context) error {
-	c.mu.Lock()
+	c.streamsMu.Lock()
 	if c.client == nil {
-		c.mu.Unlock()
+		c.streamsMu.Unlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
 	client := c.client
+	c.streamsMu.Unlock()
 
 	stream, streamErr := client.RegisterAgent(ctx)
 	if streamErr != nil {
-		c.mu.Unlock()
 		return fmt.Errorf("failed to create registration stream: %w", streamErr)
 	}
-
-	c.registrationStream = stream
 
 	req := &fodcv1.RegisterAgentRequest{
 		NodeRole: c.nodeRole,
@@ -174,17 +161,19 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 		return fmt.Errorf("registration response missing agent ID")
 	}
 
+	c.streamsMu.Lock()
+	c.registrationStream = stream
 	c.agentID = resp.AgentId
 	if resp.HeartbeatIntervalSeconds > 0 {
 		c.heartbeatInterval = time.Duration(resp.HeartbeatIntervalSeconds) * time.Second
 	}
+	c.streamsMu.Unlock()
 
 	c.logger.Info().
 		Str("proxy_addr", c.proxyAddr).
 		Str("agent_id", resp.AgentId).
 		Dur("heartbeat_interval", c.heartbeatInterval).
 		Msg("Agent registered with Proxy")
-	c.mu.Unlock()
 
 	c.startHeartbeat(ctx)
 
@@ -195,13 +184,14 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 
 // StartMetricsStream establishes bi-directional metrics stream with Proxy.
 func (c *Client) StartMetricsStream(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.streamsMu.Lock()
 	if c.client == nil {
+		c.streamsMu.Unlock()
 		return fmt.Errorf("client not connected, call Connect() first")
 	}
 	client := c.client
 	agentID := c.agentID
+	c.streamsMu.Unlock()
 
 	if agentID == "" {
 		return fmt.Errorf("agent ID not available, register agent first")
@@ -215,7 +205,9 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 		return fmt.Errorf("failed to create metrics stream: %w", streamErr)
 	}
 
+	c.streamsMu.Lock()
 	c.metricsStream = stream
+	c.streamsMu.Unlock()
 
 	go c.handleMetricsStream(ctx, stream)
 
@@ -228,12 +220,13 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
 func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsRequestFilter) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
+	c.streamsMu.RLock()
 	if c.disconnected || c.metricsStream == nil {
+		c.streamsMu.RUnlock()
 		return fmt.Errorf("metrics stream not established")
 	}
+	metricsStream := c.metricsStream
+	c.streamsMu.RUnlock()
 
 	datasources := c.flightRecorder.GetDatasources()
 	if len(datasources) == 0 {
@@ -242,7 +235,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			Metrics:   []*fodcv1.Metric{},
 			Timestamp: timestamppb.Now(),
 		}
-		if sendErr := c.metricsStream.Send(req); sendErr != nil {
+		if sendErr := metricsStream.Send(req); sendErr != nil {
 			return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 		}
 		return nil
@@ -261,7 +254,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := c.metricsStream.Send(req); sendErr != nil {
+			if sendErr := metricsStream.Send(req); sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
@@ -274,17 +267,17 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := c.metricsStream.Send(req); sendErr != nil {
+			if sendErr := metricsStream.Send(req); sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
 		}
 
-		return c.sendFilteredMetrics(c.metricsStream, allMetrics, timestampValues, descriptions, filter)
+		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
 	}
 
 	// For latest metrics (no time filter), we can send even without timestamps
-	return c.sendLatestMetrics(c.metricsStream, allMetrics, descriptions)
+	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -409,12 +402,13 @@ func (c *Client) sendFilteredMetrics(
 
 // SendHeartbeat sends heartbeat to Proxy.
 func (c *Client) SendHeartbeat(_ context.Context) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
+	c.streamsMu.RLock()
 	if c.disconnected || c.registrationStream == nil {
+		c.streamsMu.RUnlock()
 		return fmt.Errorf("registration stream not established")
 	}
+	registrationStream := c.registrationStream
+	c.streamsMu.RUnlock()
 
 	req := &fodcv1.RegisterAgentRequest{
 		NodeRole: c.nodeRole,
@@ -425,7 +419,7 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		},
 	}
 
-	if sendErr := c.registrationStream.Send(req); sendErr != nil {
+	if sendErr := registrationStream.Send(req); sendErr != nil {
 		return fmt.Errorf("failed to send heartbeat: %w", sendErr)
 	}
 
@@ -434,10 +428,9 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 
 // Disconnect closes connection to Proxy.
 func (c *Client) Disconnect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.streamsMu.Lock()
 	if c.disconnected {
+		c.streamsMu.Unlock()
 		return nil
 	}
 
@@ -462,14 +455,15 @@ func (c *Client) Disconnect() error {
 		}
 		c.metricsStream = nil
 	}
+	c.streamsMu.Unlock()
 
-	if c.conn != nil {
-		if closeErr := c.conn.Close(); closeErr != nil {
-			c.logger.Warn().Err(closeErr).Msg("Error closing connection")
-		}
-		c.conn = nil
-		c.client = nil
-	}
+	// Stop the connection manager (this will close the connection)
+	c.connManager.Stop()
+
+	c.streamsMu.Lock()
+	c.conn = nil
+	c.client = nil
+	c.streamsMu.Unlock()
 
 	c.logger.Info().Msg("Disconnected from FODC Proxy")
 
@@ -478,6 +472,9 @@ func (c *Client) Disconnect() error {
 
 // Start starts the proxy client with automatic reconnection.
 func (c *Client) Start(ctx context.Context) error {
+	// Start the connection manager's event processing goroutine
+	c.connManager.Start(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -614,16 +611,16 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 
 // reconnect handles automatic reconnection when streams break.
 func (c *Client) reconnect(ctx context.Context) {
-	c.mu.Lock()
+	c.streamsMu.Lock()
 	if c.disconnected {
-		c.mu.Unlock()
+		c.streamsMu.Unlock()
 		c.logger.Warn().Msg("Already disconnected intentionally, skipping reconnection...")
 		return
 	}
 
 	c.logger.Info().Msg("Starting reconnection process...")
 
-	// Clean up existing streams and connection
+	// Clean up existing streams
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
@@ -636,70 +633,41 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.metricsStream.CloseSend()
 		c.metricsStream = nil
 	}
-	if c.conn != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		c.client = nil
-	}
-	c.mu.Unlock()
+	c.streamsMu.Unlock()
 
-	// Retry loop with exponential backoff
-	retryInterval := c.reconnectInterval
-	sleepWithBackoff := func() bool {
-		select {
-		case <-ctx.Done():
-			c.logger.Info().Msg("Reconnection canceled due to context cancellation")
-			return false
-		case <-c.stopCh:
-			c.logger.Info().Msg("Reconnection canceled due to stop signal")
-			return false
-		case <-time.After(retryInterval):
-			retryInterval *= 2
-			if retryInterval > maxRetryInterval {
-				retryInterval = maxRetryInterval
-			}
-			return true
-		}
-	}
+	// Request reconnection through the connection manager
+	reconnectCh := c.connManager.RequestReconnect(ctx)
+	reconnectResult := <-reconnectCh
 
-	for {
-		c.logger.Info().Dur("retry_interval", retryInterval).Msg("Attempting to reconnect...")
-
-		// Try to reconnect
-		if connectErr := c.Connect(ctx); connectErr != nil {
-			c.logger.Error().Err(connectErr).Msg("Failed to reconnect to Proxy, retrying...")
-			if !sleepWithBackoff() {
-				return
-			}
-			continue
-		}
-
-		// Try to re-establish registration stream
-		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
-			c.logger.Error().Err(regErr).Msg("Failed to restart registration stream, retrying...")
-			if !sleepWithBackoff() {
-				return
-			}
-			continue
-		}
-
-		// Try to re-establish metrics stream
-		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
-			c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream, retrying...")
-			if !sleepWithBackoff() {
-				return
-			}
-			continue
-		}
-
-		c.logger.Info().Msg("Successfully reconnected to Proxy")
+	if reconnectResult.Error != nil {
+		c.logger.Error().Err(reconnectResult.Error).Msg("Failed to reconnect to Proxy")
 		return
 	}
+
+	// Update connection references
+	c.streamsMu.Lock()
+	c.conn = reconnectResult.Conn
+	c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
+	c.streamsMu.Unlock()
+
+	// Try to re-establish registration stream
+	if regErr := c.StartRegistrationStream(ctx); regErr != nil {
+		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream")
+		return
+	}
+
+	// Try to re-establish metrics stream
+	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
+		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
+		return
+	}
+
+	c.logger.Info().Msg("Successfully reconnected to Proxy")
 }
 
 // startHeartbeat starts the heartbeat ticker.
 func (c *Client) startHeartbeat(ctx context.Context) {
-	c.mu.Lock()
+	c.streamsMu.Lock()
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 	}
@@ -707,7 +675,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 	c.heartbeatTicker = time.NewTicker(c.heartbeatInterval)
 	tickerCh := c.heartbeatTicker.C
 	stopCh := c.stopCh
-	c.mu.Unlock()
+	c.streamsMu.Unlock()
 
 	go func() {
 		for {
