@@ -27,7 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -48,7 +47,6 @@ type MetricsRequestFilter struct {
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
 	connManager        *ConnManager
-	conn               *grpc.ClientConn
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
 	logger             *logger.Logger
@@ -110,7 +108,6 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.streamsMu.Lock()
-	c.conn = result.Conn
 	c.client = fodcv1.NewFODCServiceClient(result.Conn)
 	// Reset disconnected state and recreate stopCh for reconnection
 	if c.disconnected {
@@ -477,7 +474,6 @@ func (c *Client) Disconnect() error {
 	c.connManager.Stop()
 
 	c.streamsMu.Lock()
-	c.conn = nil
 	c.client = nil
 	c.streamsMu.Unlock()
 
@@ -662,7 +658,6 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	// Update connection references
 	c.streamsMu.Lock()
-	c.conn = reconnectResult.Conn
 	c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
 	c.streamsMu.Unlock()
 

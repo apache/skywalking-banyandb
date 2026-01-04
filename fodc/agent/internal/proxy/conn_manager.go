@@ -48,7 +48,6 @@ const (
 type ConnEvent struct {
 	ResultCh  chan<- ConnResult
 	Context   context.Context
-	ErrorCh   chan<- error
 	Type      ConnEventType
 	Immediate bool // If true, skip backoff and retry immediately
 }
@@ -137,20 +136,10 @@ func (cm *ConnManager) Stop() {
 		return // Already stopped
 	}
 
+	// Signal the run goroutine to stop
 	close(cm.stopCh)
-	// Send disconnect event to clean up
-	disconnectEvent := ConnEvent{
-		Type:    ConnEventDisconnect,
-		Context: context.Background(),
-	}
-	select {
-	case cm.eventCh <- disconnectEvent:
-	case <-time.After(1 * time.Second):
-		// Channel might be full or manager stopped, force close
-		close(cm.eventCh)
-	}
 
-	// Wait for goroutine to exit before resetting state
+	// Wait for goroutine to exit and cleanup
 	<-cm.doneCh
 
 	cm.started = false
@@ -229,9 +218,9 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		cm.stateMu.Unlock()
 
 		cm.cleanupConnection()
-		if event.ErrorCh != nil {
-			event.ErrorCh <- nil
-			close(event.ErrorCh)
+		if event.ResultCh != nil {
+			event.ResultCh <- ConnResult{Error: nil}
+			close(event.ResultCh)
 		}
 	case ConnEventConnect:
 		cm.stateMu.RLock()

@@ -293,12 +293,10 @@ func TestProxyClient_Connect_Success(t *testing.T) {
 		// If connection fails, verify error message
 		assert.Contains(t, err.Error(), "failed to create proxy client")
 	} else {
-		// If connection succeeds, verify connection is set
+		// If connection succeeds, verify client is set
 		pc.streamsMu.RLock()
-		conn := pc.conn
 		client := pc.client
 		pc.streamsMu.RUnlock()
-		assert.NotNil(t, conn)
 		assert.NotNil(t, client)
 	}
 }
@@ -354,9 +352,9 @@ func TestProxyClient_Connect_Reconnection(t *testing.T) {
 	// The important part is that disconnected state is reset
 	if err == nil {
 		pc.streamsMu.RLock()
-		conn := pc.conn
+		client := pc.client
 		pc.streamsMu.RUnlock()
-		assert.NotNil(t, conn)
+		assert.NotNil(t, client)
 	}
 }
 
@@ -851,8 +849,6 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	defer ticker.Stop()
 
 	pc.streamsMu.Lock()
-	// Set conn to nil to avoid panic - Disconnect handles nil gracefully
-	pc.conn = nil
 	pc.client = mockClient
 	pc.registrationStream = mockRegStream
 	pc.metricsStream = mockMetricsStream
@@ -864,12 +860,12 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	require.NoError(t, err)
 	pc.streamsMu.RLock()
 	disconnected := pc.disconnected
-	conn := pc.conn
+	client := pc.client
 	registrationStream := pc.registrationStream
 	metricsStream := pc.metricsStream
 	pc.streamsMu.RUnlock()
 	assert.True(t, disconnected)
-	assert.Nil(t, conn)
+	assert.Nil(t, client)
 	assert.Nil(t, registrationStream)
 	assert.Nil(t, metricsStream)
 }

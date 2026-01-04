@@ -194,18 +194,18 @@ func TestConnManager_DisconnectEvent(t *testing.T) {
 	defer cm.Stop()
 
 	// Send disconnect event
-	errorCh := make(chan error, 1)
+	resultCh := make(chan ConnResult, 1)
 	event := ConnEvent{
-		Type:    ConnEventDisconnect,
-		Context: ctx,
-		ErrorCh: errorCh,
+		Type:     ConnEventDisconnect,
+		Context:  ctx,
+		ResultCh: resultCh,
 	}
 
 	cm.EventChannel() <- event
 
 	select {
-	case err := <-errorCh:
-		assert.NoError(t, err)
+	case result := <-resultCh:
+		assert.NoError(t, result.Error)
 		// Give some time for state update
 		time.Sleep(50 * time.Millisecond)
 		assert.True(t, cm.IsDisconnected())
