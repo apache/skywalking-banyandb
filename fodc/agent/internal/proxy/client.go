@@ -99,6 +99,9 @@ func NewClient(
 
 // Connect establishes a gRPC connection to Proxy.
 func (c *Client) Connect(ctx context.Context) error {
+	// Auto-start connection manager if not already started
+	c.connManager.Start(ctx)
+
 	resultCh := c.connManager.RequestConnect(ctx)
 	result := <-resultCh
 	if result.Error != nil {

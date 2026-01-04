@@ -21,6 +21,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -84,8 +85,11 @@ type ConnManager struct {
 	reconnectInterval time.Duration
 	retryInterval     time.Duration
 
+	stateMu      sync.RWMutex // Protects state and disconnected
 	state        ConnState
 	disconnected bool
+	started      bool
+	startedMu    sync.Mutex // Protects started flag
 }
 
 // NewConnManager creates a new connection manager.
@@ -112,6 +116,14 @@ func (cm *ConnManager) EventChannel() chan<- ConnEvent {
 
 // Start starts the connection manager's event processing goroutine.
 func (cm *ConnManager) Start(ctx context.Context) {
+	cm.startedMu.Lock()
+	defer cm.startedMu.Unlock()
+
+	if cm.started {
+		return // Already started
+	}
+
+	cm.started = true
 	go cm.run(ctx)
 }
 
@@ -194,25 +206,33 @@ func (cm *ConnManager) run(ctx context.Context) {
 func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 	switch event.Type {
 	case ConnEventDisconnect:
+		cm.stateMu.Lock()
 		cm.disconnected = true
-		cm.cleanupConnection()
 		cm.state = ConnStateDisconnected
+		cm.stateMu.Unlock()
+
+		cm.cleanupConnection()
 		if event.ErrorCh != nil {
 			event.ErrorCh <- nil
 			close(event.ErrorCh)
 		}
 	case ConnEventConnect:
-		if cm.state == ConnStateConnected && cm.currentConn != nil {
+		cm.stateMu.RLock()
+		currentState := cm.state
+		currentConn := cm.currentConn
+		cm.stateMu.RUnlock()
+
+		if currentState == ConnStateConnected && currentConn != nil {
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
-					Conn:   cm.currentConn,
+					Conn:   currentConn,
 					Client: nil, // Client should be created by caller
 				}
 				close(event.ResultCh)
 			}
 			return
 		}
-		if cm.state == ConnStateConnecting {
+		if currentState == ConnStateConnecting {
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
 					Error: fmt.Errorf("connection already in progress"),
@@ -221,7 +241,11 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}
 			return
 		}
+
+		cm.stateMu.Lock()
 		cm.state = ConnStateConnecting
+		cm.stateMu.Unlock()
+
 		connCtx, connCancel := context.WithCancel(ctx)
 		defer connCancel()
 		// If event.Context is provided and not done, cancel connCtx when event.Context is done
@@ -235,6 +259,8 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}()
 		}
 		result := cm.doConnect(connCtx)
+
+		cm.stateMu.Lock()
 		if result.Error == nil {
 			cm.state = ConnStateConnected
 			cm.currentConn = result.Conn
@@ -242,12 +268,19 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		} else {
 			cm.state = ConnStateDisconnected
 		}
+		cm.stateMu.Unlock()
+
 		if event.ResultCh != nil {
 			event.ResultCh <- result
 			close(event.ResultCh)
 		}
 	case ConnEventReconnect:
-		if cm.disconnected {
+		cm.stateMu.RLock()
+		disconnected := cm.disconnected
+		currentState := cm.state
+		cm.stateMu.RUnlock()
+
+		if disconnected {
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
 					Error: fmt.Errorf("connection manager is disconnected"),
@@ -256,7 +289,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}
 			return
 		}
-		if cm.state == ConnStateReconnecting {
+		if currentState == ConnStateReconnecting {
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
 					Error: fmt.Errorf("reconnection already in progress"),
@@ -265,7 +298,11 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}
 			return
 		}
+
+		cm.stateMu.Lock()
 		cm.state = ConnStateReconnecting
+		cm.stateMu.Unlock()
+
 		cm.cleanupConnection()
 
 		reconnCtx, reconnCancel := context.WithCancel(ctx)
@@ -281,6 +318,8 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}()
 		}
 		result := cm.doReconnect(reconnCtx, event.Immediate)
+
+		cm.stateMu.Lock()
 		if result.Error == nil {
 			cm.state = ConnStateConnected
 			cm.currentConn = result.Conn
@@ -288,6 +327,8 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		} else {
 			cm.state = ConnStateDisconnected
 		}
+		cm.stateMu.Unlock()
+
 		if event.ResultCh != nil {
 			event.ResultCh <- result
 			close(event.ResultCh)
@@ -348,8 +389,25 @@ func (cm *ConnManager) cleanupConnection() {
 
 // cleanup performs final cleanup when the manager stops.
 func (cm *ConnManager) cleanup() {
+	cm.stateMu.Lock()
 	cm.disconnected = true
-	cm.cleanupConnection()
 	cm.state = ConnStateDisconnected
+	cm.stateMu.Unlock()
+
+	cm.cleanupConnection()
 	cm.logger.Info().Msg("Connection manager stopped")
+}
+
+// GetState returns the current connection state (thread-safe).
+func (cm *ConnManager) GetState() ConnState {
+	cm.stateMu.RLock()
+	defer cm.stateMu.RUnlock()
+	return cm.state
+}
+
+// IsDisconnected returns whether the manager is disconnected (thread-safe).
+func (cm *ConnManager) IsDisconnected() bool {
+	cm.stateMu.RLock()
+	defer cm.stateMu.RUnlock()
+	return cm.disconnected
 }

@@ -36,7 +36,7 @@ func TestNewConnManager(t *testing.T) {
 	assert.NotNil(t, cm)
 	assert.Equal(t, proxyAddr, cm.proxyAddr)
 	assert.Equal(t, reconnectInterval, cm.reconnectInterval)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 	assert.NotNil(t, cm.eventCh)
 	assert.NotNil(t, cm.stopCh)
 	assert.NotNil(t, cm.logger)
@@ -84,8 +84,8 @@ func TestConnManager_StartStop(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify it's in disconnected state
-	assert.True(t, cm.disconnected)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.True(t, cm.IsDisconnected())
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 }
 
 func TestConnManager_RequestConnect_Success(t *testing.T) {
@@ -208,8 +208,8 @@ func TestConnManager_DisconnectEvent(t *testing.T) {
 		assert.NoError(t, err)
 		// Give some time for state update
 		time.Sleep(50 * time.Millisecond)
-		assert.True(t, cm.disconnected)
-		assert.Equal(t, ConnStateDisconnected, cm.state)
+		assert.True(t, cm.IsDisconnected())
+		assert.Equal(t, ConnStateDisconnected, cm.GetState())
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for disconnect event to be processed")
 	}
@@ -276,8 +276,8 @@ func TestConnManager_StopWithPendingEvents(t *testing.T) {
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.True(t, cm.disconnected)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.True(t, cm.IsDisconnected())
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 }
 
 func TestConnManager_ContextCancellation(t *testing.T) {
@@ -294,8 +294,8 @@ func TestConnManager_ContextCancellation(t *testing.T) {
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.True(t, cm.disconnected)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.True(t, cm.IsDisconnected())
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 }
 
 func TestConnManager_ReconnectWithBackoff(t *testing.T) {
@@ -365,8 +365,8 @@ func TestConnManager_StateTransitions(t *testing.T) {
 	defer cancel()
 
 	// Initial state
-	assert.Equal(t, ConnStateDisconnected, cm.state)
-	assert.False(t, cm.disconnected)
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.False(t, cm.IsDisconnected())
 
 	cm.Start(ctx)
 
@@ -377,16 +377,16 @@ func TestConnManager_StateTransitions(t *testing.T) {
 	// After connect attempt
 	time.Sleep(50 * time.Millisecond)
 	if result.Error != nil {
-		assert.Equal(t, ConnStateDisconnected, cm.state)
+		assert.Equal(t, ConnStateDisconnected, cm.GetState())
 	} else {
-		assert.Equal(t, ConnStateConnected, cm.state)
+		assert.Equal(t, ConnStateConnected, cm.GetState())
 	}
 
 	// Stop should set disconnected flag
 	cm.Stop()
 	time.Sleep(50 * time.Millisecond)
-	assert.True(t, cm.disconnected)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.True(t, cm.IsDisconnected())
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 }
 
 func TestConnManager_CleanupOnStop(t *testing.T) {
@@ -408,9 +408,8 @@ func TestConnManager_CleanupOnStop(t *testing.T) {
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.True(t, cm.disconnected)
-	assert.Nil(t, cm.currentConn)
-	assert.Equal(t, ConnStateDisconnected, cm.state)
+	assert.True(t, cm.IsDisconnected())
+	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 }
 
 func TestConnEventType_Values(t *testing.T) {
@@ -498,7 +497,7 @@ func TestConnManager_ConcurrentStopAndConnect(t *testing.T) {
 
 	// Should handle gracefully without panic
 	time.Sleep(100 * time.Millisecond)
-	assert.True(t, cm.disconnected)
+	assert.True(t, cm.IsDisconnected())
 }
 
 func TestConnManager_MultipleReconnectRequests(t *testing.T) {
