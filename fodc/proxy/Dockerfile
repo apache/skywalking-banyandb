@@ -22,9 +22,9 @@ FROM busybox:stable-glibc AS build-linux
 
 ARG TARGETARCH
 
-COPY build/bin/linux/${TARGETARCH}/fodc-agent-static /fodc-agent
+COPY build/bin/linux/${TARGETARCH}/fodc-proxy-static /fodc-proxy
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM build-linux AS final
 
-ENTRYPOINT ["/fodc-agent"]
+ENTRYPOINT ["/fodc-proxy"]
