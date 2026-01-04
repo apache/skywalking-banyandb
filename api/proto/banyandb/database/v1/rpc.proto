@@ -382,11 +382,11 @@ message GroupDeletionTask {
   google.protobuf.Timestamp created_at = 7;
 }
 
-message GroupDeletionTaskGetRequest {
+message GroupRegistryServiceQueryRequest {
   string group = 1;
 }
 
-message GroupDeletionTaskGetResponse {
+message GroupRegistryServiceQueryResponse {
   GroupDeletionTask task = 1;
 }
 
@@ -412,11 +412,11 @@ message GroupRegistryServiceExistResponse {
   bool has_group = 1;
 }
 
-message GroupInspectionRequest {
+message GroupRegistryServiceInspectRequest {
   string group = 1;
 }
 
-message GroupInspectionResponse {
+message GroupRegistryServiceInspectResponse {
   banyandb.common.v1.Group group = 1;
   SchemaInfo schema_info = 2;
   repeated DataInfo data_info = 3;
@@ -506,7 +506,7 @@ service GroupRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
 
-  rpc Inspect(GroupInspectionRequest) returns (GroupInspectionResponse) {
+  rpc Inspect(GroupRegistryServiceInspectRequest) returns (GroupRegistryServiceInspectResponse) {
     option (google.api.http) = {get: "/v1/group/{group}/content"};
   }
 
@@ -514,7 +514,7 @@ service GroupRegistryService {
     option (google.api.http) = {delete: "/v1/group/{group}"};
   }
 
-  rpc Query(GroupDeletionTaskGetRequest) returns (GroupDeletionTaskGetResponse) {
+  rpc Query(GroupRegistryServiceQueryRequest) returns (GroupRegistryServiceQueryResponse) {
     option (google.api.http) = {get: "/v1/group/{group}/task"};
   }
 }
