@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // TestNewFlightRecorder tests the creation of a new FlightRecorder instance.

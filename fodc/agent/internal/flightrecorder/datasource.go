@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/apache/skywalking-banyandb/fodc/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 const (
