@@ -157,6 +157,7 @@ func startAgentForFixture(f *failureFixture, ip string, port int, role string) *
 }
 
 func registerAgent(agent *agentHandle) {
+	agent.client.StartConnManager(agent.ctx)
 	Expect(agent.client.Connect(agent.ctx)).To(Succeed())
 	Expect(agent.client.StartRegistrationStream(agent.ctx)).To(Succeed())
 	Expect(agent.client.StartMetricsStream(agent.ctx)).To(Succeed())
@@ -345,6 +346,7 @@ var _ = Describe("Failure Scenarios", func() {
 		fixture.grpcServer = grpcproxy.NewServer(fixture.service, fixture.proxyGRPCAddr, 4194304, fixture.logger)
 		Expect(fixture.grpcServer.Start()).To(Succeed())
 		agent.ctx, agent.cancel = context.WithCancel(context.Background())
+		agent.client.StartConnManager(agent.ctx)
 		Expect(agent.client.Connect(agent.ctx)).To(Succeed())
 		Expect(agent.client.StartRegistrationStream(agent.ctx)).To(Succeed())
 		Expect(agent.client.StartMetricsStream(agent.ctx)).To(Succeed())

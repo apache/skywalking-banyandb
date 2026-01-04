@@ -176,6 +176,11 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 	})
 
 	It("should register multiple agents with different roles", func() {
+		By("Starting connection managers for all agents")
+		proxyClient1.StartConnManager(agentCtx1)
+		proxyClient2.StartConnManager(agentCtx2)
+		proxyClient3.StartConnManager(agentCtx3)
+
 		By("Connecting all agents to proxy")
 		connectErr1 := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr1).NotTo(HaveOccurred())
@@ -219,6 +224,11 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 	})
 
 	It("should aggregate metrics from all agents", func() {
+		By("Starting connection managers for all agents")
+		proxyClient1.StartConnManager(agentCtx1)
+		proxyClient2.StartConnManager(agentCtx2)
+		proxyClient3.StartConnManager(agentCtx3)
+
 		By("Connecting all agents to proxy")
 		connectErr1 := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr1).NotTo(HaveOccurred())
@@ -344,6 +354,11 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 	})
 
 	It("should filter metrics by role", func() {
+		By("Starting connection managers for all agents")
+		proxyClient1.StartConnManager(agentCtx1)
+		proxyClient2.StartConnManager(agentCtx2)
+		proxyClient3.StartConnManager(agentCtx3)
+
 		By("Connecting all agents to proxy")
 		connectErr1 := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr1).NotTo(HaveOccurred())
@@ -460,6 +475,11 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 	})
 
 	It("should filter metrics by address", func() {
+		By("Starting connection managers for all agents")
+		proxyClient1.StartConnManager(agentCtx1)
+		proxyClient2.StartConnManager(agentCtx2)
+		proxyClient3.StartConnManager(agentCtx3)
+
 		By("Connecting all agents to proxy")
 		connectErr1 := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr1).NotTo(HaveOccurred())

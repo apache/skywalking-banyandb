@@ -132,6 +132,7 @@ var _ = Describe("Prometheus Integration", func() {
 			fixture.testLogger,
 		)
 		Expect(agent).NotTo(BeNil())
+		agent.StartConnManager(ctx)
 		Expect(agent.Connect(ctx)).To(Succeed())
 		Expect(agent.StartRegistrationStream(ctx)).To(Succeed())
 		Expect(agent.StartMetricsStream(ctx)).To(Succeed())

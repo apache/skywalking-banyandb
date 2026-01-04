@@ -149,11 +149,24 @@ func NewProxyClient(
 
 // ProxyClientWrapper wraps ProxyClient methods for testing.
 type ProxyClientWrapper struct {
-	client *proxy.Client
+	client        *proxy.Client
+	ctx           context.Context
+	connMgrActive bool
+}
+
+// StartConnManager starts the connection manager.
+func (w *ProxyClientWrapper) StartConnManager(ctx context.Context) {
+	w.ctx = ctx
+	w.client.StartConnManager(ctx)
+	w.connMgrActive = true
 }
 
 // Connect establishes a gRPC connection to Proxy.
 func (w *ProxyClientWrapper) Connect(ctx context.Context) error {
+	// Auto-start connection manager if not already started
+	if !w.connMgrActive {
+		w.StartConnManager(ctx)
+	}
 	return w.client.Connect(ctx)
 }
 
@@ -169,6 +182,7 @@ func (w *ProxyClientWrapper) StartMetricsStream(ctx context.Context) error {
 
 // Disconnect closes connection to Proxy.
 func (w *ProxyClientWrapper) Disconnect() error {
+	w.connMgrActive = false
 	return w.client.Disconnect()
 }
 

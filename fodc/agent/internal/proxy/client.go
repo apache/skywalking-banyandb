@@ -96,11 +96,13 @@ func NewClient(
 	}
 }
 
+// StartConnManager is useful for tests or scenarios where you want to manually control connection lifecycle.
+func (c *Client) StartConnManager(ctx context.Context) {
+	c.connManager.Start(ctx)
+}
+
 // Connect establishes a gRPC connection to Proxy.
 func (c *Client) Connect(ctx context.Context) error {
-	// Auto-start connection manager if not already started
-	c.connManager.Start(ctx)
-
 	resultCh := c.connManager.RequestConnect(ctx)
 	result := <-resultCh
 	if result.Error != nil {
@@ -470,7 +472,6 @@ func (c *Client) Disconnect() error {
 	}
 	c.streamsMu.Unlock()
 
-	// Stop the connection manager (this will close the connection)
 	c.connManager.Stop()
 
 	c.streamsMu.Lock()
@@ -484,7 +485,6 @@ func (c *Client) Disconnect() error {
 
 // Start starts the proxy client with automatic reconnection.
 func (c *Client) Start(ctx context.Context) error {
-	// Start the connection manager's event processing goroutine
 	c.connManager.Start(ctx)
 
 	for {
@@ -632,7 +632,6 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	c.logger.Info().Msg("Starting reconnection process...")
 
-	// Clean up existing streams
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
@@ -647,7 +646,6 @@ func (c *Client) reconnect(ctx context.Context) {
 	}
 	c.streamsMu.Unlock()
 
-	// Request reconnection through the connection manager
 	reconnectCh := c.connManager.RequestReconnect(ctx)
 	reconnectResult := <-reconnectCh
 

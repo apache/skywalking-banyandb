@@ -54,9 +54,8 @@ type ConnEvent struct {
 
 // ConnResult represents the result of a connection operation.
 type ConnResult struct {
-	Conn   *grpc.ClientConn
-	Client interface{} // Will be cast to the appropriate client type
-	Error  error
+	Conn  *grpc.ClientConn
+	Error error
 }
 
 // ConnState represents the state of the connection.
@@ -231,8 +230,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		if currentState == ConnStateConnected && currentConn != nil {
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
-					Conn:   currentConn,
-					Client: nil, // Client should be created by caller
+					Conn: currentConn,
 				}
 				close(event.ResultCh)
 			}
