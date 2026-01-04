@@ -91,7 +91,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			}
 
 			// Marshal the topNValue
-			dst, err := tt.topNVal.marshal(nil)
+			dst, err := tt.topNVal.Marshal(nil)
 			require.NoError(t, err)
 
 			// Unmarshal the topNValue

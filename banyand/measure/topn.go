@@ -230,11 +230,11 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 			}
 		}
 		topNValue.Reset()
-		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
+		topNValue.SetMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
 		var shardID uint32
 		for _, tuple := range tuples {
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			topNValue.addValue(
+			topNValue.AddValue(
 				tuple.V1.(int64),
 				data[0].([]*modelv1.TagValue),
 			)
@@ -264,7 +264,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 			},
 		}
 		buf = buf[:0]
-		if buf, err = topNValue.marshal(buf); err != nil {
+		if buf, err = topNValue.Marshal(buf); err != nil {
 			return err
 		}
 		iwr := &measurev1.InternalWriteRequest{
@@ -693,12 +693,12 @@ type TopNValue struct {
 	firstValue      int64
 }
 
-func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
+func (t *TopNValue) SetMetadata(valueName string, entityTagNames []string) {
 	t.valueName = valueName
 	t.entityTagNames = entityTagNames
 }
 
-func (t *TopNValue) addValue(value int64, entityValues []*modelv1.TagValue) {
+func (t *TopNValue) AddValue(value int64, entityValues []*modelv1.TagValue) {
 	entityValuesCopy := make([]*modelv1.TagValue, len(entityValues))
 	copy(entityValuesCopy, entityValues)
 	t.values = append(t.values, value)
@@ -751,7 +751,7 @@ func (t *TopNValue) resizeEntities(size int, entitySize int) [][]*modelv1.TagVal
 	return t.entities
 }
 
-func (t *TopNValue) marshal(dst []byte) ([]byte, error) {
+func (t *TopNValue) Marshal(dst []byte) ([]byte, error) {
 	if len(t.values) == 0 {
 		return nil, errors.New("values is empty")
 	}

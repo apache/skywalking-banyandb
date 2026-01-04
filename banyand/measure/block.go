@@ -760,13 +760,13 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			nonAggregatorItems := m[uTimestamps]
 
 			topNValue.Reset()
-			topNValue.setMetadata(valueName, entityTagNames)
+			topNValue.SetMetadata(valueName, entityTagNames)
 
 			for _, item := range nonAggregatorItems {
-				topNValue.addValue(item.val, item.values)
+				topNValue.AddValue(item.val, item.values)
 			}
 
-			buf, err := topNValue.marshal(make([]byte, 0, 128))
+			buf, err := topNValue.Marshal(make([]byte, 0, 128))
 			if err != nil {
 				log.Error().Err(err).Msg("failed to marshal topN value, skip current batch")
 				continue
