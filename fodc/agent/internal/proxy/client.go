@@ -229,6 +229,14 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 	metricsStream := c.metricsStream
 	c.streamsMu.RUnlock()
 
+	// Double-check pattern: verify stream is still valid before using
+	c.streamsMu.RLock()
+	if c.disconnected || c.metricsStream != metricsStream {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("metrics stream closed")
+	}
+	c.streamsMu.RUnlock()
+
 	datasources := c.flightRecorder.GetDatasources()
 	if len(datasources) == 0 {
 		// Always send a response even if no datasources exist
@@ -420,7 +428,24 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		},
 	}
 
+	// Double-check pattern: verify stream is still valid before sending
+	c.streamsMu.RLock()
+	if c.disconnected || c.registrationStream != registrationStream {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("registration stream closed")
+	}
+	c.streamsMu.RUnlock()
+
 	if sendErr := registrationStream.Send(req); sendErr != nil {
+		// Check if error is due to stream being closed/disconnected
+		if errors.Is(sendErr, io.EOF) || errors.Is(sendErr, context.Canceled) {
+			return fmt.Errorf("registration stream closed")
+		}
+		if st, ok := status.FromError(sendErr); ok {
+			if st.Code() == codes.Canceled {
+				return fmt.Errorf("registration stream closed")
+			}
+		}
 		return fmt.Errorf("failed to send heartbeat: %w", sendErr)
 	}
 

@@ -203,7 +203,6 @@ func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
 }
 
 // run is the main event processing loop running in a single goroutine.
-// All connection state mutations happen here, eliminating the need for locks.
 func (cm *ConnManager) run(ctx context.Context) {
 	defer close(cm.doneCh)
 	for {
