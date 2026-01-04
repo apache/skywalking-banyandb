@@ -238,7 +238,7 @@ func TestConnManager_MultipleConnectRequests(t *testing.T) {
 	// One should succeed or indicate connection in progress
 	t.Logf("Result1 error: %v", result1.Error)
 	t.Logf("Result2 error: %v", result2.Error)
-	
+
 	// At least one should complete successfully or report in progress
 	hasSuccess := result1.Error == nil || result2.Error == nil
 	hasInProgress := (result1.Error != nil && result1.Error.Error() == "connection already in progress") ||

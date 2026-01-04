@@ -278,7 +278,13 @@ func TestProxyClient_Connect_Success(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the connection manager before calling Connect
+	pc.connManager.Start(ctx)
+	defer pc.connManager.Stop()
+
 	err := pc.Connect(ctx)
 
 	// grpc.NewClient may succeed even without a server (lazy connection)
@@ -302,17 +308,19 @@ func TestProxyClient_Connect_AlreadyConnected(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
-	// Mock connection
-	mockConn := &grpc.ClientConn{}
-	mockClient := &mockFODCServiceClient{}
-	pc.streamsMu.Lock()
-	pc.conn = mockConn
-	pc.client = mockClient
-	pc.streamsMu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	ctx := context.Background()
+	// Start the connection manager
+	pc.connManager.Start(ctx)
+	defer pc.connManager.Stop()
+
+	// First connection
 	err := pc.Connect(ctx)
+	require.NoError(t, err)
 
+	// Second connection should use existing connection
+	err = pc.Connect(ctx)
 	assert.NoError(t, err)
 }
 
@@ -321,13 +329,19 @@ func TestProxyClient_Connect_Reconnection(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the connection manager
+	pc.connManager.Start(ctx)
+	defer pc.connManager.Stop()
+
 	// Set disconnected state
 	pc.streamsMu.Lock()
 	pc.disconnected = true
-	pc.stopCh = make(chan struct{})
+	close(pc.stopCh)
 	pc.streamsMu.Unlock()
 
-	ctx := context.Background()
 	err := pc.Connect(ctx)
 
 	// Verify disconnected state is reset regardless of connection success/failure
