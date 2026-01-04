@@ -20,6 +20,7 @@ syntax = "proto3";
 package banyandb.database.v1;
 
 import "banyandb/common/v1/common.proto";
+import "banyandb/database/v1/database.proto";
 import "banyandb/database/v1/schema.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
@@ -364,7 +365,7 @@ message GroupRegistryServiceDeleteResponse {
   string task_id = 2;
 }
 
-message GroupDeletionProgress {
+message GroupDeletionTask {
   enum Phase {
     PHASE_UNSPECIFIED = 0;
     PHASE_PENDING = 1;
@@ -373,38 +374,20 @@ message GroupDeletionProgress {
     PHASE_FAILED = 4;
   }
   Phase current_phase = 1;
-  int32 stream_count = 2;
-  int32 measure_count = 3;
-  int32 trace_count = 4;
-  int64 data_size_bytes = 5;
+  map<string, int32> total_counts = 2;
+  map<string, int32> deleted_counts = 3;
+  int64 total_data_size_bytes = 4;
+  int64 deleted_data_size_bytes = 5;
   string message = 6;
-  bool is_dry_run = 7;
-  int64 deleted_data_bytes = 8;
-  string error_message = 9;
-}
-
-message GroupDeletionTask {
-  string task_id = 1;
-  string group_name = 2;
-  GroupDeletionProgress progress = 3;
-  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp created_at = 7;
 }
 
 message GroupDeletionTaskGetRequest {
-  string task_id = 1;
+  string group = 1;
 }
 
 message GroupDeletionTaskGetResponse {
   GroupDeletionTask task = 1;
-}
-
-message GroupDeletionTaskListRequest {
-  string group_name = 1;
-  bool include_completed = 2;
-}
-
-message GroupDeletionTaskListResponse {
-  repeated GroupDeletionTask tasks = 1;
 }
 
 message GroupRegistryServiceGetRequest {
@@ -429,6 +412,74 @@ message GroupRegistryServiceExistResponse {
   bool has_group = 1;
 }
 
+message GroupInspectionRequest {
+  string group = 1;
+}
+
+message GroupInspectionResponse {
+  banyandb.common.v1.Group group = 1;
+  SchemaInfo schema_info = 2;
+  repeated DataInfo data_info = 3;
+  repeated LiaisonInfo liaison_info = 4;
+}
+
+message SchemaInfo {
+  repeated string streams = 1;
+  repeated string measures = 2;
+  repeated string traces = 3;
+  repeated string properties = 4;
+  repeated string index_rules = 5;
+  repeated string index_rule_bindings = 6;
+  repeated string topn_aggregations = 7;
+}
+
+message DataInfo {
+  banyandb.database.v1.Node node = 1;
+  repeated SegmentInfo segment_info = 2;
+  int64 data_size_bytes = 3;
+}
+
+message SegmentInfo {
+  string segment_id = 1;
+  string time_range_start = 2;
+  string time_range_end = 3;
+  repeated ShardInfo shard_info = 4;
+  SeriesIndexInfo series_index_info = 5;
+}
+
+message ShardInfo {
+  uint32 shard_id = 1;
+  int64 data_count = 2;
+  int64 data_size_bytes = 3;
+  int64 part_count = 4;
+  InvertedIndexInfo inverted_index_info = 5;
+  SIDXInfo sidx_info = 6;
+}
+
+message SeriesIndexInfo {
+  int64 data_count = 1;
+  int64 data_size_bytes = 2;
+}
+
+message InvertedIndexInfo {
+  int64 data_count = 1;
+  int64 data_size_bytes = 2;
+}
+
+message SIDXInfo {
+  int64 data_count = 1;
+  int64 data_size_bytes = 2;
+  int64 part_count = 3;
+}
+
+message LiaisonInfo {
+  int64 pending_write_data_count = 1;
+  int64 pending_sync_part_count = 2;
+  int64 pending_sync_data_size_bytes = 3;
+  int64 pending_handoff_part_count = 4;
+  int64 pending_handoff_data_size_bytes = 5;
+}
+
 service GroupRegistryService {
   rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse) {
     option (google.api.http) = {
@@ -444,10 +495,6 @@ service GroupRegistryService {
     };
   }
 
-  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
-    option (google.api.http) = {delete: "/v1/group/schema/{group}"};
-  }
-
   rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse) {
     option (google.api.http) = {get: "/v1/group/schema/{group}"};
   }
@@ -459,12 +506,16 @@ service GroupRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
 
-  rpc GetDeletionTask(GroupDeletionTaskGetRequest) returns (GroupDeletionTaskGetResponse) {
-    option (google.api.http) = {get: "/v1/group/deletion-tasks/{task_id}"};
+  rpc Inspect(GroupInspectionRequest) returns (GroupInspectionResponse) {
+    option (google.api.http) = {get: "/v1/group/{group}/content"};
   }
 
-  rpc ListDeletionTasks(GroupDeletionTaskListRequest) returns (GroupDeletionTaskListResponse) {
-    option (google.api.http) = {get: "/v1/group/deletion-tasks"};
+  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/group/{group}"};
+  }
+
+  rpc Query(GroupDeletionTaskGetRequest) returns (GroupDeletionTaskGetResponse) {
+    option (google.api.http) = {get: "/v1/group/{group}/task"};
   }
 }
 

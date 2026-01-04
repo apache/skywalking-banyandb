@@ -165,12 +165,14 @@
     - [TagType](#banyandb-database-v1-TagType)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
-    - [GroupDeletionProgress](#banyandb-database-v1-GroupDeletionProgress)
+    - [DataInfo](#banyandb-database-v1-DataInfo)
     - [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask)
+    - [GroupDeletionTask.DeletedCountsEntry](#banyandb-database-v1-GroupDeletionTask-DeletedCountsEntry)
+    - [GroupDeletionTask.TotalCountsEntry](#banyandb-database-v1-GroupDeletionTask-TotalCountsEntry)
     - [GroupDeletionTaskGetRequest](#banyandb-database-v1-GroupDeletionTaskGetRequest)
     - [GroupDeletionTaskGetResponse](#banyandb-database-v1-GroupDeletionTaskGetResponse)
-    - [GroupDeletionTaskListRequest](#banyandb-database-v1-GroupDeletionTaskListRequest)
-    - [GroupDeletionTaskListResponse](#banyandb-database-v1-GroupDeletionTaskListResponse)
+    - [GroupInspectionRequest](#banyandb-database-v1-GroupInspectionRequest)
+    - [GroupInspectionResponse](#banyandb-database-v1-GroupInspectionResponse)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
     - [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse)
     - [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest)
@@ -207,6 +209,8 @@
     - [IndexRuleRegistryServiceListResponse](#banyandb-database-v1-IndexRuleRegistryServiceListResponse)
     - [IndexRuleRegistryServiceUpdateRequest](#banyandb-database-v1-IndexRuleRegistryServiceUpdateRequest)
     - [IndexRuleRegistryServiceUpdateResponse](#banyandb-database-v1-IndexRuleRegistryServiceUpdateResponse)
+    - [InvertedIndexInfo](#banyandb-database-v1-InvertedIndexInfo)
+    - [LiaisonInfo](#banyandb-database-v1-LiaisonInfo)
     - [MeasureRegistryServiceCreateRequest](#banyandb-database-v1-MeasureRegistryServiceCreateRequest)
     - [MeasureRegistryServiceCreateResponse](#banyandb-database-v1-MeasureRegistryServiceCreateResponse)
     - [MeasureRegistryServiceDeleteRequest](#banyandb-database-v1-MeasureRegistryServiceDeleteRequest)
@@ -231,6 +235,11 @@
     - [PropertyRegistryServiceListResponse](#banyandb-database-v1-PropertyRegistryServiceListResponse)
     - [PropertyRegistryServiceUpdateRequest](#banyandb-database-v1-PropertyRegistryServiceUpdateRequest)
     - [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse)
+    - [SIDXInfo](#banyandb-database-v1-SIDXInfo)
+    - [SchemaInfo](#banyandb-database-v1-SchemaInfo)
+    - [SegmentInfo](#banyandb-database-v1-SegmentInfo)
+    - [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo)
+    - [ShardInfo](#banyandb-database-v1-ShardInfo)
     - [Snapshot](#banyandb-database-v1-Snapshot)
     - [SnapshotRequest](#banyandb-database-v1-SnapshotRequest)
     - [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group)
@@ -272,7 +281,7 @@
     - [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest)
     - [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse)
   
-    - [GroupDeletionProgress.Phase](#banyandb-database-v1-GroupDeletionProgress-Phase)
+    - [GroupDeletionTask.Phase](#banyandb-database-v1-GroupDeletionTask-Phase)
   
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
@@ -2629,23 +2638,17 @@ Type determine the index structure under the hood
 
 
 
-<a name="banyandb-database-v1-GroupDeletionProgress"></a>
+<a name="banyandb-database-v1-DataInfo"></a>
 
-### GroupDeletionProgress
+### DataInfo
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| current_phase | [GroupDeletionProgress.Phase](#banyandb-database-v1-GroupDeletionProgress-Phase) |  |  |
-| stream_count | [int32](#int32) |  |  |
-| measure_count | [int32](#int32) |  |  |
-| trace_count | [int32](#int32) |  |  |
+| node | [Node](#banyandb-database-v1-Node) |  |  |
+| segments | [SegmentInfo](#banyandb-database-v1-SegmentInfo) | repeated |  |
 | data_size_bytes | [int64](#int64) |  |  |
-| message | [string](#string) |  |  |
-| is_dry_run | [bool](#bool) |  |  |
-| deleted_data_bytes | [int64](#int64) |  |  |
-| error_message | [string](#string) |  |  |
 
 
 
@@ -2660,10 +2663,45 @@ Type determine the index structure under the hood
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| task_id | [string](#string) |  |  |
-| group_name | [string](#string) |  |  |
-| progress | [GroupDeletionProgress](#banyandb-database-v1-GroupDeletionProgress) |  |  |
+| current_phase | [GroupDeletionTask.Phase](#banyandb-database-v1-GroupDeletionTask-Phase) |  |  |
+| total_counts | [GroupDeletionTask.TotalCountsEntry](#banyandb-database-v1-GroupDeletionTask-TotalCountsEntry) | repeated |  |
+| deleted_counts | [GroupDeletionTask.DeletedCountsEntry](#banyandb-database-v1-GroupDeletionTask-DeletedCountsEntry) | repeated |  |
+| total_data_size_bytes | [int64](#int64) |  |  |
+| deleted_data_size_bytes | [int64](#int64) |  |  |
+| message | [string](#string) |  |  |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTask-DeletedCountsEntry"></a>
+
+### GroupDeletionTask.DeletedCountsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupDeletionTask-TotalCountsEntry"></a>
+
+### GroupDeletionTask.TotalCountsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int32](#int32) |  |  |
 
 
 
@@ -2678,7 +2716,7 @@ Type determine the index structure under the hood
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| task_id | [string](#string) |  |  |
+| group | [string](#string) |  |  |
 
 
 
@@ -2700,31 +2738,33 @@ Type determine the index structure under the hood
 
 
 
-<a name="banyandb-database-v1-GroupDeletionTaskListRequest"></a>
+<a name="banyandb-database-v1-GroupInspectionRequest"></a>
 
-### GroupDeletionTaskListRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group_name | [string](#string) |  |  |
-| include_completed | [bool](#bool) |  |  |
-
-
-
-
-
-
-<a name="banyandb-database-v1-GroupDeletionTaskListResponse"></a>
-
-### GroupDeletionTaskListResponse
+### GroupInspectionRequest
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tasks | [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask) | repeated |  |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GroupInspectionResponse"></a>
+
+### GroupInspectionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [banyandb.common.v1.Group](#banyandb-common-v1-Group) |  |  |
+| schema | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  |  |
+| datas | [DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
+| liaisons | [LiaisonInfo](#banyandb-database-v1-LiaisonInfo) | repeated |  |
 
 
 
@@ -3241,6 +3281,41 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-InvertedIndexInfo"></a>
+
+### InvertedIndexInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_count | [int64](#int64) |  |  |
+| data_size_bytes | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-LiaisonInfo"></a>
+
+### LiaisonInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pending_write_data_count | [int64](#int64) |  |  |
+| pending_sync_part_count | [int64](#int64) |  |  |
+| pending_sync_data_size_bytes | [int64](#int64) |  |  |
+| pending_handoff_part_count | [int64](#int64) |  |  |
+| pending_handoff_data_size_bytes | [int64](#int64) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-MeasureRegistryServiceCreateRequest"></a>
 
 ### MeasureRegistryServiceCreateRequest
@@ -3597,6 +3672,99 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SIDXInfo"></a>
+
+### SIDXInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_count | [int64](#int64) |  |  |
+| data_size_bytes | [int64](#int64) |  |  |
+| part_count | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SchemaInfo"></a>
+
+### SchemaInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| streams | [string](#string) | repeated |  |
+| measures | [string](#string) | repeated |  |
+| traces | [string](#string) | repeated |  |
+| properties | [string](#string) | repeated |  |
+| index_rules | [string](#string) | repeated |  |
+| index_rule_bindings | [string](#string) | repeated |  |
+| topn_aggregations | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SegmentInfo"></a>
+
+### SegmentInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| segment_id | [string](#string) |  |  |
+| time_range_start | [string](#string) |  |  |
+| time_range_end | [string](#string) |  |  |
+| shards | [ShardInfo](#banyandb-database-v1-ShardInfo) | repeated |  |
+| series_index | [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SeriesIndexInfo"></a>
+
+### SeriesIndexInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_count | [int64](#int64) |  |  |
+| data_size_bytes | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ShardInfo"></a>
+
+### ShardInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| data_count | [int64](#int64) |  |  |
+| data_size_bytes | [int64](#int64) |  |  |
+| part_count | [int64](#int64) |  |  |
+| inverted_index | [InvertedIndexInfo](#banyandb-database-v1-InvertedIndexInfo) |  |  |
+| sidx | [SIDXInfo](#banyandb-database-v1-SIDXInfo) |  |  |
 
 
 
@@ -4201,9 +4369,9 @@ Type determine the index structure under the hood
  
 
 
-<a name="banyandb-database-v1-GroupDeletionProgress-Phase"></a>
+<a name="banyandb-database-v1-GroupDeletionTask-Phase"></a>
 
-### GroupDeletionProgress.Phase
+### GroupDeletionTask.Phase
 
 
 | Name | Number | Description |
@@ -4229,12 +4397,12 @@ Type determine the index structure under the hood
 | ----------- | ------------ | ------------- | ------------|
 | Create | [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest) | [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse) |  |
 | Update | [GroupRegistryServiceUpdateRequest](#banyandb-database-v1-GroupRegistryServiceUpdateRequest) | [GroupRegistryServiceUpdateResponse](#banyandb-database-v1-GroupRegistryServiceUpdateResponse) |  |
-| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) |  |
 | Get | [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest) | [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse) |  |
 | List | [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest) | [GroupRegistryServiceListResponse](#banyandb-database-v1-GroupRegistryServiceListResponse) |  |
 | Exist | [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest) | [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
-| GetDeletionTask | [GroupDeletionTaskGetRequest](#banyandb-database-v1-GroupDeletionTaskGetRequest) | [GroupDeletionTaskGetResponse](#banyandb-database-v1-GroupDeletionTaskGetResponse) |  |
-| ListDeletionTasks | [GroupDeletionTaskListRequest](#banyandb-database-v1-GroupDeletionTaskListRequest) | [GroupDeletionTaskListResponse](#banyandb-database-v1-GroupDeletionTaskListResponse) |  |
+| Inspect | [GroupInspectionRequest](#banyandb-database-v1-GroupInspectionRequest) | [GroupInspectionResponse](#banyandb-database-v1-GroupInspectionResponse) |  |
+| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) |  |
+| Query | [GroupDeletionTaskGetRequest](#banyandb-database-v1-GroupDeletionTaskGetRequest) | [GroupDeletionTaskGetResponse](#banyandb-database-v1-GroupDeletionTaskGetResponse) |  |
 
 
 <a name="banyandb-database-v1-IndexRuleBindingRegistryService"></a>
