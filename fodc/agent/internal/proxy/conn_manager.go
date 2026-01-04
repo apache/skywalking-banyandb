@@ -85,7 +85,7 @@ type ConnManager struct {
 	reconnectInterval time.Duration
 	retryInterval     time.Duration
 
-	stateMu      sync.RWMutex // Protects state and disconnected
+	stateMu      sync.RWMutex // Protects state, disconnected, currentConn, and retryInterval
 	state        ConnState
 	disconnected bool
 	started      bool
@@ -359,31 +359,42 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 
 // doReconnect performs reconnection with exponential backoff.
 func (cm *ConnManager) doReconnect(ctx context.Context, immediate bool) ConnResult {
+	var retryInterval time.Duration
 	if !immediate {
+		cm.stateMu.RLock()
+		retryInterval = cm.retryInterval
+		cm.stateMu.RUnlock()
 		// Wait with exponential backoff
 		select {
 		case <-ctx.Done():
 			return ConnResult{Error: ctx.Err()}
 		case <-cm.stopCh:
 			return ConnResult{Error: fmt.Errorf("connection manager stopped")}
-		case <-time.After(cm.retryInterval):
+		case <-time.After(retryInterval):
+			cm.stateMu.Lock()
 			cm.retryInterval *= 2
 			if cm.retryInterval > connManagerMaxRetryInterval {
 				cm.retryInterval = connManagerMaxRetryInterval
 			}
+			retryInterval = cm.retryInterval
+			cm.stateMu.Unlock()
 		}
 	}
-	cm.logger.Info().Dur("retry_interval", cm.retryInterval).Msg("Attempting to reconnect...")
+	cm.logger.Info().Dur("retry_interval", retryInterval).Msg("Attempting to reconnect...")
 	return cm.doConnect(ctx)
 }
 
 // cleanupConnection closes the current connection and cleans up resources.
 func (cm *ConnManager) cleanupConnection() {
-	if cm.currentConn != nil {
-		if closeErr := cm.currentConn.Close(); closeErr != nil {
+	cm.stateMu.Lock()
+	currentConn := cm.currentConn
+	cm.currentConn = nil
+	cm.stateMu.Unlock()
+
+	if currentConn != nil {
+		if closeErr := currentConn.Close(); closeErr != nil {
 			cm.logger.Warn().Err(closeErr).Msg("Error closing connection")
 		}
-		cm.currentConn = nil
 	}
 }
 

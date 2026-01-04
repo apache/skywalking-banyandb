@@ -108,17 +108,15 @@ func (c *Client) Connect(ctx context.Context) error {
 		return result.Error
 	}
 
-	c.conn = result.Conn
-
 	c.streamsMu.Lock()
+	c.conn = result.Conn
 	c.client = fodcv1.NewFODCServiceClient(result.Conn)
-	c.streamsMu.Unlock()
-
 	// Reset disconnected state and recreate stopCh for reconnection
 	if c.disconnected {
 		c.disconnected = false
 		c.stopCh = make(chan struct{})
 	}
+	c.streamsMu.Unlock()
 
 	return nil
 }
