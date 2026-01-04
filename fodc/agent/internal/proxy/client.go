@@ -67,7 +67,8 @@ type Client struct {
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
 	disconnected      bool
-	streamsMu         sync.RWMutex // Protects streams only
+	streamsMu         sync.RWMutex   // Protects streams only
+	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
 }
 
 // NewClient creates a new Client instance.
@@ -227,14 +228,6 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 		return fmt.Errorf("metrics stream not established")
 	}
 	metricsStream := c.metricsStream
-	c.streamsMu.RUnlock()
-
-	// Double-check pattern: verify stream is still valid before using
-	c.streamsMu.RLock()
-	if c.disconnected || c.metricsStream != metricsStream {
-		c.streamsMu.RUnlock()
-		return fmt.Errorf("metrics stream closed")
-	}
 	c.streamsMu.RUnlock()
 
 	datasources := c.flightRecorder.GetDatasources()
@@ -428,14 +421,6 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		},
 	}
 
-	// Double-check pattern: verify stream is still valid before sending
-	c.streamsMu.RLock()
-	if c.disconnected || c.registrationStream != registrationStream {
-		c.streamsMu.RUnlock()
-		return fmt.Errorf("registration stream closed")
-	}
-	c.streamsMu.RUnlock()
-
 	if sendErr := registrationStream.Send(req); sendErr != nil {
 		// Check if error is due to stream being closed/disconnected
 		if errors.Is(sendErr, io.EOF) || errors.Is(sendErr, context.Canceled) {
@@ -467,7 +452,12 @@ func (c *Client) Disconnect() error {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
 	}
+	c.streamsMu.Unlock()
 
+	// Wait for heartbeat goroutine to exit before closing streams
+	c.heartbeatWg.Wait()
+
+	c.streamsMu.Lock()
 	if c.registrationStream != nil {
 		if closeErr := c.registrationStream.CloseSend(); closeErr != nil {
 			c.logger.Warn().Err(closeErr).Msg("Error closing registration stream")
@@ -701,9 +691,11 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 	c.heartbeatTicker = time.NewTicker(c.heartbeatInterval)
 	tickerCh := c.heartbeatTicker.C
 	stopCh := c.stopCh
+	c.heartbeatWg.Add(1)
 	c.streamsMu.Unlock()
 
 	go func() {
+		defer c.heartbeatWg.Done()
 		for {
 			select {
 			case <-ctx.Done():
