@@ -1329,3 +1329,80 @@ func Test_mergeParts(t *testing.T) {
 		})
 	}
 }
+
+func Test_mergeParts_tagTypeConflict(t *testing.T) {
+	tsList := []*traces{
+		{
+			traceIDs:   []string{"trace1"},
+			timestamps: []int64{1},
+			tags: [][]*tagValue{
+				{
+					{tag: "status_code", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(200), valueArr: nil},
+				},
+			},
+			spans:   [][]byte{[]byte("span1")},
+			spanIDs: []string{"span1"},
+		},
+		{
+			traceIDs:   []string{"trace2"},
+			timestamps: []int64{2},
+			tags: [][]*tagValue{
+				{
+					{tag: "status_code", valueType: pbv1.ValueTypeStr, value: []byte("200"), valueArr: nil},
+				},
+			},
+			spans:   [][]byte{[]byte("span2")},
+			spanIDs: []string{"span2"},
+		},
+	}
+
+	verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
+		closeCh := make(chan struct{})
+		defer close(closeCh)
+		tst := &tsTable{pm: protector.Nop{}}
+		p, mergeErr := tst.mergeParts(fileSystem, closeCh, pp, partID, root)
+		require.Error(t, mergeErr, "Expected merge to fail with tag type conflict")
+		if p != nil {
+			p.decRef()
+		}
+	}
+
+	t.Run("memory parts", func(t *testing.T) {
+		var pp []*partWrapper
+		tmpPath, defFn := test.Space(require.New(t))
+		defer func() {
+			for _, pw := range pp {
+				pw.decRef()
+			}
+			defFn()
+		}()
+		for _, ts := range tsList {
+			mp := generateMemPart()
+			mp.mustInitFromTraces(ts)
+			pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
+		}
+		verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1)
+	})
+
+	t.Run("file parts", func(t *testing.T) {
+		var fpp []*partWrapper
+		tmpPath, defFn := test.Space(require.New(t))
+		defer func() {
+			for _, pw := range fpp {
+				pw.decRef()
+			}
+			defFn()
+		}()
+		fileSystem := fs.NewLocalFileSystem()
+		for i, ts := range tsList {
+			mp := generateMemPart()
+			mp.mustInitFromTraces(ts)
+			mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i)))
+			filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i), tmpPath, fileSystem))
+			filePW.p.partMetadata.ID = uint64(i)
+			fpp = append(fpp, filePW)
+			releaseMemPart(mp)
+		}
+		verify(t, fpp, fileSystem, tmpPath, uint64(len(tsList)))
+	})
+}

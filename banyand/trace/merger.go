@@ -338,6 +338,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var tmpBlock *blockPointer
 	var decoder *encoding.BytesBlockDecoder
 	var rawBlk rawBlock
+	tagTypes := make(tagType)
 	getDecoder := func() *encoding.BytesBlockDecoder {
 		if decoder == nil {
 			decoder = generateColumnValuesDecoder()
@@ -357,6 +358,18 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		default:
 		}
 		b := br.block
+
+		for tagName, tagType := range b.bm.tagType {
+			if existingType, exists := tagTypes[tagName]; exists {
+				if existingType != tagType {
+					return nil, nil, nil, fmt.Errorf(
+						"cannot merge parts with conflicting tag types: tag=%s has type %d in one part and %d in another",
+						tagName, existingType, tagType)
+				}
+			}
+			tagTypes[tagName] = tagType
+		}
+
 		// Fast path: if this is the only block for this traceID AND we have no pending block,
 		// copy it raw without unmarshaling
 		nextB := br.peek()
