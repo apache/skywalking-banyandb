@@ -31,6 +31,10 @@ Release Notes.
 - Add FODC overview doc.
 - Remove Java client doc, and recreate client APIs docs.
 
+### Chores
+
+- Upgrade Node.js support from 20.12 to 24.6.0, and align CI, license checks, and documentation
+
 ## 0.9.0
 
 ### Features

@@ -229,6 +229,12 @@ var allTagProjections = &model.TagProjection{
 	Names: []string{"strArrTag", "strTag", "intTag"},
 }
 
+var testSchemaTagTypes = map[string]pbv1.ValueType{
+	"strArrTag": pbv1.ValueTypeStrArr,
+	"strTag":    pbv1.ValueTypeStr,
+	"intTag":    pbv1.ValueTypeInt64,
+}
+
 var tsTS1 = &traces{
 	traceIDs:   []string{"trace1", "trace2", "trace3"},
 	timestamps: []int64{1, 1, 1},
