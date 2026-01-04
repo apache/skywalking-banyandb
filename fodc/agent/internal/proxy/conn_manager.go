@@ -33,8 +33,10 @@ const (
 	connManagerMaxRetryInterval = 30 * time.Second
 )
 
+// ConnEventType represents the type of connection event.
 type ConnEventType int
 
+// Possible connection event types.
 const (
 	ConnEventConnect ConnEventType = iota
 	ConnEventReconnect
@@ -57,6 +59,7 @@ type ConnResult struct {
 	Error  error
 }
 
+// ConnState represents the state of the connection.
 type ConnState int
 
 const (
@@ -219,19 +222,18 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			return
 		}
 		cm.state = ConnStateConnecting
-		connCtx, connCancel := func() (context.Context, context.CancelFunc) {
-			if event.Context != nil {
+		connCtx, connCancel := context.WithCancel(ctx)
+		defer connCancel()
+		// If event.Context is provided and not done, cancel connCtx when event.Context is done
+		if event.Context != nil {
+			go func() {
 				select {
 				case <-event.Context.Done():
-					// Event context is done, use parent context
-					return context.WithCancel(ctx)
-				default:
-					return context.WithCancel(event.Context)
+					connCancel()
+				case <-connCtx.Done():
 				}
-			}
-			return context.WithCancel(ctx)
-		}()
-		defer connCancel()
+			}()
+		}
 		result := cm.doConnect(connCtx)
 		if result.Error == nil {
 			cm.state = ConnStateConnected
@@ -246,7 +248,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		}
 	case ConnEventReconnect:
 		if cm.disconnected {
-			// Intentionally disconnected, skip reconnection
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
 					Error: fmt.Errorf("connection manager is disconnected"),
@@ -256,7 +257,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			return
 		}
 		if cm.state == ConnStateReconnecting {
-			// Reconnection already in progress, return error to avoid blocking
 			if event.ResultCh != nil {
 				event.ResultCh <- ConnResult{
 					Error: fmt.Errorf("reconnection already in progress"),
@@ -268,19 +268,18 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		cm.state = ConnStateReconnecting
 		cm.cleanupConnection()
 
-		reconnCtx, reconnCancel := func() (context.Context, context.CancelFunc) {
-			if event.Context != nil {
+		reconnCtx, reconnCancel := context.WithCancel(ctx)
+		defer reconnCancel()
+		// If event.Context is provided and not done, cancel reconnCtx when event.Context is done
+		if event.Context != nil {
+			go func() {
 				select {
 				case <-event.Context.Done():
-					// Event context is done, use parent context
-					return context.WithCancel(ctx)
-				default:
-					return context.WithCancel(event.Context)
+					reconnCancel()
+				case <-reconnCtx.Done():
 				}
-			}
-			return context.WithCancel(ctx)
-		}()
-		defer reconnCancel()
+			}()
+		}
 		result := cm.doReconnect(reconnCtx, event.Immediate)
 		if result.Error == nil {
 			cm.state = ConnStateConnected
@@ -298,7 +297,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 
 // doConnect performs the actual connection attempt.
 func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
-	// Check if context is already canceled
 	select {
 	case <-ctx.Done():
 		return ConnResult{Error: ctx.Err()}
