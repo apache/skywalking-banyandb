@@ -75,11 +75,11 @@ const (
 )
 
 // ConnManager manages connection lifecycle using a single goroutine.
-// All connection operations are serialized through an event channel.
 type ConnManager struct {
 	logger            *logger.Logger
 	eventCh           chan ConnEvent
 	stopCh            chan struct{}
+	doneCh            chan struct{} // Signals when run() goroutine has exited
 	currentConn       *grpc.ClientConn
 	proxyAddr         string
 	reconnectInterval time.Duration
@@ -101,6 +101,7 @@ func NewConnManager(
 	return &ConnManager{
 		eventCh:           make(chan ConnEvent, 10),
 		stopCh:            make(chan struct{}),
+		doneCh:            make(chan struct{}),
 		logger:            logger,
 		proxyAddr:         proxyAddr,
 		reconnectInterval: reconnectInterval,
@@ -129,6 +130,13 @@ func (cm *ConnManager) Start(ctx context.Context) {
 
 // Stop stops the connection manager and closes all connections.
 func (cm *ConnManager) Stop() {
+	cm.startedMu.Lock()
+	defer cm.startedMu.Unlock()
+
+	if !cm.started {
+		return // Already stopped
+	}
+
 	close(cm.stopCh)
 	// Send disconnect event to clean up
 	disconnectEvent := ConnEvent{
@@ -141,6 +149,15 @@ func (cm *ConnManager) Stop() {
 		// Channel might be full or manager stopped, force close
 		close(cm.eventCh)
 	}
+
+	// Wait for goroutine to exit before resetting state
+	<-cm.doneCh
+
+	cm.started = false
+	// Recreate channels for next Start()
+	cm.eventCh = make(chan ConnEvent, 10)
+	cm.stopCh = make(chan struct{})
+	cm.doneCh = make(chan struct{})
 }
 
 // RequestConnect requests a connection attempt.
@@ -188,6 +205,7 @@ func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
 // run is the main event processing loop running in a single goroutine.
 // All connection state mutations happen here, eliminating the need for locks.
 func (cm *ConnManager) run(ctx context.Context) {
+	defer close(cm.doneCh)
 	for {
 		select {
 		case <-ctx.Done():
@@ -364,7 +382,7 @@ func (cm *ConnManager) doReconnect(ctx context.Context, immediate bool) ConnResu
 		cm.stateMu.RLock()
 		retryInterval = cm.retryInterval
 		cm.stateMu.RUnlock()
-		// Wait with exponential backoff
+
 		select {
 		case <-ctx.Done():
 			return ConnResult{Error: ctx.Err()}
