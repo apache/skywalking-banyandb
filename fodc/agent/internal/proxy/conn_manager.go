@@ -304,7 +304,6 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 		}
 
 		lastErr = result.Error
-		if attempt < connManagerMaxRetries {
 			cm.logger.Warn().
 				Err(result.Error).
 				Int("attempt", attempt).
