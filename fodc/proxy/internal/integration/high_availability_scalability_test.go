@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -50,6 +51,8 @@ type agentFixture struct {
 	nodeIP         string
 	nodeRole       string
 	nodePort       int
+	startWg        sync.WaitGroup
+	mu             sync.Mutex
 }
 
 var _ = Describe("High Availability and Scalability", func() {
@@ -146,7 +149,12 @@ var _ = Describe("High Availability and Scalability", func() {
 	AfterEach(func() {
 		for _, agent := range agents {
 			if agent != nil {
-				agent.cancel()
+				agent.mu.Lock()
+				if agent.cancel != nil {
+					agent.cancel()
+				}
+				agent.mu.Unlock()
+				agent.startWg.Wait()
 				_ = agent.client.Disconnect()
 			}
 		}
@@ -162,35 +170,22 @@ var _ = Describe("High Availability and Scalability", func() {
 	})
 
 	It("supports 100+ concurrent agents and reconnection under load", func() {
-		connectConcurrently := func(action func(*agentFixture) error) {
-			errCh := make(chan error, len(agents))
-			for _, agent := range agents {
-				go func(a *agentFixture) {
-					errCh <- action(a)
-				}(agent)
-			}
-			for i := 0; i < len(agents); i++ {
-				Expect(<-errCh).To(Succeed())
-			}
+		By("starting all agents with automatic connection and stream setup")
+		for idx := range agents {
+			agent := agents[idx]
+			agent.mu.Lock()
+			ctx := agent.ctx
+			agent.mu.Unlock()
+			agent.startWg.Add(1)
+			go func(a *agentFixture, agentCtx context.Context) {
+				defer a.startWg.Done()
+				_ = a.client.Start(agentCtx)
+			}(agent, ctx)
 		}
-
-		By("connecting and registering all agents")
-		connectConcurrently(func(a *agentFixture) error {
-			return a.client.Connect(a.ctx)
-		})
-
-		connectConcurrently(func(a *agentFixture) error {
-			return a.client.StartRegistrationStream(a.ctx)
-		})
 
 		Eventually(func() int {
 			return len(agentRegistry.ListAgents())
 		}, 15*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", highAvailabilityAgentCount))
-
-		By("starting metrics streams for every agent")
-		connectConcurrently(func(a *agentFixture) error {
-			return a.client.StartMetricsStream(a.ctx)
-		})
 
 		time.Sleep(500 * time.Millisecond)
 
@@ -208,6 +203,7 @@ var _ = Describe("High Availability and Scalability", func() {
 		time.Sleep(500 * time.Millisecond)
 
 		By("verifying on-demand collection returns metrics quickly")
+		var metricsListMu sync.Mutex
 		var metricsList []map[string]interface{}
 		start := time.Now()
 		Eventually(func() error {
@@ -219,12 +215,16 @@ var _ = Describe("High Availability and Scalability", func() {
 			if resp.StatusCode != http.StatusOK {
 				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 			}
-			if decodeErr := json.NewDecoder(resp.Body).Decode(&metricsList); decodeErr != nil {
+			var decodedMetrics []map[string]interface{}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&decodedMetrics); decodeErr != nil {
 				return decodeErr
 			}
-			if len(metricsList) < highAvailabilityAgentCount {
-				return fmt.Errorf("expected at least %d metrics, got %d", highAvailabilityAgentCount, len(metricsList))
+			if len(decodedMetrics) < highAvailabilityAgentCount {
+				return fmt.Errorf("expected at least %d metrics, got %d", highAvailabilityAgentCount, len(decodedMetrics))
 			}
+			metricsListMu.Lock()
+			metricsList = decodedMetrics
+			metricsListMu.Unlock()
 			return nil
 		}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
 		duration := time.Since(start)
@@ -234,8 +234,12 @@ var _ = Describe("High Availability and Scalability", func() {
 			return metricsAggregator.ActiveCollections()
 		}, 30*time.Second, 500*time.Millisecond).Should(Equal(0))
 
+		metricsListMu.Lock()
+		currentMetricsList := metricsList
+		metricsListMu.Unlock()
+
 		agentIDs := make(map[string]bool)
-		for _, metric := range metricsList {
+		for _, metric := range currentMetricsList {
 			agentIDs[metric["agent_id"].(string)] = true
 			labels := metric["labels"].(map[string]interface{})
 			Expect(labels["node_role"]).NotTo(BeNil())
@@ -246,14 +250,51 @@ var _ = Describe("High Availability and Scalability", func() {
 		By("reconnecting a subset of agents under load")
 		for idx := 0; idx < reconnectSubsetSize; idx++ {
 			agent := agents[idx]
-			agent.cancel()
+			agent.mu.Lock()
+			oldCancel := agent.cancel
+			agent.mu.Unlock()
+
+			oldCancel()
 			Expect(agent.client.Disconnect()).To(Succeed())
 
-			agent.ctx, agent.cancel = context.WithCancel(context.Background())
-			Expect(agent.client.Connect(agent.ctx)).To(Succeed())
-			Expect(agent.client.StartRegistrationStream(agent.ctx)).To(Succeed())
-			Expect(agent.client.StartMetricsStream(agent.ctx)).To(Succeed())
+			agent.startWg.Wait()
 
+			// Create a new client instance (connection manager cannot be restarted after disconnect)
+			newClient := testhelper.NewProxyClientWrapper(
+				proxyGRPCAddr,
+				agent.nodeIP,
+				agent.nodePort,
+				agent.nodeRole,
+				map[string]string{"zone": "zone-" + strconv.Itoa(idx%3)},
+				2*time.Second,
+				1*time.Second,
+				agent.flightRecorder,
+				logger.GetLogger("test", "agent"),
+			)
+			Expect(newClient).NotTo(BeNil())
+
+			agent.mu.Lock()
+			agent.client = newClient
+			agent.ctx, agent.cancel = context.WithCancel(context.Background())
+			newCtx := agent.ctx
+			agent.mu.Unlock()
+
+			agent.startWg.Add(1)
+			go func(a *agentFixture, ctx context.Context) {
+				defer a.startWg.Done()
+				_ = a.client.Start(ctx)
+			}(agent, newCtx)
+		}
+
+		By("waiting for reconnected agents to register")
+		Eventually(func() int {
+			return len(agentRegistry.ListAgents())
+		}, 10*time.Second, 200*time.Millisecond).Should(BeNumerically(">=", highAvailabilityAgentCount))
+
+		By("adding new metrics to reconnected agents after they're fully connected")
+		time.Sleep(2 * time.Second) // Wait for new client instances to establish metrics streams
+		for idx := 0; idx < reconnectSubsetSize; idx++ {
+			agent := agents[idx]
 			Expect(testhelper.UpdateMetrics(agent.flightRecorder, []testhelper.RawMetric{{
 				Name:   fmt.Sprintf("reconnect_metric_%d", idx),
 				Value:  float64(idx + 1000),
@@ -261,8 +302,6 @@ var _ = Describe("High Availability and Scalability", func() {
 				Labels: []testhelper.Label{{Name: "agent_idx", Value: strconv.Itoa(idx)}},
 			}})).To(Succeed())
 		}
-
-		time.Sleep(2 * time.Second)
 
 		By("collecting metrics again to ensure reconnection succeeded")
 		Eventually(func() error {
@@ -274,26 +313,34 @@ var _ = Describe("High Availability and Scalability", func() {
 			if resp.StatusCode != http.StatusOK {
 				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 			}
-			if decodeErr := json.NewDecoder(resp.Body).Decode(&metricsList); decodeErr != nil {
+			var decodedMetrics []map[string]interface{}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&decodedMetrics); decodeErr != nil {
 				return decodeErr
 			}
-			if len(metricsList) < reconnectSubsetSize {
-				return fmt.Errorf("expected at least %d metrics after reconnection, got %d", reconnectSubsetSize, len(metricsList))
+			if len(decodedMetrics) < reconnectSubsetSize {
+				return fmt.Errorf("expected at least %d metrics after reconnection, got %d", reconnectSubsetSize, len(decodedMetrics))
+			}
+
+			metricsListMu.Lock()
+			metricsList = decodedMetrics
+			metricsListMu.Unlock()
+
+			// Check if reconnect metrics are present
+			for idx := 0; idx < reconnectSubsetSize; idx++ {
+				name := fmt.Sprintf("reconnect_metric_%d", idx)
+				foundReconnectMetric := false
+				for _, metric := range decodedMetrics {
+					if metric["name"] == name {
+						foundReconnectMetric = true
+						break
+					}
+				}
+				if !foundReconnectMetric {
+					return fmt.Errorf("reconnect metric %s not found", name)
+				}
 			}
 			return nil
 		}, 30*time.Second, 500*time.Millisecond).Should(Succeed())
-
-		for idx := 0; idx < reconnectSubsetSize; idx++ {
-			name := fmt.Sprintf("reconnect_metric_%d", idx)
-			foundReconnectMetric := false
-			for _, metric := range metricsList {
-				if metric["name"] == name {
-					foundReconnectMetric = true
-					break
-				}
-			}
-			Expect(foundReconnectMetric).To(BeTrue(), fmt.Sprintf("expected reconnect metric %s to appear", name))
-		}
 
 		time.Sleep(2 * time.Second)
 

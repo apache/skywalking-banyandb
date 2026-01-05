@@ -345,10 +345,9 @@ var _ = Describe("Failure Scenarios", func() {
 		fixture.aggregator.SetGRPCService(fixture.service)
 		fixture.grpcServer = grpcproxy.NewServer(fixture.service, fixture.proxyGRPCAddr, 4194304, fixture.logger)
 		Expect(fixture.grpcServer.Start()).To(Succeed())
-		
 		// Wait for gRPC server to be ready
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Create a new agent client for reconnection after server restart
 		agent = startAgentForFixture(fixture, "127.0.0.30", 9020, "datanode-cold")
 		registerAgent(agent)
