@@ -33,6 +33,7 @@ import (
 
 const (
 	connManagerMaxRetryInterval = 30 * time.Second
+	connManagerMaxRetries       = 3
 )
 
 // ConnEventType represents the type of connection event.
@@ -276,28 +277,59 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 	}
 }
 
-// doReconnect performs reconnection with exponential backoff.
+// doReconnect performs reconnection with exponential backoff and automatic retries.
 func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
-	cm.stateMu.RLock()
-	retryInterval := cm.retryInterval
-	cm.stateMu.RUnlock()
+	var lastErr error
+	for attempt := 1; attempt <= connManagerMaxRetries; attempt++ {
+		cm.stateMu.RLock()
+		retryInterval := cm.retryInterval
+		cm.stateMu.RUnlock()
 
-	select {
-	case <-ctx.Done():
-		return ConnResult{Error: ctx.Err()}
-	case <-cm.closer.CloseNotify():
-		return ConnResult{Error: fmt.Errorf("connection manager stopped")}
-	case <-time.After(retryInterval):
-		cm.stateMu.Lock()
-		cm.retryInterval *= 2
-		if cm.retryInterval > connManagerMaxRetryInterval {
-			cm.retryInterval = connManagerMaxRetryInterval
+		// Wait before attempting connection
+		select {
+		case <-ctx.Done():
+			return ConnResult{Error: ctx.Err()}
+		case <-cm.closer.CloseNotify():
+			return ConnResult{Error: fmt.Errorf("connection manager stopped")}
+		case <-time.After(retryInterval):
 		}
-		retryInterval = cm.retryInterval
-		cm.stateMu.Unlock()
+
+		cm.logger.Info().
+			Dur("retry_interval", retryInterval).
+			Int("attempt", attempt).
+			Int("max_retries", connManagerMaxRetries).
+			Msg("Attempting to reconnect...")
+
+		result := cm.doConnect(ctx)
+
+		if result.Error == nil {
+			cm.logger.Info().Int("attempt", attempt).Msg("Reconnection succeeded")
+			return result
+		}
+
+		lastErr = result.Error
+		if attempt < connManagerMaxRetries {
+			cm.logger.Warn().
+				Err(result.Error).
+				Int("attempt", attempt).
+				Int("remaining", connManagerMaxRetries-attempt).
+				Msg("Reconnection attempt failed, will retry")
+
+			cm.stateMu.Lock()
+			cm.retryInterval *= 2
+			if cm.retryInterval > connManagerMaxRetryInterval {
+				cm.retryInterval = connManagerMaxRetryInterval
+			}
+			cm.stateMu.Unlock()
+		} else {
+			cm.logger.Error().
+				Err(result.Error).
+				Int("attempt", attempt).
+				Msg("Reconnection failed after max retries")
+		}
 	}
-	cm.logger.Info().Dur("retry_interval", retryInterval).Msg("Attempting to reconnect...")
-	return cm.doConnect(ctx)
+
+	return ConnResult{Error: fmt.Errorf("failed to reconnect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }
 
 // cleanupConnection closes the current connection and cleans up resources.

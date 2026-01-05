@@ -38,7 +38,7 @@ func TestNewConnManager(t *testing.T) {
 	assert.Equal(t, reconnectInterval, cm.reconnectInterval)
 	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 	assert.NotNil(t, cm.eventCh)
-	assert.NotNil(t, cm.stopCh)
+	assert.NotNil(t, cm.closer)
 	assert.NotNil(t, cm.logger)
 }
 
