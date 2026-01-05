@@ -242,11 +242,11 @@ type distributedPlan struct {
 	s                       logical.Schema
 	queryTemplate           *measurev1.QueryRequest
 	sortTagSpec             logical.TagSpec
+	groupByTagsRefs         [][]*logical.TagRef
 	maxDataPointsSize       uint32
 	sortByTime              bool
 	desc                    bool
 	needCompletePushDownAgg bool
-	groupByTagsRefs         [][]*logical.TagRef
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -562,7 +562,7 @@ func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByT
 	return result
 }
 
-// formatGroupByKeyForDedup computes a hash key for a data point based on groupBy tags
+// formatGroupByKeyForDedup computes a hash key for a data point based on groupBy tags.
 func formatGroupByKeyForDedup(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
 	hash := xxhash.New()
 	for _, tagFamilyRef := range groupByTagsRefs {
