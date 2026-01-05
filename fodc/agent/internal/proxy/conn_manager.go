@@ -126,8 +126,8 @@ func (cm *connManager) stop() {
 	cm.closer.CloseThenWait()
 }
 
-// requestConnection requests a connection attempt with optional heartbeat check.
-func (cm *connManager) requestConnection(ctx context.Context) <-chan connResult {
+// RequestConnect requests a connection attempt.
+func (cm *connManager) RequestConnect(ctx context.Context) <-chan connResult {
 	resultCh := make(chan connResult, 1)
 	event := connEvent{
 		Type:     connEventConnect,
@@ -144,11 +144,6 @@ func (cm *connManager) requestConnection(ctx context.Context) <-chan connResult 
 		close(resultCh)
 	}
 	return resultCh
-}
-
-// RequestConnect requests a connection attempt.
-func (cm *connManager) RequestConnect(ctx context.Context) <-chan connResult {
-	return cm.requestConnection(ctx)
 }
 
 // run is the main event processing loop running in a single goroutine.
