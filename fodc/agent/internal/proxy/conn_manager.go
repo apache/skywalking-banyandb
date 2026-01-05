@@ -311,12 +311,7 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 				Int("remaining", connManagerMaxRetries-attempt).
 				Msg("Reconnection attempt failed, will retry")
 
-			cm.stateMu.Lock()
-			cm.retryInterval *= 2
-			if cm.retryInterval > connManagerMaxRetryInterval {
-				cm.retryInterval = connManagerMaxRetryInterval
-			}
-			cm.stateMu.Unlock()
+		     retryInterval *= 2
 		} else {
 			cm.logger.Error().
 				Err(result.Error).
