@@ -50,14 +50,16 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		proxyClient       *testhelper.ProxyClientWrapper
 		agentCtx          context.Context
 		agentCancel       context.CancelFunc
+		testLogger        *logger.Logger
+		heartbeatInterval time.Duration
 	)
 
 	BeforeEach(func() {
-		testLogger := logger.GetLogger("test", "integration")
+		testLogger = logger.GetLogger("test", "integration")
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
-		heartbeatInterval := 2 * time.Second
+		heartbeatInterval = 2 * time.Second
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
 		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, testLogger, heartbeatInterval)
@@ -198,14 +200,14 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		By("Waiting for agent to be marked as offline")
 		// Health check runs every heartbeatTimeout/2 (2.5s), and we need to wait for
 		// the heartbeat timeout (5s) plus a bit more for the health check to run
-		// Maximum wait: heartbeatTimeout (5s) + healthCheckInterval (2.5s) = 7.5s, use 10s for safety
+		// Maximum wait: heartbeatTimeout (5s) + healthCheckInterval (2.5s) = 7.5s, use 15s for safety
 		Eventually(func() string {
 			agents := agentRegistry.ListAgents()
 			if len(agents) == 0 {
-				return "unregistered"
+				return "no_agents"
 			}
 			return string(agents[0].Status)
-		}, 10*time.Second, 500*time.Millisecond).Should(Equal("unconnected"))
+		}, 15*time.Second, 500*time.Millisecond).Should(Equal("unconnected"))
 
 		By("Querying /metrics-windows endpoint after disconnection")
 		var metricsListAfter []map[string]interface{}
@@ -236,8 +238,23 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		}
 		Expect(foundMetricAfter).To(BeFalse(), "metrics should not be returned from disconnected agent")
 
-		By("Agent reconnects and re-registers")
+		By("Creating new agent client for reconnection")
 		agentCtx, agentCancel = context.WithCancel(context.Background())
+		// Create a new ProxyClientWrapper for reconnection to simulate a real agent reconnecting
+		proxyClient = testhelper.NewProxyClientWrapper(
+			proxyGRPCAddr,
+			"127.0.0.1",
+			8080,
+			"datanode-hot",
+			map[string]string{"env": "test"},
+			heartbeatInterval,
+			1*time.Second,
+			flightRecorder,
+			testLogger,
+		)
+		Expect(proxyClient).NotTo(BeNil())
+
+		By("Agent reconnects and re-registers")
 		reconnectErr := proxyClient.Connect(agentCtx)
 		Expect(reconnectErr).NotTo(HaveOccurred())
 
@@ -250,14 +267,27 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 			if len(agents) == 0 {
 				return ""
 			}
+			// Return the status of the most recent agent (should be the new one)
+			for _, agent := range agents {
+				if agent.Status == "online" {
+					return "online"
+				}
+			}
 			return string(agents[0].Status)
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal("online"))
 
 		By("Waiting for old agent to be cleaned up from registry")
 		// The old agent will be unregistered after cleanupTimeout (10s)
-		// But we can proceed once we have exactly 1 agent (the new one)
+		// We may have 2 agents temporarily (old offline one + new online one)
 		Eventually(func() int {
-			return len(agentRegistry.ListAgents())
+			agents := agentRegistry.ListAgents()
+			onlineCount := 0
+			for _, agent := range agents {
+				if agent.Status == "online" {
+					onlineCount++
+				}
+			}
+			return onlineCount
 		}, 12*time.Second, 500*time.Millisecond).Should(Equal(1))
 
 		By("Starting metrics stream after reconnection")

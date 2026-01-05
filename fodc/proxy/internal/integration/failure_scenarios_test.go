@@ -345,11 +345,13 @@ var _ = Describe("Failure Scenarios", func() {
 		fixture.aggregator.SetGRPCService(fixture.service)
 		fixture.grpcServer = grpcproxy.NewServer(fixture.service, fixture.proxyGRPCAddr, 4194304, fixture.logger)
 		Expect(fixture.grpcServer.Start()).To(Succeed())
-		agent.ctx, agent.cancel = context.WithCancel(context.Background())
-		agent.client.StartConnManager(agent.ctx)
-		Expect(agent.client.Connect(agent.ctx)).To(Succeed())
-		Expect(agent.client.StartRegistrationStream(agent.ctx)).To(Succeed())
-		Expect(agent.client.StartMetricsStream(agent.ctx)).To(Succeed())
+		
+		// Wait for gRPC server to be ready
+		time.Sleep(100 * time.Millisecond)
+		
+		// Create a new agent client for reconnection after server restart
+		agent = startAgentForFixture(fixture, "127.0.0.30", 9020, "datanode-cold")
+		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
 			Name:  "recovery_metric",

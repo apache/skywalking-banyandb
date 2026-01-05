@@ -40,24 +40,29 @@ import (
 
 var _ = Describe("Test Case 2: Metrics Time Window", func() {
 	var (
-		proxyGRPCAddr     string
-		proxyHTTPAddr     string
-		grpcServer        *grpcproxy.Server
-		httpServer        *api.Server
-		agentRegistry     *registry.AgentRegistry
-		metricsAggregator *metricsproxy.Aggregator
-		grpcService       *grpcproxy.FODCService
-		flightRecorder1   interface{}
-		flightRecorder2   interface{}
-		proxyClient1      *testhelper.ProxyClientWrapper
-		proxyClient2      *testhelper.ProxyClientWrapper
-		agentCtx1         context.Context
-		agentCancel1      context.CancelFunc
-		agentCtx2         context.Context
-		agentCancel2      context.CancelFunc
+		proxyGRPCAddr       string
+		proxyHTTPAddr       string
+		grpcServer          *grpcproxy.Server
+		httpServer          *api.Server
+		agentRegistry       *registry.AgentRegistry
+		metricsAggregator   *metricsproxy.Aggregator
+		grpcService         *grpcproxy.FODCService
+		flightRecorder1     interface{}
+		flightRecorder2     interface{}
+		proxyClient1        *testhelper.ProxyClientWrapper
+		proxyClient2        *testhelper.ProxyClientWrapper
+		proxyClient1Started bool
+		proxyClient2Started bool
+		agentCtx1           context.Context
+		agentCancel1        context.CancelFunc
+		agentCtx2           context.Context
+		agentCancel2        context.CancelFunc
 	)
 
 	BeforeEach(func() {
+		// Reset connection tracking
+		proxyClient1Started = false
+		proxyClient2Started = false
 		testLogger := logger.GetLogger("test", "integration")
 
 		// Use longer timeouts for this test suite since tests can take time
@@ -143,10 +148,11 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 		if agentCancel2 != nil {
 			agentCancel2()
 		}
-		if proxyClient1 != nil {
+		// Only disconnect clients that were actually started
+		if proxyClient1 != nil && proxyClient1Started {
 			_ = proxyClient1.Disconnect()
 		}
-		if proxyClient2 != nil {
+		if proxyClient2 != nil && proxyClient2Started {
 			_ = proxyClient2.Disconnect()
 		}
 		if httpServer != nil {
@@ -164,8 +170,10 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 		By("Connecting agents to proxy")
 		connectErr1 := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr1).NotTo(HaveOccurred())
+		proxyClient1Started = true
 		connectErr2 := proxyClient2.Connect(agentCtx2)
 		Expect(connectErr2).NotTo(HaveOccurred())
+		proxyClient2Started = true
 
 		By("Starting registration streams")
 		regErr1 := proxyClient1.StartRegistrationStream(agentCtx1)
@@ -421,6 +429,7 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 		By("Connecting agent to proxy")
 		connectErr := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr).NotTo(HaveOccurred())
+		proxyClient1Started = true
 
 		regErr := proxyClient1.StartRegistrationStream(agentCtx1)
 		Expect(regErr).NotTo(HaveOccurred())
@@ -498,6 +507,7 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 		By("Connecting agent to proxy")
 		connectErr := proxyClient1.Connect(agentCtx1)
 		Expect(connectErr).NotTo(HaveOccurred())
+		proxyClient1Started = true
 
 		regErr := proxyClient1.StartRegistrationStream(agentCtx1)
 		Expect(regErr).NotTo(HaveOccurred())
