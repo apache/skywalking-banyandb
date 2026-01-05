@@ -80,7 +80,6 @@ type ConnManager struct {
 	heartbeatChecker  HeartbeatChecker
 	eventCh           chan ConnEvent
 	proxyAddr         string
-	reconnectInterval time.Duration
 	retryInterval     time.Duration
 	state             ConnState
 	stateMu           sync.RWMutex
@@ -98,7 +97,6 @@ func NewConnManager(
 		closer:            run.NewCloser(1),
 		logger:            logger,
 		proxyAddr:         proxyAddr,
-		reconnectInterval: reconnectInterval,
 		state:             ConnStateDisconnected,
 		retryInterval:     reconnectInterval,
 		heartbeatChecker:  nil,
@@ -240,7 +238,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		if result.Error == nil {
 			cm.state = ConnStateConnected
 			cm.currentConn = result.Conn
-			cm.retryInterval = cm.reconnectInterval
 		} else {
 			cm.state = ConnStateDisconnected
 		}
@@ -279,8 +276,6 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 	var lastErr error
 	retryInterval := cm.retryInterval
 	for attempt := 1; attempt <= connManagerMaxRetries; attempt++ {
-		
-
 		// Wait before attempting connection
 		select {
 		case <-ctx.Done():
@@ -296,26 +291,27 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 			Int("max_retries", connManagerMaxRetries).
 			Msg("Attempting to reconnect...")
 
-		result := cm.doConnect(ctx)
+		reconnectResult := cm.doConnect(ctx)
 
-		if result.Error == nil {
+		if reconnectResult.Error == nil {
 			cm.logger.Info().Int("attempt", attempt).Msg("Reconnection succeeded")
-			return result
+			return reconnectResult
 		}
 
-		lastErr = result.Error
-			cm.logger.Warn().
-				Err(result.Error).
-				Int("attempt", attempt).
-				Int("remaining", connManagerMaxRetries-attempt).
-				Msg("Reconnection attempt failed, will retry")
-
-		     retryInterval *= 2
+		lastErr = reconnectResult.Error
+		cm.logger.Warn().
+			Err(reconnectResult.Error).
+			Int("attempt", attempt).
+			Int("remaining", connManagerMaxRetries-attempt).
+			Msg("Reconnection attempt failed, will retry")
+		retryInterval *= 2
+		if cm.retryInterval > connManagerMaxRetryInterval {
+			cm.retryInterval = connManagerMaxRetryInterval
+		}
 	}
 	cm.logger.Error().
-				Err(result.Error).
-				Int("attempt", attempt).
-				Msg("Reconnection failed after max retries")
+		Err(lastErr).
+		Msg("Reconnection failed after max retries")
 
 	return ConnResult{Error: fmt.Errorf("failed to reconnect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }

@@ -626,6 +626,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.logger.Warn().Msg("Already disconnected intentionally, skipping reconnection...")
 		return
 	}
+	originalClient := c.client
 
 	c.logger.Info().Msg("Starting reconnection process...")
 
@@ -651,9 +652,11 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
-	c.streamsMu.Lock()
-	c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
-	c.streamsMu.Unlock()
+	if originalClient == nil || reconnectResult.Conn != nil {
+		c.streamsMu.Lock()
+		c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
+		c.streamsMu.Unlock()
+	}
 
 	if regErr := c.StartRegistrationStream(ctx); regErr != nil {
 		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream")
