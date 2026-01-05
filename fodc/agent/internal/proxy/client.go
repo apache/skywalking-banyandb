@@ -46,7 +46,7 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
-	connManager        *ConnManager
+	connManager        *connManager
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
 	logger             *logger.Logger
@@ -81,7 +81,7 @@ func NewClient(
 	flightRecorder *flightrecorder.FlightRecorder,
 	logger *logger.Logger,
 ) *Client {
-	connMgr := NewConnManager(proxyAddr, reconnectInterval, logger)
+	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
 	client := &Client{
 		connManager:       connMgr,
 		proxyAddr:         proxyAddr,
@@ -96,13 +96,13 @@ func NewClient(
 		stopCh:            make(chan struct{}),
 	}
 
-	connMgr.SetHeartbeatChecker(client.SendHeartbeat)
+	connMgr.setHeartbeatChecker(client.SendHeartbeat)
 	return client
 }
 
 // StartConnManager is useful for tests or scenarios where you want to manually control connection lifecycle.
 func (c *Client) StartConnManager(ctx context.Context) {
-	c.connManager.Start(ctx)
+	c.connManager.start(ctx)
 }
 
 // Connect establishes a gRPC connection to Proxy.
@@ -469,7 +469,7 @@ func (c *Client) Disconnect() error {
 	}
 	c.streamsMu.Unlock()
 
-	c.connManager.Stop()
+	c.connManager.stop()
 
 	c.streamsMu.Lock()
 	c.client = nil
@@ -482,7 +482,7 @@ func (c *Client) Disconnect() error {
 
 // Start starts the proxy client with automatic reconnection.
 func (c *Client) Start(ctx context.Context) error {
-	c.connManager.Start(ctx)
+	c.connManager.start(ctx)
 
 	for {
 		select {
@@ -644,7 +644,7 @@ func (c *Client) reconnect(ctx context.Context) {
 	}
 	c.streamsMu.Unlock()
 
-	reconnectCh := c.connManager.RequestReconnect(ctx)
+	reconnectCh := c.connManager.RequestConnect(ctx)
 	reconnectResult := <-reconnectCh
 
 	if reconnectResult.Error != nil {

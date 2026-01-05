@@ -36,128 +36,123 @@ const (
 	connManagerMaxRetries       = 3
 )
 
-// ConnEventType represents the type of connection event.
-type ConnEventType int
+// connEventType represents the type of connection event.
+type connEventType int
 
 // Possible connection event types.
 const (
-	ConnEventConnect ConnEventType = iota
-	ConnEventDisconnect
+	connEventConnect connEventType = iota
+	connEventDisconnect
 )
 
-// ConnEvent represents a connection event sent to the manager.
-type ConnEvent struct {
-	ResultCh chan<- ConnResult
+// connEvent represents a connection event sent to the manager.
+type connEvent struct {
+	ResultCh chan<- connResult
 	Context  context.Context
-	Type     ConnEventType
+	Type     connEventType
 }
 
-// ConnResult represents the result of a connection operation.
-type ConnResult struct {
+// connResult represents the result of a connection operation.
+type connResult struct {
 	Conn  *grpc.ClientConn
 	Error error
 }
 
-// ConnState represents the state of the connection.
-type ConnState int
+// connState represents the state of the connection.
+type connState int
 
 const (
-	// ConnStateDisconnected indicates the connection is disconnected.
-	ConnStateDisconnected ConnState = iota
-	// ConnStateConnected indicates the connection is established.
-	ConnStateConnected
+	// connStateDisconnected indicates the connection is disconnected.
+	connStateDisconnected connState = iota
+	// connStateConnected indicates the connection is established.
+	connStateConnected
 )
 
-// HeartbeatChecker is a function that checks if the connection is healthy.
-type HeartbeatChecker func(context.Context) error
+// heartbeatCheckerFunc is a function that checks if the connection is healthy.
+type heartbeatCheckerFunc func(context.Context) error
 
-// ConnManager manages connection lifecycle using a single goroutine.
-type ConnManager struct {
+// connManager manages connection lifecycle using a single goroutine.
+type connManager struct {
 	logger           *logger.Logger
 	currentConn      *grpc.ClientConn
 	closer           *run.Closer
-	heartbeatChecker HeartbeatChecker
-	eventCh          chan ConnEvent
+	heartbeatChecker heartbeatCheckerFunc
+	eventCh          chan connEvent
 	proxyAddr        string
 	retryInterval    time.Duration
-	state            ConnState
+	state            connState
 	stateMu          sync.RWMutex
 	startOnce        sync.Once
 }
 
-// NewConnManager creates a new connection manager.
-func NewConnManager(
+// newConnManager creates a new connection manager.
+func newConnManager(
 	proxyAddr string,
 	reconnectInterval time.Duration,
 	logger *logger.Logger,
-) *ConnManager {
-	return &ConnManager{
-		eventCh:          make(chan ConnEvent, 10),
+) *connManager {
+	return &connManager{
+		eventCh:          make(chan connEvent, 10),
 		closer:           run.NewCloser(1),
 		logger:           logger,
 		proxyAddr:        proxyAddr,
-		state:            ConnStateDisconnected,
+		state:            connStateDisconnected,
 		retryInterval:    reconnectInterval,
 		heartbeatChecker: nil,
 	}
 }
 
-// SetHeartbeatChecker sets the heartbeat checker function.
-func (cm *ConnManager) SetHeartbeatChecker(checker HeartbeatChecker) {
+// setHeartbeatChecker sets the heartbeat checker function.
+func (cm *connManager) setHeartbeatChecker(checker heartbeatCheckerFunc) {
 	cm.stateMu.Lock()
 	cm.heartbeatChecker = checker
 	cm.stateMu.Unlock()
 }
 
-// EventChannel returns the channel for sending connect/reconnect events.
-func (cm *ConnManager) EventChannel() chan<- ConnEvent {
+// eventChannel returns the channel for sending connect/reconnect events.
+func (cm *connManager) eventChannel() chan<- connEvent {
 	return cm.eventCh
 }
 
-// Start starts the connection manager's event processing goroutine.
-func (cm *ConnManager) Start(ctx context.Context) {
+// start starts the connection manager's event processing goroutine.
+func (cm *connManager) start(ctx context.Context) {
 	cm.startOnce.Do(func() {
 		go cm.run(ctx)
 	})
 }
 
-// Stop stops the connection manager and closes all connections.
-func (cm *ConnManager) Stop() {
+// stop stops the connection manager and closes all connections.
+func (cm *connManager) stop() {
 	cm.closer.CloseThenWait()
 }
 
 // requestConnection requests a connection attempt with optional heartbeat check.
-func (cm *ConnManager) requestConnection(ctx context.Context) <-chan ConnResult {
-	resultCh := make(chan ConnResult, 1)
-	event := ConnEvent{
-		Type:     ConnEventConnect,
+func (cm *connManager) requestConnection(ctx context.Context) <-chan connResult {
+	resultCh := make(chan connResult, 1)
+	event := connEvent{
+		Type:     connEventConnect,
 		Context:  ctx,
 		ResultCh: resultCh,
 	}
 	select {
 	case cm.eventCh <- event:
 	case <-ctx.Done():
-		resultCh <- ConnResult{Error: ctx.Err()}
+		resultCh <- connResult{Error: ctx.Err()}
 		close(resultCh)
 	default:
-		resultCh <- ConnResult{Error: fmt.Errorf("connection manager event channel is full")}
+		resultCh <- connResult{Error: fmt.Errorf("connection manager event channel is full")}
 		close(resultCh)
 	}
 	return resultCh
 }
 
 // RequestConnect requests a connection attempt.
-func (cm *ConnManager) RequestConnect(ctx context.Context) <-chan ConnResult {
-	return cm.requestConnection(ctx)
-}
-
-// RequestReconnect requests a reconnection attempt with exponential backoff.
-func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
+func (cm *connManager) RequestConnect(ctx context.Context) <-chan connResult {
 	return cm.requestConnection(ctx)
 }
 
 // run is the main event processing loop running in a single goroutine.
-func (cm *ConnManager) run(ctx context.Context) {
+func (cm *connManager) run(ctx context.Context) {
 	defer cm.closer.Done()
 	for {
 		select {
@@ -174,26 +169,26 @@ func (cm *ConnManager) run(ctx context.Context) {
 }
 
 // handleEvent runs in the single goroutine and processes a connection event.
-func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
+func (cm *connManager) handleEvent(ctx context.Context, event connEvent) {
 	switch event.Type {
-	case ConnEventDisconnect:
+	case connEventDisconnect:
 		cm.stateMu.Lock()
-		cm.state = ConnStateDisconnected
+		cm.state = connStateDisconnected
 		cm.stateMu.Unlock()
 
 		cm.cleanupConnection()
 		if event.ResultCh != nil {
-			event.ResultCh <- ConnResult{Error: nil}
+			event.ResultCh <- connResult{Error: nil}
 			close(event.ResultCh)
 		}
-	case ConnEventConnect:
+	case connEventConnect:
 		cm.stateMu.RLock()
 		currentState := cm.state
 		currentConn := cm.currentConn
 		heartbeatChecker := cm.heartbeatChecker
 		cm.stateMu.RUnlock()
 
-		if currentState == ConnStateConnected && currentConn != nil && heartbeatChecker != nil {
+		if currentState == connStateConnected && currentConn != nil && heartbeatChecker != nil {
 			checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
 			heartbeatErr := heartbeatChecker(checkCtx)
 			checkCancel()
@@ -201,7 +196,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			if heartbeatErr == nil {
 				cm.logger.Debug().Msg("Connection is healthy, reusing existing connection")
 				if event.ResultCh != nil {
-					event.ResultCh <- ConnResult{Conn: currentConn}
+					event.ResultCh <- connResult{Conn: currentConn}
 					close(event.ResultCh)
 				}
 				return
@@ -209,7 +204,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			cm.logger.Warn().Err(heartbeatErr).Msg("Heartbeat check failed, reconnecting")
 		}
 		// For reconnect cleanup old connection first
-		if currentState == ConnStateConnected {
+		if currentState == connStateConnected {
 			cm.cleanupConnection()
 		}
 
@@ -229,10 +224,10 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 
 		cm.stateMu.Lock()
 		if result.Error == nil {
-			cm.state = ConnStateConnected
+			cm.state = connStateConnected
 			cm.currentConn = result.Conn
 		} else {
-			cm.state = ConnStateDisconnected
+			cm.state = connStateDisconnected
 		}
 		cm.stateMu.Unlock()
 
@@ -244,7 +239,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 }
 
 // doConnect performs the connection attempt with retry using exponential backoff.
-func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
+func (cm *connManager) doConnect(ctx context.Context) connResult {
 	var lastErr error
 	retryInterval := cm.retryInterval
 
@@ -252,16 +247,16 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return ConnResult{Error: fmt.Errorf("context canceled after %d attempts: %w", attempt-1, ctx.Err())}
+				return connResult{Error: fmt.Errorf("context canceled after %d attempts: %w", attempt-1, ctx.Err())}
 			}
-			return ConnResult{Error: ctx.Err()}
+			return connResult{Error: ctx.Err()}
 		default:
 		}
 
 		conn, dialErr := grpc.NewClient(cm.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if dialErr == nil {
 			cm.logger.Info().Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).Msg("Connected to FODC Proxy")
-			return ConnResult{Conn: conn}
+			return connResult{Conn: conn}
 		}
 
 		cm.logger.Error().Err(dialErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).
@@ -269,7 +264,7 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 		lastErr = fmt.Errorf("failed to create proxy client: %w", dialErr)
 
 		if attempt >= connManagerMaxRetries {
-			return ConnResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", attempt, lastErr)}
+			return connResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", attempt, lastErr)}
 		}
 
 		cm.logger.Warn().
@@ -279,26 +274,26 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 			Int("remaining", connManagerMaxRetries-attempt).
 			Msg("Connection attempt failed, will retry")
 
-		select {
-		case <-ctx.Done():
-			return ConnResult{Error: ctx.Err()}
-		case <-cm.closer.CloseNotify():
-			return ConnResult{Error: fmt.Errorf("connection manager stopped")}
-		case <-time.After(retryInterval):
-		}
-
 		retryInterval *= 2
 		if retryInterval > connManagerMaxRetryInterval {
 			retryInterval = connManagerMaxRetryInterval
 		}
+
+		select {
+		case <-ctx.Done():
+			return connResult{Error: ctx.Err()}
+		case <-cm.closer.CloseNotify():
+			return connResult{Error: fmt.Errorf("connection manager stopped")}
+		case <-time.After(retryInterval):
+		}
 	}
 	cm.logger.Error().Err(lastErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", connManagerMaxRetries).
 		Msg("Failed to connect to FODC Proxy")
-	return ConnResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", connManagerMaxRetries, lastErr)}
+	return connResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }
 
 // cleanupConnection closes the current connection and cleans up resources.
-func (cm *ConnManager) cleanupConnection() {
+func (cm *connManager) cleanupConnection() {
 	cm.stateMu.Lock()
 	currentConn := cm.currentConn
 	cm.currentConn = nil
@@ -312,17 +307,17 @@ func (cm *ConnManager) cleanupConnection() {
 }
 
 // cleanup performs final cleanup when the manager stops.
-func (cm *ConnManager) cleanup() {
+func (cm *connManager) cleanup() {
 	cm.stateMu.Lock()
-	cm.state = ConnStateDisconnected
+	cm.state = connStateDisconnected
 	cm.stateMu.Unlock()
 
 	cm.cleanupConnection()
 	cm.logger.Info().Msg("Connection manager stopped")
 }
 
-// GetState returns the current connection state (thread-safe).
-func (cm *ConnManager) GetState() ConnState {
+// getState returns the current connection state (thread-safe).
+func (cm *connManager) getState() connState {
 	cm.stateMu.RLock()
 	defer cm.stateMu.RUnlock()
 	return cm.state

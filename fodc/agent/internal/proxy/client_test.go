@@ -282,8 +282,8 @@ func TestProxyClient_Connect_Success(t *testing.T) {
 	defer cancel()
 
 	// Start the connection manager before calling Connect
-	pc.connManager.Start(ctx)
-	defer pc.connManager.Stop()
+	pc.connManager.start(ctx)
+	defer pc.connManager.stop()
 
 	err := pc.Connect(ctx)
 
@@ -310,8 +310,8 @@ func TestProxyClient_Connect_AlreadyConnected(t *testing.T) {
 	defer cancel()
 
 	// Start the connection manager
-	pc.connManager.Start(ctx)
-	defer pc.connManager.Stop()
+	pc.connManager.start(ctx)
+	defer pc.connManager.stop()
 
 	// First connection
 	err := pc.Connect(ctx)
@@ -331,8 +331,8 @@ func TestProxyClient_Connect_Reconnection(t *testing.T) {
 	defer cancel()
 
 	// Start the connection manager
-	pc.connManager.Start(ctx)
-	defer pc.connManager.Stop()
+	pc.connManager.start(ctx)
+	defer pc.connManager.stop()
 
 	// Set disconnected state
 	pc.streamsMu.Lock()
@@ -844,8 +844,8 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	defer cancel()
 
 	// Start the connection manager before calling Connect
-	pc.connManager.Start(ctx)
-	defer pc.connManager.Stop()
+	pc.connManager.start(ctx)
+	defer pc.connManager.stop()
 
 	// First connect
 	err := pc.Connect(ctx)

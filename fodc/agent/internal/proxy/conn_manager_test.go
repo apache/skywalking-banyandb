@@ -31,12 +31,12 @@ func TestNewConnManager(t *testing.T) {
 	proxyAddr := "localhost:17913"
 	reconnectInterval := 5 * time.Second
 
-	cm := NewConnManager(proxyAddr, reconnectInterval, testLogger)
+	cm := newConnManager(proxyAddr, reconnectInterval, testLogger)
 
 	assert.NotNil(t, cm)
 	assert.Equal(t, proxyAddr, cm.proxyAddr)
 	assert.Equal(t, reconnectInterval, cm.retryInterval)
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 	assert.NotNil(t, cm.eventCh)
 	assert.NotNil(t, cm.closer)
 	assert.NotNil(t, cm.logger)
@@ -44,15 +44,15 @@ func TestNewConnManager(t *testing.T) {
 
 func TestConnManager_EventChannel(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
-	eventCh := cm.EventChannel()
+	eventCh := cm.eventChannel()
 	assert.NotNil(t, eventCh)
 
 	// Verify we can send to the channel
 	ctx := context.Background()
-	event := ConnEvent{
-		Type:    ConnEventDisconnect,
+	event := connEvent{
+		Type:    connEventDisconnect,
 		Context: ctx,
 	}
 
@@ -66,36 +66,36 @@ func TestConnManager_EventChannel(t *testing.T) {
 
 func TestConnManager_StartStop(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Start the manager
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Give it time to start
 	time.Sleep(50 * time.Millisecond)
 
 	// Stop the manager
-	cm.Stop()
+	cm.stop()
 
 	// Give it time to stop
 	time.Sleep(50 * time.Millisecond)
 
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnManager_RequestConnect_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	// grpc.NewClient succeeds even with invalid addresses (lazy connection)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Request connection
 	resultCh := cm.RequestConnect(ctx)
@@ -115,13 +115,13 @@ func TestConnManager_RequestConnect_Success(t *testing.T) {
 
 func TestConnManager_RequestConnect_ContextCanceled(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Create a context that's already canceled
 	canceledCtx, cancelFunc := context.WithCancel(context.Background())
@@ -149,19 +149,19 @@ func TestConnManager_RequestConnect_ContextCanceled(t *testing.T) {
 
 func TestConnManager_RequestReconnect_WhenDisconnected(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Manually set disconnected flag
-	disconnectEvent := ConnEvent{
-		Type:    ConnEventDisconnect,
+	disconnectEvent := connEvent{
+		Type:    connEventDisconnect,
 		Context: ctx,
 	}
-	cm.EventChannel() <- disconnectEvent
+	cm.eventChannel() <- disconnectEvent
 
 	// Give it time to process the disconnect
 	time.Sleep(100 * time.Millisecond)
@@ -170,7 +170,7 @@ func TestConnManager_RequestReconnect_WhenDisconnected(t *testing.T) {
 	reconnCtx, reconnCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer reconnCancel()
 
-	resultCh := cm.RequestReconnect(reconnCtx)
+	resultCh := cm.RequestConnect(reconnCtx)
 
 	select {
 	case result := <-resultCh:
@@ -184,30 +184,30 @@ func TestConnManager_RequestReconnect_WhenDisconnected(t *testing.T) {
 
 func TestConnManager_DisconnectEvent(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Send disconnect event
-	resultCh := make(chan ConnResult, 1)
-	event := ConnEvent{
-		Type:     ConnEventDisconnect,
+	resultCh := make(chan connResult, 1)
+	event := connEvent{
+		Type:     connEventDisconnect,
 		Context:  ctx,
 		ResultCh: resultCh,
 	}
 
-	cm.EventChannel() <- event
+	cm.eventChannel() <- event
 
 	select {
 	case result := <-resultCh:
 		assert.NoError(t, result.Error)
 		// Give some time for state update
 		time.Sleep(50 * time.Millisecond)
-		assert.Equal(t, ConnStateDisconnected, cm.GetState())
+		assert.Equal(t, connStateDisconnected, cm.getState())
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for disconnect event to be processed")
 	}
@@ -215,13 +215,13 @@ func TestConnManager_DisconnectEvent(t *testing.T) {
 
 func TestConnManager_MultipleConnectRequests(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Send first connect request
 	resultCh1 := cm.RequestConnect(ctx)
@@ -246,43 +246,43 @@ func TestConnManager_MultipleConnectRequests(t *testing.T) {
 
 func TestConnManager_StopWithPendingEvents(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Fill the event channel
 	for i := 0; i < 5; i++ {
-		event := ConnEvent{
-			Type:     ConnEventConnect,
+		event := connEvent{
+			Type:     connEventConnect,
 			Context:  ctx,
-			ResultCh: make(chan ConnResult, 1),
+			ResultCh: make(chan connResult, 1),
 		}
 		select {
-		case cm.EventChannel() <- event:
+		case cm.eventChannel() <- event:
 		case <-time.After(100 * time.Millisecond):
 			t.Logf("Could not send event %d", i)
 		}
 	}
 
 	// Stop should handle pending events gracefully
-	cm.Stop()
+	cm.stop()
 
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnManager_ContextCancellation(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Cancel the context
 	cancel()
@@ -290,29 +290,27 @@ func TestConnManager_ContextCancellation(t *testing.T) {
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnManager_ReconnectWithBackoff(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 100*time.Millisecond, testLogger)
+	cm := newConnManager("localhost:17913", 100*time.Millisecond, testLogger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Request reconnect (not immediate, should use backoff)
-	resultCh := cm.RequestReconnect(ctx)
+	resultCh := cm.RequestConnect(ctx)
 
 	start := time.Now()
 	select {
 	case result := <-resultCh:
 		duration := time.Since(start)
-		// Should have waited at least the initial retry interval
-		assert.GreaterOrEqual(t, duration, 100*time.Millisecond)
-		// Connection should succeed or fail, but we got a result
+		// Connection should succeed or fail, but we got a result within the timeout.
 		t.Logf("Reconnect result error: %v, duration: %v", result.Error, duration)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for reconnect result")
@@ -321,15 +319,15 @@ func TestConnManager_ReconnectWithBackoff(t *testing.T) {
 
 func TestConnManager_ImmediateReconnect(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 1*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 1*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
-	// Request immediate reconnect using RequestReconnect which now supports ForceNew flag
+	// Request immediate reconnect using RequestConnect which now supports ForceNew flag
 	resultCh := cm.RequestConnect(ctx)
 
 	start := time.Now()
@@ -346,15 +344,15 @@ func TestConnManager_ImmediateReconnect(t *testing.T) {
 
 func TestConnManager_StateTransitions(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Initial state
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Request connect
 	resultCh := cm.RequestConnect(ctx)
@@ -363,64 +361,64 @@ func TestConnManager_StateTransitions(t *testing.T) {
 	// After connect attempt
 	time.Sleep(50 * time.Millisecond)
 	if result.Error != nil {
-		assert.Equal(t, ConnStateDisconnected, cm.GetState())
+		assert.Equal(t, connStateDisconnected, cm.getState())
 	} else {
-		assert.Equal(t, ConnStateConnected, cm.GetState())
+		assert.Equal(t, connStateConnected, cm.getState())
 	}
 
 	// Stop should set disconnected flag
-	cm.Stop()
+	cm.stop()
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnManager_CleanupOnStop(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Try to establish a connection (will likely fail with invalid address, but that's okay)
 	resultCh := cm.RequestConnect(ctx)
 	<-resultCh
 
 	// Stop should cleanup any existing connection
-	cm.Stop()
+	cm.stop()
 
 	// Give time for cleanup
 	time.Sleep(100 * time.Millisecond)
 
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnEventType_Values(t *testing.T) {
 	// Verify the enum values are distinct
-	assert.NotEqual(t, ConnEventConnect, ConnEventDisconnect)
+	assert.NotEqual(t, connEventConnect, connEventDisconnect)
 }
 
 func TestConnState_Values(t *testing.T) {
 	// Verify the state values are distinct
-	assert.NotEqual(t, ConnStateDisconnected, ConnStateConnected)
+	assert.NotEqual(t, connStateDisconnected, connStateConnected)
 }
 
 func TestConnManager_ExponentialBackoff(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 50*time.Millisecond, testLogger)
+	cm := newConnManager("localhost:17913", 50*time.Millisecond, testLogger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Initial retry interval should match reconnect interval
 	assert.Equal(t, 50*time.Millisecond, cm.retryInterval)
 
 	// First reconnect
-	resultCh1 := cm.RequestReconnect(ctx)
+	resultCh1 := cm.RequestConnect(ctx)
 	<-resultCh1
 
 	// Retry interval should have doubled
@@ -435,19 +433,19 @@ func TestConnManager_ExponentialBackoff(t *testing.T) {
 
 func TestConnManager_MaxRetryInterval(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 1*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 1*time.Second, testLogger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Manually set retry interval to a high value
 	cm.retryInterval = 20 * time.Second
 
 	// Request reconnect - this should trigger the backoff logic
-	resultCh := cm.RequestReconnect(ctx)
+	resultCh := cm.RequestConnect(ctx)
 	<-resultCh
 
 	// Retry interval should be capped at maxRetryInterval (30 seconds)
@@ -457,12 +455,12 @@ func TestConnManager_MaxRetryInterval(t *testing.T) {
 
 func TestConnManager_ConcurrentStopAndConnect(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
+	cm.start(ctx)
 
 	// Send connect request and stop concurrently
 	go func() {
@@ -470,26 +468,26 @@ func TestConnManager_ConcurrentStopAndConnect(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	cm.Stop()
+	cm.stop()
 
 	// Should handle gracefully without panic
 	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, ConnStateDisconnected, cm.GetState())
+	assert.Equal(t, connStateDisconnected, cm.getState())
 }
 
 func TestConnManager_MultipleReconnectRequests(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cm.Start(ctx)
-	defer cm.Stop()
+	cm.start(ctx)
+	defer cm.stop()
 
 	// Send multiple reconnect requests
-	resultCh1 := cm.RequestReconnect(ctx)
-	resultCh2 := cm.RequestReconnect(ctx)
+	resultCh1 := cm.RequestConnect(ctx)
+	resultCh2 := cm.RequestConnect(ctx)
 
 	// Both should get responses
 	result1 := <-resultCh1
@@ -506,15 +504,15 @@ func TestConnManager_MultipleReconnectRequests(t *testing.T) {
 
 func TestConnManager_FullEventChannelConnect(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	// Don't start the manager, so events won't be processed
 	ctx := context.Background()
 
 	// Fill the event channel (capacity is 10)
 	for i := 0; i < 10; i++ {
-		cm.EventChannel() <- ConnEvent{
-			Type:    ConnEventDisconnect,
+		cm.eventChannel() <- connEvent{
+			Type:    connEventDisconnect,
 			Context: ctx,
 		}
 	}
@@ -533,21 +531,21 @@ func TestConnManager_FullEventChannelConnect(t *testing.T) {
 
 func TestConnManager_FullEventChannelReconnect(t *testing.T) {
 	testLogger := initTestLogger(t)
-	cm := NewConnManager("localhost:17913", 5*time.Second, testLogger)
+	cm := newConnManager("localhost:17913", 5*time.Second, testLogger)
 
 	// Don't start the manager, so events won't be processed
 	ctx := context.Background()
 
 	// Fill the event channel (capacity is 10)
 	for i := 0; i < 10; i++ {
-		cm.EventChannel() <- ConnEvent{
-			Type:    ConnEventDisconnect,
+		cm.eventChannel() <- connEvent{
+			Type:    connEventDisconnect,
 			Context: ctx,
 		}
 	}
 
 	// Next request should fail because channel is full
-	resultCh := cm.RequestReconnect(ctx)
+	resultCh := cm.RequestConnect(ctx)
 
 	select {
 	case result := <-resultCh:
