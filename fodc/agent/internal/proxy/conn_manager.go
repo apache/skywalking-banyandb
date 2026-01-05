@@ -63,9 +63,7 @@ type ConnResult struct {
 type ConnState int
 
 const (
-	// ConnStateDisconnected indicates the connection is disconnected.
 	ConnStateDisconnected ConnState = iota
-	// ConnStateConnected indicates the connection is established.
 	ConnStateConnected
 )
 

@@ -180,6 +180,12 @@ func (w *ProxyClientWrapper) StartMetricsStream(ctx context.Context) error {
 	return w.client.StartMetricsStream(ctx)
 }
 
+// Start starts the proxy client with automatic connection and stream setup.
+func (w *ProxyClientWrapper) Start(ctx context.Context) error {
+	w.ctx = ctx
+	return w.client.Start(ctx)
+}
+
 // Disconnect closes connection to Proxy.
 func (w *ProxyClientWrapper) Disconnect() error {
 	w.connMgrActive = false

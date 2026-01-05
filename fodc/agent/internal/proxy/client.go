@@ -235,7 +235,6 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 
 	datasources := c.flightRecorder.GetDatasources()
 	if len(datasources) == 0 {
-		// Always send a response even if no datasources exist
 		req := &fodcv1.StreamMetricsRequest{
 			Metrics:   []*fodcv1.Metric{},
 			Timestamp: timestamppb.Now(),
@@ -251,10 +250,8 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 	timestamps := ds.GetTimestamps()
 	descriptions := ds.GetDescriptions()
 
-	// If filtering by time window is requested, we need timestamps
 	if filter != nil && (filter.StartTime != nil || filter.EndTime != nil) {
 		if timestamps == nil {
-			// Send empty response if timestamps are required but not available
 			req := &fodcv1.StreamMetricsRequest{
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
@@ -267,7 +264,6 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 
 		timestampValues := timestamps.GetAllValues()
 		if len(timestampValues) == 0 {
-			// Send empty response if no timestamps available for filtering
 			req := &fodcv1.StreamMetricsRequest{
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
@@ -281,7 +277,6 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
 	}
 
-	// For latest metrics (no time filter), we can send even without timestamps
 	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
 }
 
@@ -294,11 +289,9 @@ func (c *Client) sendLatestMetrics(
 	protoMetrics := make([]*fodcv1.Metric, 0)
 
 	for metricKey, metricBuffer := range allMetrics {
-		// Get the most recent value (may include unfinalized values)
 		metricValue := metricBuffer.GetCurrentValue()
 		allValues := metricBuffer.GetAllValues()
 
-		// Skip metrics with no finalized values and zero current value
 		if len(allValues) == 0 && metricValue == 0 {
 			continue
 		}
@@ -658,18 +651,15 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
-	// Update connection references
 	c.streamsMu.Lock()
 	c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
 	c.streamsMu.Unlock()
 
-	// Try to re-establish registration stream
 	if regErr := c.StartRegistrationStream(ctx); regErr != nil {
 		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream")
 		return
 	}
 
-	// Try to re-establish metrics stream
 	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
 		return

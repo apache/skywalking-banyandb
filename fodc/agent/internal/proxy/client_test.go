@@ -840,8 +840,21 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "worker", nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
-	// Don't set a real grpc.ClientConn as it will panic on Close()
-	// Instead, test with nil conn or use a real connection setup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the connection manager before calling Connect
+	pc.connManager.Start(ctx)
+	defer pc.connManager.Stop()
+
+	// First connect
+	err := pc.Connect(ctx)
+	if err != nil {
+		t.Skipf("Cannot test disconnect without connection: %v", err)
+		return
+	}
+
+	// Set up mock streams to test cleanup
 	mockClient := &mockFODCServiceClient{}
 	mockRegStream := newMockRegisterAgentClient(context.Background())
 	mockMetricsStream := newMockStreamMetricsClient(context.Background())
@@ -855,9 +868,10 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 	pc.heartbeatTicker = ticker
 	pc.streamsMu.Unlock()
 
-	err := pc.Disconnect()
+	// Now disconnect
+	disconnectErr := pc.Disconnect()
 
-	require.NoError(t, err)
+	require.NoError(t, disconnectErr)
 	pc.streamsMu.RLock()
 	disconnected := pc.disconnected
 	client := pc.client
