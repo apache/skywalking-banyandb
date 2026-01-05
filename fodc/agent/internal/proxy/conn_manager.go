@@ -47,10 +47,9 @@ const (
 
 // ConnEvent represents a connection event sent to the manager.
 type ConnEvent struct {
-	ResultCh  chan<- ConnResult
-	Context   context.Context
-	Type      ConnEventType
-	Immediate bool // If true, skip backoff and retry immediately
+	ResultCh chan<- ConnResult
+	Context  context.Context
+	Type     ConnEventType
 }
 
 // ConnResult represents the result of a connection operation.
@@ -74,16 +73,16 @@ type HeartbeatChecker func(context.Context) error
 
 // ConnManager manages connection lifecycle using a single goroutine.
 type ConnManager struct {
-	logger            *logger.Logger
-	currentConn       *grpc.ClientConn
-	closer            *run.Closer
-	heartbeatChecker  HeartbeatChecker
-	eventCh           chan ConnEvent
-	proxyAddr         string
-	retryInterval     time.Duration
-	state             ConnState
-	stateMu           sync.RWMutex
-	startOnce         sync.Once
+	logger           *logger.Logger
+	currentConn      *grpc.ClientConn
+	closer           *run.Closer
+	heartbeatChecker HeartbeatChecker
+	eventCh          chan ConnEvent
+	proxyAddr        string
+	retryInterval    time.Duration
+	state            ConnState
+	stateMu          sync.RWMutex
+	startOnce        sync.Once
 }
 
 // NewConnManager creates a new connection manager.
@@ -93,13 +92,13 @@ func NewConnManager(
 	logger *logger.Logger,
 ) *ConnManager {
 	return &ConnManager{
-		eventCh:           make(chan ConnEvent, 10),
-		closer:            run.NewCloser(1),
-		logger:            logger,
-		proxyAddr:         proxyAddr,
-		state:             ConnStateDisconnected,
-		retryInterval:     reconnectInterval,
-		heartbeatChecker:  nil,
+		eventCh:          make(chan ConnEvent, 10),
+		closer:           run.NewCloser(1),
+		logger:           logger,
+		proxyAddr:        proxyAddr,
+		state:            ConnStateDisconnected,
+		retryInterval:    reconnectInterval,
+		heartbeatChecker: nil,
 	}
 }
 
@@ -128,13 +127,12 @@ func (cm *ConnManager) Stop() {
 }
 
 // requestConnection requests a connection attempt with optional heartbeat check.
-func (cm *ConnManager) requestConnection(ctx context.Context, immediate bool) <-chan ConnResult {
+func (cm *ConnManager) requestConnection(ctx context.Context) <-chan ConnResult {
 	resultCh := make(chan ConnResult, 1)
 	event := ConnEvent{
-		Type:      ConnEventConnect,
-		Context:   ctx,
-		ResultCh:  resultCh,
-		Immediate: immediate,
+		Type:     ConnEventConnect,
+		Context:  ctx,
+		ResultCh: resultCh,
 	}
 	select {
 	case cm.eventCh <- event:
@@ -150,12 +148,12 @@ func (cm *ConnManager) requestConnection(ctx context.Context, immediate bool) <-
 
 // RequestConnect requests a connection attempt.
 func (cm *ConnManager) RequestConnect(ctx context.Context) <-chan ConnResult {
-	return cm.requestConnection(ctx, true)
+	return cm.requestConnection(ctx)
 }
 
 // RequestReconnect requests a reconnection attempt with exponential backoff.
 func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
-	return cm.requestConnection(ctx, false)
+	return cm.requestConnection(ctx)
 }
 
 // run is the main event processing loop running in a single goroutine.
@@ -227,12 +225,7 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}()
 		}
 
-		var result ConnResult
-		if !event.Immediate {
-			result = cm.doReconnect(connCtx)
-		} else {
-			result = cm.doConnect(connCtx)
-		}
+		result := cm.doConnect(connCtx)
 
 		cm.stateMu.Lock()
 		if result.Error == nil {
@@ -250,33 +243,42 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 	}
 }
 
-// doConnect performs the actual connection attempt.
+// doConnect performs the connection attempt with retry using exponential backoff.
 func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
-	select {
-	case <-ctx.Done():
-		return ConnResult{Error: ctx.Err()}
-	default:
-	}
-
-	conn, dialErr := grpc.NewClient(cm.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if dialErr != nil {
-		cm.logger.Error().Err(dialErr).Str("proxy_addr", cm.proxyAddr).Msg("Failed to create proxy client")
-		return ConnResult{
-			Error: fmt.Errorf("failed to create proxy client: %w", dialErr),
-		}
-	}
-	cm.logger.Info().Str("proxy_addr", cm.proxyAddr).Msg("Connected to FODC Proxy")
-	return ConnResult{
-		Conn: conn,
-	}
-}
-
-// doReconnect performs reconnection with exponential backoff and automatic retries.
-func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 	var lastErr error
 	retryInterval := cm.retryInterval
+
 	for attempt := 1; attempt <= connManagerMaxRetries; attempt++ {
-		// Wait before attempting connection
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return ConnResult{Error: fmt.Errorf("context canceled after %d attempts: %w", attempt-1, ctx.Err())}
+			}
+			return ConnResult{Error: ctx.Err()}
+		default:
+		}
+
+		conn, dialErr := grpc.NewClient(cm.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if dialErr == nil {
+			cm.logger.Info().Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).Msg("Connected to FODC Proxy")
+			return ConnResult{Conn: conn}
+		}
+
+		cm.logger.Error().Err(dialErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).
+			Msg("Failed to create proxy client")
+		lastErr = fmt.Errorf("failed to create proxy client: %w", dialErr)
+
+		if attempt >= connManagerMaxRetries {
+			return ConnResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", attempt, lastErr)}
+		}
+
+		cm.logger.Warn().
+			Err(lastErr).
+			Dur("retry_interval", retryInterval).
+			Int("attempt", attempt).
+			Int("remaining", connManagerMaxRetries-attempt).
+			Msg("Connection attempt failed, will retry")
+
 		select {
 		case <-ctx.Done():
 			return ConnResult{Error: ctx.Err()}
@@ -285,35 +287,14 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 		case <-time.After(retryInterval):
 		}
 
-		cm.logger.Info().
-			Dur("retry_interval", retryInterval).
-			Int("attempt", attempt).
-			Int("max_retries", connManagerMaxRetries).
-			Msg("Attempting to reconnect...")
-
-		reconnectResult := cm.doConnect(ctx)
-
-		if reconnectResult.Error == nil {
-			cm.logger.Info().Int("attempt", attempt).Msg("Reconnection succeeded")
-			return reconnectResult
-		}
-
-		lastErr = reconnectResult.Error
-		cm.logger.Warn().
-			Err(reconnectResult.Error).
-			Int("attempt", attempt).
-			Int("remaining", connManagerMaxRetries-attempt).
-			Msg("Reconnection attempt failed, will retry")
 		retryInterval *= 2
-		if cm.retryInterval > connManagerMaxRetryInterval {
-			cm.retryInterval = connManagerMaxRetryInterval
+		if retryInterval > connManagerMaxRetryInterval {
+			retryInterval = connManagerMaxRetryInterval
 		}
 	}
-	cm.logger.Error().
-		Err(lastErr).
-		Msg("Reconnection failed after max retries")
-
-	return ConnResult{Error: fmt.Errorf("failed to reconnect after %d attempts: %w", connManagerMaxRetries, lastErr)}
+	cm.logger.Error().Err(lastErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", connManagerMaxRetries).
+		Msg("Failed to connect to FODC Proxy")
+	return ConnResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }
 
 // cleanupConnection closes the current connection and cleans up resources.

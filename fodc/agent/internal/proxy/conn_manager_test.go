@@ -35,7 +35,7 @@ func TestNewConnManager(t *testing.T) {
 
 	assert.NotNil(t, cm)
 	assert.Equal(t, proxyAddr, cm.proxyAddr)
-	assert.Equal(t, reconnectInterval, cm.reconnectInterval)
+	assert.Equal(t, reconnectInterval, cm.retryInterval)
 	assert.Equal(t, ConnStateDisconnected, cm.GetState())
 	assert.NotNil(t, cm.eventCh)
 	assert.NotNil(t, cm.closer)
@@ -256,10 +256,9 @@ func TestConnManager_StopWithPendingEvents(t *testing.T) {
 	// Fill the event channel
 	for i := 0; i < 5; i++ {
 		event := ConnEvent{
-			Type:      ConnEventConnect,
-			Context:   ctx,
-			ResultCh:  make(chan ConnResult, 1),
-			Immediate: true,
+			Type:     ConnEventConnect,
+			Context:  ctx,
+			ResultCh: make(chan ConnResult, 1),
 		}
 		select {
 		case cm.EventChannel() <- event:
