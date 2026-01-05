@@ -41,31 +41,33 @@ import (
 
 // Service implements DNS-based node discovery.
 type Service struct {
-	lastQueryTime     time.Time
-	resolver          Resolver
-	caCertReloader    *pkgtls.Reloader
-	nodeCache         map[string]*databasev1.Node
-	closer            *run.Closer
-	log               *logger.Logger
-	metrics           *metrics
-	handlers          map[string]schema.EventHandler
-	caCertPath        string
-	srvAddresses      []string
-	lastSuccessfulDNS []string
-	pollInterval      time.Duration
-	initInterval      time.Duration
-	initDuration      time.Duration
-	grpcTimeout       time.Duration
-	cacheMutex        sync.RWMutex
-	lastSuccessMutex  sync.RWMutex
-	handlersMutex     sync.RWMutex
-	lastQueryMutex    sync.RWMutex
-	tlsEnabled        bool
+	lastQueryTime        time.Time
+	resolver             Resolver
+	pathToReloader       map[string]*pkgtls.Reloader
+	srvIndexToPath       map[int]string
+	resolvedAddrToSRVIdx map[string]int
+	nodeCache            map[string]*databasev1.Node
+	closer               *run.Closer
+	log                  *logger.Logger
+	metrics              *metrics
+	handlers             map[string]schema.EventHandler
+	caCertPaths          []string
+	srvAddresses         []string
+	lastSuccessfulDNS    []string
+	pollInterval         time.Duration
+	initInterval         time.Duration
+	initDuration         time.Duration
+	grpcTimeout          time.Duration
+	cacheMutex           sync.RWMutex
+	handlersMutex        sync.RWMutex
+	lastQueryMutex       sync.RWMutex
+	resolvedAddrMutex    sync.RWMutex
+	tlsEnabled           bool
 }
 
 // Config holds configuration for DNS discovery service.
 type Config struct {
-	CACertPath   string
+	CACertPaths  []string
 	SRVAddresses []string
 	InitInterval time.Duration
 	InitDuration time.Duration
@@ -88,34 +90,66 @@ func (d *defaultResolver) LookupSRV(ctx context.Context, name string) (string, [
 
 // NewService creates a new DNS discovery service.
 func NewService(cfg Config) (*Service, error) {
-	// Validation
+	// validation
 	if len(cfg.SRVAddresses) == 0 {
 		return nil, errors.New("DNS SRV addresses cannot be empty")
 	}
 
-	svc := &Service{
-		srvAddresses:      cfg.SRVAddresses,
-		initInterval:      cfg.InitInterval,
-		initDuration:      cfg.InitDuration,
-		pollInterval:      cfg.PollInterval,
-		grpcTimeout:       cfg.GRPCTimeout,
-		tlsEnabled:        cfg.TLSEnabled,
-		caCertPath:        cfg.CACertPath,
-		nodeCache:         make(map[string]*databasev1.Node),
-		handlers:          make(map[string]schema.EventHandler),
-		lastSuccessfulDNS: []string{},
-		closer:            run.NewCloser(1),
-		log:               logger.GetLogger("metadata-discovery-dns"),
-		resolver:          &defaultResolver{},
+	// validate CA cert paths match SRV addresses when TLS is enabled
+	if cfg.TLSEnabled {
+		if len(cfg.CACertPaths) != len(cfg.SRVAddresses) {
+			return nil, fmt.Errorf("number of CA cert paths (%d) must match number of SRV addresses (%d)",
+				len(cfg.CACertPaths), len(cfg.SRVAddresses))
+		}
 	}
 
-	if svc.tlsEnabled && svc.caCertPath != "" {
-		var err error
-		svc.caCertReloader, err = pkgtls.NewClientCertReloader(svc.caCertPath, svc.log)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize CA certificate reloader: %w", err)
+	svc := &Service{
+		srvAddresses:         cfg.SRVAddresses,
+		initInterval:         cfg.InitInterval,
+		initDuration:         cfg.InitDuration,
+		pollInterval:         cfg.PollInterval,
+		grpcTimeout:          cfg.GRPCTimeout,
+		tlsEnabled:           cfg.TLSEnabled,
+		caCertPaths:          cfg.CACertPaths,
+		nodeCache:            make(map[string]*databasev1.Node),
+		handlers:             make(map[string]schema.EventHandler),
+		lastSuccessfulDNS:    []string{},
+		pathToReloader:       make(map[string]*pkgtls.Reloader),
+		srvIndexToPath:       make(map[int]string),
+		resolvedAddrToSRVIdx: make(map[string]int),
+		closer:               run.NewCloser(1),
+		log:                  logger.GetLogger("metadata-discovery-dns"),
+		resolver:             &defaultResolver{},
+	}
+
+	// create shared reloaders for CA certificates
+	if svc.tlsEnabled {
+		for srvIdx, certPath := range cfg.CACertPaths {
+			// Store the SRV index → cert path mapping
+			svc.srvIndexToPath[srvIdx] = certPath
+
+			// check if we already have a Reloader for this path
+			if _, exists := svc.pathToReloader[certPath]; exists {
+				svc.log.Debug().Str("certPath", certPath).Int("srvIndex", srvIdx).
+					Msg("Reusing existing CA certificate reloader")
+				continue
+			}
+
+			// create new Reloader for this unique path
+			reloader, reloaderErr := pkgtls.NewClientCertReloader(certPath, svc.log)
+			if reloaderErr != nil {
+				// clean up any already-created reloaders
+				for _, r := range svc.pathToReloader {
+					r.Stop()
+				}
+				return nil, fmt.Errorf("failed to initialize CA certificate reloader for path %s (SRV index %d): %w",
+					certPath, srvIdx, reloaderErr)
+			}
+
+			svc.pathToReloader[certPath] = reloader
+			svc.log.Info().Str("certPath", certPath).Int("srvIndex", srvIdx).
+				Str("srvAddress", cfg.SRVAddresses[srvIdx]).Msg("Initialized DNS CA certificate reloader")
 		}
-		svc.log.Debug().Str("caCertPath", svc.caCertPath).Msg("Initialized DNS CA certificate reloader")
 	}
 
 	return svc, nil
@@ -131,21 +165,46 @@ func newServiceWithResolver(cfg Config, resolver Resolver) (*Service, error) {
 	return svc, nil
 }
 
-func (s *Service) getTLSDialOptions() ([]grpc.DialOption, error) {
+func (s *Service) getTLSDialOptions(address string) ([]grpc.DialOption, error) {
 	if !s.tlsEnabled {
 		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
 	}
 
-	if s.caCertReloader != nil {
-		tlsConfig, err := s.caCertReloader.GetClientTLSConfig("")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get TLS config from reloader: %w", err)
+	// look up which Reloader to use for this address
+	if len(s.pathToReloader) > 0 {
+		// Find which SRV address this resolved address came from
+		s.resolvedAddrMutex.RLock()
+		srvIdx, addrExists := s.resolvedAddrToSRVIdx[address]
+		s.resolvedAddrMutex.RUnlock()
+
+		if !addrExists {
+			return nil, fmt.Errorf("no SRV mapping found for address %s", address)
 		}
+
+		// look up the cert path for this SRV index
+		certPath, pathExists := s.srvIndexToPath[srvIdx]
+		if !pathExists {
+			return nil, fmt.Errorf("no cert path found for SRV index %d (address %s)", srvIdx, address)
+		}
+
+		// get the Reloader for this cert path
+		reloader, reloaderExists := s.pathToReloader[certPath]
+		if !reloaderExists {
+			return nil, fmt.Errorf("no reloader found for cert path %s (address %s)", certPath, address)
+		}
+
+		// get fresh TLS config from the Reloader
+		tlsConfig, configErr := reloader.GetClientTLSConfig("")
+		if configErr != nil {
+			return nil, fmt.Errorf("failed to get TLS config from reloader for address %s: %w", address, configErr)
+		}
+
 		creds := credentials.NewTLS(tlsConfig)
 		return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
 	}
 
-	opts, err := grpchelper.SecureOptions(nil, s.tlsEnabled, false, s.caCertPath)
+	// fallback to static TLS config (when no reloaders configured)
+	opts, err := grpchelper.SecureOptions(nil, s.tlsEnabled, false, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
@@ -155,6 +214,23 @@ func (s *Service) getTLSDialOptions() ([]grpc.DialOption, error) {
 // Start begins the DNS discovery background process.
 func (s *Service) Start(ctx context.Context) error {
 	s.log.Debug().Msg("Starting DNS-based node discovery service")
+
+	// start all Reloaders
+	if len(s.pathToReloader) > 0 {
+		startedReloaders := make([]*pkgtls.Reloader, 0, len(s.pathToReloader))
+
+		for certPath, reloader := range s.pathToReloader {
+			if startErr := reloader.Start(); startErr != nil {
+				// stop any already-started reloaders
+				for _, r := range startedReloaders {
+					r.Stop()
+				}
+				return fmt.Errorf("failed to start CA certificate reloader for path %s: %w", certPath, startErr)
+			}
+			startedReloaders = append(startedReloaders, reloader)
+			s.log.Debug().Str("certPath", certPath).Msg("Started CA certificate reloader")
+		}
+	}
 
 	go s.discoveryLoop(ctx)
 
@@ -166,14 +242,6 @@ func (s *Service) discoveryLoop(ctx context.Context) {
 	initPhaseEnd := time.Now().Add(s.initDuration)
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.closer.CloseNotify():
-			return
-		default:
-		}
-
 		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
 			s.log.Err(err).Msg("failed to query DNS and update nodes")
 		}
@@ -185,7 +253,18 @@ func (s *Service) discoveryLoop(ctx context.Context) {
 		} else {
 			interval = s.pollInterval
 		}
-		time.Sleep(interval)
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-s.closer.CloseNotify():
+			timer.Stop()
+			return
+		case <-timer.C:
+			// continue to next iteration
+		}
 	}
 }
 
@@ -205,12 +284,7 @@ func (s *Service) queryDNSAndUpdateNodes(ctx context.Context) error {
 
 	if queryErr != nil {
 		s.log.Warn().Err(queryErr).Msg("DNS query failed, using last successful cache")
-
-		// Use last successful cache
-		s.lastSuccessMutex.RLock()
 		addresses = s.lastSuccessfulDNS
-		s.lastSuccessMutex.RUnlock()
-
 		if len(addresses) == 0 {
 			if s.metrics != nil {
 				s.metrics.discoveryFailedCount.Inc(1)
@@ -218,11 +292,7 @@ func (s *Service) queryDNSAndUpdateNodes(ctx context.Context) error {
 			return fmt.Errorf("DNS query failed and no cached addresses available: %w", queryErr)
 		}
 	} else {
-		// Update last successful cache
-		s.lastSuccessMutex.Lock()
 		s.lastSuccessfulDNS = addresses
-		s.lastSuccessMutex.Unlock()
-
 		if s.log.Debug().Enabled() {
 			s.log.Debug().
 				Int("count", len(addresses)).
@@ -255,9 +325,11 @@ func (s *Service) queryAllSRVRecords(ctx context.Context) ([]string, error) {
 	}()
 
 	allAddresses := make(map[string]bool)
+	// track which SRV address (by index) each resolved address came from
+	newAddrToSRVIdx := make(map[string]int)
 	var queryErrors []error
 
-	for _, srvAddr := range s.srvAddresses {
+	for srvIdx, srvAddr := range s.srvAddresses {
 		_, addrs, lookupErr := s.resolver.LookupSRV(ctx, srvAddr)
 		if lookupErr != nil {
 			queryErrors = append(queryErrors, fmt.Errorf("lookup %s failed: %w", srvAddr, lookupErr))
@@ -267,6 +339,11 @@ func (s *Service) queryAllSRVRecords(ctx context.Context) ([]string, error) {
 		for _, srv := range addrs {
 			address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
 			allAddresses[address] = true
+
+			// track which SRV address this resolved to (first-wins strategy)
+			if _, exists := newAddrToSRVIdx[address]; !exists {
+				newAddrToSRVIdx[address] = srvIdx
+			}
 		}
 	}
 
@@ -278,6 +355,11 @@ func (s *Service) queryAllSRVRecords(ctx context.Context) ([]string, error) {
 		}
 		return nil, errors.Join(queryErrors...)
 	}
+
+	// update the resolved address to SRV index mapping
+	s.resolvedAddrMutex.Lock()
+	s.resolvedAddrToSRVIdx = newAddrToSRVIdx
+	s.resolvedAddrMutex.Unlock()
 
 	// convert map to slice
 	result := make([]string, 0, len(allAddresses))
@@ -302,7 +384,7 @@ func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error
 		s.cacheMutex.RUnlock()
 
 		if !exists {
-			// fetch metrics from gRPC
+			// fetch node metadata from gRPC
 			node, fetchErr := s.fetchNodeMetadata(ctx, addr)
 			if fetchErr != nil {
 				s.log.Warn().
@@ -333,30 +415,36 @@ func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error
 		}
 	}
 
+	// collect nodes to delete first
 	s.cacheMutex.Lock()
+	nodesToDelete := make(map[string]*databasev1.Node)
 	for addr, node := range s.nodeCache {
 		if !addressSet[addr] {
-			// update cache and notify the handlers
-			delete(s.nodeCache, addr)
-
-			s.log.Debug().
-				Str("address", addr).
-				Str("name", node.GetMetadata().GetName()).
-				Msg("Node removed from cache (no longer in DNS)")
-
-			s.cacheMutex.Unlock()
-			s.notifyHandlers(schema.Metadata{
-				TypeMeta: schema.TypeMeta{
-					Kind: schema.KindNode,
-					Name: node.GetMetadata().GetName(),
-				},
-				Spec: node,
-			}, false)
-			s.cacheMutex.Lock()
+			nodesToDelete[addr] = node
 		}
+	}
+
+	// delete from cache while still holding lock
+	for addr, node := range nodesToDelete {
+		delete(s.nodeCache, addr)
+		s.log.Debug().
+			Str("address", addr).
+			Str("name", node.GetMetadata().GetName()).
+			Msg("Node removed from cache (no longer in DNS)")
 	}
 	cacheSize := len(s.nodeCache)
 	s.cacheMutex.Unlock()
+
+	// Notify handlers after releasing lock
+	for _, node := range nodesToDelete {
+		s.notifyHandlers(schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+				Name: node.GetMetadata().GetName(),
+			},
+			Spec: node,
+		}, false)
+	}
 
 	// update total nodes metric
 	if s.metrics != nil {
@@ -371,7 +459,7 @@ func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error
 }
 
 func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*databasev1.Node, error) {
-	// Record gRPC query metrics
+	// record gRPC query metrics
 	startTime := time.Now()
 	var grpcErr error
 	defer func() {
@@ -389,8 +477,8 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*datab
 	ctxTimeout, cancel := context.WithTimeout(ctx, s.grpcTimeout)
 	defer cancel()
 
-	// for TLS connections with other nodes to getting matadata
-	dialOpts, err := s.getTLSDialOptions()
+	// for TLS connections with other nodes to getting metadata
+	dialOpts, err := s.getTLSDialOptions(address)
 	if err != nil {
 		grpcErr = fmt.Errorf("failed to get TLS dial options: %w", err)
 		return nil, grpcErr
@@ -445,6 +533,13 @@ func (s *Service) SetMetrics(factory observability.Factory) {
 func (s *Service) Close() error {
 	s.closer.Done()
 	s.closer.CloseThenWait()
+
+	// stop all Reloaders
+	for certPath, reloader := range s.pathToReloader {
+		reloader.Stop()
+		s.log.Debug().Str("certPath", certPath).Msg("Stopped CA certificate reloader")
+	}
+
 	return nil
 }
 
@@ -464,7 +559,7 @@ func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databa
 
 	var result []*databasev1.Node
 	for _, node := range s.nodeCache {
-		// Filter by role if specified
+		// filter by role if specified
 		if role != databasev1.Role_ROLE_UNSPECIFIED {
 			hasRole := false
 			for _, nodeRole := range node.GetRoles() {

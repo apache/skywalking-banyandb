@@ -47,6 +47,13 @@ const (
 	FlagEtcdEndpointsName = "etcd-endpoints"
 )
 
+const (
+	// NodeDiscoveryModeEtcd represents etcd-based node discovery mode.
+	NodeDiscoveryModeEtcd = "etcd"
+	// NodeDiscoveryModeDNS represents DNS-based node discovery mode.
+	NodeDiscoveryModeDNS = "dns"
+)
+
 const flagEtcdUsername = "etcd-username"
 
 const flagEtcdPassword = "etcd-password"
@@ -72,12 +79,13 @@ type clientService struct {
 	closer               *run.Closer
 	nodeInfo             *databasev1.Node
 	etcdTLSCertFile      string
-	dnsCACertPath        string
+	dnsCACertPaths       []string
 	etcdPassword         string
 	etcdTLSCAFile        string
 	etcdUsername         string
 	etcdTLSKeyFile       string
 	namespace            string
+	nodeDiscoveryMode    string
 	dnsSRVAddresses      []string
 	endpoints            []string
 	registryTimeout      time.Duration
@@ -89,7 +97,6 @@ type clientService struct {
 	nodeInfoMux          sync.Mutex
 	forceRegisterNode    bool
 	toRegisterNode       bool
-	dnsRegistryEnabled   bool
 	dnsTLSEnabled        bool
 }
 
@@ -109,34 +116,53 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.registryTimeout, "node-registry-timeout", 2*time.Minute, "The timeout for the node registry")
 	fs.DurationVar(&s.etcdFullSyncInterval, "etcd-full-sync-interval", 30*time.Minute, "The interval for full sync etcd")
 
-	// DNS-based node discovery configuration
-	fs.BoolVar(&s.dnsRegistryEnabled, "node-registry-dns-enabled", false,
-		"Is DNS registry enabled")
-	fs.StringSliceVar(&s.dnsSRVAddresses, "node-registry-dns-srv-addresses", []string{},
+	// node discovery configuration
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", NodeDiscoveryModeEtcd,
+		"Node discovery mode: 'etcd' for etcd-based discovery, 'dns' for DNS-based discovery")
+	fs.StringSliceVar(&s.dnsSRVAddresses, "node-discovery-dns-srv-addresses", []string{},
 		"DNS SRV addresses for node discovery (e.g., _grpc._tcp.banyandb.svc.cluster.local)")
-	fs.DurationVar(&s.dnsFetchInitInterval, "node-registry-dns-fetch-init-interval", 1*time.Second,
+	fs.DurationVar(&s.dnsFetchInitInterval, "node-discovery-dns-fetch-init-interval", 5*time.Second,
 		"DNS query interval during initialization phase")
-	fs.DurationVar(&s.dnsFetchInitDuration, "node-registry-dns-fetch-init-duration", 30*time.Second,
+	fs.DurationVar(&s.dnsFetchInitDuration, "node-discovery-dns-fetch-init-duration", 5*time.Minute,
 		"Duration of the initialization phase for DNS discovery")
-	fs.DurationVar(&s.dnsFetchInterval, "node-registry-dns-fetch-interval", 10*time.Second,
+	fs.DurationVar(&s.dnsFetchInterval, "node-discovery-dns-fetch-interval", 15*time.Second,
 		"DNS query interval after initialization phase")
-	fs.DurationVar(&s.grpcTimeout, "node-registry-grpc-timeout", 5*time.Second,
+	fs.DurationVar(&s.grpcTimeout, "node-discovery-grpc-timeout", 5*time.Second,
 		"Timeout for gRPC calls to fetch node metadata")
-	fs.BoolVar(&s.dnsTLSEnabled, "node-registry-dns-tls", false,
+	fs.BoolVar(&s.dnsTLSEnabled, "node-discovery-dns-tls", false,
 		"Enable TLS for DNS discovery gRPC connections")
-	fs.StringVar(&s.dnsCACertPath, "node-registry-dns-ca-cert", "",
-		"CA certificate file to verify DNS discovered nodes")
+	fs.StringSliceVar(&s.dnsCACertPaths, "node-discovery-dns-ca-certs", []string{},
+		"Comma-separated list of CA certificate files to verify DNS discovered nodes (one per SRV address, in same order)")
 
 	return fs
 }
 
 func (s *clientService) Validate() error {
-	if s.endpoints == nil {
-		return errors.New("endpoints is empty")
+	if s.nodeDiscoveryMode != NodeDiscoveryModeEtcd && s.nodeDiscoveryMode != NodeDiscoveryModeDNS {
+		return fmt.Errorf("invalid node-discovery-mode: %s, must be '%s' or '%s'", s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS)
 	}
-	if s.dnsRegistryEnabled && s.dnsTLSEnabled && s.dnsCACertPath == "" {
-		return fmt.Errorf("DNS TLS is enabled, but no CA certificate file was provided")
+
+	// Validate etcd endpoints (required for both modes for schema storage)
+	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && len(s.endpoints) == 0 {
+		return errors.New("etcd endpoints cannot be empty")
 	}
+
+	// Validate DNS mode specific requirements
+	if s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
+		if len(s.dnsSRVAddresses) == 0 {
+			return errors.New("DNS mode requires non-empty DNS SRV addresses")
+		}
+		if s.dnsTLSEnabled {
+			if len(s.dnsCACertPaths) == 0 {
+				return errors.New("DNS TLS is enabled, but no CA certificate files were provided")
+			}
+			if len(s.dnsCACertPaths) != len(s.dnsSRVAddresses) {
+				return fmt.Errorf("number of DNS CA cert paths (%d) must match number of SRV addresses (%d)",
+					len(s.dnsCACertPaths), len(s.dnsSRVAddresses))
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -186,7 +212,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		return err
 	}
 
-	if s.dnsRegistryEnabled {
+	if s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
 		l.Info().Strs("srv-addresses", s.dnsSRVAddresses).Msg("Initializing DNS-based node discovery")
 
 		var createErr error
@@ -197,14 +223,15 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			PollInterval: s.dnsFetchInterval,
 			GRPCTimeout:  s.grpcTimeout,
 			TLSEnabled:   s.dnsTLSEnabled,
-			CACertPath:   s.dnsCACertPath,
+			CACertPaths:  s.dnsCACertPaths,
 		})
 		if createErr != nil {
 			return fmt.Errorf("failed to create DNS discovery service: %w", createErr)
 		}
 	}
 
-	if !s.toRegisterNode || s.dnsRegistryEnabled {
+	// skip node registration if DNS mode is enabled or node registration is disabled
+	if !s.toRegisterNode || s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
 		return nil
 	}
 	val := ctx.Value(common.ContextNodeKey)

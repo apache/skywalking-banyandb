@@ -42,14 +42,29 @@ func (s *Service) QueryDNSAndUpdateNodes(ctx context.Context) error {
 
 // GetLastSuccessfulDNS returns the cached successful DNS addresses for testing.
 func (s *Service) GetLastSuccessfulDNS() []string {
-	s.lastSuccessMutex.RLock()
-	defer s.lastSuccessMutex.RUnlock()
 	result := make([]string, len(s.lastSuccessfulDNS))
 	copy(result, s.lastSuccessfulDNS)
 	return result
 }
 
 // GetTLSDialOptions is exported for testing TLS configuration.
-func (s *Service) GetTLSDialOptions() ([]grpc.DialOption, error) {
-	return s.getTLSDialOptions()
+func (s *Service) GetTLSDialOptions(address string) ([]grpc.DialOption, error) {
+	return s.getTLSDialOptions(address)
+}
+
+// GetResolvedAddrMapping returns the resolved address to SRV index mapping for testing.
+func (s *Service) GetResolvedAddrMapping() map[string]int {
+	s.resolvedAddrMutex.RLock()
+	defer s.resolvedAddrMutex.RUnlock()
+
+	result := make(map[string]int, len(s.resolvedAddrToSRVIdx))
+	for k, v := range s.resolvedAddrToSRVIdx {
+		result[k] = v
+	}
+	return result
+}
+
+// GetReloaderCount returns the number of unique Reloaders for testing.
+func (s *Service) GetReloaderCount() int {
+	return len(s.pathToReloader)
 }
