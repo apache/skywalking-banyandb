@@ -395,23 +395,25 @@ func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error
 				continue
 			}
 
-			// update cache and notify handlers
 			s.cacheMutex.Lock()
-			s.nodeCache[addr] = node
+			if _, alreadyAdded := s.nodeCache[addr]; !alreadyAdded {
+				s.nodeCache[addr] = node
+
+				// notify handlers after releasing lock
+				s.notifyHandlers(schema.Metadata{
+					TypeMeta: schema.TypeMeta{
+						Kind: schema.KindNode,
+						Name: node.GetMetadata().GetName(),
+					},
+					Spec: node,
+				}, true)
+
+				s.log.Debug().
+					Str("address", addr).
+					Str("name", node.GetMetadata().GetName()).
+					Msg("New node discovered and added to cache")
+			}
 			s.cacheMutex.Unlock()
-
-			s.notifyHandlers(schema.Metadata{
-				TypeMeta: schema.TypeMeta{
-					Kind: schema.KindNode,
-					Name: node.GetMetadata().GetName(),
-				},
-				Spec: node,
-			}, true)
-
-			s.log.Debug().
-				Str("address", addr).
-				Str("name", node.GetMetadata().GetName()).
-				Msg("New node discovered and added to cache")
 		}
 	}
 
@@ -484,7 +486,7 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*datab
 		return nil, grpcErr
 	}
 	// nolint:contextcheck
-	conn, connErr := grpchelper.ConnWithAuth(address, s.grpcTimeout, "", "", dialOpts...)
+	conn, connErr := grpchelper.Conn(address, s.grpcTimeout, dialOpts...)
 	if connErr != nil {
 		grpcErr = fmt.Errorf("failed to connect to %s: %w", address, connErr)
 		return nil, grpcErr

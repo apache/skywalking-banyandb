@@ -142,7 +142,7 @@ func (s *clientService) Validate() error {
 		return fmt.Errorf("invalid node-discovery-mode: %s, must be '%s' or '%s'", s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS)
 	}
 
-	// Validate etcd endpoints (required for both modes for schema storage)
+	// Validate etcd endpoints (required when using etcd-based node discovery for schema storage)
 	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && len(s.endpoints) == 0 {
 		return errors.New("etcd endpoints cannot be empty")
 	}
