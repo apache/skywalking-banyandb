@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -160,6 +161,17 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.Top = ud.originalQuery.Top
 		temp.GroupBy = ud.originalQuery.GroupBy
 	}
+	// Prepare groupBy tags refs if needed for deduplication
+	var groupByTagsRefs [][]*logical.TagRef
+	if ud.needCompletePushDownAgg && ud.originalQuery.GetGroupBy() != nil {
+		groupByTags := logical.ToTags(ud.originalQuery.GetGroupBy().GetTagProjection())
+		var err error
+		groupByTagsRefs, err = s.CreateTagRef(groupByTags...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if ud.groupByEntity {
 		e := s.EntityList()[0]
 		sortTagSpec := s.FindTagSpecByName(e)
@@ -172,6 +184,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			sortByTime:              false,
 			sortTagSpec:             *sortTagSpec,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -184,6 +197,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			s:                       s,
 			sortByTime:              true,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
@@ -192,6 +206,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			s:                       s,
 			sortByTime:              true,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -215,6 +230,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		sortByTime:              false,
 		sortTagSpec:             *sortTagSpec,
 		needCompletePushDownAgg: ud.needCompletePushDownAgg,
+		groupByTagsRefs:         groupByTagsRefs,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -230,6 +246,7 @@ type distributedPlan struct {
 	sortByTime              bool
 	desc                    bool
 	needCompletePushDownAgg bool
+	groupByTagsRefs         [][]*logical.TagRef
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -293,7 +310,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		return &pushedDownAggregatedIterator{dataPoints: pushedDownAggDps}, err
+		deduplicatedDps := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
@@ -513,4 +531,64 @@ func (s *pushedDownAggregatedIterator) Current() []*measurev1.DataPoint {
 
 func (s *pushedDownAggregatedIterator) Close() error {
 	return nil
+}
+
+// deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas
+// by keeping only one data point per group. Since aggregated results from different replicas
+// for the same group should be identical, we can safely keep only one per group.
+func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) []*measurev1.DataPoint {
+	if len(groupByTagsRefs) == 0 {
+		// No groupBy, return as is (should not happen for pushed down aggregation)
+		return dataPoints
+	}
+
+	groupMap := make(map[uint64]*measurev1.DataPoint)
+	for _, dp := range dataPoints {
+		key, err := formatGroupByKeyForDedup(dp, groupByTagsRefs)
+		if err != nil {
+			// If we can't compute the key, keep the data point
+			continue
+		}
+		// Keep the first data point for each group
+		if _, exists := groupMap[key]; !exists {
+			groupMap[key] = dp
+		}
+	}
+
+	result := make([]*measurev1.DataPoint, 0, len(groupMap))
+	for _, dp := range groupMap {
+		result = append(result, dp)
+	}
+	return result
+}
+
+// formatGroupByKeyForDedup computes a hash key for a data point based on groupBy tags
+func formatGroupByKeyForDedup(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
+	hash := xxhash.New()
+	for _, tagFamilyRef := range groupByTagsRefs {
+		for _, tagRef := range tagFamilyRef {
+			if tagRef.Spec.TagFamilyIdx >= len(point.GetTagFamilies()) {
+				return 0, fmt.Errorf("tag family index out of range")
+			}
+			if tagRef.Spec.TagIdx >= len(point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) {
+				return 0, fmt.Errorf("tag index out of range")
+			}
+			tag := point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
+			switch v := tag.GetValue().GetValue().(type) {
+			case *modelv1.TagValue_Str:
+				_, err := hash.Write([]byte(v.Str.GetValue()))
+				if err != nil {
+					return 0, err
+				}
+			case *modelv1.TagValue_Int:
+				_, err := hash.Write(convert.Int64ToBytes(v.Int.GetValue()))
+				if err != nil {
+					return 0, err
+				}
+			case *modelv1.TagValue_IntArray, *modelv1.TagValue_StrArray, *modelv1.TagValue_BinaryData:
+				return 0, fmt.Errorf("group-by on array/binary tag is not supported")
+			}
+		}
+	}
+	return hash.Sum64(), nil
 }
