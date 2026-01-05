@@ -75,17 +75,16 @@ type HeartbeatChecker func(context.Context) error
 // ConnManager manages connection lifecycle using a single goroutine.
 type ConnManager struct {
 	logger            *logger.Logger
-	eventCh           chan ConnEvent
-	closer            *run.Closer
 	currentConn       *grpc.ClientConn
+	closer            *run.Closer
+	heartbeatChecker  HeartbeatChecker
+	eventCh           chan ConnEvent
 	proxyAddr         string
 	reconnectInterval time.Duration
 	retryInterval     time.Duration
-	heartbeatChecker  HeartbeatChecker
-
-	stateMu   sync.RWMutex // Protects state, currentConn, and retryInterval
-	state     ConnState
-	startOnce sync.Once
+	state             ConnState
+	stateMu           sync.RWMutex
+	startOnce         sync.Once
 }
 
 // NewConnManager creates a new connection manager.
@@ -230,7 +229,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			}()
 		}
 
-		// Execute connection with optional backoff
 		var result ConnResult
 		if !event.Immediate {
 			result = cm.doReconnect(connCtx)
@@ -238,7 +236,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 			result = cm.doConnect(connCtx)
 		}
 
-		// Update state based on result
 		cm.stateMu.Lock()
 		if result.Error == nil {
 			cm.state = ConnStateConnected
