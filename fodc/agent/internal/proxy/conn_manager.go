@@ -277,10 +277,9 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 // doReconnect performs reconnection with exponential backoff and automatic retries.
 func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 	var lastErr error
+	retryInterval := cm.retryInterval
 	for attempt := 1; attempt <= connManagerMaxRetries; attempt++ {
-		cm.stateMu.RLock()
-		retryInterval := cm.retryInterval
-		cm.stateMu.RUnlock()
+		
 
 		// Wait before attempting connection
 		select {
