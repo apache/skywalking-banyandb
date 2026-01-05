@@ -40,7 +40,6 @@ type ConnEventType int
 // Possible connection event types.
 const (
 	ConnEventConnect ConnEventType = iota
-	ConnEventReconnect
 	ConnEventDisconnect
 )
 
@@ -64,13 +63,12 @@ type ConnState int
 const (
 	// ConnStateDisconnected indicates the connection is disconnected.
 	ConnStateDisconnected ConnState = iota
-	// ConnStateConnecting indicates a connection attempt is in progress.
-	ConnStateConnecting
 	// ConnStateConnected indicates the connection is established.
 	ConnStateConnected
-	// ConnStateReconnecting indicates a reconnection attempt is in progress.
-	ConnStateReconnecting
 )
+
+// HeartbeatChecker is a function that checks if the connection is healthy.
+type HeartbeatChecker func(context.Context) error
 
 // ConnManager manages connection lifecycle using a single goroutine.
 type ConnManager struct {
@@ -82,12 +80,12 @@ type ConnManager struct {
 	proxyAddr         string
 	reconnectInterval time.Duration
 	retryInterval     time.Duration
+	heartbeatChecker  HeartbeatChecker
 
-	stateMu      sync.RWMutex // Protects state, disconnected, currentConn, and retryInterval
-	state        ConnState
-	disconnected bool
-	started      bool
-	startedMu    sync.Mutex // Protects started flag
+	stateMu   sync.RWMutex // Protects state, currentConn, and retryInterval
+	state     ConnState
+	started   bool
+	startedMu sync.Mutex // Protects started flag
 }
 
 // NewConnManager creates a new connection manager.
@@ -105,7 +103,15 @@ func NewConnManager(
 		reconnectInterval: reconnectInterval,
 		state:             ConnStateDisconnected,
 		retryInterval:     reconnectInterval,
+		heartbeatChecker:  nil,
 	}
+}
+
+// SetHeartbeatChecker sets the heartbeat checker function.
+func (cm *ConnManager) SetHeartbeatChecker(checker HeartbeatChecker) {
+	cm.stateMu.Lock()
+	cm.heartbeatChecker = checker
+	cm.stateMu.Unlock()
 }
 
 // EventChannel returns the channel for sending connect/reconnect events.
@@ -132,13 +138,11 @@ func (cm *ConnManager) Stop() {
 	defer cm.startedMu.Unlock()
 
 	if !cm.started {
-		return // Already stopped
+		return
 	}
 
-	// Signal the run goroutine to stop
 	close(cm.stopCh)
 
-	// Wait for goroutine to exit and cleanup
 	<-cm.doneCh
 
 	cm.started = false
@@ -148,14 +152,14 @@ func (cm *ConnManager) Stop() {
 	cm.doneCh = make(chan struct{})
 }
 
-// RequestConnect requests a connection attempt.
-func (cm *ConnManager) RequestConnect(ctx context.Context) <-chan ConnResult {
+// requestConnection requests a connection attempt with optional heartbeat check.
+func (cm *ConnManager) requestConnection(ctx context.Context, immediate bool) <-chan ConnResult {
 	resultCh := make(chan ConnResult, 1)
 	event := ConnEvent{
 		Type:      ConnEventConnect,
 		Context:   ctx,
 		ResultCh:  resultCh,
-		Immediate: true,
+		Immediate: immediate,
 	}
 	select {
 	case cm.eventCh <- event:
@@ -169,25 +173,14 @@ func (cm *ConnManager) RequestConnect(ctx context.Context) <-chan ConnResult {
 	return resultCh
 }
 
-// RequestReconnect requests a reconnection attempt.
+// RequestConnect requests a connection attempt.
+func (cm *ConnManager) RequestConnect(ctx context.Context) <-chan ConnResult {
+	return cm.requestConnection(ctx, true)
+}
+
+// RequestReconnect requests a reconnection attempt with exponential backoff.
 func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
-	resultCh := make(chan ConnResult, 1)
-	event := ConnEvent{
-		Type:      ConnEventReconnect,
-		Context:   ctx,
-		ResultCh:  resultCh,
-		Immediate: false,
-	}
-	select {
-	case cm.eventCh <- event:
-	case <-ctx.Done():
-		resultCh <- ConnResult{Error: ctx.Err()}
-		close(resultCh)
-	default:
-		resultCh <- ConnResult{Error: fmt.Errorf("connection manager event channel is full")}
-		close(resultCh)
-	}
-	return resultCh
+	return cm.requestConnection(ctx, false)
 }
 
 // run is the main event processing loop running in a single goroutine.
@@ -212,7 +205,6 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 	switch event.Type {
 	case ConnEventDisconnect:
 		cm.stateMu.Lock()
-		cm.disconnected = true
 		cm.state = ConnStateDisconnected
 		cm.stateMu.Unlock()
 
@@ -225,34 +217,31 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 		cm.stateMu.RLock()
 		currentState := cm.state
 		currentConn := cm.currentConn
+		heartbeatChecker := cm.heartbeatChecker
 		cm.stateMu.RUnlock()
 
-		if currentState == ConnStateConnected && currentConn != nil {
-			if event.ResultCh != nil {
-				event.ResultCh <- ConnResult{
-					Conn: currentConn,
-				}
-				close(event.ResultCh)
-			}
-			return
-		}
-		if currentState == ConnStateConnecting {
-			if event.ResultCh != nil {
-				event.ResultCh <- ConnResult{
-					Error: fmt.Errorf("connection already in progress"),
-				}
-				close(event.ResultCh)
-			}
-			return
-		}
+		if currentState == ConnStateConnected && currentConn != nil && heartbeatChecker != nil {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
+			heartbeatErr := heartbeatChecker(checkCtx)
+			checkCancel()
 
-		cm.stateMu.Lock()
-		cm.state = ConnStateConnecting
-		cm.stateMu.Unlock()
+			if heartbeatErr == nil {
+				cm.logger.Debug().Msg("Connection is healthy, reusing existing connection")
+				if event.ResultCh != nil {
+					event.ResultCh <- ConnResult{Conn: currentConn}
+					close(event.ResultCh)
+				}
+				return
+			}
+			cm.logger.Warn().Err(heartbeatErr).Msg("Heartbeat check failed, reconnecting")
+		}
+		// For reconnect cleanup old connection first
+		if currentState == ConnStateConnected {
+			cm.cleanupConnection()
+		}
 
 		connCtx, connCancel := context.WithCancel(ctx)
 		defer connCancel()
-		// If event.Context is provided and not done, cancel connCtx when event.Context is done
 		if event.Context != nil {
 			go func() {
 				select {
@@ -262,67 +251,16 @@ func (cm *ConnManager) handleEvent(ctx context.Context, event ConnEvent) {
 				}
 			}()
 		}
-		result := cm.doConnect(connCtx)
 
-		cm.stateMu.Lock()
-		if result.Error == nil {
-			cm.state = ConnStateConnected
-			cm.currentConn = result.Conn
-			cm.retryInterval = cm.reconnectInterval
+		// Execute connection with optional backoff
+		var result ConnResult
+		if !event.Immediate {
+			result = cm.doReconnect(connCtx)
 		} else {
-			cm.state = ConnStateDisconnected
-		}
-		cm.stateMu.Unlock()
-
-		if event.ResultCh != nil {
-			event.ResultCh <- result
-			close(event.ResultCh)
-		}
-	case ConnEventReconnect:
-		cm.stateMu.RLock()
-		disconnected := cm.disconnected
-		currentState := cm.state
-		cm.stateMu.RUnlock()
-
-		if disconnected {
-			if event.ResultCh != nil {
-				event.ResultCh <- ConnResult{
-					Error: fmt.Errorf("connection manager is disconnected"),
-				}
-				close(event.ResultCh)
-			}
-			return
-		}
-		if currentState == ConnStateReconnecting {
-			if event.ResultCh != nil {
-				event.ResultCh <- ConnResult{
-					Error: fmt.Errorf("reconnection already in progress"),
-				}
-				close(event.ResultCh)
-			}
-			return
+			result = cm.doConnect(connCtx)
 		}
 
-		cm.stateMu.Lock()
-		cm.state = ConnStateReconnecting
-		cm.stateMu.Unlock()
-
-		cm.cleanupConnection()
-
-		reconnCtx, reconnCancel := context.WithCancel(ctx)
-		defer reconnCancel()
-		// If event.Context is provided and not done, cancel reconnCtx when event.Context is done
-		if event.Context != nil {
-			go func() {
-				select {
-				case <-event.Context.Done():
-					reconnCancel()
-				case <-reconnCtx.Done():
-				}
-			}()
-		}
-		result := cm.doReconnect(reconnCtx, event.Immediate)
-
+		// Update state based on result
 		cm.stateMu.Lock()
 		if result.Error == nil {
 			cm.state = ConnStateConnected
@@ -362,27 +300,24 @@ func (cm *ConnManager) doConnect(ctx context.Context) ConnResult {
 }
 
 // doReconnect performs reconnection with exponential backoff.
-func (cm *ConnManager) doReconnect(ctx context.Context, immediate bool) ConnResult {
-	var retryInterval time.Duration
-	if !immediate {
-		cm.stateMu.RLock()
-		retryInterval = cm.retryInterval
-		cm.stateMu.RUnlock()
+func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
+	cm.stateMu.RLock()
+	retryInterval := cm.retryInterval
+	cm.stateMu.RUnlock()
 
-		select {
-		case <-ctx.Done():
-			return ConnResult{Error: ctx.Err()}
-		case <-cm.stopCh:
-			return ConnResult{Error: fmt.Errorf("connection manager stopped")}
-		case <-time.After(retryInterval):
-			cm.stateMu.Lock()
-			cm.retryInterval *= 2
-			if cm.retryInterval > connManagerMaxRetryInterval {
-				cm.retryInterval = connManagerMaxRetryInterval
-			}
-			retryInterval = cm.retryInterval
-			cm.stateMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ConnResult{Error: ctx.Err()}
+	case <-cm.stopCh:
+		return ConnResult{Error: fmt.Errorf("connection manager stopped")}
+	case <-time.After(retryInterval):
+		cm.stateMu.Lock()
+		cm.retryInterval *= 2
+		if cm.retryInterval > connManagerMaxRetryInterval {
+			cm.retryInterval = connManagerMaxRetryInterval
 		}
+		retryInterval = cm.retryInterval
+		cm.stateMu.Unlock()
 	}
 	cm.logger.Info().Dur("retry_interval", retryInterval).Msg("Attempting to reconnect...")
 	return cm.doConnect(ctx)
@@ -405,7 +340,6 @@ func (cm *ConnManager) cleanupConnection() {
 // cleanup performs final cleanup when the manager stops.
 func (cm *ConnManager) cleanup() {
 	cm.stateMu.Lock()
-	cm.disconnected = true
 	cm.state = ConnStateDisconnected
 	cm.stateMu.Unlock()
 
@@ -418,11 +352,4 @@ func (cm *ConnManager) GetState() ConnState {
 	cm.stateMu.RLock()
 	defer cm.stateMu.RUnlock()
 	return cm.state
-}
-
-// IsDisconnected returns whether the manager is disconnected (thread-safe).
-func (cm *ConnManager) IsDisconnected() bool {
-	cm.stateMu.RLock()
-	defer cm.stateMu.RUnlock()
-	return cm.disconnected
 }

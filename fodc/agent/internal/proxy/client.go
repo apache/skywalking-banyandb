@@ -81,8 +81,9 @@ func NewClient(
 	flightRecorder *flightrecorder.FlightRecorder,
 	logger *logger.Logger,
 ) *Client {
-	return &Client{
-		connManager:       NewConnManager(proxyAddr, reconnectInterval, logger),
+	connMgr := NewConnManager(proxyAddr, reconnectInterval, logger)
+	client := &Client{
+		connManager:       connMgr,
 		proxyAddr:         proxyAddr,
 		nodeIP:            nodeIP,
 		nodePort:          nodePort,
@@ -94,6 +95,9 @@ func NewClient(
 		logger:            logger,
 		stopCh:            make(chan struct{}),
 	}
+
+	connMgr.SetHeartbeatChecker(client.SendHeartbeat)
+	return client
 }
 
 // StartConnManager is useful for tests or scenarios where you want to manually control connection lifecycle.
