@@ -652,7 +652,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
-	if originalClient == nil || reconnectResult.Conn != nil {
+	if originalClient == nil && reconnectResult.Conn != nil {
 		c.streamsMu.Lock()
 		c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
 		c.streamsMu.Unlock()
