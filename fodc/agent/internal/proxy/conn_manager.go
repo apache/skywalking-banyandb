@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -74,8 +75,7 @@ type HeartbeatChecker func(context.Context) error
 type ConnManager struct {
 	logger            *logger.Logger
 	eventCh           chan ConnEvent
-	stopCh            chan struct{}
-	doneCh            chan struct{} // Signals when run() goroutine has exited
+	closer            *run.Closer
 	currentConn       *grpc.ClientConn
 	proxyAddr         string
 	reconnectInterval time.Duration
@@ -84,8 +84,7 @@ type ConnManager struct {
 
 	stateMu   sync.RWMutex // Protects state, currentConn, and retryInterval
 	state     ConnState
-	started   bool
-	startedMu sync.Mutex // Protects started flag
+	startOnce sync.Once
 }
 
 // NewConnManager creates a new connection manager.
@@ -96,8 +95,7 @@ func NewConnManager(
 ) *ConnManager {
 	return &ConnManager{
 		eventCh:           make(chan ConnEvent, 10),
-		stopCh:            make(chan struct{}),
-		doneCh:            make(chan struct{}),
+		closer:            run.NewCloser(1),
 		logger:            logger,
 		proxyAddr:         proxyAddr,
 		reconnectInterval: reconnectInterval,
@@ -121,35 +119,14 @@ func (cm *ConnManager) EventChannel() chan<- ConnEvent {
 
 // Start starts the connection manager's event processing goroutine.
 func (cm *ConnManager) Start(ctx context.Context) {
-	cm.startedMu.Lock()
-	defer cm.startedMu.Unlock()
-
-	if cm.started {
-		return // Already started
-	}
-
-	cm.started = true
-	go cm.run(ctx)
+	cm.startOnce.Do(func() {
+		go cm.run(ctx)
+	})
 }
 
 // Stop stops the connection manager and closes all connections.
 func (cm *ConnManager) Stop() {
-	cm.startedMu.Lock()
-	defer cm.startedMu.Unlock()
-
-	if !cm.started {
-		return
-	}
-
-	close(cm.stopCh)
-
-	<-cm.doneCh
-
-	cm.started = false
-	// Recreate channels for next Start()
-	cm.eventCh = make(chan ConnEvent, 10)
-	cm.stopCh = make(chan struct{})
-	cm.doneCh = make(chan struct{})
+	cm.closer.CloseThenWait()
 }
 
 // requestConnection requests a connection attempt with optional heartbeat check.
@@ -185,13 +162,13 @@ func (cm *ConnManager) RequestReconnect(ctx context.Context) <-chan ConnResult {
 
 // run is the main event processing loop running in a single goroutine.
 func (cm *ConnManager) run(ctx context.Context) {
-	defer close(cm.doneCh)
+	defer cm.closer.Done()
 	for {
 		select {
 		case <-ctx.Done():
 			cm.cleanup()
 			return
-		case <-cm.stopCh:
+		case <-cm.closer.CloseNotify():
 			cm.cleanup()
 			return
 		case event := <-cm.eventCh:
@@ -308,7 +285,7 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 	select {
 	case <-ctx.Done():
 		return ConnResult{Error: ctx.Err()}
-	case <-cm.stopCh:
+	case <-cm.closer.CloseNotify():
 		return ConnResult{Error: fmt.Errorf("connection manager stopped")}
 	case <-time.After(retryInterval):
 		cm.stateMu.Lock()
