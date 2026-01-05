@@ -14,8 +14,24 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
+NAME := fodc-agent
+BINARIES := $(NAME)-cli
 
-SELECT trace_id, state, duration, status_code, span_id FROM STREAM sw IN default-spec
-TIME > '-15m'
-WHERE trace_id IN ('spec_trace_2', 'spec_trace_5')
+IMG_NAME := skywalking-fodc-agent
+
+# Override SOURCE_DIR to match the actual Go module path structure
+SOURCE_DIR := fodc/agent
+
+include ../../scripts/build/version.mk
+include ../../scripts/build/base.mk
+include ../../scripts/build/generate_go.mk
+include ../../scripts/build/build.mk
+include ../../scripts/build/docker.mk
+include ../../scripts/build/test.mk
+include ../../scripts/build/lint.mk
+include ../../scripts/build/vendor.mk
+include ../../scripts/build/help.mk
+
+prepare-build: generate

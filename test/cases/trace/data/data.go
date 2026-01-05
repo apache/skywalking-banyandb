@@ -249,37 +249,30 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 	innerGm.Expect(ok).To(gm.BeTrue())
 }
 
-func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration) {
+func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration, version *uint64) {
 	var templates []interface{}
 	content, err := dataFS.ReadFile("testdata/" + dataFile)
 	gm.Expect(err).ShouldNot(gm.HaveOccurred())
 	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	gm.Expect(version).NotTo(gm.BeNil(), "version must be provided")
 
-	for i, template := range templates {
-		// Extract span data from template
+	for _, template := range templates {
 		templateMap, ok := template.(map[string]interface{})
 		gm.Expect(ok).To(gm.BeTrue())
-
-		// Get span data
 		spanData, ok := templateMap["span"].(string)
 		gm.Expect(ok).To(gm.BeTrue())
-
-		// Get tags data
 		tagsData, ok := templateMap["tags"].([]interface{})
 		gm.Expect(ok).To(gm.BeTrue())
 
-		// Convert tags to TagValue format
 		var tagValues []*modelv1.TagValue
 		for _, tag := range tagsData {
-			tagBytes, err := json.Marshal(tag)
-			gm.Expect(err).ShouldNot(gm.HaveOccurred())
+			tagBytes, marshalErr := json.Marshal(tag)
+			gm.Expect(marshalErr).ShouldNot(gm.HaveOccurred())
 			tagValue := &modelv1.TagValue{}
 			gm.Expect(protojson.Unmarshal(tagBytes, tagValue)).ShouldNot(gm.HaveOccurred())
 			tagValues = append(tagValues, tagValue)
 		}
-
-		// Add timestamp tag as the last tag
-		timestamp := baseTime.Add(interval * time.Duration(i))
+		timestamp := baseTime.Add(interval * time.Duration(*version))
 		timestampTag := &modelv1.TagValue{
 			Value: &modelv1.TagValue_Timestamp{
 				Timestamp: timestamppb.New(timestamp),
@@ -291,9 +284,51 @@ func loadData(stream tracev1.TraceService_WriteClient, metadata *commonv1.Metada
 			Metadata: metadata,
 			Tags:     tagValues,
 			Span:     []byte(spanData),
-			Version:  uint64(i + 1),
+			Version:  *version,
 		})
+		*version++
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
+	}
+}
+
+func loadDataWithSpec(stream tracev1.TraceService_WriteClient, md *commonv1.Metadata, dataFile string,
+	baseTime time.Time, interval time.Duration, spec *tracev1.TagSpec, version *uint64,
+) {
+	var templates []interface{}
+	content, err := dataFS.ReadFile("testdata/" + dataFile)
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	gm.Expect(version).NotTo(gm.BeNil(), "version must be provided")
+
+	isFirst := true
+	for i, template := range templates {
+		templateMap, ok := template.(map[string]interface{})
+		gm.Expect(ok).To(gm.BeTrue())
+		spanData, ok := templateMap["span"].(string)
+		gm.Expect(ok).To(gm.BeTrue())
+		tagsData, ok := templateMap["tags"].([]interface{})
+		gm.Expect(ok).To(gm.BeTrue())
+
+		var tagValues []*modelv1.TagValue
+		for _, tag := range tagsData {
+			tagBytes, marshalErr := json.Marshal(tag)
+			gm.Expect(marshalErr).ShouldNot(gm.HaveOccurred())
+			tagValue := &modelv1.TagValue{}
+			gm.Expect(protojson.Unmarshal(tagBytes, tagValue)).ShouldNot(gm.HaveOccurred())
+			tagValues = append(tagValues, tagValue)
+		}
+		tagValues = append(tagValues, &modelv1.TagValue{
+			Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(baseTime.Add(time.Duration(i) * interval))},
+		})
+
+		req := &tracev1.WriteRequest{Tags: tagValues, Span: []byte(spanData), Version: *version}
+		*version++
+		if isFirst {
+			req.Metadata = md
+			req.TagSpec = spec
+			isFirst = false
+		}
+		gm.Expect(stream.Send(req)).Should(gm.Succeed())
 	}
 }
 
@@ -319,7 +354,8 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	ctx := context.Background()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval)
+	version := uint64(1)
+	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &version)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
 		_, err := writeClient.Recv()
@@ -327,91 +363,53 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
 
-// SpecWithData pairs a TagSpec with a data file.
-type SpecWithData struct {
+// WriteSpec defines the specification for writing trace data.
+type WriteSpec struct {
+	Metadata *commonv1.Metadata
 	Spec     *tracev1.TagSpec
 	DataFile string
 }
 
-// WriteWithSpec writes trace data using tag_spec to specify tag names.
-func WriteWithSpec(conn *grpclib.ClientConn, name, group string,
-	baseTime time.Time, interval time.Duration, specDataPairs ...SpecWithData,
-) {
+// WriteMixed writes trace data in schema order first, and then in spec order.
+func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
 	ctx := context.Background()
-	md := &commonv1.Metadata{
-		Name:  name,
-		Group: group,
-	}
-
 	schemaClient := databasev1.NewTraceRegistryServiceClient(conn)
-	resp, err := schemaClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: md})
-	gm.Expect(err).NotTo(gm.HaveOccurred())
-	md = resp.GetTrace().GetMetadata()
-
 	c := tracev1.NewTraceServiceClient(conn)
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 
-	isFirstRequest := true
+	var currentMd *commonv1.Metadata
 	version := uint64(1)
 	currentTime := baseTime
-	for _, pair := range specDataPairs {
+	for idx, ws := range writeSpecs {
+		if ws.Metadata != nil {
+			resp, getErr := schemaClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: ws.Metadata})
+			gm.Expect(getErr).NotTo(gm.HaveOccurred())
+			currentMd = resp.GetTrace().GetMetadata()
+		}
+		gm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
+
 		var templates []interface{}
-		content, err := dataFS.ReadFile("testdata/" + pair.DataFile)
-		gm.Expect(err).ShouldNot(gm.HaveOccurred())
+		content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
+		gm.Expect(readErr).ShouldNot(gm.HaveOccurred())
 		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
 
-		isFirstForSpec := true
-		for i, template := range templates {
-			templateMap, ok := template.(map[string]interface{})
-			gm.Expect(ok).To(gm.BeTrue())
-
-			spanData, ok := templateMap["span"].(string)
-			gm.Expect(ok).To(gm.BeTrue())
-
-			tagsData, ok := templateMap["tags"].([]interface{})
-			gm.Expect(ok).To(gm.BeTrue())
-
-			var tagValues []*modelv1.TagValue
-			for _, tag := range tagsData {
-				tagBytes, err := json.Marshal(tag)
-				gm.Expect(err).ShouldNot(gm.HaveOccurred())
-				tagValue := &modelv1.TagValue{}
-				gm.Expect(protojson.Unmarshal(tagBytes, tagValue)).ShouldNot(gm.HaveOccurred())
-				tagValues = append(tagValues, tagValue)
+		if idx == 0 {
+			loadData(writeClient, currentMd, ws.DataFile, currentTime, interval, &version)
+		} else {
+			var mdToSend *commonv1.Metadata
+			if ws.Metadata != nil {
+				mdToSend = currentMd
 			}
-
-			timestamp := currentTime.Add(time.Duration(i) * interval)
-			timestampTag := &modelv1.TagValue{
-				Value: &modelv1.TagValue_Timestamp{
-					Timestamp: timestamppb.New(timestamp),
-				},
-			}
-			tagValues = append(tagValues, timestampTag)
-
-			req := &tracev1.WriteRequest{
-				Tags:    tagValues,
-				Span:    []byte(spanData),
-				Version: version,
-			}
-			if isFirstRequest {
-				req.Metadata = md
-				isFirstRequest = false
-			}
-			if isFirstForSpec {
-				req.TagSpec = pair.Spec
-				isFirstForSpec = false
-			}
-			gm.Expect(writeClient.Send(req)).Should(gm.Succeed())
-			version++
+			loadDataWithSpec(writeClient, mdToSend, ws.DataFile, currentTime, interval, ws.Spec, &version)
 		}
 		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
+		_, recvErr := writeClient.Recv()
+		return recvErr
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
 
