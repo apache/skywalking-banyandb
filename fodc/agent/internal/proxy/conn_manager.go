@@ -312,13 +312,11 @@ func (cm *ConnManager) doReconnect(ctx context.Context) ConnResult {
 				Msg("Reconnection attempt failed, will retry")
 
 		     retryInterval *= 2
-		} else {
-			cm.logger.Error().
+	}
+	cm.logger.Error().
 				Err(result.Error).
 				Int("attempt", attempt).
 				Msg("Reconnection failed after max retries")
-		}
-	}
 
 	return ConnResult{Error: fmt.Errorf("failed to reconnect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }
