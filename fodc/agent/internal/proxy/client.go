@@ -70,6 +70,14 @@ type Client struct {
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
 }
 
+// safeCloseStopCh safely closes the stopCh channel, recovering from panic if already closed.
+func (c *Client) safeCloseStopCh() {
+	defer func() {
+		recover()
+	}()
+	close(c.stopCh)
+}
+
 // NewClient creates a new Client instance.
 func NewClient(
 	proxyAddr string,
@@ -451,7 +459,7 @@ func (c *Client) Disconnect() error {
 	}
 
 	c.disconnected = true
-	close(c.stopCh)
+	c.safeCloseStopCh()
 
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
@@ -646,7 +654,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.heartbeatTicker = nil
 	}
 
-	close(c.stopCh)
+	c.safeCloseStopCh()
 	c.streamsMu.Unlock()
 
 	c.heartbeatWg.Wait()
