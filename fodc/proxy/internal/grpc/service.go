@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"net"
 	"sync"
 	"time"
 
@@ -277,7 +277,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 }
 
 // RequestMetrics requests metrics from an agent via the metrics stream.
-func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTime, endTime *time.Time) error {
+func (s *FODCService) RequestMetrics(agentID string, startTime, endTime *time.Time) error {
 	s.connectionsMu.RLock()
 	agentConn, exists := s.connections[agentID]
 	s.connectionsMu.RUnlock()
@@ -341,14 +341,9 @@ func (s *FODCService) getAgentIDFromPeer(ctx context.Context) string {
 	peerAddr := peerInfo.Addr.String()
 	agents := s.registry.ListAgents()
 
-	// Parse peer address to extract IP (peer.Addr.String() format is typically "IP:port" or "[IP]:port")
-	peerIP := peerAddr
-	if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
-		peerIP = peerAddr[:idx]
-		// Remove brackets for IPv6 addresses
-		if len(peerIP) > 0 && peerIP[0] == '[' && peerIP[len(peerIP)-1] == ']' {
-			peerIP = peerIP[1 : len(peerIP)-1]
-		}
+	peerIP, _, splitErr := net.SplitHostPort(peerAddr)
+	if splitErr != nil {
+		return ""
 	}
 
 	for _, agentInfo := range agents {

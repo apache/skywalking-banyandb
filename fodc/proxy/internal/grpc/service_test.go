@@ -225,7 +225,7 @@ func newTestService(t *testing.T) (*FODCService, *registry.AgentRegistry) {
 
 type mockRequestSender struct{}
 
-func (m *mockRequestSender) RequestMetrics(_ context.Context, _ string, _, _ *time.Time) error {
+func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 	return nil
 }
 
@@ -571,7 +571,7 @@ func TestRequestMetrics_Success(t *testing.T) {
 	service.connectionsMu.Unlock()
 
 	now := time.Now()
-	err := service.RequestMetrics(ctx, agentID, &now, nil)
+	err := service.RequestMetrics(agentID, &now, nil)
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(stream.sentResponses))
@@ -599,7 +599,7 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 
 	startTime := time.Now().Add(-1 * time.Hour)
 	endTime := time.Now()
-	err := service.RequestMetrics(ctx, agentID, &startTime, &endTime)
+	err := service.RequestMetrics(agentID, &startTime, &endTime)
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(stream.sentResponses))
@@ -610,8 +610,7 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 func TestRequestMetrics_ConnectionNotFound(t *testing.T) {
 	service, _ := newTestService(t)
 
-	ctx := context.Background()
-	err := service.RequestMetrics(ctx, "non-existent", nil, nil)
+	err := service.RequestMetrics("non-existent", nil, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "connection not found")
@@ -632,7 +631,7 @@ func TestRequestMetrics_NoMetricsStream(t *testing.T) {
 	}
 	service.connectionsMu.Unlock()
 
-	err := service.RequestMetrics(ctx, agentID, nil, nil)
+	err := service.RequestMetrics(agentID, nil, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "metrics stream not established")
@@ -658,7 +657,7 @@ func TestRequestMetrics_SendError(t *testing.T) {
 	}
 	service.connectionsMu.Unlock()
 
-	err := service.RequestMetrics(ctx, agentID, nil, nil)
+	err := service.RequestMetrics(agentID, nil, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send metrics request")

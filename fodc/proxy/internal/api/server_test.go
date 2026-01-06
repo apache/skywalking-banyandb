@@ -46,7 +46,7 @@ type mockRequestSender struct {
 	requestErr error
 }
 
-func (m *mockRequestSender) RequestMetrics(_ context.Context, _ string, _, _ *time.Time) error {
+func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 	return m.requestErr
 }
 

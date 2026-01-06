@@ -69,7 +69,7 @@ type Aggregator struct {
 
 // RequestSender is an interface for sending metrics requests to agents.
 type RequestSender interface {
-	RequestMetrics(ctx context.Context, agentID string, startTime, endTime *time.Time) error
+	RequestMetrics(agentID string, startTime, endTime *time.Time) error
 }
 
 // NewAggregator creates a new MetricsAggregator instance.
@@ -172,13 +172,16 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	defer func() {
 		ma.collectingMu.Lock()
 		for _, agentID := range agentIDs {
-			delete(ma.collecting, agentID)
+			if collectCh, exists := ma.collecting[agentID]; exists {
+				close(collectCh)
+				delete(ma.collecting, agentID)
+			}
 		}
 		ma.collectingMu.Unlock()
 	}()
 
 	for _, agentInfo := range agents {
-		requestErr := ma.grpcService.RequestMetrics(ctx, agentInfo.AgentID, filter.StartTime, filter.EndTime)
+		requestErr := ma.grpcService.RequestMetrics(agentInfo.AgentID, filter.StartTime, filter.EndTime)
 		if requestErr != nil {
 			ma.logger.Error().
 				Err(requestErr).

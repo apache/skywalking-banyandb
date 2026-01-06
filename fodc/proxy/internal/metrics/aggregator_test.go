@@ -53,7 +53,7 @@ func newMockRequestSender() *mockRequestSender {
 	}
 }
 
-func (m *mockRequestSender) RequestMetrics(_ context.Context, agentID string, _ *time.Time, _ *time.Time) error {
+func (m *mockRequestSender) RequestMetrics(agentID string, _ *time.Time, _ *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requestCallCount++
