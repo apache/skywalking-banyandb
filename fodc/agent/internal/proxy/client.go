@@ -558,18 +558,12 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 			return
 		}
 		if recvErr != nil {
-			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
-			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
 				c.logger.Debug().Err(recvErr).Msg("Registration stream closed")
 				return
-			}
-			if st, ok := status.FromError(recvErr); ok {
-				// Check if it's a gRPC status error with expected codes
-				code := st.Code()
-				if code == codes.Canceled || code == codes.DeadlineExceeded {
-					c.logger.Debug().Err(recvErr).Msg("Registration stream closed")
-					return
-				}
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream, reconnecting...")
 			go c.reconnect(ctx)
@@ -596,18 +590,12 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 			return
 		}
 		if recvErr != nil {
-			// Check if it's a context cancellation or deadline exceeded (expected errors during cleanup)
-			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
 				c.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
 				return
-			}
-			if st, ok := status.FromError(recvErr); ok {
-				// Check if it's a gRPC status error with expected codes
-				code := st.Code()
-				if code == codes.Canceled || code == codes.DeadlineExceeded {
-					c.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
-					return
-				}
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
 			go c.reconnect(ctx)
