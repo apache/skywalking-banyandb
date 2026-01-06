@@ -31,13 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 )
 
-type aggregatorItem struct {
-	int64Func aggregation.Func[int64]
-	key       string
-	values    pbv1.EntityValues
-	index     int
-}
-
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error
@@ -104,12 +97,15 @@ func (aggr *postNonAggregationProcessor) Pop() any {
 }
 
 func (aggr *postNonAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
+
 	if lowest := aggr.items[0]; lowest != nil {
 		if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val() {
+			delete(aggr.cache, lowest.key)
 			aggr.cache[key] = item
 			aggr.items[0] = item
 			heap.Fix(aggr, 0)
 		} else if aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val() {
+			delete(aggr.cache, lowest.key)
 			aggr.cache[key] = item
 			aggr.items[0] = item
 			heap.Fix(aggr, 0)
@@ -261,43 +257,67 @@ func (naggr *postNonAggregationProcessor) Flush() ([]*topNAggregatorItem, error)
 	}
 	clear(naggr.timelines)
 
-	if naggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-
-		for _, item := range result {
-			if exist, found := naggr.cache[item.key]; found {
-				exist.int64Func.In(item.val)
-				continue
-			}
-
-			aggrFunc, err := aggregation.NewFunc[int64](naggr.aggrFunc)
-			if err != nil {
-				return nil, err
-			}
-
-			item.int64Func = aggrFunc
-			item.int64Func.In(item.val)
-
-			if naggr.Len() < int(naggr.topN) {
-				naggr.cache[item.key] = item
-				heap.Push(naggr, item)
-			} else {
-				naggr.tryEnqueue(item.key, item)
-			}
-
-			aggregationItems := []*topNAggregatorItem{}
-
-			for naggr.Len() > 0 {
-				item := heap.Pop(naggr).(*topNAggregatorItem)
-				aggregationItems = append(aggregationItems, item)
-			}
-			return aggregationItems, nil
-		}
+	if naggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		return result, nil
 	}
 
-	return result, nil
+	for _, item := range result {
+		if exist, found := naggr.cache[item.key]; found {
+			exist.int64Func.In(item.val)
+			continue
+		}
+
+		aggrFunc, err := aggregation.NewFunc[int64](naggr.aggrFunc)
+		if err != nil {
+			return nil, err
+		}
+
+		item.int64Func = aggrFunc
+		item.int64Func.In(item.val)
+
+		if naggr.Len() < int(naggr.topN) {
+			naggr.cache[item.key] = item
+			heap.Push(naggr, item)
+		} else {
+			naggr.tryEnqueue(item.key, item)
+		}
+
+	}
+
+	aggregationItems := make([]*topNAggregatorItem, 0, naggr.Len())
+	for naggr.Len() > 0 {
+		item := heap.Pop(naggr).(*topNAggregatorItem)
+		aggregationItems = append(aggregationItems, item)
+	}
+	return aggregationItems, nil
 }
 
 func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
+
+	if naggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		topNAggregatorItems, err := naggr.Flush()
+		if err != nil {
+			return []*measurev1.TopNList{}
+		}
+		items := make([]*measurev1.TopNList_Item, len(topNAggregatorItems))
+		for i, item := range topNAggregatorItems {
+			items[i] = &measurev1.TopNList_Item{
+				Entity: item.GetTags(tagNames),
+				Value: &modelv1.FieldValue{
+					Value: &modelv1.FieldValue_Int{
+						Int: &modelv1.Int{Value: item.int64Func.Val()},
+					},
+				},
+			}
+		}
+		return []*measurev1.TopNList{
+			{
+				Timestamp: timestamppb.Now(),
+				Items:     items,
+			},
+		}
+	}
+
 	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
 	for ts, timeline := range naggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.queue.Len())
