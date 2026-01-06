@@ -55,7 +55,7 @@ jobs:
           npm run build
           cd ..
       - name: Upload generated files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: build-artifacts
           path: |
