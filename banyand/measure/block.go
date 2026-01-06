@@ -748,7 +748,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				topNPostAggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+				topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
 			}
 
 			m, err := topNPostAggregator.Flush()

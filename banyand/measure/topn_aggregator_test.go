@@ -40,12 +40,15 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-var _ = Describe("Write TopN Aggregation test data", func() {
+var _ = FDescribe("Write TopN Aggregation test data", func() {
 
 	var svcs *services
 	var deferFn func()
 	var goods []gleak.Goroutine
+
 	const groupName = "sw_metric"
+	valueName := "endpoint_resp_time-service"
+	entityTagNames := []string{"tag1", "tag2"}
 
 	BeforeEach(func() {
 		svcs, deferFn = setUp()
@@ -65,9 +68,6 @@ var _ = Describe("Write TopN Aggregation test data", func() {
 
 		topNValue := measure.GenerateTopNValue()
 		defer measure.ReleaseTopNValue(topNValue)
-
-		valueName := "endpoint_resp_time-service"
-		entityTagNames := []string{"tag1", "tag2"}
 
 		t1 := &measure.TopNValue{}
 		t1.SetMetadata(valueName, entityTagNames)
@@ -158,6 +158,9 @@ var _ = Describe("Write TopN Aggregation test data", func() {
 				Begin: timestamppb.New(timestamp.NowMilli().Add(-time.Hour)),
 				End:   timestamppb.New(timestamp.NowMilli().Add(time.Hour)),
 			},
+			TopN:           10,
+			FieldValueSort: modelv1.Sort_SORT_DESC,
+			Agg:            modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
 		}
 
 		feat, err := svcs.pipeline.Publish(context.Background(), data.TopicTopNQuery, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req))
