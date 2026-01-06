@@ -491,7 +491,7 @@ func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
 			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
 			for k := start; k < end; k++ {
 				if len(c.values) > k {
-					if !hasSchemaType || c.valueType == schemaType {
+					if hasSchemaType && c.valueType == schemaType {
 						values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
 					} else {
 						values[k-start] = pbv1.NullTagValue
@@ -536,7 +536,7 @@ func (bc *blockCursor) copyTo(r *model.StreamResult) {
 		for i2, c := range cf.tags {
 			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
 			if len(c.values) > bc.idx {
-				if !hasSchemaType || c.valueType == schemaType {
+				if hasSchemaType && c.valueType == schemaType {
 					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
 				} else {
 					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)

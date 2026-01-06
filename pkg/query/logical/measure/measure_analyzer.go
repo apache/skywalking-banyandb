@@ -101,11 +101,7 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 	}
 	fieldProjection := criteria.GetFieldProjection().GetNames()
 	if len(fieldProjection) > 0 {
-		projFields := make([]*logical.Field, len(fieldProjection))
-		for i, fieldName := range fieldProjection {
-			projFields[i] = logical.NewField(fieldName)
-		}
-		if err := ms.ValidateProjectionFields(projFields...); err != nil {
+		if err := ms.ValidateProjectionFields(fieldProjection...); err != nil {
 			return nil, err
 		}
 	}

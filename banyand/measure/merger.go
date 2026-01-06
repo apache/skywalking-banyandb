@@ -385,13 +385,18 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		return
 	}
 
+	// Optimization: ensure left starts with smaller or equal timestamp to reduce unnecessary swaps
+	if right.timestamps[right.idx] < left.timestamps[left.idx] {
+		left, right = right, left
+	}
+
 	for {
 		i := left.idx
 		ts2 := right.timestamps[right.idx]
 		for i < len(left.timestamps) && left.timestamps[i] <= ts2 {
 			i++
 		}
-		if left.timestamps[i-1] == ts2 {
+		if i > left.idx && left.timestamps[i-1] == ts2 {
 			if left.versions[i-1] >= right.versions[right.idx] {
 				target.append(left, i)
 			} else {

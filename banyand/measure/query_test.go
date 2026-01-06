@@ -1238,8 +1238,9 @@ func TestQueryResult(t *testing.T) {
 			verify := func(t *testing.T, tst *tsTable) {
 				defer tst.Close()
 				queryOpts := queryOptions{
-					minTimestamp: tt.minTimestamp,
-					maxTimestamp: tt.maxTimestamp,
+					schemaTagTypes: testSchemaTagTypes,
+					minTimestamp:   tt.minTimestamp,
+					maxTimestamp:   tt.maxTimestamp,
 				}
 				s := tst.currentSnapshot()
 				require.NotNil(t, s)
@@ -1467,8 +1468,9 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			}
 			defer tst.Close()
 			queryOpts := queryOptions{
-				minTimestamp: tt.minTimestamp,
-				maxTimestamp: tt.maxTimestamp,
+				schemaTagTypes: testSchemaTagTypes,
+				minTimestamp:   tt.minTimestamp,
+				maxTimestamp:   tt.maxTimestamp,
 			}
 			queryOpts.TagProjection = tagProjections[1]
 			queryOpts.FieldProjection = fieldProjections[1]

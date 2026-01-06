@@ -549,7 +549,7 @@ OUTER:
 			for i := range cf.columns {
 				if cf.columns[i].name == tagName {
 					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
-					if !hasSchemaType || cf.columns[i].valueType == schemaType {
+					if hasSchemaType && cf.columns[i].valueType == schemaType {
 						for _, v := range cf.columns[i].values[idx:offset] {
 							t.Values = append(t.Values, mustDecodeTagValue(cf.columns[i].valueType, v))
 						}
@@ -638,7 +638,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 			for _, c := range cf.columns {
 				if c.name == tagName {
 					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
-					if !hasSchemaType || c.valueType == schemaType {
+					if hasSchemaType && c.valueType == schemaType {
 						r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
 					} else {
 						r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, pbv1.NullTagValue)
@@ -694,7 +694,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 			for _, c := range cf.columns {
 				if c.name == tagName {
 					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
-					if !hasSchemaType || c.valueType == schemaType {
+					if hasSchemaType && c.valueType == schemaType {
 						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = mustDecodeTagValue(c.valueType, c.values[bc.idx])
 					} else {
 						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = pbv1.NullTagValue

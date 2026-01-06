@@ -15,8 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-
-SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_metric
-TIME > '-15m'
-WHERE id IN ('id_spec_2', 'id_spec_5')
-
+name: "sw"
+groups: ["test-trace-spec", "test-trace-spec2"]
+tag_projection: ["trace_id", "state", "duration", "span_id"]
+criteria:
+  condition:
+    name: "trace_id"
+    op: "BINARY_OP_IN"
+    value:
+      str_array:
+        value: ["schema_trace_001", "spec_trace_001", "spec_trace_003"]

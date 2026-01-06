@@ -43,7 +43,6 @@ import (
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
-	sqo.TagProjection = s.filterTagProjection(sqo.TagProjection)
 	if err = validateQueryInput(sqo); err != nil {
 		return nil, err
 	}
@@ -70,11 +69,11 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	series := prepareSeriesData(sqo)
 
 	schemaTagTypes := make(map[string]pbv1.ValueType)
-	if is := s.indexSchema.Load(); is != nil {
-		for name, spec := range is.(indexSchema).tagMap {
-			vt := pbv1.TagValueSpecToValueType(spec.GetType())
+	for _, tf := range s.schema.GetTagFamilies() {
+		for _, tag := range tf.GetTags() {
+			vt := pbv1.TagValueSpecToValueType(tag.GetType())
 			if vt != pbv1.ValueTypeUnknown {
-				schemaTagTypes[name] = vt
+				schemaTagTypes[tag.GetName()] = vt
 			}
 		}
 	}
@@ -86,7 +85,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
 	}
 
-	return s.executeIndexedQuery(ctx, segments, series, sqo, &tr)
+	return s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
 }
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {
@@ -97,50 +96,6 @@ func validateQueryInput(sqo model.StreamQueryOptions) error {
 		return errors.New("invalid query options: tagProjection is required")
 	}
 	return nil
-}
-
-func (s *stream) filterTagProjection(tagProjection []model.TagProjection) []model.TagProjection {
-	is := s.indexSchema.Load()
-	if is == nil {
-		return tagProjection
-	}
-	tagMap := is.(indexSchema).tagMap
-	if len(tagMap) == 0 {
-		return tagProjection
-	}
-
-	schemaTagFamilies := make(map[string]map[string]struct{})
-	for _, tf := range s.schema.GetTagFamilies() {
-		tagNames := make(map[string]struct{})
-		for _, tag := range tf.GetTags() {
-			tagNames[tag.GetName()] = struct{}{}
-		}
-		schemaTagFamilies[tf.GetName()] = tagNames
-	}
-
-	result := make([]model.TagProjection, 0, len(tagProjection))
-	for _, tp := range tagProjection {
-		schemaTags, familyExists := schemaTagFamilies[tp.Family]
-		if !familyExists {
-			continue
-		}
-
-		filteredNames := make([]string, 0, len(tp.Names))
-		for _, name := range tp.Names {
-			if _, tagExists := schemaTags[name]; tagExists {
-				filteredNames = append(filteredNames, name)
-			}
-		}
-
-		if len(filteredNames) > 0 {
-			result = append(result, model.TagProjection{
-				Family: tp.Family,
-				Names:  filteredNames,
-			})
-		}
-	}
-
-	return result
 }
 
 func (s *stream) getTSDB() (storage.TSDB[*tsTable, option], error) {
@@ -210,9 +165,10 @@ func (s *stream) executeIndexedQuery(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (model.StreamQueryResult, error) {
-	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, tr)
+	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, schemaTagTypes, tr)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +206,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	segments []storage.Segment[*tsTable, option],
 	series []*pbv1.Series,
 	sqo model.StreamQueryOptions,
+	schemaTagTypes map[string]pbv1.ValueType,
 	tr *index.RangeOpts,
 ) (idxResult, posting.List, posting.List, error) {
 	var result idxResult
@@ -258,6 +215,7 @@ func (s *stream) processSegmentsAndBuildFilters(
 	result.sm = s
 	result.qo = queryOptions{
 		StreamQueryOptions: sqo,
+		schemaTagTypes:     schemaTagTypes,
 		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
 	}
 
