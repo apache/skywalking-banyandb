@@ -24,10 +24,12 @@ import (
 
 type metrics struct {
 	// DNS-related metrics
-	dnsQueryCount         meter.Counter
-	dnsQueryFailedCount   meter.Counter
-	dnsQueryTotalDuration meter.Counter
-	dnsQueryDuration      meter.Histogram
+	dnsQueryCount           meter.Counter
+	dnsQueryFailedCount     meter.Counter
+	dnsQueryTotalDuration   meter.Counter
+	dnsQueryDuration        meter.Histogram
+	dnsSRVLookupCount       meter.Counter
+	dnsSRVLookupFailedCount meter.Counter
 
 	// gRPC-related metrics
 	grpcQueryCount         meter.Counter
@@ -48,10 +50,12 @@ type metrics struct {
 func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
 		// DNS-related metrics
-		dnsQueryCount:         factory.NewCounter("dns_query_count"),
-		dnsQueryFailedCount:   factory.NewCounter("dns_query_failed_count"),
-		dnsQueryTotalDuration: factory.NewCounter("dns_query_total_duration"),
-		dnsQueryDuration:      factory.NewHistogram("dns_query_duration", meter.DefBuckets),
+		dnsQueryCount:           factory.NewCounter("dns_query_count"),
+		dnsQueryFailedCount:     factory.NewCounter("dns_query_failed_count"),
+		dnsQueryTotalDuration:   factory.NewCounter("dns_query_total_duration"),
+		dnsQueryDuration:        factory.NewHistogram("dns_query_duration", meter.DefBuckets),
+		dnsSRVLookupCount:       factory.NewCounter("dns_srv_lookup_count"),
+		dnsSRVLookupFailedCount: factory.NewCounter("dns_srv_lookup_failed_count"),
 
 		// gRPC-related metrics
 		grpcQueryCount:         factory.NewCounter("grpc_query_count"),

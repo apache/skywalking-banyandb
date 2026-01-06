@@ -41,28 +41,26 @@ import (
 
 // Service implements DNS-based node discovery.
 type Service struct {
-	lastQueryTime        time.Time
-	resolver             Resolver
-	pathToReloader       map[string]*pkgtls.Reloader
-	srvIndexToPath       map[int]string
-	resolvedAddrToSRVIdx map[string]int
-	nodeCache            map[string]*databasev1.Node
-	closer               *run.Closer
-	log                  *logger.Logger
-	metrics              *metrics
-	handlers             map[string]schema.EventHandler
-	caCertPaths          []string
-	srvAddresses         []string
-	lastSuccessfulDNS    []string
-	pollInterval         time.Duration
-	initInterval         time.Duration
-	initDuration         time.Duration
-	grpcTimeout          time.Duration
-	cacheMutex           sync.RWMutex
-	handlersMutex        sync.RWMutex
-	lastQueryMutex       sync.RWMutex
-	resolvedAddrMutex    sync.RWMutex
-	tlsEnabled           bool
+	lastQueryTime     time.Time
+	resolver          Resolver
+	pathToReloader    map[string]*pkgtls.Reloader
+	srvAddrToPath     map[string]string
+	nodeCache         map[string]*databasev1.Node
+	closer            *run.Closer
+	log               *logger.Logger
+	metrics           *metrics
+	handlers          map[string]schema.EventHandler
+	caCertPaths       []string
+	srvAddresses      []string
+	lastSuccessfulDNS map[string][]string
+	pollInterval      time.Duration
+	initInterval      time.Duration
+	initDuration      time.Duration
+	grpcTimeout       time.Duration
+	cacheMutex        sync.RWMutex
+	handlersMutex     sync.RWMutex
+	lastQueryMutex    sync.RWMutex
+	tlsEnabled        bool
 }
 
 // Config holds configuration for DNS discovery service.
@@ -104,29 +102,28 @@ func NewService(cfg Config) (*Service, error) {
 	}
 
 	svc := &Service{
-		srvAddresses:         cfg.SRVAddresses,
-		initInterval:         cfg.InitInterval,
-		initDuration:         cfg.InitDuration,
-		pollInterval:         cfg.PollInterval,
-		grpcTimeout:          cfg.GRPCTimeout,
-		tlsEnabled:           cfg.TLSEnabled,
-		caCertPaths:          cfg.CACertPaths,
-		nodeCache:            make(map[string]*databasev1.Node),
-		handlers:             make(map[string]schema.EventHandler),
-		lastSuccessfulDNS:    []string{},
-		pathToReloader:       make(map[string]*pkgtls.Reloader),
-		srvIndexToPath:       make(map[int]string),
-		resolvedAddrToSRVIdx: make(map[string]int),
-		closer:               run.NewCloser(1),
-		log:                  logger.GetLogger("metadata-discovery-dns"),
-		resolver:             &defaultResolver{},
+		srvAddresses:      cfg.SRVAddresses,
+		initInterval:      cfg.InitInterval,
+		initDuration:      cfg.InitDuration,
+		pollInterval:      cfg.PollInterval,
+		grpcTimeout:       cfg.GRPCTimeout,
+		tlsEnabled:        cfg.TLSEnabled,
+		caCertPaths:       cfg.CACertPaths,
+		nodeCache:         make(map[string]*databasev1.Node),
+		handlers:          make(map[string]schema.EventHandler),
+		lastSuccessfulDNS: make(map[string][]string),
+		pathToReloader:    make(map[string]*pkgtls.Reloader),
+		srvAddrToPath:     make(map[string]string),
+		closer:            run.NewCloser(1),
+		log:               logger.GetLogger("metadata-discovery-dns"),
+		resolver:          &defaultResolver{},
 	}
 
 	// create shared reloaders for CA certificates
 	if svc.tlsEnabled {
 		for srvIdx, certPath := range cfg.CACertPaths {
-			// Store the SRV index → cert path mapping
-			svc.srvIndexToPath[srvIdx] = certPath
+			srvAddr := cfg.SRVAddresses[srvIdx]
+			svc.srvAddrToPath[srvAddr] = certPath
 
 			// check if we already have a Reloader for this path
 			if _, exists := svc.pathToReloader[certPath]; exists {
@@ -142,13 +139,13 @@ func NewService(cfg Config) (*Service, error) {
 				for _, r := range svc.pathToReloader {
 					r.Stop()
 				}
-				return nil, fmt.Errorf("failed to initialize CA certificate reloader for path %s (SRV index %d): %w",
-					certPath, srvIdx, reloaderErr)
+				return nil, fmt.Errorf("failed to initialize CA certificate reloader for path %s (SRV %s): %w",
+					certPath, srvAddr, reloaderErr)
 			}
 
 			svc.pathToReloader[certPath] = reloader
 			svc.log.Info().Str("certPath", certPath).Int("srvIndex", srvIdx).
-				Str("srvAddress", cfg.SRVAddresses[srvIdx]).Msg("Initialized DNS CA certificate reloader")
+				Str("srvAddress", srvAddr).Msg("Initialized DNS CA certificate reloader")
 		}
 	}
 
@@ -165,26 +162,17 @@ func newServiceWithResolver(cfg Config, resolver Resolver) (*Service, error) {
 	return svc, nil
 }
 
-func (s *Service) getTLSDialOptions(address string) ([]grpc.DialOption, error) {
+func (s *Service) getTLSDialOptions(srvAddr, address string) ([]grpc.DialOption, error) {
 	if !s.tlsEnabled {
 		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
 	}
 
 	// look up which Reloader to use for this address
 	if len(s.pathToReloader) > 0 {
-		// Find which SRV address this resolved address came from
-		s.resolvedAddrMutex.RLock()
-		srvIdx, addrExists := s.resolvedAddrToSRVIdx[address]
-		s.resolvedAddrMutex.RUnlock()
-
-		if !addrExists {
-			return nil, fmt.Errorf("no SRV mapping found for address %s", address)
-		}
-
-		// look up the cert path for this SRV index
-		certPath, pathExists := s.srvIndexToPath[srvIdx]
+		// look up the cert path for this SRV address
+		certPath, pathExists := s.srvAddrToPath[srvAddr]
 		if !pathExists {
-			return nil, fmt.Errorf("no cert path found for SRV index %d (address %s)", srvIdx, address)
+			return nil, fmt.Errorf("no cert path found for SRV %s (address %s)", srvAddr, address)
 		}
 
 		// get the Reloader for this cert path
@@ -280,30 +268,61 @@ func (s *Service) queryDNSAndUpdateNodes(ctx context.Context) error {
 		}
 	}()
 
-	addresses, queryErr := s.queryAllSRVRecords(ctx)
+	srvToAddresses, srvToErrors := s.queryAllSRVRecords(ctx)
 
-	if queryErr != nil {
-		s.log.Warn().Err(queryErr).Msg("DNS query failed, using last successful cache")
-		addresses = s.lastSuccessfulDNS
-		if len(addresses) == 0 {
-			if s.metrics != nil {
-				s.metrics.discoveryFailedCount.Inc(1)
-			}
-			return fmt.Errorf("DNS query failed and no cached addresses available: %w", queryErr)
+	// merge with lastSuccessfulDNS for failed SRV addresses
+	s.lastQueryMutex.Lock()
+	finalAddresses := make(map[string][]string)
+
+	for srv, addrs := range srvToAddresses {
+		finalAddresses[srv] = addrs
+		s.lastSuccessfulDNS[srv] = addrs
+	}
+	for srv, err := range srvToErrors {
+		if cachedAddrs, exists := s.lastSuccessfulDNS[srv]; exists {
+			finalAddresses[srv] = cachedAddrs
+			s.log.Warn().
+				Str("srv", srv).
+				Err(err).
+				Strs("cached_addresses", cachedAddrs).
+				Msg("Using cached addresses for failed SRV query")
+		} else {
+			s.log.Warn().
+				Str("srv", srv).
+				Err(err).
+				Msg("SRV query failed and no cached addresses available")
 		}
-	} else {
-		s.lastSuccessfulDNS = addresses
-		if s.log.Debug().Enabled() {
-			s.log.Debug().
-				Int("count", len(addresses)).
-				Strs("addresses", addresses).
-				Strs("srv_addresses", s.srvAddresses).
-				Msg("DNS query successful")
+	}
+	s.lastQueryMutex.Unlock()
+
+	// check if we have any addresses at all
+	if len(finalAddresses) == 0 {
+		if s.metrics != nil {
+			s.metrics.discoveryFailedCount.Inc(1)
 		}
+		// collect all errors for reporting
+		allErrors := make([]error, 0, len(srvToErrors))
+		for srv, err := range srvToErrors {
+			allErrors = append(allErrors, fmt.Errorf("SRV %s: %w", srv, err))
+		}
+		return fmt.Errorf("all DNS queries failed and no cached addresses available: %w", errors.Join(allErrors...))
+	}
+
+	if s.log.Debug().Enabled() {
+		totalAddrs := 0
+		for _, addrs := range finalAddresses {
+			totalAddrs += len(addrs)
+		}
+		s.log.Debug().
+			Int("total_addresses", totalAddrs).
+			Int("successful_srvs", len(srvToAddresses)).
+			Int("failed_srvs", len(srvToErrors)).
+			Int("total_srvs", len(s.srvAddresses)).
+			Msg("DNS query completed")
 	}
 
 	// Update node cache based on DNS results
-	updateErr := s.updateNodeCache(ctx, addresses)
+	updateErr := s.updateNodeCache(ctx, finalAddresses)
 	if updateErr != nil && s.metrics != nil {
 		s.metrics.discoveryFailedCount.Inc(1)
 	}
@@ -313,7 +332,7 @@ func (s *Service) queryDNSAndUpdateNodes(ctx context.Context) error {
 	return updateErr
 }
 
-func (s *Service) queryAllSRVRecords(ctx context.Context) ([]string, error) {
+func (s *Service) queryAllSRVRecords(ctx context.Context) (map[string][]string, map[string]error) {
 	startTime := time.Now()
 	defer func() {
 		if s.metrics != nil {
@@ -324,104 +343,95 @@ func (s *Service) queryAllSRVRecords(ctx context.Context) ([]string, error) {
 		}
 	}()
 
-	allAddresses := make(map[string]bool)
-	// track which SRV address (by index) each resolved address came from
-	newAddrToSRVIdx := make(map[string]int)
-	var queryErrors []error
+	srvToAddresses := make(map[string][]string)
+	srvToErrors := make(map[string]error)
 
-	for srvIdx, srvAddr := range s.srvAddresses {
+	for _, srvAddr := range s.srvAddresses {
+		if s.metrics != nil {
+			s.metrics.dnsSRVLookupCount.Inc(1)
+		}
 		_, addrs, lookupErr := s.resolver.LookupSRV(ctx, srvAddr)
 		if lookupErr != nil {
-			queryErrors = append(queryErrors, fmt.Errorf("lookup %s failed: %w", srvAddr, lookupErr))
+			if s.metrics != nil {
+				s.metrics.dnsSRVLookupFailedCount.Inc(1)
+			}
+			srvToErrors[srvAddr] = lookupErr
 			continue
 		}
 
+		// store resolved addresses for this SRV
+		resolvedAddrs := make([]string, 0, len(addrs))
 		for _, srv := range addrs {
 			address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
-			allAddresses[address] = true
-
-			// track which SRV address this resolved to (first-wins strategy)
-			if _, exists := newAddrToSRVIdx[address]; !exists {
-				newAddrToSRVIdx[address] = srvIdx
-			}
+			resolvedAddrs = append(resolvedAddrs, address)
 		}
+		srvToAddresses[srvAddr] = resolvedAddrs
 	}
 
-	// if there have any error occurred,
-	// then just return the query error to ignore the result to make sure the cache correct
-	if len(queryErrors) > 0 {
+	// Update metrics if all queries failed
+	if len(srvToAddresses) == 0 && len(srvToErrors) > 0 {
 		if s.metrics != nil {
 			s.metrics.dnsQueryFailedCount.Inc(1)
 		}
-		return nil, errors.Join(queryErrors...)
 	}
 
-	// update the resolved address to SRV index mapping
-	s.resolvedAddrMutex.Lock()
-	s.resolvedAddrToSRVIdx = newAddrToSRVIdx
-	s.resolvedAddrMutex.Unlock()
-
-	// convert map to slice
-	result := make([]string, 0, len(allAddresses))
-	for addr := range allAddresses {
-		result = append(result, addr)
-	}
-
-	return result, nil
+	return srvToAddresses, srvToErrors
 }
 
-func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error {
-	addressSet := make(map[string]bool)
-	for _, addr := range addresses {
-		addressSet[addr] = true
-	}
-
+func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string][]string) error {
 	var addErrors []error
+	for srvAddr, addrs := range srvToAddresses {
+		for _, addr := range addrs {
+			s.cacheMutex.RLock()
+			_, exists := s.nodeCache[addr]
+			s.cacheMutex.RUnlock()
 
-	for addr := range addressSet {
-		s.cacheMutex.RLock()
-		_, exists := s.nodeCache[addr]
-		s.cacheMutex.RUnlock()
+			if !exists {
+				// fetch node metadata from gRPC
+				node, fetchErr := s.fetchNodeMetadata(ctx, srvAddr, addr)
+				if fetchErr != nil {
+					s.log.Warn().
+						Err(fetchErr).
+						Str("address", addr).
+						Msg("Failed to fetch node metadata")
+					addErrors = append(addErrors, fetchErr)
+					continue
+				}
 
-		if !exists {
-			// fetch node metadata from gRPC
-			node, fetchErr := s.fetchNodeMetadata(ctx, addr)
-			if fetchErr != nil {
-				s.log.Warn().
-					Err(fetchErr).
-					Str("address", addr).
-					Msg("Failed to fetch node metadata")
-				addErrors = append(addErrors, fetchErr)
-				continue
+				s.cacheMutex.Lock()
+				if _, alreadyAdded := s.nodeCache[addr]; !alreadyAdded {
+					s.nodeCache[addr] = node
+
+					// notify handlers after releasing lock
+					s.notifyHandlers(schema.Metadata{
+						TypeMeta: schema.TypeMeta{
+							Kind: schema.KindNode,
+							Name: node.GetMetadata().GetName(),
+						},
+						Spec: node,
+					}, true)
+
+					s.log.Debug().
+						Str("address", addr).
+						Str("name", node.GetMetadata().GetName()).
+						Msg("New node discovered and added to cache")
+				}
+				s.cacheMutex.Unlock()
 			}
-
-			s.cacheMutex.Lock()
-			if _, alreadyAdded := s.nodeCache[addr]; !alreadyAdded {
-				s.nodeCache[addr] = node
-
-				// notify handlers after releasing lock
-				s.notifyHandlers(schema.Metadata{
-					TypeMeta: schema.TypeMeta{
-						Kind: schema.KindNode,
-						Name: node.GetMetadata().GetName(),
-					},
-					Spec: node,
-				}, true)
-
-				s.log.Debug().
-					Str("address", addr).
-					Str("name", node.GetMetadata().GetName()).
-					Msg("New node discovered and added to cache")
-			}
-			s.cacheMutex.Unlock()
 		}
 	}
 
 	// collect nodes to delete first
+	allAddr := make(map[string]bool)
+	for _, addrs := range srvToAddresses {
+		for _, addr := range addrs {
+			allAddr[addr] = true
+		}
+	}
 	s.cacheMutex.Lock()
 	nodesToDelete := make(map[string]*databasev1.Node)
 	for addr, node := range s.nodeCache {
-		if !addressSet[addr] {
+		if !allAddr[addr] {
 			nodesToDelete[addr] = node
 		}
 	}
@@ -460,7 +470,7 @@ func (s *Service) updateNodeCache(ctx context.Context, addresses []string) error
 	return nil
 }
 
-func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*databasev1.Node, error) {
+func (s *Service) fetchNodeMetadata(ctx context.Context, srvAddr, address string) (*databasev1.Node, error) {
 	// record gRPC query metrics
 	startTime := time.Now()
 	var grpcErr error
@@ -480,7 +490,7 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*datab
 	defer cancel()
 
 	// for TLS connections with other nodes to getting metadata
-	dialOpts, err := s.getTLSDialOptions(address)
+	dialOpts, err := s.getTLSDialOptions(srvAddr, address)
 	if err != nil {
 		grpcErr = fmt.Errorf("failed to get TLS dial options: %w", err)
 		return nil, grpcErr
@@ -547,7 +557,7 @@ func (s *Service) Close() error {
 
 // ListNode list all existing nodes from cache.
 func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	// if the service is haven't begun/finished, then try to query and update DNS first
+	// if the service hasn't begun/finished, then try to query and update DNS first
 	s.lastQueryMutex.RLock()
 	notQueried := s.lastQueryTime.IsZero()
 	s.lastQueryMutex.RUnlock()

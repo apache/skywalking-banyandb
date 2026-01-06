@@ -258,10 +258,11 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			addresses, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).NotTo(HaveOccurred())
-			Expect(addresses).To(HaveLen(1))
-			Expect(addresses).To(ContainElement("node1.test.local:17912"))
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(ctx)
+			Expect(srvToErrors).To(BeEmpty())
+			Expect(srvToAddresses).To(HaveLen(1))
+			Expect(srvToAddresses).To(HaveKey("_grpc._tcp.test.local"))
+			Expect(srvToAddresses["_grpc._tcp.test.local"]).To(ConsistOf("node1.test.local:17912"))
 
 			// Verify DNS resolver was called exactly once
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
@@ -286,12 +287,17 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			addresses, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).NotTo(HaveOccurred())
-			Expect(addresses).To(HaveLen(3)) // Deduplicated
-			Expect(addresses).To(ContainElements(
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(ctx)
+			Expect(srvToErrors).To(BeEmpty())
+			Expect(srvToAddresses).To(HaveLen(2))
+			Expect(srvToAddresses).To(HaveKey("_grpc._tcp.zone1.local"))
+			Expect(srvToAddresses).To(HaveKey("_grpc._tcp.zone2.local"))
+			Expect(srvToAddresses["_grpc._tcp.zone1.local"]).To(ConsistOf(
 				"node1.test.local:17912",
 				"node2.test.local:17912",
+			))
+			Expect(srvToAddresses["_grpc._tcp.zone2.local"]).To(ConsistOf(
+				"node1.test.local:17912",
 				"node3.test.local:17912",
 			))
 
@@ -307,16 +313,17 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			addresses, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).To(HaveOccurred())
-			Expect(queryErr.Error()).To(ContainSubstring("DNS server unavailable"))
-			Expect(addresses).To(BeEmpty())
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(ctx)
+			Expect(srvToAddresses).To(BeEmpty())
+			Expect(srvToErrors).To(HaveLen(1))
+			Expect(srvToErrors).To(HaveKey("_grpc._tcp.test.local"))
+			Expect(srvToErrors["_grpc._tcp.test.local"].Error()).To(ContainSubstring("DNS server unavailable"))
 
 			// Verify DNS was still called (and failed)
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
 		})
 
-		It("should fail when any DNS query fails (🎯 critical scenario)", func() {
+		It("should return partial results when some DNS queries fail", func() {
 			config.SRVAddresses = []string{
 				"_grpc._tcp.zone1.local",
 				"_grpc._tcp.zone2.local",
@@ -331,10 +338,15 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			addresses, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).To(HaveOccurred()) // Any error should cause failure
-			Expect(queryErr.Error()).To(ContainSubstring("zone2 DNS unavailable"))
-			Expect(addresses).To(BeNil()) // No partial results returned
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(ctx)
+			// Should have partial success
+			Expect(srvToAddresses).To(HaveLen(1))
+			Expect(srvToAddresses).To(HaveKey("_grpc._tcp.zone1.local"))
+			Expect(srvToAddresses["_grpc._tcp.zone1.local"]).To(ConsistOf("node1.test.local:17912"))
+			// Should have error for failed SRV
+			Expect(srvToErrors).To(HaveLen(1))
+			Expect(srvToErrors).To(HaveKey("_grpc._tcp.zone2.local"))
+			Expect(srvToErrors["_grpc._tcp.zone2.local"].Error()).To(ContainSubstring("zone2 DNS unavailable"))
 
 			// Verify both DNS addresses were attempted
 			Expect(mockResolver.getCallCount("_grpc._tcp.zone1.local")).To(Equal(1))
@@ -348,9 +360,11 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			addresses, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).NotTo(HaveOccurred())
-			Expect(addresses).To(BeEmpty())
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(ctx)
+			Expect(srvToErrors).To(BeEmpty())
+			Expect(srvToAddresses).To(HaveLen(1))
+			Expect(srvToAddresses).To(HaveKey("_grpc._tcp.test.local"))
+			Expect(srvToAddresses["_grpc._tcp.test.local"]).To(BeEmpty())
 
 			// Verify DNS was called
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
@@ -368,10 +382,11 @@ var _ = Describe("DNS Discovery Service", func() {
 			cancelCtx, cancel := context.WithCancel(ctx)
 			cancel() // Cancel immediately
 
-			addresses, queryErr := svc.QueryAllSRVRecords(cancelCtx)
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(cancelCtx)
 			// Context cancellation should cause query to fail
-			Expect(queryErr).To(HaveOccurred())
-			Expect(addresses).To(BeNil())
+			Expect(srvToAddresses).To(BeEmpty())
+			Expect(srvToErrors).To(HaveLen(1))
+			Expect(srvToErrors).To(HaveKey("_grpc._tcp.test.local"))
 
 			// Verify DNS was called and detected cancellation
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
@@ -390,10 +405,11 @@ var _ = Describe("DNS Discovery Service", func() {
 			defer cancel()
 			time.Sleep(10 * time.Millisecond) // Ensure timeout
 
-			addresses, queryErr := svc.QueryAllSRVRecords(timeoutCtx)
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(timeoutCtx)
 			// Timeout should cause query to fail
-			Expect(queryErr).To(HaveOccurred())
-			Expect(addresses).To(BeNil())
+			Expect(srvToAddresses).To(BeEmpty())
+			Expect(srvToErrors).To(HaveLen(1))
+			Expect(srvToErrors).To(HaveKey("_grpc._tcp.test.local"))
 
 			// Verify DNS was called and detected timeout
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
@@ -460,10 +476,12 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, queryErr = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(queryErr).NotTo(HaveOccurred())
 
-			// First successful query should cache all 4 addresses
-			addresses1, queryErr := svc.QueryAllSRVRecords(ctx)
-			Expect(queryErr).NotTo(HaveOccurred())
-			Expect(addresses1).To(HaveLen(4))
+			// First successful query should return 2 SRVs with 2 addresses each
+			srvToAddresses1, srvToErrors1 := svc.QueryAllSRVRecords(ctx)
+			Expect(srvToErrors1).To(BeEmpty())
+			Expect(srvToAddresses1).To(HaveLen(2))
+			Expect(srvToAddresses1["_grpc._tcp.zone1.local"]).To(HaveLen(2))
+			Expect(srvToAddresses1["_grpc._tcp.zone2.local"]).To(HaveLen(2))
 
 			// Verify both DNS zones were queried
 			Expect(mockResolver.getCallCount("_grpc._tcp.zone1.local")).To(Equal(1))
@@ -477,14 +495,16 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(mockResolver.getCallCount("_grpc._tcp.zone1.local")).To(Equal(2))
 			Expect(mockResolver.getCallCount("_grpc._tcp.zone2.local")).To(Equal(2))
 
-			// Verify the cache was populated with all 4 nodes
+			// Verify the cache was populated with addresses per SRV
 			cached := svc.GetLastSuccessfulDNS()
-			Expect(cached).To(HaveLen(4))
-			Expect(cached).To(ContainElements(
-				ContainSubstring("node1.test.local"),
-				ContainSubstring("node2.test.local"),
-				ContainSubstring("node3.test.local"),
-				ContainSubstring("node4.test.local"),
+			Expect(cached).To(HaveLen(2))
+			Expect(cached["_grpc._tcp.zone1.local"]).To(ConsistOf(
+				"node1.test.local:17912",
+				"node2.test.local:17912",
+			))
+			Expect(cached["_grpc._tcp.zone2.local"]).To(ConsistOf(
+				"node3.test.local:17912",
+				"node4.test.local:17912",
 			))
 
 			// Now simulate partial failure: zone1 succeeds, zone2 fails
@@ -503,8 +523,14 @@ var _ = Describe("DNS Discovery Service", func() {
 
 			// Verify fallback happened - cache still has all 4 nodes from first success
 			cachedAfterFailure := svc.GetLastSuccessfulDNS()
-			Expect(cachedAfterFailure).To(HaveLen(4))
+			Expect(cachedAfterFailure).To(HaveLen(2)) // 2 SRVs
 			Expect(cachedAfterFailure).To(Equal(cached))
+			// Count total addresses across all SRVs
+			totalAddrs := 0
+			for _, addrs := range cachedAfterFailure {
+				totalAddrs += len(addrs)
+			}
+			Expect(totalAddrs).To(Equal(4)) // 4 total addresses
 
 			// Verify both DNS zones were attempted
 			Expect(mockResolver.getCallCount("_grpc._tcp.zone1.local")).To(Equal(3))
@@ -918,11 +944,23 @@ var _ = Describe("DNS Discovery Service", func() {
 
 			// Verify that getTLSDialOptions returns TLS credentials
 			// Need to query DNS first to establish address mapping
-			addrs, queryErr := svc.QueryAllSRVRecords(context.Background())
-			Expect(queryErr).NotTo(HaveOccurred())
-			Expect(addrs).NotTo(BeEmpty())
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(context.Background())
+			Expect(srvToErrors).To(BeEmpty())
+			Expect(srvToAddresses).NotTo(BeEmpty())
 
-			dialOpts, err := svc.GetTLSDialOptions(addrs[0])
+			// Get first SRV and address
+			var firstSRV, firstAddr string
+			for srv, addrs := range srvToAddresses {
+				if len(addrs) > 0 {
+					firstSRV = srv
+					firstAddr = addrs[0]
+					break
+				}
+			}
+			Expect(firstSRV).NotTo(BeEmpty())
+			Expect(firstAddr).NotTo(BeEmpty())
+
+			dialOpts, err := svc.GetTLSDialOptions(firstSRV, firstAddr)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dialOpts).NotTo(BeEmpty())
 		})
@@ -1071,65 +1109,6 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(reloaderCount).To(Equal(1))
 		})
 
-		It("should correctly map resolved addresses to SRV indices", func() {
-			config.TLSEnabled = true
-			config.SRVAddresses = []string{"_grpc._tcp.zone1.local", "_grpc._tcp.zone2.local"}
-			config.CACertPaths = []string{certFile, certFile}
-
-			// Setup mock DNS responses
-			mockResolver.setResponse("_grpc._tcp.zone1.local", []*net.SRV{
-				{Target: "node1.zone1", Port: 9090},
-				{Target: "node2.zone1", Port: 9091},
-			})
-			mockResolver.setResponse("_grpc._tcp.zone2.local", []*net.SRV{
-				{Target: "node1.zone2", Port: 9092},
-			})
-
-			var err error
-			svc, err = dns.NewServiceWithResolver(config, mockResolver)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(svc).NotTo(BeNil())
-
-			// Query DNS to establish address mapping
-			_, err = svc.QueryAllSRVRecords(context.Background())
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify address mapping
-			addrMapping := svc.GetResolvedAddrMapping()
-			Expect(addrMapping).To(HaveLen(3))
-			Expect(addrMapping["node1.zone1:9090"]).To(Equal(0)) // zone1 = index 0
-			Expect(addrMapping["node2.zone1:9091"]).To(Equal(0)) // zone1 = index 0
-			Expect(addrMapping["node1.zone2:9092"]).To(Equal(1)) // zone2 = index 1
-		})
-
-		It("should use first-wins strategy when multiple SRV addresses resolve to same IP", func() {
-			config.TLSEnabled = true
-			config.SRVAddresses = []string{"_grpc._tcp.zone1.local", "_grpc._tcp.zone2.local"}
-			config.CACertPaths = []string{certFile, certFile}
-
-			// Both zones resolve to the same address
-			mockResolver.setResponse("_grpc._tcp.zone1.local", []*net.SRV{
-				{Target: "shared.node", Port: 9090},
-			})
-			mockResolver.setResponse("_grpc._tcp.zone2.local", []*net.SRV{
-				{Target: "shared.node", Port: 9090}, // Same address
-			})
-
-			var err error
-			svc, err = dns.NewServiceWithResolver(config, mockResolver)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(svc).NotTo(BeNil())
-
-			// Query DNS to establish address mapping
-			_, err = svc.QueryAllSRVRecords(context.Background())
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify first-wins: should map to zone1 (index 0)
-			addrMapping := svc.GetResolvedAddrMapping()
-			Expect(addrMapping).To(HaveLen(1))
-			Expect(addrMapping["shared.node:9090"]).To(Equal(0)) // First SRV (zone1)
-		})
-
 		It("should return different TLS credentials for different addresses", func() {
 			// Create second certificate file for testing
 			certFile2 := "testdata/ca_cert.pem" // In real scenario, this would be different
@@ -1152,16 +1131,29 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(svc).NotTo(BeNil())
 
 			// Query DNS to establish address mapping
-			addrs, err := svc.QueryAllSRVRecords(context.Background())
-			Expect(err).NotTo(HaveOccurred())
-			Expect(addrs).To(HaveLen(2))
+			srvToAddresses, srvToErrors := svc.QueryAllSRVRecords(context.Background())
+			Expect(srvToErrors).To(BeEmpty())
+			Expect(srvToAddresses).To(HaveLen(2))
+
+			// Collect addresses with their SRV mapping
+			type addrWithSRV struct {
+				srv  string
+				addr string
+			}
+			var addrList []addrWithSRV
+			for srv, addrs := range srvToAddresses {
+				for _, addr := range addrs {
+					addrList = append(addrList, addrWithSRV{srv: srv, addr: addr})
+				}
+			}
+			Expect(addrList).To(HaveLen(2))
 
 			// Get TLS options for both addresses
-			dialOpts1, err := svc.GetTLSDialOptions(addrs[0])
+			dialOpts1, err := svc.GetTLSDialOptions(addrList[0].srv, addrList[0].addr)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dialOpts1).NotTo(BeEmpty())
 
-			dialOpts2, err := svc.GetTLSDialOptions(addrs[1])
+			dialOpts2, err := svc.GetTLSDialOptions(addrList[1].srv, addrList[1].addr)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dialOpts2).NotTo(BeEmpty())
 
@@ -1479,7 +1471,9 @@ var _ = Describe("DNS Discovery Service", func() {
 			// Verify lastSuccessfulDNS cache has the address
 			cachedAddresses := svc.GetLastSuccessfulDNS()
 			Expect(cachedAddresses).To(HaveLen(1))
-			initialCachedAddress := cachedAddresses[0]
+			Expect(cachedAddresses).To(HaveKey("_grpc._tcp.test.local"))
+			initialCachedAddresses := cachedAddresses["_grpc._tcp.test.local"]
+			Expect(initialCachedAddresses).To(HaveLen(1))
 
 			// Now make DNS fail
 			mockResolver.setError("_grpc._tcp.test.local", fmt.Errorf("DNS server down"))
@@ -1496,7 +1490,8 @@ var _ = Describe("DNS Discovery Service", func() {
 			// Verify lastSuccessfulDNS cache still has the original address
 			cachedAddresses = svc.GetLastSuccessfulDNS()
 			Expect(cachedAddresses).To(HaveLen(1))
-			Expect(cachedAddresses[0]).To(Equal(initialCachedAddress))
+			Expect(cachedAddresses).To(HaveKey("_grpc._tcp.test.local"))
+			Expect(cachedAddresses["_grpc._tcp.test.local"]).To(Equal(initialCachedAddresses))
 
 			// Verify DNS query count increased (service kept trying despite failures)
 			callCount := mockResolver.getCallCount("_grpc._tcp.test.local")

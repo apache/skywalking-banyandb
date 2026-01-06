@@ -21,6 +21,8 @@ import (
 	"context"
 
 	"google.golang.org/grpc"
+
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 // Test exports for external tests (package dns_test).
@@ -31,7 +33,7 @@ func NewServiceWithResolver(cfg Config, resolver Resolver) (*Service, error) {
 }
 
 // QueryAllSRVRecords is exported for testing DNS query behavior.
-func (s *Service) QueryAllSRVRecords(ctx context.Context) ([]string, error) {
+func (s *Service) QueryAllSRVRecords(ctx context.Context) (map[string][]string, map[string]error) {
 	return s.queryAllSRVRecords(ctx)
 }
 
@@ -41,25 +43,15 @@ func (s *Service) QueryDNSAndUpdateNodes(ctx context.Context) error {
 }
 
 // GetLastSuccessfulDNS returns the cached successful DNS addresses for testing.
-func (s *Service) GetLastSuccessfulDNS() []string {
-	result := make([]string, len(s.lastSuccessfulDNS))
-	copy(result, s.lastSuccessfulDNS)
-	return result
-}
+func (s *Service) GetLastSuccessfulDNS() map[string][]string {
+	s.lastQueryMutex.RLock()
+	defer s.lastQueryMutex.RUnlock()
 
-// GetTLSDialOptions is exported for testing TLS configuration.
-func (s *Service) GetTLSDialOptions(address string) ([]grpc.DialOption, error) {
-	return s.getTLSDialOptions(address)
-}
-
-// GetResolvedAddrMapping returns the resolved address to SRV index mapping for testing.
-func (s *Service) GetResolvedAddrMapping() map[string]int {
-	s.resolvedAddrMutex.RLock()
-	defer s.resolvedAddrMutex.RUnlock()
-
-	result := make(map[string]int, len(s.resolvedAddrToSRVIdx))
-	for k, v := range s.resolvedAddrToSRVIdx {
-		result[k] = v
+	result := make(map[string][]string, len(s.lastSuccessfulDNS))
+	for k, v := range s.lastSuccessfulDNS {
+		addrs := make([]string, len(v))
+		copy(addrs, v)
+		result[k] = addrs
 	}
 	return result
 }
@@ -67,4 +59,21 @@ func (s *Service) GetResolvedAddrMapping() map[string]int {
 // GetReloaderCount returns the number of unique Reloaders for testing.
 func (s *Service) GetReloaderCount() int {
 	return len(s.pathToReloader)
+}
+
+// GetNodeCache returns the current node cache for testing.
+func (s *Service) GetNodeCache() map[string]*databasev1.Node {
+	s.cacheMutex.RLock()
+	defer s.cacheMutex.RUnlock()
+
+	result := make(map[string]*databasev1.Node, len(s.nodeCache))
+	for k, v := range s.nodeCache {
+		result[k] = v
+	}
+	return result
+}
+
+// GetTLSDialOptions is exported for testing TLS configuration.
+func (s *Service) GetTLSDialOptions(srvAddr, address string) ([]grpc.DialOption, error) {
+	return s.getTLSDialOptions(srvAddr, address)
 }

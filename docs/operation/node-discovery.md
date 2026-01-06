@@ -110,7 +110,7 @@ BanyanDB implements real-time cluster membership tracking:
 
 - Watches etcd prefix `/nodes/` for PUT (add/update) and DELETE events.
 - Revision-based streaming resumes from last known revision after reconnection.
-- Periodic full sync every 5-35 minutes (randomized) to detect missed events.
+- Periodic full sync every 30 minutes (randomized) to detect missed events.
 
 #### Deregistration
 
