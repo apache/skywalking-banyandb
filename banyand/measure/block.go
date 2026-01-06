@@ -734,7 +734,7 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				for _, e := range entityList {
 					entityValues = append(entityValues, e)
 				}
-				topNPostAggregator.Load(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+				topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
 			}
 
 			topNValue.Reset()
@@ -751,18 +751,16 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 				topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
 			}
 
-			m, err := topNPostAggregator.Flush()
+			items, err := topNPostAggregator.Flush()
 			if err != nil {
 				log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
 				continue
 			}
 
-			nonAggregatorItems := m[uTimestamps]
-
 			topNValue.Reset()
 			topNValue.SetMetadata(valueName, entityTagNames)
 
-			for _, item := range nonAggregatorItems {
+			for _, item := range items {
 				topNValue.AddValue(item.val, item.values)
 			}
 

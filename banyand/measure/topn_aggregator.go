@@ -38,18 +38,10 @@ type aggregatorItem struct {
 	index     int
 }
 
-type dedupItem struct {
-	entityValuesStr string
-	values          pbv1.EntityValues
-	timestampMillis uint64
-	val             int64
-	version         int64
-}
-
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error
-	Flush() (map[uint64][]*nonAggregatorItem, error)
+	Flush() ([]*topNAggregatorItem, error)
 	Val([]string) []*measurev1.TopNList
 }
 
@@ -63,55 +55,45 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 			timelines: make(map[uint64]*topNTimelineItem),
 		}
 	}
-	aggregator := &postAggregationProcessor{
+	aggregator := &postNonAggregationProcessor{
 		topN:     topN,
 		sort:     sort,
 		aggrFunc: aggrFunc,
-		cache:    make(map[string]*aggregatorItem),
-		items:    make([]*aggregatorItem, 0, topN),
+		cache:    make(map[string]*topNAggregatorItem),
+		items:    make([]*topNAggregatorItem, 0, topN),
 	}
 	heap.Init(aggregator)
 	return aggregator
 }
 
-// postAggregationProcessor is an implementation of postProcessor with aggregation.
-type postAggregationProcessor struct {
-	cache           map[string]*aggregatorItem
-	items           []*aggregatorItem
-	latestTimestamp uint64
-	topN            int32
-	sort            modelv1.Sort
-	aggrFunc        modelv1.AggregationFunction
-}
-
-func (aggr *postAggregationProcessor) Len() int {
+func (aggr *postNonAggregationProcessor) Len() int {
 	return len(aggr.items)
 }
 
 // Less reports whether min/max heap has to be built.
 // For DESC, a min heap has to be built,
 // while for ASC, a max heap has to be built.
-func (aggr *postAggregationProcessor) Less(i, j int) bool {
+func (aggr *postNonAggregationProcessor) Less(i, j int) bool {
 	if aggr.sort == modelv1.Sort_SORT_DESC {
 		return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
 	}
 	return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
 }
 
-func (aggr *postAggregationProcessor) Swap(i, j int) {
+func (aggr *postNonAggregationProcessor) Swap(i, j int) {
 	aggr.items[i], aggr.items[j] = aggr.items[j], aggr.items[i]
 	aggr.items[i].index = i
 	aggr.items[j].index = j
 }
 
-func (aggr *postAggregationProcessor) Push(x any) {
+func (aggr *postNonAggregationProcessor) Push(x any) {
 	n := len(aggr.items)
-	item := x.(*aggregatorItem)
+	item := x.(*topNAggregatorItem)
 	item.index = n
 	aggr.items = append(aggr.items, item)
 }
 
-func (aggr *postAggregationProcessor) Pop() any {
+func (aggr *postNonAggregationProcessor) Pop() any {
 	old := aggr.items
 	n := len(old)
 	item := old[n-1]
@@ -121,66 +103,7 @@ func (aggr *postAggregationProcessor) Pop() any {
 	return item
 }
 
-func (aggr *postAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, key string) error {
-	// update latest ts
-	if aggr.latestTimestamp < timestampMillis {
-		aggr.latestTimestamp = timestampMillis
-	}
-	if item, found := aggr.cache[key]; found {
-		item.int64Func.In(val)
-		return nil
-	}
-
-	aggrFunc, err := aggregation.NewFunc[int64](aggr.aggrFunc)
-	if err != nil {
-		return err
-	}
-	item := &aggregatorItem{
-		key:       key,
-		int64Func: aggrFunc,
-		values:    entityValues,
-	}
-	item.int64Func.In(val)
-
-	if aggr.Len() < int(aggr.topN) {
-		aggr.cache[key] = item
-		heap.Push(aggr, item)
-	} else {
-		aggr.tryEnqueue(key, item)
-	}
-
-	return nil
-}
-
-func (aggr *postAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
-
-	return nil, nil
-}
-
-func (aggr *postAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
-	aggr.Flush()
-	topNItems := make([]*measurev1.TopNList_Item, aggr.Len())
-
-	for aggr.Len() > 0 {
-		item := heap.Pop(aggr).(*aggregatorItem)
-		topNItems[aggr.Len()] = &measurev1.TopNList_Item{
-			Entity: item.GetTags(tagNames),
-			Value: &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{Value: item.int64Func.Val()},
-				},
-			},
-		}
-	}
-	return []*measurev1.TopNList{
-		{
-			Timestamp: timestamppb.New(time.Unix(0, int64(aggr.latestTimestamp))),
-			Items:     topNItems,
-		},
-	}
-}
-
-func (aggr *postAggregationProcessor) tryEnqueue(key string, item *aggregatorItem) {
+func (aggr *postNonAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
 	if lowest := aggr.items[0]; lowest != nil {
 		if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val() {
 			aggr.cache[key] = item
@@ -205,17 +128,18 @@ func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 	return tags
 }
 
-var _ flow.Element = (*nonAggregatorItem)(nil)
+var _ flow.Element = (*topNAggregatorItem)(nil)
 
-type nonAggregatorItem struct {
-	key     string
-	values  pbv1.EntityValues
-	val     int64
-	version int64
-	index   int
+type topNAggregatorItem struct {
+	key       string
+	values    pbv1.EntityValues
+	int64Func aggregation.Func[int64]
+	val       int64
+	version   int64
+	index     int
 }
 
-func (n *nonAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
+func (n *topNAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 	tags := make([]*modelv1.Tag, len(n.values))
 	for i := 0; i < len(tags); i++ {
 		tags[i] = &modelv1.Tag{
@@ -226,23 +150,26 @@ func (n *nonAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
 	return tags
 }
 
-func (n *nonAggregatorItem) GetIndex() int {
+func (n *topNAggregatorItem) GetIndex() int {
 	return n.index
 }
 
-func (n *nonAggregatorItem) SetIndex(i int) {
+func (n *topNAggregatorItem) SetIndex(i int) {
 	n.index = i
 }
 
 type topNTimelineItem struct {
 	queue *flow.DedupPriorityQueue
-	items map[string]*nonAggregatorItem
+	items map[string]*topNAggregatorItem
 }
 
 type postNonAggregationProcessor struct {
+	cache     map[string]*topNAggregatorItem
 	timelines map[uint64]*topNTimelineItem
 	topN      int32
 	sort      modelv1.Sort
+	aggrFunc  modelv1.AggregationFunction
+	items     []*topNAggregatorItem
 }
 
 func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error {
@@ -252,24 +179,24 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 		timeline := &topNTimelineItem{
 			queue: flow.NewPriorityQueue(func(a, b interface{}) int {
 				if naggr.sort == modelv1.Sort_SORT_DESC {
-					if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
+					if a.(*topNAggregatorItem).val < b.(*topNAggregatorItem).val {
 						return -1
-					} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
+					} else if a.(*topNAggregatorItem).val == b.(*topNAggregatorItem).val {
 						return 0
 					}
 					return 1
 				}
-				if a.(*nonAggregatorItem).val < b.(*nonAggregatorItem).val {
+				if a.(*topNAggregatorItem).val < b.(*topNAggregatorItem).val {
 					return 1
-				} else if a.(*nonAggregatorItem).val == b.(*nonAggregatorItem).val {
+				} else if a.(*topNAggregatorItem).val == b.(*topNAggregatorItem).val {
 					return 0
 				}
 				return -1
 			}, false),
-			items: make(map[string]*nonAggregatorItem),
+			items: make(map[string]*topNAggregatorItem),
 		}
 
-		newItem := &nonAggregatorItem{
+		newItem := &topNAggregatorItem{
 			val:     val,
 			key:     key,
 			values:  entityValues,
@@ -286,7 +213,6 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 		if version > item.version {
 			item.val = val
 			item.version = version
-			item.values = entityValues
 
 			heap.Fix(timeline.queue, item.index)
 		}
@@ -294,7 +220,7 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 		return nil
 	}
 
-	newItem := &nonAggregatorItem{
+	newItem := &topNAggregatorItem{
 		val:     val,
 		key:     key,
 		values:  entityValues,
@@ -308,7 +234,7 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	}
 
 	if lowest := timeline.queue.Peek(); lowest != nil {
-		lowestItem := lowest.(*nonAggregatorItem)
+		lowestItem := lowest.(*topNAggregatorItem)
 
 		shouldReplace :=
 			(naggr.sort == modelv1.Sort_SORT_DESC && lowestItem.val < val) ||
@@ -324,18 +250,51 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	return nil
 }
 
-func (naggr *postNonAggregationProcessor) Flush() (map[uint64][]*nonAggregatorItem, error) {
+func (naggr *postNonAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
 
-	m := make(map[uint64][]*nonAggregatorItem)
-	for timeline, item := range naggr.timelines {
-		nonAggregatorItems := make([]*nonAggregatorItem, 0, len(item.items))
+	var result []*topNAggregatorItem
 
-		for _, item := range item.items {
-			nonAggregatorItems = append(nonAggregatorItems, item)
+	for _, timeline := range naggr.timelines {
+		for _, nonAggItem := range timeline.items {
+			result = append(result, nonAggItem)
 		}
-		m[timeline] = nonAggregatorItems
 	}
-	return m, nil
+	clear(naggr.timelines)
+
+	if naggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+
+		for _, item := range result {
+			if exist, found := naggr.cache[item.key]; found {
+				exist.int64Func.In(item.val)
+				continue
+			}
+
+			aggrFunc, err := aggregation.NewFunc[int64](naggr.aggrFunc)
+			if err != nil {
+				return nil, err
+			}
+
+			item.int64Func = aggrFunc
+			item.int64Func.In(item.val)
+
+			if naggr.Len() < int(naggr.topN) {
+				naggr.cache[item.key] = item
+				heap.Push(naggr, item)
+			} else {
+				naggr.tryEnqueue(item.key, item)
+			}
+
+			aggregationItems := []*topNAggregatorItem{}
+
+			for naggr.Len() > 0 {
+				item := heap.Pop(naggr).(*topNAggregatorItem)
+				aggregationItems = append(aggregationItems, item)
+			}
+			return aggregationItems, nil
+		}
+	}
+
+	return result, nil
 }
 
 func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
@@ -344,10 +303,10 @@ func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.To
 		items := make([]*measurev1.TopNList_Item, timeline.queue.Len())
 		for idx, elem := range timeline.queue.Values() {
 			items[idx] = &measurev1.TopNList_Item{
-				Entity: elem.(*nonAggregatorItem).GetTags(tagNames),
+				Entity: elem.(*topNAggregatorItem).GetTags(tagNames),
 				Value: &modelv1.FieldValue{
 					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{Value: elem.(*nonAggregatorItem).val},
+						Int: &modelv1.Int{Value: elem.(*topNAggregatorItem).val},
 					},
 				},
 			}
