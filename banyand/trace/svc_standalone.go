@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -135,7 +136,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
-	observability.UpdatePath(path)
+	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")
@@ -145,7 +146,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		s.dataPath = filepath.Join(path, storage.DataDir)
 	}
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
-		observability.UpdatePath(s.dataPath)
+		obsservice.UpdatePath(s.dataPath)
 	}
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
 
