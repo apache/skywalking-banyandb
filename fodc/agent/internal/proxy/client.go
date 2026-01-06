@@ -633,6 +633,8 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
+	originalClient := c.client
+
 	c.logger.Info().Msg("Starting reconnection process...")
 
 	if c.heartbeatTicker != nil {
@@ -670,7 +672,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
-	if connResult.conn != nil {
+	if originalClient == nil || connResult.conn != nil  {
 		c.streamsMu.Lock()
 		c.client = fodcv1.NewFODCServiceClient(connResult.conn)
 		c.streamsMu.Unlock()
