@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -232,12 +233,12 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
-	observability.UpdatePath(path)
+	obsservice.UpdatePath(path)
 	if s.dataPath == "" {
 		s.dataPath = filepath.Join(path, storage.DataDir)
 	}
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
-		observability.UpdatePath(s.dataPath)
+		obsservice.UpdatePath(s.dataPath)
 	}
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -252,7 +253,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels)
 
 	s.cm = newCacheMetrics(s.omr)
-	observability.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
+	obsservice.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
 
 	if s.pipeline == nil {
 		return nil
@@ -312,7 +313,7 @@ func (s *dataSVC) GracefulStop() {
 		s.diskMonitor.Stop()
 	}
 
-	observability.MetricsCollector.Unregister("measure_cache")
+	obsservice.MetricsCollector.Unregister("measure_cache")
 	s.schemaRepo.Close()
 	s.c.Close()
 }

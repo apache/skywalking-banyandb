@@ -15,24 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package services
 
 import (
-	"context"
-	"time"
+	"net/http"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-type nativeProviderFactory struct {
-	metadata metadata.Repo
-	nodeInfo native.NodeInfo
-}
-
-func (f nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return native.NewProvider(ctx, scope, f.metadata, f.nodeInfo)
+func registerMetricsEndpoint(reg *prometheus.Registry, metricsMux *http.ServeMux) {
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(
+		reg,
+		promhttp.HandlerOpts{},
+	))
 }

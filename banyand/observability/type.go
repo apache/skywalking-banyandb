@@ -19,24 +19,29 @@
 package observability
 
 import (
-	"errors"
-
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
-	errNoAddr         = errors.New("no address")
-	errNoMode         = errors.New("no observability mode")
-	errInvalidMode    = errors.New("invalid observability mode")
-	errDuplicatedMode = errors.New("duplicated observability mode")
+	// RootScope is the root scope for all metrics.
+	RootScope = meter.NewHierarchicalScope("banyandb", "_")
+	// SystemScope is the system scope for all metrics.
+	SystemScope = RootScope.SubScope("system")
 )
+
+// Factory is the factory for creating metrics.
+type Factory interface {
+	NewCounter(name string, labelNames ...string) meter.Counter
+	NewGauge(name string, labelNames ...string) meter.Gauge
+	NewHistogram(name string, buckets meter.Buckets, labelNames ...string) meter.Histogram
+}
 
 // MetricsRegistry is the interface for metrics registry.
 type MetricsRegistry interface {
 	run.Service
 	// With returns a factory with the given scope.
-	With(scope meter.Scope) *Factory
+	With(scope meter.Scope) Factory
 	// NativeEnabled returns whether the native mode is enabled.
 	NativeEnabled() bool
 }

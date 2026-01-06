@@ -118,12 +118,52 @@ func (m *mockMetricsRegistry) Serve() run.StopNotify        { return nil }
 func (m *mockMetricsRegistry) GracefulStop()                {}
 func (m *mockMetricsRegistry) Name() string                 { return "mock" }
 func (m *mockMetricsRegistry) NativeEnabled() bool          { return false }
-func (m *mockMetricsRegistry) With(_ meter.Scope) *observability.Factory {
-	return &observability.Factory{}
+func (m *mockMetricsRegistry) With(_ meter.Scope) observability.Factory {
+	return &mockFactory{}
 }
 
 func createMockMetricsRegistry() observability.MetricsRegistry {
 	return &mockMetricsRegistry{}
+}
+
+type mockFactory struct{}
+
+func (m *mockFactory) NewCounter(_ string, _ ...string) meter.Counter {
+	return &mockCounter{}
+}
+
+func (m *mockFactory) NewGauge(_ string, _ ...string) meter.Gauge {
+	return &mockGauge{}
+}
+
+func (m *mockFactory) NewHistogram(_ string, _ meter.Buckets, _ ...string) meter.Histogram {
+	return &mockHistogram{}
+}
+
+type mockCounter struct{}
+
+func (m *mockCounter) Inc(_ float64, _ ...string) {}
+
+func (m *mockCounter) Delete(_ ...string) bool {
+	return true
+}
+
+type mockGauge struct{}
+
+func (m *mockGauge) Set(_ float64, _ ...string) {}
+
+func (m *mockGauge) Add(_ float64, _ ...string) {}
+
+func (m *mockGauge) Delete(_ ...string) bool {
+	return true
+}
+
+type mockHistogram struct{}
+
+func (m *mockHistogram) Observe(_ float64, _ ...string) {}
+
+func (m *mockHistogram) Delete(_ ...string) bool {
+	return true
 }
 
 // Mock group implementation.

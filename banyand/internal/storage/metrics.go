@@ -19,6 +19,7 @@ package storage
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
@@ -36,10 +37,10 @@ type metrics struct {
 	totalRetentionErr            meter.Counter
 	totalRetentionHasDataLatency meter.Counter
 
-	schedulerMetrics *observability.SchedulerMetrics
+	schedulerMetrics *obsservice.SchedulerMetrics
 }
 
-func newMetrics(factory *observability.Factory) *metrics {
+func newMetrics(factory observability.Factory) *metrics {
 	if factory == nil {
 		return nil
 	}
@@ -54,7 +55,7 @@ func newMetrics(factory *observability.Factory) *metrics {
 		totalRetentionErr:            factory.NewCounter("total_retention_err"),
 		totalRetentionHasDataLatency: factory.NewCounter("total_retention_has_data_latency"),
 		totalRetentionHasData:        factory.NewCounter("total_retention_has_data"),
-		schedulerMetrics:             observability.NewSchedulerMetrics(factory),
+		schedulerMetrics:             obsservice.NewSchedulerMetrics(factory),
 	}
 }
 

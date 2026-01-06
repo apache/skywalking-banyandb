@@ -34,7 +34,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -244,7 +244,7 @@ func generateMeasure(db storage.TSDB[*tsTable, option], cache storage.Cache) *me
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
+	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "standalone", nil)
 	pm := protector.NewMemory(metricSvc)
 
 	m := &measure{

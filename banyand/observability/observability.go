@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,25 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
-
-import (
-	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
-)
-
-// Metrics is a collection of metrics.
-type Metrics struct {
-	totalErrs    meter.Counter
-	totalRetries meter.Counter
-	totalPanics  meter.Counter
-}
-
-// NewMetrics creates a new Metrics.
-func NewMetrics(factory observability.Factory) *Metrics {
-	return &Metrics{
-		totalErrs:    factory.NewCounter("total_err"),
-		totalRetries: factory.NewCounter("total_retries"),
-		totalPanics:  factory.NewCounter("total_panics"),
-	}
-}
+// Package observability provides metrics, profiling, and etc.
+package observability

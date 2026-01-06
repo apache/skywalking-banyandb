@@ -212,7 +212,7 @@ type MockMetrics struct{}
 
 func (m *MockMetrics) DeleteAll() {}
 
-func (m *MockMetrics) Factory() *observability.Factory {
+func (m *MockMetrics) Factory() observability.Factory {
 	return nil
 }
 
