@@ -181,6 +181,11 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	}()
 
 	for _, agentInfo := range agents {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		requestErr := ma.grpcService.RequestMetrics(agentInfo.AgentID, filter.StartTime, filter.EndTime)
 		if requestErr != nil {
 			ma.logger.Error().
