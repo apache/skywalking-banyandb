@@ -50,9 +50,9 @@ type Service struct {
 	log               *logger.Logger
 	metrics           *metrics
 	handlers          map[string]schema.EventHandler
-	caCertPaths       []string
-	srvAddresses      []string
 	lastSuccessfulDNS map[string][]string
+	srvAddresses      []string
+	caCertPaths       []string
 	pollInterval      time.Duration
 	initInterval      time.Duration
 	initDuration      time.Duration
