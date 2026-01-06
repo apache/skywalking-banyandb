@@ -542,7 +542,6 @@ func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByT
 	if len(groupByTagsRefs) == 0 {
 		return dataPoints, nil
 	}
-
 	groupMap := make(map[uint64]*measurev1.DataPoint)
 	result := make([]*measurev1.DataPoint, 0)
 	for _, dp := range dataPoints {
