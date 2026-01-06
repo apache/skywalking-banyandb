@@ -17,12 +17,12 @@
 #
 
 NAME := fodc
-BINARIES := $(NAME)-agent
+BINARIES := $(NAME)-proxy
 
-IMG_NAME := skywalking-fodc-agent
+IMG_NAME := skywalking-fodc-proxy
 
 # Override SOURCE_DIR to match the actual Go module path structure
-SOURCE_DIR := fodc/agent
+SOURCE_DIR := fodc/proxy
 
 include ../../scripts/build/version.mk
 include ../../scripts/build/base.mk
