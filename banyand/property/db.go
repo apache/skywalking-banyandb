@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -120,7 +121,7 @@ func openDB(
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}
 	db.lock = lock
-	observability.MetricsCollector.Register(loc, db.collect)
+	obsservice.MetricsCollector.Register(loc, db.collect)
 	return db, nil
 }
 

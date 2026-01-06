@@ -18,6 +18,7 @@
 package observability
 
 import (
+	"errors"
 	"net/http"
 	"net/http/pprof"
 	"sync"
@@ -31,6 +32,8 @@ var (
 	_ run.Service = (*pprofService)(nil)
 	_ run.Config  = (*pprofService)(nil)
 )
+
+var errNoAddr = errors.New("no address")
 
 // NewProfService returns a pprof service.
 func NewProfService() run.Service {
