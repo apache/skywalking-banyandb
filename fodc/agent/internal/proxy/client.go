@@ -109,12 +109,12 @@ func (c *Client) StartConnManager(ctx context.Context) {
 func (c *Client) Connect(ctx context.Context) error {
 	resultCh := c.connManager.RequestConnect(ctx)
 	result := <-resultCh
-	if result.Error != nil {
-		return result.Error
+	if result.err != nil {
+		return result.err
 	}
 
 	c.streamsMu.Lock()
-	c.client = fodcv1.NewFODCServiceClient(result.Conn)
+	c.client = fodcv1.NewFODCServiceClient(result.conn)
 	// Reset disconnected state and recreate stopCh for reconnection
 	if c.disconnected {
 		c.disconnected = false
@@ -647,14 +647,14 @@ func (c *Client) reconnect(ctx context.Context) {
 	reconnectCh := c.connManager.RequestConnect(ctx)
 	reconnectResult := <-reconnectCh
 
-	if reconnectResult.Error != nil {
-		c.logger.Error().Err(reconnectResult.Error).Msg("Failed to reconnect to Proxy")
+	if reconnectResult.err != nil {
+		c.logger.Error().Err(reconnectResult.err).Msg("Failed to reconnect to Proxy")
 		return
 	}
 
-	if originalClient == nil && reconnectResult.Conn != nil {
+	if originalClient == nil && reconnectResult.conn != nil {
 		c.streamsMu.Lock()
-		c.client = fodcv1.NewFODCServiceClient(reconnectResult.Conn)
+		c.client = fodcv1.NewFODCServiceClient(reconnectResult.conn)
 		c.streamsMu.Unlock()
 	}
 

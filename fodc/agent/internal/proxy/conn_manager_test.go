@@ -52,8 +52,8 @@ func TestConnManager_EventChannel(t *testing.T) {
 	// Verify we can send to the channel
 	ctx := context.Background()
 	event := connEvent{
-		Type:    connEventDisconnect,
-		Context: ctx,
+		eventType: connEventDisconnect,
+		context:   ctx,
 	}
 
 	select {
@@ -103,10 +103,10 @@ func TestConnManager_RequestConnect_Success(t *testing.T) {
 	select {
 	case result := <-resultCh:
 		// grpc.NewClient succeeds, actual connection happens later
-		if result.Error != nil {
-			t.Logf("Connect error: %v", result.Error)
+		if result.err != nil {
+			t.Logf("Connect error: %v", result.err)
 		} else {
-			assert.NotNil(t, result.Conn)
+			assert.NotNil(t, result.conn)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for connect result")
@@ -136,8 +136,8 @@ func TestConnManager_RequestConnect_ContextCanceled(t *testing.T) {
 	case result := <-resultCh:
 		// The RequestConnect method checks ctx.Done() in the select statement
 		// If the context is already canceled, it should return an error
-		if result.Error != nil {
-			assert.Equal(t, context.Canceled, result.Error)
+		if result.err != nil {
+			assert.Equal(t, context.Canceled, result.err)
 		} else {
 			// If connection succeeded before context check, that's also valid
 			t.Logf("Connection succeeded despite canceled context")
@@ -158,8 +158,8 @@ func TestConnManager_RequestReconnect_WhenDisconnected(t *testing.T) {
 
 	// Manually set disconnected flag
 	disconnectEvent := connEvent{
-		Type:    connEventDisconnect,
-		Context: ctx,
+		eventType: connEventDisconnect,
+		context:   ctx,
 	}
 	cm.eventChannel() <- disconnectEvent
 
@@ -176,7 +176,7 @@ func TestConnManager_RequestReconnect_WhenDisconnected(t *testing.T) {
 	case result := <-resultCh:
 		// The new implementation attempts to reconnect even when disconnected
 		// It should succeed or fail based on actual connection, not state
-		t.Logf("Reconnect result: error=%v", result.Error)
+		t.Logf("Reconnect result: error=%v", result.err)
 	case <-time.After(15 * time.Second):
 		t.Fatal("Timeout waiting for reconnect result")
 	}
@@ -195,16 +195,16 @@ func TestConnManager_DisconnectEvent(t *testing.T) {
 	// Send disconnect event
 	resultCh := make(chan connResult, 1)
 	event := connEvent{
-		Type:     connEventDisconnect,
-		Context:  ctx,
-		ResultCh: resultCh,
+		eventType: connEventDisconnect,
+		context:   ctx,
+		resultCh:  resultCh,
 	}
 
 	cm.eventChannel() <- event
 
 	select {
 	case result := <-resultCh:
-		assert.NoError(t, result.Error)
+		assert.NoError(t, result.err)
 		// Give some time for state update
 		time.Sleep(50 * time.Millisecond)
 		assert.Equal(t, connStateDisconnected, cm.getState())
@@ -234,13 +234,13 @@ func TestConnManager_MultipleConnectRequests(t *testing.T) {
 	result2 := <-resultCh2
 
 	// One should succeed or indicate connection in progress
-	t.Logf("Result1 error: %v", result1.Error)
-	t.Logf("Result2 error: %v", result2.Error)
+	t.Logf("Result1 error: %v", result1.err)
+	t.Logf("Result2 error: %v", result2.err)
 
 	// At least one should complete successfully or report in progress
-	hasSuccess := result1.Error == nil || result2.Error == nil
-	hasInProgress := (result1.Error != nil && result1.Error.Error() == "connection already in progress") ||
-		(result2.Error != nil && result2.Error.Error() == "connection already in progress")
+	hasSuccess := result1.err == nil || result2.err == nil
+	hasInProgress := (result1.err != nil && result1.err.Error() == "connection already in progress") ||
+		(result2.err != nil && result2.err.Error() == "connection already in progress")
 	assert.True(t, hasSuccess || hasInProgress, "Expected at least one success or 'in progress' message")
 }
 
@@ -256,9 +256,9 @@ func TestConnManager_StopWithPendingEvents(t *testing.T) {
 	// Fill the event channel
 	for i := 0; i < 5; i++ {
 		event := connEvent{
-			Type:     connEventConnect,
-			Context:  ctx,
-			ResultCh: make(chan connResult, 1),
+			eventType: connEventConnect,
+			context:   ctx,
+			resultCh:  make(chan connResult, 1),
 		}
 		select {
 		case cm.eventChannel() <- event:
@@ -311,7 +311,7 @@ func TestConnManager_ReconnectWithBackoff(t *testing.T) {
 	case result := <-resultCh:
 		duration := time.Since(start)
 		// Connection should succeed or fail, but we got a result within the timeout.
-		t.Logf("Reconnect result error: %v, duration: %v", result.Error, duration)
+		t.Logf("Reconnect result error: %v, duration: %v", result.err, duration)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for reconnect result")
 	}
@@ -336,7 +336,7 @@ func TestConnManager_ImmediateReconnect(t *testing.T) {
 		duration := time.Since(start)
 		// Immediate connect should not wait for backoff
 		assert.Less(t, duration, 500*time.Millisecond)
-		t.Logf("Immediate connect result error: %v, duration: %v", result.Error, duration)
+		t.Logf("Immediate connect result error: %v, duration: %v", result.err, duration)
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for immediate connect result")
 	}
@@ -360,7 +360,7 @@ func TestConnManager_StateTransitions(t *testing.T) {
 
 	// After connect attempt
 	time.Sleep(50 * time.Millisecond)
-	if result.Error != nil {
+	if result.err != nil {
 		assert.Equal(t, connStateDisconnected, cm.getState())
 	} else {
 		assert.Equal(t, connStateConnected, cm.getState())
@@ -494,12 +494,12 @@ func TestConnManager_MultipleReconnectRequests(t *testing.T) {
 	result2 := <-resultCh2
 
 	// At least one should complete
-	t.Logf("Result1 error: %v", result1.Error)
-	t.Logf("Result2 error: %v", result2.Error)
+	t.Logf("Result1 error: %v", result1.err)
+	t.Logf("Result2 error: %v", result2.err)
 
 	// Check that we got both responses
-	assert.True(t, result1.Error != nil || result1.Conn != nil)
-	assert.True(t, result2.Error != nil || result2.Conn != nil)
+	assert.True(t, result1.err != nil || result1.conn != nil)
+	assert.True(t, result2.err != nil || result2.conn != nil)
 }
 
 func TestConnManager_FullEventChannelConnect(t *testing.T) {
@@ -512,8 +512,8 @@ func TestConnManager_FullEventChannelConnect(t *testing.T) {
 	// Fill the event channel (capacity is 10)
 	for i := 0; i < 10; i++ {
 		cm.eventChannel() <- connEvent{
-			Type:    connEventDisconnect,
-			Context: ctx,
+			eventType: connEventDisconnect,
+			context:   ctx,
 		}
 	}
 
@@ -522,8 +522,8 @@ func TestConnManager_FullEventChannelConnect(t *testing.T) {
 
 	select {
 	case result := <-resultCh:
-		require.NotNil(t, result.Error)
-		assert.Contains(t, result.Error.Error(), "event channel is full")
+		require.NotNil(t, result.err)
+		assert.Contains(t, result.err.Error(), "event channel is full")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Expected immediate error for full channel")
 	}
@@ -539,8 +539,8 @@ func TestConnManager_FullEventChannelReconnect(t *testing.T) {
 	// Fill the event channel (capacity is 10)
 	for i := 0; i < 10; i++ {
 		cm.eventChannel() <- connEvent{
-			Type:    connEventDisconnect,
-			Context: ctx,
+			eventType: connEventDisconnect,
+			context:   ctx,
 		}
 	}
 
@@ -549,8 +549,8 @@ func TestConnManager_FullEventChannelReconnect(t *testing.T) {
 
 	select {
 	case result := <-resultCh:
-		require.NotNil(t, result.Error)
-		assert.Contains(t, result.Error.Error(), "event channel is full")
+		require.NotNil(t, result.err)
+		assert.Contains(t, result.err.Error(), "event channel is full")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Expected immediate error for full channel")
 	}

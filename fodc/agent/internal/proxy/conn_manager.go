@@ -47,15 +47,15 @@ const (
 
 // connEvent represents a connection event sent to the manager.
 type connEvent struct {
-	resultCh chan<- connResult
-	context  context.Context
-	type     connEventType
+	resultCh  chan<- connResult
+	context   context.Context
+	eventType connEventType
 }
 
 // connResult represents the result of a connection operation.
 type connResult struct {
-	conn  *grpc.ClientConn
-	err error
+	conn *grpc.ClientConn
+	err  error
 }
 
 // connState represents the state of the connection.
@@ -130,17 +130,17 @@ func (cm *connManager) stop() {
 func (cm *connManager) RequestConnect(ctx context.Context) <-chan connResult {
 	resultCh := make(chan connResult, 1)
 	event := connEvent{
-		Type:     connEventConnect,
-		Context:  ctx,
-		ResultCh: resultCh,
+		eventType: connEventConnect,
+		context:   ctx,
+		resultCh:  resultCh,
 	}
 	select {
 	case cm.eventCh <- event:
 	case <-ctx.Done():
-		resultCh <- connResult{Error: ctx.Err()}
+		resultCh <- connResult{err: ctx.Err()}
 		close(resultCh)
 	default:
-		resultCh <- connResult{Error: fmt.Errorf("connection manager event channel is full")}
+		resultCh <- connResult{err: fmt.Errorf("connection manager event channel is full")}
 		close(resultCh)
 	}
 	return resultCh
@@ -165,16 +165,16 @@ func (cm *connManager) run(ctx context.Context) {
 
 // handleEvent runs in the single goroutine and processes a connection event.
 func (cm *connManager) handleEvent(ctx context.Context, event connEvent) {
-	switch event.Type {
+	switch event.eventType {
 	case connEventDisconnect:
 		cm.stateMu.Lock()
 		cm.state = connStateDisconnected
 		cm.stateMu.Unlock()
 
 		cm.cleanupConnection()
-		if event.ResultCh != nil {
-			event.ResultCh <- connResult{Error: nil}
-			close(event.ResultCh)
+		if event.resultCh != nil {
+			event.resultCh <- connResult{err: nil}
+			close(event.resultCh)
 		}
 	case connEventConnect:
 		cm.stateMu.RLock()
@@ -190,9 +190,9 @@ func (cm *connManager) handleEvent(ctx context.Context, event connEvent) {
 
 			if heartbeatErr == nil {
 				cm.logger.Debug().Msg("Connection is healthy, reusing existing connection")
-				if event.ResultCh != nil {
-					event.ResultCh <- connResult{Conn: currentConn}
-					close(event.ResultCh)
+				if event.resultCh != nil {
+					event.resultCh <- connResult{conn: currentConn}
+					close(event.resultCh)
 				}
 				return
 			}
@@ -205,10 +205,10 @@ func (cm *connManager) handleEvent(ctx context.Context, event connEvent) {
 
 		connCtx, connCancel := context.WithCancel(ctx)
 		defer connCancel()
-		if event.Context != nil {
+		if event.context != nil {
 			go func() {
 				select {
-				case <-event.Context.Done():
+				case <-event.context.Done():
 					connCancel()
 				case <-connCtx.Done():
 				}
@@ -218,17 +218,17 @@ func (cm *connManager) handleEvent(ctx context.Context, event connEvent) {
 		result := cm.doConnect(connCtx)
 
 		cm.stateMu.Lock()
-		if result.Error == nil {
+		if result.err == nil {
 			cm.state = connStateConnected
-			cm.currentConn = result.Conn
+			cm.currentConn = result.conn
 		} else {
 			cm.state = connStateDisconnected
 		}
 		cm.stateMu.Unlock()
 
-		if event.ResultCh != nil {
-			event.ResultCh <- result
-			close(event.ResultCh)
+		if event.resultCh != nil {
+			event.resultCh <- result
+			close(event.resultCh)
 		}
 	}
 }
@@ -242,16 +242,16 @@ func (cm *connManager) doConnect(ctx context.Context) connResult {
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return connResult{Error: fmt.Errorf("context canceled after %d attempts: %w", attempt-1, ctx.Err())}
+				return connResult{err: fmt.Errorf("context canceled after %d attempts: %w", attempt-1, ctx.Err())}
 			}
-			return connResult{Error: ctx.Err()}
+			return connResult{err: ctx.Err()}
 		default:
 		}
 
 		conn, dialErr := grpc.NewClient(cm.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if dialErr == nil {
 			cm.logger.Info().Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).Msg("Connected to FODC Proxy")
-			return connResult{Conn: conn}
+			return connResult{conn: conn}
 		}
 
 		cm.logger.Error().Err(dialErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).
@@ -259,7 +259,7 @@ func (cm *connManager) doConnect(ctx context.Context) connResult {
 		lastErr = fmt.Errorf("failed to create proxy client: %w", dialErr)
 
 		if attempt >= connManagerMaxRetries {
-			return connResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", attempt, lastErr)}
+			return connResult{err: fmt.Errorf("failed to connect after %d attempts: %w", attempt, lastErr)}
 		}
 
 		cm.logger.Warn().
@@ -276,15 +276,15 @@ func (cm *connManager) doConnect(ctx context.Context) connResult {
 
 		select {
 		case <-ctx.Done():
-			return connResult{Error: ctx.Err()}
+			return connResult{err: ctx.Err()}
 		case <-cm.closer.CloseNotify():
-			return connResult{Error: fmt.Errorf("connection manager stopped")}
+			return connResult{err: fmt.Errorf("connection manager stopped")}
 		case <-time.After(retryInterval):
 		}
 	}
 	cm.logger.Error().Err(lastErr).Str("proxy_addr", cm.proxyAddr).Int("attempt", connManagerMaxRetries).
 		Msg("Failed to connect to FODC Proxy")
-	return connResult{Error: fmt.Errorf("failed to connect after %d attempts: %w", connManagerMaxRetries, lastErr)}
+	return connResult{err: fmt.Errorf("failed to connect after %d attempts: %w", connManagerMaxRetries, lastErr)}
 }
 
 // cleanupConnection closes the current connection and cleans up resources.
