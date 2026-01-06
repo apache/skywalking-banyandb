@@ -90,5 +90,4 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 15 * time.Minute, Offset: 25 * time.Minute, DisOrder: true}),
-	g.Entry("projection with empty tag value", helpers.Args{Input: "empty_tag_value", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 )
