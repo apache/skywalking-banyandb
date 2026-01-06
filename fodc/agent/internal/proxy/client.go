@@ -618,6 +618,9 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 // reconnect uses a buffered channel to ensure only one reconnect goroutine runs at a time.
 func (c *Client) reconnect(ctx context.Context) {
 	select {
+	case <-ctx.Done():
+		c.logger.Debug().Msg("Context canceled, skipping reconnection...")
+		return
 	case c.reconnectCh <- struct{}{}:
 		// Acquired the slot, proceed with reconnection
 	default:
@@ -661,7 +664,13 @@ func (c *Client) reconnect(ctx context.Context) {
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
-	connResult := <-connResultCh
+	var connResult connResult
+	select {
+	case <-ctx.Done():
+		c.logger.Warn().Msg("Context canceled during reconnection")
+		return
+	case connResult = <-connResultCh:
+	}
 
 	if connResult.err != nil {
 		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
