@@ -60,6 +60,26 @@ func (ac *agentConnection) getLastActivity() time.Time {
 	return ac.lastActivity
 }
 
+// setMetricsStream sets the metrics stream.
+func (ac *agentConnection) setMetricsStream(stream fodcv1.FODCService_StreamMetricsServer) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.metricsStream = stream
+}
+
+// sendMetricsRequest sends a metrics request to the agent via the metrics stream.
+func (ac *agentConnection) sendMetricsRequest(resp *fodcv1.StreamMetricsResponse) error {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if ac.metricsStream == nil {
+		return fmt.Errorf("metrics stream not established for agent ID: %s", ac.agentID)
+	}
+	if sendErr := ac.metricsStream.Send(resp); sendErr != nil {
+		return fmt.Errorf("failed to send metrics request: %w", sendErr)
+	}
+	return nil
+}
+
 // FODCService implements the FODC gRPC service.
 type FODCService struct {
 	fodcv1.UnimplementedFODCServiceServer
@@ -203,7 +223,7 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	s.connectionsMu.Lock()
 	existingConn, exists := s.connections[agentID]
 	if exists {
-		existingConn.metricsStream = stream
+		existingConn.setMetricsStream(stream)
 		existingConn.updateActivity()
 	} else {
 		agentConn := &agentConnection{
@@ -259,15 +279,11 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 // RequestMetrics requests metrics from an agent via the metrics stream.
 func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTime, endTime *time.Time) error {
 	s.connectionsMu.RLock()
-	defer s.connectionsMu.RUnlock()
 	agentConn, exists := s.connections[agentID]
+	s.connectionsMu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
-	}
-
-	if agentConn.metricsStream == nil {
-		return fmt.Errorf("metrics stream not established for agent ID: %s", agentID)
 	}
 
 	resp := &fodcv1.StreamMetricsResponse{}
@@ -284,11 +300,7 @@ func (s *FODCService) RequestMetrics(_ context.Context, agentID string, startTim
 		}
 	}
 
-	if sendErr := agentConn.metricsStream.Send(resp); sendErr != nil {
-		return fmt.Errorf("failed to send metrics request: %w", sendErr)
-	}
-
-	return nil
+	return agentConn.sendMetricsRequest(resp)
 }
 
 // cleanupConnection cleans up a connection and unregisters the agent if needed.
