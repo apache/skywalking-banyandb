@@ -51,6 +51,7 @@ type Client struct {
 	flightRecorder     *flightrecorder.FlightRecorder
 	logger             *logger.Logger
 	stopCh             chan struct{}
+	reconnectCh        chan struct{}
 	labels             map[string]string
 	client             fodcv1.FODCServiceClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
@@ -94,6 +95,7 @@ func NewClient(
 		flightRecorder:    flightRecorder,
 		logger:            logger,
 		stopCh:            make(chan struct{}),
+		reconnectCh:       make(chan struct{}, 1),
 	}
 
 	connMgr.setHeartbeatChecker(client.SendHeartbeat)
@@ -629,7 +631,20 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 }
 
 // reconnect handles automatic reconnection when streams break.
+// Uses a buffered channel to ensure only one reconnect goroutine runs at a time.
 func (c *Client) reconnect(ctx context.Context) {
+	select {
+	case c.reconnectCh <- struct{}{}:
+		// Acquired the slot, proceed with reconnection
+	default:
+		c.logger.Debug().Msg("Reconnection already in progress, skipping...")
+		return
+	}
+
+	defer func() {
+		<-c.reconnectCh
+	}()
+
 	c.streamsMu.Lock()
 	if c.disconnected {
 		c.streamsMu.Unlock()
@@ -653,17 +668,17 @@ func (c *Client) reconnect(ctx context.Context) {
 	}
 	c.streamsMu.Unlock()
 
-	reconnectCh := c.connManager.RequestConnect(ctx)
-	reconnectResult := <-reconnectCh
+	connResultCh := c.connManager.RequestConnect(ctx)
+	connResult := <-connResultCh
 
-	if reconnectResult.err != nil {
-		c.logger.Error().Err(reconnectResult.err).Msg("Failed to reconnect to Proxy")
+	if connResult.err != nil {
+		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
 		return
 	}
 
-	if reconnectResult.conn != nil {
+	if connResult.conn != nil {
 		c.streamsMu.Lock()
-		c.client = fodcv1.NewFODCServiceClient(reconnectResult.conn)
+		c.client = fodcv1.NewFODCServiceClient(connResult.conn)
 		c.streamsMu.Unlock()
 	}
 
