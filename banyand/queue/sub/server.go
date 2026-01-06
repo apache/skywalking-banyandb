@@ -47,6 +47,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -76,9 +77,11 @@ type server struct {
 	streamv1.UnimplementedStreamServiceServer
 	databasev1.UnimplementedSnapshotServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
+	databasev1.UnimplementedClusterStateServiceServer
 	creds               credentials.TransportCredentials
 	tlsReloader         *pkgtls.Reloader
 	omr                 observability.MetricsRegistry
+	schemaRegistry      metadata.Repo
 	metrics             *metrics
 	ser                 *grpclib.Server
 	listeners           map[bus.Topic][]bus.MessageListener
@@ -88,6 +91,7 @@ type server struct {
 	httpSrv             *http.Server
 	curNode             *databasev1.Node
 	clientCloser        context.CancelFunc
+	clusterStateService databasev1.ClusterStateServiceServer
 	httpAddr            string
 	addr                string
 	host                string
@@ -107,17 +111,18 @@ type server struct {
 }
 
 // NewServer returns a new gRPC server.
-func NewServer(omr observability.MetricsRegistry) queue.Server {
-	return NewServerWithPorts(omr, "", 17912, 17913)
+func NewServer(omr observability.MetricsRegistry, schemaRegistry metadata.Repo) queue.Server {
+	return NewServerWithPorts(omr, schemaRegistry, "", 17912, 17913)
 }
 
 // NewServerWithPorts returns a new gRPC server with specified ports.
-func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
-	return &server{
+func NewServerWithPorts(omr observability.MetricsRegistry, schemaRegistry metadata.Repo, flagNamePrefix string, port, httpPort uint32) queue.Server {
+	srv := &server{
 		listeners:           make(map[bus.Topic][]bus.MessageListener),
 		topicMap:            make(map[string]bus.Topic),
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
 		omr:                 omr,
+		schemaRegistry:      schemaRegistry,
 		maxRecvMsgSize:      defaultRecvSize,
 		flagNamePrefix:      flagNamePrefix,
 		port:                port,
@@ -128,6 +133,7 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		chunkBufferTimeout:    5 * time.Second,
 		maxChunkGapSize:       5,
 	}
+	return srv
 }
 
 func (s *server) PreRun(ctx context.Context) error {
@@ -283,6 +289,7 @@ func (s *server) Serve() run.StopNotify {
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
+	databasev1.RegisterClusterStateServiceServer(s.ser, s)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
@@ -307,6 +314,13 @@ func (s *server) Serve() run.StopNotify {
 		s.log.Error().Err(err).Msg("Failed to register snapshot service")
 		close(stopCh)
 		return stopCh
+	}
+	if s.clusterStateService != nil {
+		if err := databasev1.RegisterClusterStateServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
+			s.log.Error().Err(err).Msg("Failed to register cluster state service")
+			close(stopCh)
+			return stopCh
+		}
 	}
 	mux := chi.NewRouter()
 	mux.Mount("/api", http.StripPrefix("/api", gwMux))

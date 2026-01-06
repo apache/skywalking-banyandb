@@ -51,7 +51,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, metricsPipeline, "data", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	pipeline := sub.NewServer(metricSvc)
+	pipeline := sub.NewServer(metricSvc, metaSvc)
 	propertyStreamPipeline := queue.Local()
 	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
 	if err != nil {

@@ -62,7 +62,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
+	internalPipeline := sub.NewServerWithPorts(metricSvc, metaSvc, "liaison-server", 18912, 18913)
 	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure liaison service")

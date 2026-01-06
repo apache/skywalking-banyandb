@@ -165,6 +165,8 @@
     - [TagType](#banyandb-database-v1-TagType)
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
+    - [GetClusterStateRequest](#banyandb-database-v1-GetClusterStateRequest)
+    - [GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse)
     - [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest)
     - [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
@@ -268,6 +270,7 @@
     - [TraceRegistryServiceUpdateRequest](#banyandb-database-v1-TraceRegistryServiceUpdateRequest)
     - [TraceRegistryServiceUpdateResponse](#banyandb-database-v1-TraceRegistryServiceUpdateResponse)
   
+    - [ClusterStateService](#banyandb-database-v1-ClusterStateService)
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
@@ -2636,6 +2639,31 @@ Type determine the index structure under the hood
 
 
 
+<a name="banyandb-database-v1-GetClusterStateRequest"></a>
+
+### GetClusterStateRequest
+
+
+
+
+
+
+
+<a name="banyandb-database-v1-GetClusterStateResponse"></a>
+
+### GetClusterStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [Node](#banyandb-database-v1-Node) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-GetCurrentNodeRequest"></a>
 
 ### GetCurrentNodeRequest
@@ -4130,6 +4158,16 @@ Type determine the index structure under the hood
  
 
  
+
+
+<a name="banyandb-database-v1-ClusterStateService"></a>
+
+### ClusterStateService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetClusterState | [GetClusterStateRequest](#banyandb-database-v1-GetClusterStateRequest) | [GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse) |  |
 
 
 <a name="banyandb-database-v1-GroupRegistryService"></a>

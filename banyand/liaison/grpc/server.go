@@ -88,6 +88,7 @@ type NodeRegistries struct {
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
+	databasev1.UnimplementedClusterStateServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
 	protector  protector.Memory
@@ -422,6 +423,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
 	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
+	databasev1.RegisterClusterStateServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
@@ -536,6 +538,15 @@ func (s *server) calculateGrpcBufferSizes() (int32, int32) {
 	}
 
 	return connWindowSize, streamWindowSize
+}
+
+// GetClusterState returns the current state of all nodes in the cluster.
+func (s *server) GetClusterState(ctx context.Context, _ *databasev1.GetClusterStateRequest) (*databasev1.GetClusterStateResponse, error) {
+	nodes, err := s.schemaRepo.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
+	if err != nil {
+		return nil, err
+	}
+	return &databasev1.GetClusterStateResponse{Nodes: nodes}, nil
 }
 
 func (s *server) GracefulStop() {

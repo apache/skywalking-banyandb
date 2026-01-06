@@ -78,7 +78,7 @@ func setupChunkedSyncTestWithChunkSize(t *testing.T, testName string, chunkSize 
 	testGroup := run.NewGroup(testName)
 	closer, deferFn := run.NewTester(testName + "-closer")
 
-	server := sub.NewServerWithPorts(omr, testName, grpcPort, httpPort)
+	server := sub.NewServerWithPorts(omr, nil, testName, grpcPort, httpPort)
 
 	mockHandler := NewMockChunkedSyncHandler()
 

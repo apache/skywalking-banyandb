@@ -684,3 +684,15 @@ message GetCurrentNodeResponse {
 service NodeQueryService {
   rpc GetCurrentNode(GetCurrentNodeRequest) returns (GetCurrentNodeResponse) {}
 }
+
+message GetClusterStateRequest {}
+
+message GetClusterStateResponse {
+  repeated banyandb.database.v1.Node nodes = 1;
+}
+
+service ClusterStateService {
+  rpc GetClusterState(GetClusterStateRequest) returns (GetClusterStateResponse) {
+    option (google.api.http) = {get: "/v1/cluster/state"};
+  }
+}
