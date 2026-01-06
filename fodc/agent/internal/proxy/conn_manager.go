@@ -47,9 +47,9 @@ const (
 
 // connEvent represents a connection event sent to the manager.
 type connEvent struct {
-	ResultCh chan<- connResult
-	Context  context.Context
-	Type     connEventType
+	resultCh chan<- connResult
+	context  context.Context
+	type     connEventType
 }
 
 // connResult represents the result of a connection operation.
