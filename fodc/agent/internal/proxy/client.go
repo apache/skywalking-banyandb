@@ -114,9 +114,19 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.streamsMu.Lock()
+	wasDisconnected := c.disconnected
+	if wasDisconnected {
+		close(c.stopCh)
+	}
+	c.streamsMu.Unlock()
+
+	if wasDisconnected {
+		c.heartbeatWg.Wait()
+	}
+
+	c.streamsMu.Lock()
 	c.client = fodcv1.NewFODCServiceClient(result.conn)
-	// Reset disconnected state and recreate stopCh for reconnection
-	if c.disconnected {
+	if wasDisconnected {
 		c.disconnected = false
 		c.stopCh = make(chan struct{})
 	}
@@ -626,7 +636,6 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.logger.Warn().Msg("Already disconnected intentionally, skipping reconnection...")
 		return
 	}
-	originalClient := c.client
 
 	c.logger.Info().Msg("Starting reconnection process...")
 
@@ -652,7 +661,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		return
 	}
 
-	if originalClient == nil && reconnectResult.conn != nil {
+	if reconnectResult.conn != nil {
 		c.streamsMu.Lock()
 		c.client = fodcv1.NewFODCServiceClient(reconnectResult.conn)
 		c.streamsMu.Unlock()
