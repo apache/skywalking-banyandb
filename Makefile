@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl mcp fodc
+PROJECTS := ui banyand bydbctl mcp fodc/agent
 
 TEST_CI_OPTS ?=
 
@@ -175,11 +175,11 @@ license-dep: default ## Fix license header issues
 ##@ Docker targets
 
 docker.build: TARGET=docker
-docker.build: PROJECTS:= banyand bydbctl mcp fodc
+docker.build: PROJECTS:= banyand bydbctl mcp fodc/agent
 docker.build: default ## Build docker images
 
 docker.push: TARGET=docker.push
-docker.push: PROJECTS:= banyand bydbctl mcp fodc
+docker.push: PROJECTS:= banyand bydbctl mcp fodc/agent
 docker.push: default ## Push docker images
 
 default:

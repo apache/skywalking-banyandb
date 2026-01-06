@@ -640,7 +640,7 @@ BSD-3-Clause licenses
 ========================================================================
 
     fast-uri 3.1.0 BSD-3-Clause
-    qs 6.14.0 BSD-3-Clause
+    qs 6.14.1 BSD-3-Clause
 
 ========================================================================
 ISC licenses
@@ -659,7 +659,7 @@ MIT licenses
 ========================================================================
 
     @modelcontextprotocol/sdk 1.24.1 MIT
-    @types/node 20.19.25 MIT
+    @types/node 24.10.4 MIT
     @types/node-fetch 2.6.13 MIT
     abort-controller 3.0.0 MIT
     accepts 2.0.0 MIT
@@ -756,7 +756,7 @@ MIT licenses
     toidentifier 1.0.1 MIT
     tr46 0.0.3 MIT
     type-is 2.0.1 MIT
-    undici-types 6.21.0 MIT
+    undici-types 7.16.0 MIT
     unpipe 1.0.0 MIT
     vary 1.1.2 MIT
     web-streams-polyfill 4.0.0-beta.3 MIT

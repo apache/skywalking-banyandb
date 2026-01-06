@@ -16,19 +16,22 @@
 # under the License.
 #
 
-NAME := fodc
+NAME := fodc-agent
 BINARIES := $(NAME)-cli
 
-IMG_NAME := skywalking-fodc
+IMG_NAME := skywalking-fodc-agent
 
-include ../scripts/build/version.mk
-include ../scripts/build/base.mk
-include ../scripts/build/generate_go.mk
-include ../scripts/build/build.mk
-include ../scripts/build/docker.mk
-include ../scripts/build/test.mk
-include ../scripts/build/lint.mk
-include ../scripts/build/vendor.mk
-include ../scripts/build/help.mk
+# Override SOURCE_DIR to match the actual Go module path structure
+SOURCE_DIR := fodc/agent
+
+include ../../scripts/build/version.mk
+include ../../scripts/build/base.mk
+include ../../scripts/build/generate_go.mk
+include ../../scripts/build/build.mk
+include ../../scripts/build/docker.mk
+include ../../scripts/build/test.mk
+include ../../scripts/build/lint.mk
+include ../../scripts/build/vendor.mk
+include ../../scripts/build/help.mk
 
 prepare-build: generate
