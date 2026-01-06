@@ -42,13 +42,13 @@ type PostProcessor interface {
 func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
-		return &postNonAggregationProcessor{
+		return &topNPostAggregationProcessor{
 			topN:      topN,
 			sort:      sort,
 			timelines: make(map[uint64]*topNTimelineItem),
 		}
 	}
-	aggregator := &postNonAggregationProcessor{
+	aggregator := &topNPostAggregationProcessor{
 		topN:     topN,
 		sort:     sort,
 		aggrFunc: aggrFunc,
@@ -59,34 +59,34 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 	return aggregator
 }
 
-func (aggr *postNonAggregationProcessor) Len() int {
+func (aggr *topNPostAggregationProcessor) Len() int {
 	return len(aggr.items)
 }
 
 // Less reports whether min/max heap has to be built.
 // For DESC, a min heap has to be built,
 // while for ASC, a max heap has to be built.
-func (aggr *postNonAggregationProcessor) Less(i, j int) bool {
+func (aggr *topNPostAggregationProcessor) Less(i, j int) bool {
 	if aggr.sort == modelv1.Sort_SORT_DESC {
 		return aggr.items[i].int64Func.Val() < aggr.items[j].int64Func.Val()
 	}
 	return aggr.items[i].int64Func.Val() > aggr.items[j].int64Func.Val()
 }
 
-func (aggr *postNonAggregationProcessor) Swap(i, j int) {
+func (aggr *topNPostAggregationProcessor) Swap(i, j int) {
 	aggr.items[i], aggr.items[j] = aggr.items[j], aggr.items[i]
 	aggr.items[i].index = i
 	aggr.items[j].index = j
 }
 
-func (aggr *postNonAggregationProcessor) Push(x any) {
+func (aggr *topNPostAggregationProcessor) Push(x any) {
 	n := len(aggr.items)
 	item := x.(*topNAggregatorItem)
 	item.index = n
 	aggr.items = append(aggr.items, item)
 }
 
-func (aggr *postNonAggregationProcessor) Pop() any {
+func (aggr *topNPostAggregationProcessor) Pop() any {
 	old := aggr.items
 	n := len(old)
 	item := old[n-1]
@@ -96,7 +96,7 @@ func (aggr *postNonAggregationProcessor) Pop() any {
 	return item
 }
 
-func (aggr *postNonAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
+func (aggr *topNPostAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
 
 	if lowest := aggr.items[0]; lowest != nil {
 		if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val() {
@@ -111,17 +111,6 @@ func (aggr *postNonAggregationProcessor) tryEnqueue(key string, item *topNAggreg
 			heap.Fix(aggr, 0)
 		}
 	}
-}
-
-func (n *aggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
-	tags := make([]*modelv1.Tag, len(n.values))
-	for i := 0; i < len(tags); i++ {
-		tags[i] = &modelv1.Tag{
-			Key:   tagNames[i],
-			Value: n.values[i],
-		}
-	}
-	return tags
 }
 
 var _ flow.Element = (*topNAggregatorItem)(nil)
@@ -159,7 +148,7 @@ type topNTimelineItem struct {
 	items map[string]*topNAggregatorItem
 }
 
-type postNonAggregationProcessor struct {
+type topNPostAggregationProcessor struct {
 	cache     map[string]*topNAggregatorItem
 	timelines map[uint64]*topNTimelineItem
 	topN      int32
@@ -168,13 +157,13 @@ type postNonAggregationProcessor struct {
 	items     []*topNAggregatorItem
 }
 
-func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error {
-	timeline, ok := naggr.timelines[timestampMillis]
+func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error {
+	timeline, ok := taggr.timelines[timestampMillis]
 	key := entityValues.String()
 	if !ok {
 		timeline := &topNTimelineItem{
 			queue: flow.NewPriorityQueue(func(a, b interface{}) int {
-				if naggr.sort == modelv1.Sort_SORT_DESC {
+				if taggr.sort == modelv1.Sort_SORT_DESC {
 					if a.(*topNAggregatorItem).val < b.(*topNAggregatorItem).val {
 						return -1
 					} else if a.(*topNAggregatorItem).val == b.(*topNAggregatorItem).val {
@@ -201,7 +190,7 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 
 		timeline.items[key] = newItem
 		heap.Push(timeline.queue, newItem)
-		naggr.timelines[timestampMillis] = timeline
+		taggr.timelines[timestampMillis] = timeline
 		return nil
 	}
 
@@ -223,7 +212,7 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 		version: version,
 	}
 
-	if timeline.queue.Len() < int(naggr.topN) {
+	if timeline.queue.Len() < int(taggr.topN) {
 		heap.Push(timeline.queue, newItem)
 		timeline.items[key] = newItem
 		return nil
@@ -233,8 +222,8 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 		lowestItem := lowest.(*topNAggregatorItem)
 
 		shouldReplace :=
-			(naggr.sort == modelv1.Sort_SORT_DESC && lowestItem.val < val) ||
-				(naggr.sort != modelv1.Sort_SORT_DESC && lowestItem.val > val)
+			(taggr.sort == modelv1.Sort_SORT_DESC && lowestItem.val < val) ||
+				(taggr.sort != modelv1.Sort_SORT_DESC && lowestItem.val > val)
 
 		if shouldReplace {
 			delete(timeline.items, lowestItem.key)
@@ -246,80 +235,88 @@ func (naggr *postNonAggregationProcessor) Put(entityValues pbv1.EntityValues, va
 	return nil
 }
 
-func (naggr *postNonAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
+func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
 
 	var result []*topNAggregatorItem
 
-	for _, timeline := range naggr.timelines {
-		for _, nonAggItem := range timeline.items {
-			result = append(result, nonAggItem)
-		}
-	}
-	clear(naggr.timelines)
+	if taggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 
-	if naggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-		return result, nil
-	}
-
-	for _, item := range result {
-		if exist, found := naggr.cache[item.key]; found {
-			exist.int64Func.In(item.val)
-			continue
-		}
-
-		aggrFunc, err := aggregation.NewFunc[int64](naggr.aggrFunc)
-		if err != nil {
-			return nil, err
-		}
-
-		item.int64Func = aggrFunc
-		item.int64Func.In(item.val)
-
-		if naggr.Len() < int(naggr.topN) {
-			naggr.cache[item.key] = item
-			heap.Push(naggr, item)
-		} else {
-			naggr.tryEnqueue(item.key, item)
-		}
-
-	}
-
-	aggregationItems := make([]*topNAggregatorItem, 0, naggr.Len())
-	for naggr.Len() > 0 {
-		item := heap.Pop(naggr).(*topNAggregatorItem)
-		aggregationItems = append(aggregationItems, item)
-	}
-	return aggregationItems, nil
-}
-
-func (naggr *postNonAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
-
-	if naggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-		topNAggregatorItems, err := naggr.Flush()
-		if err != nil {
-			return []*measurev1.TopNList{}
-		}
-		items := make([]*measurev1.TopNList_Item, len(topNAggregatorItems))
-		for i, item := range topNAggregatorItems {
-			items[i] = &measurev1.TopNList_Item{
-				Entity: item.GetTags(tagNames),
-				Value: &modelv1.FieldValue{
-					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{Value: item.int64Func.Val()},
-					},
-				},
+		for _, timeline := range taggr.timelines {
+			for _, nonAggItem := range timeline.items {
+				result = append(result, nonAggItem)
 			}
 		}
-		return []*measurev1.TopNList{
-			{
-				Timestamp: timestamppb.Now(),
-				Items:     items,
+		clear(taggr.timelines)
+	} else {
+		for _, timeline := range taggr.timelines {
+			for _, item := range timeline.items {
+				if exist, found := taggr.cache[item.key]; found {
+					exist.int64Func.In(item.val)
+					continue
+				}
+
+				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc)
+				if err != nil {
+					return nil, err
+				}
+
+				item.int64Func = aggrFunc
+				item.int64Func.In(item.val)
+
+				if taggr.Len() < int(taggr.topN) {
+					taggr.cache[item.key] = item
+					heap.Push(taggr, item)
+				} else {
+					taggr.tryEnqueue(item.key, item)
+				}
+			}
+		}
+		result = make([]*topNAggregatorItem, 0, taggr.Len())
+		for taggr.Len() > 0 {
+			item := heap.Pop(taggr).(*topNAggregatorItem)
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
+}
+
+func (taggr *topNPostAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
+
+	if taggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		return taggr.valWithAggregation(tagNames)
+	}
+
+	return taggr.valWithoutAggregation(tagNames)
+}
+
+func (taggr *topNPostAggregationProcessor) valWithAggregation(tagNames []string) []*measurev1.TopNList {
+	topNAggregatorItems, err := taggr.Flush()
+	if err != nil {
+		return []*measurev1.TopNList{}
+	}
+	items := make([]*measurev1.TopNList_Item, len(topNAggregatorItems))
+	for i, item := range topNAggregatorItems {
+		items[i] = &measurev1.TopNList_Item{
+			Entity: item.GetTags(tagNames),
+			Value: &modelv1.FieldValue{
+				Value: &modelv1.FieldValue_Int{
+					Int: &modelv1.Int{Value: item.int64Func.Val()},
+				},
 			},
 		}
 	}
+	return []*measurev1.TopNList{
+		{
+			Timestamp: timestamppb.Now(),
+			Items:     items,
+		},
+	}
+}
 
-	topNLists := make([]*measurev1.TopNList, 0, len(naggr.timelines))
-	for ts, timeline := range naggr.timelines {
+func (taggr *topNPostAggregationProcessor) valWithoutAggregation(tagNames []string) []*measurev1.TopNList {
+	topNLists := make([]*measurev1.TopNList, 0, len(taggr.timelines))
+	for ts, timeline := range taggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.queue.Len())
 		for idx, elem := range timeline.queue.Values() {
 			items[idx] = &measurev1.TopNList_Item{
