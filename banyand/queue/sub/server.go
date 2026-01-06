@@ -91,7 +91,6 @@ type server struct {
 	httpSrv             *http.Server
 	curNode             *databasev1.Node
 	clientCloser        context.CancelFunc
-	clusterStateService databasev1.ClusterStateServiceServer
 	httpAddr            string
 	addr                string
 	host                string
@@ -315,12 +314,10 @@ func (s *server) Serve() run.StopNotify {
 		close(stopCh)
 		return stopCh
 	}
-	if s.clusterStateService != nil {
-		if err := databasev1.RegisterClusterStateServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
-			s.log.Error().Err(err).Msg("Failed to register cluster state service")
-			close(stopCh)
-			return stopCh
-		}
+	if err := databasev1.RegisterClusterStateServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
+		s.log.Error().Err(err).Msg("Failed to register cluster state service")
+		close(stopCh)
+		return stopCh
 	}
 	mux := chi.NewRouter()
 	mux.Mount("/api", http.StripPrefix("/api", gwMux))
