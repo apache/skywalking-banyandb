@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -310,7 +309,10 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		deduplicatedDps := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		if dedupErr != nil {
+			return nil, multierr.Append(err, dedupErr)
+		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
@@ -534,61 +536,51 @@ func (s *pushedDownAggregatedIterator) Close() error {
 }
 
 // deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas
-// by keeping only one data point per group. Since aggregated results from different replicas
-// for the same group should be identical, we can safely keep only one per group.
-func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) []*measurev1.DataPoint {
+// by keeping only one data point per group. Since replicas hold identical data, aggregates
+// for the same group are identical across replicas.
+func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
-		// No groupBy, return as is (should not happen for pushed down aggregation)
-		return dataPoints
+		return dataPoints, nil
 	}
 
 	groupMap := make(map[uint64]*measurev1.DataPoint)
+	result := make([]*measurev1.DataPoint, 0)
 	for _, dp := range dataPoints {
-		key, err := formatGroupByKeyForDedup(dp, groupByTagsRefs)
+		key, err := formatGroupByKey(dp, groupByTagsRefs)
 		if err != nil {
-			// If we can't compute the key, keep the data point
-			continue
+			return nil, err
 		}
-		// Keep the first data point for each group
-		if _, exists := groupMap[key]; !exists {
+		existing, exists := groupMap[key]
+		if !exists {
 			groupMap[key] = dp
+			result = append(result, dp)
+		} else if !groupByTagsEqual(dp, existing, groupByTagsRefs) {
+			// Hash collision: different groups have the same hash, keep both
+			groupMap[key] = dp
+			result = append(result, dp)
 		}
 	}
-
-	result := make([]*measurev1.DataPoint, 0, len(groupMap))
-	for _, dp := range groupMap {
-		result = append(result, dp)
-	}
-	return result
+	return result, nil
 }
 
-// formatGroupByKeyForDedup computes a hash key for a data point based on groupBy tags.
-func formatGroupByKeyForDedup(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
-	hash := xxhash.New()
+// groupByTagsEqual compares group-by tag values of two data points.
+func groupByTagsEqual(dp1, dp2 *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) bool {
 	for _, tagFamilyRef := range groupByTagsRefs {
 		for _, tagRef := range tagFamilyRef {
-			if tagRef.Spec.TagFamilyIdx >= len(point.GetTagFamilies()) {
-				return 0, fmt.Errorf("tag family index out of range")
+			if tagRef.Spec.TagFamilyIdx >= len(dp1.GetTagFamilies()) ||
+				tagRef.Spec.TagFamilyIdx >= len(dp2.GetTagFamilies()) {
+				return false
 			}
-			if tagRef.Spec.TagIdx >= len(point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) {
-				return 0, fmt.Errorf("tag index out of range")
+			if tagRef.Spec.TagIdx >= len(dp1.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) ||
+				tagRef.Spec.TagIdx >= len(dp2.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) {
+				return false
 			}
-			tag := point.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
-			switch v := tag.GetValue().GetValue().(type) {
-			case *modelv1.TagValue_Str:
-				_, err := hash.Write([]byte(v.Str.GetValue()))
-				if err != nil {
-					return 0, err
-				}
-			case *modelv1.TagValue_Int:
-				_, err := hash.Write(convert.Int64ToBytes(v.Int.GetValue()))
-				if err != nil {
-					return 0, err
-				}
-			case *modelv1.TagValue_IntArray, *modelv1.TagValue_StrArray, *modelv1.TagValue_BinaryData:
-				return 0, fmt.Errorf("group-by on array/binary tag is not supported")
+			tag1 := dp1.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
+			tag2 := dp2.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
+			if pbv1.MustCompareTagValue(tag1.GetValue(), tag2.GetValue()) != 0 {
+				return false
 			}
 		}
 	}
-	return hash.Sum64(), nil
+	return true
 }
