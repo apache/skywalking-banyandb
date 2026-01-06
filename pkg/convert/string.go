@@ -21,11 +21,13 @@ import (
 	"unsafe"
 )
 
+var emptyStringBytes = []byte{}
+
 // StringToBytes converts string to bytes.
 // It work well until the referenced memory won’t be changed.
 func StringToBytes(s string) (b []byte) {
 	if s == "" {
-		return nil
+		return emptyStringBytes
 	}
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }

@@ -22,6 +22,7 @@ Release Notes.
 - Fix server got panic when create/update property with high dist usage.
 - Fix incorrect key range update in sidx part metadata.
 - Fix panic in measure block merger when merging blocks with overlapping timestamps.
+- Fix unsupported empty string tag bug.
 
 ### Document
 

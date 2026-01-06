@@ -45,6 +45,7 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),

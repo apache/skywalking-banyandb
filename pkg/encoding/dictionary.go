@@ -51,7 +51,7 @@ func (d *Dictionary) Reset() {
 // Add adds a value to the dictionary.
 func (d *Dictionary) Add(value []byte) bool {
 	for i, v := range d.values {
-		if bytes.Equal(v, value) {
+		if valuesEqual(v, value) {
 			d.indices = append(d.indices, uint32(i))
 			return true
 		}
@@ -63,6 +63,17 @@ func (d *Dictionary) Add(value []byte) bool {
 	index := uint32(len(d.values) - 1)
 	d.indices = append(d.indices, index)
 	return true
+}
+
+// valuesEqual compares two byte slices, distinguishing nil from empty slice.
+func valuesEqual(a, b []byte) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return bytes.Equal(a, b)
 }
 
 // Encode encodes the dictionary.
@@ -124,15 +135,22 @@ func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([]
 	dst := d.values[:0]
 	data := decompressedData
 	for _, sLen := range aLens {
-		if uint64(len(data)) < sLen {
-			return nil, nil, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
-		}
 		if sLen == 0 {
 			dst = append(dst, nil)
 			continue
 		}
-		dst = append(dst, data[:sLen])
-		data = data[sLen:]
+		// Reverse the offset
+		actualLen := sLen - 1
+		if uint64(len(data)) < actualLen {
+			return nil, nil, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", actualLen, len(data))
+		}
+		if actualLen == 0 {
+			// Explicitly create non-nil empty slice for empty strings
+			dst = append(dst, []byte{})
+		} else {
+			dst = append(dst, data[:actualLen])
+		}
+		data = data[actualLen:]
 	}
 
 	return dst, tail, nil
@@ -289,15 +307,22 @@ func DecodeDictionaryValues(src []byte) ([][]byte, error) {
 	var values [][]byte
 	data := decompressedData
 	for _, sLen := range aLens {
-		if uint64(len(data)) < sLen {
-			return nil, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
-		}
 		if sLen == 0 {
 			values = append(values, nil)
 			continue
 		}
-		values = append(values, data[:sLen])
-		data = data[sLen:]
+		// Reverse the offset
+		actualLen := sLen - 1
+		if uint64(len(data)) < actualLen {
+			return nil, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", actualLen, len(data))
+		}
+		if actualLen == 0 {
+			// Explicitly create non-nil empty slice for empty strings
+			values = append(values, []byte{})
+		} else {
+			values = append(values, data[:actualLen])
+		}
+		data = data[actualLen:]
 	}
 
 	return values, nil
