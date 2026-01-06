@@ -630,8 +630,7 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 	}
 }
 
-// reconnect handles automatic reconnection when streams break.
-// Uses a buffered channel to ensure only one reconnect goroutine runs at a time.
+// reconnect uses a buffered channel to ensure only one reconnect goroutine runs at a time.
 func (c *Client) reconnect(ctx context.Context) {
 	select {
 	case c.reconnectCh <- struct{}{}:
@@ -658,6 +657,14 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
 	}
+
+	close(c.stopCh)
+	c.streamsMu.Unlock()
+
+	c.heartbeatWg.Wait()
+	c.streamsMu.Lock()
+
+	c.stopCh = make(chan struct{})
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
 		c.registrationStream = nil
