@@ -527,13 +527,7 @@ func (c *Client) Start(ctx context.Context) error {
 		}
 
 		c.logger.Info().Msg("Proxy client started successfully")
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-c.stopCh:
-			return nil
-		}
+		return nil
 	}
 }
 
