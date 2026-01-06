@@ -117,9 +117,6 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.streamsMu.Lock()
 	wasDisconnected := c.disconnected
-	if wasDisconnected {
-		close(c.stopCh)
-	}
 	c.streamsMu.Unlock()
 
 	if wasDisconnected {
