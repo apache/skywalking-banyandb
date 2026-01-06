@@ -54,8 +54,8 @@ type connEvent struct {
 
 // connResult represents the result of a connection operation.
 type connResult struct {
-	Conn  *grpc.ClientConn
-	Error error
+	conn  *grpc.ClientConn
+	err error
 }
 
 // connState represents the state of the connection.
