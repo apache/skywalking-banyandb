@@ -688,6 +688,7 @@ service NodeQueryService {
 message GetClusterStateRequest {}
 
 message GetClusterStateResponse {
+  // nodes contains all discovered nodes in the cluster across all roles.
   repeated banyandb.database.v1.Node nodes = 1;
 }
 
