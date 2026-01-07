@@ -435,7 +435,7 @@ type serverMetrics struct {
 	totalSendToNextLatency  meter.Counter
 }
 
-func newServerMetrics(factory *observability.Factory) *serverMetrics {
+func newServerMetrics(factory observability.Factory) *serverMetrics {
 	return &serverMetrics{
 		totalReceived:     factory.NewCounter("total_received", "group"),
 		totalAddProcessed: factory.NewCounter("total_add_processed", "group"),

@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -131,7 +132,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	s.repairDir = filepath.Join(path, storage.RepairDir)
-	observability.UpdatePath(path)
+	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
 		return errors.New("node id is empty")

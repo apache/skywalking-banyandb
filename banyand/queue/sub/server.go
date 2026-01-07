@@ -38,8 +38,11 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -72,6 +75,7 @@ type server struct {
 	clusterv1.UnimplementedChunkedSyncServiceServer
 	streamv1.UnimplementedStreamServiceServer
 	databasev1.UnimplementedSnapshotServiceServer
+	databasev1.UnimplementedNodeQueryServiceServer
 	creds               credentials.TransportCredentials
 	tlsReloader         *pkgtls.Reloader
 	omr                 observability.MetricsRegistry
@@ -82,6 +86,7 @@ type server struct {
 	chunkedSyncHandlers map[bus.Topic]queue.ChunkedSyncHandler
 	log                 *logger.Logger
 	httpSrv             *http.Server
+	curNode             *databasev1.Node
 	clientCloser        context.CancelFunc
 	httpAddr            string
 	addr                string
@@ -125,7 +130,7 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 	}
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("server-queue-sub")
 	s.metrics = newMetrics(s.omr.With(queueSubScope))
 
@@ -137,6 +142,27 @@ func (s *server) PreRun(_ context.Context) error {
 			return errors.Wrap(err, "failed to initialize TLS reloader for queue server")
 		}
 		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Initialized TLS reloader for queue server")
+	}
+
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	roleVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || roleVal == nil {
+		s.log.Warn().Msg("node or role value not found in context")
+		return nil
+	}
+	nodeRoles := roleVal.([]databasev1.Role)
+	node := nodeVal.(common.Node)
+	s.curNode = &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: node.NodeID,
+		},
+		GrpcAddress: node.GrpcAddress,
+		HttpAddress: node.HTTPAddress,
+		Roles:       nodeRoles,
+		Labels:      node.Labels,
+		CreatedAt:   timestamppb.Now(),
+
+		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 	}
 
 	return nil
@@ -256,6 +282,7 @@ func (s *server) Serve() run.StopNotify {
 	clusterv1.RegisterChunkedSyncServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
+	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
@@ -373,7 +400,7 @@ type metrics struct {
 	bufferCapacityExceeded   meter.Counter
 }
 
-func newMetrics(factory *observability.Factory) *metrics {
+func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
 		totalStarted:        factory.NewCounter("total_started", "topic"),
 		totalFinished:       factory.NewCounter("total_finished", "topic"),
