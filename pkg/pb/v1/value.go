@@ -45,6 +45,7 @@ const (
 	ValueTypeStrArr
 	ValueTypeInt64Arr
 	ValueTypeTimestamp
+	ValueTypeMixed
 )
 
 // MustTagValueToValueType converts modelv1.TagValue to ValueType.

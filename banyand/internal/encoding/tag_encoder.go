@@ -358,3 +358,81 @@ func decodeDefaultTagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, b
 	}
 	return dst, nil
 }
+
+// TypedValue represents a value with its type information.
+type TypedValue struct {
+	Value []byte
+	Type  pbv1.ValueType
+}
+
+// EncodeMixedTagValues encodes tag values with type information.
+func EncodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]byte) error {
+	if len(values) == 0 {
+		return nil
+	}
+
+	bb.Buf = append(bb.Buf[:0], byte(encoding.EncodeTypeTyped))
+	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(values)))
+
+	typesBytes := make([]byte, len(types))
+	for i, t := range types {
+		typesBytes[i] = byte(t)
+	}
+	compressedTypes := encoding.EncodeBytesBlock(nil, [][]byte{typesBytes})
+	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(compressedTypes)))
+	bb.Buf = append(bb.Buf, compressedTypes...)
+
+	compressedValues := encoding.EncodeBytesBlock(nil, values)
+	bb.Buf = append(bb.Buf, compressedValues...)
+
+	return nil
+}
+
+// DecodeMixedTagValues decodes tag values with type information.
+func DecodeMixedTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,
+	bb *bytes.Buffer, count uint64,
+) ([][]byte, []pbv1.ValueType, error) {
+	if len(bb.Buf) == 0 {
+		return nil, []pbv1.ValueType{pbv1.ValueTypeUnknown}, nil
+	}
+
+	encodeType := encoding.EncodeType(bb.Buf[0])
+	if encodeType != encoding.EncodeTypeTyped {
+		logger.Panicf("expected typed encoding type, got %d", encodeType)
+	}
+
+	src := bb.Buf[1:]
+	src, tagCount := encoding.BytesToVarUint64(src)
+	if tagCount != count {
+		logger.Panicf("tag count mismatch: expected %d, got %d", count, tagCount)
+	}
+
+	src, compressedTypesSize := encoding.BytesToVarUint64(src)
+	if uint64(len(src)) < compressedTypesSize {
+		logger.Panicf("buffer too short for compressed types: need %d, have %d", compressedTypesSize, len(src))
+	}
+	var typesRaw [][]byte
+	var decodeErr error
+	typesRaw, decodeErr = decoder.Decode(typesRaw[:0], src[:compressedTypesSize], 1)
+	if decodeErr != nil {
+		logger.Panicf("cannot decode types: %v", decodeErr)
+	}
+	src = src[compressedTypesSize:]
+	if len(typesRaw) != 1 || uint64(len(typesRaw[0])) != count {
+		logger.Panicf("invalid types: expected 1 array with %d elements, got %d arrays", count, len(typesRaw))
+	}
+
+	if len(dstTypes) < int(count) {
+		dstTypes = append(dstTypes, make([]pbv1.ValueType, int(count)-len(dstTypes))...)
+	}
+	dstTypes = dstTypes[:count]
+	for i, b := range typesRaw[0] {
+		dstTypes[i] = pbv1.ValueType(b)
+	}
+
+	dst, decodeErr = decoder.Decode(dst[:0], src, count)
+	if decodeErr != nil {
+		logger.Panicf("cannot decode mixed values: %v", decodeErr)
+	}
+	return dst, dstTypes, nil
+}

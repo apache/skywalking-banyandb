@@ -261,3 +261,89 @@ func TestTag_HighCardinalityStringEncoding(t *testing.T) {
 		})
 	}
 }
+
+func TestTag_MixedTagEncodingDecoding(t *testing.T) {
+	tests := []struct {
+		tag  *tag
+		name string
+	}{
+		{
+			name: "mixed tag with string and int64 types",
+			tag: &tag{
+				name:      "mixed_string_int64",
+				valueType: pbv1.ValueTypeMixed,
+				values:    [][]byte{[]byte("str1"), convert.Int64ToBytes(123), []byte("str2"), convert.Int64ToBytes(456)},
+				types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeInt64, pbv1.ValueTypeStr, pbv1.ValueTypeInt64},
+			},
+		},
+		{
+			name: "mixed tag with binary and string types",
+			tag: &tag{
+				name:      "mixed_binary_string",
+				valueType: pbv1.ValueTypeMixed,
+				values:    [][]byte{[]byte("binary1"), []byte("str1"), []byte("binary2"), []byte("str2")},
+				types:     []pbv1.ValueType{pbv1.ValueTypeBinaryData, pbv1.ValueTypeStr, pbv1.ValueTypeBinaryData, pbv1.ValueTypeStr},
+			},
+		},
+		{
+			name: "mixed tag with nil values",
+			tag: &tag{
+				name:      "mixed_with_nils",
+				valueType: pbv1.ValueTypeMixed,
+				values:    [][]byte{[]byte("str1"), nil, []byte("str2"), nil},
+				types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeUnknown, pbv1.ValueTypeStr, pbv1.ValueTypeUnknown},
+			},
+		},
+		{
+			name: "mixed tag with all different types",
+			tag: &tag{
+				name:      "mixed_all_types",
+				valueType: pbv1.ValueTypeMixed,
+				values: [][]byte{
+					[]byte("str1"),
+					convert.Int64ToBytes(100),
+					{0x01, 0x02, 0x03},
+				},
+				types: []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeInt64, pbv1.ValueTypeBinaryData},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := &tagMetadata{}
+
+			buf, filterBuf := &bytes.Buffer{}, &bytes.Buffer{}
+			w, fw := &writer{}, &writer{}
+			w.init(buf)
+			fw.init(filterBuf)
+
+			tt.tag.mustWriteTo(tm, w, fw)
+
+			assert.Equal(t, w.bytesWritten, tm.size)
+			assert.Equal(t, uint64(len(buf.Buf)), tm.size)
+			assert.Equal(t, uint64(0), tm.offset)
+			assert.Equal(t, tt.tag.name, tm.name)
+			assert.Equal(t, pbv1.ValueTypeMixed, tm.valueType)
+
+			assert.True(t, len(buf.Buf) > 0, "Encoded buffer should not be empty")
+			assert.Equal(t, byte(encoding.EncodeTypeTyped), buf.Buf[0], "First byte should be typed encoding type")
+
+			decoder := &encoding.BytesBlockDecoder{}
+			unmarshaled := &tag{}
+			unmarshaled.mustReadValues(decoder, buf, *tm, uint64(len(tt.tag.values)))
+
+			assert.Equal(t, tt.tag.name, unmarshaled.name)
+			assert.Equal(t, tt.tag.valueType, unmarshaled.valueType)
+			assert.Equal(t, len(tt.tag.values), len(unmarshaled.values), "Number of values should match")
+			assert.Equal(t, len(tt.tag.types), len(unmarshaled.types), "Number of types should match")
+
+			for i := range tt.tag.values {
+				assert.Equal(t, tt.tag.values[i], unmarshaled.values[i],
+					"Value at index %d should match original", i)
+				assert.Equal(t, tt.tag.types[i], unmarshaled.types[i],
+					"Type at index %d should match original", i)
+			}
+		})
+	}
+}

@@ -360,3 +360,301 @@ func Test_mergeParts(t *testing.T) {
 		})
 	}
 }
+
+func Test_mergeTwoBlocksMixedType(t *testing.T) {
+	tests := []struct {
+		left  *blockPointer
+		right *blockPointer
+		want  *blockPointer
+		name  string
+	}{
+		{
+			name: "Merge blocks with different tag types",
+			left: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					elementIDs: []uint64{0, 1},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeStr,
+									values:    [][]byte{[]byte("str1"), []byte("str2")},
+								},
+							},
+						},
+					},
+				},
+			},
+			right: &blockPointer{
+				block: block{
+					timestamps: []int64{3, 4},
+					elementIDs: []uint64{2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeBinaryData,
+									values:    [][]byte{[]byte("binary1"), []byte("binary2")},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 3, 4},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("str1"), []byte("str2"), []byte("binary1"), []byte("binary2")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeStr, pbv1.ValueTypeBinaryData, pbv1.ValueTypeBinaryData},
+								},
+							},
+						},
+					},
+				},
+				bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}},
+			},
+		},
+		{
+			name: "Merge mixed tag with non-mixed tag",
+			left: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					elementIDs: []uint64{0, 1},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("str1"), []byte("int1")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeInt64},
+								},
+							},
+						},
+					},
+				},
+			},
+			right: &blockPointer{
+				block: block{
+					timestamps: []int64{3, 4},
+					elementIDs: []uint64{2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeBinaryData,
+									values:    [][]byte{[]byte("binary1"), []byte("binary2")},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 3, 4},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("str1"), []byte("int1"), []byte("binary1"), []byte("binary2")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeInt64, pbv1.ValueTypeBinaryData, pbv1.ValueTypeBinaryData},
+								},
+							},
+						},
+					},
+				},
+				bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}},
+			},
+		},
+		{
+			name: "Merge two mixed tags",
+			left: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					elementIDs: []uint64{0, 1},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("str1"), []byte("str2")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeStr},
+								},
+							},
+						},
+					},
+				},
+			},
+			right: &blockPointer{
+				block: block{
+					timestamps: []int64{3, 4},
+					elementIDs: []uint64{2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("int1"), []byte("int2")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeInt64, pbv1.ValueTypeInt64},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 3, 4},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "mixedTag",
+									valueType: pbv1.ValueTypeMixed,
+									values:    [][]byte{[]byte("str1"), []byte("str2"), []byte("int1"), []byte("int2")},
+									types:     []pbv1.ValueType{pbv1.ValueTypeStr, pbv1.ValueTypeStr, pbv1.ValueTypeInt64, pbv1.ValueTypeInt64},
+								},
+							},
+						},
+					},
+				},
+				bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}},
+			},
+		},
+		{
+			name: "Merge blocks with same tag types",
+			left: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					elementIDs: []uint64{0, 1},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "strTag",
+									valueType: pbv1.ValueTypeStr,
+									values:    [][]byte{[]byte("str1"), []byte("str2")},
+								},
+							},
+						},
+					},
+				},
+			},
+			right: &blockPointer{
+				block: block{
+					timestamps: []int64{3, 4},
+					elementIDs: []uint64{2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "strTag",
+									valueType: pbv1.ValueTypeStr,
+									values:    [][]byte{[]byte("str3"), []byte("str4")},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2, 3, 4},
+					elementIDs: []uint64{0, 1, 2, 3},
+					tagFamilies: []tagFamily{
+						{
+							name: "tf1",
+							tags: []tag{
+								{
+									name:      "strTag",
+									valueType: pbv1.ValueTypeStr,
+									values:    [][]byte{[]byte("str1"), []byte("str2"), []byte("str3"), []byte("str4")},
+								},
+							},
+						},
+					},
+				},
+				bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := &blockPointer{}
+			mergeTwoBlocks(target, tt.left, tt.right)
+
+			if !reflect.DeepEqual(target.timestamps, tt.want.timestamps) {
+				t.Errorf("timestamps mismatch: got %v, want %v", target.timestamps, tt.want.timestamps)
+			}
+			if !reflect.DeepEqual(target.elementIDs, tt.want.elementIDs) {
+				t.Errorf("elementIDs mismatch: got %v, want %v", target.elementIDs, tt.want.elementIDs)
+			}
+
+			if len(target.tagFamilies) != len(tt.want.tagFamilies) {
+				t.Fatalf("tagFamilies length mismatch: got %d, want %d", len(target.tagFamilies), len(tt.want.tagFamilies))
+			}
+			for i := range target.tagFamilies {
+				if target.tagFamilies[i].name != tt.want.tagFamilies[i].name {
+					t.Errorf("tagFamily[%d].name mismatch: got %q, want %q", i, target.tagFamilies[i].name, tt.want.tagFamilies[i].name)
+				}
+				if len(target.tagFamilies[i].tags) != len(tt.want.tagFamilies[i].tags) {
+					t.Fatalf("tagFamily[%d].tags length mismatch: got %d, want %d", i, len(target.tagFamilies[i].tags), len(tt.want.tagFamilies[i].tags))
+				}
+				for j := range target.tagFamilies[i].tags {
+					gotTag := &target.tagFamilies[i].tags[j]
+					wantTag := &tt.want.tagFamilies[i].tags[j]
+
+					if gotTag.name != wantTag.name {
+						t.Errorf("tag[%d][%d].name mismatch: got %q, want %q", i, j, gotTag.name, wantTag.name)
+					}
+					if gotTag.valueType != wantTag.valueType {
+						t.Errorf("tag[%d][%d].valueType mismatch: got %d, want %d", i, j, gotTag.valueType, wantTag.valueType)
+					}
+					if !reflect.DeepEqual(gotTag.values, wantTag.values) {
+						t.Errorf("tag[%d][%d].values mismatch: got %v, want %v", i, j, gotTag.values, wantTag.values)
+					}
+					if !reflect.DeepEqual(gotTag.types, wantTag.types) {
+						t.Errorf("tag[%d][%d].types mismatch: got %v, want %v", i, j, gotTag.types, wantTag.types)
+					}
+				}
+			}
+
+			if target.bm.timestamps.min != tt.want.bm.timestamps.min {
+				t.Errorf("bm.timestamps.min mismatch: got %d, want %d", target.bm.timestamps.min, tt.want.bm.timestamps.min)
+			}
+			if target.bm.timestamps.max != tt.want.bm.timestamps.max {
+				t.Errorf("bm.timestamps.max mismatch: got %d, want %d", target.bm.timestamps.max, tt.want.bm.timestamps.max)
+			}
+		})
+	}
+}

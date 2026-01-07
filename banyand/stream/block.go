@@ -179,9 +179,9 @@ func (b *block) validate() {
 	}
 	tff := b.tagFamilies
 	for _, tf := range tff {
-		for _, c := range tf.tags {
-			if len(c.values) != itemsCount {
-				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", c.name, len(c.values), itemsCount)
+		for _, t := range tf.tags {
+			if len(t.values) != itemsCount {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", t.name, len(t.values), itemsCount)
 			}
 		}
 	}
@@ -244,19 +244,19 @@ NEXT:
 }
 
 func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	columnFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
+	tagFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
 ) {
-	if columnFamilyMetadataBlock.offset != metaReader.bytesRead {
-		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
+	if tagFamilyMetadataBlock.offset != metaReader.bytesRead {
+		logger.Panicf("offset %d must be equal to bytesRead %d", tagFamilyMetadataBlock.offset, metaReader.bytesRead)
 	}
 	bb := bigValuePool.Generate()
-	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(columnFamilyMetadataBlock.size))
+	bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(tagFamilyMetadataBlock.size))
 	metaReader.mustReadFull(bb.Buf)
 	tfm := generateTagFamilyMetadata()
 	defer releaseTagFamilyMetadata(tfm)
 	err := tfm.unmarshal(bb.Buf)
 	if err != nil {
-		logger.Panicf("%s: cannot unmarshal columnFamilyMetadata: %v", metaReader.Path(), err)
+		logger.Panicf("%s: cannot unmarshal tagFamilyMetadata: %v", metaReader.Path(), err)
 	}
 	bigValuePool.Release(bb)
 	b.tagFamilies[tfIndex].name = name
@@ -485,20 +485,12 @@ func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
 		}
 	}
 
-	for i, cf := range bc.tagFamilies {
-		for j, c := range cf.tags {
+	for i, tf := range bc.tagFamilies {
+		for j, t := range tf.tags {
 			values := make([]*modelv1.TagValue, end-start)
-			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
+			schemaType, hasSchemaType := bc.schemaTagTypes[t.name]
 			for k := start; k < end; k++ {
-				if len(c.values) > k {
-					if hasSchemaType && c.valueType == schemaType {
-						values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
-					} else {
-						values[k-start] = pbv1.NullTagValue
-					}
-				} else {
-					values[k-start] = pbv1.NullTagValue
-				}
+				values[k-start] = decodeTagValue(t, k, hasSchemaType, schemaType)
 			}
 			if desc {
 				slices.Reverse(values)
@@ -529,23 +521,29 @@ func (bc *blockCursor) copyTo(r *model.StreamResult) {
 	if len(bc.tagFamilies) != len(r.TagFamilies) {
 		logger.Panicf("unexpected number of tag families: got %d; want %d", len(bc.tagFamilies), len(r.TagFamilies))
 	}
-	for i, cf := range bc.tagFamilies {
-		if len(r.TagFamilies[i].Tags) != len(cf.tags) {
+	for i, tf := range bc.tagFamilies {
+		if len(r.TagFamilies[i].Tags) != len(tf.tags) {
 			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
 		}
-		for i2, c := range cf.tags {
-			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
-			if len(c.values) > bc.idx {
-				if hasSchemaType && c.valueType == schemaType {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
-				} else {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
-				}
-			} else {
-				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
-			}
+		for j, t := range tf.tags {
+			schemaType, hasSchemaType := bc.schemaTagTypes[t.name]
+			r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, decodeTagValue(t, bc.idx, hasSchemaType, schemaType))
 		}
 	}
+}
+
+func decodeTagValue(t tag, idx int, hasSchemaType bool, schemaType pbv1.ValueType) *modelv1.TagValue {
+	if len(t.values) <= idx {
+		return pbv1.NullTagValue
+	}
+	valueType := t.valueType
+	if t.valueType == pbv1.ValueTypeMixed && idx < len(t.types) {
+		valueType = t.types[idx]
+	}
+	if hasSchemaType && valueType == schemaType {
+		return mustDecodeTagValue(valueType, t.values[idx])
+	}
+	return pbv1.NullTagValue
 }
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
@@ -614,9 +612,15 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 			if len(idxList) > 0 {
 				for _, idx := range idxList {
 					t.values = append(t.values, cf.tags[i].values[idx])
+					if cf.tags[i].valueType == pbv1.ValueTypeMixed && idx < len(cf.tags[i].types) {
+						t.types = append(t.types, cf.tags[i].types[idx])
+					}
 				}
 			} else {
 				t.values = append(t.values, cf.tags[i].values[start:end+1]...)
+				if cf.tags[i].valueType == pbv1.ValueTypeMixed && len(cf.tags[i].types) > 0 {
+					t.types = append(t.types, cf.tags[i].types[start:end+1]...)
+				}
 			}
 			tf.tags = append(tf.tags, t)
 		}
@@ -704,15 +708,57 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 				bi.tagFamilies[i].name, len(b.tagFamilies[i].tags), len(bi.tagFamilies[i].tags))
 		}
 		for j := range bi.tagFamilies[i].tags {
-			if bi.tagFamilies[i].tags[j].name != b.tagFamilies[i].tags[j].name {
+			existingTag, srcTag := &bi.tagFamilies[i].tags[j], &b.tagFamilies[i].tags[j]
+			if existingTag.name != srcTag.name {
 				return fmt.Errorf("unexpected tag name for tag family %q: got %q; want %q",
-					bi.tagFamilies[i].name, b.tagFamilies[i].tags[j].name, bi.tagFamilies[i].tags[j].name)
+					bi.tagFamilies[i].name, srcTag.name, existingTag.name)
 			}
-			assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
-			bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
+			if existingTag.valueType != srcTag.valueType &&
+				existingTag.valueType != pbv1.ValueTypeUnknown &&
+				srcTag.valueType != pbv1.ValueTypeUnknown {
+				return fmt.Errorf("type mismatch for tag %q: existing=%d, source=%d",
+					existingTag.name, existingTag.valueType, srcTag.valueType)
+			}
+			assertIdxAndOffset(srcTag.name, len(srcTag.values), b.idx, offset)
+			if existingTag.valueType == pbv1.ValueTypeMixed || srcTag.valueType == pbv1.ValueTypeMixed {
+				appendAsMixed(existingTag, srcTag, b.idx, offset)
+			} else {
+				existingTag.values = append(existingTag.values, srcTag.values[b.idx:offset]...)
+			}
 		}
 	}
 	return nil
+}
+
+func shouldAppendAsMixed(existing, src *tag) bool {
+	if existing.valueType == pbv1.ValueTypeMixed || src.valueType == pbv1.ValueTypeMixed {
+		return true
+	}
+	if existing.valueType == pbv1.ValueTypeUnknown || src.valueType == pbv1.ValueTypeUnknown {
+		return false
+	}
+	return existing.valueType != src.valueType
+}
+
+func appendAsMixed(target, source *tag, srcIdx, offset int) {
+	if target.valueType != pbv1.ValueTypeMixed {
+		existingType := target.valueType
+		target.resizeTypes(len(target.values))
+		for i := range target.values {
+			target.types[i] = existingType
+		}
+		target.valueType = pbv1.ValueTypeMixed
+	}
+	for i := srcIdx; i < offset; i++ {
+		target.values = append(target.values, source.values[i])
+		var valueType pbv1.ValueType
+		if source.valueType == pbv1.ValueTypeMixed && len(source.types) > i {
+			valueType = source.types[i]
+		} else {
+			valueType = source.valueType
+		}
+		target.types = append(target.types, valueType)
+	}
 }
 
 func fullTagAppend(bi, b *blockPointer, offset int) {
@@ -721,12 +767,19 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		tfv := tagFamily{name: tf.name}
 		for i := range tf.tags {
 			assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].values), b.idx, offset)
-			col := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
+			tag := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
 			for j := 0; j < existDataSize; j++ {
-				col.values = append(col.values, nil)
+				tag.values = append(tag.values, nil)
 			}
-			col.values = append(col.values, tf.tags[i].values[b.idx:offset]...)
-			tfv.tags = append(tfv.tags, col)
+			tag.values = append(tag.values, tf.tags[i].values[b.idx:offset]...)
+			if tf.tags[i].valueType == pbv1.ValueTypeMixed {
+				assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].types), b.idx, offset)
+				for j := 0; j < existDataSize; j++ {
+					tag.types = append(tag.types, pbv1.ValueTypeUnknown)
+				}
+				tag.types = append(tag.types, tf.tags[i].types[b.idx:offset]...)
+			}
+			tfv.tags = append(tfv.tags, tag)
 		}
 		bi.tagFamilies = append(bi.tagFamilies, tfv)
 	}
@@ -744,23 +797,34 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 
 	for _, tf := range b.tagFamilies {
 		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
-			columnMap := make(map[string]*tag)
+			tagMap := make(map[string]*tag)
 			for i := range existingTagFamily.tags {
-				columnMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+				tagMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
 			}
 
-			for _, c := range tf.tags {
-				if existingColumn, exists := columnMap[c.name]; exists {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
-				} else {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					col := tag{name: c.name, valueType: c.valueType}
-					for j := 0; j < existDataSize; j++ {
-						col.values = append(col.values, nil)
+			for _, t := range tf.tags {
+				if existingTag, tagExists := tagMap[t.name]; tagExists {
+					assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+					if shouldAppendAsMixed(existingTag, &t) {
+						appendAsMixed(existingTag, &t, b.idx, offset)
+					} else {
+						existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
 					}
-					col.values = append(col.values, c.values[b.idx:offset]...)
-					existingTagFamily.tags = append(existingTagFamily.tags, col)
+				} else {
+					assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+					tag := tag{name: t.name, valueType: t.valueType}
+					for j := 0; j < existDataSize; j++ {
+						tag.values = append(tag.values, nil)
+					}
+					tag.values = append(tag.values, t.values[b.idx:offset]...)
+					if t.valueType == pbv1.ValueTypeMixed {
+						assertIdxAndOffset(t.name, len(t.types), b.idx, offset)
+						for j := 0; j < existDataSize; j++ {
+							tag.types = append(tag.types, pbv1.ValueTypeUnknown)
+						}
+						tag.types = append(tag.types, t.types[b.idx:offset]...)
+					}
+					existingTagFamily.tags = append(existingTagFamily.tags, tag)
 				}
 			}
 		} else {
@@ -780,17 +844,27 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 				for j := 0; j < emptySize; j++ {
 					tf.tags[i].values = append(tf.tags[i].values, nil)
 				}
+				if tf.tags[i].valueType == pbv1.ValueTypeMixed {
+					for j := 0; j < emptySize; j++ {
+						tf.tags[i].types = append(tf.tags[i].types, pbv1.ValueTypeUnknown)
+					}
+				}
 			}
 		} else {
 			existingTagFamily := tagFamilyMap[tf.name]
-			columnMap := make(map[string]*tag)
+			tagMap := make(map[string]*tag)
 			for i := range existingTagFamily.tags {
-				columnMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+				tagMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
 			}
 			for i := range tf.tags {
-				if _, exists := columnMap[tf.tags[i].name]; !exists {
+				if _, tagExists := tagMap[tf.tags[i].name]; !tagExists {
 					for j := 0; j < emptySize; j++ {
 						tf.tags[i].values = append(tf.tags[i].values, nil)
+					}
+					if tf.tags[i].valueType == pbv1.ValueTypeMixed {
+						for j := 0; j < emptySize; j++ {
+							tf.tags[i].types = append(tf.tags[i].types, pbv1.ValueTypeUnknown)
+						}
 					}
 				}
 			}

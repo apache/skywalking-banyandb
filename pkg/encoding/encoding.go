@@ -95,6 +95,7 @@ const (
 	EncodeTypeDeltaOfDeltaWithVersion
 	EncodeTypePlain
 	EncodeTypeDictionary
+	EncodeTypeTyped
 )
 
 // GetVersionType returns the version type of the given encoding type.

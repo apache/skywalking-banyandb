@@ -34,6 +34,7 @@ type tag struct {
 	max          []byte
 	name         string
 	values       [][]byte
+	types        []pbv1.ValueType
 	valueType    pbv1.ValueType
 }
 
@@ -45,6 +46,8 @@ func (t *tag) reset() {
 		values[i] = nil
 	}
 	t.values = values[:0]
+
+	t.types = t.types[:0]
 
 	t.min = t.min[:0]
 	t.max = t.max[:0]
@@ -66,6 +69,16 @@ func (t *tag) resizeValues(valuesLen int) [][]byte {
 	return values
 }
 
+func (t *tag) resizeTypes(typesLen int) []pbv1.ValueType {
+	types := t.types
+	if n := typesLen - cap(types); n > 0 {
+		types = append(types[:cap(types)], make([]pbv1.ValueType, n)...)
+	}
+	types = types[:typesLen]
+	t.types = types
+	return types
+}
+
 func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *writer) {
 	tm.reset()
 
@@ -75,10 +88,19 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
-	// Use shared encoding module
-	encodeType, err := internalencoding.EncodeTagValues(bb, t.values, t.valueType)
-	if err != nil {
-		logger.Panicf("failed to encode tag values: %v", err)
+	var encodeType pkgencoding.EncodeType
+	var err error
+	if t.valueType == pbv1.ValueTypeMixed {
+		err = internalencoding.EncodeMixedTagValues(bb, t.types, t.values)
+		if err != nil {
+			logger.Panicf("failed to encode mixed tag values: %v", err)
+		}
+		encodeType = pkgencoding.EncodeTypeTyped
+	} else {
+		encodeType, err = internalencoding.EncodeTagValues(bb, t.values, t.valueType)
+		if err != nil {
+			logger.Panicf("failed to encode tag values: %v", err)
+		}
 	}
 
 	tm.size = uint64(len(bb.Buf))
@@ -110,9 +132,9 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	}
 }
 
-func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.Reader, cm tagMetadata, count uint64) {
-	t.name = cm.name
-	t.valueType = cm.valueType
+func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.Reader, tm tagMetadata, count uint64) {
+	t.name = tm.name
+	t.valueType = tm.valueType
 	if t.valueType == pbv1.ValueTypeUnknown {
 		for range count {
 			t.values = append(t.values, nil)
@@ -120,31 +142,34 @@ func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.R
 		return
 	}
 
-	valuesSize := cm.size
+	valuesSize := tm.size
 	if valuesSize > maxValuesBlockSize {
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
 	}
 
-	// Use shared decoding module
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(valuesSize))
-	fs.MustReadData(reader, int64(cm.offset), bb.Buf)
+	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 
 	var err error
-	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	if t.valueType == pbv1.ValueTypeMixed {
+		t.values, t.types, err = internalencoding.DecodeMixedTagValues(t.values, t.types, decoder, bb, count)
+	} else {
+		t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	}
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
 }
 
-func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *seqReader, cm tagMetadata, count uint64) {
-	t.name = cm.name
-	t.valueType = cm.valueType
-	if cm.offset != reader.bytesRead {
-		logger.Panicf("%s: offset mismatch: %d vs %d", reader.Path(), cm.offset, reader.bytesRead)
+func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *seqReader, tm tagMetadata, count uint64) {
+	t.name = tm.name
+	t.valueType = tm.valueType
+	if tm.offset != reader.bytesRead {
+		logger.Panicf("%s: offset mismatch: %d vs %d", reader.Path(), tm.offset, reader.bytesRead)
 	}
-	valuesSize := cm.size
+	valuesSize := tm.size
 	if valuesSize > maxValuesBlockSize {
 		logger.Panicf("%s: block size cannot exceed %d bytes; got %d bytes", reader.Path(), maxValuesBlockSize, valuesSize)
 	}
@@ -154,9 +179,12 @@ func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *
 	bb.Buf = bytes.ResizeOver(bb.Buf[:0], int(valuesSize))
 	reader.mustReadFull(bb.Buf)
 
-	// Use shared decoding module
 	var err error
-	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	if t.valueType == pbv1.ValueTypeMixed {
+		t.values, t.types, err = internalencoding.DecodeMixedTagValues(t.values, t.types, decoder, bb, count)
+	} else {
+		t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	}
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
