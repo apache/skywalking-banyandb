@@ -33,7 +33,7 @@ import (
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
 type PostProcessor interface {
-	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error
+	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64)
 	Flush() ([]*topNAggregatorItem, error)
 	Val([]string) []*measurev1.TopNList
 }
@@ -115,9 +115,9 @@ func (aggr *topNPostAggregationProcessor) tryEnqueue(key string, item *topNAggre
 var _ flow.Element = (*topNAggregatorItem)(nil)
 
 type topNAggregatorItem struct {
+	int64Func aggregation.Func[int64]
 	key       string
 	values    pbv1.EntityValues
-	int64Func aggregation.Func[int64]
 	val       int64
 	version   int64
 	index     int
@@ -156,7 +156,7 @@ type topNPostAggregationProcessor struct {
 	items     []*topNAggregatorItem
 }
 
-func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) error {
+func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
 	timeline, ok := taggr.timelines[timestampMillis]
 	key := entityValues.String()
 	if !ok {
@@ -190,18 +190,17 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 		timeline.items[key] = newItem
 		heap.Push(timeline.queue, newItem)
 		taggr.timelines[timestampMillis] = timeline
-		return nil
+		return
 	}
 
 	if item, exist := timeline.items[key]; exist {
 		if version > item.version {
 			item.val = val
 			item.version = version
-
 			heap.Fix(timeline.queue, item.index)
 		}
 
-		return nil
+		return
 	}
 
 	newItem := &topNAggregatorItem{
@@ -214,7 +213,7 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 	if timeline.queue.Len() < int(taggr.topN) {
 		heap.Push(timeline.queue, newItem)
 		timeline.items[key] = newItem
-		return nil
+		return
 	}
 
 	if lowest := timeline.queue.Peek(); lowest != nil {
@@ -230,7 +229,6 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 		}
 	}
 
-	return nil
 }
 
 func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
@@ -249,6 +247,7 @@ func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error
 			for _, item := range timeline.items {
 				if exist, found := taggr.cache[item.key]; found {
 					exist.int64Func.In(item.val)
+					heap.Fix(taggr, exist.index)
 					continue
 				}
 

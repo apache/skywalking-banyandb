@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"time"
 
-	apiData "github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -34,7 +33,7 @@ import (
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/skywalking-banyandb/api/data"
+	apiData "github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -161,7 +160,7 @@ var _ = FDescribe("Write TopN Aggregation test data", func() {
 			Agg:            modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
 		}
 
-		feat, err := svcs.pipeline.Publish(context.Background(), data.TopicTopNQuery, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req))
+		feat, err := svcs.pipeline.Publish(context.Background(), apiData.TopicTopNQuery, bus.NewMessage(bus.MessageID(time.Now().UnixNano()), req))
 		Expect(err).ShouldNot(HaveOccurred())
 
 		msg, err := feat.Get()
