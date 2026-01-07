@@ -28,7 +28,7 @@ func TestStringToBytes(t *testing.T) {
 		s    string
 		want []byte
 	}{
-		{"EmptyString", "", nil},
+		{"EmptyString", "", []byte{}},
 		{"NonEmptyString", "hello", []byte("hello")},
 		{"SpecialChars", "!@#$%^&*()_+{}", []byte("!@#$%^&*()_+{}")},
 		{"CustomString", "test123", []byte("test123")},
