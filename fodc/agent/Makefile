@@ -16,8 +16,8 @@
 # under the License.
 #
 
-NAME := fodc-agent
-BINARIES := $(NAME)-cli
+NAME := fodc
+BINARIES := $(NAME)-agent
 
 IMG_NAME := skywalking-fodc-agent
 

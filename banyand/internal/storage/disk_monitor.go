@@ -26,6 +26,7 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -198,7 +199,7 @@ func (dm *DiskMonitor) checkAndCleanup(serviceName string) {
 	if err != nil {
 		dm.logger.Error().Err(err).Msg("failed to get real-time disk usage")
 		// Fall back to cached metrics if real-time calculation fails
-		diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+		diskPercent = obsservice.GetPathUsedPercent(dm.service.GetDataPath())
 	}
 	dm.metrics.diskUsagePercent.Set(float64(diskPercent), serviceName)
 
@@ -253,7 +254,7 @@ func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 	diskPercent, err := getRealTimeDiskUsagePercent(dm.service.GetDataPath())
 	if err != nil {
 		dm.logger.Error().Err(err).Msg("failed to get real-time disk usage after snapshot cleanup")
-		diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+		diskPercent = obsservice.GetPathUsedPercent(dm.service.GetDataPath())
 	}
 	if float64(diskPercent) <= dm.config.LowWatermark {
 		dm.logger.Info().
@@ -275,7 +276,7 @@ func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 		diskPercent, err = getRealTimeDiskUsagePercent(dm.service.GetDataPath())
 		if err != nil {
 			dm.logger.Error().Err(err).Msg("failed to get real-time disk usage after segment deletion")
-			diskPercent = observability.GetPathUsedPercent(dm.service.GetDataPath())
+			diskPercent = obsservice.GetPathUsedPercent(dm.service.GetDataPath())
 		}
 		if float64(diskPercent) <= dm.config.LowWatermark {
 			dm.logger.Info().

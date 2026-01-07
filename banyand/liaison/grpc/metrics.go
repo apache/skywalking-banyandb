@@ -49,7 +49,7 @@ type metrics struct {
 	memoryState                  meter.Gauge
 }
 
-func newMetrics(factory *observability.Factory) *metrics {
+func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
 		totalStarted:                 factory.NewCounter("total_started", "group", "service", "method"),
 		totalFinished:                factory.NewCounter("total_finished", "group", "service", "method"),

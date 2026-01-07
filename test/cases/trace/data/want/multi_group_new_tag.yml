@@ -156,7 +156,7 @@ traces:
             value: api_service
       - key: error_message
         value:
-          "null": null
+          str: {}
       - key: trace_id
         value:
           str:
@@ -170,7 +170,7 @@ traces:
             value: api_service
       - key: error_message
         value:
-          "null": null
+          str: {}
       - key: trace_id
         value:
           str:

@@ -82,7 +82,7 @@ func newRepair(
 	shardPath string,
 	repairPath string,
 	l *logger.Logger,
-	metricsFactory *observability.Factory,
+	metricsFactory observability.Factory,
 	batchSearchSize int,
 	treeSlotCount int,
 	scheduler *repairScheduler,
@@ -952,7 +952,7 @@ type repairMetrics struct {
 	totalBuildTreeDuration meter.Counter
 }
 
-func newRepairMetrics(fac *observability.Factory) *repairMetrics {
+func newRepairMetrics(fac observability.Factory) *repairMetrics {
 	return &repairMetrics{
 		totalBuildTreeFinished: fac.NewCounter("property_repair_build_tree_finished"),
 		totalBuildTreeFailures: fac.NewCounter("property_repair_build_tree_failures"),
@@ -1292,7 +1292,7 @@ type repairSchedulerMetrics struct {
 	totalRepairFailedCount  meter.Counter
 }
 
-func newRepairSchedulerMetrics(omr *observability.Factory) *repairSchedulerMetrics {
+func newRepairSchedulerMetrics(omr observability.Factory) *repairSchedulerMetrics {
 	return &repairSchedulerMetrics{
 		totalRepairBuildTreeStarted:   omr.NewCounter("repair_build_tree_started"),
 		totalRepairBuildTreeFinished:  omr.NewCounter("repair_build_tree_finished"),
