@@ -493,11 +493,15 @@ func (c *Client) Disconnect() error {
 func (c *Client) Start(ctx context.Context) error {
 	c.connManager.start(ctx)
 
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-c.stopCh:
+		case <-stopCh:
 			return nil
 		default:
 		}
@@ -533,11 +537,15 @@ func (c *Client) Start(ctx context.Context) error {
 
 // handleRegistrationStream handles the registration stream.
 func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FODCService_RegisterAgentClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -565,11 +573,15 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 
 // handleMetricsStream handles the metrics stream.
 func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCService_StreamMetricsClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -645,6 +657,9 @@ func (c *Client) reconnect(ctx context.Context) {
 	c.heartbeatWg.Wait()
 	c.streamsMu.Lock()
 
+	if !c.disconnected {
+		close(c.stopCh)
+	}
 	c.stopCh = make(chan struct{})
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
