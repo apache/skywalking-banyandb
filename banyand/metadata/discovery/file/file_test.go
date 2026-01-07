@@ -365,7 +365,7 @@ nodes:
 				if _, errList := svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED); errList != nil {
 					t.Errorf("list node: %v", errList)
 				}
-				if _, errGet := svc.GetNode(ctx, addr); errGet != nil {
+				if _, errGet := svc.GetNode(ctx, "concurrent-node"); errGet != nil {
 					t.Errorf("get node: %v", errGet)
 				}
 			}
