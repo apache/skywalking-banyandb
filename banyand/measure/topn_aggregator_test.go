@@ -24,10 +24,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
@@ -37,6 +33,10 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var _ = FDescribe("Write TopN Aggregation test data", func() {
