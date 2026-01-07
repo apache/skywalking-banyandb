@@ -228,7 +228,6 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 			timeline.queue.ReplaceLowest(newItem)
 		}
 	}
-
 }
 
 func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
