@@ -693,13 +693,13 @@ type TopNValue struct {
 	firstValue      int64
 }
 
-// SetMetadata set valueName and entityTagNames
+// SetMetadata set valueName and entityTagNames.
 func (t *TopNValue) SetMetadata(valueName string, entityTagNames []string) {
 	t.valueName = valueName
 	t.entityTagNames = entityTagNames
 }
 
-// AddValue add value and entityValues
+// AddValue add value and entityValues.
 func (t *TopNValue) AddValue(value int64, entityValues []*modelv1.TagValue) {
 	entityValuesCopy := make([]*modelv1.TagValue, len(entityValues))
 	copy(entityValuesCopy, entityValues)
@@ -753,7 +753,7 @@ func (t *TopNValue) resizeEntities(size int, entitySize int) [][]*modelv1.TagVal
 	return t.entities
 }
 
-// Marshal marshal the topNValue to the dst
+// Marshal marshal the topNValue to the dst.
 func (t *TopNValue) Marshal(dst []byte) ([]byte, error) {
 	if len(t.values) == 0 {
 		return nil, errors.New("values is empty")
