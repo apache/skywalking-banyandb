@@ -493,11 +493,15 @@ func (c *Client) Disconnect() error {
 func (c *Client) Start(ctx context.Context) error {
 	c.connManager.start(ctx)
 
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-c.stopCh:
+		case <-stopCh:
 			return nil
 		default:
 		}
