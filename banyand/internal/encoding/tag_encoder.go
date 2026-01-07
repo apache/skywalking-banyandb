@@ -372,12 +372,6 @@ func decodeDefaultTagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, b
 	return dst, nil
 }
 
-// TypedValue represents a value with its type information.
-type TypedValue struct {
-	Value []byte
-	Type  pbv1.ValueType
-}
-
 func encodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]byte) {
 	if len(values) == 0 {
 		return
