@@ -49,11 +49,12 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 		}
 	}
 	aggregator := &topNPostAggregationProcessor{
-		topN:     topN,
-		sort:     sort,
-		aggrFunc: aggrFunc,
-		cache:    make(map[string]*topNAggregatorItem),
-		items:    make([]*topNAggregatorItem, 0, topN),
+		topN:      topN,
+		sort:      sort,
+		aggrFunc:  aggrFunc,
+		cache:     make(map[string]*topNAggregatorItem),
+		timelines: make(map[uint64]*topNTimelineItem),
+		items:     make([]*topNAggregatorItem, 0, topN),
 	}
 	heap.Init(aggregator)
 	return aggregator
@@ -97,17 +98,15 @@ func (aggr *topNPostAggregationProcessor) Pop() any {
 }
 
 func (aggr *topNPostAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
-
 	if lowest := aggr.items[0]; lowest != nil {
-		if aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val() {
+		shouldReplace := (aggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val()) ||
+			(aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val())
+
+		if shouldReplace {
 			delete(aggr.cache, lowest.key)
 			aggr.cache[key] = item
 			aggr.items[0] = item
-			heap.Fix(aggr, 0)
-		} else if aggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val() {
-			delete(aggr.cache, lowest.key)
-			aggr.cache[key] = item
-			aggr.items[0] = item
+			item.index = 0
 			heap.Fix(aggr, 0)
 		}
 	}
@@ -221,9 +220,8 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 	if lowest := timeline.queue.Peek(); lowest != nil {
 		lowestItem := lowest.(*topNAggregatorItem)
 
-		shouldReplace :=
-			(taggr.sort == modelv1.Sort_SORT_DESC && lowestItem.val < val) ||
-				(taggr.sort != modelv1.Sort_SORT_DESC && lowestItem.val > val)
+		shouldReplace := (taggr.sort == modelv1.Sort_SORT_DESC && lowestItem.val < val) ||
+			(taggr.sort != modelv1.Sort_SORT_DESC && lowestItem.val > val)
 
 		if shouldReplace {
 			delete(timeline.items, lowestItem.key)
@@ -236,7 +234,6 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 }
 
 func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
-
 	var result []*topNAggregatorItem
 
 	if taggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
@@ -282,7 +279,6 @@ func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error
 }
 
 func (taggr *topNPostAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
-
 	if taggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		return taggr.valWithAggregation(tagNames)
 	}
@@ -295,9 +291,13 @@ func (taggr *topNPostAggregationProcessor) valWithAggregation(tagNames []string)
 	if err != nil {
 		return []*measurev1.TopNList{}
 	}
-	items := make([]*measurev1.TopNList_Item, len(topNAggregatorItems))
+	length := len(topNAggregatorItems)
+	items := make([]*measurev1.TopNList_Item, length)
+
 	for i, item := range topNAggregatorItems {
-		items[i] = &measurev1.TopNList_Item{
+		targetIdx := length - 1 - i
+
+		items[targetIdx] = &measurev1.TopNList_Item{
 			Entity: item.GetTags(tagNames),
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{

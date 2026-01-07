@@ -41,7 +41,6 @@ import (
 )
 
 var _ = FDescribe("Write TopN Aggregation test data", func() {
-
 	var svcs *services
 	var deferFn func()
 	var goods []gleak.Goroutine
@@ -65,7 +64,6 @@ var _ = FDescribe("Write TopN Aggregation test data", func() {
 	})
 
 	It("should write and query TopN binary data", func() {
-
 		topNValue := measure.GenerateTopNValue()
 		defer measure.ReleaseTopNValue(topNValue)
 
