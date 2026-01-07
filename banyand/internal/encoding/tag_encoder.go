@@ -394,8 +394,7 @@ func encodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]b
 	bb.Buf = encoding.VarUint64ToBytes(bb.Buf, uint64(len(compressedTypes)))
 	bb.Buf = append(bb.Buf, compressedTypes...)
 
-	compressedValues := encoding.EncodeBytesBlock(nil, values)
-	bb.Buf = append(bb.Buf, compressedValues...)
+	bb.Buf = encoding.EncodeBytesBlock(bb.Buf, values)
 }
 
 func decodeMixedTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,
