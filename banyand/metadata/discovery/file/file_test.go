@@ -181,7 +181,7 @@ nodes:
 	assert.Equal(t, nodeName, nodes[0].GetMetadata().GetName())
 	assert.Equal(t, serverAddr, nodes[0].GetGrpcAddress())
 
-	nodeFromCache, getErr := svc.GetNode(ctx, serverAddr)
+	nodeFromCache, getErr := svc.GetNode(ctx, nodeName)
 	require.NoError(t, getErr)
 	assert.Equal(t, nodeName, nodeFromCache.GetMetadata().GetName())
 }

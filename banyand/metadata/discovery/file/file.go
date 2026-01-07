@@ -304,11 +304,20 @@ func (s *Service) ListNode(_ context.Context, role databasev1.Role) ([]*database
 
 	var result []*databasev1.Node
 	for _, node := range s.nodeCache {
-		// file mode doesn't support role filtering as roles are not stored in config
-		// return all nodes when ROLE_UNSPECIFIED, otherwise return empty list
-		if role == databasev1.Role_ROLE_UNSPECIFIED {
-			result = append(result, node)
+		// filter by role if specified
+		if role != databasev1.Role_ROLE_UNSPECIFIED {
+			hasRole := false
+			for _, nodeRole := range node.GetRoles() {
+				if nodeRole == role {
+					hasRole = true
+					break
+				}
+			}
+			if !hasRole {
+				continue
+			}
 		}
+		result = append(result, node)
 	}
 
 	return result, nil
@@ -319,8 +328,10 @@ func (s *Service) GetNode(_ context.Context, nodeName string) (*databasev1.Node,
 	s.cacheMutex.RLock()
 	defer s.cacheMutex.RUnlock()
 
-	if node, exists := s.nodeCache[nodeName]; exists {
-		return node, nil
+	for _, node := range s.nodeCache {
+		if node.GetMetadata() != nil && node.GetMetadata().GetName() == nodeName {
+			return node, nil
+		}
 	}
 
 	return nil, fmt.Errorf("node %s not found", nodeName)
@@ -338,6 +349,7 @@ func (s *Service) UpdateNode(_ context.Context, _ *databasev1.Node) error {
 
 func (s *Service) periodicFetch(ctx context.Context) {
 	fetchTicker := time.NewTicker(s.fetchInterval)
+	defer fetchTicker.Stop()
 
 	for {
 		select {
@@ -345,6 +357,8 @@ func (s *Service) periodicFetch(ctx context.Context) {
 			if err := s.loadAndParseFile(ctx); err != nil {
 				s.log.Warn().Err(err).Msg("Failed to reload configuration file")
 			}
+		case <-s.closer.CloseNotify():
+			return
 		case <-ctx.Done():
 			return
 		}

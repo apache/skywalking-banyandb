@@ -285,15 +285,14 @@ This creates DNS SRV record: `_grpc._tcp.banyandb-data.default.svc.cluster.local
 
 File-based discovery provides a simple static configuration approach where nodes are defined in a YAML file. This mode is ideal for testing environments, small deployments, or scenarios where dynamic service discovery infrastructure is unavailable.
 
-The service monitors the configuration file for changes and automatically updates the node registry when the file is modified.
+The service periodically reloads the configuration file and automatically updates the node registry when changes are detected.
 
 ### How it Works
-
 1. Read node configurations from a YAML file on startup
 2. Attempt to connect to each node via gRPC to fetch full metadata
 3. Successfully connected nodes are added to the cache
-4. Failed nodes are tracked separately and retried periodically
-5. Watch the file for changes and reload automatically
+4. Nodes that fail to connect are skipped and will be attempted again on the next periodic file reload
+5. Reload the file at a configured interval (FetchInterval), reprocessing all nodes (including previously failed ones)
 6. Notify registered handlers when nodes are added or removed
 
 ### Configuration Flags
@@ -308,8 +307,8 @@ The service monitors the configuration file for changes and automatically update
 # gRPC settings
 --node-discovery-grpc-timeout=5s             # Timeout for metadata fetch (default: 5s)
 
-# Retry settings
---node-discovery-file-retry-interval=20s     # Retry interval for failed nodes (default: 20s)
+# Interval settings
+--node-discovery-file-retry-interval=20s     # Interval to poll the discovery file and retry failed nodes (default: 20s)
 ```
 
 ### YAML Configuration Format
@@ -361,7 +360,6 @@ When the service starts:
 2. Validates required fields (`grpc_address`)
 3. Attempts gRPC connection to each node
 4. Successfully connected nodes → added to cache
-5. Failed nodes → wait for the next interval
 
 ### Error Handling
 
@@ -371,7 +369,7 @@ When the service starts:
 - Missing required fields → service fails to start
 
 **Runtime Errors:**
-- gRPC connection failure → node added to retry queue
+- gRPC connection failure → node skipped; retried on next file reload
 - File read error → keep existing cache, log error
 - File deleted → keep existing cache, log error
 

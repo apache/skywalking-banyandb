@@ -410,13 +410,13 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) NodeRegistry() schema.Node {
-	// If DNS discovery is enabled, use it instead of etcd
-	if s.dnsDiscovery != nil {
-		return s.dnsDiscovery
-	}
 	// If file discovery is enabled, use it instead of etcd
 	if s.fileDiscovery != nil {
 		return s.fileDiscovery
+	}
+	// If DNS discovery is enabled, use it instead of etcd
+	if s.dnsDiscovery != nil {
+		return s.dnsDiscovery
 	}
 	// Otherwise use etcd schema registry
 	return s.schemaRegistry
