@@ -15,28 +15,38 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package convert
+package integration_test
 
 import (
-	"unsafe"
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var emptyStringBytes = []byte{}
-
-// StringToBytes converts string to bytes.
-// It works well until the referenced memory won’t be changed.
-func StringToBytes(s string) (b []byte) {
-	if s == "" {
-		return emptyStringBytes
-	}
-	return unsafe.Slice(unsafe.StringData(s), len(s))
+func TestFODCProxyIntegration(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "FODC Proxy Integration Test Suite")
 }
 
-// BytesToString converts bytes to string.
-// It works well until the referenced memory won’t be changed.
-func BytesToString(b []byte) string {
-	if len(b) == 0 {
-		return ""
+var goods []gleak.Goroutine
+
+var _ = BeforeSuite(func() {
+	goods = gleak.Goroutines()
+	Expect(logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})).To(Succeed())
+})
+
+var _ = AfterSuite(func() {})
+
+var _ = ReportAfterSuite("FODC Proxy Integration Test Suite", func(report Report) {
+	if report.SuiteSucceeded {
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}
-	return unsafe.String(unsafe.SliceData(b), len(b))
-}
+})
