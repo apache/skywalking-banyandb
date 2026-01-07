@@ -153,11 +153,7 @@ func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.R
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
 
 	var err error
-	if t.valueType == pbv1.ValueTypeMixed {
-		t.values, t.types, err = internalencoding.DecodeMixedTagValues(t.values, t.types, decoder, bb, count)
-	} else {
-		t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
-	}
+	t.values, t.types, err = internalencoding.DecodeTagValues(t.values, t.types, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
@@ -180,11 +176,7 @@ func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *
 	reader.mustReadFull(bb.Buf)
 
 	var err error
-	if t.valueType == pbv1.ValueTypeMixed {
-		t.values, t.types, err = internalencoding.DecodeMixedTagValues(t.values, t.types, decoder, bb, count)
-	} else {
-		t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
-	}
+	t.values, t.types, err = internalencoding.DecodeTagValues(t.values, t.types, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}

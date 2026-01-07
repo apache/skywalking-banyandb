@@ -556,7 +556,7 @@ func (p *part) readBlockTags(tagName string, bm *blockMetadata, elems *elements,
 	fs.MustReadData(tdReader, int64(tm.dataBlock.offset), tdData)
 
 	// Decode tag values directly (no compression)
-	tagValues, err := internalencoding.DecodeTagValues(nil, decoder, &bytes.Buffer{Buf: tdData}, tm.valueType, int(bm.count))
+	tagValues, _, err := internalencoding.DecodeTagValues(nil, nil, decoder, &bytes.Buffer{Buf: tdData}, tm.valueType, int(bm.count))
 	if err != nil {
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}

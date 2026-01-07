@@ -65,7 +65,7 @@ func TestEncodeDecodeTagValues_Int64_WithNilValues(t *testing.T) {
 			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
 			decoder := &pkgencoding.BytesBlockDecoder{}
-			decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
+			decoded, _, err := DecodeTagValues(nil, nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
 			require.NoError(t, err)
 			require.Len(t, decoded, len(tt.values))
 
@@ -116,7 +116,7 @@ func TestEncodeDecodeTagValues_Int64_WithNullStringValues(t *testing.T) {
 			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
 			decoder := &pkgencoding.BytesBlockDecoder{}
-			decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
+			decoded, _, err := DecodeTagValues(nil, nil, decoder, bb, pbv1.ValueTypeInt64, len(tt.values))
 			require.NoError(t, err)
 			require.Len(t, decoded, len(tt.values))
 
@@ -148,7 +148,7 @@ func TestEncodeDecodeTagValues_Int64_MixedNilAndNullString(t *testing.T) {
 	require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
 
 	decoder := &pkgencoding.BytesBlockDecoder{}
-	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
+	decoded, _, err := DecodeTagValues(nil, nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
 	require.NoError(t, err)
 	require.Len(t, decoded, len(values))
 
@@ -182,7 +182,7 @@ func TestEncodeDecodeTagValues_Int64_ValidValues(t *testing.T) {
 	require.Equal(t, pkgencoding.EncodeTypeDelta, encodeType)
 
 	decoder := &pkgencoding.BytesBlockDecoder{}
-	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
+	decoded, _, err := DecodeTagValues(nil, nil, decoder, bb, pbv1.ValueTypeInt64, len(values))
 	require.NoError(t, err)
 	require.Len(t, decoded, len(values))
 
@@ -199,7 +199,7 @@ func TestEncodeDecodeTagValues_Int64_EmptyInput(t *testing.T) {
 	require.Equal(t, pkgencoding.EncodeTypeUnknown, encodeType)
 
 	decoder := &pkgencoding.BytesBlockDecoder{}
-	decoded, err := DecodeTagValues(nil, decoder, bb, pbv1.ValueTypeInt64, 0)
+	decoded, _, err := DecodeTagValues(nil, nil, decoder, bb, pbv1.ValueTypeInt64, 0)
 	require.NoError(t, err)
 	assert.Nil(t, decoded)
 }

@@ -106,19 +106,26 @@ func EncodeTagValues(bb *bytes.Buffer, values [][]byte, valueType pbv1.ValueType
 }
 
 // DecodeTagValues decodes tag values based on the value type.
-func DecodeTagValues(dst [][]byte, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, valueType pbv1.ValueType, count int) ([][]byte, error) {
+func DecodeTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, valueType pbv1.ValueType, count int) ([][]byte, []pbv1.ValueType, error) {
 	if len(bb.Buf) == 0 {
-		return nil, nil
+		if valueType == pbv1.ValueTypeMixed {
+			return nil, []pbv1.ValueType{pbv1.ValueTypeUnknown}, nil
+		}
+		return nil, nil, nil
 	}
 
+	var err error
 	switch valueType {
+	case pbv1.ValueTypeMixed:
+		return decodeMixedTagValues(dst, dstTypes, decoder, bb, uint64(count))
 	case pbv1.ValueTypeInt64:
-		return decodeInt64TagValues(dst, decoder, bb, uint64(count))
+		dst, err = decodeInt64TagValues(dst, decoder, bb, uint64(count))
 	case pbv1.ValueTypeFloat64:
-		return decodeFloat64TagValues(dst, decoder, bb, uint64(count))
+		dst, err = decodeFloat64TagValues(dst, decoder, bb, uint64(count))
 	default:
-		return decodeDefaultTagValues(dst, decoder, bb, uint64(count))
+		dst, err = decodeDefaultTagValues(dst, decoder, bb, uint64(count))
 	}
+	return dst, nil, err
 }
 
 func encodeInt64TagValues(bb *bytes.Buffer, values [][]byte) (encoding.EncodeType, error) {
@@ -388,14 +395,9 @@ func EncodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]b
 	return nil
 }
 
-// DecodeMixedTagValues decodes tag values with type information.
-func DecodeMixedTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,
+func decodeMixedTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,
 	bb *bytes.Buffer, count uint64,
 ) ([][]byte, []pbv1.ValueType, error) {
-	if len(bb.Buf) == 0 {
-		return nil, []pbv1.ValueType{pbv1.ValueTypeUnknown}, nil
-	}
-
 	encodeType := encoding.EncodeType(bb.Buf[0])
 	if encodeType != encoding.EncodeTypeTyped {
 		logger.Panicf("expected typed encoding type, got %d", encodeType)

@@ -230,7 +230,7 @@ func decodeAndConvertTagValues(td *tagData, decoder *pkgencoding.BytesBlockDecod
 	var err error
 
 	// Decode to tmpBytes buffer, reusing the existing slice to avoid allocations
-	td.tmpBytes, err = internalencoding.DecodeTagValues(td.tmpBytes[:0], decoder, encodedData, valueType, count)
+	td.tmpBytes, _, err = internalencoding.DecodeTagValues(td.tmpBytes[:0], nil, decoder, encodedData, valueType, count)
 	if err != nil {
 		return fmt.Errorf("cannot decode tag values: %w", err)
 	}

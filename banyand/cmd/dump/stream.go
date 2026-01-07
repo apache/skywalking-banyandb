@@ -801,7 +801,7 @@ func readStreamTagValues(decoder *encoding.BytesBlockDecoder, tagBlock streamDat
 	// Decode values using the internal encoding package
 	var err error
 	var values [][]byte
-	values, err = internalencoding.DecodeTagValues(values, decoder, bb, valueType, count)
+	values, _, err = internalencoding.DecodeTagValues(values, nil, decoder, bb, valueType, count)
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode tag values: %w", err)
 	}

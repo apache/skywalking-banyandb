@@ -95,7 +95,7 @@ func (t *tag) mustReadValues(decoder *pkgencoding.BytesBlockDecoder, reader fs.R
 
 	// Use shared decoding module
 	var err error
-	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	t.values, _, err = internalencoding.DecodeTagValues(t.values, nil, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}
@@ -119,7 +119,7 @@ func (t *tag) mustSeqReadValues(decoder *pkgencoding.BytesBlockDecoder, reader *
 
 	// Use shared decoding module
 	var err error
-	t.values, err = internalencoding.DecodeTagValues(t.values, decoder, bb, t.valueType, int(count))
+	t.values, _, err = internalencoding.DecodeTagValues(t.values, nil, decoder, bb, t.valueType, int(count))
 	if err != nil {
 		logger.Panicf("%s: failed to decode tag values: %v", reader.Path(), err)
 	}

@@ -55,7 +55,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test decoding
 		decoder := &pkgencoding.BytesBlockDecoder{}
-		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		decodedValues, _, err := encoding.DecodeTagValues(nil, nil, decoder, bb, tag.valueType, len(tag.values))
 		assert.NoError(t, err)
 		assert.Equal(t, len(tag.values), len(decodedValues))
 		assert.Equal(t, tag.values, decodedValues)
@@ -81,7 +81,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test decoding
 		decoder := &pkgencoding.BytesBlockDecoder{}
-		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		decodedValues, _, err := encoding.DecodeTagValues(nil, nil, decoder, bb, tag.valueType, len(tag.values))
 		assert.NoError(t, err)
 		assert.Equal(t, len(tag.values), len(decodedValues))
 		assert.Equal(t, tag.values, decodedValues)
@@ -107,7 +107,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test decoding
 		decoder := &pkgencoding.BytesBlockDecoder{}
-		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		decodedValues, _, err := encoding.DecodeTagValues(nil, nil, decoder, bb, tag.valueType, len(tag.values))
 		assert.NoError(t, err)
 		assert.Equal(t, len(tag.values), len(decodedValues))
 		assert.Equal(t, tag.values, decodedValues)
@@ -138,7 +138,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test decoding
 		decoder := &pkgencoding.BytesBlockDecoder{}
-		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, len(tag.values))
+		decodedValues, _, err := encoding.DecodeTagValues(nil, nil, decoder, bb, tag.valueType, len(tag.values))
 		assert.NoError(t, err)
 		assert.Equal(t, len(tag.values), len(decodedValues))
 		assert.Equal(t, tag.values, decodedValues)
@@ -168,7 +168,7 @@ func TestTagEncodingDecoding(t *testing.T) {
 
 		// Test decoding
 		decoder := &pkgencoding.BytesBlockDecoder{}
-		decodedValues, err := encoding.DecodeTagValues(nil, decoder, bb, tag.valueType, 0)
+		decodedValues, _, err := encoding.DecodeTagValues(nil, nil, decoder, bb, tag.valueType, 0)
 		assert.NoError(t, err)
 		assert.Nil(t, decodedValues)
 	})
