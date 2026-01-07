@@ -542,44 +542,17 @@ func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByT
 	if len(groupByTagsRefs) == 0 {
 		return dataPoints, nil
 	}
-	groupMap := make(map[uint64]*measurev1.DataPoint)
+	groupMap := make(map[uint64]struct{})
 	result := make([]*measurev1.DataPoint, 0)
 	for _, dp := range dataPoints {
 		key, err := formatGroupByKey(dp, groupByTagsRefs)
 		if err != nil {
 			return nil, err
 		}
-		existing, exists := groupMap[key]
-		if !exists {
-			groupMap[key] = dp
-			result = append(result, dp)
-		} else if !groupByTagsEqual(dp, existing, groupByTagsRefs) {
-			// Hash collision: different groups have the same hash, keep both
-			groupMap[key] = dp
+		if _, exists := groupMap[key]; !exists {
+			groupMap[key] = struct{}{}
 			result = append(result, dp)
 		}
 	}
 	return result, nil
-}
-
-// groupByTagsEqual compares group-by tag values of two data points.
-func groupByTagsEqual(dp1, dp2 *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) bool {
-	for _, tagFamilyRef := range groupByTagsRefs {
-		for _, tagRef := range tagFamilyRef {
-			if tagRef.Spec.TagFamilyIdx >= len(dp1.GetTagFamilies()) ||
-				tagRef.Spec.TagFamilyIdx >= len(dp2.GetTagFamilies()) {
-				return false
-			}
-			if tagRef.Spec.TagIdx >= len(dp1.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) ||
-				tagRef.Spec.TagIdx >= len(dp2.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()) {
-				return false
-			}
-			tag1 := dp1.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
-			tag2 := dp2.GetTagFamilies()[tagRef.Spec.TagFamilyIdx].GetTags()[tagRef.Spec.TagIdx]
-			if pbv1.MustCompareTagValue(tag1.GetValue(), tag2.GetValue()) != 0 {
-				return false
-			}
-		}
-	}
-	return true
 }
