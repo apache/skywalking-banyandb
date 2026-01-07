@@ -507,7 +507,7 @@ service GroupRegistryService {
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
 
   rpc Inspect(GroupRegistryServiceInspectRequest) returns (GroupRegistryServiceInspectResponse) {
-    option (google.api.http) = {get: "/v1/group/{group}/content"};
+    option (google.api.http) = {get: "/v1/group/content/{group}"};
   }
 
   rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
@@ -515,7 +515,7 @@ service GroupRegistryService {
   }
 
   rpc Query(GroupRegistryServiceQueryRequest) returns (GroupRegistryServiceQueryResponse) {
-    option (google.api.http) = {get: "/v1/group/{group}/task"};
+    option (google.api.http) = {get: "/v1/group/task/{group}"};
   }
 }
 
