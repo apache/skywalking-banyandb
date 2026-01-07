@@ -7,12 +7,13 @@ Node discovery enables BanyanDB nodes to locate and communicate with each other 
 1. **Request Routing**: When liaison nodes need to send requests to data nodes for query/write execution.
 2. **Data Migration**: When the lifecycle service queries the node list to perform shard migration and rebalancing.
 
-BanyanDB supports two discovery mechanisms to accommodate different deployment environments:
+BanyanDB supports three discovery mechanisms to accommodate different deployment environments:
 
 - **Etcd-based Discovery**: Traditional distributed consensus approach suitable for VM deployments and multi-cloud scenarios.
 - **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
+- **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
 
-This document provides guidance on configuring and operating both discovery modes.
+This document provides guidance on configuring and operating all discovery modes.
 
 ## Etcd-Based Discovery
 
@@ -278,6 +279,102 @@ spec:
 
 This creates DNS SRV record: `_grpc._tcp.banyandb-data.default.svc.cluster.local`
 
+## File-Based Discovery
+
+### Overview
+
+File-based discovery provides a simple static configuration approach where nodes are defined in a YAML file. This mode is ideal for testing environments, small deployments, or scenarios where dynamic service discovery infrastructure is unavailable.
+
+The service monitors the configuration file for changes and automatically updates the node registry when the file is modified.
+
+### How it Works
+
+1. Read node configurations from a YAML file on startup
+2. Attempt to connect to each node via gRPC to fetch full metadata
+3. Successfully connected nodes are added to the cache
+4. Failed nodes are tracked separately and retried periodically
+5. Watch the file for changes and reload automatically
+6. Notify registered handlers when nodes are added or removed
+
+### Configuration Flags
+
+```shell
+# Mode selection
+--node-discovery-mode=file                    # Enable file mode
+
+# File path (required for file mode)
+--node-discovery-file-path=/path/to/nodes.yaml
+
+# gRPC settings
+--node-discovery-grpc-timeout=5s             # Timeout for metadata fetch (default: 5s)
+
+# Retry settings
+--node-discovery-file-retry-interval=20s     # Retry interval for failed nodes (default: 20s)
+```
+
+### YAML Configuration Format
+
+```yaml
+nodes:
+  - name: liaison-0
+    grpc_address: 192.168.1.10:18912
+  - name: data-hot-0
+    grpc_address: 192.168.1.20:17912
+    tls_enabled: true
+    ca_cert_path: /etc/banyandb/certs/ca.crt
+  - name: data-cold-0
+    grpc_address: 192.168.1.30:17912
+```
+
+**Configuration Fields:**
+
+- **name** (required): Identifier for the node
+- **grpc_address** (required): gRPC endpoint in `host:port` format
+- **tls_enabled** (optional): Enable TLS for gRPC connection (default: false)
+- **ca_cert_path** (optional): Path to CA certificate file (required when TLS is enabled)
+
+### Configuration Examples
+
+**Basic Configuration:**
+
+```shell
+banyand data \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
+```
+
+**With Custom Retry Interval:**
+
+```shell
+banyand liaison \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml \
+  --node-discovery-file-retry-interval=30s
+```
+
+### Node Lifecycle
+
+#### Initial/Interval Load
+
+When the service starts:
+1. Reads the YAML configuration file
+2. Validates required fields (`grpc_address`)
+3. Attempts gRPC connection to each node
+4. Successfully connected nodes → added to cache
+5. Failed nodes → wait for the next interval
+
+### Error Handling
+
+**Startup Errors:**
+- Missing or invalid file path → service fails to start
+- Invalid YAML format → service fails to start
+- Missing required fields → service fails to start
+
+**Runtime Errors:**
+- gRPC connection failure → node added to retry queue
+- File read error → keep existing cache, log error
+- File deleted → keep existing cache, log error
+
 ## Choosing a Discovery Mode
 
 ### Etcd Mode - Best For
@@ -294,3 +391,12 @@ This creates DNS SRV record: `_grpc._tcp.banyandb-data.default.svc.cluster.local
 - Cloud-native architecture alignment
 - StatefulSets with stable network identities
 - Rapid deployment without external dependencies
+
+### File Mode - Best For
+
+- Development and testing environments
+- Small static clusters (< 10 nodes)
+- Air-gapped deployments without service discovery infrastructure
+- Proof-of-concept and demo setups
+- Environments where node membership is manually managed
+- Scenarios requiring predictable and auditable node configuration
