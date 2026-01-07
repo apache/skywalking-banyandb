@@ -74,7 +74,7 @@ jobs:
       - name: Sanitize test name for artifact
         if: ${{ failure() }}
         id: sanitize-name
-        run: echo "sanitized=$(echo '${{ inputs.test-name }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
+        run: echo "sanitized=$(echo '${{ inputs.test-name }}-${{ inputs.timezone }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder

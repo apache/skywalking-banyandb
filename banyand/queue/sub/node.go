@@ -15,44 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package sub
 
 import (
-	"sync"
+	"context"
+
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-// MetricsCollector is a global metrics collector.
-var MetricsCollector = Collector{
-	getters: make(map[string]MetricsGetter),
-}
-
-// MetricsGetter is a function that collects metrics.
-type MetricsGetter func()
-
-// Collector is a metrics collector.
-type Collector struct {
-	getters map[string]MetricsGetter
-	gMux    sync.RWMutex
-}
-
-// Register registers a metrics getter.
-func (c *Collector) Register(name string, getter MetricsGetter) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	c.getters[name] = getter
-}
-
-// Unregister unregisters a metrics getter.
-func (c *Collector) Unregister(name string) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	delete(c.getters, name)
-}
-
-func (c *Collector) collect() {
-	c.gMux.RLock()
-	defer c.gMux.RUnlock()
-	for _, getter := range c.getters {
-		getter()
-	}
+func (s *server) GetCurrentNode(context.Context, *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
+	return &databasev1.GetCurrentNodeResponse{
+		Node: s.curNode,
+	}, nil
 }
