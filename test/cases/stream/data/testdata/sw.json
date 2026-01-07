@@ -22,7 +22,7 @@
       {"str":{"value": "/product_id"}},
       {"int":{"value": 500}},
       {"int":{"value": 1622933202000000000}},
-      {"null":0},
+      {"str":{"value": ""}},
       {"null":0},
       {"str":{"value": "1"}},
       {"str":{"value":"mysql"}},

@@ -40,6 +40,8 @@ binary(){
     make generate && make -C ui build
     make -C mcp release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy release
     bindir=./build
     mkdir -p ${bindir}/bin
     # Copy relevant files
@@ -64,6 +66,18 @@ binary(){
     copy_binaries bydbctl
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz -C ${bindir} .
+
+    # Build fodc-agent
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    copy_binaries fodc/agent
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-agent.tgz -C ${bindir} .
+
+    # Build fodc-proxy
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    copy_binaries fodc/proxy
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz -C ${bindir} .
 }
 
 copy_binaries() {
