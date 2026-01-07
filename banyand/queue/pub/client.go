@@ -464,7 +464,14 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				if errInternal := p.checkServiceHealth(t, node.conn); errInternal == nil {
+				p.mu.RLock()
+				nodeCur, okCur := p.active[nodeName]
+				p.mu.RUnlock()
+				if !okCur {
+					return
+				}
+				errInternal := p.checkServiceHealth(t, nodeCur.conn)
+				if errInternal == nil {
 					func() {
 						p.mu.Lock()
 						defer p.mu.Unlock()
@@ -478,7 +485,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 					}()
 					return
 				}
-				p.log.Warn().Str("topic", t).Err(err).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", t).Err(errInternal).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}

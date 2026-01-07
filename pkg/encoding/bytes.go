@@ -46,7 +46,12 @@ func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 	u64s := GenerateUint64List(len(a))
 	aLens := u64s.L[:0]
 	for _, s := range a {
-		aLens = append(aLens, uint64(len(s)))
+		if s == nil {
+			aLens = append(aLens, 0)
+		} else {
+			// Offset by 1: "" (len 0) becomes 1, "a" (len 1) becomes 2, etc.
+			aLens = append(aLens, uint64(len(s))+1)
+		}
 	}
 	u64s.L = aLens
 	dst = EncodeUint64Block(dst, u64s.L)
@@ -100,15 +105,22 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 
 	data := bbd.data[dataLen:]
 	for _, sLen := range aLens {
-		if uint64(len(data)) < sLen {
-			return dst, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
-		}
 		if sLen == 0 {
 			dst = append(dst, nil)
 			continue
 		}
-		dst = append(dst, data[:sLen])
-		data = data[sLen:]
+		// Reverse the offset
+		actualLen := sLen - 1
+		if uint64(len(data)) < actualLen {
+			return dst, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", actualLen, len(data))
+		}
+		if actualLen == 0 {
+			// Explicitly create non-nil empty slice for empty strings
+			dst = append(dst, []byte{})
+		} else {
+			dst = append(dst, data[:actualLen])
+		}
+		data = data[actualLen:]
 	}
 
 	return dst, nil
@@ -136,15 +148,22 @@ func (bbd *BytesBlockDecoder) DecodeWithTail(dst [][]byte, src []byte, itemsCoun
 
 	data := bbd.data[dataLen:]
 	for _, sLen := range aLens {
-		if uint64(len(data)) < sLen {
-			return dst, tail, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", sLen, len(data))
-		}
 		if sLen == 0 {
 			dst = append(dst, nil)
 			continue
 		}
-		dst = append(dst, data[:sLen])
-		data = data[sLen:]
+		// Reverse the offset
+		actualLen := sLen - 1
+		if uint64(len(data)) < actualLen {
+			return dst, tail, fmt.Errorf("cannot decode a string with the length %d bytes from %d bytes", actualLen, len(data))
+		}
+		if actualLen == 0 {
+			// Explicitly create non-nil empty slice for empty strings
+			dst = append(dst, []byte{})
+		} else {
+			dst = append(dst, data[:actualLen])
+		}
+		data = data[actualLen:]
 	}
 
 	return dst, tail, nil

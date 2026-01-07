@@ -30,7 +30,7 @@ type Metrics struct {
 }
 
 // NewMetrics creates a new Metrics.
-func NewMetrics(factory *observability.Factory) *Metrics {
+func NewMetrics(factory observability.Factory) *Metrics {
 	return &Metrics{
 		totalErrs:    factory.NewCounter("total_err"),
 		totalRetries: factory.NewCounter("total_retries"),

@@ -779,3 +779,13 @@ service TraceRegistryService {
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(TraceRegistryServiceExistRequest) returns (TraceRegistryServiceExistResponse);
 }
+
+message GetCurrentNodeRequest {}
+
+message GetCurrentNodeResponse {
+  banyandb.database.v1.Node node = 1;
+}
+
+service NodeQueryService {
+  rpc GetCurrentNode(GetCurrentNodeRequest) returns (GetCurrentNodeResponse) {}
+}

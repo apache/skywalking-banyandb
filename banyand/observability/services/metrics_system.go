@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+package services
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -44,10 +45,6 @@ var (
 )
 
 var (
-	// RootScope is the root scope for all metrics.
-	RootScope = meter.NewHierarchicalScope("banyandb", "_")
-	// SystemScope is the system scope for all metrics.
-	SystemScope      = RootScope.SubScope("system")
 	cpuStateGauge    meter.Gauge
 	cpuNumGauge      meter.Gauge
 	memoryStateGauge meter.Gauge
@@ -87,7 +84,7 @@ func init() {
 }
 
 func (p *metricService) initMetrics() {
-	factory := p.With(SystemScope)
+	factory := p.With(observability.SystemScope)
 	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
 	cpuNumGauge = factory.NewGauge("cpu_num")
 	memoryStateGauge = factory.NewGauge("memory_state", "kind")
