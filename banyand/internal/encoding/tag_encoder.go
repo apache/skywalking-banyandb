@@ -89,8 +89,9 @@ func releaseDictionary(d *encoding.Dictionary) {
 // EncodeTagValues encodes tag values based on the value type with optimal compression.
 // For int64: uses delta encoding with first value storage.
 // For float64: converts to decimal integers with exponent, then delta encoding.
+// For mixed: encodes values with type information.
 // For other types: uses dictionary encoding, falls back to plain with zstd compression.
-func EncodeTagValues(bb *bytes.Buffer, values [][]byte, valueType pbv1.ValueType) (encoding.EncodeType, error) {
+func EncodeTagValues(bb *bytes.Buffer, values [][]byte, valueType pbv1.ValueType, types []pbv1.ValueType) (encoding.EncodeType, error) {
 	if len(values) == 0 {
 		return encoding.EncodeTypeUnknown, nil
 	}
@@ -100,13 +101,18 @@ func EncodeTagValues(bb *bytes.Buffer, values [][]byte, valueType pbv1.ValueType
 		return encodeInt64TagValues(bb, values)
 	case pbv1.ValueTypeFloat64:
 		return encodeFloat64TagValues(bb, values)
+	case pbv1.ValueTypeMixed:
+		encodeMixedTagValues(bb, types, values)
+		return encoding.EncodeTypeTyped, nil
 	default:
 		return encodeDefaultTagValues(bb, values)
 	}
 }
 
 // DecodeTagValues decodes tag values based on the value type.
-func DecodeTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder, bb *bytes.Buffer, valueType pbv1.ValueType, count int) ([][]byte, []pbv1.ValueType, error) {
+func DecodeTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,
+	bb *bytes.Buffer, valueType pbv1.ValueType, count int,
+) ([][]byte, []pbv1.ValueType, error) {
 	if len(bb.Buf) == 0 {
 		if valueType == pbv1.ValueTypeMixed {
 			return nil, []pbv1.ValueType{pbv1.ValueTypeUnknown}, nil
@@ -372,10 +378,9 @@ type TypedValue struct {
 	Type  pbv1.ValueType
 }
 
-// EncodeMixedTagValues encodes tag values with type information.
-func EncodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]byte) error {
+func encodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]byte) {
 	if len(values) == 0 {
-		return nil
+		return
 	}
 
 	bb.Buf = append(bb.Buf[:0], byte(encoding.EncodeTypeTyped))
@@ -391,8 +396,6 @@ func EncodeMixedTagValues(bb *bytes.Buffer, types []pbv1.ValueType, values [][]b
 
 	compressedValues := encoding.EncodeBytesBlock(nil, values)
 	bb.Buf = append(bb.Buf, compressedValues...)
-
-	return nil
 }
 
 func decodeMixedTagValues(dst [][]byte, dstTypes []pbv1.ValueType, decoder *encoding.BytesBlockDecoder,

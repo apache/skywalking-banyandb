@@ -88,19 +88,9 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
 
-	var encodeType pkgencoding.EncodeType
-	var err error
-	if t.valueType == pbv1.ValueTypeMixed {
-		err = internalencoding.EncodeMixedTagValues(bb, t.types, t.values)
-		if err != nil {
-			logger.Panicf("failed to encode mixed tag values: %v", err)
-		}
-		encodeType = pkgencoding.EncodeTypeTyped
-	} else {
-		encodeType, err = internalencoding.EncodeTagValues(bb, t.values, t.valueType)
-		if err != nil {
-			logger.Panicf("failed to encode tag values: %v", err)
-		}
+	encodeType, err := internalencoding.EncodeTagValues(bb, t.values, t.valueType, t.types)
+	if err != nil {
+		logger.Panicf("failed to encode tag values: %v", err)
 	}
 
 	tm.size = uint64(len(bb.Buf))

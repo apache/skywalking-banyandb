@@ -59,7 +59,7 @@ func TestEncodeDecodeTagValues_Int64_WithNilValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bb := &bytes.Buffer{}
-			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64)
+			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64, nil)
 			require.NoError(t, err)
 			require.NotNil(t, bb.Buf)
 			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
@@ -110,7 +110,7 @@ func TestEncodeDecodeTagValues_Int64_WithNullStringValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bb := &bytes.Buffer{}
-			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64)
+			encodeType, err := EncodeTagValues(bb, tt.values, pbv1.ValueTypeInt64, nil)
 			require.NoError(t, err)
 			require.NotNil(t, bb.Buf)
 			require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
@@ -142,7 +142,7 @@ func TestEncodeDecodeTagValues_Int64_MixedNilAndNullString(t *testing.T) {
 	}
 
 	bb := &bytes.Buffer{}
-	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64)
+	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bb.Buf)
 	require.Equal(t, pkgencoding.EncodeTypePlain, encodeType)
@@ -176,7 +176,7 @@ func TestEncodeDecodeTagValues_Int64_ValidValues(t *testing.T) {
 	}
 
 	bb := &bytes.Buffer{}
-	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64)
+	encodeType, err := EncodeTagValues(bb, values, pbv1.ValueTypeInt64, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bb.Buf)
 	require.Equal(t, pkgencoding.EncodeTypeDelta, encodeType)
@@ -193,7 +193,7 @@ func TestEncodeDecodeTagValues_Int64_ValidValues(t *testing.T) {
 
 func TestEncodeDecodeTagValues_Int64_EmptyInput(t *testing.T) {
 	bb := &bytes.Buffer{}
-	encodeType, err := EncodeTagValues(bb, nil, pbv1.ValueTypeInt64)
+	encodeType, err := EncodeTagValues(bb, nil, pbv1.ValueTypeInt64, nil)
 	require.NoError(t, err)
 	assert.Nil(t, bb.Buf)
 	require.Equal(t, pkgencoding.EncodeTypeUnknown, encodeType)
