@@ -653,6 +653,9 @@ func (c *Client) reconnect(ctx context.Context) {
 	c.heartbeatWg.Wait()
 	c.streamsMu.Lock()
 
+	if !c.disconnected {
+		close(c.stopCh)
+	}
 	c.stopCh = make(chan struct{})
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
