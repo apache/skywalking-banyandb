@@ -763,106 +763,131 @@ func appendAsMixed(target, source *tag, srcIdx, offset int) {
 
 func fullTagAppend(bi, b *blockPointer, offset int) {
 	existDataSize := len(bi.timestamps)
-	appendTagFamilies := func(tf tagFamily) {
-		tfv := tagFamily{name: tf.name}
-		for i := range tf.tags {
-			assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].values), b.idx, offset)
-			tag := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
-			for j := 0; j < existDataSize; j++ {
-				tag.values = append(tag.values, nil)
-			}
-			tag.values = append(tag.values, tf.tags[i].values[b.idx:offset]...)
-			if tf.tags[i].valueType == pbv1.ValueTypeMixed {
-				assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].types), b.idx, offset)
-				for j := 0; j < existDataSize; j++ {
-					tag.types = append(tag.types, pbv1.ValueTypeUnknown)
-				}
-				tag.types = append(tag.types, tf.tags[i].types[b.idx:offset]...)
-			}
-			tfv.tags = append(tfv.tags, tag)
-		}
-		bi.tagFamilies = append(bi.tagFamilies, tfv)
-	}
 	if len(bi.tagFamilies) == 0 {
-		for _, tf := range b.tagFamilies {
-			appendTagFamilies(tf)
-		}
+		initTagFamilies(bi, b, offset, existDataSize)
 		return
 	}
-
 	tagFamilyMap := make(map[string]*tagFamily)
 	for i := range bi.tagFamilies {
 		tagFamilyMap[bi.tagFamilies[i].name] = &bi.tagFamilies[i]
 	}
+	mergeTagFamilies(bi, b, offset, existDataSize, tagFamilyMap)
+	padMissingTagsWithNils(bi, b, offset, tagFamilyMap)
+}
 
+func initTagFamilies(bi, b *blockPointer, offset, existDataSize int) {
 	for _, tf := range b.tagFamilies {
-		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
-			tagMap := make(map[string]*tag)
-			for i := range existingTagFamily.tags {
-				tagMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+		tfv := tagFamily{name: tf.name}
+		for i := range tf.tags {
+			assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].values), b.idx, offset)
+			t := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
+			for range existDataSize {
+				t.values = append(t.values, nil)
 			}
-
-			for _, t := range tf.tags {
-				if existingTag, tagExists := tagMap[t.name]; tagExists {
-					assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
-					if shouldAppendAsMixed(existingTag, &t) {
-						appendAsMixed(existingTag, &t, b.idx, offset)
-					} else {
-						existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
-					}
-				} else {
-					assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
-					tag := tag{name: t.name, valueType: t.valueType}
-					for j := 0; j < existDataSize; j++ {
-						tag.values = append(tag.values, nil)
-					}
-					tag.values = append(tag.values, t.values[b.idx:offset]...)
-					if t.valueType == pbv1.ValueTypeMixed {
-						assertIdxAndOffset(t.name, len(t.types), b.idx, offset)
-						for j := 0; j < existDataSize; j++ {
-							tag.types = append(tag.types, pbv1.ValueTypeUnknown)
-						}
-						tag.types = append(tag.types, t.types[b.idx:offset]...)
-					}
-					existingTagFamily.tags = append(existingTagFamily.tags, tag)
+			t.values = append(t.values, tf.tags[i].values[b.idx:offset]...)
+			if tf.tags[i].valueType == pbv1.ValueTypeMixed {
+				assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].types), b.idx, offset)
+				for range existDataSize {
+					t.types = append(t.types, pbv1.ValueTypeUnknown)
 				}
+				t.types = append(t.types, tf.tags[i].types[b.idx:offset]...)
 			}
-		} else {
-			appendTagFamilies(tf)
+			tfv.tags = append(tfv.tags, t)
+		}
+		bi.tagFamilies = append(bi.tagFamilies, tfv)
+	}
+}
+
+func mergeTagFamilies(bi, b *blockPointer, offset, existDataSize int, tagFamilyMap map[string]*tagFamily) {
+	for _, tf := range b.tagFamilies {
+		existingTagFamily, exists := tagFamilyMap[tf.name]
+		if !exists {
+			tfv := tagFamily{name: tf.name}
+			for i := range tf.tags {
+				assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].values), b.idx, offset)
+				t := tag{name: tf.tags[i].name, valueType: tf.tags[i].valueType}
+				for range existDataSize {
+					t.values = append(t.values, nil)
+				}
+				t.values = append(t.values, tf.tags[i].values[b.idx:offset]...)
+				if tf.tags[i].valueType == pbv1.ValueTypeMixed {
+					assertIdxAndOffset(tf.tags[i].name, len(tf.tags[i].types), b.idx, offset)
+					for range existDataSize {
+						t.types = append(t.types, pbv1.ValueTypeUnknown)
+					}
+					t.types = append(t.types, tf.tags[i].types[b.idx:offset]...)
+				}
+				tfv.tags = append(tfv.tags, t)
+			}
+			bi.tagFamilies = append(bi.tagFamilies, tfv)
+			continue
+		}
+
+		tagMap := make(map[string]*tag)
+		for i := range existingTagFamily.tags {
+			tagMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+		}
+
+		for _, t := range tf.tags {
+			existingTag, tagExists := tagMap[t.name]
+			if tagExists {
+				assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+				if shouldAppendAsMixed(existingTag, &t) {
+					appendAsMixed(existingTag, &t, b.idx, offset)
+				} else {
+					existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
+				}
+			} else {
+				assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+				newTag := tag{name: t.name, valueType: t.valueType}
+				for range existDataSize {
+					newTag.values = append(newTag.values, nil)
+				}
+				newTag.values = append(newTag.values, t.values[b.idx:offset]...)
+				if t.valueType == pbv1.ValueTypeMixed {
+					assertIdxAndOffset(t.name, len(t.types), b.idx, offset)
+					for range existDataSize {
+						newTag.types = append(newTag.types, pbv1.ValueTypeUnknown)
+					}
+					newTag.types = append(newTag.types, t.types[b.idx:offset]...)
+				}
+				existingTagFamily.tags = append(existingTagFamily.tags, newTag)
+			}
 		}
 	}
-	for k := range tagFamilyMap {
-		delete(tagFamilyMap, k)
-	}
+}
+
+func padMissingTagsWithNils(bi, b *blockPointer, offset int, tagFamilyMap map[string]*tagFamily) {
+	clear(tagFamilyMap)
 	for i := range b.tagFamilies {
 		tagFamilyMap[b.tagFamilies[i].name] = &b.tagFamilies[i]
 	}
 	emptySize := offset - b.idx
+
 	for _, tf := range bi.tagFamilies {
 		if _, exists := tagFamilyMap[tf.name]; !exists {
 			for i := range tf.tags {
-				for j := 0; j < emptySize; j++ {
+				for range emptySize {
 					tf.tags[i].values = append(tf.tags[i].values, nil)
 				}
 				if tf.tags[i].valueType == pbv1.ValueTypeMixed {
-					for j := 0; j < emptySize; j++ {
+					for range emptySize {
 						tf.tags[i].types = append(tf.tags[i].types, pbv1.ValueTypeUnknown)
 					}
 				}
 			}
 		} else {
-			existingTagFamily := tagFamilyMap[tf.name]
 			tagMap := make(map[string]*tag)
-			for i := range existingTagFamily.tags {
-				tagMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
+			for i := range tagFamilyMap[tf.name].tags {
+				tagMap[tagFamilyMap[tf.name].tags[i].name] = &tagFamilyMap[tf.name].tags[i]
 			}
 			for i := range tf.tags {
 				if _, tagExists := tagMap[tf.tags[i].name]; !tagExists {
-					for j := 0; j < emptySize; j++ {
+					for range emptySize {
 						tf.tags[i].values = append(tf.tags[i].values, nil)
 					}
 					if tf.tags[i].valueType == pbv1.ValueTypeMixed {
-						for j := 0; j < emptySize; j++ {
+						for range emptySize {
 							tf.tags[i].types = append(tf.tags[i].types, pbv1.ValueTypeUnknown)
 						}
 					}

@@ -992,7 +992,8 @@ func matchesCriteria(tags map[string][]byte, tagTypes map[string]pbv1.ValueType,
 		}
 
 		valueType := tagTypes[name]
-		tagValue := convertTagValue(value, valueType)
+		tagValue, _ := convertTagValue(value, valueType)
+		// TODO: handle the error
 		if tagValue != nil {
 			modelTags = append(modelTags, &modelv1.Tag{
 				Key:   name,
@@ -1012,9 +1013,9 @@ func matchesCriteria(tags map[string][]byte, tagTypes map[string]pbv1.ValueType,
 	return match
 }
 
-func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
+func convertTagValue(value []byte, valueType pbv1.ValueType) (*modelv1.TagValue, error) {
 	if value == nil {
-		return pbv1.NullTagValue
+		return pbv1.NullTagValue, nil
 	}
 
 	switch valueType {
@@ -1025,7 +1026,7 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 					Value: string(value),
 				},
 			},
-		}
+		}, nil
 	case pbv1.ValueTypeInt64:
 		if len(value) >= 8 {
 			return &modelv1.TagValue{
@@ -1034,7 +1035,7 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 						Value: convert.BytesToInt64(value),
 					},
 				},
-			}
+			}, nil
 		}
 	case pbv1.ValueTypeStrArr:
 		// Decode string array
@@ -1057,13 +1058,15 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 					Value: values,
 				},
 			},
-		}
+		}, nil
 	case pbv1.ValueTypeBinaryData:
 		return &modelv1.TagValue{
 			Value: &modelv1.TagValue_BinaryData{
 				BinaryData: value,
 			},
-		}
+		}, nil
+	case pbv1.ValueTypeMixed:
+		return nil, fmt.Errorf("cannot convert ValueTypeMixed tag value")
 	case pbv1.ValueTypeUnknown:
 		// Fall through to default
 	case pbv1.ValueTypeFloat64:
@@ -1081,7 +1084,7 @@ func convertTagValue(value []byte, valueType pbv1.ValueType) *modelv1.TagValue {
 				Value: string(value),
 			},
 		},
-	}
+	}, nil
 }
 
 // traceTagRegistry implements logical.Schema for tag filtering.
