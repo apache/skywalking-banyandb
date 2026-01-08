@@ -321,7 +321,7 @@ nodes:
 	defer cancel()
 	require.NoError(t, svc.Start(ctx))
 
-	node, getErr := svc.GetNode(ctx, addr)
+	node, getErr := svc.GetNode(ctx, "cached-node")
 	require.NoError(t, getErr)
 	assert.Equal(t, "cached-node", node.GetMetadata().GetName())
 
