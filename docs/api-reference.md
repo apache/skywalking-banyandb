@@ -167,6 +167,7 @@
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
     - [GetClusterStateRequest](#banyandb-database-v1-GetClusterStateRequest)
     - [GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse)
+    - [GetClusterStateResponse.RouteTablesEntry](#banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry)
     - [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest)
     - [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse)
     - [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest)
@@ -229,6 +230,7 @@
     - [PropertyRegistryServiceListResponse](#banyandb-database-v1-PropertyRegistryServiceListResponse)
     - [PropertyRegistryServiceUpdateRequest](#banyandb-database-v1-PropertyRegistryServiceUpdateRequest)
     - [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse)
+    - [RouteTable](#banyandb-database-v1-RouteTable)
     - [Snapshot](#banyandb-database-v1-Snapshot)
     - [SnapshotRequest](#banyandb-database-v1-SnapshotRequest)
     - [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group)
@@ -2657,7 +2659,23 @@ Type determine the index structure under the hood
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| nodes | [Node](#banyandb-database-v1-Node) | repeated |  |
+| route_tables | [GetClusterStateResponse.RouteTablesEntry](#banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry) | repeated | Liaison node: map&#39;s key could be &#34;tire1&#34; and &#34;tire2&#34;. tire1 route traffic between liaison nodes, tire2 spread data among data nodes Data node: map&#39;s key could be &#34;property&#34; for gossip. Lifecycle agent: map&#39;s key could be the next stage&#39;s name. |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry"></a>
+
+### GetClusterStateResponse.RouteTablesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [RouteTable](#banyandb-database-v1-RouteTable) |  |  |
 
 
 
@@ -3552,6 +3570,24 @@ Type determine the index structure under the hood
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-RouteTable"></a>
+
+### RouteTable
+RouteTable represents a collection of nodes grouped by their health state.
+It provides a view of nodes that are registered, actively healthy, and those being evicted.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| registered | [Node](#banyandb-database-v1-Node) | repeated | registered contains all nodes that have been discovered and registered in this route. |
+| active | [string](#string) | repeated | active contains node names (Node.Metadata.Name) that are currently healthy and can handle requests. |
+| evictable | [string](#string) | repeated | evictable contains node names (Node.Metadata.Name) that are unhealthy and being retried before eviction. |
 
 
 

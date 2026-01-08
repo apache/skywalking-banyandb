@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -62,7 +63,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, tire1Client, "liaison", measureLiaisonNodeRegistry)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	internalPipeline := sub.NewServerWithPorts(metricSvc, metaSvc, "liaison-server", 18912, 18913)
+	internalPipeline := sub.NewServerWithPorts(metricSvc, "liaison-server", 18912, 18913)
 	measureSVC, err := measure.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, measureDataNodeSel, tire2Client)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure liaison service")
@@ -89,12 +90,17 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
 	}
 
+	routeProviders := map[string]route.TableProvider{
+		"tire1": tire1Client,
+		"tire2": tire2Client,
+	}
+
 	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
-	}, metricSvc, pm)
+	}, metricSvc, pm, routeProviders)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 	var units []run.Unit

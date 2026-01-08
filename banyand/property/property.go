@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -32,6 +33,7 @@ type Service interface {
 	run.PreRunner
 	run.Config
 	run.Service
+	route.TableProvider
 
 	GetGossIPGrpcPort() *uint32
 }
