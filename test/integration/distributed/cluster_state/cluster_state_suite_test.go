@@ -15,13 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package cluster_state
+package cluster_state_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gleak"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -32,11 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/onsi/gomega/gleak"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestClusterState(t *testing.T) {
