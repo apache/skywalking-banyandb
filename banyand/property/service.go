@@ -201,6 +201,9 @@ func (s *service) GetGossIPGrpcPort() *uint32 {
 
 // GetRouteTable implements RouteTableProvider interface by delegating to gossipMessenger.
 func (s *service) GetRouteTable() *databasev1.RouteTable {
+	if s.gossipMessenger == nil {
+		return nil
+	}
 	return s.gossipMessenger.GetRouteTable()
 }
 
