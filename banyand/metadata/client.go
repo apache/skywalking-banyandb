@@ -142,7 +142,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.filePath, "node-discovery-file-path", "",
 		"File path for static node configuration (file mode only)")
 	fs.DurationVar(&s.fileFetchInterval, "node-discovery-file-fetch-interval", 20*time.Second,
-		"Fetch file interval for nodes in file discovery mode")
+		"Interval to poll the discovery file and retry failed nodes in file discovery mode")
 
 	return fs
 }

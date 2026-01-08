@@ -200,25 +200,34 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 				continue
 			}
 
+			var (
+				added    bool
+				metadata schema.Metadata
+			)
+
 			s.cacheMutex.Lock()
 			if _, alreadyAdded := s.nodeCache[n.Address]; !alreadyAdded {
 				s.nodeCache[n.Address] = node
-
-				// notify handlers after releasing lock
-				s.notifyHandlers(schema.Metadata{
+				added = true
+				metadata = schema.Metadata{
 					TypeMeta: schema.TypeMeta{
 						Kind: schema.KindNode,
 						Name: node.GetMetadata().GetName(),
 					},
 					Spec: node,
-				}, true)
+				}
+			}
+			s.cacheMutex.Unlock()
+
+			if added {
+				// notify handlers after releasing lock
+				s.notifyHandlers(metadata, true)
 
 				s.log.Debug().
 					Str("address", n.Address).
 					Str("name", node.GetMetadata().GetName()).
 					Msg("New node discovered and added to cache")
 			}
-			s.cacheMutex.Unlock()
 		}
 	}
 
