@@ -292,7 +292,7 @@ The service periodically reloads the configuration file and automatically update
 2. Attempt to connect to each node via gRPC to fetch full metadata
 3. Successfully connected nodes are added to the cache
 4. Nodes that fail to connect are skipped and will be attempted again on the next periodic file reload
-5. Reload the file at a configured interval (FetchInterval), reprocessing all nodes (including previously failed ones)
+5. Reload the file at a configured interval (FetchInterval), reprocessing all nodes (including previously failed ones, excluding all successful ones)
 6. Notify registered handlers when nodes are added or removed
 
 ### Configuration Flags
