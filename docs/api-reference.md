@@ -2656,14 +2656,14 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-DataInfo"></a>
 
 ### DataInfo
-
+DataInfo contains data storage information for a specific node.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| node | [Node](#banyandb-database-v1-Node) |  |  |
-| segment_info | [SegmentInfo](#banyandb-database-v1-SegmentInfo) | repeated |  |
-| data_size_bytes | [int64](#int64) |  |  |
+| node | [Node](#banyandb-database-v1-Node) |  | node is the node that stores this data. |
+| segment_info | [SegmentInfo](#banyandb-database-v1-SegmentInfo) | repeated | segment_info contains information about each segment on this node. |
+| data_size_bytes | [int64](#int64) |  | data_size_bytes is the total size of data on this node in bytes. |
 
 
 
@@ -2698,18 +2698,18 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupDeletionTask"></a>
 
 ### GroupDeletionTask
-
+GroupDeletionTask represents the status of a group deletion operation.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| current_phase | [GroupDeletionTask.Phase](#banyandb-database-v1-GroupDeletionTask-Phase) |  |  |
-| total_counts | [GroupDeletionTask.TotalCountsEntry](#banyandb-database-v1-GroupDeletionTask-TotalCountsEntry) | repeated |  |
-| deleted_counts | [GroupDeletionTask.DeletedCountsEntry](#banyandb-database-v1-GroupDeletionTask-DeletedCountsEntry) | repeated |  |
-| total_data_size_bytes | [int64](#int64) |  |  |
-| deleted_data_size_bytes | [int64](#int64) |  |  |
-| message | [string](#string) |  |  |
-| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| current_phase | [GroupDeletionTask.Phase](#banyandb-database-v1-GroupDeletionTask-Phase) |  | current_phase is the current phase of the deletion task. |
+| total_counts | [GroupDeletionTask.TotalCountsEntry](#banyandb-database-v1-GroupDeletionTask-TotalCountsEntry) | repeated | total_counts maps resource types to their total count. |
+| deleted_counts | [GroupDeletionTask.DeletedCountsEntry](#banyandb-database-v1-GroupDeletionTask-DeletedCountsEntry) | repeated | deleted_counts maps resource types to the count of deleted resources. |
+| total_data_size_bytes | [int64](#int64) |  | total_data_size_bytes is the total size of data to be deleted in bytes. |
+| deleted_data_size_bytes | [int64](#int64) |  | deleted_data_size_bytes is the size of data that has been deleted in bytes. |
+| message | [string](#string) |  | message provides additional information about the task status. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the timestamp when the task was created. |
 
 
 
@@ -2776,14 +2776,14 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceDeleteRequest"></a>
 
 ### GroupRegistryServiceDeleteRequest
-
+GroupRegistryServiceDeleteRequest is the request for deleting a group.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  |  |
-| dry_run | [bool](#bool) |  |  |
-| force | [bool](#bool) |  |  |
+| group | [string](#string) |  | group is the name of the group to delete. |
+| dry_run | [bool](#bool) |  | dry_run indicates whether to perform a dry run without actually deleting data. When true, returns what would be deleted without making changes. |
+| force | [bool](#bool) |  | force indicates whether to force delete the group even if it contains data. When false, deletion will fail if the group is not empty. |
 
 
 
@@ -2793,13 +2793,13 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceDeleteResponse"></a>
 
 ### GroupRegistryServiceDeleteResponse
-
+GroupRegistryServiceDeleteResponse is the response for deleting a group.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| deleted | [bool](#bool) |  |  |
-| task_id | [string](#string) |  |  |
+| deleted | [bool](#bool) |  | deleted indicates whether the group was deleted. |
+| task_id | [string](#string) |  | task_id is the ID of the background deletion task. |
 
 
 
@@ -2869,12 +2869,12 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceInspectRequest"></a>
 
 ### GroupRegistryServiceInspectRequest
-
+GroupRegistryServiceInspectRequest is the request for inspecting a group&#39;s detailed information.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  |  |
+| group | [string](#string) |  | group is the name of the group to inspect. |
 
 
 
@@ -2884,15 +2884,15 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceInspectResponse"></a>
 
 ### GroupRegistryServiceInspectResponse
-
+GroupRegistryServiceInspectResponse is the response for inspecting a group.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [banyandb.common.v1.Group](#banyandb-common-v1-Group) |  |  |
-| schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  |  |
-| data_info | [DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
-| liaison_info | [LiaisonInfo](#banyandb-database-v1-LiaisonInfo) | repeated |  |
+| group | [banyandb.common.v1.Group](#banyandb-common-v1-Group) |  | group contains the group metadata. |
+| schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  | schema_info contains information about all schemas in the group. |
+| data_info | [DataInfo](#banyandb-database-v1-DataInfo) | repeated | data_info contains data storage information for each node. |
+| liaison_info | [LiaisonInfo](#banyandb-database-v1-LiaisonInfo) | repeated | liaison_info contains information about pending operations in liaison. |
 
 
 
@@ -2927,12 +2927,12 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceQueryRequest"></a>
 
 ### GroupRegistryServiceQueryRequest
-
+GroupRegistryServiceQueryRequest is the request for querying a group deletion task.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  |  |
+| group | [string](#string) |  | group is the name of the group whose deletion task to query. |
 
 
 
@@ -2942,12 +2942,12 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupRegistryServiceQueryResponse"></a>
 
 ### GroupRegistryServiceQueryResponse
-
+GroupRegistryServiceQueryResponse is the response for querying a group deletion task.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| task | [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask) |  |  |
+| task | [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask) |  | task contains the status of the deletion task. |
 
 
 
@@ -3324,13 +3324,13 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-InvertedIndexInfo"></a>
 
 ### InvertedIndexInfo
-
+InvertedIndexInfo contains information about the inverted index.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| data_count | [int64](#int64) |  |  |
-| data_size_bytes | [int64](#int64) |  |  |
+| data_count | [int64](#int64) |  | data_count is the number of entries in the inverted index. |
+| data_size_bytes | [int64](#int64) |  | data_size_bytes is the size of the inverted index in bytes. |
 
 
 
@@ -3340,16 +3340,16 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-LiaisonInfo"></a>
 
 ### LiaisonInfo
-
+LiaisonInfo contains information about pending operations in liaison.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| pending_write_data_count | [int64](#int64) |  |  |
-| pending_sync_part_count | [int64](#int64) |  |  |
-| pending_sync_data_size_bytes | [int64](#int64) |  |  |
-| pending_handoff_part_count | [int64](#int64) |  |  |
-| pending_handoff_data_size_bytes | [int64](#int64) |  |  |
+| pending_write_data_count | [int64](#int64) |  | pending_write_data_count is the number of data entries waiting to be written. |
+| pending_sync_part_count | [int64](#int64) |  | pending_sync_part_count is the number of parts waiting to be synchronized. |
+| pending_sync_data_size_bytes | [int64](#int64) |  | pending_sync_data_size_bytes is the size of data waiting to be synchronized in bytes. |
+| pending_handoff_part_count | [int64](#int64) |  | pending_handoff_part_count is the number of parts waiting for handoff. |
+| pending_handoff_data_size_bytes | [int64](#int64) |  | pending_handoff_data_size_bytes is the size of data waiting for handoff in bytes. |
 
 
 
@@ -3721,14 +3721,14 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-SIDXInfo"></a>
 
 ### SIDXInfo
-
+SIDXInfo contains information about sidx.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| data_count | [int64](#int64) |  |  |
-| data_size_bytes | [int64](#int64) |  |  |
-| part_count | [int64](#int64) |  |  |
+| data_count | [int64](#int64) |  | data_count is the number of entries in sidx. |
+| data_size_bytes | [int64](#int64) |  | data_size_bytes is the size of sidx in bytes. |
+| part_count | [int64](#int64) |  | part_count is the number of parts in sidx. |
 
 
 
@@ -3738,18 +3738,18 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-SchemaInfo"></a>
 
 ### SchemaInfo
-
+SchemaInfo contains information about all schema objects in a group.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| streams | [string](#string) | repeated |  |
-| measures | [string](#string) | repeated |  |
-| traces | [string](#string) | repeated |  |
-| properties | [string](#string) | repeated |  |
-| index_rules | [string](#string) | repeated |  |
-| index_rule_bindings | [string](#string) | repeated |  |
-| topn_aggregations | [string](#string) | repeated |  |
+| streams | [string](#string) | repeated | streams is the list of stream names in the group. |
+| measures | [string](#string) | repeated | measures is the list of measure names in the group. |
+| traces | [string](#string) | repeated | traces is the list of trace names in the group. |
+| properties | [string](#string) | repeated | properties is the list of property names in the group. |
+| index_rules | [string](#string) | repeated | index_rules is the list of index rule names in the group. |
+| index_rule_bindings | [string](#string) | repeated | index_rule_bindings is the list of index rule binding names in the group. |
+| topn_aggregations | [string](#string) | repeated | topn_aggregations is the list of TopN aggregation names in the group. |
 
 
 
@@ -3759,16 +3759,16 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-SegmentInfo"></a>
 
 ### SegmentInfo
-
+SegmentInfo contains information about a specific time segment.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| segment_id | [string](#string) |  |  |
-| time_range_start | [string](#string) |  |  |
-| time_range_end | [string](#string) |  |  |
-| shard_info | [ShardInfo](#banyandb-database-v1-ShardInfo) | repeated |  |
-| series_index_info | [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo) |  |  |
+| segment_id | [string](#string) |  | segment_id is the unique identifier of the segment. |
+| time_range_start | [string](#string) |  | time_range_start is the start time of the segment. |
+| time_range_end | [string](#string) |  | time_range_end is the end time of the segment. |
+| shard_info | [ShardInfo](#banyandb-database-v1-ShardInfo) | repeated | shard_info contains information about each shard in this segment. |
+| series_index_info | [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo) |  | series_index_info contains information about the series index. |
 
 
 
@@ -3778,13 +3778,13 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-SeriesIndexInfo"></a>
 
 ### SeriesIndexInfo
-
+SeriesIndexInfo contains information about the series index.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| data_count | [int64](#int64) |  |  |
-| data_size_bytes | [int64](#int64) |  |  |
+| data_count | [int64](#int64) |  | data_count is the number of entries in the series index. |
+| data_size_bytes | [int64](#int64) |  | data_size_bytes is the size of the series index in bytes. |
 
 
 
@@ -3794,17 +3794,17 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-ShardInfo"></a>
 
 ### ShardInfo
-
+ShardInfo contains information about a specific shard.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| shard_id | [uint32](#uint32) |  |  |
-| data_count | [int64](#int64) |  |  |
-| data_size_bytes | [int64](#int64) |  |  |
-| part_count | [int64](#int64) |  |  |
-| inverted_index_info | [InvertedIndexInfo](#banyandb-database-v1-InvertedIndexInfo) |  |  |
-| sidx_info | [SIDXInfo](#banyandb-database-v1-SIDXInfo) |  |  |
+| shard_id | [uint32](#uint32) |  | shard_id is the unique identifier of the shard. |
+| data_count | [int64](#int64) |  | data_count is the number of data entries in this shard. |
+| data_size_bytes | [int64](#int64) |  | data_size_bytes is the size of data in this shard in bytes. |
+| part_count | [int64](#int64) |  | part_count is the number of parts in this shard. |
+| inverted_index_info | [InvertedIndexInfo](#banyandb-database-v1-InvertedIndexInfo) |  | inverted_index_info contains information about the inverted index. |
+| sidx_info | [SIDXInfo](#banyandb-database-v1-SIDXInfo) |  | sidx_info contains information about sidx. |
 
 
 
@@ -4412,15 +4412,15 @@ Type determine the index structure under the hood
 <a name="banyandb-database-v1-GroupDeletionTask-Phase"></a>
 
 ### GroupDeletionTask.Phase
-
+Phase represents the current phase of the deletion task.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | PHASE_UNSPECIFIED | 0 |  |
-| PHASE_PENDING | 1 |  |
-| PHASE_IN_PROGRESS | 2 |  |
-| PHASE_COMPLETED | 3 |  |
-| PHASE_FAILED | 4 |  |
+| PHASE_PENDING | 1 | PHASE_PENDING indicates the task is waiting to start. |
+| PHASE_IN_PROGRESS | 2 | PHASE_IN_PROGRESS indicates the task is currently executing. |
+| PHASE_COMPLETED | 3 | PHASE_COMPLETED indicates the task has completed successfully. |
+| PHASE_FAILED | 4 | PHASE_FAILED indicates the task has failed. |
 
 
  
@@ -4440,9 +4440,9 @@ Type determine the index structure under the hood
 | Get | [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest) | [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse) |  |
 | List | [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest) | [GroupRegistryServiceListResponse](#banyandb-database-v1-GroupRegistryServiceListResponse) |  |
 | Exist | [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest) | [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
-| Inspect | [GroupRegistryServiceInspectRequest](#banyandb-database-v1-GroupRegistryServiceInspectRequest) | [GroupRegistryServiceInspectResponse](#banyandb-database-v1-GroupRegistryServiceInspectResponse) |  |
-| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) |  |
-| Query | [GroupRegistryServiceQueryRequest](#banyandb-database-v1-GroupRegistryServiceQueryRequest) | [GroupRegistryServiceQueryResponse](#banyandb-database-v1-GroupRegistryServiceQueryResponse) |  |
+| Inspect | [GroupRegistryServiceInspectRequest](#banyandb-database-v1-GroupRegistryServiceInspectRequest) | [GroupRegistryServiceInspectResponse](#banyandb-database-v1-GroupRegistryServiceInspectResponse) | Inspect retrieves detailed information about a group including its schemas, data distribution, and pending operations. |
+| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) | Delete removes a group and optionally all its associated data. Supports dry-run mode to preview what would be deleted. May return immediately with a task_id for background deletion of large groups. |
+| Query | [GroupRegistryServiceQueryRequest](#banyandb-database-v1-GroupRegistryServiceQueryRequest) | [GroupRegistryServiceQueryResponse](#banyandb-database-v1-GroupRegistryServiceQueryResponse) | Query retrieves the status of a group deletion task. |
 
 
 <a name="banyandb-database-v1-IndexRuleBindingRegistryService"></a>
