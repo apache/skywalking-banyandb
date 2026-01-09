@@ -55,22 +55,22 @@ type retryConfig struct {
 
 // Service implements file-based node discovery.
 type Service struct {
-	nodeCache     map[string]*databasev1.Node
 	retryQueue    map[string]*nodeRetryState
 	closer        *run.Closer
 	log           *logger.Logger
 	metrics       *metrics
-	handlers      []schema.EventHandler
 	watcher       *fsnotify.Watcher
+	nodeCache     map[string]*databasev1.Node
 	filePath      string
+	handlers      []schema.EventHandler
+	retryCfg      retryConfig
 	grpcTimeout   time.Duration
 	fetchInterval time.Duration
-	retryCfg      retryConfig
-	started       bool
 	cacheMutex    sync.RWMutex
 	handlersMutex sync.RWMutex
 	retryMutex    sync.RWMutex
 	reloadMutex   sync.Mutex
+	started       bool
 }
 
 // Config holds configuration for file discovery service.
@@ -276,7 +276,6 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 				s.retryMutex.Lock()
 				delete(s.retryQueue, nodeConfig.Address)
 				s.retryMutex.Unlock()
-				existsInRetry = false
 			} else {
 				// config unchanged, let retry scheduler handle it
 				continue
@@ -701,9 +700,9 @@ func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetrySta
 	}
 }
 
-func (s *Service) nodeConfigChanged(old, new NodeConfig) bool {
-	return old.Name != new.Name ||
-		old.Address != new.Address ||
-		old.CACertPath != new.CACertPath ||
-		old.TLSEnabled != new.TLSEnabled
+func (s *Service) nodeConfigChanged(older, newer NodeConfig) bool {
+	return older.Name != newer.Name ||
+		older.Address != newer.Address ||
+		older.CACertPath != newer.CACertPath ||
+		older.TLSEnabled != newer.TLSEnabled
 }

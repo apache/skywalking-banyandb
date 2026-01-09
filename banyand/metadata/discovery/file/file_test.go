@@ -549,13 +549,13 @@ nodes:
 	// wait for at least one retry to occur (initial backoff is 100ms)
 	require.Eventually(t, func() bool {
 		svc.retryMutex.RLock()
-		rs, exists := svc.retryQueue[address]
+		rs, retryExists := svc.retryQueue[address]
 		svc.retryMutex.RUnlock()
-		return exists && rs.attemptCount > initialAttemptCount
+		return retryExists && rs.attemptCount > initialAttemptCount
 	}, 1*time.Second, 50*time.Millisecond, "Attempt count should increase")
 
 	svc.retryMutex.RLock()
-	retryState2, _ := svc.retryQueue[address]
+	retryState2 := svc.retryQueue[address]
 	svc.retryMutex.RUnlock()
 	require.Greater(t, retryState2.attemptCount, initialAttemptCount,
 		"Attempt count should have increased")
@@ -567,16 +567,16 @@ nodes:
     grpc_address: %s
     tls_enabled: true
     ca_cert_path: /tmp/ca.crt
-`, address)), 0600)
+`, address)), 0o600)
 	require.NoError(t, err)
 
 	// wait for file change detection and reload
 	require.Eventually(t, func() bool {
 		svc.retryMutex.RLock()
-		retryState, exists := svc.retryQueue[address]
+		addrRetryState, addrExists := svc.retryQueue[address]
 		svc.retryMutex.RUnlock()
 		// Node should be back in retry with attempt 1 after config change
-		return exists && retryState.attemptCount == 1
+		return addrExists && addrRetryState.attemptCount == 1
 	}, 2*time.Second, 100*time.Millisecond, "Retry state should be reset after config change")
 
 	// verify final state
@@ -630,7 +630,7 @@ nodes:
 	require.True(t, exists, "Node should be in retry queue")
 
 	// remove node from file
-	err = os.WriteFile(configFile, []byte(`nodes: []`), 0600)
+	err = os.WriteFile(configFile, []byte(`nodes: []`), 0o600)
 	require.NoError(t, err)
 
 	// wait for file change detection and reload
