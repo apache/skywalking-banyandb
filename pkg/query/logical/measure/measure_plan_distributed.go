@@ -567,59 +567,59 @@ func deduplicateAggregatedDataPoints(
 	return result, nil
 }
 
+// getCountValue extracts count value from a data point field.
+func getCountValue(dp *measurev1.DataPoint, fieldName string) (int64, bool) {
+	for _, field := range dp.GetFields() {
+		if field.GetName() == fieldName {
+			fieldValue := field.GetValue()
+			switch v := fieldValue.GetValue().(type) {
+			case *modelv1.FieldValue_Int:
+				return v.Int.GetValue(), true
+			case *modelv1.FieldValue_Float:
+				return int64(v.Float.GetValue()), true
+			default:
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
 // aggregateCountDataPoints aggregates count results by summing values per group.
 func aggregateCountDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef, fieldName string) ([]*measurev1.DataPoint, error) {
-	groupMap := make(map[uint64][]*measurev1.DataPoint)
+	groupMap := make(map[uint64]*measurev1.DataPoint)
 	for _, dp := range dataPoints {
 		key, err := formatGroupByKey(dp, groupByTagsRefs)
 		if err != nil {
 			return nil, err
 		}
-		groupMap[key] = append(groupMap[key], dp)
+		if existingDp, exists := groupMap[key]; exists {
+			existingCount, existingOk := getCountValue(existingDp, fieldName)
+			currentCount, currentOk := getCountValue(dp, fieldName)
+			if !existingOk || !currentOk {
+				return nil, fmt.Errorf("inconsistent data: group key %d has data points with missing count field", key)
+			}
+			if existingCount != currentCount {
+				return nil, fmt.Errorf("inconsistent data: group key %d has different count values (%d vs %d) from multiple replicas", key, existingCount, currentCount)
+			}
+		}
+		groupMap[key] = dp
 	}
 	result := make([]*measurev1.DataPoint, 0, len(groupMap))
-	for _, dps := range groupMap {
-		if len(dps) == 0 {
+	for _, dp := range groupMap {
+		if dp == nil {
 			continue
 		}
-		// First deduplicate: collect unique count values (for replica deduplication)
-		uniqueCounts := make(map[int64]struct{})
-		var firstDp *measurev1.DataPoint
-		for _, dp := range dps {
-			if firstDp == nil {
-				firstDp = dp
-			}
-			for _, field := range dp.GetFields() {
-				if field.GetName() == fieldName {
-					fieldValue := field.GetValue()
-					var countVal int64
-					switch v := fieldValue.GetValue().(type) {
-					case *modelv1.FieldValue_Int:
-						countVal = v.Int.GetValue()
-					case *modelv1.FieldValue_Float:
-						countVal = int64(v.Float.GetValue())
-					default:
-						continue
-					}
-					uniqueCounts[countVal] = struct{}{}
-					break
-				}
-			}
-		}
-		// Then sum all unique count values
-		var sumValue int64
-		for countVal := range uniqueCounts {
-			sumValue += countVal
-		}
-		if firstDp == nil {
+		countVal, ok := getCountValue(dp, fieldName)
+		if !ok {
 			continue
 		}
 		aggregatedDp := &measurev1.DataPoint{
-			TagFamilies: firstDp.TagFamilies,
+			TagFamilies: dp.TagFamilies,
 			Fields: []*measurev1.DataPoint_Field{
 				{
 					Name:  fieldName,
-					Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sumValue}}},
+					Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: countVal}}},
 				},
 			},
 		}
