@@ -309,7 +309,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs, t.queryTemplate.Agg)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
 		}
@@ -536,9 +536,19 @@ func (s *pushedDownAggregatedIterator) Close() error {
 }
 
 // deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas
-// by keeping only one data point per group. Since replicas hold identical data, aggregates
-// for the same group are identical across replicas.
-func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
+// and aggregates count results by summing values per group.
+func deduplicateAggregatedDataPoints(
+	dataPoints []*measurev1.DataPoint,
+	groupByTagsRefs [][]*logical.TagRef,
+	agg *measurev1.QueryRequest_Aggregation,
+) ([]*measurev1.DataPoint, error) {
+	if agg == nil {
+		return dataPoints, nil
+	}
+	isCount := agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
+	if isCount {
+		return aggregateCountDataPoints(dataPoints, groupByTagsRefs, agg.GetFieldName())
+	}
 	if len(groupByTagsRefs) == 0 {
 		return dataPoints, nil
 	}
@@ -553,6 +563,67 @@ func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByT
 			groupMap[key] = struct{}{}
 			result = append(result, dp)
 		}
+	}
+	return result, nil
+}
+
+// aggregateCountDataPoints aggregates count results by summing values per group.
+func aggregateCountDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef, fieldName string) ([]*measurev1.DataPoint, error) {
+	groupMap := make(map[uint64][]*measurev1.DataPoint)
+	for _, dp := range dataPoints {
+		key, err := formatGroupByKey(dp, groupByTagsRefs)
+		if err != nil {
+			return nil, err
+		}
+		groupMap[key] = append(groupMap[key], dp)
+	}
+	result := make([]*measurev1.DataPoint, 0, len(groupMap))
+	for _, dps := range groupMap {
+		if len(dps) == 0 {
+			continue
+		}
+		// First deduplicate: collect unique count values (for replica deduplication)
+		uniqueCounts := make(map[int64]struct{})
+		var firstDp *measurev1.DataPoint
+		for _, dp := range dps {
+			if firstDp == nil {
+				firstDp = dp
+			}
+			for _, field := range dp.GetFields() {
+				if field.GetName() == fieldName {
+					fieldValue := field.GetValue()
+					var countVal int64
+					switch v := fieldValue.GetValue().(type) {
+					case *modelv1.FieldValue_Int:
+						countVal = v.Int.GetValue()
+					case *modelv1.FieldValue_Float:
+						countVal = int64(v.Float.GetValue())
+					default:
+						continue
+					}
+					uniqueCounts[countVal] = struct{}{}
+					break
+				}
+			}
+		}
+		// Then sum all unique count values
+		var sumValue int64
+		for countVal := range uniqueCounts {
+			sumValue += countVal
+		}
+		if firstDp == nil {
+			continue
+		}
+		aggregatedDp := &measurev1.DataPoint{
+			TagFamilies: firstDp.TagFamilies,
+			Fields: []*measurev1.DataPoint_Field{
+				{
+					Name:  fieldName,
+					Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sumValue}}},
+				},
+			},
+		}
+		result = append(result, aggregatedDp)
 	}
 	return result, nil
 }
