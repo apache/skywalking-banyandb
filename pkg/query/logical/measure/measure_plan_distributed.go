@@ -160,6 +160,17 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.Top = ud.originalQuery.Top
 		temp.GroupBy = ud.originalQuery.GroupBy
 	}
+	// Prepare groupBy tags refs if needed for deduplication
+	var groupByTagsRefs [][]*logical.TagRef
+	if ud.needCompletePushDownAgg && ud.originalQuery.GetGroupBy() != nil {
+		groupByTags := logical.ToTags(ud.originalQuery.GetGroupBy().GetTagProjection())
+		var err error
+		groupByTagsRefs, err = s.CreateTagRef(groupByTags...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if ud.groupByEntity {
 		e := s.EntityList()[0]
 		sortTagSpec := s.FindTagSpecByName(e)
@@ -172,6 +183,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			sortByTime:              false,
 			sortTagSpec:             *sortTagSpec,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -184,6 +196,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			s:                       s,
 			sortByTime:              true,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
@@ -192,6 +205,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			s:                       s,
 			sortByTime:              true,
 			needCompletePushDownAgg: ud.needCompletePushDownAgg,
+			groupByTagsRefs:         groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -215,6 +229,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		sortByTime:              false,
 		sortTagSpec:             *sortTagSpec,
 		needCompletePushDownAgg: ud.needCompletePushDownAgg,
+		groupByTagsRefs:         groupByTagsRefs,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -226,6 +241,7 @@ type distributedPlan struct {
 	s                       logical.Schema
 	queryTemplate           *measurev1.QueryRequest
 	sortTagSpec             logical.TagSpec
+	groupByTagsRefs         [][]*logical.TagRef
 	maxDataPointsSize       uint32
 	sortByTime              bool
 	desc                    bool
@@ -293,7 +309,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		return &pushedDownAggregatedIterator{dataPoints: pushedDownAggDps}, err
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		if dedupErr != nil {
+			return nil, multierr.Append(err, dedupErr)
+		}
+		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
@@ -513,4 +533,26 @@ func (s *pushedDownAggregatedIterator) Current() []*measurev1.DataPoint {
 
 func (s *pushedDownAggregatedIterator) Close() error {
 	return nil
+}
+
+// deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas
+// by keeping only one data point per group. Since replicas hold identical data, aggregates
+// for the same group are identical across replicas.
+func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
+	if len(groupByTagsRefs) == 0 {
+		return dataPoints, nil
+	}
+	groupMap := make(map[uint64]struct{})
+	result := make([]*measurev1.DataPoint, 0, len(dataPoints))
+	for _, dp := range dataPoints {
+		key, err := formatGroupByKey(dp, groupByTagsRefs)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := groupMap[key]; !exists {
+			groupMap[key] = struct{}{}
+			result = append(result, dp)
+		}
+	}
+	return result, nil
 }
