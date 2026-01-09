@@ -29,8 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -164,14 +162,6 @@ func (s *liaison) Serve() run.StopNotify {
 
 func (s *liaison) GracefulStop() {
 	s.schemaRepo.Close()
-}
-
-func (s *liaison) InFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
-	if s.schemaRepo == nil {
-		s.l.Error().Msg("schema repository is not initialized")
-		return
-	}
-	s.schemaRepo.inFlow(stm, seriesID, shardID, entityValues, dp)
 }
 
 // NewLiaison creates a new measure liaison service with the given dependencies.
