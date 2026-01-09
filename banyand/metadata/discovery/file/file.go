@@ -60,7 +60,7 @@ type Service struct {
 	closer        *run.Closer
 	log           *logger.Logger
 	metrics       *metrics
-	handlers      map[string]schema.EventHandler
+	handlers      []schema.EventHandler
 	watcher       *fsnotify.Watcher
 	filePath      string
 	grpcTimeout   time.Duration
@@ -129,7 +129,7 @@ func NewService(cfg Config) (*Service, error) {
 		filePath:      cfg.FilePath,
 		nodeCache:     make(map[string]*databasev1.Node),
 		retryQueue:    make(map[string]*nodeRetryState),
-		handlers:      make(map[string]schema.EventHandler),
+		handlers:      make([]schema.EventHandler, 0),
 		closer:        run.NewCloser(2),
 		log:           logger.GetLogger("metadata-discovery-file"),
 		grpcTimeout:   cfg.GRPCTimeout,
@@ -410,7 +410,7 @@ func (s *Service) RegisterHandler(name string, handler schema.EventHandler) {
 	s.handlersMutex.Lock()
 	defer s.handlersMutex.Unlock()
 
-	s.handlers[name] = handler
+	s.handlers = append(s.handlers, handler)
 	s.log.Debug().Str("handler", name).Msg("Registered file node discovery handler")
 }
 
