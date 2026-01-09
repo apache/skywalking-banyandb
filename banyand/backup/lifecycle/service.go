@@ -148,20 +148,22 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 }
 
 func (l *lifecycleService) Validate() error {
-	l.lifecycleGRPCAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleGRPCPort), 10))
-	if l.lifecycleGRPCAddr == ":" {
-		return errors.New("no gRPC address")
-	}
-	l.lifecycleHTTPAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleHTTPPort), 10))
-	if l.lifecycleHTTPAddr == ":" {
-		return errors.New("no HTTP address")
-	}
-	if l.lifecycleTLS {
-		if l.lifecycleCertFile == "" {
-			return errors.New("missing cert file when TLS is enabled")
+	if l.schedule != "" {
+		l.lifecycleGRPCAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleGRPCPort), 10))
+		if l.lifecycleGRPCAddr == ":" {
+			return errors.New("no gRPC address")
 		}
-		if l.lifecycleKeyFile == "" {
-			return errors.New("missing key file when TLS is enabled")
+		l.lifecycleHTTPAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleHTTPPort), 10))
+		if l.lifecycleHTTPAddr == ":" {
+			return errors.New("no HTTP address")
+		}
+		if l.lifecycleTLS {
+			if l.lifecycleCertFile == "" {
+				return errors.New("missing cert file when TLS is enabled")
+			}
+			if l.lifecycleKeyFile == "" {
+				return errors.New("missing key file when TLS is enabled")
+			}
 		}
 	}
 	return nil
@@ -171,7 +173,7 @@ func (l *lifecycleService) Validate() error {
 func (l *lifecycleService) PreRun(_ context.Context) error {
 	l.l = logger.GetLogger("lifecycle")
 
-	if l.lifecycleTLS {
+	if l.schedule != "" && l.lifecycleTLS {
 		var err error
 		l.tlsReloader, err = pkgtls.NewReloader(l.lifecycleCertFile, l.lifecycleKeyFile, l.l)
 		if err != nil {
@@ -234,8 +236,10 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
 	l.stopCh = make(chan struct{})
 
-	// Start gRPC/HTTP servers
-	l.startServers()
+	// Start gRPC/HTTP servers when schedule is set
+	if l.schedule != "" {
+		l.startServers()
+	}
 
 	done := make(chan struct{})
 	if l.schedule == "" {
