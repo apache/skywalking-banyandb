@@ -23,18 +23,28 @@ import (
 )
 
 type metrics struct {
-	fileLoadCount       meter.Counter
-	fileLoadFailedCount meter.Counter
-	fileLoadDuration    meter.Histogram
-	totalNodesCount     meter.Gauge
+	fileLoadCount         meter.Counter
+	fileLoadFailedCount   meter.Counter
+	fileLoadDuration      meter.Histogram
+	totalNodesCount       meter.Gauge
+	nodeRetryCount        meter.Counter
+	nodeRetryFailedCount  meter.Counter
+	nodeRetrySuccessCount meter.Counter
+	nodeConnectedCount    meter.Counter
+	retryQueueSize        meter.Gauge
 }
 
 // newMetrics creates a new metrics instance.
 func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
-		fileLoadCount:       factory.NewCounter("file_load_count"),
-		fileLoadFailedCount: factory.NewCounter("file_load_failed_count"),
-		fileLoadDuration:    factory.NewHistogram("file_load_duration", meter.DefBuckets),
-		totalNodesCount:     factory.NewGauge("total_nodes_count"),
+		fileLoadCount:         factory.NewCounter("file_load_count"),
+		fileLoadFailedCount:   factory.NewCounter("file_load_failed_count"),
+		fileLoadDuration:      factory.NewHistogram("file_load_duration", meter.DefBuckets),
+		totalNodesCount:       factory.NewGauge("total_nodes_count"),
+		nodeRetryCount:        factory.NewCounter("node_retry_count"),
+		nodeRetryFailedCount:  factory.NewCounter("node_retry_failed_count"),
+		nodeRetrySuccessCount: factory.NewCounter("node_retry_success_count"),
+		nodeConnectedCount:    factory.NewCounter("node_connected_count"),
+		retryQueueSize:        factory.NewGauge("retry_queue_size"),
 	}
 }

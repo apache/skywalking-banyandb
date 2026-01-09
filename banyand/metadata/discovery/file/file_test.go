@@ -40,9 +40,23 @@ import (
 )
 
 const (
-	testGRPCTimeout   = 2 * time.Second
-	testFetchInterval = 200 * time.Millisecond
+	testGRPCTimeout          = 2 * time.Second
+	testFetchInterval        = 200 * time.Millisecond
+	testRetryInitialInterval = 1 * time.Second
+	testRetryMaxInterval     = 5 * time.Minute
+	testRetryMultiplier      = 2.0
 )
+
+func testConfig(filePath string) Config {
+	return Config{
+		FilePath:             filePath,
+		GRPCTimeout:          testGRPCTimeout,
+		FetchInterval:        testFetchInterval,
+		RetryInitialInterval: testRetryInitialInterval,
+		RetryMaxInterval:     testRetryMaxInterval,
+		RetryMultiplier:      testRetryMultiplier,
+	}
+}
 
 func TestNewService(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
@@ -53,11 +67,7 @@ nodes:
 `)
 		defer os.Remove(configFile)
 
-		svc, err := NewService(Config{
-			FilePath:      configFile,
-			GRPCTimeout:   testGRPCTimeout,
-			FetchInterval: testFetchInterval,
-		})
+		svc, err := NewService(testConfig(configFile))
 		require.NoError(t, err)
 		require.NotNil(t, svc)
 		require.NoError(t, svc.Close())
@@ -70,11 +80,7 @@ nodes:
 	})
 
 	t.Run("non-existent file", func(t *testing.T) {
-		_, err := NewService(Config{
-			FilePath:      "/not/exist",
-			GRPCTimeout:   testGRPCTimeout,
-			FetchInterval: testFetchInterval,
-		})
+		_, err := NewService(testConfig("/not/exist"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to access file path")
 	})
@@ -91,11 +97,7 @@ nodes:
 `)
 		defer os.Remove(configFile)
 
-		svc, err := NewService(Config{
-			FilePath:      configFile,
-			GRPCTimeout:   testGRPCTimeout,
-			FetchInterval: testFetchInterval,
-		})
+		svc, err := NewService(testConfig(configFile))
 		require.NoError(t, err)
 		defer svc.Close()
 
@@ -111,11 +113,7 @@ nodes:
 `)
 		defer os.Remove(configFile)
 
-		svc, err := NewService(Config{
-			FilePath:      configFile,
-			GRPCTimeout:   testGRPCTimeout,
-			FetchInterval: testFetchInterval,
-		})
+		svc, err := NewService(testConfig(configFile))
 		require.NoError(t, err)
 		defer svc.Close()
 
@@ -133,11 +131,7 @@ nodes:
 `)
 		defer os.Remove(configFile)
 
-		svc, err := NewService(Config{
-			FilePath:      configFile,
-			GRPCTimeout:   testGRPCTimeout,
-			FetchInterval: testFetchInterval,
-		})
+		svc, err := NewService(testConfig(configFile))
 		require.NoError(t, err)
 		defer svc.Close()
 
@@ -163,11 +157,7 @@ nodes:
 `, nodeName, serverAddr))
 	defer os.Remove(configFile)
 
-	svc, err := NewService(Config{
-		FilePath:      configFile,
-		GRPCTimeout:   testGRPCTimeout,
-		FetchInterval: testFetchInterval,
-	})
+	svc, err := NewService(testConfig(configFile))
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -206,11 +196,7 @@ nodes:
 `, addrOne))
 	defer os.Remove(configFile)
 
-	svc, err := NewService(Config{
-		FilePath:      configFile,
-		GRPCTimeout:   testGRPCTimeout,
-		FetchInterval: testFetchInterval,
-	})
+	svc, err := NewService(testConfig(configFile))
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -274,11 +260,7 @@ nodes:
 `, addr))
 	defer os.Remove(configFile)
 
-	svc, err := NewService(Config{
-		FilePath:      configFile,
-		GRPCTimeout:   testGRPCTimeout,
-		FetchInterval: testFetchInterval,
-	})
+	svc, err := NewService(testConfig(configFile))
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -309,11 +291,7 @@ nodes:
 `, addr))
 	defer os.Remove(configFile)
 
-	svc, err := NewService(Config{
-		FilePath:      configFile,
-		GRPCTimeout:   testGRPCTimeout,
-		FetchInterval: testFetchInterval,
-	})
+	svc, err := NewService(testConfig(configFile))
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -344,11 +322,7 @@ nodes:
 `, addr))
 	defer os.Remove(configFile)
 
-	svc, err := NewService(Config{
-		FilePath:      configFile,
-		GRPCTimeout:   testGRPCTimeout,
-		FetchInterval: testFetchInterval,
-	})
+	svc, err := NewService(testConfig(configFile))
 	require.NoError(t, err)
 	defer svc.Close()
 
@@ -458,4 +432,213 @@ func startMockGRPCServer(t *testing.T) (net.Listener, *grpc.Server, *mockNodeQue
 	}()
 
 	return listener, grpcServer, mockServer
+}
+
+func TestBackoffRetryMechanism(t *testing.T) {
+	ctx := context.Background()
+
+	// create a mock server that will fail initially
+	listener, grpcServer, mockServer := startMockGRPCServer(t)
+	defer grpcServer.Stop()
+	defer listener.Close()
+
+	// initially return error (node not available)
+	mockServer.setNode(nil)
+
+	// create config file with the failing node
+	address := listener.Addr().String()
+	configFile := createTempConfigFile(t, fmt.Sprintf(`
+nodes:
+  - name: retry-node
+    grpc_address: %s
+`, address))
+	defer os.Remove(configFile)
+
+	// use shorter intervals for testing
+	cfg := Config{
+		FilePath:             configFile,
+		GRPCTimeout:          testGRPCTimeout,
+		FetchInterval:        testFetchInterval,
+		RetryInitialInterval: 100 * time.Millisecond,
+		RetryMaxInterval:     1 * time.Second,
+		RetryMultiplier:      2.0,
+	}
+
+	svc, err := NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	err = svc.Start(ctx)
+	require.NoError(t, err)
+
+	// verify node is in retry queue
+	time.Sleep(150 * time.Millisecond)
+	svc.retryMutex.RLock()
+	retryState, inRetry := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.True(t, inRetry, "Node should be in retry queue")
+	require.Equal(t, 1, retryState.attemptCount)
+
+	// verify node is not in cache yet
+	svc.cacheMutex.RLock()
+	_, inCache := svc.nodeCache[address]
+	svc.cacheMutex.RUnlock()
+	require.False(t, inCache, "Node should not be in cache yet")
+
+	// now make the node available
+	mockServer.setNode(newTestNode("retry-node", address))
+
+	// wait for retry to succeed
+	require.Eventually(t, func() bool {
+		svc.cacheMutex.RLock()
+		_, exists := svc.nodeCache[address]
+		svc.cacheMutex.RUnlock()
+		return exists
+	}, 3*time.Second, 50*time.Millisecond, "Node should eventually be added to cache after retry")
+
+	// verify node is removed from retry queue
+	svc.retryMutex.RLock()
+	_, stillInRetry := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.False(t, stillInRetry, "Node should be removed from retry queue after success")
+}
+
+func TestBackoffResetOnConfigChange(t *testing.T) {
+	ctx := context.Background()
+
+	listener, grpcServer, mockServer := startMockGRPCServer(t)
+	defer grpcServer.Stop()
+	defer listener.Close()
+
+	mockServer.setNode(nil) // fail initially
+
+	address := listener.Addr().String()
+	configFile := createTempConfigFile(t, fmt.Sprintf(`
+nodes:
+  - name: reset-test-node
+    grpc_address: %s
+    tls_enabled: false
+`, address))
+	defer os.Remove(configFile)
+
+	cfg := Config{
+		FilePath:             configFile,
+		GRPCTimeout:          testGRPCTimeout,
+		FetchInterval:        testFetchInterval,
+		RetryInitialInterval: 100 * time.Millisecond,
+		RetryMaxInterval:     1 * time.Second,
+		RetryMultiplier:      2.0,
+	}
+
+	svc, err := NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	err = svc.Start(ctx)
+	require.NoError(t, err)
+
+	// wait for node to enter retry queue
+	time.Sleep(150 * time.Millisecond)
+
+	svc.retryMutex.RLock()
+	retryState, exists := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.True(t, exists)
+	initialAttemptCount := retryState.attemptCount
+
+	// wait for at least one retry to occur (initial backoff is 100ms)
+	require.Eventually(t, func() bool {
+		svc.retryMutex.RLock()
+		rs, exists := svc.retryQueue[address]
+		svc.retryMutex.RUnlock()
+		return exists && rs.attemptCount > initialAttemptCount
+	}, 1*time.Second, 50*time.Millisecond, "Attempt count should increase")
+
+	svc.retryMutex.RLock()
+	retryState2, _ := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.Greater(t, retryState2.attemptCount, initialAttemptCount,
+		"Attempt count should have increased")
+
+	// now change the config (enable TLS)
+	err = os.WriteFile(configFile, []byte(fmt.Sprintf(`
+nodes:
+  - name: reset-test-node-updated
+    grpc_address: %s
+    tls_enabled: true
+    ca_cert_path: /tmp/ca.crt
+`, address)), 0600)
+	require.NoError(t, err)
+
+	// wait for file change detection and reload
+	require.Eventually(t, func() bool {
+		svc.retryMutex.RLock()
+		retryState, exists := svc.retryQueue[address]
+		svc.retryMutex.RUnlock()
+		// Node should be back in retry with attempt 1 after config change
+		return exists && retryState.attemptCount == 1
+	}, 2*time.Second, 100*time.Millisecond, "Retry state should be reset after config change")
+
+	// verify final state
+	svc.retryMutex.RLock()
+	retryState3, exists := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.True(t, exists, "Node should still be in retry queue after config change")
+	require.Equal(t, 1, retryState3.attemptCount,
+		"Attempt count should be reset to 1 after config change")
+}
+
+func TestRetryQueueCleanupOnFileRemoval(t *testing.T) {
+	ctx := context.Background()
+
+	listener, grpcServer, mockServer := startMockGRPCServer(t)
+	defer grpcServer.Stop()
+	defer listener.Close()
+
+	mockServer.setNode(nil) // fail initially
+
+	address := listener.Addr().String()
+	configFile := createTempConfigFile(t, fmt.Sprintf(`
+nodes:
+  - name: cleanup-test-node
+    grpc_address: %s
+`, address))
+	defer os.Remove(configFile)
+
+	cfg := Config{
+		FilePath:             configFile,
+		GRPCTimeout:          testGRPCTimeout,
+		FetchInterval:        testFetchInterval,
+		RetryInitialInterval: 100 * time.Millisecond,
+		RetryMaxInterval:     1 * time.Second,
+		RetryMultiplier:      2.0,
+	}
+
+	svc, err := NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	err = svc.Start(ctx)
+	require.NoError(t, err)
+
+	// wait for node to enter retry queue
+	time.Sleep(150 * time.Millisecond)
+
+	svc.retryMutex.RLock()
+	_, exists := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.True(t, exists, "Node should be in retry queue")
+
+	// remove node from file
+	err = os.WriteFile(configFile, []byte(`nodes: []`), 0600)
+	require.NoError(t, err)
+
+	// wait for file change detection and reload
+	time.Sleep(500 * time.Millisecond)
+
+	// verify node is removed from retry queue
+	svc.retryMutex.RLock()
+	_, stillExists := svc.retryQueue[address]
+	svc.retryMutex.RUnlock()
+	require.False(t, stillExists, "Node should be removed from retry queue")
 }

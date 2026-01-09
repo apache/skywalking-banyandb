@@ -77,33 +77,36 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 }
 
 type clientService struct {
-	schemaRegistry       schema.Registry
-	dnsDiscovery         *dns.Service
-	fileDiscovery        *file.Service
-	closer               *run.Closer
-	nodeInfo             *databasev1.Node
-	etcdTLSCertFile      string
-	dnsCACertPaths       []string
-	etcdPassword         string
-	etcdTLSCAFile        string
-	etcdUsername         string
-	etcdTLSKeyFile       string
-	namespace            string
-	nodeDiscoveryMode    string
-	filePath             string
-	dnsSRVAddresses      []string
-	endpoints            []string
-	registryTimeout      time.Duration
-	dnsFetchInitInterval time.Duration
-	dnsFetchInitDuration time.Duration
-	dnsFetchInterval     time.Duration
-	grpcTimeout          time.Duration
-	etcdFullSyncInterval time.Duration
-	fileFetchInterval    time.Duration
-	nodeInfoMux          sync.Mutex
-	forceRegisterNode    bool
-	toRegisterNode       bool
-	dnsTLSEnabled        bool
+	schemaRegistry           schema.Registry
+	dnsDiscovery             *dns.Service
+	fileDiscovery            *file.Service
+	closer                   *run.Closer
+	nodeInfo                 *databasev1.Node
+	etcdTLSCertFile          string
+	dnsCACertPaths           []string
+	etcdPassword             string
+	etcdTLSCAFile            string
+	etcdUsername             string
+	etcdTLSKeyFile           string
+	namespace                string
+	nodeDiscoveryMode        string
+	filePath                 string
+	dnsSRVAddresses          []string
+	endpoints                []string
+	registryTimeout          time.Duration
+	dnsFetchInitInterval     time.Duration
+	dnsFetchInitDuration     time.Duration
+	dnsFetchInterval         time.Duration
+	grpcTimeout              time.Duration
+	etcdFullSyncInterval     time.Duration
+	fileFetchInterval        time.Duration
+	fileRetryInitialInterval time.Duration
+	fileRetryMaxInterval     time.Duration
+	fileRetryMultiplier      float64
+	nodeInfoMux              sync.Mutex
+	forceRegisterNode        bool
+	toRegisterNode           bool
+	dnsTLSEnabled            bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -141,8 +144,14 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Comma-separated list of CA certificate files to verify DNS discovered nodes (one per SRV address, in same order)")
 	fs.StringVar(&s.filePath, "node-discovery-file-path", "",
 		"File path for static node configuration (file mode only)")
-	fs.DurationVar(&s.fileFetchInterval, "node-discovery-file-fetch-interval", 20*time.Second,
-		"Interval to poll the discovery file and retry failed nodes in file discovery mode")
+	fs.DurationVar(&s.fileFetchInterval, "node-discovery-file-fetch-interval", 5*time.Minute,
+		"Interval to poll the discovery file in file discovery mode (fallback mechanism)")
+	fs.DurationVar(&s.fileRetryInitialInterval, "node-discovery-file-retry-initial-interval", 1*time.Second,
+		"Initial retry interval for failed node metadata fetches in file discovery mode")
+	fs.DurationVar(&s.fileRetryMaxInterval, "node-discovery-file-retry-max-interval", 2*time.Minute,
+		"Maximum retry interval for failed node metadata fetches in file discovery mode")
+	fs.Float64Var(&s.fileRetryMultiplier, "node-discovery-file-retry-multiplier", 2.0,
+		"Backoff multiplier for retry intervals in file discovery mode")
 
 	return fs
 }
@@ -257,9 +266,12 @@ func (s *clientService) PreRun(ctx context.Context) error {
 
 		var createErr error
 		s.fileDiscovery, createErr = file.NewService(file.Config{
-			FilePath:      s.filePath,
-			GRPCTimeout:   s.grpcTimeout,
-			FetchInterval: s.fileFetchInterval,
+			FilePath:             s.filePath,
+			GRPCTimeout:          s.grpcTimeout,
+			FetchInterval:        s.fileFetchInterval,
+			RetryInitialInterval: s.fileRetryInitialInterval,
+			RetryMaxInterval:     s.fileRetryMaxInterval,
+			RetryMultiplier:      s.fileRetryMultiplier,
 		})
 		if createErr != nil {
 			return fmt.Errorf("failed to create file discovery service: %w", createErr)
