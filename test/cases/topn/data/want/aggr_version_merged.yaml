@@ -18,6 +18,10 @@
 lists:
   - items:
       - entity:
+          - key: service_id
+            value:
+              str:
+                value: svc_2
           - key: entity_id
             value:
               str:
@@ -26,6 +30,10 @@ lists:
           int:
             value: "12"
       - entity:
+          - key: service_id
+            value:
+              str:
+                value: svc_1
           - key: entity_id
             value:
               str:
@@ -34,6 +42,9 @@ lists:
           int:
             value: "11"
       - entity:
+          - key: service_id
+            value:
+              "null": null
           - key: entity_id
             value:
               str:

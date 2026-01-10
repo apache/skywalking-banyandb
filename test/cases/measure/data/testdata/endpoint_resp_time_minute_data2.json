@@ -5,38 +5,18 @@
         "tags": [
           {
             "str": {
-              "value": "entity_1"
+              "value": "100"
             }
-          }
-        ]
-      }
-    ],
-    "fields": [
-      {
-        "int": {
-          "value": 100
-        }
-      },
-      {
-        "int": {
-          "value": 1
-        }
-      },
-      {
-        "int": {
-          "value": 100
-        }
-      }
-    ]
-  },
-  {
-    "tag_families": [
-      {
-        "tags": [
+          },
           {
             "str": {
               "value": "entity_2"
             }
+          },
+          {
+            "str": {
+              "value": "svc_2"
+            }
           }
         ]
       }
@@ -45,11 +25,6 @@
       {
         "int": {
           "value": 100
-        }
-      },
-      {
-        "int": {
-          "value": 2
         }
       },
       {
@@ -63,39 +38,19 @@
     "tag_families": [
       {
         "tags": [
+          {
+            "str": {
+              "value": "110"
+            }
+          },
           {
             "str": {
               "value": "entity_2"
             }
-          }
-        ]
-      }
-    ],
-    "fields": [
-      {
-        "int": {
-          "value": 100
-        }
-      },
-      {
-        "int": {
-          "value": 3
-        }
-      },
-      {
-        "int": {
-          "value": 100
-        }
-      }
-    ]
-  },
-  {
-    "tag_families": [
-      {
-        "tags": [
+          },
           {
             "str": {
-              "value": "entity_3"
+              "value": ""
             }
           }
         ]
@@ -109,42 +64,7 @@
       },
       {
         "int": {
-          "value": 5
-        }
-      },
-      {
-        "int": {
-          "value": 100
-        }
-      }
-    ]
-  },
-  {
-    "tag_families": [
-      {
-        "tags": [
-          {
-            "str": {
-              "value": "entity_1"
-            }
-          }
-        ]
-      }
-    ],
-    "fields": [
-      {
-        "int": {
-          "value": 50
-        }
-      },
-      {
-        "int": {
-          "value": 4
-        }
-      },
-      {
-        "int": {
-          "value": 100
+          "value": 110
         }
       }
     ]
