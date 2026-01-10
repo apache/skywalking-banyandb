@@ -95,6 +95,15 @@ resource_opts:
 		Expect(out).To(ContainSubstring("group group1 is updated"))
 	})
 
+	It("delete group", func() {
+		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1"})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("group group1 is deleted"))
+	})
+
 	It("list group", func() {
 		// create another group for list operation
 		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})

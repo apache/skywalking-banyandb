@@ -569,6 +569,12 @@ service GroupRegistryService {
     };
   }
 
+  // Delete removes a group and all its associated data.
+  // Supports dry-run mode to preview what would be deleted.
+  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/group/schema/{group}"};
+  }
+
   rpc Get(GroupRegistryServiceGetRequest) returns (GroupRegistryServiceGetResponse) {
     option (google.api.http) = {get: "/v1/group/schema/{group}"};
   }
@@ -583,13 +589,6 @@ service GroupRegistryService {
   // Inspect retrieves detailed information about a group including its schemas, data distribution, and pending operations.
   rpc Inspect(GroupRegistryServiceInspectRequest) returns (GroupRegistryServiceInspectResponse) {
     option (google.api.http) = {get: "/v1/group/content/{group}"};
-  }
-
-  // Delete removes a group and optionally all its associated data.
-  // Supports dry-run mode to preview what would be deleted.
-  // May return immediately with a task_id for background deletion of large groups.
-  rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
-    option (google.api.http) = {delete: "/v1/group/{group}"};
   }
 
   // Query retrieves the status of a group deletion task.

@@ -4437,11 +4437,11 @@ Phase represents the current phase of the deletion task.
 | ----------- | ------------ | ------------- | ------------|
 | Create | [GroupRegistryServiceCreateRequest](#banyandb-database-v1-GroupRegistryServiceCreateRequest) | [GroupRegistryServiceCreateResponse](#banyandb-database-v1-GroupRegistryServiceCreateResponse) |  |
 | Update | [GroupRegistryServiceUpdateRequest](#banyandb-database-v1-GroupRegistryServiceUpdateRequest) | [GroupRegistryServiceUpdateResponse](#banyandb-database-v1-GroupRegistryServiceUpdateResponse) |  |
+| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) | Delete removes a group and all its associated data. Supports dry-run mode to preview what would be deleted. |
 | Get | [GroupRegistryServiceGetRequest](#banyandb-database-v1-GroupRegistryServiceGetRequest) | [GroupRegistryServiceGetResponse](#banyandb-database-v1-GroupRegistryServiceGetResponse) |  |
 | List | [GroupRegistryServiceListRequest](#banyandb-database-v1-GroupRegistryServiceListRequest) | [GroupRegistryServiceListResponse](#banyandb-database-v1-GroupRegistryServiceListResponse) |  |
 | Exist | [GroupRegistryServiceExistRequest](#banyandb-database-v1-GroupRegistryServiceExistRequest) | [GroupRegistryServiceExistResponse](#banyandb-database-v1-GroupRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead |
 | Inspect | [GroupRegistryServiceInspectRequest](#banyandb-database-v1-GroupRegistryServiceInspectRequest) | [GroupRegistryServiceInspectResponse](#banyandb-database-v1-GroupRegistryServiceInspectResponse) | Inspect retrieves detailed information about a group including its schemas, data distribution, and pending operations. |
-| Delete | [GroupRegistryServiceDeleteRequest](#banyandb-database-v1-GroupRegistryServiceDeleteRequest) | [GroupRegistryServiceDeleteResponse](#banyandb-database-v1-GroupRegistryServiceDeleteResponse) | Delete removes a group and optionally all its associated data. Supports dry-run mode to preview what would be deleted. May return immediately with a task_id for background deletion of large groups. |
 | Query | [GroupRegistryServiceQueryRequest](#banyandb-database-v1-GroupRegistryServiceQueryRequest) | [GroupRegistryServiceQueryResponse](#banyandb-database-v1-GroupRegistryServiceQueryResponse) | Query retrieves the status of a group deletion task. |
 
 
