@@ -17,11 +17,6 @@
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
@@ -57,11 +52,6 @@
             "str": {
               "value": "svc_2"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/check"
-            }
           }
         ]
       }
@@ -69,7 +59,7 @@
     "fields": [
       {
         "int": {
-          "value": 101
+          "value": 100
         }
       },
       {
@@ -104,7 +94,7 @@
     "fields": [
       {
         "int": {
-          "value": 130
+          "value": 100
         }
       },
       {
@@ -139,7 +129,7 @@
     "fields": [
       {
         "int": {
-          "value": 155
+          "value": 100
         }
       },
       {
@@ -167,9 +157,6 @@
             "str": {
               "value": ""
             }
-          },
-          {
-            "null": 0
           }
         ]
       }
@@ -205,9 +192,6 @@
             "str": {
               "value": "svc_1"
             }
-          },
-          {
-            "null": 0
           }
         ]
       }
@@ -215,7 +199,7 @@
     "fields": [
       {
         "int": {
-          "value": 240
+          "value": 300
         }
       },
       {
