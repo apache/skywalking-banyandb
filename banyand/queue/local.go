@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -96,11 +98,24 @@ func (*local) GetPort() *uint32 {
 	return nil
 }
 
+func (*local) SetRouteProviders(_ map[string]route.TableProvider) {
+}
+
 func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 
 func (*local) HealthyNodes() []string {
 	return nil
+}
+
+// GetRouteTable returns an empty route table for local queue.
+// Local queue doesn't have distributed nodes, so all fields are empty.
+func (*local) GetRouteTable() *databasev1.RouteTable {
+	return &databasev1.RouteTable{
+		Registered: []*databasev1.Node{},
+		Active:     []string{},
+		Evictable:  []string{},
+	}
 }
 
 type localBatchPublisher struct {

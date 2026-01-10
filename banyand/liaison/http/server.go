@@ -357,6 +357,7 @@ func (p *server) initGRPCClient() error {
 		databasev1.RegisterTopNAggregationRegistryServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		databasev1.RegisterSnapshotServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		databasev1.RegisterPropertyRegistryServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
+		databasev1.RegisterClusterStateServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		streamv1.RegisterStreamServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		measurev1.RegisterMeasureServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),
 		propertyv1.RegisterPropertyServiceHandlerFromEndpoint(p.grpcCtx, p.gwMux, p.grpcAddr, opts),

@@ -199,6 +199,14 @@ func (s *service) GetGossIPGrpcPort() *uint32 {
 	return s.gossipMessenger.GetServerPort()
 }
 
+// GetRouteTable implements RouteTableProvider interface by delegating to gossipMessenger.
+func (s *service) GetRouteTable() *databasev1.RouteTable {
+	if s.gossipMessenger == nil {
+		return nil
+	}
+	return s.gossipMessenger.GetRouteTable()
+}
+
 // NewService returns a new service.
 func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{
