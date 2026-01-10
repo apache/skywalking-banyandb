@@ -319,6 +319,40 @@ func (p *pub) Publish(_ context.Context, topic bus.Topic, messages ...bus.Messag
 	return p.publish(15*time.Second, topic, messages...)
 }
 
+// GetRouteTable implements RouteTableProvider interface.
+// Returns a RouteTable with all registered nodes and their health states.
+func (p *pub) GetRouteTable() *databasev1.RouteTable {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	registered := make([]*databasev1.Node, 0, len(p.registered))
+	for _, node := range p.registered {
+		if node != nil {
+			registered = append(registered, node)
+		}
+	}
+
+	active := make([]string, 0, len(p.active))
+	for nodeID := range p.active {
+		if node := p.registered[nodeID]; node != nil && node.Metadata != nil {
+			active = append(active, node.Metadata.Name)
+		}
+	}
+
+	evictable := make([]string, 0, len(p.evictable))
+	for nodeID := range p.evictable {
+		if node := p.registered[nodeID]; node != nil && node.Metadata != nil {
+			evictable = append(evictable, node.Metadata.Name)
+		}
+	}
+
+	return &databasev1.RouteTable{
+		Registered: registered,
+		Active:     active,
+		Evictable:  evictable,
+	}
+}
+
 // New returns a new queue client targeting the given node roles.
 // If no roles are passed, it defaults to databasev1.Role_ROLE_DATA.
 func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {

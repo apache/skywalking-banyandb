@@ -101,8 +101,9 @@ func (gc *GroupConfig) Close() {
 	}
 }
 
-func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
-	l *logger.Logger, metadata metadata.Repo,
+func parseGroup(
+	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
+	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 ) (*GroupConfig, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -171,6 +172,10 @@ func parseGroup(g *commonv1.Group, nodeLabels map[string]string, nodes []*databa
 	}
 	if !existed {
 		return nil, errors.New("no nodes matched")
+	}
+
+	if t := client.GetRouteTable(); t != nil {
+		clusterStateMgr.addRouteTable(t)
 	}
 	return &GroupConfig{
 		Group:           g,
