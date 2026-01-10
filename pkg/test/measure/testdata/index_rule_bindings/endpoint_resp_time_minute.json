@@ -8,7 +8,7 @@
   ],
   "subject":{
     "catalog": "CATALOG_MEASURE",
-    "name": "service_instance_cpm_minute"
+    "name": "endpoint_resp_time_minute"
   },
   "begin_at": "2021-04-15T01:30:15.01Z",
   "expire_at": "2121-04-15T01:30:15.01Z",
