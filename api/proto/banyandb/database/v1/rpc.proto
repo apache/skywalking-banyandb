@@ -867,3 +867,29 @@ message GetCurrentNodeResponse {
 service NodeQueryService {
   rpc GetCurrentNode(GetCurrentNodeRequest) returns (GetCurrentNodeResponse) {}
 }
+
+message GetClusterStateRequest {}
+
+// RouteTable represents a collection of nodes grouped by their health state.
+// It provides a view of nodes that are registered, actively healthy, and those being evicted.
+message RouteTable {
+  // registered contains all nodes that have been discovered and registered in this route.
+  repeated banyandb.database.v1.Node registered = 1;
+  // active contains node names (Node.Metadata.Name) that are currently healthy and can handle requests.
+  repeated string active = 2;
+  // evictable contains node names (Node.Metadata.Name) that are unhealthy and being retried before eviction.
+  repeated string evictable = 3;
+}
+
+message GetClusterStateResponse {
+  // Liaison node: map's key could be "tire1" and "tire2". tire1 route traffic between liaison nodes, tire2 spread data among data nodes
+  // Data node: map's key could be "property" for gossip.
+  // Lifecycle agent: map's key could be the next stage's name.
+  map<string, RouteTable> route_tables = 1;
+}
+
+service ClusterStateService {
+  rpc GetClusterState(GetClusterStateRequest) returns (GetClusterStateResponse) {
+    option (google.api.http) = {get: "/v1/cluster/state"};
+  }
+}

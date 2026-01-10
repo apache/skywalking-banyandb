@@ -166,6 +166,9 @@
   
 - [banyandb/database/v1/rpc.proto](#banyandb_database_v1_rpc-proto)
     - [DataInfo](#banyandb-database-v1-DataInfo)
+    - [GetClusterStateRequest](#banyandb-database-v1-GetClusterStateRequest)
+    - [GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse)
+    - [GetClusterStateResponse.RouteTablesEntry](#banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry)
     - [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest)
     - [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse)
     - [GroupDeletionTask](#banyandb-database-v1-GroupDeletionTask)
@@ -237,6 +240,7 @@
     - [PropertyRegistryServiceListResponse](#banyandb-database-v1-PropertyRegistryServiceListResponse)
     - [PropertyRegistryServiceUpdateRequest](#banyandb-database-v1-PropertyRegistryServiceUpdateRequest)
     - [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse)
+    - [RouteTable](#banyandb-database-v1-RouteTable)
     - [SIDXInfo](#banyandb-database-v1-SIDXInfo)
     - [SchemaInfo](#banyandb-database-v1-SchemaInfo)
     - [SegmentInfo](#banyandb-database-v1-SegmentInfo)
@@ -285,6 +289,7 @@
   
     - [GroupDeletionTask.Phase](#banyandb-database-v1-GroupDeletionTask-Phase)
   
+    - [ClusterStateService](#banyandb-database-v1-ClusterStateService)
     - [GroupRegistryService](#banyandb-database-v1-GroupRegistryService)
     - [IndexRuleBindingRegistryService](#banyandb-database-v1-IndexRuleBindingRegistryService)
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
@@ -2670,6 +2675,47 @@ DataInfo contains data storage information for a specific node.
 
 
 
+<a name="banyandb-database-v1-GetClusterStateRequest"></a>
+
+### GetClusterStateRequest
+
+
+
+
+
+
+
+<a name="banyandb-database-v1-GetClusterStateResponse"></a>
+
+### GetClusterStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| route_tables | [GetClusterStateResponse.RouteTablesEntry](#banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry) | repeated | Liaison node: map&#39;s key could be &#34;tire1&#34; and &#34;tire2&#34;. tire1 route traffic between liaison nodes, tire2 spread data among data nodes Data node: map&#39;s key could be &#34;property&#34; for gossip. Lifecycle agent: map&#39;s key could be the next stage&#39;s name. |
+
+
+
+
+
+
+<a name="banyandb-database-v1-GetClusterStateResponse-RouteTablesEntry"></a>
+
+### GetClusterStateResponse.RouteTablesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [RouteTable](#banyandb-database-v1-RouteTable) |  |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-GetCurrentNodeRequest"></a>
 
 ### GetCurrentNodeRequest
@@ -3718,6 +3764,24 @@ LiaisonInfo contains information about pending operations in liaison.
 
 
 
+<a name="banyandb-database-v1-RouteTable"></a>
+
+### RouteTable
+RouteTable represents a collection of nodes grouped by their health state.
+It provides a view of nodes that are registered, actively healthy, and those being evicted.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| registered | [Node](#banyandb-database-v1-Node) | repeated | registered contains all nodes that have been discovered and registered in this route. |
+| active | [string](#string) | repeated | active contains node names (Node.Metadata.Name) that are currently healthy and can handle requests. |
+| evictable | [string](#string) | repeated | evictable contains node names (Node.Metadata.Name) that are unhealthy and being retried before eviction. |
+
+
+
+
+
+
 <a name="banyandb-database-v1-SIDXInfo"></a>
 
 ### SIDXInfo
@@ -4426,6 +4490,16 @@ Phase represents the current phase of the deletion task.
  
 
  
+
+
+<a name="banyandb-database-v1-ClusterStateService"></a>
+
+### ClusterStateService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetClusterState | [GetClusterStateRequest](#banyandb-database-v1-GetClusterStateRequest) | [GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse) |  |
 
 
 <a name="banyandb-database-v1-GroupRegistryService"></a>
