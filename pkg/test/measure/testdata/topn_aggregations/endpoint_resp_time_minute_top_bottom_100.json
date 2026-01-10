@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "name": "endpoint_resp_time-service",
+    "name": "endpoint_resp_time_minute_top_bottom_100",
     "group": "sw_metric"
   },
   "source_measure": {

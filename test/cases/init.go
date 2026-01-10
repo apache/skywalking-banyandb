@@ -98,7 +98,7 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "duplicated", "exception", "duplicated.json", now, 0)
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_updated", "service_cpm_minute_updated_data.json", now.Add(10*time.Minute), interval)
 	casesmeasuredata.Write(conn, "endpoint_resp_time_minute", "sw_metric", "endpoint_resp_time_minute_data.json", now.Add(20*time.Second), interval)
-	casesmeasuredata.Write(conn, "endpoint_resp_time_minute", "sw_metric", "endpoint_resp_time_minute_data2.json", now.Add(20*time.Minute), interval)
+	casesmeasuredata.Write(conn, "endpoint_resp_time_minute", "sw_metric", "endpoint_resp_time_minute_data1.json", now.Add(20*time.Minute), interval)
 	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
 		casesmeasuredata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},
