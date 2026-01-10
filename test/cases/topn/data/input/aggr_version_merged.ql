@@ -16,7 +16,7 @@
 # under the License.
 
 SHOW TOP 3
-FROM MEASURE service_instance_cpm_minute_top_bottom_100 IN sw_metric
+FROM MEASURE endpoint_resp_time_minute_top_bottom_100 IN sw_metric
 TIME > '-15m'
 AGGREGATE BY MAX
 ORDER BY DESC
