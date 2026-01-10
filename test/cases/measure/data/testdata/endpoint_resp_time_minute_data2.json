@@ -17,11 +17,6 @@
             "str": {
               "value": "svc_2"
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
@@ -29,7 +24,7 @@
     "fields": [
       {
         "int": {
-          "value": 170
+          "value": 100
         }
       },
       {
@@ -57,11 +52,6 @@
             "str": {
               "value": ""
             }
-          },
-          {
-            "str": {
-              "value": "GET:/metrics"
-            }
           }
         ]
       }
@@ -69,7 +59,7 @@
     "fields": [
       {
         "int": {
-          "value": 172
+          "value": 100
         }
       },
       {

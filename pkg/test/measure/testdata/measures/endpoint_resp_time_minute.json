@@ -14,6 +14,10 @@
         {
           "name": "entity_id",
           "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "service_id",
+          "type": "TAG_TYPE_STRING"
         }
       ]
     }
@@ -34,7 +38,13 @@
   ],
   "entity": {
     "tag_names": [
+      "service_id",
       "entity_id"
+    ]
+  },
+  "sharding_key": {
+    "tag_names": [
+      "service_id"
     ]
   },
   "interval": "1m",
