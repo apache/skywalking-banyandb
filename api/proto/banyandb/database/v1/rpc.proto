@@ -23,6 +23,7 @@ import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/database.proto";
 import "banyandb/database/v1/schema.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1";
@@ -353,12 +354,66 @@ message GroupRegistryServiceUpdateRequest {
 
 message GroupRegistryServiceUpdateResponse {}
 
+// GroupRegistryServiceDeleteRequest is the request for deleting a group.
 message GroupRegistryServiceDeleteRequest {
+  // group is the name of the group to delete.
+  string group = 1;
+  // dry_run indicates whether to perform a dry run without actually deleting data.
+  // When true, returns what would be deleted without making changes.
+  bool dry_run = 2;
+  // force indicates whether to force delete the group even if it contains data.
+  // When false, deletion will fail if the group is not empty.
+  bool force = 3;
+}
+
+// GroupRegistryServiceDeleteResponse is the response for deleting a group.
+message GroupRegistryServiceDeleteResponse {
+  // deleted indicates whether the group was deleted.
+  bool deleted = 1;
+  // task_id is the ID of the background deletion task.
+  string task_id = 2;
+}
+
+// GroupDeletionTask represents the status of a group deletion operation.
+message GroupDeletionTask {
+  // Phase represents the current phase of the deletion task.
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    // PHASE_PENDING indicates the task is waiting to start.
+    PHASE_PENDING = 1;
+    // PHASE_IN_PROGRESS indicates the task is currently executing.
+    PHASE_IN_PROGRESS = 2;
+    // PHASE_COMPLETED indicates the task has completed successfully.
+    PHASE_COMPLETED = 3;
+    // PHASE_FAILED indicates the task has failed.
+    PHASE_FAILED = 4;
+  }
+  // current_phase is the current phase of the deletion task.
+  Phase current_phase = 1;
+  // total_counts maps resource types to their total count.
+  map<string, int32> total_counts = 2;
+  // deleted_counts maps resource types to the count of deleted resources.
+  map<string, int32> deleted_counts = 3;
+  // total_data_size_bytes is the total size of data to be deleted in bytes.
+  int64 total_data_size_bytes = 4;
+  // deleted_data_size_bytes is the size of data that has been deleted in bytes.
+  int64 deleted_data_size_bytes = 5;
+  // message provides additional information about the task status.
+  string message = 6;
+  // created_at is the timestamp when the task was created.
+  google.protobuf.Timestamp created_at = 7;
+}
+
+// GroupRegistryServiceQueryRequest is the request for querying a group deletion task.
+message GroupRegistryServiceQueryRequest {
+  // group is the name of the group whose deletion task to query.
   string group = 1;
 }
 
-message GroupRegistryServiceDeleteResponse {
-  bool deleted = 1;
+// GroupRegistryServiceQueryResponse is the response for querying a group deletion task.
+message GroupRegistryServiceQueryResponse {
+  // task contains the status of the deletion task.
+  GroupDeletionTask task = 1;
 }
 
 message GroupRegistryServiceGetRequest {
@@ -383,6 +438,122 @@ message GroupRegistryServiceExistResponse {
   bool has_group = 1;
 }
 
+// GroupRegistryServiceInspectRequest is the request for inspecting a group's detailed information.
+message GroupRegistryServiceInspectRequest {
+  // group is the name of the group to inspect.
+  string group = 1;
+}
+
+// GroupRegistryServiceInspectResponse is the response for inspecting a group.
+message GroupRegistryServiceInspectResponse {
+  // group contains the group metadata.
+  banyandb.common.v1.Group group = 1;
+  // schema_info contains information about all schemas in the group.
+  SchemaInfo schema_info = 2;
+  // data_info contains data storage information for each node.
+  repeated DataInfo data_info = 3;
+  // liaison_info contains information about pending operations in liaison.
+  repeated LiaisonInfo liaison_info = 4;
+}
+
+// SchemaInfo contains information about all schema objects in a group.
+message SchemaInfo {
+  // streams is the list of stream names in the group.
+  repeated string streams = 1;
+  // measures is the list of measure names in the group.
+  repeated string measures = 2;
+  // traces is the list of trace names in the group.
+  repeated string traces = 3;
+  // properties is the list of property names in the group.
+  repeated string properties = 4;
+  // index_rules is the list of index rule names in the group.
+  repeated string index_rules = 5;
+  // index_rule_bindings is the list of index rule binding names in the group.
+  repeated string index_rule_bindings = 6;
+  // topn_aggregations is the list of TopN aggregation names in the group.
+  repeated string topn_aggregations = 7;
+}
+
+// DataInfo contains data storage information for a specific node.
+message DataInfo {
+  // node is the node that stores this data.
+  banyandb.database.v1.Node node = 1;
+  // segment_info contains information about each segment on this node.
+  repeated SegmentInfo segment_info = 2;
+  // data_size_bytes is the total size of data on this node in bytes.
+  int64 data_size_bytes = 3;
+}
+
+// SegmentInfo contains information about a specific time segment.
+message SegmentInfo {
+  // segment_id is the unique identifier of the segment.
+  string segment_id = 1;
+  // time_range_start is the start time of the segment.
+  string time_range_start = 2;
+  // time_range_end is the end time of the segment.
+  string time_range_end = 3;
+  // shard_info contains information about each shard in this segment.
+  repeated ShardInfo shard_info = 4;
+  // series_index_info contains information about the series index.
+  SeriesIndexInfo series_index_info = 5;
+}
+
+// ShardInfo contains information about a specific shard.
+message ShardInfo {
+  // shard_id is the unique identifier of the shard.
+  uint32 shard_id = 1;
+  // data_count is the number of data entries in this shard.
+  int64 data_count = 2;
+  // data_size_bytes is the size of data in this shard in bytes.
+  int64 data_size_bytes = 3;
+  // part_count is the number of parts in this shard.
+  int64 part_count = 4;
+  // inverted_index_info contains information about the inverted index.
+  InvertedIndexInfo inverted_index_info = 5;
+  // sidx_info contains information about sidx.
+  SIDXInfo sidx_info = 6;
+}
+
+// SeriesIndexInfo contains information about the series index.
+message SeriesIndexInfo {
+  // data_count is the number of entries in the series index.
+  int64 data_count = 1;
+  // data_size_bytes is the size of the series index in bytes.
+  int64 data_size_bytes = 2;
+}
+
+// InvertedIndexInfo contains information about the inverted index.
+message InvertedIndexInfo {
+  // data_count is the number of entries in the inverted index.
+  int64 data_count = 1;
+  // data_size_bytes is the size of the inverted index in bytes.
+  int64 data_size_bytes = 2;
+}
+
+// SIDXInfo contains information about sidx.
+message SIDXInfo {
+  // data_count is the number of entries in sidx.
+  int64 data_count = 1;
+  // data_size_bytes is the size of sidx in bytes.
+  int64 data_size_bytes = 2;
+  // part_count is the number of parts in sidx.
+  int64 part_count = 3;
+}
+
+// LiaisonInfo contains information about pending operations in liaison.
+message LiaisonInfo {
+  // pending_write_data_count is the number of data entries waiting to be written.
+  int64 pending_write_data_count = 1;
+  // pending_sync_part_count is the number of parts waiting to be synchronized.
+  int64 pending_sync_part_count = 2;
+  // pending_sync_data_size_bytes is the size of data waiting to be synchronized in bytes.
+  int64 pending_sync_data_size_bytes = 3;
+  // pending_handoff_part_count is the number of parts waiting for handoff.
+  int64 pending_handoff_part_count = 4;
+  // pending_handoff_data_size_bytes is the size of data waiting for handoff in bytes.
+  int64 pending_handoff_data_size_bytes = 5;
+}
+
 service GroupRegistryService {
   rpc Create(GroupRegistryServiceCreateRequest) returns (GroupRegistryServiceCreateResponse) {
     option (google.api.http) = {
@@ -398,6 +569,8 @@ service GroupRegistryService {
     };
   }
 
+  // Delete removes a group and all its associated data.
+  // Supports dry-run mode to preview what would be deleted.
   rpc Delete(GroupRegistryServiceDeleteRequest) returns (GroupRegistryServiceDeleteResponse) {
     option (google.api.http) = {delete: "/v1/group/schema/{group}"};
   }
@@ -412,6 +585,16 @@ service GroupRegistryService {
 
   // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead
   rpc Exist(GroupRegistryServiceExistRequest) returns (GroupRegistryServiceExistResponse);
+
+  // Inspect retrieves detailed information about a group including its schemas, data distribution, and pending operations.
+  rpc Inspect(GroupRegistryServiceInspectRequest) returns (GroupRegistryServiceInspectResponse) {
+    option (google.api.http) = {get: "/v1/group/content/{group}"};
+  }
+
+  // Query retrieves the status of a group deletion task.
+  rpc Query(GroupRegistryServiceQueryRequest) returns (GroupRegistryServiceQueryResponse) {
+    option (google.api.http) = {get: "/v1/group/task/{group}"};
+  }
 }
 
 message TopNAggregationRegistryServiceCreateRequest {
