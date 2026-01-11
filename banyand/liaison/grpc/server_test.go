@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -104,14 +105,14 @@ func TestNewServerWithProtector(t *testing.T) {
 	protectorService := &mockProtector{state: protector.StateLow}
 
 	// Create server with protector - should not panic
-	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, protectorService)
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, protectorService, nil)
 	assert.NotNil(t, server)
 }
 
 // TestNewServerWithoutProtector verifies nil protector handling.
 func TestNewServerWithoutProtector(t *testing.T) {
 	// Server creation should not fail with nil protector (fail open)
-	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, nil)
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, nil, nil)
 	assert.NotNil(t, server)
 }
 
@@ -388,7 +389,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 	// Wait a bit for metadata service to be ready
 	time.Sleep(200 * time.Millisecond)
 
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "test", nil)
+	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 
 	nr := NewLocalNodeRegistry()
 	grpcServer := NewServer(ctx, pipeline, pipeline, pipeline, metaSvc, NodeRegistries{
@@ -396,7 +397,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
 		TraceLiaisonNodeRegistry:   nr,
-	}, metricSvc, protectorService)
+	}, metricSvc, protectorService, nil)
 
 	// Configure server - use a fixed port for testing
 	grpcServer.(*server).host = "localhost"

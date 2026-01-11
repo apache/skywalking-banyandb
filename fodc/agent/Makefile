@@ -16,10 +16,10 @@
 # under the License.
 #
 
-NAME := fodc-agent
-BINARIES := $(NAME)-cli
+NAME := fodc
+BINARIES := $(NAME)-agent
 
-IMG_NAME := skywalking-fodc-agent
+IMG_NAME := skywalking-banyandb-fodc-agent
 
 # Override SOURCE_DIR to match the actual Go module path structure
 SOURCE_DIR := fodc/agent

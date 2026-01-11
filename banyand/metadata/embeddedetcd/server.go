@@ -29,7 +29,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 
-	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -158,7 +158,7 @@ func newEmbedEtcdConfig(config *config, logger *zap.Logger) (*embed.Config, erro
 	cfg := embed.NewConfig()
 	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	cfg.Dir = filepath.Join(config.rootDir, "metadata")
-	observability.UpdatePath(cfg.Dir)
+	obsservice.UpdatePath(cfg.Dir)
 	parseURLs := func(urls []string) ([]url.URL, error) {
 		uu := make([]url.URL, 0, len(urls))
 		for _, u := range urls {

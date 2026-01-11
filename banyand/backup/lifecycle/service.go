@@ -20,16 +20,27 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"github.com/go-chi/chi/v5"
+	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/validator"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
-	"google.golang.org/grpc"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -42,24 +53,34 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 type service interface {
 	run.Config
+	run.PreRunner
 	run.Service
 }
 
 var _ service = (*lifecycleService)(nil)
 
 type lifecycleService struct {
+	databasev1.UnimplementedClusterStateServiceServer
 	metadata          metadata.Repo
 	omr               observability.MetricsRegistry
 	pm                protector.Memory
+	clusterStateMgr   *clusterStateManager
 	l                 *logger.Logger
 	sch               *timestamp.Scheduler
+	grpcServer        *grpclib.Server
+	httpSrv           *http.Server
+	tlsReloader       *pkgtls.Reloader
+	clientCloser      context.CancelFunc
+	stopCh            chan struct{}
 	measureRoot       string
 	streamRoot        string
 	traceRoot         string
@@ -68,17 +89,26 @@ type lifecycleService struct {
 	schedule          string
 	cert              string
 	gRPCAddr          string
+	lifecycleHost     string
+	lifecycleGRPCAddr string
+	lifecycleHTTPAddr string
+	lifecycleCertFile string
+	lifecycleKeyFile  string
+	lifecycleGRPCPort uint32
+	lifecycleHTTPPort uint32
 	maxExecutionTimes int
 	enableTLS         bool
 	insecure          bool
+	lifecycleTLS      bool
 	chunkSize         run.Bytes
 }
 
 // NewService creates a new lifecycle service.
 func NewService(meta metadata.Repo) run.Unit {
 	ls := &lifecycleService{
-		metadata: meta,
-		omr:      observability.BypassRegistry,
+		metadata:        meta,
+		omr:             observability.BypassRegistry,
+		clusterStateMgr: &clusterStateManager{},
 	}
 	ls.pm = protector.NewMemory(ls.omr)
 	return ls
@@ -105,16 +135,96 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
 	l.chunkSize = run.Bytes(1024 * 1024)
 	flagS.VarP(&l.chunkSize, "chunk-size", "", "Chunk size in bytes for streaming data during migration (default: 1MB)")
+
+	// Lifecycle server flags
+	flagS.BoolVar(&l.lifecycleTLS, "lifecycle-tls", false, "connection uses TLS if true, else plain TCP")
+	flagS.StringVar(&l.lifecycleCertFile, "lifecycle-cert-file", "", "the TLS cert file")
+	flagS.StringVar(&l.lifecycleKeyFile, "lifecycle-key-file", "", "the TLS key file")
+	flagS.StringVar(&l.lifecycleHost, "lifecycle-grpc-host", "", "the host of lifecycle server listens")
+	flagS.Uint32Var(&l.lifecycleGRPCPort, "lifecycle-grpc-port", 17912, "the port of lifecycle server listens")
+	flagS.Uint32Var(&l.lifecycleHTTPPort, "lifecycle-http-port", 17913, "the port of lifecycle http api listens")
+
 	return flagS
 }
 
 func (l *lifecycleService) Validate() error {
+	if l.schedule != "" {
+		l.lifecycleGRPCAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleGRPCPort), 10))
+		if l.lifecycleGRPCAddr == ":" {
+			return errors.New("no gRPC address")
+		}
+		l.lifecycleHTTPAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleHTTPPort), 10))
+		if l.lifecycleHTTPAddr == ":" {
+			return errors.New("no HTTP address")
+		}
+		if l.lifecycleTLS {
+			if l.lifecycleCertFile == "" {
+				return errors.New("missing cert file when TLS is enabled")
+			}
+			if l.lifecycleKeyFile == "" {
+				return errors.New("missing key file when TLS is enabled")
+			}
+		}
+	}
+	return nil
+}
+
+// PreRun initializes the lifecycle service and its embedded server.
+func (l *lifecycleService) PreRun(_ context.Context) error {
+	l.l = logger.GetLogger("lifecycle")
+
+	if l.schedule != "" && l.lifecycleTLS {
+		var err error
+		l.tlsReloader, err = pkgtls.NewReloader(l.lifecycleCertFile, l.lifecycleKeyFile, l.l)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize TLS reloader")
+		}
+	}
+
 	return nil
 }
 
 func (l *lifecycleService) GracefulStop() {
 	if l.sch != nil {
 		l.sch.Close()
+	}
+
+	l.l.Info().Msg("Stopping lifecycle server")
+
+	if l.tlsReloader != nil {
+		l.tlsReloader.Stop()
+	}
+
+	if l.clientCloser != nil {
+		l.clientCloser()
+	}
+
+	// Stop HTTP server
+	if l.httpSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if shutdownErr := l.httpSrv.Shutdown(ctx); shutdownErr != nil {
+			l.l.Warn().Err(shutdownErr).Msg("HTTP server shutdown error")
+		}
+	}
+
+	// Stop gRPC server
+	if l.grpcServer != nil {
+		stopped := make(chan struct{})
+		go func() {
+			l.grpcServer.GracefulStop()
+			close(stopped)
+		}()
+
+		t := time.NewTimer(10 * time.Second)
+		select {
+		case <-t.C:
+			l.grpcServer.Stop()
+			l.l.Info().Msg("Lifecycle server force stopped")
+		case <-stopped:
+			t.Stop()
+			l.l.Info().Msg("Lifecycle server stopped gracefully")
+		}
 	}
 }
 
@@ -124,6 +234,13 @@ func (l *lifecycleService) Name() string {
 
 func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
+	l.stopCh = make(chan struct{})
+
+	// Start gRPC/HTTP servers when schedule is set
+	if l.schedule != "" {
+		l.startServers()
+	}
+
 	done := make(chan struct{})
 	if l.schedule == "" {
 		defer close(done)
@@ -152,9 +269,123 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	})
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to register lifecycle migration schedule")
+		close(done)
 		return done
 	}
+
+	// Wait for either migration completion or server stop
+	go func() {
+		select {
+		case <-done:
+			// Migration completed
+		case <-l.stopCh:
+			// Server stopped
+			close(done)
+		}
+	}()
+
 	return done
+}
+
+func (l *lifecycleService) startServers() {
+	// Setup gRPC server
+	var opts []grpclib.ServerOption
+	if l.lifecycleTLS && l.tlsReloader != nil {
+		if startErr := l.tlsReloader.Start(); startErr != nil {
+			l.l.Error().Err(startErr).Msg("Failed to start TLS reloader")
+			close(l.stopCh)
+			return
+		}
+		tlsConfig := l.tlsReloader.GetTLSConfig()
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpclib.Creds(creds))
+	}
+
+	opts = append(opts,
+		grpclib.ChainUnaryInterceptor(
+			grpc_validator.UnaryServerInterceptor(),
+		),
+	)
+
+	l.grpcServer = grpclib.NewServer(opts...)
+	databasev1.RegisterClusterStateServiceServer(l.grpcServer, l)
+	grpc_health_v1.RegisterHealthServer(l.grpcServer, health.NewServer())
+
+	// Setup HTTP server
+	var ctx context.Context
+	ctx, l.clientCloser = context.WithCancel(context.Background())
+
+	clientOpts := make([]grpclib.DialOption, 0, 1)
+	if l.lifecycleTLS && l.tlsReloader != nil {
+		tlsConfig := l.tlsReloader.GetTLSConfig()
+		creds := credentials.NewTLS(tlsConfig)
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(creds))
+	} else {
+		clientOpts = append(clientOpts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	client, err := healthcheck.NewClient(ctx, l.l, l.lifecycleGRPCAddr, clientOpts)
+	if err != nil {
+		l.l.Error().Err(err).Msg("Failed to create health check client")
+		close(l.stopCh)
+		return
+	}
+
+	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
+	if registerErr := databasev1.RegisterClusterStateServiceHandlerFromEndpoint(ctx, gwMux, l.lifecycleGRPCAddr, clientOpts); registerErr != nil {
+		l.l.Error().Err(registerErr).Msg("Failed to register cluster state service")
+		close(l.stopCh)
+		return
+	}
+
+	mux := chi.NewRouter()
+	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+
+	l.httpSrv = &http.Server{
+		Addr:              l.lifecycleHTTPAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+
+	// Start both servers
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// gRPC server goroutine
+	go func() {
+		defer wg.Done()
+		lis, listenErr := net.Listen("tcp", l.lifecycleGRPCAddr)
+		if listenErr != nil {
+			l.l.Error().Err(listenErr).Msg("Failed to listen on gRPC addr")
+			return
+		}
+		l.l.Info().Str("addr", l.lifecycleGRPCAddr).Msg("Lifecycle gRPC server listening")
+		if serveErr := l.grpcServer.Serve(lis); serveErr != nil {
+			l.l.Error().Err(serveErr).Msg("gRPC server error")
+		}
+	}()
+
+	// HTTP server goroutine
+	go func() {
+		defer wg.Done()
+		l.l.Info().Str("addr", l.lifecycleHTTPAddr).Msg("Lifecycle HTTP server listening")
+		var serveErr error
+		if l.lifecycleTLS && l.tlsReloader != nil {
+			l.httpSrv.TLSConfig = l.tlsReloader.GetTLSConfig()
+			serveErr = l.httpSrv.ListenAndServeTLS("", "")
+		} else {
+			serveErr = l.httpSrv.ListenAndServe()
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			l.l.Error().Err(serveErr).Msg("HTTP server error")
+		}
+	}()
+
+	// Wait for both servers to stop
+	go func() {
+		wg.Wait()
+		close(l.stopCh)
+	}()
 }
 
 func (l *lifecycleService) action() error {
@@ -564,7 +795,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -663,7 +894,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 		return
 	}
 
-	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpc.ClientConn) (*streamv1.DeleteExpiredSegmentsResponse, error) {
+	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpclib.ClientConn) (*streamv1.DeleteExpiredSegmentsResponse, error) {
 		client := streamv1.NewStreamServiceClient(conn)
 		return client.DeleteExpiredSegments(ctx, &streamv1.DeleteExpiredSegmentsRequest{
 			Group:           g.Metadata.Name,
@@ -683,7 +914,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -746,7 +977,7 @@ func (l *lifecycleService) deleteExpiredMeasureSegments(ctx context.Context, g *
 		return
 	}
 
-	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpc.ClientConn) (*measurev1.DeleteExpiredSegmentsResponse, error) {
+	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpclib.ClientConn) (*measurev1.DeleteExpiredSegmentsResponse, error) {
 		client := measurev1.NewMeasureServiceClient(conn)
 		return client.DeleteExpiredSegments(ctx, &measurev1.DeleteExpiredSegmentsRequest{
 			Group:           g.Metadata.Name,
@@ -769,7 +1000,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 		return
 	}
 
-	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpc.ClientConn) (*tracev1.DeleteExpiredSegmentsResponse, error) {
+	resp, err := snapshot.Conn(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, func(conn *grpclib.ClientConn) (*tracev1.DeleteExpiredSegmentsResponse, error) {
 		client := tracev1.NewTraceServiceClient(conn)
 		return client.DeleteExpiredSegments(ctx, &tracev1.DeleteExpiredSegmentsRequest{
 			Group:           g.Metadata.Name,
@@ -789,7 +1020,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return

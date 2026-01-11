@@ -34,7 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -183,13 +183,13 @@ func setupForRegistry() func() {
 	// Init `Metadata` module
 	metaSvc, err := embeddedserver.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
-	metricSvc := observability.NewMetricService(metaSvc, pipeline, "standalone", nil)
+	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "standalone", nil)
 
 	nr := grpc.NewLocalNodeRegistry()
 	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, pipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: nr,
 		PropertyNodeRegistry:       nr,
-	}, metricSvc, nil)
+	}, metricSvc, nil, nil)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()

@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -54,7 +55,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	Option                         O
 	TableMetrics                   Metrics
 	TSTableCreator                 TSTableCreator[T, O]
-	StorageMetricsFactory          *observability.Factory
+	StorageMetricsFactory          observability.Factory
 	Location                       string
 	SegmentInterval                IntervalRule
 	TTL                            IntervalRule
@@ -222,7 +223,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	if err := db.segmentController.open(); err != nil {
 		return nil, err
 	}
-	observability.MetricsCollector.Register(location, db.collect)
+	obsservice.MetricsCollector.Register(location, db.collect)
 	return db, db.startRotationTask()
 }
 

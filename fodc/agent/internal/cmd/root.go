@@ -37,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
+	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -49,6 +51,9 @@ const (
 	defaultMetricsEndpoint              = "http://localhost:2121/metrics"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
+	defaultProxyAddr                    = "localhost:17900"
+	defaultHeartbeatInterval            = 10 * time.Second
+	defaultReconnectInterval            = 5 * time.Second
 )
 
 var (
@@ -59,6 +64,13 @@ var (
 	ktmEnabled                   bool
 	ktmInterval                  time.Duration
 	ktmModules                   []string
+	proxyAddr                    string
+	nodeIP                       string
+	nodePort                     int
+	nodeRole                     string
+	nodeLabels                   string
+	heartbeatInterval            time.Duration
+	reconnectInterval            time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -84,6 +96,20 @@ func init() {
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
 	rootCmd.Flags().StringVar(&prometheusListenAddr, "prometheus-listen-addr", defaultPrometheusListenAddr,
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
+	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
+		"FODC Proxy gRPC address")
+	rootCmd.Flags().StringVar(&nodeIP, "node-ip", "",
+		"IP address for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
+	rootCmd.Flags().IntVar(&nodePort, "node-port", 0,
+		"Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
+	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
+		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
+		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
+	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
+		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
+	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
+		"Interval for reconnection attempts when connection to Proxy is lost")
 	rootCmd.Flags().BoolVar(&ktmEnabled, "ktm-enabled", false, "Enable Kernel Trace Module (eBPF)")
 	rootCmd.Flags().DurationVar(&ktmInterval, "ktm-interval", 10*time.Second, "Interval for KTM metrics collection")
 	rootCmd.Flags().StringSliceVar(&ktmModules, "ktm-modules", []string{"iomonitor"}, "KTM modules to enable")
@@ -185,6 +211,44 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	stopCh := wd.Serve()
 
+	var proxyClient *proxy.Client
+	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
+		labelsMap, parseErr := parseLabels(nodeLabels)
+		if parseErr != nil {
+			_ = metricsServer.Stop()
+			return fmt.Errorf("failed to parse node labels: %w", parseErr)
+		}
+		proxyClient = proxy.NewClient(
+			proxyAddr,
+			nodeIP,
+			nodePort,
+			nodeRole,
+			labelsMap,
+			heartbeatInterval,
+			reconnectInterval,
+			fr,
+			log,
+		)
+
+		proxyCtx, proxyCancel := context.WithCancel(ctx)
+		defer proxyCancel()
+
+		go func() {
+			if startErr := proxyClient.Start(proxyCtx); startErr != nil {
+				log.Error().Err(startErr).Msg("Proxy client error")
+			}
+		}()
+
+		log.Info().
+			Str("proxy_addr", proxyAddr).
+			Str("node_ip", nodeIP).
+			Int("node_port", nodePort).
+			Str("node_role", nodeRole).
+			Msg("Proxy client started")
+	} else {
+		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --node-ip, --node-port, --node-role)")
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -202,6 +266,12 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	if stopKTM != nil {
 		stopKTM()
+	}
+
+	if proxyClient != nil {
+		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
+			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
+		}
 	}
 
 	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
@@ -268,4 +338,38 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 		close(stopBridgeCh)
 		_ = ktmSvc.Stop()
 	}, nil
+}
+
+// parseLabels parses a comma-separated labels string into a map.
+// Format: key1=value1,key2=value2.
+func parseLabels(labelsStr string) (map[string]string, error) {
+	labels := make(map[string]string)
+	if labelsStr == "" {
+		return labels, nil
+	}
+
+	pairs := strings.Split(labelsStr, ",")
+	for idx, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid label format at position %d: %q (expected key=value)", idx, pair)
+		}
+
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		if key == "" {
+			return nil, fmt.Errorf("empty label key at position %d: %q", idx, pair)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("empty label value at position %d: %q", idx, pair)
+		}
+		labels[key] = value
+	}
+
+	return labels, nil
 }

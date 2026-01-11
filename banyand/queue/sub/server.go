@@ -38,12 +38,16 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -68,37 +72,41 @@ var (
 )
 
 type server struct {
-	clusterv1.UnimplementedServiceServer
 	clusterv1.UnimplementedChunkedSyncServiceServer
 	streamv1.UnimplementedStreamServiceServer
 	databasev1.UnimplementedSnapshotServiceServer
-	creds               credentials.TransportCredentials
-	tlsReloader         *pkgtls.Reloader
-	omr                 observability.MetricsRegistry
-	metrics             *metrics
-	ser                 *grpclib.Server
-	listeners           map[bus.Topic][]bus.MessageListener
-	topicMap            map[string]bus.Topic
-	chunkedSyncHandlers map[bus.Topic]queue.ChunkedSyncHandler
-	log                 *logger.Logger
-	httpSrv             *http.Server
-	clientCloser        context.CancelFunc
-	httpAddr            string
-	addr                string
-	host                string
-	certFile            string
-	keyFile             string
-	flagNamePrefix      string
-	maxRecvMsgSize      run.Bytes
-	listenersLock       sync.RWMutex
-	port                uint32
-	httpPort            uint32
-	tls                 bool
-	// Chunk ordering configuration
-	enableChunkReordering bool
-	maxChunkBufferSize    uint32
+	databasev1.UnimplementedNodeQueryServiceServer
+	databasev1.UnimplementedClusterStateServiceServer
+	clusterv1.UnimplementedServiceServer
+	omr                   observability.MetricsRegistry
+	creds                 credentials.TransportCredentials
+	curNode               *databasev1.Node
+	metrics               *metrics
+	ser                   *grpclib.Server
+	listeners             map[bus.Topic][]bus.MessageListener
+	topicMap              map[string]bus.Topic
+	chunkedSyncHandlers   map[bus.Topic]queue.ChunkedSyncHandler
+	log                   *logger.Logger
+	httpSrv               *http.Server
+	tlsReloader           *pkgtls.Reloader
+	clientCloser          context.CancelFunc
+	routeTableProvider    map[string]route.TableProvider
+	certFile              string
+	addr                  string
+	keyFile               string
+	flagNamePrefix        string
+	httpAddr              string
+	host                  string
 	chunkBufferTimeout    time.Duration
+	maxRecvMsgSize        run.Bytes
+	listenersLock         sync.RWMutex
+	routeTableProviderMu  sync.RWMutex
+	port                  uint32
+	httpPort              uint32
+	maxChunkBufferSize    uint32
 	maxChunkGapSize       uint32
+	tls                   bool
+	enableChunkReordering bool
 }
 
 // NewServer returns a new gRPC server.
@@ -108,7 +116,7 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 
 // NewServerWithPorts returns a new gRPC server with specified ports.
 func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
-	return &server{
+	srv := &server{
 		listeners:           make(map[bus.Topic][]bus.MessageListener),
 		topicMap:            make(map[string]bus.Topic),
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
@@ -123,9 +131,10 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		chunkBufferTimeout:    5 * time.Second,
 		maxChunkGapSize:       5,
 	}
+	return srv
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("server-queue-sub")
 	s.metrics = newMetrics(s.omr.With(queueSubScope))
 
@@ -137,6 +146,27 @@ func (s *server) PreRun(_ context.Context) error {
 			return errors.Wrap(err, "failed to initialize TLS reloader for queue server")
 		}
 		s.log.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).Msg("Initialized TLS reloader for queue server")
+	}
+
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	roleVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || roleVal == nil {
+		s.log.Warn().Msg("node or role value not found in context")
+		return nil
+	}
+	nodeRoles := roleVal.([]databasev1.Role)
+	node := nodeVal.(common.Node)
+	s.curNode = &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: node.NodeID,
+		},
+		GrpcAddress: node.GrpcAddress,
+		HttpAddress: node.HTTPAddress,
+		Roles:       nodeRoles,
+		Labels:      node.Labels,
+		CreatedAt:   timestamppb.Now(),
+
+		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 	}
 
 	return nil
@@ -256,6 +286,8 @@ func (s *server) Serve() run.StopNotify {
 	clusterv1.RegisterChunkedSyncServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
+	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
+	databasev1.RegisterClusterStateServiceServer(s.ser, s)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
@@ -278,6 +310,11 @@ func (s *server) Serve() run.StopNotify {
 	gwMux := runtime.NewServeMux(runtime.WithHealthzEndpoint(client))
 	if err := databasev1.RegisterSnapshotServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
 		s.log.Error().Err(err).Msg("Failed to register snapshot service")
+		close(stopCh)
+		return stopCh
+	}
+	if err := databasev1.RegisterClusterStateServiceHandlerFromEndpoint(ctx, gwMux, s.addr, clientOpts); err != nil {
+		s.log.Error().Err(err).Msg("Failed to register cluster state service")
 		close(stopCh)
 		return stopCh
 	}
@@ -354,6 +391,12 @@ func (s *server) RegisterChunkedSyncHandler(topic bus.Topic, handler queue.Chunk
 	s.chunkedSyncHandlers[topic] = handler
 }
 
+func (s *server) SetRouteProviders(providers map[string]route.TableProvider) {
+	s.routeTableProviderMu.Lock()
+	s.routeTableProvider = providers
+	s.routeTableProviderMu.Unlock()
+}
+
 type metrics struct {
 	totalStarted  meter.Counter
 	totalFinished meter.Counter
@@ -373,7 +416,7 @@ type metrics struct {
 	bufferCapacityExceeded   meter.Counter
 }
 
-func newMetrics(factory *observability.Factory) *metrics {
+func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
 		totalStarted:        factory.NewCounter("total_started", "topic"),
 		totalFinished:       factory.NewCounter("total_finished", "topic"),

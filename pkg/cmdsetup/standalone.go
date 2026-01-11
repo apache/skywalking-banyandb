@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -49,7 +50,8 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
-	metricSvc := observability.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
+	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
+	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {
@@ -80,7 +82,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
 		TraceLiaisonNodeRegistry:   nr,
-	}, metricSvc, pm)
+	}, metricSvc, pm, nil)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 

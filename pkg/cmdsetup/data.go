@@ -24,9 +24,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -47,7 +49,8 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
 	metricsPipeline := queue.Local()
-	metricSvc := observability.NewMetricService(metaSvc, metricsPipeline, "data", nil)
+	metricSvc := services.NewMetricService(metaSvc, metricsPipeline, "data", nil)
+	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
 	pipeline := sub.NewServer(metricSvc)
 	propertyStreamPipeline := queue.Local()
@@ -55,6 +58,10 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
+	pipeline.SetRouteProviders(map[string]route.TableProvider{
+		"property": propertySvc,
+	})
+
 	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, propertyStreamPipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")

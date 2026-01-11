@@ -15,44 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package observability
+// Package route defines interfaces and types for providing route table information.
+package route
 
 import (
-	"sync"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-// MetricsCollector is a global metrics collector.
-var MetricsCollector = Collector{
-	getters: make(map[string]MetricsGetter),
-}
-
-// MetricsGetter is a function that collects metrics.
-type MetricsGetter func()
-
-// Collector is a metrics collector.
-type Collector struct {
-	getters map[string]MetricsGetter
-	gMux    sync.RWMutex
-}
-
-// Register registers a metrics getter.
-func (c *Collector) Register(name string, getter MetricsGetter) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	c.getters[name] = getter
-}
-
-// Unregister unregisters a metrics getter.
-func (c *Collector) Unregister(name string) {
-	c.gMux.Lock()
-	defer c.gMux.Unlock()
-	delete(c.getters, name)
-}
-
-func (c *Collector) collect() {
-	c.gMux.RLock()
-	defer c.gMux.RUnlock()
-	for _, getter := range c.getters {
-		getter()
-	}
+// TableProvider provides route table information for the cluster state API.
+// Implementations should return a RouteTable with all registered nodes and their health states.
+type TableProvider interface {
+	// GetRouteTable returns the current route table state.
+	// The returned RouteTable contains:
+	// - Registered: all nodes known to this provider (full Node information)
+	// - Active: node names (Node.Metadata.Name) that are currently healthy
+	// - Evictable: node names (Node.Metadata.Name) that are unhealthy and being retried
+	// The returned RouteTable is a copy and safe for concurrent access.
+	GetRouteTable() *databasev1.RouteTable
 }
