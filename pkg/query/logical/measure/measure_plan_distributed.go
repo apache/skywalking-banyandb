@@ -309,7 +309,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs, t.queryTemplate.Agg)
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
 		}
@@ -536,14 +536,7 @@ func (s *pushedDownAggregatedIterator) Close() error {
 }
 
 // deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas.
-func deduplicateAggregatedDataPoints(
-	dataPoints []*measurev1.DataPoint,
-	groupByTagsRefs [][]*logical.TagRef,
-	agg *measurev1.QueryRequest_Aggregation,
-) ([]*measurev1.DataPoint, error) {
-	if agg == nil {
-		return dataPoints, nil
-	}
+func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
 		return dataPoints, nil
 	}
