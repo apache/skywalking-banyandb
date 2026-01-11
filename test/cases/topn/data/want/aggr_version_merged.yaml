@@ -33,3 +33,11 @@ lists:
         value:
           int:
             value: "200"
+      - entity:
+          - key: entity_id
+            value:
+              str:
+                value: entity_1
+        value:
+          int:
+            value: "100"
