@@ -28,3 +28,27 @@ func (s *server) GetCurrentNode(context.Context, *databasev1.GetCurrentNodeReque
 		Node: s.curNode,
 	}, nil
 }
+
+func (s *server) GetClusterState(context.Context, *databasev1.GetClusterStateRequest) (*databasev1.GetClusterStateResponse, error) {
+	s.routeTableProviderMu.RLock()
+	defer s.routeTableProviderMu.RUnlock()
+
+	if s.routeTableProvider == nil {
+		return &databasev1.GetClusterStateResponse{RouteTables: map[string]*databasev1.RouteTable{}}, nil
+	}
+
+	routeTables := make(map[string]*databasev1.RouteTable, len(s.routeTableProvider))
+	for routeKey, provider := range s.routeTableProvider {
+		if provider == nil {
+			s.log.Warn().Str("routeKey", routeKey).Msg("route table provider is nil")
+			continue
+		}
+
+		routeTable := provider.GetRouteTable()
+		if routeTable != nil {
+			routeTables[routeKey] = routeTable
+		}
+	}
+
+	return &databasev1.GetClusterStateResponse{RouteTables: routeTables}, nil
+}

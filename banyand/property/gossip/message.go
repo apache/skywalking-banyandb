@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -60,6 +61,7 @@ type MessageClient interface {
 // MessageServer is an interface that defines methods for subscribing to topics and receiving messages in a gossip protocol.
 type MessageServer interface {
 	run.Unit
+	route.TableProvider
 	// Subscribe allows subscribing to a topic to receive messages.
 	Subscribe(listener MessageListener)
 	// RegisterServices registers the gRPC services with the provided server.

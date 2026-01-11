@@ -49,7 +49,7 @@ type Service struct {
 	closer            *run.Closer
 	log               *logger.Logger
 	metrics           *metrics
-	handlers          map[string]schema.EventHandler
+	handlers          []schema.EventHandler
 	lastSuccessfulDNS map[string][]string
 	srvAddresses      []string
 	caCertPaths       []string
@@ -110,7 +110,7 @@ func NewService(cfg Config) (*Service, error) {
 		tlsEnabled:        cfg.TLSEnabled,
 		caCertPaths:       cfg.CACertPaths,
 		nodeCache:         make(map[string]*databasev1.Node),
-		handlers:          make(map[string]schema.EventHandler),
+		handlers:          make([]schema.EventHandler, 0),
 		lastSuccessfulDNS: make(map[string][]string),
 		pathToReloader:    make(map[string]*pkgtls.Reloader),
 		srvAddrToPath:     make(map[string]string),
@@ -532,7 +532,7 @@ func (s *Service) RegisterHandler(name string, handler schema.EventHandler) {
 	s.handlersMutex.Lock()
 	defer s.handlersMutex.Unlock()
 
-	s.handlers[name] = handler
+	s.handlers = append(s.handlers, handler)
 	s.log.Debug().Str("handler", name).Msg("Registered DNS node discovery handler")
 }
 
