@@ -480,9 +480,7 @@ nodes:
 	require.Equal(t, 1, retryState.attemptCount)
 
 	// verify node is not in cache yet
-	svc.cacheMutex.RLock()
-	_, inCache := svc.nodeCache[address]
-	svc.cacheMutex.RUnlock()
+	_, inCache := svc.GetCachedNode(address)
 	require.False(t, inCache, "Node should not be in cache yet")
 
 	// now make the node available
@@ -490,9 +488,7 @@ nodes:
 
 	// wait for retry to succeed
 	require.Eventually(t, func() bool {
-		svc.cacheMutex.RLock()
-		_, exists := svc.nodeCache[address]
-		svc.cacheMutex.RUnlock()
+		_, exists := svc.GetCachedNode(address)
 		return exists
 	}, 3*time.Second, 50*time.Millisecond, "Node should eventually be added to cache after retry")
 

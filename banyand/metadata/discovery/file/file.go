@@ -27,13 +27,14 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -55,22 +56,20 @@ type retryConfig struct {
 
 // Service implements file-based node discovery.
 type Service struct {
-	retryQueue    map[string]*nodeRetryState
-	closer        *run.Closer
-	log           *logger.Logger
-	metrics       *metrics
-	watcher       *fsnotify.Watcher
-	nodeCache     map[string]*databasev1.Node
-	filePath      string
-	handlers      []schema.EventHandler
-	retryCfg      retryConfig
-	grpcTimeout   time.Duration
-	fetchInterval time.Duration
-	cacheMutex    sync.RWMutex
-	handlersMutex sync.RWMutex
-	retryMutex    sync.RWMutex
-	reloadMutex   sync.Mutex
-	started       bool
+	*common.NodeCacheBase
+	addressToNodeConfig map[string]NodeConfig
+	retryQueue          map[string]*nodeRetryState
+	closer              *run.Closer
+	metrics             *metrics
+	watcher             *fsnotify.Watcher
+	filePath            string
+	retryCfg            retryConfig
+	grpcTimeout         time.Duration
+	fetchInterval       time.Duration
+	retryMutex          sync.RWMutex
+	reloadMutex         sync.Mutex
+	configMutex         sync.RWMutex
+	started             bool
 }
 
 // Config holds configuration for file discovery service.
@@ -126,15 +125,14 @@ func NewService(cfg Config) (*Service, error) {
 	}
 
 	svc := &Service{
-		filePath:      cfg.FilePath,
-		nodeCache:     make(map[string]*databasev1.Node),
-		retryQueue:    make(map[string]*nodeRetryState),
-		handlers:      make([]schema.EventHandler, 0),
-		closer:        run.NewCloser(2),
-		log:           logger.GetLogger("metadata-discovery-file"),
-		grpcTimeout:   cfg.GRPCTimeout,
-		fetchInterval: cfg.FetchInterval,
-		watcher:       fileWatcher,
+		NodeCacheBase:       common.NewNodeCacheBase("metadata-discovery-file"),
+		filePath:            cfg.FilePath,
+		addressToNodeConfig: make(map[string]NodeConfig),
+		retryQueue:          make(map[string]*nodeRetryState),
+		closer:              run.NewCloser(2),
+		grpcTimeout:         cfg.GRPCTimeout,
+		fetchInterval:       cfg.FetchInterval,
+		watcher:             fileWatcher,
 		retryCfg: retryConfig{
 			initialInterval: cfg.RetryInitialInterval,
 			maxInterval:     cfg.RetryMaxInterval,
@@ -145,9 +143,22 @@ func NewService(cfg Config) (*Service, error) {
 	return svc, nil
 }
 
+// GetDialOptions implements GRPCDialOptionsProvider for file-specific per-node TLS.
+func (s *Service) GetDialOptions(address string) ([]grpc.DialOption, error) {
+	s.configMutex.RLock()
+	nodeConfig, exists := s.addressToNodeConfig[address]
+	s.configMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("no node configuration found for address %s", address)
+	}
+
+	return grpchelper.SecureOptions(nil, nodeConfig.TLSEnabled, false, nodeConfig.CACertPath)
+}
+
 // Start begins the file discovery background process.
 func (s *Service) Start(ctx context.Context) error {
-	s.log.Debug().Str("file_path", s.filePath).Msg("Starting file-based node discovery service")
+	s.GetLogger().Debug().Str("file_path", s.filePath).Msg("Starting file-based node discovery service")
 
 	// initial load
 	if err := s.loadAndParseFile(ctx); err != nil {
@@ -213,36 +224,23 @@ func (s *Service) loadAndParseFile(ctx context.Context) error {
 	// update cache
 	s.updateNodeCache(ctx, cfg.Nodes)
 
-	s.log.Debug().Int("node_count", len(cfg.Nodes)).Msg("Successfully loaded configuration file")
+	s.GetLogger().Debug().Int("node_count", len(cfg.Nodes)).Msg("Successfully loaded configuration file")
 	return nil
 }
 
 func (s *Service) fetchNodeMetadata(ctx context.Context, nodeConfig NodeConfig) (*databasev1.Node, error) {
-	ctxTimeout, cancel := context.WithTimeout(ctx, s.grpcTimeout)
-	defer cancel()
+	// update config mapping for GetDialOptions
+	s.configMutex.Lock()
+	s.addressToNodeConfig[nodeConfig.Address] = nodeConfig
+	s.configMutex.Unlock()
 
-	// prepare TLS options
-	dialOpts, err := grpchelper.SecureOptions(nil, nodeConfig.TLSEnabled, false, nodeConfig.CACertPath)
+	// use common fetcher
+	node, err := common.FetchNodeMetadata(ctx, nodeConfig.Address, s.grpcTimeout, s)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load TLS config for node %s: %w", nodeConfig.Name, err)
+		return nil, fmt.Errorf("failed to fetch metadata for node %s: %w", nodeConfig.Name, err)
 	}
 
-	// connect to node
-	// nolint:contextcheck
-	conn, connErr := grpchelper.Conn(nodeConfig.Address, s.grpcTimeout, dialOpts...)
-	if connErr != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", nodeConfig.Address, connErr)
-	}
-	defer conn.Close()
-
-	// query metadata of the node
-	client := databasev1.NewNodeQueryServiceClient(conn)
-	resp, callErr := client.GetCurrentNode(ctxTimeout, &databasev1.GetCurrentNodeRequest{})
-	if callErr != nil {
-		return nil, fmt.Errorf("failed to get current node from %s: %w", nodeConfig.Address, callErr)
-	}
-
-	return resp.GetNode(), nil
+	return node, nil
 }
 
 func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
@@ -252,11 +250,16 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		fileAddresses[nodeConfig.Address] = nodeConfig
 	}
 
+	// update addressToNodeConfig mapping
+	s.configMutex.Lock()
+	for _, nodeConfig := range newNodes {
+		s.addressToNodeConfig[nodeConfig.Address] = nodeConfig
+	}
+	s.configMutex.Unlock()
+
 	// process new or updated nodes
 	for _, nodeConfig := range newNodes {
-		s.cacheMutex.RLock()
-		_, existsInCache := s.nodeCache[nodeConfig.Address]
-		s.cacheMutex.RUnlock()
+		_, existsInCache := s.GetCachedNode(nodeConfig.Address)
 		// node already connected, skip
 		if existsInCache {
 			continue
@@ -270,7 +273,7 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		if existsInRetry {
 			// check if config changed (TLS settings, name, etc)
 			if s.nodeConfigChanged(retryState.config, nodeConfig) {
-				s.log.Info().
+				s.GetLogger().Info().
 					Str("address", nodeConfig.Address).
 					Msg("Node configuration changed, resetting retry state")
 				s.retryMutex.Lock()
@@ -285,7 +288,7 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		// try to fetch metadata for new node
 		node, fetchErr := s.fetchNodeMetadata(ctx, nodeConfig)
 		if fetchErr != nil {
-			s.log.Warn().
+			s.GetLogger().Warn().
 				Err(fetchErr).
 				Str("node", nodeConfig.Name).
 				Str("address", nodeConfig.Address).
@@ -309,28 +312,17 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		}
 
 		// successfully fetched - add to cache
-		var added bool
-		var metadata schema.Metadata
-
-		s.cacheMutex.Lock()
-		if _, alreadyAdded := s.nodeCache[nodeConfig.Address]; !alreadyAdded {
-			s.nodeCache[nodeConfig.Address] = node
-			added = true
-			metadata = schema.Metadata{
+		if added := s.AddNode(nodeConfig.Address, node); added {
+			// notify handlers
+			s.NotifyHandlers(schema.Metadata{
 				TypeMeta: schema.TypeMeta{
 					Kind: schema.KindNode,
 					Name: node.GetMetadata().GetName(),
 				},
 				Spec: node,
-			}
-		}
-		s.cacheMutex.Unlock()
+			}, true)
 
-		if added {
-			// notify handlers
-			s.notifyHandlers(metadata, true)
-
-			s.log.Debug().
+			s.GetLogger().Debug().
 				Str("address", nodeConfig.Address).
 				Str("name", node.GetMetadata().GetName()).
 				Msg("Node discovered and added to cache")
@@ -341,26 +333,24 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		}
 	}
 
-	// clean up nodes removed from file
-	s.cacheMutex.Lock()
-	nodesToDelete := make(map[string]*databasev1.Node)
-	for addr, node := range s.nodeCache {
+	// find nodes to delete
+	currentAddresses := s.GetAllNodeAddresses()
+	addressesToDelete := make([]string, 0)
+	for _, addr := range currentAddresses {
 		if _, inFile := fileAddresses[addr]; !inFile {
-			nodesToDelete[addr] = node
+			addressesToDelete = append(addressesToDelete, addr)
 		}
 	}
-	for addr := range nodesToDelete {
-		delete(s.nodeCache, addr)
-	}
-	cacheSize := len(s.nodeCache)
-	s.cacheMutex.Unlock()
+
+	// delete nodes and collect removed
+	nodesToDelete := s.RemoveNodes(addressesToDelete)
 
 	// also clean up retry queue for removed nodes
 	s.retryMutex.Lock()
 	for addr := range s.retryQueue {
 		if _, inFile := fileAddresses[addr]; !inFile {
 			delete(s.retryQueue, addr)
-			s.log.Debug().
+			s.GetLogger().Debug().
 				Str("address", addr).
 				Msg("Removed node from retry queue (no longer in file)")
 		}
@@ -368,9 +358,18 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 	retryQueueSize := len(s.retryQueue)
 	s.retryMutex.Unlock()
 
+	// also clean up addressToNodeConfig
+	s.configMutex.Lock()
+	for addr := range s.addressToNodeConfig {
+		if _, inFile := fileAddresses[addr]; !inFile {
+			delete(s.addressToNodeConfig, addr)
+		}
+	}
+	s.configMutex.Unlock()
+
 	// notify handlers for deletions
 	for _, node := range nodesToDelete {
-		s.notifyHandlers(schema.Metadata{
+		s.NotifyHandlers(schema.Metadata{
 			TypeMeta: schema.TypeMeta{
 				Kind: schema.KindNode,
 				Name: node.GetMetadata().GetName(),
@@ -378,7 +377,7 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 			Spec: node,
 		}, false)
 
-		s.log.Debug().
+		s.GetLogger().Debug().
 			Str("address", node.GetGrpcAddress()).
 			Str("name", node.GetMetadata().GetName()).
 			Msg("Node removed from cache (no longer in file)")
@@ -386,31 +385,9 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 
 	// update metrics
 	if s.metrics != nil {
-		s.metrics.totalNodesCount.Set(float64(cacheSize))
+		s.metrics.totalNodesCount.Set(float64(s.GetCacheSize()))
 		s.metrics.retryQueueSize.Set(float64(retryQueueSize))
 	}
-}
-
-func (s *Service) notifyHandlers(metadata schema.Metadata, isAddOrUpdate bool) {
-	s.handlersMutex.RLock()
-	defer s.handlersMutex.RUnlock()
-
-	for _, handler := range s.handlers {
-		if isAddOrUpdate {
-			handler.OnAddOrUpdate(metadata)
-		} else {
-			handler.OnDelete(metadata)
-		}
-	}
-}
-
-// RegisterHandler registers an event handler for node changes.
-func (s *Service) RegisterHandler(name string, handler schema.EventHandler) {
-	s.handlersMutex.Lock()
-	defer s.handlersMutex.Unlock()
-
-	s.handlers = append(s.handlers, handler)
-	s.log.Debug().Str("handler", name).Msg("Registered file node discovery handler")
 }
 
 // SetMetrics sets the OMR metrics.
@@ -420,12 +397,12 @@ func (s *Service) SetMetrics(factory observability.Factory) {
 
 // Close stops the file discovery service.
 func (s *Service) Close() error {
-	s.log.Debug().Msg("Closing file discovery service")
+	s.GetLogger().Debug().Msg("Closing file discovery service")
 
 	// close fsnotify watcher
 	if s.watcher != nil {
 		if err := s.watcher.Close(); err != nil {
-			s.log.Error().Err(err).Msg("Failed to close fsnotify watcher")
+			s.GetLogger().Error().Err(err).Msg("Failed to close fsnotify watcher")
 		}
 	}
 
@@ -435,46 +412,6 @@ func (s *Service) Close() error {
 	}
 
 	return nil
-}
-
-// ListNode lists all existing nodes from cache.
-func (s *Service) ListNode(_ context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	s.cacheMutex.RLock()
-	defer s.cacheMutex.RUnlock()
-
-	var result []*databasev1.Node
-	for _, node := range s.nodeCache {
-		// filter by role if specified
-		if role != databasev1.Role_ROLE_UNSPECIFIED {
-			hasRole := false
-			for _, nodeRole := range node.GetRoles() {
-				if nodeRole == role {
-					hasRole = true
-					break
-				}
-			}
-			if !hasRole {
-				continue
-			}
-		}
-		result = append(result, node)
-	}
-
-	return result, nil
-}
-
-// GetNode gets a specific node from cache.
-func (s *Service) GetNode(_ context.Context, nodeName string) (*databasev1.Node, error) {
-	s.cacheMutex.RLock()
-	defer s.cacheMutex.RUnlock()
-
-	for _, node := range s.nodeCache {
-		if node.GetMetadata() != nil && node.GetMetadata().GetName() == nodeName {
-			return node, nil
-		}
-	}
-
-	return nil, fmt.Errorf("node %s not found", nodeName)
 }
 
 // RegisterNode is not supported in file discovery mode.
@@ -494,20 +431,21 @@ func (s *Service) watchFileChanges(ctx context.Context) {
 		select {
 		case event, ok := <-s.watcher.Events:
 			if !ok {
-				s.log.Info().Msg("fsnotify watcher events channel closed")
+				s.GetLogger().Info().Msg("fsnotify watcher events channel closed")
 				return
 			}
 
-			s.log.Debug().
+			s.GetLogger().Debug().
 				Str("file", event.Name).
 				Str("op", event.Op.String()).
 				Msg("Detected node metadata file changed event")
 
 			// handle relevant events (Write, Create, Remove, Rename)
+			// generally same as tlsReloader
 			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 				// re-add file to watcher if it was removed/renamed
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					s.log.Info().Str("file", event.Name).Msg("File removed/renamed, re-adding to watcher")
+					s.GetLogger().Info().Str("file", event.Name).Msg("File removed/renamed, re-adding to watcher")
 					_ = s.watcher.Remove(s.filePath)
 
 					// wait briefly for file operations to complete
@@ -517,10 +455,10 @@ func (s *Service) watchFileChanges(ctx context.Context) {
 					maxRetries := 5
 					for attempt := 0; attempt < maxRetries; attempt++ {
 						if addErr := s.watcher.Add(s.filePath); addErr == nil {
-							s.log.Debug().Str("file", s.filePath).Msg("Re-added file to watcher")
+							s.GetLogger().Debug().Str("file", s.filePath).Msg("Re-added file to watcher")
 							break
 						} else if attempt == maxRetries-1 {
-							s.log.Error().
+							s.GetLogger().Error().
 								Err(addErr).
 								Str("file", s.filePath).
 								Msg("Failed to re-add file to watcher after retries")
@@ -534,18 +472,18 @@ func (s *Service) watchFileChanges(ctx context.Context) {
 
 				// immediate reload
 				if reloadErr := s.loadAndParseFile(ctx); reloadErr != nil {
-					s.log.Warn().Err(reloadErr).Msg("Failed to reload configuration file (fsnotify)")
+					s.GetLogger().Warn().Err(reloadErr).Msg("Failed to reload configuration file (fsnotify)")
 				} else {
-					s.log.Info().Msg("Configuration file reloaded successfully (fsnotify)")
+					s.GetLogger().Info().Msg("Configuration file reloaded successfully (fsnotify)")
 				}
 			}
 
 		case watchErr, ok := <-s.watcher.Errors:
 			if !ok {
-				s.log.Info().Msg("fsnotify watcher errors channel closed")
+				s.GetLogger().Info().Msg("fsnotify watcher errors channel closed")
 				return
 			}
-			s.log.Error().Err(watchErr).Msg("Error from fsnotify watcher")
+			s.GetLogger().Error().Err(watchErr).Msg("Error from fsnotify watcher")
 			if s.metrics != nil {
 				s.metrics.fileLoadFailedCount.Inc(1)
 			}
@@ -568,9 +506,9 @@ func (s *Service) periodicFetch(ctx context.Context) {
 		select {
 		case <-fetchTicker.C:
 			if err := s.loadAndParseFile(ctx); err != nil {
-				s.log.Warn().Err(err).Msg("Failed to reload configuration file (periodic)")
+				s.GetLogger().Warn().Err(err).Msg("Failed to reload configuration file (periodic)")
 			} else {
-				s.log.Debug().Msg("Configuration file reloaded successfully (periodic)")
+				s.GetLogger().Debug().Msg("Configuration file reloaded successfully (periodic)")
 			}
 		case <-s.closer.CloseNotify():
 			return
@@ -615,7 +553,7 @@ func (s *Service) processRetryQueue(ctx context.Context) {
 		return
 	}
 
-	s.log.Debug().Int("count", len(nodesToRetry)).Msg("Processing retry queue")
+	s.GetLogger().Debug().Int("count", len(nodesToRetry)).Msg("Processing retry queue")
 
 	// attempt retry for each node
 	for _, retryState := range nodesToRetry {
@@ -626,7 +564,7 @@ func (s *Service) processRetryQueue(ctx context.Context) {
 func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetryState) {
 	addr := retryState.config.Address
 
-	s.log.Debug().
+	s.GetLogger().Debug().
 		Str("address", addr).
 		Int("attempt", retryState.attemptCount).
 		Dur("backoff", retryState.currentBackoff).
@@ -648,7 +586,7 @@ func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetrySta
 		retryState.currentBackoff = nextBackoff
 		retryState.nextRetryTime = time.Now().Add(nextBackoff)
 
-		s.log.Warn().
+		s.GetLogger().Warn().
 			Err(fetchErr).
 			Str("address", addr).
 			Int("attempt", retryState.attemptCount).
@@ -666,10 +604,8 @@ func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetrySta
 		return
 	}
 
-	// success - move to connected state
-	s.cacheMutex.Lock()
-	s.nodeCache[addr] = node
-	s.cacheMutex.Unlock()
+	// success - add to cache
+	s.AddNode(addr, node)
 
 	// remove from retry queue
 	s.retryMutex.Lock()
@@ -678,7 +614,7 @@ func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetrySta
 	s.retryMutex.Unlock()
 
 	// notify handlers
-	s.notifyHandlers(schema.Metadata{
+	s.NotifyHandlers(schema.Metadata{
 		TypeMeta: schema.TypeMeta{
 			Kind: schema.KindNode,
 			Name: node.GetMetadata().GetName(),
@@ -686,7 +622,7 @@ func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetrySta
 		Spec: node,
 	}, true)
 
-	s.log.Info().
+	s.GetLogger().Info().
 		Str("address", addr).
 		Str("name", node.GetMetadata().GetName()).
 		Int("total_attempts", retryState.attemptCount).
