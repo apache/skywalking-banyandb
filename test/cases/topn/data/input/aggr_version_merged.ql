@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-SHOW TOP 10
+SHOW TOP 4
 FROM MEASURE endpoint_resp_time_minute_top_bottom_100 IN sw_metric
 TIME > '-15m'
 AGGREGATE BY MAX
