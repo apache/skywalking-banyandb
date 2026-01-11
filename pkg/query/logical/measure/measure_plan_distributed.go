@@ -535,8 +535,7 @@ func (s *pushedDownAggregatedIterator) Close() error {
 	return nil
 }
 
-// deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas
-// and aggregates count results by summing values per group.
+// deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas.
 func deduplicateAggregatedDataPoints(
 	dataPoints []*measurev1.DataPoint,
 	groupByTagsRefs [][]*logical.TagRef,
@@ -544,10 +543,6 @@ func deduplicateAggregatedDataPoints(
 ) ([]*measurev1.DataPoint, error) {
 	if agg == nil {
 		return dataPoints, nil
-	}
-	isCount := agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
-	if isCount {
-		return aggregateCountDataPoints(dataPoints, groupByTagsRefs, agg.GetFieldName())
 	}
 	if len(groupByTagsRefs) == 0 {
 		return dataPoints, nil
@@ -563,67 +558,6 @@ func deduplicateAggregatedDataPoints(
 			groupMap[key] = struct{}{}
 			result = append(result, dp)
 		}
-	}
-	return result, nil
-}
-
-// getCountValue extracts count value from a data point field.
-func getCountValue(dp *measurev1.DataPoint, fieldName string) (int64, bool) {
-	for _, field := range dp.GetFields() {
-		if field.GetName() == fieldName {
-			fieldValue := field.GetValue()
-			switch v := fieldValue.GetValue().(type) {
-			case *modelv1.FieldValue_Int:
-				return v.Int.GetValue(), true
-			case *modelv1.FieldValue_Float:
-				return int64(v.Float.GetValue()), true
-			default:
-				return 0, false
-			}
-		}
-	}
-	return 0, false
-}
-
-// aggregateCountDataPoints aggregates count results by summing values per group.
-func aggregateCountDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef, fieldName string) ([]*measurev1.DataPoint, error) {
-	groupMap := make(map[uint64]*measurev1.DataPoint)
-	for _, dp := range dataPoints {
-		key, err := formatGroupByKey(dp, groupByTagsRefs)
-		if err != nil {
-			return nil, err
-		}
-		if existingDp, exists := groupMap[key]; exists {
-			existingCount, existingOk := getCountValue(existingDp, fieldName)
-			currentCount, currentOk := getCountValue(dp, fieldName)
-			if !existingOk || !currentOk {
-				return nil, fmt.Errorf("inconsistent data: group key %d has data points with missing count field", key)
-			}
-			if existingCount != currentCount {
-				return nil, fmt.Errorf("inconsistent data: group key %d has different count values (%d vs %d) from multiple replicas", key, existingCount, currentCount)
-			}
-		}
-		groupMap[key] = dp
-	}
-	result := make([]*measurev1.DataPoint, 0, len(groupMap))
-	for _, dp := range groupMap {
-		if dp == nil {
-			continue
-		}
-		countVal, ok := getCountValue(dp, fieldName)
-		if !ok {
-			continue
-		}
-		aggregatedDp := &measurev1.DataPoint{
-			TagFamilies: dp.TagFamilies,
-			Fields: []*measurev1.DataPoint_Field{
-				{
-					Name:  fieldName,
-					Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: countVal}}},
-				},
-			},
-		}
-		result = append(result, aggregatedDp)
 	}
 	return result, nil
 }
