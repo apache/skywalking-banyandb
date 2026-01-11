@@ -357,6 +357,73 @@ func TestFormatPrometheusText_WithLabels(t *testing.T) {
 	assert.Contains(t, result, "env=\"test\"")
 }
 
+func TestFormatPrometheusText_Histogram(t *testing.T) {
+	server, _ := newTestServer(t)
+
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetric("request_latency_bucket", 10, map[string]string{"le": "0.1", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_bucket", 25, map[string]string{"le": "0.5", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_bucket", 30, map[string]string{"le": "+Inf", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_sum", 12.5, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_count", 30, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Contains(t, result, "# TYPE request_latency histogram")
+	assert.Contains(t, result, "request_latency_bucket{")
+	assert.Contains(t, result, "request_latency_sum{")
+	assert.Contains(t, result, "request_latency_count{")
+	assert.Contains(t, result, "le=\"0.1\"")
+	assert.Contains(t, result, "le=\"0.5\"")
+	assert.Contains(t, result, "le=\"+Inf\"")
+	assert.NotContains(t, result, "# TYPE request_latency_bucket")
+	assert.NotContains(t, result, "# TYPE request_latency_sum")
+	assert.NotContains(t, result, "# TYPE request_latency_count")
+}
+
+func TestFormatPrometheusText_HistogramAndGauge(t *testing.T) {
+	server, _ := newTestServer(t)
+
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetric("request_latency_bucket", 10, map[string]string{"le": "0.1", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_sum", 12.5, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("request_latency_count", 30, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "ip": "192.168.1.1", "port": "8080"}, now),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Contains(t, result, "# TYPE request_latency histogram")
+	assert.Contains(t, result, "# TYPE cpu_usage gauge")
+	assert.Contains(t, result, "request_latency_bucket{")
+	assert.Contains(t, result, "cpu_usage{")
+}
+
+func TestGetHistogramBaseName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"bucket suffix", "request_latency_bucket", "request_latency"},
+		{"sum suffix", "request_latency_sum", "request_latency"},
+		{"count suffix", "request_latency_count", "request_latency"},
+		{"no histogram suffix", "cpu_usage", ""},
+		{"empty string", "", ""},
+		{"only suffix", "_bucket", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getHistogramBaseName(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
 	server, _ := newTestServer(t)
 

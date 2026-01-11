@@ -37,7 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
-	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -298,13 +297,13 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 		return nil, fmt.Errorf("failed to create zap logger: %w", zapErr)
 	}
 
-	ktmSvc, err := ktm.NewKTM(ktmCfg, zapLog)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create KTM: %w", err)
+	ktmSvc, createErr := ktm.NewKTM(ktmCfg, zapLog)
+	if createErr != nil {
+		return nil, fmt.Errorf("failed to create KTM: %w", createErr)
 	}
 
-	if err := ktmSvc.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start KTM: %w", err)
+	if startErr := ktmSvc.Start(ctx); startErr != nil {
+		return nil, fmt.Errorf("failed to start KTM: %w", startErr)
 	}
 
 	stopBridgeCh := make(chan struct{})
@@ -327,8 +326,8 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				if len(rawMetrics) == 0 {
 					continue
 				}
-				if err := fr.Update(rawMetrics); err != nil {
-					log.Warn().Err(err).Msg("Failed to update FlightRecorder with KTM metrics")
+				if updateErr := fr.Update(rawMetrics); updateErr != nil {
+					log.Warn().Err(updateErr).Msg("Failed to update FlightRecorder with KTM metrics")
 				}
 			}
 		}
