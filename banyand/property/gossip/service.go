@@ -254,6 +254,28 @@ func (s *service) Serve(stopCh chan struct{}) {
 	}()
 }
 
+// GetRouteTable implements RouteTableProvider interface.
+// For gossip messenger, all registered nodes are considered active since gossip
+// protocol doesn't track separate health states.
+func (s *service) GetRouteTable() *databasev1.RouteTable {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	registered := make([]*databasev1.Node, 0, len(s.registered))
+
+	for _, node := range s.registered {
+		if node != nil {
+			registered = append(registered, node)
+		}
+	}
+
+	return &databasev1.RouteTable{
+		Registered: registered,
+		Active:     []string{},
+		Evictable:  []string{},
+	}
+}
+
 func (s *service) GracefulStop() {
 	if s.ser == nil {
 		return

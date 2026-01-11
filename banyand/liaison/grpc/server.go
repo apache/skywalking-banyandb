@@ -43,6 +43,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -88,6 +89,7 @@ type NodeRegistries struct {
 
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
+	databasev1.UnimplementedClusterStateServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
 	protector  protector.Memory
@@ -111,6 +113,7 @@ type server struct {
 	groupRepo    *groupRepo
 	*indexRuleBindingRegistryServer
 	metrics                  *metrics
+	routeTableProviders      map[string]route.TableProvider
 	keyFile                  string
 	authConfigFile           string
 	addr                     string
@@ -132,7 +135,7 @@ type server struct {
 // NewServer returns a new gRPC server.
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
-	protectorService protector.Memory,
+	protectorService protector.Memory, routeProviders map[string]route.TableProvider,
 ) Server {
 	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
@@ -198,9 +201,10 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		traceRegistryServer: &traceRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
-		schemaRepo:   schemaRegistry,
-		authReloader: auth.InitAuthReloader(),
-		protector:    protectorService,
+		schemaRepo:          schemaRegistry,
+		authReloader:        auth.InitAuthReloader(),
+		protector:           protectorService,
+		routeTableProviders: routeProviders,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -422,6 +426,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
 	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
+	databasev1.RegisterClusterStateServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})
@@ -536,6 +541,28 @@ func (s *server) calculateGrpcBufferSizes() (int32, int32) {
 	}
 
 	return connWindowSize, streamWindowSize
+}
+
+// GetClusterState returns the current state of all nodes in the cluster organized by route tables.
+func (s *server) GetClusterState(_ context.Context, _ *databasev1.GetClusterStateRequest) (*databasev1.GetClusterStateResponse, error) {
+	if s.routeTableProviders == nil {
+		return &databasev1.GetClusterStateResponse{RouteTables: map[string]*databasev1.RouteTable{}}, nil
+	}
+
+	routeTables := make(map[string]*databasev1.RouteTable, len(s.routeTableProviders))
+	for routeKey, provider := range s.routeTableProviders {
+		if provider == nil {
+			s.log.Warn().Str("routeKey", routeKey).Msg("route table provider is nil")
+			continue
+		}
+
+		routeTable := provider.GetRouteTable()
+		if routeTable != nil {
+			routeTables[routeKey] = routeTable
+		}
+	}
+
+	return &databasev1.GetClusterStateResponse{RouteTables: routeTables}, nil
 }
 
 func (s *server) GracefulStop() {
