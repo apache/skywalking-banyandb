@@ -185,7 +185,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Stop metrics server
 		if metricsServer != nil {
-			stopErr := metricsServer.Stop()
+			stopErr := metricsServer.Stop(context.Background())
 			Expect(stopErr).NotTo(HaveOccurred())
 		}
 	})

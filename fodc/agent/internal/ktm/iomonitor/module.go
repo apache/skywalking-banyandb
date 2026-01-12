@@ -153,7 +153,6 @@ func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	}
 }
 
-
 func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
 	var pid uint32
 	var perCPUStats []generated.IomonitorFadviseStatsT

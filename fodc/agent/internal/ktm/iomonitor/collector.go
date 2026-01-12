@@ -177,7 +177,7 @@ func (c *Collector) GetMetrics() *metrics.Store {
 func (c *Collector) IsDegraded() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	for _, mod := range c.modules {
 		if ioMod, ok := mod.(interface{ Degraded() bool }); ok {
 			if ioMod.Degraded() {

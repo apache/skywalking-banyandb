@@ -110,14 +110,14 @@ func (s *Server) Start(registry *prometheus.Registry, datasourceCollector *expor
 
 // Stop gracefully stops the Prometheus metrics server.
 // It waits for ongoing requests to complete within the configured shutdown timeout.
-func (s *Server) Stop() error {
+func (s *Server) Stop(ctx context.Context) error {
 	if !s.started {
 		return fmt.Errorf("server is not started")
 	}
 
 	s.logger.Info().Msg("Stopping Prometheus metrics server")
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, s.config.ShutdownTimeout)
 	defer shutdownCancel()
 
 	if shutdownErr := s.server.Shutdown(shutdownCtx); shutdownErr != nil {
