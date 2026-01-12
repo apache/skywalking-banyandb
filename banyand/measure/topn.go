@@ -47,7 +47,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -66,13 +65,21 @@ var (
 	_ flow.Sink = (*topNStreamingProcessor)(nil)
 )
 
-func (sr *schemaRepo) inFlow(stm *databasev1.Measure, seriesID uint64, shardID uint32, entityValues []*modelv1.TagValue, dp *measurev1.DataPointValue) {
+func (sr *schemaRepo) inFlow(
+	stm *databasev1.Measure,
+	seriesID uint64,
+	shardID uint32,
+	entityValues []*modelv1.TagValue,
+	dp *measurev1.DataPointValue,
+	spec *measurev1.DataPointSpec,
+) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
 		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
-				Metadata:  stm.GetMetadata(),
-				DataPoint: dp,
-				MessageId: uint64(time.Now().UnixNano()),
+				Metadata:      stm.GetMetadata(),
+				DataPoint:     dp,
+				MessageId:     uint64(time.Now().UnixNano()),
+				DataPointSpec: spec,
 			},
 			EntityValues: entityValues,
 		}, stm)
@@ -136,10 +143,127 @@ func (sr *schemaRepo) stopSteamingManager(sourceMeasure *commonv1.Metadata) {
 }
 
 type dataPointWithEntityValues struct {
+	tagSpec logical.TagSpecRegistry
 	*measurev1.DataPointValue
+	fieldIndex   map[string]int
 	entityValues []*modelv1.TagValue
 	seriesID     uint64
 	shardID      uint32
+}
+
+func newDataPointWithEntityValues(
+	dp *measurev1.DataPointValue,
+	entityValues []*modelv1.TagValue,
+	seriesID uint64,
+	shardID uint32,
+	spec *measurev1.DataPointSpec,
+	m *databasev1.Measure,
+) *dataPointWithEntityValues {
+	fieldIndex := buildFieldIndex(spec, m)
+	tagSpec := buildTagSpecRegistryFromSpec(spec, m)
+	return &dataPointWithEntityValues{
+		DataPointValue: dp,
+		entityValues:   entityValues,
+		seriesID:       seriesID,
+		shardID:        shardID,
+		tagSpec:        tagSpec,
+		fieldIndex:     fieldIndex,
+	}
+}
+
+func buildFieldIndex(spec *measurev1.DataPointSpec, m *databasev1.Measure) map[string]int {
+	if spec != nil {
+		fieldIndex := make(map[string]int, len(spec.GetFieldNames()))
+		for i, fieldName := range spec.GetFieldNames() {
+			fieldIndex[fieldName] = i
+		}
+		return fieldIndex
+	}
+	if m != nil {
+		fieldIndex := make(map[string]int, len(m.GetFields()))
+		for i, fieldSpec := range m.GetFields() {
+			fieldIndex[fieldSpec.GetName()] = i
+		}
+		return fieldIndex
+	}
+	return make(map[string]int)
+}
+
+func buildTagSpecRegistryFromSpec(spec *measurev1.DataPointSpec, m *databasev1.Measure) logical.TagSpecRegistry {
+	tagSpecMap := logical.TagSpecMap{}
+	if spec != nil {
+		for specFamilyIdx, specFamily := range spec.GetTagFamilySpec() {
+			for specTagIdx, tagName := range specFamily.GetTagNames() {
+				tagSpec := &databasev1.TagSpec{
+					Name: tagName,
+				}
+				tagSpecMap.RegisterTag(specFamilyIdx, specTagIdx, tagSpec)
+			}
+		}
+		return tagSpecMap
+	}
+	if m != nil {
+		for specFamilyIdx, tagFamily := range m.GetTagFamilies() {
+			for specTagIdx, tagSpec := range tagFamily.GetTags() {
+				tagSpecMap.RegisterTag(specFamilyIdx, specTagIdx, tagSpec)
+			}
+		}
+		return tagSpecMap
+	}
+	return tagSpecMap
+}
+
+func (dp *dataPointWithEntityValues) tagValue(tagName string) *modelv1.TagValue {
+	if familyIdx, tagIdx, ok := dp.locateSpecTag(tagName); ok {
+		if familyIdx < len(dp.GetTagFamilies()) {
+			tagFamily := dp.GetTagFamilies()[familyIdx]
+			if tagIdx < len(tagFamily.GetTags()) {
+				return tagFamily.GetTags()[tagIdx]
+			}
+		}
+		return pbv1.NullTagValue
+	}
+	return pbv1.NullTagValue
+}
+
+func (dp *dataPointWithEntityValues) locateSpecTag(tagName string) (int, int, bool) {
+	if dp.tagSpec == nil {
+		return 0, 0, false
+	}
+	tagSpecFound := dp.tagSpec.FindTagSpecByName(tagName)
+	if tagSpecFound == nil {
+		return 0, 0, false
+	}
+	familyIdx := tagSpecFound.TagFamilyIdx
+	tagIdx := tagSpecFound.TagIdx
+	if familyIdx < 0 || tagIdx < 0 {
+		return 0, 0, false
+	}
+	return familyIdx, tagIdx, true
+}
+
+func (dp *dataPointWithEntityValues) intFieldValue(fieldName string, l *logger.Logger) int64 {
+	if dp.fieldIndex == nil {
+		return 0
+	}
+	fieldIdx, ok := dp.fieldIndex[fieldName]
+	if !ok {
+		return 0
+	}
+	if fieldIdx >= len(dp.GetFields()) {
+		if l != nil {
+			l.Warn().Str("fieldName", fieldName).
+				Int("len", len(dp.GetFields())).
+				Int("fieldIdx", fieldIdx).
+				Msg("field index out of range")
+		}
+		return 0
+	}
+	field := dp.GetFields()[fieldIdx]
+	if field.GetInt() == nil {
+		return 0
+	}
+	return field.GetInt().GetValue()
 }
 
 type topNStreamingProcessor struct {
@@ -344,7 +468,6 @@ func (t *topNStreamingProcessor) handleError() {
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
 	pipeline        queue.Client
-	s               logical.TagSpecRegistry
 	l               *logger.Logger
 	m               *databasev1.Measure
 	nodeID          string
@@ -364,9 +487,6 @@ func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 		return
 	}
 	manager.m = m
-	tagMapSpec := logical.TagSpecMap{}
-	tagMapSpec.RegisterTagFamilies(m.GetTagFamilies())
-	manager.s = tagMapSpec
 	for i := range manager.registeredTasks {
 		if err := manager.start(manager.registeredTasks[i]); err != nil {
 			manager.l.Err(err).Msg("fail to start processor")
@@ -387,7 +507,6 @@ func (manager *topNProcessorManager) Close() error {
 	}
 	manager.processorList = nil
 	manager.registeredTasks = nil
-	manager.s = nil
 	manager.m = nil
 	return err
 }
@@ -404,13 +523,18 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 			manager.init(measure)
 			manager.RLock()
 		}
+		dp := request.GetRequest().GetDataPoint()
+		spec := request.GetRequest().GetDataPointSpec()
 		for _, processor := range manager.processorList {
-			processor.src <- flow.NewStreamRecordWithTimestampPb(&dataPointWithEntityValues{
-				request.GetRequest().GetDataPoint(),
+			dpWithEntity := newDataPointWithEntityValues(
+				dp,
 				request.GetEntityValues(),
 				seriesID,
 				shardID,
-			}, request.GetRequest().GetDataPoint().GetTimestamp())
+				spec,
+				manager.m,
+			)
+			processor.src <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
 		}
 	}()
 }
@@ -531,7 +655,8 @@ func (manager *topNProcessorManager) buildFilter(criteria *modelv1.Criteria) (fl
 
 	return func(_ context.Context, request any) bool {
 		tffws := request.(*dataPointWithEntityValues).GetTagFamilies()
-		ok, matchErr := f.Match(logical.TagFamiliesForWrite(tffws), manager.s)
+		tagSpec := request.(*dataPointWithEntityValues).tagSpec
+		ok, matchErr := f.Match(logical.TagFamiliesForWrite(tffws), tagSpec)
 		if matchErr != nil {
 			manager.l.Err(matchErr).Msg("fail to match criteria")
 			return false
@@ -552,30 +677,24 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
 			dpWithEvs := request.(*dataPointWithEntityValues)
-			if len(dpWithEvs.GetFields()) <= fieldIdx {
-				manager.l.Warn().Interface("point", dpWithEvs.DataPointValue).
-					Str("fieldName", fieldName).
-					Int("len", len(dpWithEvs.GetFields())).
-					Int("fieldIdx", fieldIdx).
-					Msg("out of range")
-			}
 			return flow.Data{
-				// EntityValues as identity
 				dpWithEvs.entityValues,
-				// save string representation of group values as the key, i.e. v1
 				"",
-				// field value as v2
-				dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
-				// shardID values as v3
+				dpWithEvs.intFieldValue(fieldName, manager.l),
 				dpWithEvs.shardID,
-				// seriesID values as v4
 				dpWithEvs.seriesID,
 			}
 		}, nil
 	}
-	groupLocator, removedTags := newGroupLocator(manager.m, groupByNames)
+	var removedTags []string
+	for i := range groupByNames {
+		_, _, tagSpec := pbv1.FindTagByName(manager.m.GetTagFamilies(), groupByNames[i])
+		if tagSpec == nil {
+			removedTags = append(removedTags, groupByNames[i])
+		}
+	}
 	if len(removedTags) > 0 {
-		if len(groupLocator) == 0 {
+		if len(removedTags) == len(groupByNames) {
 			manager.l.Warn().Strs("removedTags", removedTags).Str("measure", manager.m.Metadata.GetName()).
 				Msg("TopNAggregation references removed tags which no longer exist in schema, all groupBy tags were removed")
 			return nil, fmt.Errorf("all groupBy tags [%s] no longer exist in %s schema, TopNAggregation is invalid",
@@ -586,53 +705,19 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 	}
 	return func(_ context.Context, request any) any {
 		dpWithEvs := request.(*dataPointWithEntityValues)
+		groupValues := make([]string, 0, len(groupByNames))
+		for i := range groupByNames {
+			tagValue := dpWithEvs.tagValue(groupByNames[i])
+			groupValues = append(groupValues, Stringify(tagValue))
+		}
 		return flow.Data{
-			// EntityValues as identity
 			dpWithEvs.entityValues,
-			// save string representation of group values as the key, i.e. v1
-			GroupName(transform(groupLocator, func(locator partition.TagLocator) string {
-				return Stringify(extractTagValue(dpWithEvs.DataPointValue, locator))
-			})),
-			// field value as v2
-			dpWithEvs.GetFields()[fieldIdx].GetInt().GetValue(),
-			// shardID values as v3
+			GroupName(groupValues),
+			dpWithEvs.intFieldValue(fieldName, manager.l),
 			dpWithEvs.shardID,
-			// seriesID values as v4
 			dpWithEvs.seriesID,
 		}
 	}, nil
-}
-
-// groupTagsLocator can be used to locate tags within families.
-type groupTagsLocator []partition.TagLocator
-
-// newGroupLocator generates a groupTagsLocator which strictly preserve the order of groupByNames.
-func newGroupLocator(m *databasev1.Measure, groupByNames []string) (groupTagsLocator, []string) {
-	groupTags := make([]partition.TagLocator, 0, len(groupByNames))
-	var removedTags []string
-	for _, groupByName := range groupByNames {
-		fIdx, tIdx, spec := pbv1.FindTagByName(m.GetTagFamilies(), groupByName)
-		if spec == nil {
-			removedTags = append(removedTags, groupByName)
-			continue
-		}
-		groupTags = append(groupTags, partition.TagLocator{
-			FamilyOffset: fIdx,
-			TagOffset:    tIdx,
-		})
-	}
-	return groupTags, removedTags
-}
-
-func extractTagValue(dpv *measurev1.DataPointValue, locator partition.TagLocator) *modelv1.TagValue {
-	if locator.FamilyOffset >= len(dpv.GetTagFamilies()) {
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-	}
-	tagFamily := dpv.GetTagFamilies()[locator.FamilyOffset]
-	if locator.TagOffset >= len(tagFamily.GetTags()) {
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-	}
-	return tagFamily.GetTags()[locator.TagOffset]
 }
 
 // Stringify converts a TagValue to a string.
@@ -737,7 +822,7 @@ func (t *TopNValue) resizeEntityValues(size int) [][]byte {
 	return t.entityValues
 }
 
-func (t *TopNValue) resizeEntities(size int, entitySize int) [][]*modelv1.TagValue {
+func (t *TopNValue) resizeEntities(size, entitySize int) [][]*modelv1.TagValue {
 	entities := t.entities
 	if n := size - cap(t.entities); n > 0 {
 		entities = append(entities[:cap(entities)], make([][]*modelv1.TagValue, n)...)

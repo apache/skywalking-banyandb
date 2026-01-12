@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -46,6 +47,7 @@ type Client interface {
 	run.Unit
 	bus.Publisher
 	bus.Broadcaster
+	route.TableProvider
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
 	Register(bus.Topic, schema.EventHandler)
@@ -60,6 +62,7 @@ type Server interface {
 	bus.Subscriber
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
+	SetRouteProviders(providers map[string]route.TableProvider)
 }
 
 // BatchPublisher is the interface for publishing data in batch.

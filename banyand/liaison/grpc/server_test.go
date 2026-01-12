@@ -105,14 +105,14 @@ func TestNewServerWithProtector(t *testing.T) {
 	protectorService := &mockProtector{state: protector.StateLow}
 
 	// Create server with protector - should not panic
-	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, protectorService)
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, protectorService, nil)
 	assert.NotNil(t, server)
 }
 
 // TestNewServerWithoutProtector verifies nil protector handling.
 func TestNewServerWithoutProtector(t *testing.T) {
 	// Server creation should not fail with nil protector (fail open)
-	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, nil)
+	server := NewServer(context.Background(), nil, nil, nil, nil, NodeRegistries{}, nil, nil, nil)
 	assert.NotNil(t, server)
 }
 
@@ -397,7 +397,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
 		TraceLiaisonNodeRegistry:   nr,
-	}, metricSvc, protectorService)
+	}, metricSvc, protectorService, nil)
 
 	// Configure server - use a fixed port for testing
 	grpcServer.(*server).host = "localhost"
