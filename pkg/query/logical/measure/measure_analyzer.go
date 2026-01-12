@@ -181,18 +181,12 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 
 	if criteria.GetAgg() != nil {
-		// If needCompletePushDownAgg is true and has GROUP BY, skip aggregation plan
-		// because deduplicateAggregatedDataPoints already handles deduplication.
-		// If needCompletePushDownAgg is true but no GROUP BY, still need aggregation plan
-		// to aggregate results from multiple replicas using aggAllIterator.
-		if !needCompletePushDownAgg || criteria.GetGroupBy() == nil {
-			plan = newUnresolvedAggregation(plan,
-				logical.NewField(criteria.GetAgg().GetFieldName()),
-				criteria.GetAgg().GetFunction(),
-				criteria.GetGroupBy() != nil,
-			)
-			pushedLimit = math.MaxInt
-		}
+		plan = newUnresolvedAggregation(plan,
+			logical.NewField(criteria.GetAgg().GetFieldName()),
+			criteria.GetAgg().GetFunction(),
+			criteria.GetGroupBy() != nil,
+		)
+		pushedLimit = math.MaxInt
 	}
 
 	if criteria.GetTop() != nil {
