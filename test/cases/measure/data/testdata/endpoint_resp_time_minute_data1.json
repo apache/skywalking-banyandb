@@ -14,7 +14,7 @@
     "fields": [
       {
         "int": {
-          "value": 100
+          "value": 1000
         }
       }
     ]
@@ -55,6 +55,46 @@
       {
         "int": {
           "value": 300
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "entity_4"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 100
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "entity_5"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 500
         }
       }
     ]
