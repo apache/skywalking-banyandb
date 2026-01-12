@@ -63,12 +63,12 @@ func (s *Service) GetReloaderCount() int {
 
 // GetNodeCache returns the current node cache for testing.
 func (s *Service) GetNodeCache() map[string]*databasev1.Node {
-	s.cacheMutex.RLock()
-	defer s.cacheMutex.RUnlock()
-
-	result := make(map[string]*databasev1.Node, len(s.nodeCache))
-	for k, v := range s.nodeCache {
-		result[k] = v
+	result := make(map[string]*databasev1.Node)
+	addresses := s.GetAllNodeAddresses()
+	for _, addr := range addresses {
+		if node, exists := s.GetCachedNode(addr); exists {
+			result[addr] = node
+		}
 	}
 	return result
 }
