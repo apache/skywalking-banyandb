@@ -21,23 +21,23 @@ lists:
           - key: entity_id
             value:
               str:
+                value: entity_5
+        value:
+          int:
+            value: "500"
+      - entity:
+          - key: entity_id
+            value:
+              str:
+                value: entity_4
+        value:
+          int:
+            value: "400"
+      - entity:
+          - key: entity_id
+            value:
+              str:
                 value: entity_3
         value:
           int:
             value: "300"
-      - entity:
-          - key: entity_id
-            value:
-              str:
-                value: entity_2
-        value:
-          int:
-            value: "200"
-      - entity:
-          - key: entity_id
-            value:
-              str:
-                value: entity_1
-        value:
-          int:
-            value: "100"
