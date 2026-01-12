@@ -106,7 +106,44 @@ ebpf-bindings:
 			-type cache_stats_t \
 			-type read_latency_stats_t \
 			Iomonitor ../programs/iomonitor.c -- -I.)
+	@$(MAKE) add-license
 	@echo "✓ eBPF bindings generated successfully"
+
+.PHONY: add-license
+add-license:
+	@echo "Ensuring ASF license headers in generated Go files..."
+	@shopt -s nullglob
+	@files=(iomonitor/ebpf/generated/*.go)
+	@if [ "$${#files[@]}" -eq 0 ]; then \
+		echo "No generated Go files found; skipping license header injection."; \
+		exit 0; \
+	fi
+	@for file in "$${files[@]}"; do \
+		if ! grep -q "Licensed to Apache Software Foundation" "$$file"; then \
+			tmp_file="$${file}.tmp"; \
+			printf '%s\n' \
+				'// Licensed to Apache Software Foundation (ASF) under one or more contributor' \
+				'// license agreements. See the NOTICE file distributed with' \
+				'// this work for additional information regarding copyright' \
+				'// ownership. Apache Software Foundation (ASF) licenses this file to you under' \
+				'// the Apache License, Version 2.0 (the "License"); you may' \
+				'// not use this file except in compliance with the License.' \
+				'// You may obtain a copy of the License at' \
+				'//' \
+				'//     http://www.apache.org/licenses/LICENSE-2.0' \
+				'//' \
+				'// Unless required by applicable law or agreed to in writing,' \
+				'// software distributed under the License is distributed on an' \
+				'// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY' \
+				'// KIND, either express or implied.  See the License for the' \
+				'// specific language governing permissions and limitations' \
+				'// under the License.' \
+				> "$$tmp_file"; \
+			cat "$$file" >> "$$tmp_file"; \
+			mv "$$tmp_file" "$$file"; \
+		fi; \
+	done
+	@echo "✓ License headers ensured"
 
 .PHONY: iomonitor-ebpf
 iomonitor-ebpf: vmlinux ebpf-bindings
