@@ -19,4 +19,3 @@ name: "service_instance_cpm_minute_top_bottom_100"
 groups: ["sw_metric"]
 topN: 3
 fieldValueSort: 1
-agg: 2
