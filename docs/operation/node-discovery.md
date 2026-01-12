@@ -161,8 +161,12 @@ DNS-based discovery provides a cloud-native alternative leveraging Kubernetes' b
 
 # TLS configuration
 --node-discovery-dns-tls=true                # Enable TLS for DNS discovery (default: false)
---node-discovery-dns-ca-certs=/path/to/ca.crt # CA certificates (comma-separated)
+--node-discovery-dns-ca-certs=/path/to/ca.crt,/path/to/another.crt # Ordered CA bundle matching SRV addresses
 ```
+
+`node-discovery-dns-fetch-init-interval` and `node-discovery-dns-fetch-init-duration` define the aggressive polling strategy during bootstrap before falling back to the steady-state
+`node-discovery-dns-fetch-interval`. All metadata fetches share the same `node-discovery-grpc-timeout`, which is also reused by the file discovery mode. When TLS is enabled, the CA cert
+list must match the SRV address order, ensuring each role (e.g., data, liaison) can be verified with its own trust bundle.
 
 ### Configuration Examples
 
@@ -179,7 +183,7 @@ banyand data \
 **Multi-Zone Discovery:**
 
 ```shell
-banyand query \
+banyand data \
   --node-discovery-mode=dns \
   --node-discovery-dns-srv-addresses=_grpc._tcp.data.zone1.svc.local,_grpc._tcp.data.zone2.svc.local \
   --node-discovery-dns-fetch-interval=10s
@@ -292,7 +296,7 @@ The service periodically reloads the configuration file and automatically update
 2. Attempt to connect to each node via gRPC to fetch full metadata
 3. Successfully connected nodes are added to the cache
 4. Nodes that fail to connect are skipped and will be attempted again on the next periodic file reload
-5. Reload the file at a configured interval (FetchInterval), reprocessing all nodes (including previously failed ones, excluding all successful ones)
+5. Reload the file at the `node-discovery-file-fetch-interval` cadence as a backup to fsnotify-based reloads, reprocessing every entry (including nodes that previously failed)
 6. Notify registered handlers when nodes are added or removed
 
 ### Configuration Flags
@@ -308,8 +312,15 @@ The service periodically reloads the configuration file and automatically update
 --node-discovery-grpc-timeout=5s             # Timeout for metadata fetch (default: 5s)
 
 # Interval settings
---node-discovery-file-retry-interval=20s     # Interval to poll the discovery file and retry failed nodes (default: 20s)
+--node-discovery-file-fetch-interval=5m               # Polling interval to reprocess the discovery file (default: 5m)
+--node-discovery-file-retry-initial-interval=1s       # Initial retry delay for failed node metadata fetches (default: 1s)
+--node-discovery-file-retry-max-interval=2m           # Upper bound for retry delay backoff (default: 2m)
+--node-discovery-file-retry-multiplier=2.0            # Multiplicative factor applied between retries (default: 2.0)
 ```
+
+`node-discovery-file-fetch-interval` controls the periodic full reload that acts as a safety net even if filesystem events are missed.  
+`node-discovery-file-retry-*` flags configure the exponential backoff used when a node cannot be reached over gRPC. Failed nodes are retried starting from the initial interval,
+multiplied by the configured factor until the max interval is reached.
 
 ### YAML Configuration Format
 
@@ -342,13 +353,16 @@ banyand data \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml
 ```
 
-**With Custom Retry Interval:**
+**With Custom Polling and Retry Settings:**
 
 ```shell
-banyand liaison \
+banyand data \
   --node-discovery-mode=file \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml \
-  --node-discovery-file-retry-interval=30s
+  --node-discovery-file-fetch-interval=20m \
+  --node-discovery-file-retry-initial-interval=5s \
+  --node-discovery-file-retry-max-interval=1m \
+  --node-discovery-file-retry-multiplier=1.5
 ```
 
 ### Node Lifecycle
