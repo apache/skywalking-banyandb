@@ -80,7 +80,7 @@ Claude.md
 CLAUDE.md
 
 # eBPF generated files and binaries
-fodc/agent/internal/ktm/iomonitor/ebpf/generated/
+fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 
 # Codex
 AGENTS.md
