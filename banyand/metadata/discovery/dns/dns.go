@@ -32,7 +32,6 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -41,11 +40,12 @@ import (
 
 // Service implements DNS-based node discovery.
 type Service struct {
-	*common.NodeCacheBase
+	*common.DiscoveryServiceBase
 	lastQueryTime     time.Time
 	resolver          Resolver
 	pathToReloader    map[string]*pkgtls.Reloader
 	srvAddrToPath     map[string]string
+	addressToSrvAddr  map[string]string
 	closer            *run.Closer
 	metrics           *metrics
 	lastSuccessfulDNS map[string][]string
@@ -56,18 +56,22 @@ type Service struct {
 	initDuration      time.Duration
 	grpcTimeout       time.Duration
 	lastQueryMutex    sync.RWMutex
+	addressMutex      sync.RWMutex
 	tlsEnabled        bool
 }
 
 // Config holds configuration for DNS discovery service.
 type Config struct {
-	CACertPaths  []string
-	SRVAddresses []string
-	InitInterval time.Duration
-	InitDuration time.Duration
-	PollInterval time.Duration
-	GRPCTimeout  time.Duration
-	TLSEnabled   bool
+	CACertPaths          []string
+	SRVAddresses         []string
+	InitInterval         time.Duration
+	InitDuration         time.Duration
+	PollInterval         time.Duration
+	GRPCTimeout          time.Duration
+	TLSEnabled           bool
+	RetryInitialInterval time.Duration
+	RetryMaxInterval     time.Duration
+	RetryMultiplier      float64
 }
 
 // Resolver defines the interface for DNS SRV lookups.
@@ -98,7 +102,6 @@ func NewService(cfg Config) (*Service, error) {
 	}
 
 	svc := &Service{
-		NodeCacheBase:     common.NewNodeCacheBase("metadata-discovery-dns"),
 		srvAddresses:      cfg.SRVAddresses,
 		initInterval:      cfg.InitInterval,
 		initDuration:      cfg.InitDuration,
@@ -109,9 +112,21 @@ func NewService(cfg Config) (*Service, error) {
 		lastSuccessfulDNS: make(map[string][]string),
 		pathToReloader:    make(map[string]*pkgtls.Reloader),
 		srvAddrToPath:     make(map[string]string),
-		closer:            run.NewCloser(1),
+		addressToSrvAddr:  make(map[string]string),
+		closer:            run.NewCloser(2),
 		resolver:          &defaultResolver{},
 	}
+
+	// initialize discovery service base (cache + retry manager)
+	svc.DiscoveryServiceBase = common.NewServiceBase(
+		"metadata-discovery-dns",
+		svc,
+		common.RetryConfig{
+			InitialInterval: cfg.RetryInitialInterval,
+			MaxInterval:     cfg.RetryMaxInterval,
+			Multiplier:      cfg.RetryMultiplier,
+		},
+	)
 
 	// create shared reloaders for CA certificates
 	if svc.tlsEnabled {
@@ -163,10 +178,19 @@ func (s *Service) GetDialOptions(address string) ([]grpc.DialOption, error) {
 	}
 
 	// find which SRV address this node address belongs to
-	var srvAddr string
-	for srv := range s.srvAddrToPath {
-		srvAddr = srv
-		break
+	s.addressMutex.RLock()
+	srvAddr, found := s.addressToSrvAddr[address]
+	s.addressMutex.RUnlock()
+
+	if !found {
+		// fallback: use any available SRV for backward compatibility
+		for srv := range s.srvAddrToPath {
+			srvAddr = srv
+			break
+		}
+		if srvAddr == "" {
+			return nil, fmt.Errorf("no SRV address mapping found for %s", address)
+		}
 	}
 
 	// look up which Reloader to use for this address
@@ -174,11 +198,7 @@ func (s *Service) GetDialOptions(address string) ([]grpc.DialOption, error) {
 		// look up the cert path for this SRV address
 		certPath, pathExists := s.srvAddrToPath[srvAddr]
 		if !pathExists {
-			// fallback: use any available cert path
-			for _, path := range s.srvAddrToPath {
-				certPath = path
-				break
-			}
+			return nil, fmt.Errorf("no cert path found for SRV %s (address %s)", srvAddr, address)
 		}
 
 		// get the Reloader for this cert path
@@ -264,8 +284,27 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 
 	go s.discoveryLoop(ctx)
+	go s.retryScheduler(ctx)
 
 	return nil
+}
+
+func (s *Service) retryScheduler(ctx context.Context) {
+	// check retry queue every second
+	checkTicker := time.NewTicker(1 * time.Second)
+	defer checkTicker.Stop()
+
+	for {
+		select {
+		case <-checkTicker.C:
+			s.RetryManager.ProcessRetryQueue(ctx)
+
+		case <-s.closer.CloseNotify():
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *Service) discoveryLoop(ctx context.Context) {
@@ -423,11 +462,24 @@ func (s *Service) queryAllSRVRecords(ctx context.Context) (map[string][]string, 
 
 func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string][]string) error {
 	var addErrors []error
+	s.addressMutex.Lock()
+	for srvAddr, addrs := range srvToAddresses {
+		for _, addr := range addrs {
+			s.addressToSrvAddr[addr] = srvAddr
+		}
+	}
+	s.addressMutex.Unlock()
+
+	// process new nodes
 	for _, addrs := range srvToAddresses {
 		for _, addr := range addrs {
 			_, exists := s.GetCachedNode(addr)
 
 			if !exists {
+				if s.RetryManager.IsInRetry(addr) {
+					continue
+				}
+
 				// fetch node metadata from gRPC
 				node, fetchErr := s.fetchNodeMetadata(ctx, addr)
 				if fetchErr != nil {
@@ -436,24 +488,11 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 						Str("address", addr).
 						Msg("Failed to fetch node metadata")
 					addErrors = append(addErrors, fetchErr)
+					s.RetryManager.AddToRetry(addr, fetchErr)
 					continue
 				}
 
-				if added := s.AddNode(addr, node); added {
-					// notify handlers
-					s.NotifyHandlers(schema.Metadata{
-						TypeMeta: schema.TypeMeta{
-							Kind: schema.KindNode,
-							Name: node.GetMetadata().GetName(),
-						},
-						Spec: node,
-					}, true)
-
-					s.GetLogger().Debug().
-						Str("address", addr).
-						Str("name", node.GetMetadata().GetName()).
-						Msg("New node discovered and added to cache")
-				}
+				s.AddNodeAndNotify(addr, node, "New node discovered and added to cache")
 			}
 		}
 	}
@@ -475,27 +514,18 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 		}
 	}
 
-	// delete nodes and collect removed
-	nodesToDelete := s.RemoveNodes(addressesToDelete)
+	// delete nodes and notify handlers
+	s.RemoveNodesAndNotify(addressesToDelete, "Node removed from cache (no longer in DNS)")
 
-	// log deletions
-	for addr, node := range nodesToDelete {
-		s.GetLogger().Debug().
-			Str("address", addr).
-			Str("name", node.GetMetadata().GetName()).
-			Msg("Node removed from cache (no longer in DNS)")
+	// clean up address to SRV mapping for deleted nodes
+	s.addressMutex.Lock()
+	for _, addr := range addressesToDelete {
+		delete(s.addressToSrvAddr, addr)
 	}
+	s.addressMutex.Unlock()
 
-	// notify handlers for deletions
-	for _, node := range nodesToDelete {
-		s.NotifyHandlers(schema.Metadata{
-			TypeMeta: schema.TypeMeta{
-				Kind: schema.KindNode,
-				Name: node.GetMetadata().GetName(),
-			},
-			Spec: node,
-		}, false)
-	}
+	// clean up retry queue for removed nodes
+	s.RetryManager.CleanupRetryQueue(allAddr)
 
 	// update total nodes metric
 	if s.metrics != nil {
@@ -507,6 +537,11 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 	}
 
 	return nil
+}
+
+// FetchNodeWithRetry implements NodeFetcher interface for retry manager.
+func (s *Service) FetchNodeWithRetry(ctx context.Context, address string) (*databasev1.Node, error) {
+	return s.fetchNodeMetadata(ctx, address)
 }
 
 func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*databasev1.Node, error) {
@@ -537,11 +572,13 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*datab
 // SetMetrics set the OMR metrics.
 func (s *Service) SetMetrics(factory observability.Factory) {
 	s.metrics = newMetrics(factory)
+	s.DiscoveryServiceBase.SetMetrics(s.metrics)
 }
 
 // Close stops the DNS discovery service.
 func (s *Service) Close() error {
-	s.closer.Done()
+	s.closer.Done() // for discoveryLoop
+	s.closer.Done() // for retryScheduler
 	s.closer.CloseThenWait()
 
 	// stop all Reloaders

@@ -516,10 +516,9 @@ var _ = Describe("DNS Discovery Service", func() {
 
 			// Call queryDNSAndUpdateNodes again
 			// One DNS fails, so it should fallback to cached addresses (all 4 nodes)
+			// With retry mechanism, nodes already in retry queue are skipped, so no errors returned
 			queryErr2 := svc.QueryDNSAndUpdateNodes(ctx)
-			Expect(queryErr2).To(HaveOccurred())
-			// Verify the gRPC error is expected (trying to connect to non-existent servers)
-			Expect(queryErr2.Error()).To(ContainSubstring("failed to connect"))
+			Expect(queryErr2).NotTo(HaveOccurred())
 
 			// Verify fallback happened - cache still has all 4 nodes from first success
 			cachedAfterFailure := svc.GetLastSuccessfulDNS()

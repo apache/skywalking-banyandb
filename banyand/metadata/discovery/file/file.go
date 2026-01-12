@@ -32,41 +32,21 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// nodeRetryState tracks backoff retry state for a single node.
-type nodeRetryState struct {
-	nextRetryTime  time.Time
-	lastError      error
-	config         NodeConfig
-	attemptCount   int
-	currentBackoff time.Duration
-}
-
-// retryConfig holds retry backoff configuration.
-type retryConfig struct {
-	initialInterval time.Duration // Initial retry interval
-	maxInterval     time.Duration // Maximum retry interval
-	multiplier      float64       // Backoff growth factor
-}
-
 // Service implements file-based node discovery.
 type Service struct {
-	*common.NodeCacheBase
+	*common.DiscoveryServiceBase
 	addressToNodeConfig map[string]NodeConfig
-	retryQueue          map[string]*nodeRetryState
 	closer              *run.Closer
 	metrics             *metrics
 	watcher             *fsnotify.Watcher
 	filePath            string
-	retryCfg            retryConfig
 	grpcTimeout         time.Duration
 	fetchInterval       time.Duration
-	retryMutex          sync.RWMutex
 	reloadMutex         sync.Mutex
 	configMutex         sync.RWMutex
 	started             bool
@@ -125,20 +105,31 @@ func NewService(cfg Config) (*Service, error) {
 	}
 
 	svc := &Service{
-		NodeCacheBase:       common.NewNodeCacheBase("metadata-discovery-file"),
 		filePath:            cfg.FilePath,
 		addressToNodeConfig: make(map[string]NodeConfig),
-		retryQueue:          make(map[string]*nodeRetryState),
-		closer:              run.NewCloser(2),
+		closer:              run.NewCloser(3),
 		grpcTimeout:         cfg.GRPCTimeout,
 		fetchInterval:       cfg.FetchInterval,
 		watcher:             fileWatcher,
-		retryCfg: retryConfig{
-			initialInterval: cfg.RetryInitialInterval,
-			maxInterval:     cfg.RetryMaxInterval,
-			multiplier:      cfg.RetryMultiplier,
-		},
 	}
+
+	// initialize discovery service base
+	svc.DiscoveryServiceBase = common.NewServiceBase(
+		"metadata-discovery-file",
+		svc,
+		common.RetryConfig{
+			InitialInterval: cfg.RetryInitialInterval,
+			MaxInterval:     cfg.RetryMaxInterval,
+			Multiplier:      cfg.RetryMultiplier,
+		},
+	)
+
+	// set callbacks for retry manager
+	svc.RetryManager.SetSuccessCallback(func(_ string, _ *databasev1.Node) {
+		if svc.metrics != nil {
+			svc.metrics.nodeConnectedCount.Inc(1)
+		}
+	})
 
 	return svc, nil
 }
@@ -205,8 +196,7 @@ func (s *Service) loadAndParseFile(ctx context.Context) error {
 
 	var cfg NodeFileConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		parseErr = fmt.Errorf("failed to parse YAML: %w", err)
-		return parseErr
+		return fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
 	// validate required fields
@@ -228,13 +218,13 @@ func (s *Service) loadAndParseFile(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) fetchNodeMetadata(ctx context.Context, nodeConfig NodeConfig) (*databasev1.Node, error) {
-	// update config mapping for GetDialOptions
-	s.configMutex.Lock()
-	s.addressToNodeConfig[nodeConfig.Address] = nodeConfig
-	s.configMutex.Unlock()
+// FetchNodeWithRetry implements NodeFetcher interface for retry manager.
+func (s *Service) FetchNodeWithRetry(ctx context.Context, address string) (*databasev1.Node, error) {
+	// use common fetcher with address
+	return common.FetchNodeMetadata(ctx, address, s.grpcTimeout, s)
+}
 
-	// use common fetcher
+func (s *Service) fetchNodeMetadata(ctx context.Context, nodeConfig NodeConfig) (*databasev1.Node, error) {
 	node, err := common.FetchNodeMetadata(ctx, nodeConfig.Address, s.grpcTimeout, s)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metadata for node %s: %w", nodeConfig.Name, err)
@@ -244,17 +234,15 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, nodeConfig NodeConfig) 
 }
 
 func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
-	// build set of addresses from file
-	fileAddresses := make(map[string]NodeConfig)
+	newAddressToNodeConfig := make(map[string]NodeConfig)
 	for _, nodeConfig := range newNodes {
-		fileAddresses[nodeConfig.Address] = nodeConfig
+		newAddressToNodeConfig[nodeConfig.Address] = nodeConfig
 	}
 
-	// update addressToNodeConfig mapping
+	// save old config for comparison and replace with new one
 	s.configMutex.Lock()
-	for _, nodeConfig := range newNodes {
-		s.addressToNodeConfig[nodeConfig.Address] = nodeConfig
-	}
+	oldAddressToNodeConfig := s.addressToNodeConfig
+	s.addressToNodeConfig = newAddressToNodeConfig
 	s.configMutex.Unlock()
 
 	// process new or updated nodes
@@ -265,20 +253,15 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 			continue
 		}
 
-		s.retryMutex.RLock()
-		retryState, existsInRetry := s.retryQueue[nodeConfig.Address]
-		s.retryMutex.RUnlock()
+		// node in retry queue - check if config changed
+		if s.RetryManager.IsInRetry(nodeConfig.Address) {
+			oldConfig, hasOldConfig := oldAddressToNodeConfig[nodeConfig.Address]
 
-		// node in retry queue - reset if config changed
-		if existsInRetry {
-			// check if config changed (TLS settings, name, etc)
-			if s.nodeConfigChanged(retryState.config, nodeConfig) {
+			if hasOldConfig && nodeConfigChanged(oldConfig, nodeConfig) {
 				s.GetLogger().Info().
 					Str("address", nodeConfig.Address).
 					Msg("Node configuration changed, resetting retry state")
-				s.retryMutex.Lock()
-				delete(s.retryQueue, nodeConfig.Address)
-				s.retryMutex.Unlock()
+				s.RetryManager.RemoveFromRetry(nodeConfig.Address)
 			} else {
 				// config unchanged, let retry scheduler handle it
 				continue
@@ -288,45 +271,13 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 		// try to fetch metadata for new node
 		node, fetchErr := s.fetchNodeMetadata(ctx, nodeConfig)
 		if fetchErr != nil {
-			s.GetLogger().Warn().
-				Err(fetchErr).
-				Str("node", nodeConfig.Name).
-				Str("address", nodeConfig.Address).
-				Msg("Failed to fetch node metadata, adding to retry queue")
-
-			// add to retry queue with initial backoff
-			s.retryMutex.Lock()
-			s.retryQueue[nodeConfig.Address] = &nodeRetryState{
-				config:         nodeConfig,
-				attemptCount:   1,
-				nextRetryTime:  time.Now().Add(s.retryCfg.initialInterval),
-				currentBackoff: s.retryCfg.initialInterval,
-				lastError:      fetchErr,
-			}
-			s.retryMutex.Unlock()
-
-			if s.metrics != nil {
-				s.metrics.nodeRetryCount.Inc(1)
-			}
+			// add to retry queue
+			s.RetryManager.AddToRetry(nodeConfig.Address, fetchErr)
 			continue
 		}
 
 		// successfully fetched - add to cache
-		if added := s.AddNode(nodeConfig.Address, node); added {
-			// notify handlers
-			s.NotifyHandlers(schema.Metadata{
-				TypeMeta: schema.TypeMeta{
-					Kind: schema.KindNode,
-					Name: node.GetMetadata().GetName(),
-				},
-				Spec: node,
-			}, true)
-
-			s.GetLogger().Debug().
-				Str("address", nodeConfig.Address).
-				Str("name", node.GetMetadata().GetName()).
-				Msg("Node discovered and added to cache")
-
+		if s.AddNodeAndNotify(nodeConfig.Address, node, "Node discovered and added to cache") {
 			if s.metrics != nil {
 				s.metrics.nodeConnectedCount.Inc(1)
 			}
@@ -337,62 +288,32 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 	currentAddresses := s.GetAllNodeAddresses()
 	addressesToDelete := make([]string, 0)
 	for _, addr := range currentAddresses {
-		if _, inFile := fileAddresses[addr]; !inFile {
+		if _, inFile := newAddressToNodeConfig[addr]; !inFile {
 			addressesToDelete = append(addressesToDelete, addr)
 		}
 	}
 
-	// delete nodes and collect removed
-	nodesToDelete := s.RemoveNodes(addressesToDelete)
+	// delete nodes and notify handlers
+	s.RemoveNodesAndNotify(addressesToDelete, "Node removed from cache (no longer in file)")
 
-	// also clean up retry queue for removed nodes
-	s.retryMutex.Lock()
-	for addr := range s.retryQueue {
-		if _, inFile := fileAddresses[addr]; !inFile {
-			delete(s.retryQueue, addr)
-			s.GetLogger().Debug().
-				Str("address", addr).
-				Msg("Removed node from retry queue (no longer in file)")
-		}
+	// clean up retry queue for removed nodes
+	validAddresses := make(map[string]bool)
+	for addr := range newAddressToNodeConfig {
+		validAddresses[addr] = true
 	}
-	retryQueueSize := len(s.retryQueue)
-	s.retryMutex.Unlock()
-
-	// also clean up addressToNodeConfig
-	s.configMutex.Lock()
-	for addr := range s.addressToNodeConfig {
-		if _, inFile := fileAddresses[addr]; !inFile {
-			delete(s.addressToNodeConfig, addr)
-		}
-	}
-	s.configMutex.Unlock()
-
-	// notify handlers for deletions
-	for _, node := range nodesToDelete {
-		s.NotifyHandlers(schema.Metadata{
-			TypeMeta: schema.TypeMeta{
-				Kind: schema.KindNode,
-				Name: node.GetMetadata().GetName(),
-			},
-			Spec: node,
-		}, false)
-
-		s.GetLogger().Debug().
-			Str("address", node.GetGrpcAddress()).
-			Str("name", node.GetMetadata().GetName()).
-			Msg("Node removed from cache (no longer in file)")
-	}
+	s.RetryManager.CleanupRetryQueue(validAddresses)
 
 	// update metrics
 	if s.metrics != nil {
 		s.metrics.totalNodesCount.Set(float64(s.GetCacheSize()))
-		s.metrics.retryQueueSize.Set(float64(retryQueueSize))
+		s.metrics.retryQueueSize.Set(float64(s.RetryManager.GetQueueSize()))
 	}
 }
 
 // SetMetrics sets the OMR metrics.
 func (s *Service) SetMetrics(factory observability.Factory) {
 	s.metrics = newMetrics(factory)
+	s.DiscoveryServiceBase.SetMetrics(s.metrics)
 }
 
 // Close stops the file discovery service.
@@ -519,6 +440,8 @@ func (s *Service) periodicFetch(ctx context.Context) {
 }
 
 func (s *Service) retryScheduler(ctx context.Context) {
+	defer s.closer.Done()
+
 	// check retry queue every second
 	checkTicker := time.NewTicker(1 * time.Second)
 	defer checkTicker.Stop()
@@ -526,7 +449,7 @@ func (s *Service) retryScheduler(ctx context.Context) {
 	for {
 		select {
 		case <-checkTicker.C:
-			s.processRetryQueue(ctx)
+			s.RetryManager.ProcessRetryQueue(ctx)
 
 		case <-s.closer.CloseNotify():
 			return
@@ -536,109 +459,8 @@ func (s *Service) retryScheduler(ctx context.Context) {
 	}
 }
 
-func (s *Service) processRetryQueue(ctx context.Context) {
-	now := time.Now()
-
-	s.retryMutex.RLock()
-	// collect nodes ready for retry
-	nodesToRetry := make([]*nodeRetryState, 0)
-	for _, retryState := range s.retryQueue {
-		if retryState.nextRetryTime.Before(now) || retryState.nextRetryTime.Equal(now) {
-			nodesToRetry = append(nodesToRetry, retryState)
-		}
-	}
-	s.retryMutex.RUnlock()
-
-	if len(nodesToRetry) == 0 {
-		return
-	}
-
-	s.GetLogger().Debug().Int("count", len(nodesToRetry)).Msg("Processing retry queue")
-
-	// attempt retry for each node
-	for _, retryState := range nodesToRetry {
-		s.attemptNodeRetry(ctx, retryState)
-	}
-}
-
-func (s *Service) attemptNodeRetry(ctx context.Context, retryState *nodeRetryState) {
-	addr := retryState.config.Address
-
-	s.GetLogger().Debug().
-		Str("address", addr).
-		Int("attempt", retryState.attemptCount).
-		Dur("backoff", retryState.currentBackoff).
-		Msg("Attempting node metadata fetch retry")
-
-	// try to fetch metadata
-	node, fetchErr := s.fetchNodeMetadata(ctx, retryState.config)
-
-	if fetchErr != nil {
-		// retry failed - update backoff
-		retryState.attemptCount++
-		retryState.lastError = fetchErr
-
-		// calculate next backoff interval: currentBackoff * multiplier
-		nextBackoff := time.Duration(float64(retryState.currentBackoff) * s.retryCfg.multiplier)
-		if nextBackoff > s.retryCfg.maxInterval {
-			nextBackoff = s.retryCfg.maxInterval
-		}
-		retryState.currentBackoff = nextBackoff
-		retryState.nextRetryTime = time.Now().Add(nextBackoff)
-
-		s.GetLogger().Warn().
-			Err(fetchErr).
-			Str("address", addr).
-			Int("attempt", retryState.attemptCount).
-			Dur("next_backoff", nextBackoff).
-			Time("next_retry", retryState.nextRetryTime).
-			Msg("Node metadata fetch retry failed, scheduling next retry")
-
-		s.retryMutex.Lock()
-		s.retryQueue[addr] = retryState
-		s.retryMutex.Unlock()
-
-		if s.metrics != nil {
-			s.metrics.nodeRetryFailedCount.Inc(1)
-		}
-		return
-	}
-
-	// success - add to cache
-	s.AddNode(addr, node)
-
-	// remove from retry queue
-	s.retryMutex.Lock()
-	delete(s.retryQueue, addr)
-	retryQueueSize := len(s.retryQueue)
-	s.retryMutex.Unlock()
-
-	// notify handlers
-	s.NotifyHandlers(schema.Metadata{
-		TypeMeta: schema.TypeMeta{
-			Kind: schema.KindNode,
-			Name: node.GetMetadata().GetName(),
-		},
-		Spec: node,
-	}, true)
-
-	s.GetLogger().Info().
-		Str("address", addr).
-		Str("name", node.GetMetadata().GetName()).
-		Int("total_attempts", retryState.attemptCount).
-		Msg("Node metadata fetched successfully after retry")
-
-	// update metrics
-	if s.metrics != nil {
-		s.metrics.nodeConnectedCount.Inc(1)
-		s.metrics.retryQueueSize.Set(float64(retryQueueSize))
-		s.metrics.nodeRetrySuccessCount.Inc(1)
-	}
-}
-
-func (s *Service) nodeConfigChanged(older, newer NodeConfig) bool {
-	return older.Name != newer.Name ||
-		older.Address != newer.Address ||
+func nodeConfigChanged(older, newer NodeConfig) bool {
+	return older.Address != newer.Address ||
 		older.CACertPath != newer.CACertPath ||
 		older.TLSEnabled != newer.TLSEnabled
 }

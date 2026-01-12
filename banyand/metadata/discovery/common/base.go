@@ -181,3 +181,78 @@ func (b *NodeCacheBase) RemoveNodes(addresses []string) map[string]*databasev1.N
 	}
 	return removed
 }
+
+// AddNodeAndNotify adds a node to the cache and notifies handlers if added successfully.
+// Returns true if the node was added, false if it already existed.
+func (b *NodeCacheBase) AddNodeAndNotify(address string, node *databasev1.Node, logMsg string) bool {
+	if added := b.AddNode(address, node); added {
+		// notify handlers
+		b.NotifyHandlers(schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+				Name: node.GetMetadata().GetName(),
+			},
+			Spec: node,
+		}, true)
+
+		b.log.Debug().
+			Str("address", address).
+			Str("name", node.GetMetadata().GetName()).
+			Msg(logMsg)
+
+		return true
+	}
+	return false
+}
+
+// RemoveNodesAndNotify removes nodes and notifies handlers for each removed node.
+// Returns a map of removed nodes keyed by address.
+func (b *NodeCacheBase) RemoveNodesAndNotify(addresses []string, logMsg string) map[string]*databasev1.Node {
+	removed := b.RemoveNodes(addresses)
+
+	// notify handlers for deletions
+	for addr, node := range removed {
+		b.NotifyHandlers(schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+				Name: node.GetMetadata().GetName(),
+			},
+			Spec: node,
+		}, false)
+
+		b.log.Debug().
+			Str("address", addr).
+			Str("name", node.GetMetadata().GetName()).
+			Msg(logMsg)
+	}
+
+	return removed
+}
+
+// DiscoveryServiceBase combines NodeCacheBase and RetryManager for discovery services.
+// Services should embed this struct to get both cache and retry functionality.
+type DiscoveryServiceBase struct {
+	*NodeCacheBase
+	*RetryManager
+}
+
+// NewServiceBase create a new base service for gRPC-based and file-based service.
+func NewServiceBase(
+	loggerName string,
+	fetcher NodeFetcher,
+	retryConfig RetryConfig,
+) *DiscoveryServiceBase {
+	cacheBase := NewNodeCacheBase(loggerName)
+	retryManager := NewRetryManager(fetcher, cacheBase, retryConfig, nil)
+	return &DiscoveryServiceBase{
+		NodeCacheBase: cacheBase,
+		RetryManager:  retryManager,
+	}
+}
+
+// SetMetrics sets metrics for the retry manager.
+func (b *DiscoveryServiceBase) SetMetrics(metrics RetryMetrics) {
+	if b.RetryManager != nil {
+		b.RetryManager.SetMetrics(metrics)
+	}
+}

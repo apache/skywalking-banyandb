@@ -48,3 +48,23 @@ func newMetrics(factory observability.Factory) *metrics {
 		retryQueueSize:        factory.NewGauge("retry_queue_size"),
 	}
 }
+
+// IncRetryCount implements RetryMetrics interface.
+func (m *metrics) IncRetryCount() {
+	m.nodeRetryCount.Inc(1)
+}
+
+// IncRetrySuccess implements RetryMetrics interface.
+func (m *metrics) IncRetrySuccess() {
+	m.nodeRetrySuccessCount.Inc(1)
+}
+
+// IncRetryFailed implements RetryMetrics interface.
+func (m *metrics) IncRetryFailed() {
+	m.nodeRetryFailedCount.Inc(1)
+}
+
+// SetQueueSize implements RetryMetrics interface.
+func (m *metrics) SetQueueSize(size float64) {
+	m.retryQueueSize.Set(size)
+}
