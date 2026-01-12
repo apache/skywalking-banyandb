@@ -48,5 +48,6 @@ var _ = g.DescribeTable("TopN Tests", verify,
 	g.Entry("using not equal in aggregation", helpers.Args{Input: "ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("using in operation in aggregation", helpers.Args{Input: "in", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("using not-in operation in aggregation", helpers.Args{Input: "not_in", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
-	g.Entry("max top3 order by desc with version merged", helpers.Args{Input: "aggr_version_merged", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("max top3 with version merged order by desc", helpers.Args{Input: "aggr_version_merged", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("non-aggr top3 with version merged order by asc", helpers.Args{Input: "aggr_version_merged", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 )
