@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -196,11 +197,37 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	var stopKTM func()
 
 	if ktmEnabled {
-		startStop, startErr := startKTM(ctx, *log.Logger, fr)
-		if startErr != nil {
-			return startErr
+		// Check if running on Linux
+		if runtime.GOOS != "linux" {
+			log.Info().Str("os", runtime.GOOS).Msg("KTM is only supported on Linux, skipping initialization")
+			// Write ktm_status=0 (Disabled) to Flight Recorder
+			if updateErr := fr.Update([]fodcmetrics.RawMetric{
+				{
+					Name:  "ktm_status",
+					Value: 0,
+					Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+				},
+			}); updateErr != nil {
+				log.Warn().Err(updateErr).Msg("Failed to write ktm_status metric")
+			}
+		} else {
+			startStop, startErr := startKTM(ctx, *log.Logger, fr)
+			if startErr != nil {
+				log.Warn().Err(startErr).Msg("KTM startup failed, continuing without kernel tracing")
+				// Write ktm_status=0 (Disabled) to Flight Recorder
+				if updateErr := fr.Update([]fodcmetrics.RawMetric{
+					{
+						Name:  "ktm_status",
+						Value: 0,
+						Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+					},
+				}); updateErr != nil {
+					log.Warn().Err(updateErr).Msg("Failed to write ktm_status metric")
+				}
+			} else {
+				stopKTM = startStop
+			}
 		}
-		stopKTM = startStop
 	}
 
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
@@ -323,6 +350,16 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 					continue
 				}
 				rawMetrics := ktm.ToRawMetrics(store)
+				// Add ktm_status metric: 2=Full, 1=Degraded
+				ktmStatus := 2.0 // Full mode (cgroup+comm)
+				if ktmSvc.IsDegraded() {
+					ktmStatus = 1.0 // Degraded mode (comm-only)
+				}
+				rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
+					Name:  "ktm_status",
+					Value: ktmStatus,
+					Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+				})
 				if len(rawMetrics) == 0 {
 					continue
 				}

@@ -173,6 +173,21 @@ func (c *Collector) GetMetrics() *metrics.Store {
 	return c.metrics
 }
 
+// IsDegraded returns whether any module is running in degraded mode.
+func (c *Collector) IsDegraded() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	for _, mod := range c.modules {
+		if ioMod, ok := mod.(interface{ Degraded() bool }); ok {
+			if ioMod.Degraded() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Close stops the collector and cleans up resources.
 func (c *Collector) Close() error {
 	c.logger.Info("Stopping collector")

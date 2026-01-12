@@ -101,6 +101,14 @@ func (m *module) Stop() error {
 	return nil
 }
 
+// Degraded returns whether the module is running in degraded mode.
+func (m *module) Degraded() bool {
+	if m.loader == nil {
+		return false
+	}
+	return m.loader.Degraded()
+}
+
 // Collect gathers all metrics from eBPF maps.
 func (m *module) Collect() (*metrics.MetricSet, error) {
 	if m.objs == nil {
@@ -114,6 +122,14 @@ func (m *module) Collect() (*metrics.MetricSet, error) {
 	m.addDegradedMetric(ms)
 
 	return ms, nil
+}
+
+func (m *module) addDegradedMetric(ms *metrics.MetricSet) {
+	degraded := 0.0
+	if m.loader != nil && m.loader.Degraded() {
+		degraded = 1.0
+	}
+	ms.AddGauge("ktm_degraded", degraded, nil)
 }
 
 // collectMetrics collects metrics from all maps without clearing them.
@@ -137,13 +153,6 @@ func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	}
 }
 
-func (m *module) addDegradedMetric(ms *metrics.MetricSet) {
-	degraded := 0.0
-	if m.loader != nil && m.loader.Degraded() {
-		degraded = 1.0
-	}
-	ms.AddGauge("ktm_degraded", degraded, nil)
-}
 
 func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
 	var pid uint32

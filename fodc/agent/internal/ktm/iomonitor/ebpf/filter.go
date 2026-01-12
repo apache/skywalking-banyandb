@@ -32,12 +32,9 @@ import (
 )
 
 // configureFilters sets up the cgroup filtering strategy.
-// If cgroup resolution fails, falls back to comm-only filtering (degraded mode).
 // Returns (degraded bool, degradedReason string, error) where degraded=true means cgroup filtering is disabled.
 func configureFilters(objs *generated.IomonitorObjects, cgroupPath string) (bool, string, error) {
-	// Layer 1: Resolve and configure cgroup filter (preferred for correctness)
-	degraded := false
-	degradedReason := ""
+	// Resolve and configure cgroup filter (preferred for correctness)
 	targetPath, err := resolveTargetCgroupPath(cgroupPath)
 	if err != nil {
 		// Cgroup resolution failed - fall back to comm-only filtering
@@ -45,27 +42,25 @@ func configureFilters(objs *generated.IomonitorObjects, cgroupPath string) (bool
 		if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
 			return false, "", fmt.Errorf("failed to configure degraded mode: %w", updateErr)
 		}
-		degraded = true
-		degradedReason = fmt.Sprintf("cgroup path resolution failed: %v", err)
-	} else {
-		// Cgroup resolution succeeded - configure strict cgroup filtering
-		cgID, cgErr := getCgroupIDFromPath(targetPath)
-		if cgErr != nil {
-			// Failed to get cgroup ID - fall back to comm-only
-			if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
-				return false, "", fmt.Errorf("failed to configure degraded mode: %w", updateErr)
-			}
-			degraded = true
-			degradedReason = fmt.Sprintf("failed to get cgroup ID from %s: %v", targetPath, cgErr)
-		} else {
-			// Successfully got cgroup ID - enable strict filtering
-			if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
-				return false, "", fmt.Errorf("failed to program config map: %w", updateErr)
-			}
-		}
+		return true, fmt.Sprintf("cgroup path resolution failed: %v", err), nil
 	}
 
-	return degraded, degradedReason, nil
+	// Get cgroup ID
+	cgID, cgErr := getCgroupIDFromPath(targetPath)
+	if cgErr != nil {
+		// Failed to get cgroup ID - fall back to comm-only
+		if updateErr := updateConfigMap(objs.ConfigMap, 0); updateErr != nil {
+			return false, "", fmt.Errorf("failed to configure degraded mode: %w", updateErr)
+		}
+		return true, fmt.Sprintf("failed to get cgroup ID from %s: %v", targetPath, cgErr), nil
+	}
+
+	// Successfully got cgroup ID - enable strict filtering
+	if updateErr := updateConfigMap(objs.ConfigMap, cgID); updateErr != nil {
+		return false, "", fmt.Errorf("failed to program config map: %w", updateErr)
+	}
+
+	return false, "", nil
 }
 
 func resolveTargetCgroupPath(cfgPath string) (string, error) {

@@ -108,7 +108,7 @@ func (l *EnhancedLoader) LoadPrograms() error {
 	// Configure cgroup filter if requested.
 	degraded, degradedReason, err := l.ConfigureFilters()
 	if err != nil {
-		l.logger.Warn("Failed to configure filters", zap.Error(err))
+		return fmt.Errorf("failed to configure filters: %w", err)
 	}
 	l.setDegradedState(degraded, degradedReason)
 
@@ -335,10 +335,9 @@ func (l *EnhancedLoader) setDegradedState(degraded bool, reason string) {
 	}
 	l.degraded = degraded
 	if degraded {
-		l.logger.Warn("KTM degraded: failed to resolve target cgroup, falling back to comm-only",
+		l.logger.Warn("KTM is running in Degraded mode (comm-only) due to Cgroup detection failure. Data isolation in K8s pods cannot be guaranteed.",
 			zap.String("cgroup_path", l.cgroupPath),
-			zap.String("reason", reason),
-			zap.String("risk", "metrics may mix across pods if multiple processes match comm"))
+			zap.String("reason", reason))
 		return
 	}
 	l.logger.Info("KTM recovered: cgroup scoping restored")

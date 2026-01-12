@@ -94,3 +94,11 @@ func (k *KTM) GetMetrics() *metrics.Store {
 	}
 	return k.collector.GetMetrics()
 }
+
+// IsDegraded returns whether KTM is running in degraded (comm-only) mode.
+func (k *KTM) IsDegraded() bool {
+	if !k.config.Enabled || k.collector == nil {
+		return false
+	}
+	return k.collector.IsDegraded()
+}
