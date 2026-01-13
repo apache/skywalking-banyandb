@@ -29,7 +29,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -116,7 +115,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	var allErr error
-	aggregator := query.CreateTopNPostAggregator(request.GetTopN(),
+	aggregator := measure.CreateTopNPostAggregator(request.GetTopN(),
 		agg, request.GetFieldValueSort())
 	var tags []string
 	var responseCount int
@@ -142,7 +141,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					_ = aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()))
+					aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
 				}
 			}
 		}

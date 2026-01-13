@@ -59,6 +59,7 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 			sort:        criteria.FieldValueSort,
 			groupByTags: topNAggSchema.GetGroupByTagNames(),
 			ec:          ec,
+			number:      criteria.GetTopN(),
 		}
 	} else {
 		subPlans := make([]*unresolvedLocalScan, 0, len(sourceMeasureSchemaList))
@@ -71,6 +72,7 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 				sort:        criteria.FieldValueSort,
 				groupByTags: topNAggSchemaList[i].GetGroupByTagNames(),
 				ec:          ecc[i],
+				number:      criteria.GetTopN(),
 			})
 		}
 		plan = &unresolvedTopNMerger{

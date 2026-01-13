@@ -97,7 +97,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			}
 
 			// Marshal the topNValue
-			dst, err := tt.topNVal.marshal(nil)
+			dst, err := tt.topNVal.Marshal(nil)
 			require.NoError(t, err)
 
 			// Unmarshal the topNValue
@@ -126,7 +126,7 @@ func TestTopNValue_Marshal_EmptyValues(t *testing.T) {
 		values:         []int64{},
 		entities:       [][]*modelv1.TagValue{},
 	}
-	_, err := topNVal.marshal(nil)
+	_, err := topNVal.Marshal(nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "values is empty")
 }
@@ -169,7 +169,7 @@ func TestTopNValue_Unmarshal_InvalidData(t *testing.T) {
 
 func TestTopNValue_SetMetadata(t *testing.T) {
 	topNVal := &TopNValue{}
-	topNVal.setMetadata("testValue", []string{"tag1", "tag2"})
+	topNVal.SetMetadata("testValue", []string{"tag1", "tag2"})
 	require.Equal(t, "testValue", topNVal.valueName)
 	require.Equal(t, []string{"tag1", "tag2"}, topNVal.entityTagNames)
 }
@@ -180,7 +180,7 @@ func TestTopNValue_AddValue(t *testing.T) {
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
 	}
-	topNVal.addValue(100, entityValues)
+	topNVal.AddValue(100, entityValues)
 	require.Equal(t, []int64{100}, topNVal.values)
 	require.Len(t, topNVal.entities, 1)
 	require.Len(t, topNVal.entities[0], 2)
@@ -762,7 +762,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 				}
 			}
 
-			dst, err := tt.topNVal.marshal(nil)
+			dst, err := tt.topNVal.Marshal(nil)
 			require.NoError(t, err)
 
 			tt.topNVal.Reset()
@@ -793,7 +793,7 @@ func TestTopNValue_Unmarshal_InvalidEntityLength(t *testing.T) {
 		},
 	}
 
-	dst, err := topNVal.marshal(nil)
+	dst, err := topNVal.Marshal(nil)
 	require.NoError(t, err)
 
 	topNVal.Reset()

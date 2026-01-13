@@ -354,11 +354,11 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 			}
 		}
 		topNValue.Reset()
-		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
+		topNValue.SetMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
 		var shardID uint32
 		for _, tuple := range tuples {
 			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			topNValue.addValue(
+			topNValue.AddValue(
 				tuple.V1.(int64),
 				data[0].([]*modelv1.TagValue),
 			)
@@ -386,16 +386,9 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 					},
 				},
 			},
-			{
-				Value: &modelv1.TagValue_Str{
-					Str: &modelv1.Str{
-						Value: t.nodeID,
-					},
-				},
-			},
 		}
 		buf = buf[:0]
-		if buf, err = topNValue.marshal(buf); err != nil {
+		if buf, err = topNValue.Marshal(buf); err != nil {
 			return err
 		}
 		iwr := &measurev1.InternalWriteRequest{
@@ -414,6 +407,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 							},
 						},
 					},
+					Version: time.Now().UnixNano(),
 				},
 			},
 			EntityValues: entityValues,
@@ -784,12 +778,14 @@ type TopNValue struct {
 	firstValue      int64
 }
 
-func (t *TopNValue) setMetadata(valueName string, entityTagNames []string) {
+// SetMetadata set valueName and entityTagNames.
+func (t *TopNValue) SetMetadata(valueName string, entityTagNames []string) {
 	t.valueName = valueName
 	t.entityTagNames = entityTagNames
 }
 
-func (t *TopNValue) addValue(value int64, entityValues []*modelv1.TagValue) {
+// AddValue add value and entityValues.
+func (t *TopNValue) AddValue(value int64, entityValues []*modelv1.TagValue) {
 	entityValuesCopy := make([]*modelv1.TagValue, len(entityValues))
 	copy(entityValuesCopy, entityValues)
 	t.values = append(t.values, value)
@@ -842,7 +838,8 @@ func (t *TopNValue) resizeEntities(size, entitySize int) [][]*modelv1.TagValue {
 	return t.entities
 }
 
-func (t *TopNValue) marshal(dst []byte) ([]byte, error) {
+// Marshal marshal the topNValue to the dst.
+func (t *TopNValue) Marshal(dst []byte) ([]byte, error) {
 	if len(t.values) == 0 {
 		return nil, errors.New("values is empty")
 	}
@@ -953,3 +950,20 @@ func (t *TopNValue) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder) e
 func GroupName(groupTags []string) string {
 	return strings.Join(groupTags, "|")
 }
+
+// GenerateTopNValuesDecoder returns a new decoder instance of TopNValues.
+func GenerateTopNValuesDecoder() *encoding.BytesBlockDecoder {
+	v := topNValuesDecoderPool.Get()
+	if v == nil {
+		return &encoding.BytesBlockDecoder{}
+	}
+	return v
+}
+
+// ReleaseTopNValuesDecoder releases a decoder instance of TopNValues.
+func ReleaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
+	d.Reset()
+	topNValuesDecoderPool.Put(d)
+}
+
+var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder")
