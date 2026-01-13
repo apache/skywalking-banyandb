@@ -443,30 +443,25 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 }
 
 // cleanupStreams cleans up streams without stopping the connection manager.
-// This is used during retry loops to allow reconnection attempts to continue.
-// It closes stopCh to signal goroutines to exit, then recreates it for the next attempt.
 func (c *Client) cleanupStreams() {
 	c.streamsMu.Lock()
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
 	}
-	// Close stopCh to signal goroutines to exit, then recreate it for next attempt
+
 	oldStopCh := c.stopCh
 	c.stopCh = make(chan struct{})
 	c.streamsMu.Unlock()
 
-	// Signal goroutines to exit by closing the old stopCh
 	if oldStopCh != nil {
 		select {
 		case <-oldStopCh:
-			// Already closed, nothing to do
 		default:
 			close(oldStopCh)
 		}
 	}
 
-	// Wait for heartbeat goroutine to exit before closing streams
 	c.heartbeatWg.Wait()
 
 	c.streamsMu.Lock()
@@ -729,7 +724,7 @@ func (c *Client) reconnect(ctx context.Context) {
 	if connResult.err != nil {
 		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
 		if disconnectErr := c.Disconnect(); disconnectErr != nil {
-			c.logger.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
+			c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect")
 		}
 		return
 	}
