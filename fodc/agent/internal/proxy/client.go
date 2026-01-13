@@ -478,6 +478,7 @@ func (c *Client) cleanupStreams() {
 		}
 		c.metricsStream = nil
 	}
+	c.client = nil
 	c.streamsMu.Unlock()
 }
 
@@ -554,9 +555,6 @@ func (c *Client) Start(ctx context.Context) error {
 		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
 			c.logger.Error().Err(regErr).Msg("Failed to start registration stream, reconnecting...")
 			c.cleanupStreams()
-			c.streamsMu.Lock()
-			c.client = nil
-			c.streamsMu.Unlock()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
@@ -564,9 +562,6 @@ func (c *Client) Start(ctx context.Context) error {
 		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
 			c.cleanupStreams()
-			c.streamsMu.Lock()
-			c.client = nil
-			c.streamsMu.Unlock()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
