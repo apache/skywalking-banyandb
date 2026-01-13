@@ -167,7 +167,7 @@ Semantics: all counters are monotonic; latency metrics are exported as Prometheu
 
 ## Safety & Overhead Boundary
 
-KTM is strictly passive: no kernel modifications, no syscall blocking, and only bounded-size monotonic maps. Probes attach to stable tracepoints or fentry/fexit paths with kprobe fallbacks, and expected CPU overhead remains <1% under typical BanyanDB workloads.
+KTM is strictly passive: no kernel modifications, no syscall blocking, and only bounded-size monotonic maps. Probes attach to stable tracepoints, and expected CPU overhead remains <1% under typical BanyanDB workloads.
 
 ## Security and Permissions
 
@@ -181,7 +181,7 @@ The sidecar should be configured with the minimal set of capabilities required f
 
 ## Failure Modes
 
-KTM is designed to fail gracefully. If the eBPF programs fail to load at startup for any reason (e.g., kernel incompatibility, insufficient permissions, BTF information unavailable), the KTM module will be disabled.
+KTM is designed to fail gracefully. If the eBPF programs fail to load at startup for any reason (e.g., kernel incompatibility, missing tracefs/tracepoints, insufficient permissions, BTF information unavailable), the KTM module will be disabled.
 
 In this state:
 - An error will be logged to indicate that KTM could not be initialized and is therefore inactive.
@@ -199,9 +199,11 @@ This approach ensures that a failure within the observability module does not im
 
 ## Kernel Attachment Points (Current)
 
+All attachment points are tracepoints.
+
 - `sys_enter_read`, `sys_exit_read`, `sys_enter_pread64`, `sys_exit_pread64` (syscall-level I/O latency).
-- `mm_filemap_add_to_page_cache`, `filemap_get_read_batch` (page cache add/churn).
-- `ksys_fadvise64_64` (fadvise policy actions; fentry/fexit preferred).
+- `sys_enter_fadvise64`, `sys_exit_fadvise64` (fadvise policy actions).
+- `mm_filemap_get_pages`, `mm_filemap_add_to_page_cache`, `mm_filemap_delete_from_page_cache` (page cache add/churn).
 - `mm_vmscan_lru_shrink_inactive`, `mm_vmscan_direct_reclaim_begin` (memory reclaim/pressure).
 
 ## Limitations
