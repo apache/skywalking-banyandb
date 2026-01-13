@@ -966,6 +966,255 @@ func TestMergeStreamResults(t *testing.T) {
 	}
 }
 
+func TestStreamResult_CopyFrom_Deduplication(t *testing.T) {
+	tmp := &StreamResult{}
+	tests := []struct {
+		name           string
+		sr             *StreamResult
+		other          *StreamResult
+		wantElementIDs []uint64
+		wantLen        int
+	}{
+		{
+			name: "duplicate element IDs should be deduplicated",
+			sr: &StreamResult{
+				asc:        true,
+				topN:       10,
+				Timestamps: []int64{10, 20},
+				ElementIDs: []uint64{100, 200},
+				TagFamilies: []TagFamily{
+					{
+						Name: "family1",
+						Tags: []Tag{{
+							Name: "tag1",
+							Values: []*modelv1.TagValue{
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1"}}},
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value2"}}},
+							},
+						}},
+					},
+				},
+				SIDs: []common.SeriesID{1, 2},
+			},
+			other: &StreamResult{
+				asc:        true,
+				topN:       10,
+				Timestamps: []int64{15, 25},
+				ElementIDs: []uint64{100, 300}, // 100 is duplicate
+				TagFamilies: []TagFamily{
+					{
+						Name: "family1",
+						Tags: []Tag{{
+							Name: "tag1",
+							Values: []*modelv1.TagValue{
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1_dup"}}},
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value3"}}},
+							},
+						}},
+					},
+				},
+				SIDs: []common.SeriesID{1, 3},
+			},
+			wantElementIDs: []uint64{100, 200, 300},
+			wantLen:        3,
+		},
+		{
+			name: "all duplicates should result in single element",
+			sr: &StreamResult{
+				asc:        true,
+				topN:       10,
+				Timestamps: []int64{10},
+				ElementIDs: []uint64{100},
+				TagFamilies: []TagFamily{
+					{
+						Name: "family1",
+						Tags: []Tag{{
+							Name: "tag1",
+							Values: []*modelv1.TagValue{
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1"}}},
+							},
+						}},
+					},
+				},
+				SIDs: []common.SeriesID{1},
+			},
+			other: &StreamResult{
+				asc:        true,
+				topN:       10,
+				Timestamps: []int64{20},
+				ElementIDs: []uint64{100}, // duplicate
+				TagFamilies: []TagFamily{
+					{
+						Name: "family1",
+						Tags: []Tag{{
+							Name: "tag1",
+							Values: []*modelv1.TagValue{
+								{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1_dup"}}},
+							},
+						}},
+					},
+				},
+				SIDs: []common.SeriesID{1},
+			},
+			wantElementIDs: []uint64{100},
+			wantLen:        1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.sr.CopyFrom(tmp, tt.other)
+			assert.Equal(t, tt.wantLen, tt.sr.Len(), "unexpected length")
+			assert.Equal(t, tt.wantElementIDs, tt.sr.ElementIDs, "unexpected element IDs - duplicates should be removed")
+			// Verify no duplicate element IDs
+			seen := make(map[uint64]bool)
+			for _, id := range tt.sr.ElementIDs {
+				assert.False(t, seen[id], "duplicate element ID found: %d", id)
+				seen[id] = true
+			}
+		})
+	}
+}
+
+func TestMergeStreamResults_Deduplication(t *testing.T) {
+	tests := []struct {
+		name           string
+		results        []*StreamResult
+		wantElementIDs []uint64
+		wantLen        int
+		topN           int
+		asc            bool
+	}{
+		{
+			name: "duplicate element IDs across results should be deduplicated",
+			results: []*StreamResult{
+				{
+					asc:        true,
+					topN:       10,
+					Timestamps: []int64{10, 20},
+					ElementIDs: []uint64{100, 200},
+					TagFamilies: []TagFamily{
+						{
+							Name: "family1",
+							Tags: []Tag{{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1"}}},
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value2"}}},
+								},
+							}},
+						},
+					},
+					SIDs: []common.SeriesID{1, 2},
+				},
+				{
+					asc:        true,
+					topN:       10,
+					Timestamps: []int64{15, 25},
+					ElementIDs: []uint64{100, 300}, // 100 is duplicate
+					TagFamilies: []TagFamily{
+						{
+							Name: "family1",
+							Tags: []Tag{{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1_dup"}}},
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value3"}}},
+								},
+							}},
+						},
+					},
+					SIDs: []common.SeriesID{1, 3},
+				},
+			},
+			wantElementIDs: []uint64{100, 200, 300},
+			wantLen:        3,
+			topN:           10,
+			asc:            true,
+		},
+		{
+			name: "multiple duplicates across multiple results",
+			results: []*StreamResult{
+				{
+					asc:        true,
+					topN:       10,
+					Timestamps: []int64{10, 20, 30},
+					ElementIDs: []uint64{100, 200, 300},
+					TagFamilies: []TagFamily{
+						{
+							Name: "family1",
+							Tags: []Tag{{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1"}}},
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value2"}}},
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value3"}}},
+								},
+							}},
+						},
+					},
+					SIDs: []common.SeriesID{1, 2, 3},
+				},
+				{
+					asc:        true,
+					topN:       10,
+					Timestamps: []int64{15, 25},
+					ElementIDs: []uint64{100, 200}, // both duplicates
+					TagFamilies: []TagFamily{
+						{
+							Name: "family1",
+							Tags: []Tag{{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value1_dup"}}},
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value2_dup"}}},
+								},
+							}},
+						},
+					},
+					SIDs: []common.SeriesID{1, 2},
+				},
+				{
+					asc:        true,
+					topN:       10,
+					Timestamps: []int64{35},
+					ElementIDs: []uint64{300}, // duplicate
+					TagFamilies: []TagFamily{
+						{
+							Name: "family1",
+							Tags: []Tag{{
+								Name: "tag1",
+								Values: []*modelv1.TagValue{
+									{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "value3_dup"}}},
+								},
+							}},
+						},
+					},
+					SIDs: []common.SeriesID{3},
+				},
+			},
+			wantElementIDs: []uint64{100, 200, 300},
+			wantLen:        3,
+			topN:           10,
+			asc:            true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeStreamResults(tt.results, tt.topN, tt.asc)
+			assert.Equal(t, tt.wantLen, got.Len(), "unexpected length")
+			assert.Equal(t, tt.wantElementIDs, got.ElementIDs, "unexpected element IDs - duplicates should be removed")
+			// Verify no duplicate element IDs
+			seen := make(map[uint64]bool)
+			for _, id := range got.ElementIDs {
+				assert.False(t, seen[id], "duplicate element ID found: %d", id)
+				seen[id] = true
+			}
+		})
+	}
+}
+
 func TestStreamResult_TopNTooLarge(t *testing.T) {
 	tests := []struct {
 		name    string

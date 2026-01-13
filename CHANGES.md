@@ -24,6 +24,7 @@ Release Notes.
 - Fix incorrect key range update in sidx part metadata.
 - Fix panic in measure block merger when merging blocks with overlapping timestamps.
 - Fix unsupported empty string tag bug.
+- Fix duplicate elements in stream query results by implementing element ID-based deduplication across scan, merge, and result building stages.
 
 ### Document
 

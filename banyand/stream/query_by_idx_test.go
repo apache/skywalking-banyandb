@@ -31,6 +31,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -138,6 +140,194 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 				cmp.AllowUnexported(blockMetadata{}),
 			); diff != "" {
 				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestIdxResult_MergeByTagValue_Deduplication(t *testing.T) {
+	tests := []struct {
+		name             string
+		data             []*blockCursor
+		elementIDsSorted []uint64
+		wantElementIDs   []uint64
+		wantLen          int
+	}{
+		{
+			name: "duplicate element IDs in block cursors should be deduplicated",
+			data: []*blockCursor{
+				{
+					timestamps: []int64{10, 20},
+					elementIDs: []uint64{100, 200},
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(1)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1"), []byte("value2")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+				{
+					timestamps: []int64{15, 25},
+					elementIDs: []uint64{100, 300}, // 100 is duplicate
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(2)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1_dup"), []byte("value3")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+			},
+			elementIDsSorted: []uint64{100, 200, 300},
+			wantElementIDs:   []uint64{100, 200, 300},
+			wantLen:          3,
+		},
+		{
+			name: "duplicate element IDs in elementIDsSorted should be deduplicated",
+			data: []*blockCursor{
+				{
+					timestamps: []int64{10, 20, 30},
+					elementIDs: []uint64{100, 200, 300},
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(1)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1"), []byte("value2"), []byte("value3")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+			},
+			elementIDsSorted: []uint64{100, 200, 100, 300}, // 100 appears twice
+			wantElementIDs:   []uint64{100, 200, 300},      // Should be deduplicated
+			wantLen:          3,
+		},
+		{
+			name: "duplicate element IDs in both data and elementIDsSorted",
+			data: []*blockCursor{
+				{
+					timestamps: []int64{10, 20},
+					elementIDs: []uint64{100, 200},
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(1)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1"), []byte("value2")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+				{
+					timestamps: []int64{15},
+					elementIDs: []uint64{100}, // duplicate in data
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(2)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1_dup")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+			},
+			elementIDsSorted: []uint64{100, 200, 100}, // 100 appears twice in sorted list
+			wantElementIDs:   []uint64{100, 200},      // Should be deduplicated
+			wantLen:          2,
+		},
+		{
+			name: "all duplicates should result in single element",
+			data: []*blockCursor{
+				{
+					timestamps: []int64{10},
+					elementIDs: []uint64{100},
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(1)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+				{
+					timestamps: []int64{20},
+					elementIDs: []uint64{100}, // duplicate
+					idx:        0,
+					bm:         blockMetadata{seriesID: common.SeriesID(2)},
+					tagProjection: []model.TagProjection{
+						{Family: "family1", Names: []string{"tag1"}},
+					},
+					tagFamilies: []tagFamily{
+						{
+							name: "family1",
+							tags: []tag{
+								{name: "tag1", values: [][]byte{[]byte("value1_dup")}},
+							},
+						},
+					},
+					schemaTagTypes: make(map[string]pbv1.ValueType),
+				},
+			},
+			elementIDsSorted: []uint64{100, 100, 100}, // all duplicates
+			wantElementIDs:   []uint64{100},           // Should result in single element
+			wantLen:          1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qr := &idxResult{
+				data:             tt.data,
+				elementIDsSorted: tt.elementIDsSorted,
+			}
+			result := qr.mergeByTagValue()
+
+			require.Equal(t, tt.wantLen, result.Len(), "unexpected length")
+			require.Equal(t, tt.wantElementIDs, result.ElementIDs, "unexpected element IDs - duplicates should be removed")
+			// Verify no duplicate element IDs
+			seen := make(map[uint64]bool)
+			for _, id := range result.ElementIDs {
+				require.False(t, seen[id], "duplicate element ID found: %d", id)
+				seen[id] = true
 			}
 		})
 	}

@@ -45,6 +45,7 @@ func Initialize(addr string, now time.Time) {
 	// stream
 	casesstreamdata.Write(conn, "sw", now, interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
+	casesstreamdata.WriteDeduplicationTest(conn, "deduplication_test", now, time.Millisecond)
 	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
 	casesstreamdata.WriteMixed(conn, now.Add(2*time.Minute), interval,
 		casesstreamdata.WriteSpec{
