@@ -114,10 +114,6 @@ type IomonitorSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type IomonitorProgramSpecs struct {
-	FentryPread64                     *ebpf.ProgramSpec `ebpf:"fentry_pread64"`
-	FentryRead                        *ebpf.ProgramSpec `ebpf:"fentry_read"`
-	FexitPread64                      *ebpf.ProgramSpec `ebpf:"fexit_pread64"`
-	FexitRead                         *ebpf.ProgramSpec `ebpf:"fexit_read"`
 	TraceDirectReclaimBegin           *ebpf.ProgramSpec `ebpf:"trace_direct_reclaim_begin"`
 	TraceEnterFadvise64               *ebpf.ProgramSpec `ebpf:"trace_enter_fadvise64"`
 	TraceEnterPread64Tp               *ebpf.ProgramSpec `ebpf:"trace_enter_pread64_tp"`
@@ -213,10 +209,6 @@ type IomonitorVariables struct {
 //
 // It can be passed to LoadIomonitorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type IomonitorPrograms struct {
-	FentryPread64                     *ebpf.Program `ebpf:"fentry_pread64"`
-	FentryRead                        *ebpf.Program `ebpf:"fentry_read"`
-	FexitPread64                      *ebpf.Program `ebpf:"fexit_pread64"`
-	FexitRead                         *ebpf.Program `ebpf:"fexit_read"`
 	TraceDirectReclaimBegin           *ebpf.Program `ebpf:"trace_direct_reclaim_begin"`
 	TraceEnterFadvise64               *ebpf.Program `ebpf:"trace_enter_fadvise64"`
 	TraceEnterPread64Tp               *ebpf.Program `ebpf:"trace_enter_pread64_tp"`
@@ -232,10 +224,6 @@ type IomonitorPrograms struct {
 
 func (p *IomonitorPrograms) Close() error {
 	return _IomonitorClose(
-		p.FentryPread64,
-		p.FentryRead,
-		p.FexitPread64,
-		p.FexitRead,
 		p.TraceDirectReclaimBegin,
 		p.TraceEnterFadvise64,
 		p.TraceEnterPread64Tp,

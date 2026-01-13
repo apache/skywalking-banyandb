@@ -19,7 +19,7 @@
 
 package ebpf
 
-// Enhanced loader with fentry/fexit support and intelligent fallback.
+// Enhanced loader with tracepoint-based eBPF program attachment.
 
 import (
 	"fmt"
@@ -70,8 +70,6 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 			features.KernelVersion.Minor,
 			features.KernelVersion.Patch)),
 		zap.Bool("BTF", features.HasBTF),
-		zap.Bool("fentry", features.HasFentry),
-		zap.String("best_mode", AttachmentModeString(features)),
 	)
 
 	return &EnhancedLoader{
@@ -161,98 +159,69 @@ func (l *EnhancedLoader) AttachPrograms() error {
 	return nil
 }
 
-// attachFadviseWithFallback tries fentry -> tracepoint -> kprobe.
+// attachFadviseWithFallback attaches fadvise monitoring using tracepoints.
 func (l *EnhancedLoader) attachFadviseWithFallback() error {
 	funcName := "fadvise64"
 
-	// Try tracepoints (stable API)
-	if l.objects.TraceEnterFadvise64 != nil && l.objects.TraceExitFadvise64 != nil {
-		tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64",
-			l.objects.TraceEnterFadvise64, nil)
-		if err == nil {
-			l.links = append(l.links, tpEnter)
-
-			tpExit, exitErr := link.Tracepoint("syscalls", "sys_exit_fadvise64",
-				l.objects.TraceExitFadvise64, nil)
-			if exitErr == nil {
-				l.links = append(l.links, tpExit)
-				l.attachmentModes[funcName] = attachModeTracepoint
-				l.logger.Info("Attached fadvise monitoring using tracepoints")
-				return nil
-			}
-			// Cleanup enter if exit fails
-			tpEnter.Close()
-			l.links = l.links[:len(l.links)-1]
-		}
-		l.logger.Debug("Tracepoint attachment failed, trying kprobe", zap.Error(err))
+	if l.objects.TraceEnterFadvise64 == nil || l.objects.TraceExitFadvise64 == nil {
+		return fmt.Errorf("fadvise tracepoint programs not loaded")
 	}
 
-	return fmt.Errorf("failed to attach fadvise monitoring")
+	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_fadvise64",
+		l.objects.TraceEnterFadvise64, nil)
+	if err != nil {
+		return fmt.Errorf("failed to attach sys_enter_fadvise64: %w", err)
+	}
+	l.links = append(l.links, tpEnter)
+
+	tpExit, err := link.Tracepoint("syscalls", "sys_exit_fadvise64",
+		l.objects.TraceExitFadvise64, nil)
+	if err != nil {
+		// Cleanup enter if exit fails
+		tpEnter.Close()
+		l.links = l.links[:len(l.links)-1]
+		return fmt.Errorf("failed to attach sys_exit_fadvise64: %w", err)
+	}
+	l.links = append(l.links, tpExit)
+	l.attachmentModes[funcName] = attachModeTracepoint
+	l.logger.Info("Attached fadvise monitoring using tracepoints")
+	return nil
 }
 
-// attachReadLatencyWithFallback tries fentry -> tracepoint for read and pread64.
+// attachReadLatencyWithFallback attaches tracepoints for read and pread64.
 func (l *EnhancedLoader) attachReadLatencyWithFallback() error {
-	if err := l.attachSyscallLatencyWithFallback("read",
-		l.objects.FentryRead, l.objects.FexitRead,
+	if err := l.attachSyscallLatency("read",
 		l.objects.TraceEnterReadTp, l.objects.TraceExitReadTp); err != nil {
 		return err
 	}
 
-	return l.attachSyscallLatencyWithFallback("pread64",
-		l.objects.FentryPread64, l.objects.FexitPread64,
+	return l.attachSyscallLatency("pread64",
 		l.objects.TraceEnterPread64Tp, l.objects.TraceExitPread64Tp)
 }
 
-func (l *EnhancedLoader) attachSyscallLatencyWithFallback(syscallName string, fentryProg, fexitProg, tpEnterProg, tpExitProg *ebpf.Program) error {
+func (l *EnhancedLoader) attachSyscallLatency(syscallName string, tpEnterProg, tpExitProg *ebpf.Program) error {
 	attachmentKey := "syscall_" + syscallName
 
-	if l.features.HasFentry && fentryProg != nil && fexitProg != nil {
-		fentryLink, err := link.AttachTracing(link.TracingOptions{
-			Program: fentryProg,
-		})
-		if err == nil {
-			fexitLink, exitErr := link.AttachTracing(link.TracingOptions{
-				Program: fexitProg,
-			})
-			if exitErr == nil {
-				l.links = append(l.links, fentryLink, fexitLink)
-				l.attachmentModes[attachmentKey] = "fentry/fexit"
-				l.logger.Info("Attached syscall latency using fentry/fexit", zap.String("syscall", syscallName))
-				return nil
-			}
-			_ = fentryLink.Close()
-			l.logger.Debug("fexit attachment failed, falling back to tracepoint",
-				zap.String("syscall", syscallName),
-				zap.Error(exitErr))
-		} else {
-			l.logger.Debug("fentry attachment failed, falling back to tracepoint",
-				zap.String("syscall", syscallName),
-				zap.Error(err))
-		}
+	if tpEnterProg == nil || tpExitProg == nil {
+		return fmt.Errorf("tracepoint programs for %s not loaded", syscallName)
 	}
 
-	if tpEnterProg != nil && tpExitProg != nil {
-		tpEnter, err := link.Tracepoint("syscalls", "sys_enter_"+syscallName, tpEnterProg, nil)
-		if err == nil {
-			tpExit, exitErr := link.Tracepoint("syscalls", "sys_exit_"+syscallName, tpExitProg, nil)
-			if exitErr == nil {
-				l.links = append(l.links, tpEnter, tpExit)
-				l.attachmentModes[attachmentKey] = attachModeTracepoint
-				l.logger.Info("Attached syscall latency using tracepoints", zap.String("syscall", syscallName))
-				return nil
-			}
-			_ = tpEnter.Close()
-			l.logger.Debug("Tracepoint exit attachment failed",
-				zap.String("syscall", syscallName),
-				zap.Error(exitErr))
-		} else {
-			l.logger.Debug("Tracepoint enter attachment failed",
-				zap.String("syscall", syscallName),
-				zap.Error(err))
-		}
+	tpEnter, err := link.Tracepoint("syscalls", "sys_enter_"+syscallName, tpEnterProg, nil)
+	if err != nil {
+		return fmt.Errorf("failed to attach sys_enter_%s: %w", syscallName, err)
 	}
+	l.links = append(l.links, tpEnter)
 
-	return fmt.Errorf("failed to attach latency probes for syscall %s", syscallName)
+	tpExit, err := link.Tracepoint("syscalls", "sys_exit_"+syscallName, tpExitProg, nil)
+	if err != nil {
+		_ = tpEnter.Close()
+		l.links = l.links[:len(l.links)-1]
+		return fmt.Errorf("failed to attach sys_exit_%s: %w", syscallName, err)
+	}
+	l.links = append(l.links, tpExit)
+	l.attachmentModes[attachmentKey] = attachModeTracepoint
+	l.logger.Info("Attached syscall latency using tracepoints", zap.String("syscall", syscallName))
+	return nil
 }
 
 // attachCacheWithFallback attaches cache monitoring tracepoints.

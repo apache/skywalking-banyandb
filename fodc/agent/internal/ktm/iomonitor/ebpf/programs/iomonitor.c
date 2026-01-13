@@ -327,31 +327,7 @@ static __always_inline int trace_exit_pread(int ret) {
 }
 
 // =========================================================================================
-// Fentry/Fexit: Read / Pread Latency
-// =========================================================================================
-
-SEC("fentry/__x64_sys_read")
-int BPF_PROG(fentry_read, unsigned int fd, const char *buf, size_t count) {
-    return trace_enter_read();
-}
-
-SEC("fexit/__x64_sys_read")
-int BPF_PROG(fexit_read, unsigned int fd, const char *buf, size_t count, long ret) {
-    return trace_exit_read((int)ret);
-}
-
-SEC("fentry/__x64_sys_pread64")
-int BPF_PROG(fentry_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos) {
-    return trace_enter_pread();
-}
-
-SEC("fexit/__x64_sys_pread64")
-int BPF_PROG(fexit_pread64, unsigned int fd, const char *buf, size_t count, loff_t pos, long ret) {
-    return trace_exit_pread((int)ret);
-}
-
-// =========================================================================================
-// Tracepoints: Read / Pread Latency (fallback)
+// Tracepoints: Read / Pread Latency (stable kernel ABI)
 // =========================================================================================
 
 SEC("tracepoint/syscalls/sys_enter_read")
