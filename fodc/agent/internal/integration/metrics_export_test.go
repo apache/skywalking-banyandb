@@ -23,6 +23,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +32,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 )
@@ -571,6 +577,191 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 					Expect(len(lastMetrics)).To(BeNumerically(">", 0),
 						"Last scrape should have metrics")
 				}
+			}
+		}
+	})
+
+	It("should capture and export KTM metrics when enabled", func() {
+		if runtime.GOOS != "linux" {
+			Skip("KTM is only supported on Linux")
+		}
+
+		// Initialize KTM for this test
+		ctx := context.Background()
+		ktmInterval := 2 * time.Second
+		
+		ktmCfg := ktm.Config{
+			Enabled:  true,
+			Interval: ktmInterval,
+			Modules:  []string{"iomonitor"},
+			EBPF:     iomonitor.EBPFConfig{},
+		}
+
+		zapLog, zapErr := zap.NewProduction()
+		Expect(zapErr).NotTo(HaveOccurred())
+		defer zapLog.Sync()
+
+		ktmSvc, createErr := ktm.NewKTM(ktmCfg, zapLog)
+		if createErr != nil {
+			Skip(fmt.Sprintf("KTM initialization failed (may lack permissions): %v", createErr))
+		}
+
+		startErr := ktmSvc.Start(ctx)
+		if startErr != nil {
+			Skip(fmt.Sprintf("KTM start failed (may lack CAP_BPF or root): %v", startErr))
+		}
+		defer ktmSvc.Stop()
+
+		// Start metrics bridge goroutine
+		stopBridgeCh := make(chan struct{})
+		defer close(stopBridgeCh)
+		
+		go func() {
+			ticker := time.NewTicker(ktmInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopBridgeCh:
+					return
+				case <-ticker.C:
+					store := ktmSvc.GetMetrics()
+					if store == nil {
+						continue
+					}
+					rawMetrics := ktm.ToRawMetrics(store)
+					ktmStatus := 2.0
+					if ktmSvc.IsDegraded() {
+						ktmStatus = 1.0
+					}
+					rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
+						Name:  "ktm_status",
+						Value: ktmStatus,
+						Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+					})
+					if len(rawMetrics) > 0 {
+						_ = fr.Update(rawMetrics)
+					}
+				}
+			}
+		}()
+
+		// Create a temporary file to generate I/O operations for KTM to capture
+		tmpFile, tmpErr := os.CreateTemp("", "ktm-test-*.dat")
+		Expect(tmpErr).NotTo(HaveOccurred())
+		tmpFilePath := tmpFile.Name()
+		defer os.Remove(tmpFilePath)
+
+		// Write some data to generate I/O
+		testData := make([]byte, 4096)
+		for i := range testData {
+			testData[i] = byte(i % 256)
+		}
+		_, writeErr := tmpFile.Write(testData)
+		Expect(writeErr).NotTo(HaveOccurred())
+		tmpFile.Close()
+
+		// Read the file multiple times to generate read I/O
+		for i := 0; i < 10; i++ {
+			readFile, readErr := os.Open(tmpFilePath)
+			Expect(readErr).NotTo(HaveOccurred())
+			readData := make([]byte, 4096)
+			_, _ = readFile.Read(readData)
+			readFile.Close()
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// Wait for KTM to collect metrics
+		Eventually(func() bool {
+			datasources := fr.GetDatasources()
+			if len(datasources) == 0 {
+				return false
+			}
+			ds := datasources[0]
+			metricsMap := ds.GetMetrics()
+			
+			// Check if any KTM metrics are present
+			for metricKey := range metricsMap {
+				if strings.Contains(metricKey, "ktm_") {
+					return true
+				}
+			}
+			return false
+		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "KTM metrics should be buffered in FlightRecorder")
+
+		// Verify KTM metrics are in FlightRecorder
+		datasources := fr.GetDatasources()
+		Expect(datasources).NotTo(BeEmpty())
+		ds := datasources[0]
+		metricsMap := ds.GetMetrics()
+
+		// Check for ktm_status metric
+		ktmStatusFound := false
+		for metricKey := range metricsMap {
+			if strings.Contains(metricKey, "ktm_status") {
+				ktmStatusFound = true
+				metricBuffer := metricsMap[metricKey]
+				currentValue := metricBuffer.GetCurrentValue()
+				// ktm_status should be 1 (Degraded) or 2 (Full), not 0 (Disabled)
+				Expect(currentValue).To(BeNumerically(">=", 1.0), "KTM should be enabled (status >= 1)")
+				Expect(currentValue).To(BeNumerically("<=", 2.0), "KTM status should be valid (status <= 2)")
+				GinkgoWriter.Printf("KTM status: %.0f\n", currentValue)
+				break
+			}
+		}
+		Expect(ktmStatusFound).To(BeTrue(), "ktm_status metric should be present")
+
+		// Scrape Prometheus endpoint and verify KTM metrics are exported
+		fodcMetricsURL := fmt.Sprintf("http://%s/metrics", metricsServerAddr)
+		scrapeClient := &http.Client{Timeout: 5 * time.Second}
+
+		resp, scrapeErr := scrapeClient.Get(fodcMetricsURL)
+		Expect(scrapeErr).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		Expect(readErr).NotTo(HaveOccurred())
+
+		body := string(bodyBytes)
+		GinkgoWriter.Printf("Scraped metrics (KTM test):\n%s\n", body)
+
+		// Parse metrics
+		bodyWithoutTimestamps := stripTimestampsFromPrometheusFormat(body)
+		parsedMetrics, parseErr := metrics.Parse(bodyWithoutTimestamps)
+		Expect(parseErr).NotTo(HaveOccurred())
+
+		// Verify KTM metrics are present in exported format
+		ktmMetricsFound := make(map[string]bool)
+		expectedKTMMetrics := []string{
+			"ktm_status",
+			"ktm_degraded",
+		}
+
+		for _, parsedMetric := range parsedMetrics {
+			for _, expectedMetric := range expectedKTMMetrics {
+				if parsedMetric.Name == expectedMetric {
+					ktmMetricsFound[expectedMetric] = true
+					GinkgoWriter.Printf("Found KTM metric: %s = %.2f\n", parsedMetric.Name, parsedMetric.Value)
+				}
+			}
+			// Also check for any other ktm_ prefixed metrics
+			if strings.HasPrefix(parsedMetric.Name, "ktm_") {
+				GinkgoWriter.Printf("Additional KTM metric: %s = %.2f\n", parsedMetric.Name, parsedMetric.Value)
+			}
+		}
+
+		// Verify at least the core KTM metrics are present
+		Expect(ktmMetricsFound["ktm_status"]).To(BeTrue(), "ktm_status should be exported")
+		Expect(ktmMetricsFound["ktm_degraded"]).To(BeTrue(), "ktm_degraded should be exported")
+
+		// Verify ktm_status value in exported metrics matches FlightRecorder
+		for _, parsedMetric := range parsedMetrics {
+			if parsedMetric.Name == "ktm_status" {
+				Expect(parsedMetric.Value).To(BeNumerically(">=", 1.0), "Exported ktm_status should indicate KTM is enabled")
+				Expect(parsedMetric.Value).To(BeNumerically("<=", 2.0), "Exported ktm_status should be valid")
 			}
 		}
 	})
