@@ -37,7 +37,7 @@ lists:
           - key: entity_id
             value:
               str:
-                value: entity_3
+                value: entity_1
         value:
           int:
-            value: "300"
+            value: "100"
