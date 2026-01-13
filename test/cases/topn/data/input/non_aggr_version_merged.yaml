@@ -19,4 +19,5 @@ name: "endpoint_resp_time_minute_top_bottom_100"
 groups: ["sw_metric"]
 topN: 3
 fieldValueSort: 2
+agg: 0
 
