@@ -442,6 +442,46 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 	return nil
 }
 
+// cleanupStreams cleans up streams without stopping the connection manager.
+func (c *Client) cleanupStreams() {
+	c.streamsMu.Lock()
+	if c.heartbeatTicker != nil {
+		c.heartbeatTicker.Stop()
+		c.heartbeatTicker = nil
+	}
+
+	oldStopCh := c.stopCh
+	c.stopCh = make(chan struct{})
+	c.streamsMu.Unlock()
+
+	if oldStopCh != nil {
+		select {
+		case <-oldStopCh:
+		default:
+			close(oldStopCh)
+		}
+	}
+
+	c.heartbeatWg.Wait()
+
+	c.streamsMu.Lock()
+	if c.registrationStream != nil {
+		if closeErr := c.registrationStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing registration stream")
+		}
+		c.registrationStream = nil
+	}
+
+	if c.metricsStream != nil {
+		if closeErr := c.metricsStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
+		}
+		c.metricsStream = nil
+	}
+	c.client = nil
+	c.streamsMu.Unlock()
+}
+
 // Disconnect closes connection to Proxy.
 func (c *Client) Disconnect() error {
 	c.streamsMu.Lock()
@@ -493,11 +533,11 @@ func (c *Client) Disconnect() error {
 func (c *Client) Start(ctx context.Context) error {
 	c.connManager.start(ctx)
 
-	c.streamsMu.RLock()
-	stopCh := c.stopCh
-	c.streamsMu.RUnlock()
-
 	for {
+		c.streamsMu.RLock()
+		stopCh := c.stopCh
+		c.streamsMu.RUnlock()
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -514,18 +554,14 @@ func (c *Client) Start(ctx context.Context) error {
 
 		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
 			c.logger.Error().Err(regErr).Msg("Failed to start registration stream, reconnecting...")
-			if disconnectErr := c.Disconnect(); disconnectErr != nil {
-				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
-			}
+			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
 
 		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
-			if disconnectErr := c.Disconnect(); disconnectErr != nil {
-				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
-			}
+			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
@@ -682,6 +718,9 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	if connResult.err != nil {
 		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
+		if disconnectErr := c.Disconnect(); disconnectErr != nil {
+			c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect")
+		}
 		return
 	}
 
