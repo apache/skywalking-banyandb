@@ -41,6 +41,7 @@ import (
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 // volatileMetricNames contains names of metrics that are known to be volatile (gauges that change frequently).
@@ -106,6 +107,15 @@ func calculateTolerance(metricKeyStr string, bufferedValue float64) float64 {
 		return percentTolerance
 	}
 	return absTolerance
+}
+
+func skipOrFailKTM(reason string) {
+	if flags.RequireKTM {
+		Fail(reason)
+		return
+	}
+	GinkgoWriter.Printf("Skipping KTM integration test: %s\n", reason)
+	Skip(reason)
 }
 
 var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
@@ -582,7 +592,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 	It("should capture and export KTM metrics when enabled", func() {
 		if runtime.GOOS != "linux" {
-			Skip("KTM is only supported on Linux")
+			skipOrFailKTM("KTM is only supported on Linux")
+			return
 		}
 
 		// Initialize KTM for this test
@@ -602,12 +613,14 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		ktmSvc, createErr := ktm.NewKTM(ktmCfg, zapLog)
 		if createErr != nil {
-			Skip(fmt.Sprintf("KTM initialization failed (may lack permissions): %v", createErr))
+			skipOrFailKTM(fmt.Sprintf("KTM initialization failed (may lack permissions): %v", createErr))
+			return
 		}
 
 		startErr := ktmSvc.Start(ctx)
 		if startErr != nil {
-			Skip(fmt.Sprintf("KTM start failed (may lack CAP_BPF or root): %v", startErr))
+			skipOrFailKTM(fmt.Sprintf("KTM start failed (may lack CAP_BPF or root): %v", startErr))
+			return
 		}
 		defer ktmSvc.Stop()
 
