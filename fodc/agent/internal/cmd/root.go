@@ -372,6 +372,9 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 					continue
 				}
 				rawMetrics := ktm.ToRawMetrics(store)
+				if len(rawMetrics) == 0 {
+					continue
+				}
 				// Add ktm_status metric: 2=Full, 1=Degraded
 				ktmStatus := 2.0 // Full mode (cgroup+comm)
 				if ktmSvc.IsDegraded() {
