@@ -32,12 +32,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -604,14 +603,10 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			Enabled:  true,
 			Interval: ktmInterval,
 			Modules:  []string{"iomonitor"},
-			EBPF:     iomonitor.EBPFConfig{},
 		}
 
-		zapLog, zapErr := zap.NewProduction()
-		Expect(zapErr).NotTo(HaveOccurred())
-		defer zapLog.Sync()
-
-		ktmSvc, createErr := ktm.NewKTM(ktmCfg, zapLog)
+		ktmLog := zerolog.New(io.Discard)
+		ktmSvc, createErr := ktm.NewKTM(ktmCfg, ktmLog)
 		if createErr != nil {
 			skipOrFailKTM(fmt.Sprintf("KTM initialization failed (may lack permissions): %v", createErr))
 			return
@@ -651,7 +646,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 					rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
 						Name:  "ktm_status",
 						Value: ktmStatus,
-						Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+						Desc:  "KTM status: 1=Degraded (comm-only), 2=Full (cgroup+comm)",
 					})
 					if len(rawMetrics) > 0 {
 						_ = fr.Update(rawMetrics)

@@ -37,6 +37,5 @@ func DefaultConfig() Config {
 		Enabled:  false,
 		Interval: 10 * time.Second,
 		Modules:  []string{"iomonitor"},
-		EBPF:     iomonitor.EBPFConfig{},
 	}
 }

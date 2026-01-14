@@ -28,7 +28,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 )
@@ -45,14 +45,14 @@ type EnhancedLoader struct {
 	spec            *ebpf.CollectionSpec
 	objects         *generated.IomonitorObjects
 	features        *KernelFeatures
-	logger          *zap.Logger
+	logger          zerolog.Logger
 	cgroupPath      string
 	links           []link.Link
 	degraded        bool
 }
 
 // NewEnhancedLoader creates a new enhanced eBPF program loader.
-func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
+func NewEnhancedLoader(log zerolog.Logger) (*EnhancedLoader, error) {
 	// Remove memory limit for eBPF
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("failed to remove memlock limit: %w", err)
@@ -64,18 +64,18 @@ func NewEnhancedLoader(logger *zap.Logger) (*EnhancedLoader, error) {
 		return nil, fmt.Errorf("failed to detect kernel features: %w", err)
 	}
 
-	logger.Info("Detected kernel features",
-		zap.String("version", fmt.Sprintf("%d.%d.%d",
+	log.Info().
+		Str("version", fmt.Sprintf("%d.%d.%d",
 			features.KernelVersion.Major,
 			features.KernelVersion.Minor,
-			features.KernelVersion.Patch)),
-		zap.Bool("BTF", features.HasBTF),
-	)
+			features.KernelVersion.Patch)).
+		Bool("BTF", features.HasBTF).
+		Msg("Detected kernel features")
 
 	return &EnhancedLoader{
 		links:           make([]link.Link, 0),
 		features:        features,
-		logger:          logger,
+		logger:          log,
 		attachmentModes: make(map[string]string),
 		cgroupPath:      "",
 	}, nil
@@ -136,13 +136,13 @@ func (l *EnhancedLoader) AttachPrograms() error {
 
 	// Attach fadvise monitoring
 	if err := l.attachFadviseWithFallback(); err != nil {
-		l.logger.Error("Failed to attach fadvise monitoring", zap.Error(err))
+		l.logger.Error().Err(err).Msg("Failed to attach fadvise monitoring")
 		return err
 	}
 
 	// Attach read latency monitoring
 	if err := l.attachReadLatencyWithFallback(); err != nil {
-		l.logger.Error("Failed to attach read latency monitoring", zap.Error(err))
+		l.logger.Error().Err(err).Msg("Failed to attach read latency monitoring")
 		return err
 	}
 
@@ -153,8 +153,7 @@ func (l *EnhancedLoader) AttachPrograms() error {
 	l.attachCacheWithFallback()
 
 	// Log attachment summary
-	l.logger.Info("eBPF programs attached successfully",
-		zap.Any("attachment_modes", l.attachmentModes))
+	l.logger.Info().Any("attachment_modes", l.attachmentModes).Msg("eBPF programs attached successfully")
 
 	return nil
 }
@@ -184,7 +183,7 @@ func (l *EnhancedLoader) attachFadviseWithFallback() error {
 	}
 	l.links = append(l.links, tpExit)
 	l.attachmentModes[funcName] = attachModeTracepoint
-	l.logger.Info("Attached fadvise monitoring using tracepoints")
+	l.logger.Info().Msg("Attached fadvise monitoring using tracepoints")
 	return nil
 }
 
@@ -220,7 +219,7 @@ func (l *EnhancedLoader) attachSyscallLatency(syscallName string, tpEnterProg, t
 	}
 	l.links = append(l.links, tpExit)
 	l.attachmentModes[attachmentKey] = attachModeTracepoint
-	l.logger.Info("Attached syscall latency using tracepoints", zap.String("syscall", syscallName))
+	l.logger.Info().Str("syscall", syscallName).Msg("Attached syscall latency using tracepoints")
 	return nil
 }
 
@@ -231,9 +230,9 @@ func (l *EnhancedLoader) attachCacheWithFallback() {
 		if err == nil {
 			l.links = append(l.links, tp)
 			l.attachmentModes["filemap_lookup"] = attachModeTracepoint
-			l.logger.Info("Attached cache lookup monitoring using tracepoint")
+			l.logger.Info().Msg("Attached cache lookup monitoring using tracepoint")
 		} else {
-			l.logger.Debug("Failed to attach mm_filemap_get_pages", zap.Error(err))
+			l.logger.Debug().Err(err).Msg("Failed to attach mm_filemap_get_pages")
 		}
 	}
 
@@ -242,9 +241,9 @@ func (l *EnhancedLoader) attachCacheWithFallback() {
 		if err == nil {
 			l.links = append(l.links, tp)
 			l.attachmentModes["page_cache_add"] = attachModeTracepoint
-			l.logger.Info("Attached cache fill monitoring using tracepoint")
+			l.logger.Info().Msg("Attached cache fill monitoring using tracepoint")
 		} else {
-			l.logger.Debug("Failed to attach mm_filemap_add_to_page_cache", zap.Error(err))
+			l.logger.Debug().Err(err).Msg("Failed to attach mm_filemap_add_to_page_cache")
 		}
 	}
 
@@ -253,9 +252,9 @@ func (l *EnhancedLoader) attachCacheWithFallback() {
 		if err == nil {
 			l.links = append(l.links, tp)
 			l.attachmentModes["page_cache_delete"] = attachModeTracepoint
-			l.logger.Info("Attached cache delete monitoring using tracepoint")
+			l.logger.Info().Msg("Attached cache delete monitoring using tracepoint")
 		} else {
-			l.logger.Debug("Failed to attach mm_filemap_delete_from_page_cache", zap.Error(err))
+			l.logger.Debug().Err(err).Msg("Failed to attach mm_filemap_delete_from_page_cache")
 		}
 	}
 }
@@ -304,12 +303,13 @@ func (l *EnhancedLoader) setDegradedState(degraded bool, reason string) {
 	}
 	l.degraded = degraded
 	if degraded {
-		l.logger.Warn("KTM is running in Degraded mode (comm-only) due to Cgroup detection failure. Data isolation in K8s pods cannot be guaranteed.",
-			zap.String("cgroup_path", l.cgroupPath),
-			zap.String("reason", reason))
+		l.logger.Warn().
+			Str("cgroup_path", l.cgroupPath).
+			Str("reason", reason).
+			Msg("KTM is running in Degraded mode (comm-only) due to Cgroup detection failure. Data isolation in K8s pods cannot be guaranteed.")
 		return
 	}
-	l.logger.Info("KTM recovered: cgroup scoping restored")
+	l.logger.Info().Msg("KTM recovered: cgroup scoping restored")
 }
 
 // Close cleans up all resources.

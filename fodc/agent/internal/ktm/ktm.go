@@ -21,7 +21,7 @@ import (
 	"context"
 	"fmt"
 
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
@@ -29,16 +29,16 @@ import (
 
 // KTM represents the Kernel Trace Module.
 type KTM struct {
-	logger    *zap.Logger
+	logger    zerolog.Logger
 	collector *iomonitor.Collector
 	stopCh    chan struct{}
 	config    Config
 }
 
 // NewKTM creates a new KTM instance.
-func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
+func NewKTM(cfg Config, log zerolog.Logger) (*KTM, error) {
 	if !cfg.Enabled {
-		return &KTM{config: cfg, logger: logger}, nil
+		return &KTM{config: cfg, logger: log}, nil
 	}
 
 	// Convert KTM config to Collector config
@@ -48,14 +48,14 @@ func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
 		Interval: cfg.Interval,
 	}
 
-	col, err := iomonitor.New(collectorConfig, logger)
+	col, err := iomonitor.New(collectorConfig, log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create collector: %w", err)
 	}
 
 	return &KTM{
 		config:    cfg,
-		logger:    logger,
+		logger:    log,
 		collector: col,
 		stopCh:    make(chan struct{}),
 	}, nil
@@ -64,11 +64,11 @@ func NewKTM(cfg Config, logger *zap.Logger) (*KTM, error) {
 // Start starts the KTM module.
 func (k *KTM) Start(ctx context.Context) error {
 	if !k.config.Enabled {
-		k.logger.Info("KTM module is disabled")
+		k.logger.Info().Msg("KTM module is disabled")
 		return nil
 	}
 
-	k.logger.Info("Starting KTM module")
+	k.logger.Info().Msg("Starting KTM module")
 	if err := k.collector.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start collector: %w", err)
 	}
@@ -82,7 +82,7 @@ func (k *KTM) Stop() error {
 		return nil
 	}
 
-	k.logger.Info("Stopping KTM module")
+	k.logger.Info().Msg("Stopping KTM module")
 	close(k.stopCh)
 	return k.collector.Close()
 }

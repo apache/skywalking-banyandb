@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"math"
 
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
@@ -31,22 +31,22 @@ import (
 )
 
 type module struct {
-	logger     *zap.Logger
+	logger     zerolog.Logger
 	loader     *ebpf.EnhancedLoader
 	objs       *generated.IomonitorObjects
 	name       string
 	cgroupPath string
 }
 
-func newModule(logger *zap.Logger, ebpfCfg EBPFConfig) (*module, error) {
-	ebpfLoader, err := ebpf.NewEnhancedLoader(logger)
+func newModule(log zerolog.Logger, ebpfCfg EBPFConfig) (*module, error) {
+	ebpfLoader, err := ebpf.NewEnhancedLoader(log)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create eBPF loader: %w", err)
 	}
 
 	return &module{
 		name:       "iomonitor",
-		logger:     logger,
+		logger:     log,
 		loader:     ebpfLoader,
 		cgroupPath: ebpfCfg.CgroupPath,
 	}, nil
@@ -59,12 +59,11 @@ func (m *module) Name() string {
 
 // Start loads and attaches the eBPF programs.
 func (m *module) Start() error {
-	m.logger.Info("Starting I/O monitor module")
+	m.logger.Info().Msg("Starting I/O monitor module")
 
 	// Configure cgroup filtering if requested.
 	if m.cgroupPath != "" {
-		m.logger.Info("Enabling cgroup filter for eBPF programs",
-			zap.String("cgroup_path", m.cgroupPath))
+		m.logger.Info().Str("cgroup_path", m.cgroupPath).Msg("Enabling cgroup filter for eBPF programs")
 		m.loader.SetCgroupPath(m.cgroupPath)
 	}
 
@@ -84,17 +83,17 @@ func (m *module) Start() error {
 		return fmt.Errorf("failed to get eBPF objects")
 	}
 
-	m.logger.Info("I/O monitor module started successfully")
+	m.logger.Info().Msg("I/O monitor module started successfully")
 	return nil
 }
 
 // Stop cleans up the module.
 func (m *module) Stop() error {
-	m.logger.Info("Stopping I/O monitor module")
+	m.logger.Info().Msg("Stopping I/O monitor module")
 
 	if m.loader != nil {
 		if err := m.loader.Close(); err != nil {
-			m.logger.Error("Failed to close eBPF loader", zap.Error(err))
+			m.logger.Error().Err(err).Msg("Failed to close eBPF loader")
 		}
 	}
 
@@ -135,21 +134,21 @@ func (m *module) addDegradedMetric(ms *metrics.MetricSet) {
 // collectMetrics collects metrics from all maps without clearing them.
 func (m *module) collectMetrics(ms *metrics.MetricSet) {
 	if err := m.collectFadviseStats(ms); err != nil {
-		m.logger.Debug("Failed to collect fadvise stats", zap.Error(err))
+		m.logger.Debug().Err(err).Msg("Failed to collect fadvise stats")
 	}
 
 	if err := m.collectCacheStats(ms); err != nil {
-		m.logger.Debug("Failed to collect cache stats", zap.Error(err))
+		m.logger.Debug().Err(err).Msg("Failed to collect cache stats")
 	}
 
 	m.collectMemoryStats(ms)
 
 	if err := m.collectReadLatencyStats(ms); err != nil {
-		m.logger.Debug("Failed to collect read latency stats", zap.Error(err))
+		m.logger.Debug().Err(err).Msg("Failed to collect read latency stats")
 	}
 
 	if err := m.collectPreadLatencyStats(ms); err != nil {
-		m.logger.Debug("Failed to collect pread latency stats", zap.Error(err))
+		m.logger.Debug().Err(err).Msg("Failed to collect pread latency stats")
 	}
 }
 

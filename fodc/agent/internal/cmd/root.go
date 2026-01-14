@@ -31,12 +31,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
@@ -343,18 +341,12 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 	}
 
 	ktmCfg := ktm.Config{
-		Enabled:  true,
+		Enabled:  ktmEnabled,
 		Interval: ktmInterval,
 		Modules:  ktmModules,
-		EBPF:     iomonitor.EBPFConfig{},
 	}
 
-	zapLog, zapErr := zap.NewProduction()
-	if zapErr != nil {
-		return nil, fmt.Errorf("failed to create zap logger: %w", zapErr)
-	}
-
-	ktmSvc, createErr := ktm.NewKTM(ktmCfg, zapLog)
+	ktmSvc, createErr := ktm.NewKTM(ktmCfg, log)
 	if createErr != nil {
 		return nil, fmt.Errorf("failed to create KTM: %w", createErr)
 	}
@@ -388,11 +380,8 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
 					Name:  "ktm_status",
 					Value: ktmStatus,
-					Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+					Desc:  "KTM status: 1=Degraded (comm-only), 2=Full (cgroup+comm)",
 				})
-				if len(rawMetrics) == 0 {
-					continue
-				}
 				if updateErr := fr.Update(rawMetrics); updateErr != nil {
 					log.Warn().Err(updateErr).Msg("Failed to update FlightRecorder with KTM metrics")
 				}

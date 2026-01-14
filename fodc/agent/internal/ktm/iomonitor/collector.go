@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
 )
@@ -44,7 +44,7 @@ type EBPFConfig struct {
 
 // Collector manages eBPF program lifecycle and metrics collection.
 type Collector struct {
-	logger   *zap.Logger
+	logger   zerolog.Logger
 	modules  map[string]Module
 	metrics  *metrics.Store
 	ticker   *time.Ticker
@@ -63,14 +63,14 @@ type Module interface {
 }
 
 // New creates a new collector instance.
-func New(cfg CollectorConfig, logger *zap.Logger) (*Collector, error) {
+func New(cfg CollectorConfig, log zerolog.Logger) (*Collector, error) {
 	if cfg.Interval <= 0 {
 		return nil, fmt.Errorf("collector interval must be positive, got %v", cfg.Interval)
 	}
 
 	c := &Collector{
 		config:   cfg,
-		logger:   logger,
+		logger:   log,
 		modules:  make(map[string]Module),
 		metrics:  metrics.NewStore(),
 		stopChan: make(chan struct{}),
@@ -100,8 +100,7 @@ func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error
 		return module, nil
 	case "fadvise", "memory", "cache":
 		// These are all handled by iomonitor now
-		c.logger.Warn("Module is deprecated, use 'iomonitor' instead",
-			zap.String("module", name))
+		c.logger.Warn().Str("module", name).Msg("Module is deprecated, use 'iomonitor' instead")
 		return nil, fmt.Errorf("module %s is deprecated, use 'iomonitor' instead", name)
 	default:
 		return nil, fmt.Errorf("unknown module: %s", name)
@@ -110,14 +109,14 @@ func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error
 
 // Start starts the collector.
 func (c *Collector) Start(ctx context.Context) error {
-	c.logger.Info("Starting collector")
+	c.logger.Info().Msg("Starting collector")
 
 	// Start all modules
 	for name, module := range c.modules {
 		if err := module.Start(); err != nil {
 			return fmt.Errorf("failed to start module %s: %w", name, err)
 		}
-		c.logger.Info("Started module", zap.String("module", name))
+		c.logger.Info().Str("module", name).Msg("Started module")
 	}
 
 	// Start collection ticker
@@ -152,17 +151,13 @@ func (c *Collector) Collect() {
 	for name, module := range c.modules {
 		metricSet, err := module.Collect()
 		if err != nil {
-			c.logger.Error("Failed to collect metrics",
-				zap.String("module", name),
-				zap.Error(err))
+			c.logger.Error().Str("module", name).Err(err).Msg("Failed to collect metrics")
 			continue
 		}
 
 		// Store metrics
 		c.metrics.Update(name, metricSet)
-		c.logger.Debug("Collected metrics",
-			zap.String("module", name),
-			zap.Int("count", metricSet.Count()))
+		c.logger.Debug().Str("module", name).Int("count", metricSet.Count()).Msg("Collected metrics")
 	}
 }
 
@@ -190,7 +185,7 @@ func (c *Collector) IsDegraded() bool {
 
 // Close stops the collector and cleans up resources.
 func (c *Collector) Close() error {
-	c.logger.Info("Stopping collector")
+	c.logger.Info().Msg("Stopping collector")
 
 	// Stop ticker
 	if c.ticker != nil {
@@ -206,9 +201,7 @@ func (c *Collector) Close() error {
 	// Stop all modules
 	for name, module := range c.modules {
 		if err := module.Stop(); err != nil {
-			c.logger.Error("Failed to stop module",
-				zap.String("module", name),
-				zap.Error(err))
+			c.logger.Error().Str("module", name).Err(err).Msg("Failed to stop module")
 		}
 	}
 
