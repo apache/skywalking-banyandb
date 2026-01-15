@@ -249,12 +249,17 @@ func (bch *blockCursorHeap) merge(limit int) *model.StreamResult {
 		step = 1
 	}
 	result := &model.StreamResult{}
+	seenElementIDs := make(map[uint64]bool)
 
 	for bch.Len() > 0 {
 		topBC := bch.bcc[0]
-		topBC.copyTo(result)
-		if result.Len() >= limit {
-			break
+		elementID := topBC.elementIDs[topBC.idx]
+		if !seenElementIDs[elementID] {
+			seenElementIDs[elementID] = true
+			topBC.copyTo(result)
+			if result.Len() >= limit {
+				break
+			}
 		}
 		topBC.idx += step
 

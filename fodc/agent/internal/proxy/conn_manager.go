@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	connManagerMaxRetryInterval = 30 * time.Second
+	connManagerMaxRetryInterval = 60 * time.Second
 	connManagerMaxRetries       = 3
 )
 
