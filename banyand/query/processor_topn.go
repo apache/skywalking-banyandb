@@ -43,6 +43,57 @@ type topNQueryProcessor struct {
 	*bus.UnImplementedHealthyListener
 }
 
+type topNQueryContext struct {
+	sourceMeasureSchemas []*databasev1.Measure
+	topNSchemas          []*databasev1.TopNAggregation
+	ecc                  []executor.MeasureExecutionContext
+}
+
+func (t *topNQueryProcessor) prepareGroupsContext(ctx context.Context, request *measurev1.TopNRequest, ml *logger.Logger) (*topNQueryContext, error) {
+	qc := &topNQueryContext{
+		sourceMeasureSchemas: make([]*databasev1.Measure, 0, len(request.Groups)),
+		topNSchemas:          make([]*databasev1.TopNAggregation, 0, len(request.Groups)),
+		ecc:                  make([]executor.MeasureExecutionContext, 0, len(request.Groups)),
+	}
+
+	for _, group := range request.Groups {
+		topNMetadata := &commonv1.Metadata{
+			Name:  request.Name,
+			Group: group,
+		}
+		topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, topNMetadata)
+		if err != nil {
+			t.log.Error().Err(err).
+				Str("group", group).
+				Msg("fail to get execution context")
+			return nil, err
+		}
+		if topNSchema.GetFieldValueSort() != modelv1.Sort_SORT_UNSPECIFIED &&
+			topNSchema.GetFieldValueSort() != request.GetFieldValueSort() {
+			t.log.Warn().Str("group", group).Msg("unmatched sort direction")
+			return nil, err
+		}
+		sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
+		if err != nil {
+			t.log.Error().Err(err).
+				Str("group", group).
+				Msg("fail to find source measure")
+			return nil, err
+		}
+		topNResultMeasure, err := t.measureService.Measure(measure.GetTopNSchemaMetadata(group))
+		if err != nil {
+			ml.Error().Err(err).Str("group", group).Msg("fail to find topn result measure")
+			return nil, err
+		}
+
+		qc.sourceMeasureSchemas = append(qc.sourceMeasureSchemas, sourceMeasure.GetSchema())
+		qc.topNSchemas = append(qc.topNSchemas, topNSchema)
+		qc.ecc = append(qc.ecc, topNResultMeasure)
+	}
+
+	return qc, nil
+}
+
 func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	request, ok := message.Data().(*measurev1.TopNRequest)
 	n := time.Now()
@@ -63,46 +114,12 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		e.Stringer("req", request).Msg("received a topN query event")
 	}
 	// Process all groups
-	var sourceMeasureSchemas []*databasev1.Measure
-	var topNSchemas []*databasev1.TopNAggregation
-	var ecc []executor.MeasureExecutionContext
-
-	for _, group := range request.Groups {
-		topNMetadata := &commonv1.Metadata{
-			Name:  request.Name,
-			Group: group,
-		}
-		topNSchema, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, topNMetadata)
-		if err != nil {
-			t.log.Error().Err(err).
-				Str("group", group).
-				Msg("fail to get execution context")
-			return
-		}
-		if topNSchema.GetFieldValueSort() != modelv1.Sort_SORT_UNSPECIFIED &&
-			topNSchema.GetFieldValueSort() != request.GetFieldValueSort() {
-			t.log.Warn().Str("group", group).Msg("unmatched sort direction")
-			return
-		}
-		sourceMeasure, err := t.measureService.Measure(topNSchema.GetSourceMeasure())
-		if err != nil {
-			t.log.Error().Err(err).
-				Str("group", group).
-				Msg("fail to find source measure")
-			return
-		}
-		topNResultMeasure, err := t.measureService.Measure(measure.GetTopNSchemaMetadata(group))
-		if err != nil {
-			ml.Error().Err(err).Str("group", group).Msg("fail to find topn result measure")
-			return
-		}
-
-		sourceMeasureSchemas = append(sourceMeasureSchemas, sourceMeasure.GetSchema())
-		topNSchemas = append(topNSchemas, topNSchema)
-		ecc = append(ecc, topNResultMeasure)
+	qc, err := t.prepareGroupsContext(ctx, request, ml)
+	if err != nil {
+		return
 	}
 
-	plan, err := logical_measure.TopNAnalyze(request, sourceMeasureSchemas, topNSchemas, ecc)
+	plan, err := logical_measure.TopNAnalyze(request, qc.sourceMeasureSchemas, qc.topNSchemas, qc.ecc)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", request.Name, err))
 		return

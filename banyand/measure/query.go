@@ -858,7 +858,7 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var topNPostAggregator PostProcessor
 
 	if qr.topNQueryOptions != nil {
-		topNPostAggregator = CreateTopNPostAggregator(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
+		topNPostAggregator = CreateTopNPostProcessor(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
 			qr.topNQueryOptions.sortDirection)
 	}
 
@@ -872,7 +872,11 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
 			if topBC.versions[topBC.idx] > lastVersion {
-				topBC.replace(result, storedIndexValue, topNPostAggregator)
+				if topNPostAggregator != nil {
+					topBC.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+				} else {
+					topBC.replace(result, storedIndexValue)
+				}
 			}
 		} else {
 			topBC.copyTo(result, storedIndexValue, tagProjection)

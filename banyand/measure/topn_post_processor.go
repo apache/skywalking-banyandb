@@ -35,20 +35,20 @@ import (
 type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64)
 	Flush() ([]*topNAggregatorItem, error)
-	Val([]string) []*measurev1.TopNList
+	Val([]string) ([]*measurev1.TopNList, error)
 }
 
-// CreateTopNPostAggregator creates a Top-N post processor with or without aggregation.
-func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor {
+// CreateTopNPostProcessor creates a Top-N post processor with or without aggregation.
+func CreateTopNPostProcessor(topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
-		return &topNPostAggregationProcessor{
+		return &topNPostProcessor{
 			topN:      topN,
 			sort:      sort,
 			timelines: make(map[uint64]*topNTimelineItem),
 		}
 	}
-	aggregator := &topNPostAggregationProcessor{
+	aggregator := &topNPostProcessor{
 		topN:      topN,
 		sort:      sort,
 		aggrFunc:  aggrFunc,
@@ -60,34 +60,34 @@ func CreateTopNPostAggregator(topN int32, aggrFunc modelv1.AggregationFunction, 
 	return aggregator
 }
 
-func (taggr *topNPostAggregationProcessor) Len() int {
+func (taggr *topNPostProcessor) Len() int {
 	return len(taggr.items)
 }
 
 // Less reports whether min/max heap has to be built.
 // For DESC, a min heap has to be built,
 // while for ASC, a max heap has to be built.
-func (taggr *topNPostAggregationProcessor) Less(i, j int) bool {
+func (taggr *topNPostProcessor) Less(i, j int) bool {
 	if taggr.sort == modelv1.Sort_SORT_DESC {
 		return taggr.items[i].int64Func.Val() < taggr.items[j].int64Func.Val()
 	}
 	return taggr.items[i].int64Func.Val() > taggr.items[j].int64Func.Val()
 }
 
-func (taggr *topNPostAggregationProcessor) Swap(i, j int) {
+func (taggr *topNPostProcessor) Swap(i, j int) {
 	taggr.items[i], taggr.items[j] = taggr.items[j], taggr.items[i]
 	taggr.items[i].index = i
 	taggr.items[j].index = j
 }
 
-func (taggr *topNPostAggregationProcessor) Push(x any) {
+func (taggr *topNPostProcessor) Push(x any) {
 	n := len(taggr.items)
 	item := x.(*topNAggregatorItem)
 	item.index = n
 	taggr.items = append(taggr.items, item)
 }
 
-func (taggr *topNPostAggregationProcessor) Pop() any {
+func (taggr *topNPostProcessor) Pop() any {
 	old := taggr.items
 	n := len(old)
 	item := old[n-1]
@@ -97,7 +97,7 @@ func (taggr *topNPostAggregationProcessor) Pop() any {
 	return item
 }
 
-func (taggr *topNPostAggregationProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
+func (taggr *topNPostProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
 	if lowest := taggr.items[0]; lowest != nil {
 		shouldReplace := (taggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val()) ||
 			(taggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val())
@@ -147,7 +147,7 @@ type topNTimelineItem struct {
 	items map[string]*topNAggregatorItem
 }
 
-type topNPostAggregationProcessor struct {
+type topNPostProcessor struct {
 	cache     map[string]*topNAggregatorItem
 	timelines map[uint64]*topNTimelineItem
 	items     []*topNAggregatorItem
@@ -156,7 +156,7 @@ type topNPostAggregationProcessor struct {
 	topN      int32
 }
 
-func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
+func (taggr *topNPostProcessor) Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64) {
 	timeline, ok := taggr.timelines[timestampMillis]
 	key := entityValues.String()
 	if !ok {
@@ -194,11 +194,9 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 	}
 
 	if item, exist := timeline.items[key]; exist {
-		if version >= item.version {
-			item.val = val
-			item.version = version
-			heap.Fix(timeline.queue, item.index)
-		}
+		item.val = val
+		item.version = version
+		heap.Fix(timeline.queue, item.index)
 
 		return
 	}
@@ -230,7 +228,7 @@ func (taggr *topNPostAggregationProcessor) Put(entityValues pbv1.EntityValues, v
 	}
 }
 
-func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error) {
+func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 	var result []*topNAggregatorItem
 
 	if taggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
@@ -275,18 +273,18 @@ func (taggr *topNPostAggregationProcessor) Flush() ([]*topNAggregatorItem, error
 	return result, nil
 }
 
-func (taggr *topNPostAggregationProcessor) Val(tagNames []string) []*measurev1.TopNList {
+func (taggr *topNPostProcessor) Val(tagNames []string) ([]*measurev1.TopNList, error) {
 	if taggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		return taggr.valWithAggregation(tagNames)
 	}
 
-	return taggr.valWithoutAggregation(tagNames)
+	return taggr.valWithoutAggregation(tagNames), nil
 }
 
-func (taggr *topNPostAggregationProcessor) valWithAggregation(tagNames []string) []*measurev1.TopNList {
+func (taggr *topNPostProcessor) valWithAggregation(tagNames []string) ([]*measurev1.TopNList, error) {
 	topNAggregatorItems, err := taggr.Flush()
 	if err != nil {
-		return []*measurev1.TopNList{}
+		return nil, err
 	}
 	length := len(topNAggregatorItems)
 	items := make([]*measurev1.TopNList_Item, length)
@@ -308,10 +306,10 @@ func (taggr *topNPostAggregationProcessor) valWithAggregation(tagNames []string)
 			Timestamp: timestamppb.Now(),
 			Items:     items,
 		},
-	}
+	}, nil
 }
 
-func (taggr *topNPostAggregationProcessor) valWithoutAggregation(tagNames []string) []*measurev1.TopNList {
+func (taggr *topNPostProcessor) valWithoutAggregation(tagNames []string) []*measurev1.TopNList {
 	topNLists := make([]*measurev1.TopNList, 0, len(taggr.timelines))
 	for ts, timeline := range taggr.timelines {
 		items := make([]*measurev1.TopNList_Item, timeline.queue.Len())
