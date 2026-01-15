@@ -107,10 +107,12 @@ func createTestAgent(t *testing.T, reg *registry.AgentRegistry, ip string, port 
 	t.Helper()
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
-		IP:     ip,
-		Port:   port,
-		Role:   role,
-		Labels: labels,
+		IP:            ip,
+		Port:          port,
+		Role:          role,
+		Labels:        labels,
+		PodName:       "",
+		ContainerName: "",
 	}
 	primaryAddr := registry.Address{IP: ip, Port: port}
 	agentID, registerErr := reg.RegisterAgent(ctx, identity, primaryAddr)

@@ -61,6 +61,8 @@ var (
 	nodePort                     int
 	nodeRole                     string
 	nodeLabels                   string
+	podName                      string
+	containerName                string
 	heartbeatInterval            time.Duration
 	reconnectInterval            time.Duration
 	rootCmd                      = &cobra.Command{
@@ -96,6 +98,10 @@ func init() {
 		"Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
 		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringVar(&containerName, "container-name", "",
+		"Name of the container to use for the BanyanDB node's container name. Used as part of AgentIdentity for agent identification.")
+	rootCmd.Flags().StringVar(&podName, "pod-name", "",
+		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
 		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
@@ -211,6 +217,8 @@ func runFODC(_ *cobra.Command, _ []string) error {
 			nodeIP,
 			nodePort,
 			nodeRole,
+			podName,
+			containerName,
 			labelsMap,
 			heartbeatInterval,
 			reconnectInterval,

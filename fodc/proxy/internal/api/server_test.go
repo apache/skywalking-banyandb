@@ -266,8 +266,8 @@ func TestHandleHealth_Success(t *testing.T) {
 	server, testRegistry := newTestServer(t)
 
 	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker"}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master"}
+	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "", ContainerName: ""}
+	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "", ContainerName: ""}
 
 	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)

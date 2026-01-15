@@ -4716,6 +4716,8 @@ Phase represents the current phase of the deletion task.
 | node_role | [string](#string) |  |  |
 | labels | [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry) | repeated |  |
 | primary_address | [Address](#banyandb-fodc-v1-Address) |  |  |
+| pod_name | [string](#string) |  |  |
+| container_name | [string](#string) |  |  |
 
 
 

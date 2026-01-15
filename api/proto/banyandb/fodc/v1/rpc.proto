@@ -36,6 +36,8 @@ message RegisterAgentRequest {
   string node_role = 1;
   map<string, string> labels = 2;
   Address primary_address = 3;
+  string pod_name = 4;
+  string container_name = 5;
 }
 
 message Address {

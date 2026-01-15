@@ -47,10 +47,12 @@ type Address struct {
 
 // AgentIdentity represents the identity of an agent.
 type AgentIdentity struct {
-	Labels map[string]string
-	IP     string
-	Role   string
-	Port   int
+	Labels        map[string]string
+	IP            string
+	Role          string
+	Port          int
+	PodName       string
+	ContainerName string
 }
 
 // AgentInfo contains information about a registered agent.
@@ -131,6 +133,8 @@ func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity
 		Str("ip", primaryAddr.IP).
 		Int("port", primaryAddr.Port).
 		Str("role", identity.Role).
+		Str("pod_name", identity.PodName).
+		Str("container_name", identity.ContainerName).
 		Msg("Agent registered")
 
 	return agentID, nil
@@ -153,6 +157,8 @@ func (ar *AgentRegistry) UnregisterAgent(agentID string) error {
 		Str("ip", agentInfo.PrimaryAddress.IP).
 		Int("port", agentInfo.PrimaryAddress.Port).
 		Str("role", agentInfo.NodeRole).
+		Str("pod_name", agentInfo.AgentIdentity.PodName).
+		Str("container_name", agentInfo.AgentIdentity.ContainerName).
 		Msg("Agent unregistered")
 
 	return nil
@@ -266,6 +272,8 @@ func (ar *AgentRegistry) CheckAgentHealth() error {
 					Str("ip", agentInfo.PrimaryAddress.IP).
 					Int("port", agentInfo.PrimaryAddress.Port).
 					Str("role", agentInfo.NodeRole).
+					Str("pod_name", agentInfo.AgentIdentity.PodName).
+					Str("container_name", agentInfo.AgentIdentity.ContainerName).
 					Msg("Agent unregistered")
 			}
 		}
