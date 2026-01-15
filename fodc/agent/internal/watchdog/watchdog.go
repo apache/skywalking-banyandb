@@ -116,8 +116,11 @@ func (w *Watchdog) Serve() <-chan struct{} {
 		ticker := time.NewTicker(w.interval)
 		defer ticker.Stop()
 
+		w.log.Info().Msg("Starting watchdog polling loop")
 		if pollErr := w.pollAndForward(); pollErr != nil {
 			w.log.Warn().Err(pollErr).Msg("Initial metrics poll failed")
+		} else {
+			w.log.Info().Msg("Initial metrics poll succeeded")
 		}
 
 		for {
@@ -126,6 +129,7 @@ func (w *Watchdog) Serve() <-chan struct{} {
 				w.log.Info().Msg("Watchdog stopping")
 				return
 			case <-ticker.C:
+				w.log.Info().Msg("Starting metrics poll")
 				if pollErr := w.pollAndForward(); pollErr != nil {
 					w.log.Warn().Err(pollErr).Msg("Metrics poll failed")
 				}
@@ -170,7 +174,7 @@ func (w *Watchdog) pollAndForward() error {
 	}
 
 	if w.recorder == nil {
-		w.log.Debug().Int("count", len(rawMetrics)).Msg("No recorder configured, skipping metrics forwarding")
+		w.log.Error().Int("count", len(rawMetrics)).Msg("No recorder configured, skipping metrics forwarding")
 		return nil
 	}
 
@@ -178,7 +182,7 @@ func (w *Watchdog) pollAndForward() error {
 		return fmt.Errorf("failed to forward metrics to recorder: %w", updateErr)
 	}
 
-	w.log.Debug().Int("count", len(rawMetrics)).Msg("Successfully polled and forwarded metrics")
+	w.log.Info().Int("count", len(rawMetrics)).Msg("Successfully polled and forwarded metrics")
 	return nil
 }
 
@@ -194,7 +198,7 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 				return nil, ctx.Err()
 			case <-time.After(currentBackoff):
 			}
-			w.log.Debug().
+			w.log.Info().
 				Int("attempt", attempt+1).
 				Dur("backoff", currentBackoff).
 				Msg("Retrying metrics poll")
@@ -236,7 +240,11 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			continue
 		}
 
-		// Reset backoff on success
+		w.log.Info().
+			Int("count", len(parsedMetrics)).
+			Int("attempt", attempt+1).
+			Msg("Successfully parsed metrics from endpoint")
+
 		w.mu.Lock()
 		w.retryBackoff = initialBackoff
 		w.mu.Unlock()

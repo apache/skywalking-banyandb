@@ -141,8 +141,8 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.StringVar(&l.lifecycleCertFile, "lifecycle-cert-file", "", "the TLS cert file")
 	flagS.StringVar(&l.lifecycleKeyFile, "lifecycle-key-file", "", "the TLS key file")
 	flagS.StringVar(&l.lifecycleHost, "lifecycle-grpc-host", "", "the host of lifecycle server listens")
-	flagS.Uint32Var(&l.lifecycleGRPCPort, "lifecycle-grpc-port", 17912, "the port of lifecycle server listens")
-	flagS.Uint32Var(&l.lifecycleHTTPPort, "lifecycle-http-port", 17913, "the port of lifecycle http api listens")
+	flagS.Uint32Var(&l.lifecycleGRPCPort, "lifecycle-grpc-port", 17914, "the port of lifecycle server listens")
+	flagS.Uint32Var(&l.lifecycleHTTPPort, "lifecycle-http-port", 17915, "the port of lifecycle http api listens")
 
 	return flagS
 }
