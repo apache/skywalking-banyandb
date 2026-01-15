@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -131,7 +132,9 @@ func (g *groupBy) hash(ec context.Context) (mit executor.MIterator, err error) {
 
 	groupMap := make(map[uint64][]*measurev1.DataPoint)
 	groupLst := make([]uint64, 0)
+	var shardID common.ShardID
 	for iter.Next() {
+		shardID = iter.CurrentShardID()
 		dataPoints := iter.Current()
 		for _, dp := range dataPoints {
 			key, innerErr := formatGroupByKey(dp, g.groupByTagsRefs)
@@ -150,7 +153,7 @@ func (g *groupBy) hash(ec context.Context) (mit executor.MIterator, err error) {
 			groupMap[key] = group
 		}
 	}
-	return newGroupIterator(groupMap, groupLst), nil
+	return newGroupIterator(groupMap, groupLst, shardID), nil
 }
 
 func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
@@ -187,13 +190,15 @@ type groupIterator struct {
 	groupMap map[uint64][]*measurev1.DataPoint
 	groupLst []uint64
 	index    int
+	shardID  common.ShardID
 }
 
-func newGroupIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64) executor.MIterator {
+func newGroupIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64, shardID common.ShardID) executor.MIterator {
 	return &groupIterator{
 		groupMap: groupedMap,
 		groupLst: groupLst,
 		index:    -1,
+		shardID:  shardID,
 	}
 }
 
@@ -208,6 +213,10 @@ func (gmi *groupIterator) Next() bool {
 func (gmi *groupIterator) Current() []*measurev1.DataPoint {
 	key := gmi.groupLst[gmi.index]
 	return gmi.groupMap[key]
+}
+
+func (gmi *groupIterator) CurrentShardID() common.ShardID {
+	return gmi.shardID
 }
 
 func (gmi *groupIterator) Close() error {
@@ -270,6 +279,10 @@ func (gmi *groupSortIterator) Next() bool {
 
 func (gmi *groupSortIterator) Current() []*measurev1.DataPoint {
 	return gmi.current
+}
+
+func (gmi *groupSortIterator) CurrentShardID() common.ShardID {
+	return gmi.iter.CurrentShardID()
 }
 
 func (gmi *groupSortIterator) Close() error {

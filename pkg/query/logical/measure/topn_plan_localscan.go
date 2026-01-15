@@ -28,6 +28,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -247,6 +248,10 @@ func (ei *topNMIterator) Next() bool {
 
 func (ei *topNMIterator) Current() []*measurev1.DataPoint {
 	return ei.current
+}
+
+func (ei *topNMIterator) CurrentShardID() common.ShardID {
+	return 0
 }
 
 func (ei *topNMIterator) Close() error {

@@ -24,6 +24,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -283,6 +284,7 @@ type resultMIterator struct {
 	projectionTags   []model.TagProjection
 	projectionFields []string
 	i                int
+	currentShardID   common.ShardID
 }
 
 func (ei *resultMIterator) Next() bool {
@@ -304,6 +306,7 @@ func (ei *resultMIterator) Next() bool {
 	}
 	ei.current = ei.current[:0]
 	ei.i = 0
+	ei.currentShardID = r.ShardID
 	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
 	for idx := range r.TagFamilies {
 		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
@@ -372,6 +375,10 @@ func (ei *resultMIterator) Next() bool {
 
 func (ei *resultMIterator) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{ei.current[ei.i]}
+}
+
+func (ei *resultMIterator) CurrentShardID() common.ShardID {
+	return ei.currentShardID
 }
 
 func (ei *resultMIterator) Close() error {

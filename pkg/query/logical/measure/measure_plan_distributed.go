@@ -27,6 +27,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -271,37 +272,38 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			}
 		}()
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicMeasureQuery,
-		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest))
-	if err != nil {
-		return nil, err
+	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest}
+	ff, broadcastErr := dctx.Broadcast(defaultQueryTimeout, data.TopicInternalMeasureQuery,
+		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
+	if broadcastErr != nil {
+		return nil, broadcastErr
 	}
 	var see []sort.Iterator[*comparableDataPoint]
-	var pushedDownAggDps []*measurev1.DataPoint
+	var pushedDownAggDps []*measurev1.InternalDataPoint
 	var responseCount int
 	var dataPointCount int
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
 		} else {
-			d := m.Data()
-			if d == nil {
-				continue
+			switch d := m.Data().(type) {
+			case *measurev1.InternalQueryResponse:
+				responseCount++
+				if span != nil {
+					span.AddSubTrace(d.Trace)
+				}
+				if t.needCompletePushDownAgg {
+					pushedDownAggDps = append(pushedDownAggDps, d.DataPoints...)
+					dataPointCount += len(d.DataPoints)
+					continue
+				}
+				dataPointCount += len(d.DataPoints)
+				see = append(see,
+					newSortableElements(extractDataPoints(d.DataPoints),
+						t.sortByTime, t.sortTagSpec))
+			case *common.Error:
+				err = multierr.Append(err, fmt.Errorf("data node error: %s", d.Error()))
 			}
-			resp := d.(*measurev1.QueryResponse)
-			responseCount++
-			if span != nil {
-				span.AddSubTrace(resp.Trace)
-			}
-			if t.needCompletePushDownAgg {
-				pushedDownAggDps = append(pushedDownAggDps, resp.DataPoints...)
-				dataPointCount += len(resp.DataPoints)
-				continue
-			}
-			dataPointCount += len(resp.DataPoints)
-			see = append(see,
-				newSortableElements(resp.DataPoints,
-					t.sortByTime, t.sortTagSpec))
 		}
 	}
 	if span != nil {
@@ -309,7 +311,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		deduplicatedDps, dedupErr := deduplicateAggregatedDataPoints(pushedDownAggDps, t.groupByTagsRefs)
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
 		}
@@ -496,6 +498,15 @@ func (s *sortedMIterator) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{s.cur}
 }
 
+func (s *sortedMIterator) CurrentShardID() common.ShardID {
+	// In distributed query, data comes from multiple shards, so shard ID is not applicable
+	return 0
+}
+
+func (s *sortedMIterator) Close() error {
+	return nil
+}
+
 const (
 	offset64 = 14695981039346656037
 	prime64  = 1099511628211
@@ -531,26 +542,54 @@ func (s *pushedDownAggregatedIterator) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{s.dataPoints[s.index-1]}
 }
 
+func (s *pushedDownAggregatedIterator) CurrentShardID() common.ShardID {
+	// In distributed query with aggregation, data comes from multiple shards, so shard ID is not applicable
+	return 0
+}
+
 func (s *pushedDownAggregatedIterator) Close() error {
 	return nil
 }
 
-// deduplicateAggregatedDataPoints removes duplicate aggregated results from multiple replicas.
-func deduplicateAggregatedDataPoints(dataPoints []*measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
+// deduplicateAggregatedDataPointsWithShard removes duplicate aggregated results from multiple replicas
+// of the same shard, while preserving results from different shards.
+func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
-		return dataPoints, nil
+		return extractDataPoints(dataPoints), nil
 	}
+	// key = hash(shard_id, group_key)
+	// Same shard with same group key will be deduplicated
+	// Different shards with same group key will be preserved
 	groupMap := make(map[uint64]struct{})
 	result := make([]*measurev1.DataPoint, 0, len(dataPoints))
-	for _, dp := range dataPoints {
-		key, err := formatGroupByKey(dp, groupByTagsRefs)
-		if err != nil {
-			return nil, err
+	for _, idp := range dataPoints {
+		groupKey, keyErr := formatGroupByKey(idp.DataPoint, groupByTagsRefs)
+		if keyErr != nil {
+			return nil, keyErr
 		}
+		// Include shard_id in key calculation
+		key := hashWithShard(uint64(idp.ShardId), groupKey)
 		if _, exists := groupMap[key]; !exists {
 			groupMap[key] = struct{}{}
-			result = append(result, dp)
+			result = append(result, idp.DataPoint)
 		}
 	}
 	return result, nil
+}
+
+// hashWithShard combines shard_id and group_key into a single hash.
+func hashWithShard(shardID, groupKey uint64) uint64 {
+	h := uint64(offset64)
+	h = (h ^ shardID) * prime64
+	h = (h ^ groupKey) * prime64
+	return h
+}
+
+// extractDataPoints extracts DataPoint from InternalDataPoint slice.
+func extractDataPoints(idps []*measurev1.InternalDataPoint) []*measurev1.DataPoint {
+	result := make([]*measurev1.DataPoint, len(idps))
+	for idx, idp := range idps {
+		result[idx] = idp.DataPoint
+	}
+	return result
 }

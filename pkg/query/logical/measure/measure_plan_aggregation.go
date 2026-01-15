@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -200,6 +201,10 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
 	return []*measurev1.DataPoint{resultDp}
 }
 
+func (ami *aggGroupIterator[N]) CurrentShardID() common.ShardID {
+	return ami.prev.CurrentShardID()
+}
+
 func (ami *aggGroupIterator[N]) Close() error {
 	return multierr.Combine(ami.err, ami.prev.Close())
 }
@@ -272,6 +277,10 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
 		return nil
 	}
 	return []*measurev1.DataPoint{ami.result}
+}
+
+func (ami *aggAllIterator[N]) CurrentShardID() common.ShardID {
+	return ami.prev.CurrentShardID()
 }
 
 func (ami *aggAllIterator[N]) Close() error {

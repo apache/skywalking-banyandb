@@ -74,6 +74,7 @@ type MeasureResult struct {
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID
+	ShardID     common.ShardID
 }
 
 // MeasureQueryResult is the result of a measure query.
