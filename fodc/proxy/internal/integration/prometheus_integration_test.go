@@ -125,6 +125,8 @@ var _ = Describe("Prometheus Integration", func() {
 			"192.168.10.10",
 			9100,
 			"liaison",
+			"test",
+			"liaison",
 			map[string]string{"env": "prom-test"},
 			2*time.Second,
 			1*time.Second,

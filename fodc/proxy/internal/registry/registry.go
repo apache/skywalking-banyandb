@@ -50,9 +50,9 @@ type AgentIdentity struct {
 	Labels        map[string]string
 	IP            string
 	Role          string
-	Port          int
 	PodName       string
 	ContainerName string
+	Port          int
 }
 
 // AgentInfo contains information about a registered agent.

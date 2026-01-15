@@ -19,6 +19,7 @@ package watchdog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -265,7 +266,7 @@ func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
-	assert.Equal(t, context.Canceled, err)
+	assert.True(t, errors.Is(err, context.Canceled), "error should wrap context.Canceled")
 }
 
 func TestWatchdog_PollAndForward_Success(t *testing.T) {
