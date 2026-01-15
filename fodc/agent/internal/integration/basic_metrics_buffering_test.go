@@ -86,7 +86,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Create Watchdog with short polling interval for testing
 		pollInterval := 2 * time.Second
-		wd = watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
+		wd = watchdog.NewWatchdogWithConfig(fr, []string{metricsEndpoint}, pollInterval)
 
 		ctx := context.Background()
 		preRunErr := wd.PreRun(ctx)

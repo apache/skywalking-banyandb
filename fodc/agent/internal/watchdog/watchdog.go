@@ -50,7 +50,7 @@ type Watchdog struct {
 	cancel       context.CancelFunc
 	recorder     MetricsRecorder
 	ctx          context.Context
-	url          string
+	urls         []string
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	interval     time.Duration
@@ -59,11 +59,11 @@ type Watchdog struct {
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
-func NewWatchdogWithConfig(recorder MetricsRecorder, url string, interval time.Duration) *Watchdog {
+func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration) *Watchdog {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watchdog{
 		recorder:     recorder,
-		url:          url,
+		urls:         urls,
 		interval:     interval,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -88,7 +88,7 @@ func (w *Watchdog) PreRun(_ context.Context) error {
 		},
 	}
 	w.log.Info().
-		Str("endpoint", w.url).
+		Strs("endpoints", w.urls).
 		Dur("interval", w.interval).
 		Msg("Watchdog initialized")
 	return nil
@@ -186,11 +186,39 @@ func (w *Watchdog) pollAndForward() error {
 	return nil
 }
 
-// pollMetrics fetches raw metrics text from endpoint and parses them.
+// pollMetrics fetches raw metrics text from all endpoints and parses them.
 func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error) {
+	if len(w.urls) == 0 {
+		return nil, fmt.Errorf("no metrics endpoints configured")
+	}
+	allMetrics := make([]metrics.RawMetric, 0)
+	var lastErr error
+	for _, url := range w.urls {
+		endpointMetrics, pollErr := w.pollMetricsFromEndpoint(ctx, url)
+		if pollErr != nil {
+			w.log.Warn().
+				Str("endpoint", url).
+				Err(pollErr).
+				Msg("Failed to poll metrics from endpoint")
+			lastErr = pollErr
+			continue
+		}
+		allMetrics = append(allMetrics, endpointMetrics...)
+		w.log.Info().
+			Str("endpoint", url).
+			Int("count", len(endpointMetrics)).
+			Msg("Successfully polled metrics from endpoint")
+	}
+	if len(allMetrics) == 0 && lastErr != nil {
+		return nil, fmt.Errorf("failed to poll metrics from any endpoint: %w", lastErr)
+	}
+	return allMetrics, nil
+}
+
+// pollMetricsFromEndpoint fetches raw metrics text from a single endpoint and parses them.
+func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string) ([]metrics.RawMetric, error) {
 	var lastErr error
 	currentBackoff := w.retryBackoff
-
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			select {
@@ -199,32 +227,29 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			case <-time.After(currentBackoff):
 			}
 			w.log.Info().
+				Str("endpoint", url).
 				Int("attempt", attempt+1).
 				Dur("backoff", currentBackoff).
 				Msg("Retrying metrics poll")
 		}
-
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, w.url, nil)
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if reqErr != nil {
 			lastErr = fmt.Errorf("failed to create request: %w", reqErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		resp, respErr := w.client.Do(req)
 		if respErr != nil {
 			lastErr = fmt.Errorf("failed to fetch metrics: %w", respErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
@@ -232,26 +257,17 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		parsedMetrics, parseErr := metrics.Parse(string(body))
 		if parseErr != nil {
 			lastErr = fmt.Errorf("failed to parse metrics: %w", parseErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
-		w.log.Info().
-			Int("count", len(parsedMetrics)).
-			Int("attempt", attempt+1).
-			Msg("Successfully parsed metrics from endpoint")
-
 		w.mu.Lock()
 		w.retryBackoff = initialBackoff
 		w.mu.Unlock()
-
 		return parsedMetrics, nil
 	}
-
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 

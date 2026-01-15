@@ -43,7 +43,7 @@ import (
 
 const (
 	defaultPollInterval                 = 10 * time.Second
-	defaultMetricsEndpoint              = "http://localhost:2121/metrics"
+	defaultPollMetricsPorts             = "2121"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
 	defaultProxyAddr                    = "localhost:17900"
@@ -53,7 +53,7 @@ const (
 
 var (
 	pollInterval                 time.Duration
-	metricsEndpoint              string
+	pollMetricsPorts             string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
 	proxyAddr                    string
@@ -81,8 +81,8 @@ func Execute() error {
 func init() {
 	rootCmd.Flags().DurationVar(&pollInterval, "poll-metrics-interval", defaultPollInterval,
 		"Interval at which the Watchdog polls metrics from the BanyanDB container")
-	rootCmd.Flags().StringVar(&metricsEndpoint, "metrics-endpoint", defaultMetricsEndpoint,
-		"URL of the BanyanDB metrics endpoint to poll from")
+	rootCmd.Flags().StringVar(&pollMetricsPorts, "poll-metrics-ports", defaultPollMetricsPorts,
+		"Ports of the BanyanDB metrics endpoints to poll from")
 	rootCmd.Flags().IntVar(&maxMetricsMemoryUsagePercent, "max-metrics-memory-usage-percentage",
 		defaultMaxMetricsMemoryUsagePercent,
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
@@ -114,18 +114,28 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	log := logger.GetLogger("fodc")
-	log.Info().
-		Str("endpoint", metricsEndpoint).
-		Dur("interval", pollInterval).
-		Str("prometheus-listen-addr", prometheusListenAddr).
-		Msg("Starting FODC agent")
 
 	if pollInterval <= 0 {
 		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
-	if metricsEndpoint == "" {
-		return fmt.Errorf("metrics-endpoint cannot be empty")
+	if pollMetricsPorts == "" {
+		return fmt.Errorf("poll-metrics-ports cannot be empty")
 	}
+	ports, parsePortsErr := parsePorts(pollMetricsPorts)
+	if parsePortsErr != nil {
+		return fmt.Errorf("failed to parse poll-metrics-ports: %w", parsePortsErr)
+	}
+	if len(ports) == 0 {
+		return fmt.Errorf("poll-metrics-ports must contain at least one port")
+	}
+	metricsEndpoints := generateMetricsEndpoints(ports)
+
+	log.Info().
+		Str("poll-metrics-ports", pollMetricsPorts).
+		Strs("metrics-endpoints", metricsEndpoints).
+		Dur("interval", pollInterval).
+		Str("prometheus-listen-addr", prometheusListenAddr).
+		Msg("Starting FODC agent")
 	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
 		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
 	}
@@ -179,7 +189,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
 	}
 
-	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
+	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval)
 
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
@@ -287,4 +297,34 @@ func parseLabels(labelsStr string) (map[string]string, error) {
 	}
 
 	return labels, nil
+}
+
+// parsePorts parses a comma-separated ports string into a slice of port strings, format: "2121, 2222".
+func parsePorts(portsStr string) ([]string, error) {
+	if portsStr == "" {
+		return nil, fmt.Errorf("ports string cannot be empty")
+	}
+	parts := strings.Split(portsStr, ",")
+	ports := make([]string, 0, len(parts))
+	for _, part := range parts {
+		port := strings.TrimSpace(part)
+		if port == "" {
+			continue
+		}
+		ports = append(ports, port)
+	}
+	if len(ports) == 0 {
+		return nil, fmt.Errorf("no valid ports found in: %q", portsStr)
+	}
+	return ports, nil
+}
+
+// generateMetricsEndpoints generates metrics endpoint URLs from port numbers.
+func generateMetricsEndpoints(ports []string) []string {
+	endpoints := make([]string, 0, len(ports))
+	for _, port := range ports {
+		endpoint := fmt.Sprintf("http://localhost:%s/metrics", port)
+		endpoints = append(endpoints, endpoint)
+	}
+	return endpoints
 }
