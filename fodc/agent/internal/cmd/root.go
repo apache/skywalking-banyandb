@@ -195,7 +195,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
 	}
 
-	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval)
+	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval, nodeRole, podName, containerName)
 
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {

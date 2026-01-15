@@ -45,29 +45,35 @@ const (
 
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
-	client       *http.Client
-	log          *logger.Logger
-	cancel       context.CancelFunc
-	recorder     MetricsRecorder
-	ctx          context.Context
-	urls         []string
-	wg           sync.WaitGroup
-	mu           sync.RWMutex
-	interval     time.Duration
-	retryBackoff time.Duration
-	isRunning    bool
+	client        *http.Client
+	log           *logger.Logger
+	cancel        context.CancelFunc
+	recorder      MetricsRecorder
+	ctx           context.Context
+	urls          []string
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+	interval      time.Duration
+	retryBackoff  time.Duration
+	isRunning     bool
+	nodeRole      string
+	podName       string
+	containerName string
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
-func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration) *Watchdog {
+func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration, nodeRole, podName, containerName string) *Watchdog {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watchdog{
-		recorder:     recorder,
-		urls:         urls,
-		interval:     interval,
-		ctx:          ctx,
-		cancel:       cancel,
-		retryBackoff: initialBackoff,
+		recorder:      recorder,
+		urls:          urls,
+		interval:      interval,
+		ctx:           ctx,
+		cancel:        cancel,
+		retryBackoff:  initialBackoff,
+		nodeRole:      nodeRole,
+		podName:       podName,
+		containerName: containerName,
 	}
 }
 
@@ -257,7 +263,7 @@ func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string) ([]m
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-		parsedMetrics, parseErr := metrics.Parse(string(body))
+		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(string(body), w.nodeRole, w.podName, w.containerName)
 		if parseErr != nil {
 			lastErr = fmt.Errorf("failed to parse metrics: %w", parseErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
