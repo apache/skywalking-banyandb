@@ -247,6 +247,8 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 	}
 
 	metricMap := make(map[string]*metricGroup)
+	histogramBases := make(map[string]bool)
+
 	for _, metric := range aggregatedMetrics {
 		key := metric.Name
 		group, exists := metricMap[key]
@@ -259,17 +261,73 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 			metricMap[key] = group
 		}
 		group.metrics = append(group.metrics, metric)
+
+		if strings.HasSuffix(metric.Name, "_bucket") ||
+			strings.HasSuffix(metric.Name, "_sum") ||
+			strings.HasSuffix(metric.Name, "_count") {
+			baseName := getHistogramBaseName(metric.Name)
+			if baseName != "" {
+				histogramBases[baseName] = true
+			}
+		}
+	}
+
+	histogramMetrics := make(map[string][]*metrics.AggregatedMetric)
+	regularMetrics := make(map[string]*metricGroup)
+
+	for name, group := range metricMap {
+		baseName := getHistogramBaseName(name)
+		if baseName != "" && histogramBases[baseName] {
+			histogramMetrics[baseName] = append(histogramMetrics[baseName], group.metrics...)
+		} else {
+			regularMetrics[name] = group
+		}
 	}
 
 	var builder strings.Builder
-	metricNames := make([]string, 0, len(metricMap))
-	for name := range metricMap {
-		metricNames = append(metricNames, name)
-	}
-	sort.Strings(metricNames)
 
-	for _, name := range metricNames {
-		group := metricMap[name]
+	histogramNames := make([]string, 0, len(histogramBases))
+	for baseName := range histogramBases {
+		histogramNames = append(histogramNames, baseName)
+	}
+	sort.Strings(histogramNames)
+
+	for _, baseName := range histogramNames {
+		allMetrics := histogramMetrics[baseName]
+		if len(allMetrics) == 0 {
+			continue
+		}
+
+		description := allMetrics[0].Description
+		if description != "" {
+			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", baseName, description))
+		}
+		builder.WriteString(fmt.Sprintf("# TYPE %s histogram\n", baseName))
+
+		for _, metric := range allMetrics {
+			labelParts := make([]string, 0, len(metric.Labels))
+			for key, value := range metric.Labels {
+				labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, key, value))
+			}
+			sort.Strings(labelParts)
+
+			labelStr := ""
+			if len(labelParts) > 0 {
+				labelStr = "{" + strings.Join(labelParts, ",") + "}"
+			}
+
+			builder.WriteString(fmt.Sprintf("%s%s %s\n", metric.Name, labelStr, formatFloat(metric.Value)))
+		}
+	}
+
+	regularNames := make([]string, 0, len(regularMetrics))
+	for name := range regularMetrics {
+		regularNames = append(regularNames, name)
+	}
+	sort.Strings(regularNames)
+
+	for _, name := range regularNames {
+		group := regularMetrics[name]
 		if group.description != "" {
 			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", group.name, group.description))
 		}
@@ -384,6 +442,21 @@ func (s *Server) getMetricKey(metric *metrics.AggregatedMetric) string {
 // formatFloat formats a float64 value as a string.
 func formatFloat(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+// getHistogramBaseName extracts the base name from histogram metric names.
+// Returns empty string if the metric is not a histogram component.
+func getHistogramBaseName(metricName string) string {
+	if strings.HasSuffix(metricName, "_bucket") {
+		return strings.TrimSuffix(metricName, "_bucket")
+	}
+	if strings.HasSuffix(metricName, "_sum") {
+		return strings.TrimSuffix(metricName, "_sum")
+	}
+	if strings.HasSuffix(metricName, "_count") {
+		return strings.TrimSuffix(metricName, "_count")
+	}
+	return ""
 }
 
 type metricGroup struct {

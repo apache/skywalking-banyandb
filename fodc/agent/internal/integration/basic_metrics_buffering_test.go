@@ -116,7 +116,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 
 		// Stop metrics server
 		if metricsServer != nil {
-			stopErr := metricsServer.Stop()
+			stopErr := metricsServer.Stop(context.Background())
 			Expect(stopErr).NotTo(HaveOccurred())
 		}
 	})
