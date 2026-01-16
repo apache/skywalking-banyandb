@@ -334,21 +334,22 @@ func (m *module) collectReadLatencyStats(rawMetrics *[]fodcmetrics.RawMetric) er
 			Desc: "Histogram buckets for read() latency",
 		})
 	}
-	// Add +Inf bucket
-	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
-		Name:  "ktm_sys_read_latency_seconds_bucket",
-		Value: float64(cumulative),
-		Labels: []fodcmetrics.Label{
-			{Name: "le", Value: "+Inf"},
+	// Add +Inf bucket and bytes total
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_read_latency_seconds_bucket",
+			Value: float64(cumulative),
+			Labels: []fodcmetrics.Label{
+				{Name: "le", Value: "+Inf"},
+			},
+			Desc: "Histogram buckets for read() latency",
 		},
-		Desc: "Histogram buckets for read() latency",
-	})
-
-	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
-		Name:  "ktm_sys_read_bytes_total",
-		Value: float64(totalBytes),
-		Desc:  "Total bytes read via read() syscall",
-	})
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_read_bytes_total",
+			Value: float64(totalBytes),
+			Desc:  "Total bytes read via read() syscall",
+		},
+	)
 
 	return nil
 }
@@ -413,21 +414,22 @@ func (m *module) collectPreadLatencyStats(rawMetrics *[]fodcmetrics.RawMetric) e
 			Desc: "Histogram buckets for pread() latency",
 		})
 	}
-	// Add +Inf bucket
-	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
-		Name:  "ktm_sys_pread_latency_seconds_bucket",
-		Value: float64(cumulative),
-		Labels: []fodcmetrics.Label{
-			{Name: "le", Value: "+Inf"},
+	// Add +Inf bucket and bytes total
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_pread_latency_seconds_bucket",
+			Value: float64(cumulative),
+			Labels: []fodcmetrics.Label{
+				{Name: "le", Value: "+Inf"},
+			},
+			Desc: "Histogram buckets for pread() latency",
 		},
-		Desc: "Histogram buckets for pread() latency",
-	})
-
-	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
-		Name:  "ktm_sys_pread_bytes_total",
-		Value: float64(totalBytes),
-		Desc:  "Total bytes read via pread() syscall",
-	})
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_pread_bytes_total",
+			Value: float64(totalBytes),
+			Desc:  "Total bytes read via pread() syscall",
+		},
+	)
 
 	return nil
 }

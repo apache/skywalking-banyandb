@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package ktm is a module that monitors I/O operations in the kernel.
 package ktm
 
 import (

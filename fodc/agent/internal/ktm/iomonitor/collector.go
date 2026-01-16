@@ -165,7 +165,7 @@ func (c *Collector) Collect() {
 func (c *Collector) GetMetrics() []fodcmetrics.RawMetric {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	// Return a copy to avoid race conditions
 	result := make([]fodcmetrics.RawMetric, len(c.lastMetrics))
 	copy(result, c.lastMetrics)
