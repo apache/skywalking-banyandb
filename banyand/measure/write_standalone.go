@@ -148,8 +148,9 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	}
 
 	var dpt *dataPointsInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range dpg.tables {
-		if dpg.tables[i].timeRange.Contains(ts) {
+		if dpg.tables[i].timeRange.Contains(ts) && dpg.tables[i].shardID == shardID {
 			dpt = dpg.tables[i]
 			break
 		}
@@ -171,7 +172,6 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 			len(is.indexRuleLocators.TagFamilyTRule), len(stm.GetSchema().GetTagFamilies()))
 	}
 
-	shardID := common.ShardID(writeEvent.ShardId)
 	if dpt == nil {
 		var segment storage.Segment[*tsTable, option]
 		for _, seg := range dpg.segments {
@@ -191,7 +191,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
-		dpt = newDpt(segment, segment.GetTimeRange(), stm.schema.IndexMode, tstb)
+		dpt = newDpt(segment, segment.GetTimeRange(), stm.schema.IndexMode, tstb, shardID)
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
@@ -255,13 +255,14 @@ func appendDataPoints(dest *dataPointsInTable, ts int64, sid common.SeriesID, sc
 }
 
 func newDpt(segment storage.Segment[*tsTable, option], timeRange timestamp.TimeRange,
-	indexMode bool, tstb *tsTable,
+	indexMode bool, tstb *tsTable, shardID common.ShardID,
 ) *dataPointsInTable {
 	dpt := &dataPointsInTable{
 		timeRange:      timeRange,
 		tsTable:        tstb,
 		metadataDocMap: make(map[uint64]int),
 		segment:        segment,
+		shardID:        shardID,
 	}
 	if indexMode {
 		dpt.indexModeDocMap = make(map[uint64]int)

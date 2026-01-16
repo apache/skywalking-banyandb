@@ -116,8 +116,9 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 
 func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInTable, error) {
 	var et *elementsInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eg.tables {
-		if eg.tables[i].timeRange.Contains(ts) {
+		if eg.tables[i].timeRange.Contains(ts) && eg.tables[i].shardID == shardID {
 			et = eg.tables[i]
 			break
 		}
@@ -140,13 +141,13 @@ func (w *writeCallback) prepareElementsInTable(eg *elementsInGroup, writeEvent *
 			eg.segments = append(eg.segments, segment)
 		}
 
-		shardID := common.ShardID(writeEvent.ShardId)
 		tstb, err := segment.CreateTSTableIfNotExist(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
 		}
 
 		et = &elementsInTable{
+			shardID:   shardID,
 			timeRange: segment.GetTimeRange(),
 			tsTable:   tstb,
 			elements:  generateElements(),
