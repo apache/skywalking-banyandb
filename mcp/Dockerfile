@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:24.6.0-alpine AS builder
 
 WORKDIR /app
 
@@ -33,7 +33,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine AS final
+FROM node:24.6.0-alpine AS final
 
 WORKDIR /app
 
