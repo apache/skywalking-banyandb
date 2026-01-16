@@ -103,9 +103,9 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient1 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"liaison",
+			"127.0.0.1",
+			[]string{"liaison"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
 			1*time.Second,
@@ -116,9 +116,9 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient2 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.2",
-			8081,
 			"datanode-hot",
+			"127.0.0.2",
+			[]string{"data"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
 			1*time.Second,
@@ -129,9 +129,9 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient3 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.3",
-			8082,
 			"datanode-warm",
+			"127.0.0.2",
+			[]string{"data"},
 			map[string]string{"zone": "us-east-1", "env": "staging"},
 			heartbeatInterval,
 			1*time.Second,
@@ -198,26 +198,41 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		By("populating flight recorder metrics for each agent")
 		first := testhelper.RawMetric{
-			Name:   "liaison_full_metric",
-			Value:  10.0,
-			Desc:   "liaison metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-west-1"}},
+			Name:  "liaison_full_metric",
+			Value: 10.0,
+			Desc:  "liaison metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-west-1"},
+				{Name: "node_role", Value: "liaison"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "liaison"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder1, []testhelper.RawMetric{first})).To(Succeed())
 
 		second := testhelper.RawMetric{
-			Name:   "datanode_hot_full_metric",
-			Value:  20.0,
-			Desc:   "datanode hot metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-west-1"}},
+			Name:  "datanode_hot_full_metric",
+			Value: 20.0,
+			Desc:  "datanode hot metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-west-1"},
+				{Name: "node_role", Value: "datanode-hot"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "data"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder2, []testhelper.RawMetric{second})).To(Succeed())
 
 		third := testhelper.RawMetric{
-			Name:   "datanode_warm_full_metric",
-			Value:  30.0,
-			Desc:   "datanode warm metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-east-1"}},
+			Name:  "datanode_warm_full_metric",
+			Value: 30.0,
+			Desc:  "datanode warm metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-east-1"},
+				{Name: "node_role", Value: "datanode-warm"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "data"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder3, []testhelper.RawMetric{third})).To(Succeed())
 
@@ -252,22 +267,19 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 			labels := metric["labels"].(map[string]interface{})
 			nodeRole := labels["node_role"].(string)
-			Expect(metric["ip"]).NotTo(BeEmpty())
-			Expect(metric["port"]).NotTo(BeZero())
+			podName := metric["pod_name"].(string)
+			Expect(podName).To(Equal("demo"))
 
 			switch metric["name"] {
 			case "liaison_full_metric":
 				foundRoles["liaison"] = true
 				Expect(nodeRole).To(Equal("liaison"))
-				Expect(metric["ip"]).To(Equal("127.0.0.1"))
 			case "datanode_hot_full_metric":
 				foundRoles["datanode-hot"] = true
 				Expect(nodeRole).To(Equal("datanode-hot"))
-				Expect(metric["ip"]).To(Equal("127.0.0.2"))
 			case "datanode_warm_full_metric":
 				foundRoles["datanode-warm"] = true
 				Expect(nodeRole).To(Equal("datanode-warm"))
-				Expect(metric["ip"]).To(Equal("127.0.0.3"))
 			}
 		}
 

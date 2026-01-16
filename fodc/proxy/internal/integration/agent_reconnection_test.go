@@ -95,9 +95,9 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 
 		proxyClient = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"datanode-hot",
+			"127.0.0.1",
+			[]string{"data"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,
 			1*time.Second,
@@ -243,9 +243,9 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		// Create a new ProxyClientWrapper for reconnection to simulate a real agent reconnecting
 		proxyClient = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"datanode-hot",
+			"127.0.0.1",
+			[]string{"data"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,
 			1*time.Second,

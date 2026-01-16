@@ -20,7 +20,7 @@ package metrics
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +43,6 @@ type AggregatedMetric struct {
 	Timestamp   time.Time
 	Name        string
 	AgentID     string
-	NodeRole    string
 	Description string
 	Value       float64
 }
@@ -53,7 +52,7 @@ type Filter struct {
 	StartTime *time.Time
 	EndTime   *time.Time
 	Role      string
-	Address   string
+	PodName   string
 	AgentIDs  []string
 }
 
@@ -99,11 +98,6 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			labels[key] = value
 		}
 
-		labels["agent_id"] = agentID
-		labels["node_role"] = agentInfo.NodeRole
-		labels["ip"] = agentInfo.PrimaryAddress.IP
-		labels["port"] = fmt.Sprintf("%d", agentInfo.PrimaryAddress.Port)
-
 		for key, value := range agentInfo.Labels {
 			labels[key] = value
 		}
@@ -124,7 +118,6 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			Value:       metric.Value,
 			Timestamp:   timestamp,
 			AgentID:     agentID,
-			NodeRole:    agentInfo.NodeRole,
 			Description: metric.Description,
 		}
 
@@ -286,10 +279,10 @@ func (ma *Aggregator) getFilteredAgents(filter *Filter) []*registry.AgentInfo {
 		agents = ma.registry.ListAgents()
 	}
 
-	if filter.Address != "" {
+	if filter.PodName != "" {
 		filteredAgents := make([]*registry.AgentInfo, 0)
 		for _, agentInfo := range agents {
-			if ma.matchesAddress(agentInfo, filter.Address) {
+			if strings.EqualFold(agentInfo.AgentIdentity.PodName, filter.PodName) {
 				filteredAgents = append(filteredAgents, agentInfo)
 			}
 		}
@@ -297,16 +290,4 @@ func (ma *Aggregator) getFilteredAgents(filter *Filter) []*registry.AgentInfo {
 	}
 
 	return agents
-}
-
-// matchesAddress checks if an agent matches the address filter.
-func (ma *Aggregator) matchesAddress(agentInfo *registry.AgentInfo, address string) bool {
-	ipPort := fmt.Sprintf("%s:%d", agentInfo.PrimaryAddress.IP, agentInfo.PrimaryAddress.Port)
-	if ipPort == address {
-		return true
-	}
-	if agentInfo.PrimaryAddress.IP == address {
-		return true
-	}
-	return false
 }

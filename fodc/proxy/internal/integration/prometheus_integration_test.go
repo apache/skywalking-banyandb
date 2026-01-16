@@ -122,9 +122,9 @@ var _ = Describe("Prometheus Integration", func() {
 		fr = testhelper.NewFlightRecorder(4 * 1024 * 1024)
 		agent = testhelper.NewProxyClientWrapper(
 			fixture.grpcAddr,
-			"192.168.10.10",
-			9100,
 			"liaison",
+			"192.168.10.10",
+			[]string{"liaison"},
 			map[string]string{"env": "prom-test"},
 			2*time.Second,
 			1*time.Second,
@@ -157,6 +157,9 @@ var _ = Describe("Prometheus Integration", func() {
 			Desc:  "Mock Prometheus metric",
 			Labels: []testhelper.Label{
 				{Name: "component", Value: "worker"},
+				{Name: "node_role", Value: "liaison"},
+				{Name: "pod_name", Value: "test"},
+				{Name: "container_name", Value: "liaison"},
 			},
 		}})).To(Succeed())
 

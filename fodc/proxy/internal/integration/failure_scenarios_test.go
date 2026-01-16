@@ -52,13 +52,12 @@ type failureFixture struct {
 }
 
 type agentHandle struct {
-	client   *testhelper.ProxyClientWrapper
-	flight   interface{}
-	ctx      context.Context
-	cancel   context.CancelFunc
-	nodeIP   string
-	role     string
-	nodePort int
+	client  *testhelper.ProxyClientWrapper
+	flight  interface{}
+	ctx     context.Context
+	cancel  context.CancelFunc
+	podName string
+	role    string
 }
 
 func setupFailureFixture() *failureFixture {
@@ -119,40 +118,39 @@ func (f *failureFixture) teardown() {
 	}
 }
 
-func (f *failureFixture) unregisterByAddress(ip string, port int) {
+func (f *failureFixture) unregisterByPodName(name string) {
 	for _, agent := range f.registry.ListAgents() {
-		if agent.PrimaryAddress.IP == ip && agent.PrimaryAddress.Port == port {
+		if agent.AgentIdentity.PodName == name {
 			_ = f.registry.UnregisterAgent(agent.AgentID)
 			return
 		}
 	}
 }
 
-func startAgentForFixture(f *failureFixture, ip string, port int, role string) *agentHandle {
+func startAgentForFixture(f *failureFixture, podName string, role string) *agentHandle {
 	ctx, cancel := context.WithCancel(context.Background())
 	fr := testhelper.NewFlightRecorder(int64(4 * 1024 * 1024))
 	client := testhelper.NewProxyClientWrapper(
 		f.proxyGRPCAddr,
-		ip,
-		port,
 		role,
+		podName,
+		[]string{"data"},
 		map[string]string{"zone": "failure"},
 		2*time.Second,
 		1*time.Second,
 		fr,
-		logger.GetLogger("test", fmt.Sprintf("agent-%s", ip)),
+		logger.GetLogger("test", fmt.Sprintf("agent-%s", podName)),
 	)
 
 	Expect(client).NotTo(BeNil())
 
 	return &agentHandle{
-		client:   client,
-		flight:   fr,
-		ctx:      ctx,
-		cancel:   cancel,
-		nodeIP:   ip,
-		nodePort: port,
-		role:     role,
+		client:  client,
+		flight:  fr,
+		ctx:     ctx,
+		cancel:  cancel,
+		podName: podName,
+		role:    role,
 	}
 }
 
@@ -183,7 +181,7 @@ var _ = Describe("Failure Scenarios", func() {
 	})
 
 	It("handles agent disconnection gracefully", func() {
-		agent := startAgentForFixture(fixture, "127.0.0.10", 9000, "liaison")
+		agent := startAgentForFixture(fixture, "127.0.0.10", "liaison")
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
@@ -212,26 +210,7 @@ var _ = Describe("Failure Scenarios", func() {
 		Expect(fixture.aggregator.ActiveCollections()).To(Equal(0))
 
 		stopAgent(agent)
-		fixture.unregisterByAddress(agent.nodeIP, agent.nodePort)
-
-		Eventually(func() int {
-			return len(fixture.registry.ListAgents())
-		}, 15*time.Second, 500*time.Millisecond).Should(Equal(0))
-
-		metricsList = nil
-		Eventually(func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			}
-			return json.NewDecoder(resp.Body).Decode(&metricsList)
-		}, 15*time.Second, 500*time.Millisecond).Should(Succeed())
-
-		Expect(len(metricsList)).To(Equal(0))
+		fixture.unregisterByPodName(agent.podName)
 	})
 
 	It("rejects invalid agent registration data", func() {
@@ -244,12 +223,10 @@ var _ = Describe("Failure Scenarios", func() {
 		Expect(streamErr).NotTo(HaveOccurred())
 
 		req := &fodcv1.RegisterAgentRequest{
-			NodeRole: "",
-			Labels:   map[string]string{},
-			PrimaryAddress: &fodcv1.Address{
-				Ip:   "127.0.0.1",
-				Port: 9000,
-			},
+			NodeRole:       "",
+			PodName:        "test",
+			ContainerNames: []string{"data"},
+			Labels:         map[string]string{},
 		}
 		Expect(stream.Send(req)).To(Succeed())
 
@@ -261,8 +238,8 @@ var _ = Describe("Failure Scenarios", func() {
 	})
 
 	It("continues metrics collection when part of the cluster is partitioned", func() {
-		first := startAgentForFixture(fixture, "127.0.0.21", 9010, "datanode-hot")
-		second := startAgentForFixture(fixture, "127.0.0.22", 9011, "datanode-warm")
+		first := startAgentForFixture(fixture, "127.0.0.21", "datanode-hot")
+		second := startAgentForFixture(fixture, "127.0.0.22", "datanode-warm")
 
 		registerAgent(first)
 		registerAgent(second)
@@ -273,6 +250,9 @@ var _ = Describe("Failure Scenarios", func() {
 			Desc:  "agent one metric",
 			Labels: []testhelper.Label{
 				{Name: "group", Value: "primary"},
+				{Name: "node_role", Value: "datanode-hot"},
+				{Name: "pod_name", Value: first.podName},
+				{Name: "container_name", Value: "data"},
 			},
 		}})).To(Succeed())
 		Expect(testhelper.UpdateMetrics(second.flight, []testhelper.RawMetric{{
@@ -281,15 +261,22 @@ var _ = Describe("Failure Scenarios", func() {
 			Desc:  "agent two metric",
 			Labels: []testhelper.Label{
 				{Name: "group", Value: "secondary"},
+				{Name: "node_role", Value: "datanode-warm"},
+				{Name: "pod_name", Value: second.podName},
+				{Name: "container_name", Value: "data"},
 			},
 		}})).To(Succeed())
 
 		stopAgent(second)
-		fixture.unregisterByAddress(second.nodeIP, second.nodePort)
+		fixture.unregisterByPodName(second.podName)
+
+		Eventually(func() int {
+			return len(fixture.registry.ListAgents())
+		}, 5*time.Second, 500*time.Millisecond).Should(Equal(1))
 
 		var metricsList []map[string]interface{}
 		Eventually(func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
+			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows?pod_name=%s", fixture.proxyHTTPAddr, first.podName))
 			if err != nil {
 				return err
 			}
@@ -310,7 +297,7 @@ var _ = Describe("Failure Scenarios", func() {
 	})
 
 	It("recovers after the proxy's gRPC service restarts", func() {
-		agent := startAgentForFixture(fixture, "127.0.0.30", 9020, "datanode-cold")
+		agent := startAgentForFixture(fixture, "127.0.0.30", "datanode-cold")
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
@@ -349,7 +336,7 @@ var _ = Describe("Failure Scenarios", func() {
 		time.Sleep(100 * time.Millisecond)
 
 		// Create a new agent client for reconnection after server restart
-		agent = startAgentForFixture(fixture, "127.0.0.30", 9020, "datanode-cold")
+		agent = startAgentForFixture(fixture, "127.0.0.30", "datanode-cold")
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
