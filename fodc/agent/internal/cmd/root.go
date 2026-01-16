@@ -61,7 +61,6 @@ var (
 	prometheusListenAddr         string
 	ktmEnabled                   bool
 	ktmInterval                  time.Duration
-	ktmModules                   []string
 	proxyAddr                    string
 	nodeIP                       string
 	nodePort                     int
@@ -110,7 +109,6 @@ func init() {
 		"Interval for reconnection attempts when connection to Proxy is lost")
 	rootCmd.Flags().BoolVar(&ktmEnabled, "ktm-enabled", false, "Enable Kernel Trace Module (eBPF)")
 	rootCmd.Flags().DurationVar(&ktmInterval, "ktm-interval", 10*time.Second, "Interval for KTM metrics collection")
-	rootCmd.Flags().StringSliceVar(&ktmModules, "ktm-modules", []string{"iomonitor"}, "KTM modules to enable")
 }
 
 func calculateCapacitySize(log *logger.Logger, maxMemoryUsagePercent int) int64 {
@@ -343,7 +341,7 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 	ktmCfg := ktm.Config{
 		Enabled:  ktmEnabled,
 		Interval: ktmInterval,
-		Modules:  ktmModules,
+		Modules:  []string{"iomonitor"},
 	}
 
 	ktmSvc, createErr := ktm.NewKTM(ktmCfg, log)
@@ -367,23 +365,19 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 			case <-stopBridgeCh:
 				return
 			case <-ticker.C:
-				store := ktmSvc.GetMetrics()
-				if store == nil {
-					continue
-				}
-				rawMetrics := ktm.ToRawMetrics(store)
-				if len(rawMetrics) == 0 {
-					continue
-				}
-				// Add ktm_status metric: 2=Full, 1=Degraded
+				rawMetrics := ktmSvc.GetMetrics()
+				// Add ktm_status metric: 0=Disabled, 1=Degraded, 2=Full.
 				ktmStatus := 2.0 // Full mode (cgroup+comm)
 				if ktmSvc.IsDegraded() {
 					ktmStatus = 1.0 // Degraded mode (comm-only)
 				}
+				if len(rawMetrics) == 0 {
+					ktmStatus = 0.0
+				}
 				rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
 					Name:  "ktm_status",
 					Value: ktmStatus,
-					Desc:  "KTM status: 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+					Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
 				})
 				if updateErr := fr.Update(rawMetrics); updateErr != nil {
 					log.Warn().Err(updateErr).Msg("Failed to update FlightRecorder with KTM metrics")

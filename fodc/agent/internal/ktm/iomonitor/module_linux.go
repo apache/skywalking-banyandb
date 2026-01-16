@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build linux
+//go:build linux && (amd64 || arm64 || 386)
 
 package iomonitor
 
@@ -27,7 +27,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 type module struct {
@@ -109,50 +109,54 @@ func (m *module) Degraded() bool {
 }
 
 // Collect gathers all metrics from eBPF maps.
-func (m *module) Collect() (*metrics.MetricSet, error) {
+func (m *module) Collect() ([]fodcmetrics.RawMetric, error) {
 	if m.objs == nil {
 		return nil, fmt.Errorf("eBPF objects not initialized")
 	}
 
-	ms := metrics.NewMetricSet()
+	rawMetrics := make([]fodcmetrics.RawMetric, 0)
 
 	// Collect metrics (cumulative)
-	m.collectMetrics(ms)
-	m.addDegradedMetric(ms)
+	m.collectMetrics(&rawMetrics)
+	m.addDegradedMetric(&rawMetrics)
 
-	return ms, nil
+	return rawMetrics, nil
 }
 
-func (m *module) addDegradedMetric(ms *metrics.MetricSet) {
+func (m *module) addDegradedMetric(rawMetrics *[]fodcmetrics.RawMetric) {
 	degraded := 0.0
 	if m.loader != nil && m.loader.Degraded() {
 		degraded = 1.0
 	}
-	ms.AddGauge("ktm_degraded", degraded, nil)
+	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+		Name:  "ktm_degraded",
+		Value: degraded,
+		Desc:  "KTM degraded mode indicator: 0=normal, 1=degraded",
+	})
 }
 
 // collectMetrics collects metrics from all maps without clearing them.
-func (m *module) collectMetrics(ms *metrics.MetricSet) {
-	if err := m.collectFadviseStats(ms); err != nil {
+func (m *module) collectMetrics(rawMetrics *[]fodcmetrics.RawMetric) {
+	if err := m.collectFadviseStats(rawMetrics); err != nil {
 		m.logger.Debug().Err(err).Msg("Failed to collect fadvise stats")
 	}
 
-	if err := m.collectCacheStats(ms); err != nil {
+	if err := m.collectCacheStats(rawMetrics); err != nil {
 		m.logger.Debug().Err(err).Msg("Failed to collect cache stats")
 	}
 
-	m.collectMemoryStats(ms)
+	m.collectMemoryStats(rawMetrics)
 
-	if err := m.collectReadLatencyStats(ms); err != nil {
+	if err := m.collectReadLatencyStats(rawMetrics); err != nil {
 		m.logger.Debug().Err(err).Msg("Failed to collect read latency stats")
 	}
 
-	if err := m.collectPreadLatencyStats(ms); err != nil {
+	if err := m.collectPreadLatencyStats(rawMetrics); err != nil {
 		m.logger.Debug().Err(err).Msg("Failed to collect pread latency stats")
 	}
 }
 
-func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
+func (m *module) collectFadviseStats(rawMetrics *[]fodcmetrics.RawMetric) error {
 	var pid uint32
 	var perCPUStats []generated.IomonitorFadviseStatsT
 	iter := m.objs.FadviseStatsMap.Iterate()
@@ -168,13 +172,23 @@ func (m *module) collectFadviseStats(ms *metrics.MetricSet) error {
 		}
 	}
 
-	ms.AddCounter("ktm_fadvise_calls_total", float64(totalCalls), nil)
-	ms.AddCounter("ktm_fadvise_dontneed_total", float64(dontneed), nil)
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_fadvise_calls_total",
+			Value: float64(totalCalls),
+			Desc:  "Total number of fadvise calls",
+		},
+		fodcmetrics.RawMetric{
+			Name:  "ktm_fadvise_dontneed_total",
+			Value: float64(dontneed),
+			Desc:  "Total number of fadvise DONTNEED calls",
+		},
+	)
 
 	return iter.Err()
 }
 
-func (m *module) collectCacheStats(ms *metrics.MetricSet) error {
+func (m *module) collectCacheStats(rawMetrics *[]fodcmetrics.RawMetric) error {
 	var pid uint32
 	var perCPUStats []generated.IomonitorCacheStatsT
 	iter := m.objs.CacheStatsMap.Iterate()
@@ -192,14 +206,28 @@ func (m *module) collectCacheStats(ms *metrics.MetricSet) error {
 		}
 	}
 
-	ms.AddCounter("ktm_cache_lookups_total", float64(lookups), nil)
-	ms.AddCounter("ktm_cache_fills_total", float64(adds), nil)
-	ms.AddCounter("ktm_cache_deletes_total", float64(deletes), nil)
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_cache_lookups_total",
+			Value: float64(lookups),
+			Desc:  "Total number of page cache lookups",
+		},
+		fodcmetrics.RawMetric{
+			Name:  "ktm_cache_fills_total",
+			Value: float64(adds),
+			Desc:  "Total number of page cache fills",
+		},
+		fodcmetrics.RawMetric{
+			Name:  "ktm_cache_deletes_total",
+			Value: float64(deletes),
+			Desc:  "Total number of page cache deletions",
+		},
+	)
 
 	return iter.Err()
 }
 
-func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
+func (m *module) collectMemoryStats(rawMetrics *[]fodcmetrics.RawMetric) {
 	// LRU shrink stats (per-CPU)
 	var key uint32
 	var perCPUShrink []generated.IomonitorShrinkCountersT
@@ -211,9 +239,23 @@ func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
 			totalReclaimed += cpuCounters.NrReclaimedTotal
 			totalEvents += cpuCounters.EventsTotal
 		}
-		ms.AddCounter("ktm_memory_lru_pages_scanned_total", float64(totalScanned), nil)
-		ms.AddCounter("ktm_memory_lru_pages_reclaimed_total", float64(totalReclaimed), nil)
-		ms.AddCounter("ktm_memory_lru_shrink_events_total", float64(totalEvents), nil)
+		*rawMetrics = append(*rawMetrics,
+			fodcmetrics.RawMetric{
+				Name:  "ktm_memory_lru_pages_scanned_total",
+				Value: float64(totalScanned),
+				Desc:  "Total number of LRU pages scanned",
+			},
+			fodcmetrics.RawMetric{
+				Name:  "ktm_memory_lru_pages_reclaimed_total",
+				Value: float64(totalReclaimed),
+				Desc:  "Total number of LRU pages reclaimed",
+			},
+			fodcmetrics.RawMetric{
+				Name:  "ktm_memory_lru_shrink_events_total",
+				Value: float64(totalEvents),
+				Desc:  "Total number of LRU shrink events",
+			},
+		)
 	}
 
 	// Direct reclaim stats (per-CPU)
@@ -224,11 +266,15 @@ func (m *module) collectMemoryStats(ms *metrics.MetricSet) {
 		for _, cpuCounters := range perCPUReclaim {
 			totalBegin += cpuCounters.DirectReclaimBeginTotal
 		}
-		ms.AddCounter("ktm_memory_direct_reclaim_begin_total", float64(totalBegin), nil)
+		*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+			Name:  "ktm_memory_direct_reclaim_begin_total",
+			Value: float64(totalBegin),
+			Desc:  "Total number of direct reclaim begin events",
+		})
 	}
 }
 
-func (m *module) collectReadLatencyStats(ms *metrics.MetricSet) error {
+func (m *module) collectReadLatencyStats(rawMetrics *[]fodcmetrics.RawMetric) error {
 	var pid uint32
 	var perCPUStats []generated.IomonitorReadLatencyStatsT
 	iter := m.objs.ReadLatencyStatsMap.Iterate()
@@ -254,10 +300,22 @@ func (m *module) collectReadLatencyStats(ms *metrics.MetricSet) error {
 		return err
 	}
 
-	// Convert to cumulative map for Prometheus
-	promBuckets := make(map[float64]uint64)
-	var cumulative uint64
+	// Add histogram sum and count
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_read_latency_seconds_sum",
+			Value: float64(totalSumNs) / 1e9,
+			Desc:  "Total sum of read() latency in seconds",
+		},
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_read_latency_seconds_count",
+			Value: float64(totalCount),
+			Desc:  "Total count of read() calls",
+		},
+	)
 
+	// Add histogram buckets
+	var cumulative uint64
 	for i := 0; i < 32; i++ {
 		count := aggBuckets[i]
 		cumulative += count
@@ -267,18 +325,35 @@ func (m *module) collectReadLatencyStats(ms *metrics.MetricSet) error {
 		upperBoundUs := math.Pow(2, float64(i))
 		upperBoundSec := upperBoundUs / 1e6
 
-		promBuckets[upperBoundSec] = cumulative
+		*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+			Name:  "ktm_sys_read_latency_seconds_bucket",
+			Value: float64(cumulative),
+			Labels: []fodcmetrics.Label{
+				{Name: "le", Value: fmt.Sprintf("%g", upperBoundSec)},
+			},
+			Desc: "Histogram buckets for read() latency",
+		})
 	}
 	// Add +Inf bucket
-	promBuckets[math.Inf(1)] = cumulative
+	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+		Name:  "ktm_sys_read_latency_seconds_bucket",
+		Value: float64(cumulative),
+		Labels: []fodcmetrics.Label{
+			{Name: "le", Value: "+Inf"},
+		},
+		Desc: "Histogram buckets for read() latency",
+	})
 
-	ms.AddHistogram("ktm_sys_read_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
-	ms.AddCounter("ktm_sys_read_bytes_total", float64(totalBytes), nil)
+	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+		Name:  "ktm_sys_read_bytes_total",
+		Value: float64(totalBytes),
+		Desc:  "Total bytes read via read() syscall",
+	})
 
 	return nil
 }
 
-func (m *module) collectPreadLatencyStats(ms *metrics.MetricSet) error {
+func (m *module) collectPreadLatencyStats(rawMetrics *[]fodcmetrics.RawMetric) error {
 	var pid uint32
 	var perCPUStats []generated.IomonitorReadLatencyStatsT
 	iter := m.objs.PreadLatencyStatsMap.Iterate()
@@ -304,10 +379,22 @@ func (m *module) collectPreadLatencyStats(ms *metrics.MetricSet) error {
 		return err
 	}
 
-	// Convert to cumulative map for Prometheus
-	promBuckets := make(map[float64]uint64)
-	var cumulative uint64
+	// Add histogram sum and count
+	*rawMetrics = append(*rawMetrics,
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_pread_latency_seconds_sum",
+			Value: float64(totalSumNs) / 1e9,
+			Desc:  "Total sum of pread() latency in seconds",
+		},
+		fodcmetrics.RawMetric{
+			Name:  "ktm_sys_pread_latency_seconds_count",
+			Value: float64(totalCount),
+			Desc:  "Total count of pread() calls",
+		},
+	)
 
+	// Add histogram buckets
+	var cumulative uint64
 	for i := 0; i < 32; i++ {
 		count := aggBuckets[i]
 		cumulative += count
@@ -317,13 +404,30 @@ func (m *module) collectPreadLatencyStats(ms *metrics.MetricSet) error {
 		upperBoundUs := math.Pow(2, float64(i))
 		upperBoundSec := upperBoundUs / 1e6
 
-		promBuckets[upperBoundSec] = cumulative
+		*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+			Name:  "ktm_sys_pread_latency_seconds_bucket",
+			Value: float64(cumulative),
+			Labels: []fodcmetrics.Label{
+				{Name: "le", Value: fmt.Sprintf("%g", upperBoundSec)},
+			},
+			Desc: "Histogram buckets for pread() latency",
+		})
 	}
 	// Add +Inf bucket
-	promBuckets[math.Inf(1)] = cumulative
+	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+		Name:  "ktm_sys_pread_latency_seconds_bucket",
+		Value: float64(cumulative),
+		Labels: []fodcmetrics.Label{
+			{Name: "le", Value: "+Inf"},
+		},
+		Desc: "Histogram buckets for pread() latency",
+	})
 
-	ms.AddHistogram("ktm_sys_pread_latency_seconds", promBuckets, float64(totalSumNs)/1e9, totalCount, nil)
-	ms.AddCounter("ktm_sys_pread_bytes_total", float64(totalBytes), nil)
+	*rawMetrics = append(*rawMetrics, fodcmetrics.RawMetric{
+		Name:  "ktm_sys_pread_bytes_total",
+		Value: float64(totalBytes),
+		Desc:  "Total bytes read via pread() syscall",
+	})
 
 	return nil
 }

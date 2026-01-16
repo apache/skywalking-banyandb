@@ -24,7 +24,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // KTM represents the Kernel Trace Module.
@@ -88,7 +88,7 @@ func (k *KTM) Stop() error {
 }
 
 // GetMetrics returns the collected metrics.
-func (k *KTM) GetMetrics() *metrics.Store {
+func (k *KTM) GetMetrics() []fodcmetrics.RawMetric {
 	if !k.config.Enabled || k.collector == nil {
 		return nil
 	}

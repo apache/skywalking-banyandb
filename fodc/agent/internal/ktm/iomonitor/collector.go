@@ -26,7 +26,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/metrics"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
 // CollectorConfig defines the collector configuration.
@@ -44,14 +44,14 @@ type EBPFConfig struct {
 
 // Collector manages eBPF program lifecycle and metrics collection.
 type Collector struct {
-	logger   zerolog.Logger
-	modules  map[string]Module
-	metrics  *metrics.Store
-	ticker   *time.Ticker
-	stopChan chan struct{}
-	config   CollectorConfig
-	wg       sync.WaitGroup
-	mu       sync.RWMutex
+	logger      zerolog.Logger
+	modules     map[string]Module
+	lastMetrics []fodcmetrics.RawMetric
+	ticker      *time.Ticker
+	stopChan    chan struct{}
+	config      CollectorConfig
+	wg          sync.WaitGroup
+	mu          sync.RWMutex
 }
 
 // Module represents an eBPF monitoring module.
@@ -59,7 +59,7 @@ type Module interface {
 	Name() string
 	Start() error
 	Stop() error
-	Collect() (*metrics.MetricSet, error)
+	Collect() ([]fodcmetrics.RawMetric, error)
 }
 
 // New creates a new collector instance.
@@ -69,11 +69,11 @@ func New(cfg CollectorConfig, log zerolog.Logger) (*Collector, error) {
 	}
 
 	c := &Collector{
-		config:   cfg,
-		logger:   log,
-		modules:  make(map[string]Module),
-		metrics:  metrics.NewStore(),
-		stopChan: make(chan struct{}),
+		config:      cfg,
+		logger:      log,
+		modules:     make(map[string]Module),
+		lastMetrics: make([]fodcmetrics.RawMetric, 0),
+		stopChan:    make(chan struct{}),
 	}
 
 	// Initialize modules based on configuration
@@ -98,10 +98,6 @@ func (c *Collector) createModule(name string, ebpfCfg EBPFConfig) (Module, error
 			return nil, fmt.Errorf("failed to create iomonitor module: %w", err)
 		}
 		return module, nil
-	case "fadvise", "memory", "cache":
-		// These are all handled by iomonitor now
-		c.logger.Warn().Str("module", name).Msg("Module is deprecated, use 'iomonitor' instead")
-		return nil, fmt.Errorf("module %s is deprecated, use 'iomonitor' instead", name)
 	default:
 		return nil, fmt.Errorf("unknown module: %s", name)
 	}
@@ -148,24 +144,32 @@ func (c *Collector) Collect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	allMetrics := make([]fodcmetrics.RawMetric, 0)
+
 	for name, module := range c.modules {
-		metricSet, err := module.Collect()
+		rawMetrics, err := module.Collect()
 		if err != nil {
 			c.logger.Error().Str("module", name).Err(err).Msg("Failed to collect metrics")
 			continue
 		}
 
-		// Store metrics
-		c.metrics.Update(name, metricSet)
-		c.logger.Debug().Str("module", name).Int("count", metricSet.Count()).Msg("Collected metrics")
+		// Aggregate metrics
+		allMetrics = append(allMetrics, rawMetrics...)
+		c.logger.Debug().Str("module", name).Int("count", len(rawMetrics)).Msg("Collected metrics")
 	}
+
+	c.lastMetrics = allMetrics
 }
 
 // GetMetrics returns current metrics.
-func (c *Collector) GetMetrics() *metrics.Store {
+func (c *Collector) GetMetrics() []fodcmetrics.RawMetric {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.metrics
+	
+	// Return a copy to avoid race conditions
+	result := make([]fodcmetrics.RawMetric, len(c.lastMetrics))
+	copy(result, c.lastMetrics)
+	return result
 }
 
 // IsDegraded returns whether any module is running in degraded mode.

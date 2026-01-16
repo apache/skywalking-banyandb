@@ -634,11 +634,10 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 				case <-stopBridgeCh:
 					return
 				case <-ticker.C:
-					store := ktmSvc.GetMetrics()
-					if store == nil {
+					rawMetrics := ktmSvc.GetMetrics()
+					if rawMetrics == nil {
 						continue
 					}
-					rawMetrics := ktm.ToRawMetrics(store)
 					ktmStatus := 2.0
 					if ktmSvc.IsDegraded() {
 						ktmStatus = 1.0
