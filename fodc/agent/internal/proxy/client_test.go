@@ -375,7 +375,10 @@ func TestProxyClient_StartRegistrationStream_NotConnected(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "datanode-hot", "test", []string{"data"}, map[string]string{"env": "test"}, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient(
+		"localhost:8080", "192.168.1.1", 9090, "datanode-hot", "test",
+		[]string{"data"}, map[string]string{"env": "test"},
+		5*time.Second, 10*time.Second, fr, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -632,7 +635,10 @@ func TestProxyClient_SendHeartbeat_NoStream(t *testing.T) {
 func TestProxyClient_SendHeartbeat_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "192.168.1.1", 9090, "datanode-hot", "test", []string{"data"}, map[string]string{"env": "test"}, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient(
+		"localhost:8080", "192.168.1.1", 9090, "datanode-hot", "test",
+		[]string{"data"}, map[string]string{"env": "test"},
+		5*time.Second, 10*time.Second, fr, testLogger)
 
 	ctx := context.Background()
 	mockStream := newMockRegisterAgentClient(ctx)

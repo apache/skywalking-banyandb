@@ -268,10 +268,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		By("Adding metrics to each Flight Recorder")
 		rawMetrics1 := []testhelper.RawMetric{
 			{
-				Name:   "liaison_metric",
-				Value:  10.0,
-				Desc:   "Liaison metric",
-				Labels: []testhelper.Label{{Name: "label1", Value: "value1"}},
+				Name:  "liaison_metric",
+				Value: 10.0,
+				Desc:  "Liaison metric",
+				Labels: []testhelper.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "node_role", Value: "liaison"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "liaison"},
+				},
 			},
 		}
 		updateErr1 := testhelper.UpdateMetrics(flightRecorder1, rawMetrics1)
@@ -279,10 +284,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics2 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_hot_metric",
-				Value:  20.0,
-				Desc:   "DataNode hot metric",
-				Labels: []testhelper.Label{{Name: "label2", Value: "value2"}},
+				Name:  "datanode_hot_metric",
+				Value: 20.0,
+				Desc:  "DataNode hot metric",
+				Labels: []testhelper.Label{
+					{Name: "label2", Value: "value2"},
+					{Name: "node_role", Value: "datanode-hot"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr2 := testhelper.UpdateMetrics(flightRecorder2, rawMetrics2)
@@ -290,10 +300,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics3 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_warm_metric",
-				Value:  30.0,
-				Desc:   "DataNode warm metric",
-				Labels: []testhelper.Label{{Name: "label3", Value: "value3"}},
+				Name:  "datanode_warm_metric",
+				Value: 30.0,
+				Desc:  "DataNode warm metric",
+				Labels: []testhelper.Label{
+					{Name: "label3", Value: "value3"},
+					{Name: "node_role", Value: "datanode-warm"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr3 := testhelper.UpdateMetrics(flightRecorder3, rawMetrics3)
@@ -339,6 +354,8 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				foundLiaisonMetric = true
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("liaison"))
+				Expect(labels["pod_name"]).To(Equal("demo"))
+				Expect(labels["container_name"]).To(Equal("liaison"))
 				Expect(metric["ip"]).To(Equal("127.0.0.1"))
 			case "datanode_hot_metric":
 				foundHotMetric = true
@@ -398,10 +415,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		By("Adding metrics to each Flight Recorder")
 		rawMetrics1 := []testhelper.RawMetric{
 			{
-				Name:   "liaison_metric",
-				Value:  10.0,
-				Desc:   "Liaison metric",
-				Labels: []testhelper.Label{{Name: "label1", Value: "value1"}},
+				Name:  "liaison_metric",
+				Value: 10.0,
+				Desc:  "Liaison metric",
+				Labels: []testhelper.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "node_role", Value: "liaison"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "liaison"},
+				},
 			},
 		}
 		updateErr1 := testhelper.UpdateMetrics(flightRecorder1, rawMetrics1)
@@ -409,10 +431,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics2 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_hot_metric",
-				Value:  20.0,
-				Desc:   "DataNode hot metric",
-				Labels: []testhelper.Label{{Name: "label2", Value: "value2"}},
+				Name:  "datanode_hot_metric",
+				Value: 20.0,
+				Desc:  "DataNode hot metric",
+				Labels: []testhelper.Label{
+					{Name: "label2", Value: "value2"},
+					{Name: "node_role", Value: "datanode-hot"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr2 := testhelper.UpdateMetrics(flightRecorder2, rawMetrics2)
@@ -420,10 +447,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics3 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_warm_metric",
-				Value:  30.0,
-				Desc:   "DataNode warm metric",
-				Labels: []testhelper.Label{{Name: "label3", Value: "value3"}},
+				Name:  "datanode_warm_metric",
+				Value: 30.0,
+				Desc:  "DataNode warm metric",
+				Labels: []testhelper.Label{
+					{Name: "label3", Value: "value3"},
+					{Name: "node_role", Value: "datanode-warm"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr3 := testhelper.UpdateMetrics(flightRecorder3, rawMetrics3)
@@ -519,10 +551,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		By("Adding metrics to each Flight Recorder")
 		rawMetrics1 := []testhelper.RawMetric{
 			{
-				Name:   "liaison_metric",
-				Value:  10.0,
-				Desc:   "Liaison metric",
-				Labels: []testhelper.Label{{Name: "label1", Value: "value1"}},
+				Name:  "liaison_metric",
+				Value: 10.0,
+				Desc:  "Liaison metric",
+				Labels: []testhelper.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "node_role", Value: "liaison"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "liaison"},
+				},
 			},
 		}
 		updateErr1 := testhelper.UpdateMetrics(flightRecorder1, rawMetrics1)
@@ -530,10 +567,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics2 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_hot_metric",
-				Value:  20.0,
-				Desc:   "DataNode hot metric",
-				Labels: []testhelper.Label{{Name: "label2", Value: "value2"}},
+				Name:  "datanode_hot_metric",
+				Value: 20.0,
+				Desc:  "DataNode hot metric",
+				Labels: []testhelper.Label{
+					{Name: "label2", Value: "value2"},
+					{Name: "node_role", Value: "datanode-hot"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr2 := testhelper.UpdateMetrics(flightRecorder2, rawMetrics2)
@@ -541,10 +583,15 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		rawMetrics3 := []testhelper.RawMetric{
 			{
-				Name:   "datanode_warm_metric",
-				Value:  30.0,
-				Desc:   "DataNode warm metric",
-				Labels: []testhelper.Label{{Name: "label3", Value: "value3"}},
+				Name:  "datanode_warm_metric",
+				Value: 30.0,
+				Desc:  "DataNode warm metric",
+				Labels: []testhelper.Label{
+					{Name: "label3", Value: "value3"},
+					{Name: "node_role", Value: "datanode-warm"},
+					{Name: "pod_name", Value: "demo"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		updateErr3 := testhelper.UpdateMetrics(flightRecorder3, rawMetrics3)

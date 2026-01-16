@@ -195,7 +195,13 @@ func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
-	req := createTestStreamMetricsRequest("cpu_usage", 75.5, map[string]string{"cpu": "0"}, &now)
+	labels := map[string]string{
+		"cpu":            "0",
+		"node_role":      "datanode-warm",
+		"pod_name":       "test",
+		"container_name": "data",
+	}
+	req := createTestStreamMetricsRequest("cpu_usage", 75.5, labels, &now)
 
 	err := aggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, req)
 	require.NoError(t, err)
@@ -211,7 +217,7 @@ func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 		assert.Equal(t, "8080", metric.Labels["port"])
 		assert.Equal(t, "datanode-warm", metric.Labels["node_role"])
 		assert.Equal(t, "test", metric.Labels["pod_name"])
-		assert.Equal(t, "datanode-warm", metric.Labels["container_name"])
+		assert.Equal(t, "data", metric.Labels["container_name"])
 		assert.Equal(t, "0", metric.Labels["cpu"])
 		assert.WithinDuration(t, now, metric.Timestamp, time.Second)
 	case <-time.After(1 * time.Second):
@@ -234,7 +240,13 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
-	req := createTestStreamMetricsRequest("memory_usage", 50.0, map[string]string{"type": "heap"}, &now)
+	labels := map[string]string{
+		"type":           "heap",
+		"node_role":      "master",
+		"pod_name":       "test",
+		"container_name": "master",
+	}
+	req := createTestStreamMetricsRequest("memory_usage", 50.0, labels, &now)
 
 	err := aggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, req)
 	require.NoError(t, err)

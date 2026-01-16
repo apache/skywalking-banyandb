@@ -99,7 +99,7 @@ func init() {
 	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
 		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
 	rootCmd.Flags().StringSliceVar(&containerNames, "container-name", []string{},
-		"Names of the containers corresponding to each poll-metrics-port (can be specified multiple times or comma-separated). Must have one-to-one correspondence with poll-metrics-ports.")
+		"Names of the containers corresponding to each poll-metrics-port. Must have one-to-one correspondence with poll-metrics-ports.")
 	rootCmd.Flags().StringVar(&podName, "pod-name", "",
 		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",

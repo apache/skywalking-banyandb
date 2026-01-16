@@ -277,6 +277,9 @@ var _ = Describe("Failure Scenarios", func() {
 			Desc:  "agent one metric",
 			Labels: []testhelper.Label{
 				{Name: "group", Value: "primary"},
+				{Name: "node_role", Value: "datanode-hot"},
+				{Name: "pod_name", Value: "test"},
+				{Name: "container_name", Value: "data"},
 			},
 		}})).To(Succeed())
 		Expect(testhelper.UpdateMetrics(second.flight, []testhelper.RawMetric{{
@@ -285,15 +288,22 @@ var _ = Describe("Failure Scenarios", func() {
 			Desc:  "agent two metric",
 			Labels: []testhelper.Label{
 				{Name: "group", Value: "secondary"},
+				{Name: "node_role", Value: "datanode-warm"},
+				{Name: "pod_name", Value: "test"},
+				{Name: "container_name", Value: "data"},
 			},
 		}})).To(Succeed())
 
 		stopAgent(second)
 		fixture.unregisterByAddress(second.nodeIP, second.nodePort)
 
+		Eventually(func() int {
+			return len(fixture.registry.ListAgents())
+		}, 5*time.Second, 500*time.Millisecond).Should(Equal(1))
+
 		var metricsList []map[string]interface{}
 		Eventually(func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
+			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows?address=%s:%d", fixture.proxyHTTPAddr, first.nodeIP, first.nodePort))
 			if err != nil {
 				return err
 			}

@@ -45,20 +45,22 @@ const (
 
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
-	client        *http.Client
-	log           *logger.Logger
-	cancel        context.CancelFunc
-	recorder      MetricsRecorder
-	ctx           context.Context
-	urls          []string
-	wg            sync.WaitGroup
-	mu            sync.RWMutex
-	interval      time.Duration
-	retryBackoff  time.Duration
-	isRunning     bool
+	recorder MetricsRecorder
+	log      *logger.Logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	client   *http.Client
+
 	nodeRole       string
 	podName        string
+	urls           []string
 	containerNames []string
+
+	interval     time.Duration
+	retryBackoff time.Duration
+	mu           sync.RWMutex
+	wg           sync.WaitGroup
+	isRunning    bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.

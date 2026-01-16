@@ -166,16 +166,26 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 		By("Adding metrics to Flight Recorder")
 		rawMetrics := []testhelper.RawMetric{
 			{
-				Name:   "test_metric_1",
-				Value:  42.5,
-				Desc:   "Test metric 1 description",
-				Labels: []testhelper.Label{{Name: "label1", Value: "value1"}},
+				Name:  "test_metric_1",
+				Value: 42.5,
+				Desc:  "Test metric 1 description",
+				Labels: []testhelper.Label{
+					{Name: "label1", Value: "value1"},
+					{Name: "node_role", Value: "datanode-hot"},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 			{
-				Name:   "test_metric_2",
-				Value:  100.0,
-				Desc:   "Test metric 2 description",
-				Labels: []testhelper.Label{{Name: "label2", Value: "value2"}},
+				Name:  "test_metric_2",
+				Value: 100.0,
+				Desc:  "Test metric 2 description",
+				Labels: []testhelper.Label{
+					{Name: "label2", Value: "value2"},
+					{Name: "node_role", Value: "datanode-hot"},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			},
 		}
 		// Use helper function to update metrics (avoids importing internal package)

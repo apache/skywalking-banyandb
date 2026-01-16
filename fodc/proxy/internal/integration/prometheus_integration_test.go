@@ -159,6 +159,9 @@ var _ = Describe("Prometheus Integration", func() {
 			Desc:  "Mock Prometheus metric",
 			Labels: []testhelper.Label{
 				{Name: "component", Value: "worker"},
+				{Name: "node_role", Value: "liaison"},
+				{Name: "pod_name", Value: "test"},
+				{Name: "container_name", Value: "liaison"},
 			},
 		}})).To(Succeed())
 

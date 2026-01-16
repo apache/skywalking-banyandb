@@ -192,12 +192,19 @@ var _ = Describe("High Availability and Scalability", func() {
 		time.Sleep(500 * time.Millisecond)
 
 		By("populating each Flight Recorder with sample metrics")
+		agentRoles := []string{"liaison", "datanode-hot", "datanode-warm", "datanode-cold"}
 		for idx, agent := range agents {
+			role := agentRoles[idx%len(agentRoles)]
 			metric := testhelper.RawMetric{
-				Name:   "ha_metric",
-				Value:  float64(idx + 1),
-				Desc:   "High availability metric",
-				Labels: []testhelper.Label{{Name: "agent_idx", Value: strconv.Itoa(idx)}},
+				Name:  "ha_metric",
+				Value: float64(idx + 1),
+				Desc:  "High availability metric",
+				Labels: []testhelper.Label{
+					{Name: "agent_idx", Value: strconv.Itoa(idx)},
+					{Name: "node_role", Value: role},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			}
 			Expect(testhelper.UpdateMetrics(agent.flightRecorder, []testhelper.RawMetric{metric})).To(Succeed())
 		}
@@ -299,11 +306,17 @@ var _ = Describe("High Availability and Scalability", func() {
 		time.Sleep(2 * time.Second) // Wait for new client instances to establish metrics streams
 		for idx := 0; idx < reconnectSubsetSize; idx++ {
 			agent := agents[idx]
+			role := agentRoles[idx%len(agentRoles)]
 			Expect(testhelper.UpdateMetrics(agent.flightRecorder, []testhelper.RawMetric{{
-				Name:   fmt.Sprintf("reconnect_metric_%d", idx),
-				Value:  float64(idx + 1000),
-				Desc:   "reconnect metric",
-				Labels: []testhelper.Label{{Name: "agent_idx", Value: strconv.Itoa(idx)}},
+				Name:  fmt.Sprintf("reconnect_metric_%d", idx),
+				Value: float64(idx + 1000),
+				Desc:  "reconnect metric",
+				Labels: []testhelper.Label{
+					{Name: "agent_idx", Value: strconv.Itoa(idx)},
+					{Name: "node_role", Value: role},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			}})).To(Succeed())
 		}
 

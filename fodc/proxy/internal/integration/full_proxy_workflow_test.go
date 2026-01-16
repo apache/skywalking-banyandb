@@ -204,26 +204,41 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		By("populating flight recorder metrics for each agent")
 		first := testhelper.RawMetric{
-			Name:   "liaison_full_metric",
-			Value:  10.0,
-			Desc:   "liaison metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-west-1"}},
+			Name:  "liaison_full_metric",
+			Value: 10.0,
+			Desc:  "liaison metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-west-1"},
+				{Name: "node_role", Value: "liaison"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "liaison"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder1, []testhelper.RawMetric{first})).To(Succeed())
 
 		second := testhelper.RawMetric{
-			Name:   "datanode_hot_full_metric",
-			Value:  20.0,
-			Desc:   "datanode hot metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-west-1"}},
+			Name:  "datanode_hot_full_metric",
+			Value: 20.0,
+			Desc:  "datanode hot metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-west-1"},
+				{Name: "node_role", Value: "datanode-hot"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "data"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder2, []testhelper.RawMetric{second})).To(Succeed())
 
 		third := testhelper.RawMetric{
-			Name:   "datanode_warm_full_metric",
-			Value:  30.0,
-			Desc:   "datanode warm metric for workflow",
-			Labels: []testhelper.Label{{Name: "zone", Value: "us-east-1"}},
+			Name:  "datanode_warm_full_metric",
+			Value: 30.0,
+			Desc:  "datanode warm metric for workflow",
+			Labels: []testhelper.Label{
+				{Name: "zone", Value: "us-east-1"},
+				{Name: "node_role", Value: "datanode-warm"},
+				{Name: "pod_name", Value: "demo"},
+				{Name: "container_name", Value: "data"},
+			},
 		}
 		Expect(testhelper.UpdateMetrics(flightRecorder3, []testhelper.RawMetric{third})).To(Succeed())
 

@@ -58,13 +58,13 @@ type AgentIdentity struct {
 // AgentInfo contains information about a registered agent.
 type AgentInfo struct {
 	Labels         map[string]string
-	RegisteredAt   time.Time
-	LastHeartbeat  time.Time
 	AgentID        string
 	NodeRole       string
 	Status         AgentStatus
-	AgentIdentity  AgentIdentity
+	RegisteredAt   time.Time
+	LastHeartbeat  time.Time
 	PrimaryAddress Address
+	AgentIdentity  AgentIdentity
 }
 
 // AgentRegistry manages the lifecycle and state of all connected FODC Agents.
