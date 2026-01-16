@@ -120,8 +120,6 @@ func ValidateMetricsBufferAlignment(fr interface{}) error {
 // NewProxyClient creates a new ProxyClient instance for testing.
 func NewProxyClient(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
 	podName string,
 	containerNames []string,
@@ -138,8 +136,6 @@ func NewProxyClient(
 	}
 	return proxy.NewClient(
 		proxyAddr,
-		nodeIP,
-		nodePort,
 		nodeRole,
 		podName,
 		containerNames,
@@ -199,8 +195,6 @@ func (w *ProxyClientWrapper) Disconnect() error {
 // NewProxyClientWrapper creates a wrapped ProxyClient for testing.
 func NewProxyClientWrapper(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
 	podName string,
 	containerNames []string,
@@ -212,8 +206,6 @@ func NewProxyClientWrapper(
 ) *ProxyClientWrapper {
 	client := NewProxyClient(
 		proxyAddr,
-		nodeIP,
-		nodePort,
 		nodeRole,
 		podName,
 		containerNames,

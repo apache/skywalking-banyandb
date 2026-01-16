@@ -39,32 +39,22 @@ const (
 	AgentStatusOffline AgentStatus = "unconnected"
 )
 
-// Address represents a network address.
-type Address struct {
-	IP   string
-	Port int
-}
-
 // AgentIdentity represents the identity of an agent.
 type AgentIdentity struct {
 	Labels         map[string]string
-	IP             string
 	Role           string
 	PodName        string
 	ContainerNames []string
-	Port           int
 }
 
 // AgentInfo contains information about a registered agent.
 type AgentInfo struct {
-	Labels         map[string]string
-	AgentID        string
-	NodeRole       string
-	Status         AgentStatus
-	RegisteredAt   time.Time
-	LastHeartbeat  time.Time
-	PrimaryAddress Address
-	AgentIdentity  AgentIdentity
+	Labels        map[string]string
+	AgentID       string
+	Status        AgentStatus
+	RegisteredAt  time.Time
+	LastHeartbeat time.Time
+	AgentIdentity AgentIdentity
 }
 
 // AgentRegistry manages the lifecycle and state of all connected FODC Agents.
@@ -94,7 +84,7 @@ func NewAgentRegistry(logger *logger.Logger, heartbeatTimeout, cleanupTimeout ti
 }
 
 // RegisterAgent registers a new agent or updates existing agent information.
-func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity, primaryAddr Address) (string, error) {
+func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity) (string, error) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
 
@@ -102,36 +92,30 @@ func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity
 		return "", fmt.Errorf("maximum number of agents (%d) reached", ar.maxAgents)
 	}
 
-	if primaryAddr.IP == "" {
-		return "", fmt.Errorf("primary address IP cannot be empty")
-	}
-	if primaryAddr.Port <= 0 {
-		return "", fmt.Errorf("primary address port must be greater than 0")
-	}
 	if identity.Role == "" {
 		return "", fmt.Errorf("node role cannot be empty")
+	}
+
+	if identity.PodName == "" {
+		return "", fmt.Errorf("pod name cannot be empty")
 	}
 
 	agentID := uuid.New().String()
 	now := time.Now()
 
 	agentInfo := &AgentInfo{
-		AgentID:        agentID,
-		AgentIdentity:  identity,
-		NodeRole:       identity.Role,
-		PrimaryAddress: primaryAddr,
-		Labels:         identity.Labels,
-		RegisteredAt:   now,
-		LastHeartbeat:  now,
-		Status:         AgentStatusOnline,
+		AgentID:       agentID,
+		AgentIdentity: identity,
+		Labels:        identity.Labels,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        AgentStatusOnline,
 	}
 
 	ar.agents[agentID] = agentInfo
 
 	logFields := ar.logger.Info().
 		Str("agent_id", agentID).
-		Str("ip", primaryAddr.IP).
-		Int("port", primaryAddr.Port).
 		Str("role", identity.Role).
 		Str("pod_name", identity.PodName)
 	if len(identity.ContainerNames) > 0 {
@@ -156,9 +140,7 @@ func (ar *AgentRegistry) UnregisterAgent(agentID string) error {
 
 	logFields := ar.logger.Info().
 		Str("agent_id", agentID).
-		Str("ip", agentInfo.PrimaryAddress.IP).
-		Int("port", agentInfo.PrimaryAddress.Port).
-		Str("role", agentInfo.NodeRole).
+		Str("role", agentInfo.AgentIdentity.Role).
 		Str("pod_name", agentInfo.AgentIdentity.PodName)
 	if len(agentInfo.AgentIdentity.ContainerNames) > 0 {
 		logFields = logFields.Strs("container_names", agentInfo.AgentIdentity.ContainerNames)
@@ -184,16 +166,15 @@ func (ar *AgentRegistry) UpdateHeartbeat(agentID string) error {
 	return nil
 }
 
-// GetAgent retrieves agent information by primary IP + port + role + labels.
-func (ar *AgentRegistry) GetAgent(ip string, port int, role string, labels map[string]string) (*AgentInfo, error) {
+// GetAgent retrieves agent information by primary containerNames + role + labels.
+func (ar *AgentRegistry) GetAgent(podName string, role string, labels map[string]string) (*AgentInfo, error) {
 	ar.mu.RLock()
 	defer ar.mu.RUnlock()
 
 	identity := AgentIdentity{
-		IP:     ip,
-		Port:   port,
-		Role:   role,
-		Labels: labels,
+		Role:    role,
+		Labels:  labels,
+		PodName: podName,
 	}
 
 	for _, agentInfo := range ar.agents {
@@ -241,7 +222,7 @@ func (ar *AgentRegistry) ListAgentsByRole(role string) []*AgentInfo {
 
 	agents := make([]*AgentInfo, 0)
 	for _, agentInfo := range ar.agents {
-		if agentInfo.NodeRole == role {
+		if agentInfo.AgentIdentity.Role == role {
 			infoCopy := *agentInfo
 			agents = append(agents, &infoCopy)
 		}
@@ -273,9 +254,7 @@ func (ar *AgentRegistry) CheckAgentHealth() error {
 				delete(ar.agents, agentID)
 				logFields := ar.logger.Info().
 					Str("agent_id", agentID).
-					Str("ip", agentInfo.PrimaryAddress.IP).
-					Int("port", agentInfo.PrimaryAddress.Port).
-					Str("role", agentInfo.NodeRole).
+					Str("role", agentInfo.AgentIdentity.Role).
 					Str("pod_name", agentInfo.AgentIdentity.PodName)
 				if len(agentInfo.AgentIdentity.ContainerNames) > 0 {
 					logFields = logFields.Strs("container_names", agentInfo.AgentIdentity.ContainerNames)
@@ -298,10 +277,7 @@ func (ar *AgentRegistry) Stop() {
 
 // matchesIdentity checks if two agent identities match.
 func (ar *AgentRegistry) matchesIdentity(identity1, identity2 AgentIdentity) bool {
-	if identity1.IP != identity2.IP {
-		return false
-	}
-	if identity1.Port != identity2.Port {
+	if identity1.PodName != identity2.PodName {
 		return false
 	}
 	if identity1.Role != identity2.Role {

@@ -19,6 +19,7 @@ package registry
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -68,27 +69,23 @@ func TestRegisterAgent_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test"},
-		PodName:        "test",
+		PodName:        "test.pod",
 		ContainerNames: []string{"data"},
 	}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, err := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, err := ar.RegisterAgent(ctx, identity)
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, agentID)
 	agentInfo, getErr := ar.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 	assert.Equal(t, agentID, agentInfo.AgentID)
-	assert.Equal(t, identity.IP, agentInfo.AgentIdentity.IP)
-	assert.Equal(t, identity.Port, agentInfo.AgentIdentity.Port)
 	assert.Equal(t, identity.Role, agentInfo.AgentIdentity.Role)
 	assert.Equal(t, identity.Labels, agentInfo.Labels)
-	assert.Equal(t, primaryAddr, agentInfo.PrimaryAddress)
+	assert.Equal(t, identity.PodName, agentInfo.AgentIdentity.PodName)
+	assert.Equal(t, identity.ContainerNames, agentInfo.AgentIdentity.ContainerNames)
 	assert.Equal(t, AgentStatusOnline, agentInfo.Status)
 	assert.WithinDuration(t, time.Now(), agentInfo.RegisteredAt, time.Second)
 	assert.WithinDuration(t, time.Now(), agentInfo.LastHeartbeat, time.Second)
@@ -99,50 +96,34 @@ func TestRegisterAgent_MaxAgentsReached(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID1, err1 := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, err1)
 	assert.NotEmpty(t, agentID1)
 
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
+	identity2 := AgentIdentity{Role: "datanode-cold", PodName: "test", ContainerNames: []string{"lifecycle"}}
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2)
 	require.NoError(t, err2)
 	assert.NotEmpty(t, agentID2)
 
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"liaison"}}
-	_, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
+	identity3 := AgentIdentity{Role: "datanode-warm", PodName: "test", ContainerNames: []string{"liaison"}}
+	_, err3 := ar.RegisterAgent(ctx, identity3)
 	assert.Error(t, err3)
 	assert.Contains(t, err3.Error(), "maximum number of agents")
 }
 
-func TestRegisterAgent_EmptyPrimaryIP(t *testing.T) {
+func TestRegisterAgent_EmptyPodName(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "", ContainerNames: []string{"data"}}
 
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "primary address IP cannot be empty")
-}
-
-func TestRegisterAgent_InvalidPort(t *testing.T) {
-	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
-	defer ar.Stop()
-
-	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 0}
-
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
+	_, err := ar.RegisterAgent(ctx, identity)
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "primary address port must be greater than 0")
+	assert.Contains(t, err.Error(), "pod name cannot be empty")
 }
 
 func TestRegisterAgent_EmptyRole(t *testing.T) {
@@ -150,10 +131,9 @@ func TestRegisterAgent_EmptyRole(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "", PodName: "test", ContainerNames: []string{}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "", PodName: "test", ContainerNames: []string{}}
 
-	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
+	_, err := ar.RegisterAgent(ctx, identity)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "node role cannot be empty")
@@ -164,10 +144,9 @@ func TestUnregisterAgent_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	err := ar.UnregisterAgent(agentID)
@@ -193,10 +172,9 @@ func TestUpdateHeartbeat_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	agentInfoBefore, getErrBefore := ar.GetAgentByID(agentID)
@@ -230,24 +208,21 @@ func TestGetAgent_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test", "zone": "us-east"},
-		PodName:        "test",
+		PodName:        "test.pod",
 		ContainerNames: []string{"data"},
 	}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
-	agentInfo, err := ar.GetAgent("192.168.1.1", 8080, "worker", map[string]string{"env": "test", "zone": "us-east"})
+	agentInfo, err := ar.GetAgent("test.pod", "datanode-hot", map[string]string{"env": "test", "zone": "us-east"})
 
 	require.NoError(t, err)
 	assert.Equal(t, agentID, agentInfo.AgentID)
-	assert.Equal(t, identity.IP, agentInfo.AgentIdentity.IP)
-	assert.Equal(t, identity.Port, agentInfo.AgentIdentity.Port)
+	assert.Equal(t, identity.PodName, agentInfo.AgentIdentity.PodName)
+	assert.Equal(t, identity.ContainerNames, agentInfo.AgentIdentity.ContainerNames)
 	assert.Equal(t, identity.Role, agentInfo.AgentIdentity.Role)
 }
 
@@ -255,7 +230,7 @@ func TestGetAgent_NotFound(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	_, err := ar.GetAgent("192.168.1.1", 8080, "worker", nil)
+	_, err := ar.GetAgent("test.pod", "datanode-hot", nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "agent not found")
@@ -267,19 +242,16 @@ func TestGetAgent_LabelMismatch(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test"},
-		PodName:        "test",
+		PodName:        "test.pod",
 		ContainerNames: []string{"data"},
 	}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
-	_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	_, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
-	_, err := ar.GetAgent("192.168.1.1", 8080, "worker", map[string]string{"env": "prod"})
+	_, err := ar.GetAgent("test.pod", "datanode-hot", map[string]string{"env": "prod"})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "agent not found")
@@ -290,18 +262,17 @@ func TestGetAgentByID_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	agentInfo, err := ar.GetAgentByID(agentID)
 
 	require.NoError(t, err)
 	assert.Equal(t, agentID, agentInfo.AgentID)
-	assert.Equal(t, identity.IP, agentInfo.AgentIdentity.IP)
-	assert.Equal(t, identity.Port, agentInfo.AgentIdentity.Port)
+	assert.Equal(t, identity.PodName, agentInfo.AgentIdentity.PodName)
+	assert.Equal(t, identity.ContainerNames, agentInfo.AgentIdentity.ContainerNames)
 	assert.Equal(t, identity.Role, agentInfo.AgentIdentity.Role)
 }
 
@@ -330,15 +301,15 @@ func TestListAgents_Multiple(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-cold", PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity3 := AgentIdentity{Role: "datanode-warm", PodName: "test", ContainerNames: []string{"liaison"}}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
+	agentID1, err1 := ar.RegisterAgent(ctx, identity1)
 	require.NoError(t, err1)
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2)
 	require.NoError(t, err2)
-	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
+	agentID3, err3 := ar.RegisterAgent(ctx, identity3)
 	require.NoError(t, err3)
 
 	agents := ar.ListAgents()
@@ -358,39 +329,59 @@ func TestListAgentsByRole_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-cold", PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity3 := AgentIdentity{Role: "datanode-warm", PodName: "test", ContainerNames: []string{"liaison"}}
 
-	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
+	agentID1, err1 := ar.RegisterAgent(ctx, identity1)
 	require.NoError(t, err1)
-	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
+	agentID2, err2 := ar.RegisterAgent(ctx, identity2)
 	require.NoError(t, err2)
-	agentID3, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
+	agentID3, err3 := ar.RegisterAgent(ctx, identity3)
 	require.NoError(t, err3)
 
-	workerAgents := ar.ListAgentsByRole("worker")
-	masterAgents := ar.ListAgentsByRole("master")
+	datanodeHotAgents := ar.ListAgentsByRole("datanode-hot")
+	assert.Equal(t, 1, len(datanodeHotAgents))
+	assert.Equal(t, agentID1, datanodeHotAgents[0].AgentID)
+	assert.Equal(t, "datanode-hot", datanodeHotAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity1.PodName, datanodeHotAgents[0].AgentIdentity.PodName)
+	assert.Equal(t, identity1.ContainerNames, datanodeHotAgents[0].AgentIdentity.ContainerNames)
+	assert.Equal(t, identity1.Role, datanodeHotAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity1.Labels, datanodeHotAgents[0].Labels)
+	assert.Equal(t, AgentStatusOnline, datanodeHotAgents[0].Status)
+	assert.WithinDuration(t, time.Now(), datanodeHotAgents[0].RegisteredAt, time.Second)
+	assert.WithinDuration(t, time.Now(), datanodeHotAgents[0].LastHeartbeat, time.Second)
 
-	assert.Equal(t, 2, len(workerAgents))
-	workerIDs := make(map[string]bool)
-	for _, agentInfo := range workerAgents {
-		workerIDs[agentInfo.AgentID] = true
-		assert.Equal(t, "worker", agentInfo.NodeRole)
-	}
-	assert.True(t, workerIDs[agentID1])
-	assert.True(t, workerIDs[agentID3])
+	datanodeColdAgents := ar.ListAgentsByRole("datanode-cold")
+	assert.Equal(t, 1, len(datanodeColdAgents))
+	assert.Equal(t, agentID2, datanodeColdAgents[0].AgentID)
+	assert.Equal(t, "datanode-cold", datanodeColdAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity2.PodName, datanodeColdAgents[0].AgentIdentity.PodName)
+	assert.Equal(t, identity2.ContainerNames, datanodeColdAgents[0].AgentIdentity.ContainerNames)
+	assert.Equal(t, identity2.Role, datanodeColdAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity2.Labels, datanodeColdAgents[0].Labels)
+	assert.Equal(t, AgentStatusOnline, datanodeColdAgents[0].Status)
+	assert.WithinDuration(t, time.Now(), datanodeColdAgents[0].RegisteredAt, time.Second)
+	assert.WithinDuration(t, time.Now(), datanodeColdAgents[0].LastHeartbeat, time.Second)
 
-	assert.Equal(t, 1, len(masterAgents))
-	assert.Equal(t, agentID2, masterAgents[0].AgentID)
-	assert.Equal(t, "master", masterAgents[0].NodeRole)
+	datanodeWarmAgents := ar.ListAgentsByRole("datanode-warm")
+	assert.Equal(t, 1, len(datanodeWarmAgents))
+	assert.Equal(t, agentID3, datanodeWarmAgents[0].AgentID)
+	assert.Equal(t, "datanode-warm", datanodeWarmAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity3.PodName, datanodeWarmAgents[0].AgentIdentity.PodName)
+	assert.Equal(t, identity3.ContainerNames, datanodeWarmAgents[0].AgentIdentity.ContainerNames)
+	assert.Equal(t, identity3.Role, datanodeWarmAgents[0].AgentIdentity.Role)
+	assert.Equal(t, identity3.Labels, datanodeWarmAgents[0].Labels)
+	assert.Equal(t, AgentStatusOnline, datanodeWarmAgents[0].Status)
+	assert.WithinDuration(t, time.Now(), datanodeWarmAgents[0].RegisteredAt, time.Second)
+	assert.WithinDuration(t, time.Now(), datanodeWarmAgents[0].LastHeartbeat, time.Second)
 }
 
 func TestListAgentsByRole_Empty(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	agents := ar.ListAgentsByRole("worker")
+	agents := ar.ListAgentsByRole("datanode-hot")
 
 	assert.NotNil(t, agents)
 	assert.Equal(t, 0, len(agents))
@@ -403,10 +394,9 @@ func TestCheckAgentHealth_HeartbeatTimeout(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	agentInfoBefore, getErrBefore := ar.GetAgentByID(agentID)
@@ -430,10 +420,9 @@ func TestCheckAgentHealth_CleanupTimeout(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-warm", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	time.Sleep(cleanupTimeout + 10*time.Millisecond)
@@ -453,10 +442,9 @@ func TestCheckAgentHealth_HeartbeatKeepsOnline(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	time.Sleep(30 * time.Millisecond)
@@ -495,17 +483,13 @@ func TestMatchesIdentity_ExactMatch(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test", "zone": "us-east"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test", "zone": "us-east"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
@@ -519,8 +503,8 @@ func TestMatchesIdentity_IPMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-cold", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -530,8 +514,8 @@ func TestMatchesIdentity_PortMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8081, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-cold", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -541,8 +525,8 @@ func TestMatchesIdentity_RoleMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "master", Labels: nil, PodName: "test", ContainerNames: []string{"liaison"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-cold", Labels: nil, PodName: "test", ContainerNames: []string{"liaison"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -553,17 +537,13 @@ func TestMatchesIdentity_LabelMismatch(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-cold",
 		Labels:         map[string]string{"env": "prod"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
@@ -578,17 +558,13 @@ func TestMatchesIdentity_LabelKeyMissing(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-hot",
 		Labels:         map[string]string{"env": "test", "zone": "us-east"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:             "192.168.1.1",
-		Port:           8080,
-		Role:           "worker",
+		Role:           "datanode-cold",
 		Labels:         map[string]string{"env": "test"},
 		PodName:        "test",
 		ContainerNames: []string{"data"},
@@ -602,8 +578,8 @@ func TestMatchesIdentity_EmptyLabels(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
+	identity1 := AgentIdentity{Role: "datanode-hot", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{Role: "datanode-hot", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.True(t, result)
@@ -620,15 +596,12 @@ func TestConcurrentRegisterAndList(t *testing.T) {
 	for idx := 0; idx < numAgents; idx++ {
 		go func(agentIdx int) {
 			identity := AgentIdentity{
-				IP:             "192.168.1.1",
-				Port:           8080 + agentIdx,
-				Role:           "worker",
+				Role:           "datanode-hot",
 				Labels:         map[string]string{"idx": "test"},
-				PodName:        "test",
+				PodName:        "test_" + strconv.Itoa(agentIdx),
 				ContainerNames: []string{"data"},
 			}
-			primaryAddr := Address{IP: "192.168.1.1", Port: 8080 + agentIdx}
-			_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+			_, registerErr := ar.RegisterAgent(ctx, identity)
 			if registerErr != nil {
 				t.Errorf("Failed to register agent %d: %v", agentIdx, registerErr)
 			}
@@ -649,10 +622,9 @@ func TestConcurrentUpdateHeartbeat(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
+	identity := AgentIdentity{Role: "datanode-hot", PodName: "test", ContainerNames: []string{"data"}}
 
-	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := ar.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 
 	numUpdates := 20

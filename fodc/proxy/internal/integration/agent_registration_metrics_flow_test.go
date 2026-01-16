@@ -102,10 +102,8 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 		// Create proxy client using testhelper wrapper
 		proxyClient = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"datanode-hot",
-			"test",
+			"127.0.0.1",
 			[]string{"data"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,
@@ -153,7 +151,7 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 		By("Verifying agent is registered")
 		agents := agentRegistry.ListAgents()
 		Expect(len(agents)).To(Equal(1))
-		Expect(agents[0].NodeRole).To(Equal("datanode-hot"))
+		Expect(agents[0].AgentIdentity.Role).To(Equal("datanode-hot"))
 		Expect(agents[0].Status).To(Equal(registry.AgentStatusOnline))
 
 		By("Starting metrics stream")
@@ -235,11 +233,12 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 				Expect(dataPoint["value"]).To(BeNumerically("==", 42.5))
 				// Verify node metadata (top-level fields)
 				Expect(metric["agent_id"]).NotTo(BeEmpty())
-				Expect(metric["ip"]).To(Equal("127.0.0.1"))
-				Expect(metric["port"]).To(BeNumerically("==", 8080))
+				Expect(metric["pod_name"]).To(Equal("test"))
 				// Verify labels contain node_role
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("datanode-hot"))
+				Expect(labels["pod_name"]).To(Equal("test"))
+				Expect(labels["container_name"]).To(Equal("data"))
 			}
 			if name == "test_metric_2" {
 				foundMetric2 = true
@@ -252,6 +251,8 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 				Expect(metric["agent_id"]).NotTo(BeEmpty())
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("datanode-hot"))
+				Expect(labels["pod_name"]).To(Equal("test"))
+				Expect(labels["container_name"]).To(Equal("data"))
 			}
 		}
 		Expect(foundMetric1).To(BeTrue(), "test_metric_1 should be found in response")

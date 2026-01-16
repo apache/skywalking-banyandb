@@ -265,12 +265,12 @@ func TestHandleHealth_Success(t *testing.T) {
 	server, testRegistry := newTestServer(t)
 
 	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "datanode-cold", PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "liaison", PodName: "test", ContainerNames: []string{"liaison"}}
+	identity1 := registry.AgentIdentity{PodName: "192.168.1.1", Role: "datanode-cold", ContainerNames: []string{"data"}}
+	identity2 := registry.AgentIdentity{PodName: "192.168.1.2", Role: "liaison", ContainerNames: []string{"liaison"}}
 
-	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080})
+	_, err1 := testRegistry.RegisterAgent(ctx, identity1)
 	require.NoError(t, err1)
-	_, err2 := testRegistry.RegisterAgent(ctx, identity2, registry.Address{IP: "192.168.1.2", Port: 8080})
+	_, err2 := testRegistry.RegisterAgent(ctx, identity2)
 	require.NoError(t, err2)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -313,7 +313,7 @@ func TestFormatPrometheusText_SingleMetric(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatPrometheusText(metricsList)
@@ -329,9 +329,9 @@ func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "ip": "192.168.1.1", "port": "8080"}, now),
-		createTestMetric("cpu_usage", 80.0, map[string]string{"cpu": "1", "ip": "192.168.1.1", "port": "8080"}, now),
-		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
+		createTestMetric("cpu_usage", 80.0, map[string]string{"cpu": "1", "pod_name": "192.168.1.1"}, now),
+		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatPrometheusText(metricsList)
@@ -346,7 +346,7 @@ func TestFormatPrometheusText_WithLabels(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatPrometheusText(metricsList)
@@ -369,7 +369,7 @@ func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatMetricsWindowJSON(metricsList)
@@ -378,8 +378,7 @@ func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
 	item := result[0]
 	assert.Equal(t, "cpu_usage", item["name"])
 	assert.Equal(t, "test-agent-1", item["agent_id"])
-	assert.Equal(t, "192.168.1.1", item["ip"])
-	assert.Equal(t, 8080, item["port"])
+	assert.Equal(t, "192.168.1.1", item["pod_name"])
 	assert.Contains(t, item, "data")
 }
 
@@ -388,8 +387,8 @@ func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "ip": "192.168.1.1", "port": "8080"}, now),
-		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
+		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatMetricsWindowJSON(metricsList)
@@ -406,7 +405,7 @@ func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
 func TestGetMetricKey(t *testing.T) {
 	server, _ := newTestServer(t)
 
-	metric := createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "ip": "192.168.1.1", "port": "8080"}, time.Now())
+	metric := createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, time.Now())
 
 	key := server.getMetricKey(metric)
 
@@ -414,8 +413,7 @@ func TestGetMetricKey(t *testing.T) {
 	assert.Contains(t, key, "test-agent-1")
 	assert.Contains(t, key, "cpu=0")
 	assert.Contains(t, key, "env=test")
-	assert.NotContains(t, key, "ip")
-	assert.NotContains(t, key, "port")
+	assert.Contains(t, key, "pod_name=192.168.1.1")
 }
 
 func TestFormatFloat(t *testing.T) {
@@ -496,9 +494,9 @@ func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("z_metric", 1.0, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
-		createTestMetric("a_metric", 2.0, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
-		createTestMetric("m_metric", 3.0, map[string]string{"ip": "192.168.1.1", "port": "8080"}, now),
+		createTestMetric("z_metric", 1.0, map[string]string{"pod_name": "192.168.1.1"}, now),
+		createTestMetric("a_metric", 2.0, map[string]string{"pod_name": "192.168.1.1"}, now),
+		createTestMetric("m_metric", 3.0, map[string]string{"pod_name": "192.168.1.1"}, now),
 	}
 
 	result := server.formatPrometheusText(metricsList)

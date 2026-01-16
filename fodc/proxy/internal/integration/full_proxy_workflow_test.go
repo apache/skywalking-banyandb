@@ -103,10 +103,8 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient1 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"liaison",
-			"demo",
+			"127.0.0.1",
 			[]string{"liaison"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
@@ -118,10 +116,8 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient2 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.2",
-			8081,
 			"datanode-hot",
-			"demo",
+			"127.0.0.2",
 			[]string{"data"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
@@ -133,10 +129,8 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 		proxyClient3 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.3",
-			8082,
 			"datanode-warm",
-			"demo",
+			"127.0.0.2",
 			[]string{"data"},
 			map[string]string{"zone": "us-east-1", "env": "staging"},
 			heartbeatInterval,
@@ -273,22 +267,19 @@ var _ = Describe("Full FODC Proxy Workflow", func() {
 
 			labels := metric["labels"].(map[string]interface{})
 			nodeRole := labels["node_role"].(string)
-			Expect(metric["ip"]).NotTo(BeEmpty())
-			Expect(metric["port"]).NotTo(BeZero())
+			podName := metric["pod_name"].(string)
+			Expect(podName).To(Equal("demo"))
 
 			switch metric["name"] {
 			case "liaison_full_metric":
 				foundRoles["liaison"] = true
 				Expect(nodeRole).To(Equal("liaison"))
-				Expect(metric["ip"]).To(Equal("127.0.0.1"))
 			case "datanode_hot_full_metric":
 				foundRoles["datanode-hot"] = true
 				Expect(nodeRole).To(Equal("datanode-hot"))
-				Expect(metric["ip"]).To(Equal("127.0.0.2"))
 			case "datanode_warm_full_metric":
 				foundRoles["datanode-warm"] = true
 				Expect(nodeRole).To(Equal("datanode-warm"))
-				Expect(metric["ip"]).To(Equal("127.0.0.3"))
 			}
 		}
 

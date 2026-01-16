@@ -19,6 +19,7 @@ package metrics
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,19 +104,16 @@ func newTestAggregator(t *testing.T) (*Aggregator, *registry.AgentRegistry, *moc
 }
 
 //nolint:unparam // port parameter kept for flexibility in future tests
-func createTestAgent(t *testing.T, reg *registry.AgentRegistry, ip string, port int, role string, labels map[string]string) string {
+func createTestAgent(t *testing.T, reg *registry.AgentRegistry, podName string, role string, labels map[string]string) string {
 	t.Helper()
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
-		IP:             ip,
-		Port:           port,
 		Role:           role,
 		Labels:         labels,
-		PodName:        "test",
+		PodName:        podName,
 		ContainerNames: []string{role},
 	}
-	primaryAddr := registry.Address{IP: ip, Port: port}
-	agentID, registerErr := reg.RegisterAgent(ctx, identity, primaryAddr)
+	agentID, registerErr := reg.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
 	return agentID
 }
@@ -164,7 +162,7 @@ func TestSetGRPCService(t *testing.T) {
 func TestProcessMetricsFromAgent_Success(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", map[string]string{"env": "test"})
+	agentID := createTestAgent(t, testRegistry, "test", "datanode-warm", map[string]string{"env": "test"})
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -184,7 +182,7 @@ func TestProcessMetricsFromAgent_Success(t *testing.T) {
 func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -213,8 +211,6 @@ func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 		assert.Equal(t, "cpu_usage", metric.Name)
 		assert.Equal(t, 75.5, metric.Value)
 		assert.Equal(t, agentID, metric.AgentID)
-		assert.Equal(t, "192.168.1.1", metric.Labels["ip"])
-		assert.Equal(t, "8080", metric.Labels["port"])
 		assert.Equal(t, "datanode-warm", metric.Labels["node_role"])
 		assert.Equal(t, "test", metric.Labels["pod_name"])
 		assert.Equal(t, "data", metric.Labels["container_name"])
@@ -229,7 +225,7 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
 	agentLabels := map[string]string{"env": "prod", "zone": "us-east"}
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "master", agentLabels)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "liaison", agentLabels)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -267,7 +263,7 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 func TestProcessMetricsFromAgent_WithoutTimestamp(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -295,7 +291,7 @@ func TestProcessMetricsFromAgent_WithoutTimestamp(t *testing.T) {
 func TestProcessMetricsFromAgent_MultipleMetrics(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -336,7 +332,7 @@ func TestProcessMetricsFromAgent_MultipleMetrics(t *testing.T) {
 func TestProcessMetricsFromAgent_ContextCancelled(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
@@ -372,8 +368,8 @@ func TestCollectMetricsFromAgents_NoAgents(t *testing.T) {
 func TestCollectMetricsFromAgents_Success(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
 
 	ctx := context.Background()
 	filter := &Filter{}
@@ -411,9 +407,9 @@ func TestCollectMetricsFromAgents_Success(t *testing.T) {
 func TestCollectMetricsFromAgents_FilterByAgentIDs(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
-	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "liaison", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
+	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", "liaison", nil)
 
 	ctx := context.Background()
 	filter := &Filter{
@@ -454,9 +450,9 @@ func TestCollectMetricsFromAgents_FilterByAgentIDs(t *testing.T) {
 func TestCollectMetricsFromAgents_FilterByRole(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
-	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "liaison", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
+	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", "liaison", nil)
 
 	ctx := context.Background()
 	filter := &Filter{
@@ -494,48 +490,15 @@ func TestCollectMetricsFromAgents_FilterByRole(t *testing.T) {
 	assert.NotContains(t, requestedIDs, agentID3)
 }
 
-func TestCollectMetricsFromAgents_FilterByAddress(t *testing.T) {
+func TestCollectMetricsFromAgents_FilterByPodName(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
 
 	ctx := context.Background()
 	filter := &Filter{
-		Address: "192.168.1.1:8080",
-	}
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		agentInfo1, getErr1 := testRegistry.GetAgentByID(agentID1)
-		if getErr1 == nil {
-			req1 := createTestStreamMetricsRequest("cpu_usage", 75.5, nil, nil)
-			processErr1 := aggregator.ProcessMetricsFromAgent(ctx, agentID1, agentInfo1, req1)
-			if processErr1 != nil {
-				t.Errorf("Failed to process metrics: %v", processErr1)
-			}
-		}
-	}()
-
-	metrics, err := aggregator.CollectMetricsFromAgents(ctx, filter)
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, len(metrics))
-	assert.Equal(t, 1, mockSender.GetRequestCallCount())
-	requestedIDs := mockSender.GetRequestedAgentIDs()
-	assert.Contains(t, requestedIDs, agentID1)
-	assert.NotContains(t, requestedIDs, agentID2)
-}
-
-func TestCollectMetricsFromAgents_FilterByIP(t *testing.T) {
-	aggregator, testRegistry, mockSender := newTestAggregator(t)
-
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
-
-	ctx := context.Background()
-	filter := &Filter{
-		Address: "192.168.1.1",
+		PodName: "192.168.1.1",
 	}
 
 	go func() {
@@ -563,8 +526,8 @@ func TestCollectMetricsFromAgents_FilterByIP(t *testing.T) {
 func TestCollectMetricsFromAgents_RequestError(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
 
 	mockSender.SetRequestError(agentID1, assert.AnError)
 
@@ -593,7 +556,7 @@ func TestCollectMetricsFromAgents_RequestError(t *testing.T) {
 func TestCollectMetricsFromAgents_Timeout(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	ctx := context.Background()
 	filter := &Filter{}
@@ -607,7 +570,7 @@ func TestCollectMetricsFromAgents_Timeout(t *testing.T) {
 func TestCollectMetricsFromAgents_WithTimeWindow(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	ctx := context.Background()
 	startTime := time.Now().Add(-1 * time.Hour)
@@ -639,7 +602,7 @@ func TestCollectMetricsFromAgents_WithTimeWindow(t *testing.T) {
 func TestGetLatestMetrics(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	ctx := context.Background()
 
@@ -665,7 +628,7 @@ func TestGetLatestMetrics(t *testing.T) {
 func TestGetMetricsWindow(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	ctx := context.Background()
 	startTime := time.Now().Add(-1 * time.Hour)
@@ -694,7 +657,7 @@ func TestGetMetricsWindow(t *testing.T) {
 func TestGetMetricsWindow_NilFilter(t *testing.T) {
 	aggregator, testRegistry, mockSender := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	ctx := context.Background()
 	startTime := time.Now().Add(-1 * time.Hour)
@@ -722,8 +685,8 @@ func TestGetMetricsWindow_NilFilter(t *testing.T) {
 func TestGetFilteredAgents_NilFilter(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	createTestAgent(t, testRegistry, "192.168.1.2", 8080, "liaison", nil)
+	createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	createTestAgent(t, testRegistry, "192.168.1.2", "liaison", nil)
 
 	agents := aggregator.getFilteredAgents(nil)
 
@@ -733,9 +696,9 @@ func TestGetFilteredAgents_NilFilter(t *testing.T) {
 func TestGetFilteredAgents_ByAgentIDs(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "liaison", nil)
-	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "liaison", nil)
+	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", "datanode-warm", nil)
 
 	filter := &Filter{
 		AgentIDs: []string{agentID1, agentID3},
@@ -756,9 +719,9 @@ func TestGetFilteredAgents_ByAgentIDs(t *testing.T) {
 func TestGetFilteredAgents_ByRole(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", 8080, "liaison", nil)
-	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	agentID2 := createTestAgent(t, testRegistry, "192.168.1.2", "liaison", nil)
+	agentID3 := createTestAgent(t, testRegistry, "192.168.1.3", "datanode-warm", nil)
 
 	filter := &Filter{
 		Role: "datanode-warm",
@@ -770,37 +733,21 @@ func TestGetFilteredAgents_ByRole(t *testing.T) {
 	agentIDs := make(map[string]bool)
 	for _, agentInfo := range agents {
 		agentIDs[agentInfo.AgentID] = true
-		assert.Equal(t, "datanode-warm", agentInfo.NodeRole)
+		assert.Equal(t, "datanode-warm", agentInfo.AgentIdentity.Role)
 	}
 	assert.True(t, agentIDs[agentID1])
 	assert.True(t, agentIDs[agentID3])
 	assert.False(t, agentIDs[agentID2])
 }
 
-func TestGetFilteredAgents_ByAddress(t *testing.T) {
+func TestGetFilteredAgents_ByPodName(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	_ = createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
+	_ = createTestAgent(t, testRegistry, "192.168.1.2", "datanode-warm", nil)
 
 	filter := &Filter{
-		Address: "192.168.1.1:8080",
-	}
-
-	agents := aggregator.getFilteredAgents(filter)
-
-	assert.Equal(t, 1, len(agents))
-	assert.Equal(t, agentID1, agents[0].AgentID)
-}
-
-func TestGetFilteredAgents_ByIP(t *testing.T) {
-	aggregator, testRegistry, _ := newTestAggregator(t)
-
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
-	_ = createTestAgent(t, testRegistry, "192.168.1.2", 8080, "datanode-warm", nil)
-
-	filter := &Filter{
-		Address: "192.168.1.1",
+		PodName: "192.168.1.1",
 	}
 
 	agents := aggregator.getFilteredAgents(filter)
@@ -812,7 +759,7 @@ func TestGetFilteredAgents_ByIP(t *testing.T) {
 func TestGetFilteredAgents_InvalidAgentID(t *testing.T) {
 	aggregator, testRegistry, _ := newTestAggregator(t)
 
-	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID1 := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 
 	filter := &Filter{
 		AgentIDs: []string{agentID1, "invalid-id"},
@@ -825,49 +772,49 @@ func TestGetFilteredAgents_InvalidAgentID(t *testing.T) {
 }
 
 func TestMatchesAddress_ExactMatch(t *testing.T) {
-	aggregator, testRegistry, _ := newTestAggregator(t)
+	_, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	result := aggregator.matchesAddress(agentInfo, "192.168.1.1:8080")
+	result := strings.EqualFold(agentInfo.AgentIdentity.PodName, "192.168.1.1")
 
 	assert.True(t, result)
 }
 
 func TestMatchesAddress_IPMatch(t *testing.T) {
-	aggregator, testRegistry, _ := newTestAggregator(t)
+	_, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	result := aggregator.matchesAddress(agentInfo, "192.168.1.1")
+	result := strings.EqualFold(agentInfo.AgentIdentity.PodName, "192.168.1.1")
 
 	assert.True(t, result)
 }
 
 func TestMatchesAddress_NoMatch(t *testing.T) {
-	aggregator, testRegistry, _ := newTestAggregator(t)
+	_, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	result := aggregator.matchesAddress(agentInfo, "192.168.1.2:8080")
+	result := strings.EqualFold(agentInfo.AgentIdentity.PodName, "192.168.1.2:8080")
 
 	assert.False(t, result)
 }
 
 func TestMatchesAddress_PortMismatch(t *testing.T) {
-	aggregator, testRegistry, _ := newTestAggregator(t)
+	_, testRegistry, _ := newTestAggregator(t)
 
-	agentID := createTestAgent(t, testRegistry, "192.168.1.1", 8080, "datanode-warm", nil)
+	agentID := createTestAgent(t, testRegistry, "192.168.1.1", "datanode-warm", nil)
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	result := aggregator.matchesAddress(agentInfo, "192.168.1.1:8081")
+	result := strings.EqualFold(agentInfo.AgentIdentity.PodName, "192.168.1.1:8081")
 
 	assert.False(t, result)
 }

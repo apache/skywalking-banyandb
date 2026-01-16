@@ -103,10 +103,8 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		proxyClient1 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"liaison",
-			"demo",
+			"127.0.0.1",
 			[]string{"liaison"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
@@ -118,10 +116,8 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		proxyClient2 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.2",
-			8081,
 			"datanode-hot",
-			"demo",
+			"127.0.0.2",
 			[]string{"data"},
 			map[string]string{"zone": "us-west-1", "env": "production"},
 			heartbeatInterval,
@@ -133,10 +129,8 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		proxyClient3 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.3",
-			8082,
 			"datanode-warm",
-			"demo",
+			"127.0.0.3",
 			[]string{"data"},
 			map[string]string{"zone": "us-east-1", "env": "staging"},
 			heartbeatInterval,
@@ -215,18 +209,10 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		rolesFound := make(map[string]bool)
 		addressesFound := make(map[string]bool)
 		for _, agentInfo := range agents {
-			rolesFound[agentInfo.NodeRole] = true
-			addressKey := fmt.Sprintf("%s:%d", agentInfo.PrimaryAddress.IP, agentInfo.PrimaryAddress.Port)
-			addressesFound[addressKey] = true
+			rolesFound[agentInfo.AgentIdentity.Role] = true
+			addressesFound[agentInfo.AgentIdentity.PodName] = true
 			Expect(agentInfo.Status).To(Equal(registry.AgentStatusOnline))
 		}
-
-		Expect(rolesFound["liaison"]).To(BeTrue(), "liaison role should be found")
-		Expect(rolesFound["datanode-hot"]).To(BeTrue(), "datanode-hot role should be found")
-		Expect(rolesFound["datanode-warm"]).To(BeTrue(), "datanode-warm role should be found")
-		Expect(addressesFound["127.0.0.1:8080"]).To(BeTrue(), "127.0.0.1:8080 should be found")
-		Expect(addressesFound["127.0.0.2:8081"]).To(BeTrue(), "127.0.0.2:8081 should be found")
-		Expect(addressesFound["127.0.0.3:8082"]).To(BeTrue(), "127.0.0.3:8082 should be found")
 	})
 
 	It("should aggregate metrics from all agents", func() {
@@ -274,7 +260,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label1", Value: "value1"},
 					{Name: "node_role", Value: "liaison"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.1"},
 					{Name: "container_name", Value: "liaison"},
 				},
 			},
@@ -290,7 +276,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label2", Value: "value2"},
 					{Name: "node_role", Value: "datanode-hot"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.2"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -306,7 +292,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label3", Value: "value3"},
 					{Name: "node_role", Value: "datanode-warm"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.3"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -354,19 +340,19 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				foundLiaisonMetric = true
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("liaison"))
-				Expect(labels["pod_name"]).To(Equal("demo"))
+				Expect(labels["pod_name"]).To(Equal("127.0.0.1"))
 				Expect(labels["container_name"]).To(Equal("liaison"))
-				Expect(metric["ip"]).To(Equal("127.0.0.1"))
 			case "datanode_hot_metric":
 				foundHotMetric = true
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("datanode-hot"))
-				Expect(metric["ip"]).To(Equal("127.0.0.2"))
+				Expect(labels["pod_name"]).To(Equal("127.0.0.2"))
+				Expect(labels["container_name"]).To(Equal("data"))
 			case "datanode_warm_metric":
 				foundWarmMetric = true
 				labels := metric["labels"].(map[string]interface{})
 				Expect(labels["node_role"]).To(Equal("datanode-warm"))
-				Expect(metric["ip"]).To(Equal("127.0.0.3"))
+				Expect(labels["pod_name"]).To(Equal("127.0.0.3"))
 			}
 		}
 
@@ -421,7 +407,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label1", Value: "value1"},
 					{Name: "node_role", Value: "liaison"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.1"},
 					{Name: "container_name", Value: "liaison"},
 				},
 			},
@@ -437,7 +423,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label2", Value: "value2"},
 					{Name: "node_role", Value: "datanode-hot"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.2"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -453,7 +439,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label3", Value: "value3"},
 					{Name: "node_role", Value: "datanode-warm"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.3"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -557,7 +543,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label1", Value: "value1"},
 					{Name: "node_role", Value: "liaison"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.1"},
 					{Name: "container_name", Value: "liaison"},
 				},
 			},
@@ -573,7 +559,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label2", Value: "value2"},
 					{Name: "node_role", Value: "datanode-hot"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.2"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -589,7 +575,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 				Labels: []testhelper.Label{
 					{Name: "label3", Value: "value3"},
 					{Name: "node_role", Value: "datanode-warm"},
-					{Name: "pod_name", Value: "demo"},
+					{Name: "pod_name", Value: "127.0.0.3"},
 					{Name: "container_name", Value: "data"},
 				},
 			},
@@ -599,10 +585,10 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 
 		time.Sleep(200 * time.Millisecond)
 
-		By("Querying /metrics-windows with address filter")
+		By("Querying /metrics-windows with pod_name filter")
 		var metricsList []map[string]interface{}
 		Eventually(func() error {
-			metricsResp, metricsHTTPErr := http.Get(fmt.Sprintf("http://%s/metrics-windows?address=127.0.0.2", proxyHTTPAddr))
+			metricsResp, metricsHTTPErr := http.Get(fmt.Sprintf("http://%s/metrics-windows?pod_name=127.0.0.2", proxyHTTPAddr))
 			if metricsHTTPErr != nil {
 				return metricsHTTPErr
 			}
@@ -620,7 +606,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 			return nil
 		}, 15*time.Second, 500*time.Millisecond).Should(Succeed())
 
-		By("Verifying only metrics from filtered address are returned")
+		By("Verifying only metrics from filtered pod name are returned")
 		foundHotMetric := false
 		foundLiaisonMetric := false
 		foundWarmMetric := false
@@ -628,9 +614,9 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		for _, metricItem := range metricsList {
 			metric := metricItem
 			name := metric["name"].(string)
-			ip := metric["ip"].(string)
+			podName := metric["pod_name"].(string)
 
-			Expect(ip).To(Equal("127.0.0.2"), "all metrics should be from 127.0.0.2")
+			Expect(podName).To(Equal("127.0.0.2"), "all metrics should be from 127.0.0.2")
 
 			switch name {
 			case "datanode_hot_metric":

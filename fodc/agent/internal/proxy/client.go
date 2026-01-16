@@ -58,7 +58,6 @@ type Client struct {
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
-	nodeIP         string
 	nodeRole       string
 	podName        string
 	agentID        string
@@ -68,15 +67,12 @@ type Client struct {
 	reconnectInterval time.Duration
 	streamsMu         sync.RWMutex   // Protects streams only
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
-	nodePort          int
 	disconnected      bool
 }
 
 // NewClient creates a new Client instance.
 func NewClient(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
 	podName string,
 	containerNames []string,
@@ -90,8 +86,6 @@ func NewClient(
 	client := &Client{
 		connManager:       connMgr,
 		proxyAddr:         proxyAddr,
-		nodeIP:            nodeIP,
-		nodePort:          nodePort,
 		nodeRole:          nodeRole,
 		podName:           podName,
 		containerNames:    containerNames,
@@ -160,10 +154,6 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 		Labels:         c.labels,
 		PodName:        c.podName,
 		ContainerNames: c.containerNames,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
 	}
 
 	if sendErr := stream.Send(req); sendErr != nil {
@@ -430,10 +420,6 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		Labels:         c.labels,
 		PodName:        c.podName,
 		ContainerNames: c.containerNames,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
 	}
 
 	if sendErr := registrationStream.Send(req); sendErr != nil {

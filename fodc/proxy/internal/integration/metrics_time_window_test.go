@@ -113,10 +113,8 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 
 		proxyClient1 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.1",
-			8080,
 			"datanode-hot",
-			"test",
+			"127.0.0.1",
 			[]string{"data"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,
@@ -128,10 +126,8 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 
 		proxyClient2 = testhelper.NewProxyClientWrapper(
 			proxyGRPCAddr,
-			"127.0.0.2",
-			8081,
 			"liaison",
-			"test",
+			"127.0.0.2",
 			[]string{"liaison"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,

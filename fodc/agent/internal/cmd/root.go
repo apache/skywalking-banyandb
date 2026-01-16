@@ -57,8 +57,6 @@ var (
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
 	proxyAddr                    string
-	nodeIP                       string
-	nodePort                     int
 	nodeRole                     string
 	nodeLabels                   string
 	podName                      string
@@ -92,10 +90,6 @@ func init() {
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
 	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
 		"FODC Proxy gRPC address")
-	rootCmd.Flags().StringVar(&nodeIP, "node-ip", "",
-		"IP address for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
-	rootCmd.Flags().IntVar(&nodePort, "node-port", 0,
-		"Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
 		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
 	rootCmd.Flags().StringSliceVar(&containerNames, "container-name", []string{},
@@ -202,7 +196,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	stopCh := wd.Serve()
 
 	var proxyClient *proxy.Client
-	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
+	if proxyAddr != "" && podName != "" && nodeRole != "" {
 		labelsMap, parseErr := parseLabels(nodeLabels)
 		if parseErr != nil {
 			_ = metricsServer.Stop()
@@ -210,8 +204,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		}
 		proxyClient = proxy.NewClient(
 			proxyAddr,
-			nodeIP,
-			nodePort,
 			nodeRole,
 			podName,
 			containerNames,
@@ -233,12 +225,11 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 		log.Info().
 			Str("proxy_addr", proxyAddr).
-			Str("node_ip", nodeIP).
-			Int("node_port", nodePort).
+			Str("pod_name", podName).
 			Str("node_role", nodeRole).
 			Msg("Proxy client started")
 	} else {
-		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --node-ip, --node-port, --node-role)")
+		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
 	}
 
 	sigCh := make(chan os.Signal, 1)

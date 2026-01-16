@@ -117,10 +117,8 @@ var _ = Describe("High Availability and Scalability", func() {
 			fr := testhelper.NewFlightRecorder(capacitySize)
 			client := testhelper.NewProxyClientWrapper(
 				proxyGRPCAddr,
-				ip,
-				port,
 				role,
-				"test",
+				ip+":"+strconv.Itoa(port),
 				[]string{"data"},
 				map[string]string{"zone": "zone-" + strconv.Itoa(idx%3)},
 				2*time.Second,
@@ -252,7 +250,7 @@ var _ = Describe("High Availability and Scalability", func() {
 			agentIDs[metric["agent_id"].(string)] = true
 			labels := metric["labels"].(map[string]interface{})
 			Expect(labels["node_role"]).NotTo(BeNil())
-			Expect(metric["ip"]).NotTo(BeEmpty())
+			Expect(labels["pod_name"]).NotTo(BeEmpty())
 		}
 		Expect(len(agentIDs)).To(Equal(highAvailabilityAgentCount))
 
@@ -271,8 +269,6 @@ var _ = Describe("High Availability and Scalability", func() {
 			// Create a new client instance (connection manager cannot be restarted after disconnect)
 			newClient := testhelper.NewProxyClientWrapper(
 				proxyGRPCAddr,
-				agent.nodeIP,
-				agent.nodePort,
 				agent.nodeRole,
 				"test",
 				[]string{"data"},
