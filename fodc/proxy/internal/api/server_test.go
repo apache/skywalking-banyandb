@@ -136,7 +136,7 @@ func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
 func TestHandleMetrics_WithRoleFilter(t *testing.T) {
 	server, _ := newTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics?role=worker", nil)
+	req := httptest.NewRequest(http.MethodGet, "/metrics?role=datanode-cold", nil)
 	w := httptest.NewRecorder()
 
 	server.handleMetrics(w, req)
@@ -265,8 +265,8 @@ func TestHandleHealth_Success(t *testing.T) {
 	server, testRegistry := newTestServer(t)
 
 	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
+	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "datanode-cold", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "liaison", PodName: "test", ContainerNames: []string{"liaison"}}
 
 	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
@@ -476,7 +476,7 @@ func TestHandleMetricsWindows_WithFilters(t *testing.T) {
 	q := u.Query()
 	q.Set("start_time", startTime)
 	q.Set("end_time", endTime)
-	q.Set("role", "worker")
+	q.Set("role", "datanode-cold")
 	q.Set("address", "192.168.1.1")
 	u.RawQuery = q.Encode()
 
