@@ -106,7 +106,7 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 			8080,
 			"datanode-hot",
 			"test",
-			"data",
+			[]string{"data"},
 			map[string]string{"env": "test"},
 			heartbeatInterval,
 			1*time.Second,

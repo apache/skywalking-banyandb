@@ -57,12 +57,12 @@ type Client struct {
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 
-	proxyAddr     string
-	nodeIP        string
-	nodeRole      string
-	podName       string
-	containerName string
-	agentID       string
+	proxyAddr      string
+	nodeIP         string
+	nodeRole       string
+	podName        string
+	containerNames []string
+	agentID        string
 
 	nodePort          int
 	heartbeatInterval time.Duration
@@ -79,7 +79,7 @@ func NewClient(
 	nodePort int,
 	nodeRole string,
 	podName string,
-	containerName string,
+	containerNames []string,
 	labels map[string]string,
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
@@ -94,7 +94,7 @@ func NewClient(
 		nodePort:          nodePort,
 		nodeRole:          nodeRole,
 		podName:           podName,
-		containerName:     containerName,
+		containerNames:    containerNames,
 		labels:            labels,
 		heartbeatInterval: heartbeatInterval,
 		reconnectInterval: reconnectInterval,
@@ -156,10 +156,10 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 	}
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      c.nodeRole,
-		Labels:        c.labels,
-		PodName:       c.podName,
-		ContainerName: c.containerName,
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   c.nodeIP,
 			Port: int32(c.nodePort),
@@ -426,10 +426,10 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 	c.streamsMu.RUnlock()
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      c.nodeRole,
-		Labels:        c.labels,
-		PodName:       c.podName,
-		ContainerName: c.containerName,
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   c.nodeIP,
 			Port: int32(c.nodePort),

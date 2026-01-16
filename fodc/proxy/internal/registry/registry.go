@@ -47,12 +47,12 @@ type Address struct {
 
 // AgentIdentity represents the identity of an agent.
 type AgentIdentity struct {
-	Labels        map[string]string
-	IP            string
-	Role          string
-	PodName       string
-	ContainerName string
-	Port          int
+	Labels         map[string]string
+	IP             string
+	Role           string
+	PodName        string
+	ContainerNames []string
+	Port           int
 }
 
 // AgentInfo contains information about a registered agent.
@@ -128,14 +128,16 @@ func (ar *AgentRegistry) RegisterAgent(_ context.Context, identity AgentIdentity
 
 	ar.agents[agentID] = agentInfo
 
-	ar.logger.Info().
+	logFields := ar.logger.Info().
 		Str("agent_id", agentID).
 		Str("ip", primaryAddr.IP).
 		Int("port", primaryAddr.Port).
 		Str("role", identity.Role).
-		Str("pod_name", identity.PodName).
-		Str("container_name", identity.ContainerName).
-		Msg("Agent registered")
+		Str("pod_name", identity.PodName)
+	if len(identity.ContainerNames) > 0 {
+		logFields = logFields.Strs("container_names", identity.ContainerNames)
+	}
+	logFields.Msg("Agent registered")
 
 	return agentID, nil
 }
@@ -152,14 +154,16 @@ func (ar *AgentRegistry) UnregisterAgent(agentID string) error {
 
 	delete(ar.agents, agentID)
 
-	ar.logger.Info().
+	logFields := ar.logger.Info().
 		Str("agent_id", agentID).
 		Str("ip", agentInfo.PrimaryAddress.IP).
 		Int("port", agentInfo.PrimaryAddress.Port).
 		Str("role", agentInfo.NodeRole).
-		Str("pod_name", agentInfo.AgentIdentity.PodName).
-		Str("container_name", agentInfo.AgentIdentity.ContainerName).
-		Msg("Agent unregistered")
+		Str("pod_name", agentInfo.AgentIdentity.PodName)
+	if len(agentInfo.AgentIdentity.ContainerNames) > 0 {
+		logFields = logFields.Strs("container_names", agentInfo.AgentIdentity.ContainerNames)
+	}
+	logFields.Msg("Agent unregistered")
 
 	return nil
 }
@@ -267,14 +271,16 @@ func (ar *AgentRegistry) CheckAgentHealth() error {
 
 			if timeSinceHeartbeat > ar.cleanupTimeout {
 				delete(ar.agents, agentID)
-				ar.logger.Info().
+				logFields := ar.logger.Info().
 					Str("agent_id", agentID).
 					Str("ip", agentInfo.PrimaryAddress.IP).
 					Int("port", agentInfo.PrimaryAddress.Port).
 					Str("role", agentInfo.NodeRole).
-					Str("pod_name", agentInfo.AgentIdentity.PodName).
-					Str("container_name", agentInfo.AgentIdentity.ContainerName).
-					Msg("Agent unregistered")
+					Str("pod_name", agentInfo.AgentIdentity.PodName)
+				if len(agentInfo.AgentIdentity.ContainerNames) > 0 {
+					logFields = logFields.Strs("container_names", agentInfo.AgentIdentity.ContainerNames)
+				}
+				logFields.Msg("Agent unregistered")
 			}
 		}
 	}

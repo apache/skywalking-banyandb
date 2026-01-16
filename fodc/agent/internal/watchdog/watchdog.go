@@ -56,24 +56,24 @@ type Watchdog struct {
 	interval      time.Duration
 	retryBackoff  time.Duration
 	isRunning     bool
-	nodeRole      string
-	podName       string
-	containerName string
+	nodeRole       string
+	podName        string
+	containerNames []string
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
-func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration, nodeRole, podName, containerName string) *Watchdog {
+func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration, nodeRole, podName string, containerNames []string) *Watchdog {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watchdog{
-		recorder:      recorder,
-		urls:          urls,
-		interval:      interval,
-		ctx:           ctx,
-		cancel:        cancel,
-		retryBackoff:  initialBackoff,
-		nodeRole:      nodeRole,
-		podName:       podName,
-		containerName: containerName,
+		recorder:       recorder,
+		urls:           urls,
+		interval:       interval,
+		ctx:            ctx,
+		cancel:         cancel,
+		retryBackoff:   initialBackoff,
+		nodeRole:       nodeRole,
+		podName:        podName,
+		containerNames: containerNames,
 	}
 }
 
@@ -199,8 +199,12 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 	}
 	allMetrics := make([]metrics.RawMetric, 0)
 	var lastErr error
-	for _, url := range w.urls {
-		endpointMetrics, pollErr := w.pollMetricsFromEndpoint(ctx, url)
+	for idx, url := range w.urls {
+		containerName := ""
+		if idx < len(w.containerNames) {
+			containerName = w.containerNames[idx]
+		}
+		endpointMetrics, pollErr := w.pollMetricsFromEndpoint(ctx, url, containerName)
 		if pollErr != nil {
 			w.log.Warn().
 				Str("endpoint", url).
@@ -222,7 +226,7 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 }
 
 // pollMetricsFromEndpoint fetches raw metrics text from a single endpoint and parses them.
-func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string) ([]metrics.RawMetric, error) {
+func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string, containerName string) ([]metrics.RawMetric, error) {
 	var lastErr error
 	currentBackoff := w.retryBackoff
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -263,7 +267,7 @@ func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string) ([]m
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(string(body), w.nodeRole, w.podName, w.containerName)
+		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(string(body), w.nodeRole, w.podName, containerName)
 		if parseErr != nil {
 			lastErr = fmt.Errorf("failed to parse metrics: %w", parseErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)

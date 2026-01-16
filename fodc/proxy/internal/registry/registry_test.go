@@ -68,12 +68,12 @@ func TestRegisterAgent_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
@@ -99,19 +99,19 @@ func TestRegisterAgent_MaxAgentsReached(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID1, err1 := ar.RegisterAgent(ctx, identity, primaryAddr)
 	require.NoError(t, err1)
 	assert.NotEmpty(t, agentID1)
 
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
 	agentID2, err2 := ar.RegisterAgent(ctx, identity2, Address{IP: "192.168.1.2", Port: 8080})
 	require.NoError(t, err2)
 	assert.NotEmpty(t, agentID2)
 
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"liaison"}}
 	_, err3 := ar.RegisterAgent(ctx, identity3, Address{IP: "192.168.1.3", Port: 8080})
 	assert.Error(t, err3)
 	assert.Contains(t, err3.Error(), "maximum number of agents")
@@ -122,7 +122,7 @@ func TestRegisterAgent_EmptyPrimaryIP(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "", Port: 8080}
 
 	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -136,7 +136,7 @@ func TestRegisterAgent_InvalidPort(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 0}
 
 	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -150,7 +150,7 @@ func TestRegisterAgent_EmptyRole(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "", PodName: "test", ContainerName: ""}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "", PodName: "test", ContainerNames: []string{}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	_, err := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -164,7 +164,7 @@ func TestUnregisterAgent_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -193,7 +193,7 @@ func TestUpdateHeartbeat_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -230,12 +230,12 @@ func TestGetAgent_Success(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test", "zone": "us-east"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test", "zone": "us-east"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
@@ -267,12 +267,12 @@ func TestGetAgent_LabelMismatch(t *testing.T) {
 
 	ctx := context.Background()
 	identity := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
@@ -290,7 +290,7 @@ func TestGetAgentByID_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -330,9 +330,9 @@ func TestListAgents_Multiple(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerName: "master"}
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
+	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
@@ -358,9 +358,9 @@ func TestListAgentsByRole_Success(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerName: "master"}
-	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
+	identity3 := AgentIdentity{IP: "192.168.1.3", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	agentID1, err1 := ar.RegisterAgent(ctx, identity1, Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)
@@ -403,7 +403,7 @@ func TestCheckAgentHealth_HeartbeatTimeout(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -430,7 +430,7 @@ func TestCheckAgentHealth_CleanupTimeout(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -453,7 +453,7 @@ func TestCheckAgentHealth_HeartbeatKeepsOnline(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -495,20 +495,20 @@ func TestMatchesIdentity_ExactMatch(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test", "zone": "us-east"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test", "zone": "us-east"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test", "zone": "us-east"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test", "zone": "us-east"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 
 	result := ar.matchesIdentity(identity1, identity2)
@@ -519,8 +519,8 @@ func TestMatchesIdentity_IPMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -530,8 +530,8 @@ func TestMatchesIdentity_PortMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8081, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8081, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -541,8 +541,8 @@ func TestMatchesIdentity_RoleMismatch(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "master", Labels: nil, PodName: "test", ContainerName: "master"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "master", Labels: nil, PodName: "test", ContainerNames: []string{"liaison"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.False(t, result)
@@ -553,20 +553,20 @@ func TestMatchesIdentity_LabelMismatch(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "prod"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "prod"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 
 	result := ar.matchesIdentity(identity1, identity2)
@@ -578,20 +578,20 @@ func TestMatchesIdentity_LabelKeyMissing(t *testing.T) {
 	defer ar.Stop()
 
 	identity1 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test", "zone": "us-east"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test", "zone": "us-east"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 	identity2 := AgentIdentity{
-		IP:            "192.168.1.1",
-		Port:          8080,
-		Role:          "worker",
-		Labels:        map[string]string{"env": "test"},
-		PodName:       "test",
-		ContainerName: "worker",
+		IP:             "192.168.1.1",
+		Port:           8080,
+		Role:           "worker",
+		Labels:         map[string]string{"env": "test"},
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 	}
 
 	result := ar.matchesIdentity(identity1, identity2)
@@ -602,8 +602,8 @@ func TestMatchesIdentity_EmptyLabels(t *testing.T) {
 	ar := newTestRegistry(t, 5*time.Second, 10*time.Second, 100)
 	defer ar.Stop()
 
-	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
-	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerName: "worker"}
+	identity1 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", Labels: nil, PodName: "test", ContainerNames: []string{"lifecycle"}}
 
 	result := ar.matchesIdentity(identity1, identity2)
 	assert.True(t, result)
@@ -620,12 +620,12 @@ func TestConcurrentRegisterAndList(t *testing.T) {
 	for idx := 0; idx < numAgents; idx++ {
 		go func(agentIdx int) {
 			identity := AgentIdentity{
-				IP:            "192.168.1.1",
-				Port:          8080 + agentIdx,
-				Role:          "worker",
-				Labels:        map[string]string{"idx": "test"},
-				PodName:       "test",
-				ContainerName: "worker",
+				IP:             "192.168.1.1",
+				Port:           8080 + agentIdx,
+				Role:           "worker",
+				Labels:         map[string]string{"idx": "test"},
+				PodName:        "test",
+				ContainerNames: []string{"data"},
 			}
 			primaryAddr := Address{IP: "192.168.1.1", Port: 8080 + agentIdx}
 			_, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)
@@ -649,7 +649,7 @@ func TestConcurrentUpdateHeartbeat(t *testing.T) {
 	defer ar.Stop()
 
 	ctx := context.Background()
-	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	primaryAddr := Address{IP: "192.168.1.1", Port: 8080}
 
 	agentID, registerErr := ar.RegisterAgent(ctx, identity, primaryAddr)

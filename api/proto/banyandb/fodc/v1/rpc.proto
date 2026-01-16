@@ -37,7 +37,7 @@ message RegisterAgentRequest {
   map<string, string> labels = 2;
   Address primary_address = 3;
   string pod_name = 4;
-  string container_name = 5;
+  repeated string container_names = 5;
 }
 
 message Address {

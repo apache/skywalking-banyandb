@@ -137,7 +137,7 @@ func startAgentForFixture(f *failureFixture, ip string, port int, role string) *
 		port,
 		role,
 		"test",
-		"data",
+		[]string{"data"},
 		map[string]string{"zone": "failure"},
 		2*time.Second,
 		1*time.Second,
@@ -246,10 +246,10 @@ var _ = Describe("Failure Scenarios", func() {
 		Expect(streamErr).NotTo(HaveOccurred())
 
 		req := &fodcv1.RegisterAgentRequest{
-			NodeRole:      "",
-			PodName:       "test",
-			ContainerName: "data",
-			Labels:        map[string]string{},
+			NodeRole:       "",
+			PodName:        "test",
+			ContainerNames: []string{"data"},
+			Labels:         map[string]string{},
 			PrimaryAddress: &fodcv1.Address{
 				Ip:   "127.0.0.1",
 				Port: 9000,

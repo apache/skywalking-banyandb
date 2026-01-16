@@ -112,7 +112,7 @@ func createTestAgent(t *testing.T, reg *registry.AgentRegistry, ip string, port 
 		Role:          role,
 		Labels:        labels,
 		PodName:       "test",
-		ContainerName: role,
+		ContainerNames: []string{role},
 	}
 	primaryAddr := registry.Address{IP: ip, Port: port}
 	agentID, registerErr := reg.RegisterAgent(ctx, identity, primaryAddr)
@@ -207,11 +207,11 @@ func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 		assert.Equal(t, "cpu_usage", metric.Name)
 		assert.Equal(t, 75.5, metric.Value)
 		assert.Equal(t, agentID, metric.AgentID)
-		assert.Equal(t, "worker", metric.NodeRole)
 		assert.Equal(t, "192.168.1.1", metric.Labels["ip"])
 		assert.Equal(t, "8080", metric.Labels["port"])
-		assert.Equal(t, agentID, metric.Labels["agent_id"])
 		assert.Equal(t, "worker", metric.Labels["node_role"])
+		assert.Equal(t, "test", metric.Labels["pod_name"])
+		assert.Equal(t, "worker", metric.Labels["container_name"])
 		assert.Equal(t, "0", metric.Labels["cpu"])
 		assert.WithinDuration(t, now, metric.Timestamp, time.Second)
 	case <-time.After(1 * time.Second):
@@ -245,7 +245,8 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 		metric := metrics[0]
 		assert.Equal(t, "prod", metric.Labels["env"])
 		assert.Equal(t, "us-east", metric.Labels["zone"])
-		assert.Equal(t, "master", metric.NodeRole)
+		assert.Equal(t, "test", metric.Labels["pod_name"])
+		assert.Equal(t, "master", metric.Labels["container_name"])
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for metrics")
 	}

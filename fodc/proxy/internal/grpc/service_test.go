@@ -275,9 +275,9 @@ func TestRegisterAgent_Success(t *testing.T) {
 	stream := newMockRegisterAgentServer(ctx)
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      "worker",
-		PodName:       "test",
-		ContainerName: "worker",
+		NodeRole:       "worker",
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   "192.168.1.1",
 			Port: 8080,
@@ -289,8 +289,8 @@ func TestRegisterAgent_Success(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		stream.AddRequest(&fodcv1.RegisterAgentRequest{
-			PodName:       "test",
-			ContainerName: "worker",
+			PodName:        "test",
+			ContainerNames: []string{"data"},
 		})
 		time.Sleep(10 * time.Millisecond)
 		stream.SetRecvError(io.EOF)
@@ -319,9 +319,9 @@ func TestRegisterAgent_RegistrationError(t *testing.T) {
 	stream := newMockRegisterAgentServer(ctx)
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      "worker",
-		PodName:       "test",
-		ContainerName: "worker",
+		NodeRole:       "worker",
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   "",
 			Port: 8080,
@@ -344,9 +344,9 @@ func TestRegisterAgent_SendError(t *testing.T) {
 	stream.SetSendError(errors.New("send error"))
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      "worker",
-		PodName:       "test",
-		ContainerName: "worker",
+		NodeRole:       "worker",
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   "192.168.1.1",
 			Port: 8080,
@@ -374,9 +374,9 @@ func TestRegisterAgent_HeartbeatUpdate(t *testing.T) {
 	stream := newMockRegisterAgentServer(ctx)
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:      "worker",
-		PodName:       "test",
-		ContainerName: "worker",
+		NodeRole:       "worker",
+		PodName:        "test",
+		ContainerNames: []string{"data"},
 		PrimaryAddress: &fodcv1.Address{
 			Ip:   "192.168.1.1",
 			Port: 8080,
@@ -387,8 +387,8 @@ func TestRegisterAgent_HeartbeatUpdate(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		stream.AddRequest(&fodcv1.RegisterAgentRequest{
-			PodName:       "test",
-			ContainerName: "worker",
+			PodName:        "test",
+			ContainerNames: []string{"data"},
 		})
 		time.Sleep(10 * time.Millisecond)
 		stream.SetRecvError(io.EOF)
@@ -408,7 +408,7 @@ func TestStreamMetrics_Success(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -443,7 +443,7 @@ func TestStreamMetrics_AgentIDFromContext(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -477,7 +477,7 @@ func TestStreamMetrics_AgentIDFromPeer(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -527,7 +527,7 @@ func TestStreamMetrics_ContextCancelled(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -550,7 +550,7 @@ func TestStreamMetrics_RecvError(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -569,7 +569,7 @@ func TestRequestMetrics_Success(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -596,7 +596,7 @@ func TestRequestMetrics_WithTimeWindow(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -634,7 +634,7 @@ func TestRequestMetrics_NoMetricsStream(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -655,7 +655,7 @@ func TestRequestMetrics_SendError(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -713,7 +713,7 @@ func TestGetAgentIDFromPeer_Success(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -730,7 +730,7 @@ func TestGetAgentIDFromPeer_SecondaryAddress(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -757,7 +757,7 @@ func TestGetAgentIDFromPeer_NoMatch(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	_, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 
@@ -774,7 +774,7 @@ func TestCleanupConnection(t *testing.T) {
 	service, testRegistry := newTestService(t)
 
 	ctx := context.Background()
-	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
+	identity := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, registerErr)
 

@@ -43,7 +43,6 @@ type AggregatedMetric struct {
 	Timestamp   time.Time
 	Name        string
 	AgentID     string
-	NodeRole    string
 	Description string
 	Value       float64
 }
@@ -99,8 +98,6 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			labels[key] = value
 		}
 
-		labels["agent_id"] = agentID
-		labels["node_role"] = agentInfo.NodeRole
 		labels["ip"] = agentInfo.PrimaryAddress.IP
 		labels["port"] = fmt.Sprintf("%d", agentInfo.PrimaryAddress.Port)
 
@@ -124,7 +121,6 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			Value:       metric.Value,
 			Timestamp:   timestamp,
 			AgentID:     agentID,
-			NodeRole:    agentInfo.NodeRole,
 			Description: metric.Description,
 		}
 

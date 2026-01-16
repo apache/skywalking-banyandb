@@ -127,12 +127,12 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 
 		if initialRegistration {
 			identity := registry.AgentIdentity{
-				IP:            req.PrimaryAddress.Ip,
-				Port:          int(req.PrimaryAddress.Port),
-				Role:          req.NodeRole,
-				Labels:        req.Labels,
-				PodName:       req.PodName,
-				ContainerName: req.ContainerName,
+				IP:             req.PrimaryAddress.Ip,
+				Port:           int(req.PrimaryAddress.Port),
+				Role:           req.NodeRole,
+				Labels:         req.Labels,
+				PodName:        req.PodName,
+				ContainerNames: req.ContainerNames,
 			}
 
 			primaryAddr := registry.Address{
@@ -180,14 +180,16 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 			}
 
 			initialRegistration = false
-			s.logger.Info().
+			logFields := s.logger.Info().
 				Str("agent_id", agentID).
 				Str("ip", identity.IP).
 				Int("port", identity.Port).
 				Str("role", identity.Role).
-				Str("pod_name", identity.PodName).
-				Str("container_name", identity.ContainerName).
-				Msg("Agent registration stream established")
+				Str("pod_name", identity.PodName)
+			if len(identity.ContainerNames) > 0 {
+				logFields = logFields.Strs("container_names", identity.ContainerNames)
+			}
+			logFields.Msg("Agent registration stream established")
 		} else {
 			if updateErr := s.registry.UpdateHeartbeat(agentID); updateErr != nil {
 				s.logger.Error().Err(updateErr).Str("agent_id", agentID).Msg("Failed to update heartbeat")

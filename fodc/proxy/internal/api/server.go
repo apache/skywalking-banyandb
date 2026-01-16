@@ -113,7 +113,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if filter.Role != "" || filter.Address != "" {
 		filteredMetrics := make([]*metrics.AggregatedMetric, 0)
 		for _, metric := range aggregatedMetrics {
-			if filter.Role != "" && metric.NodeRole != filter.Role {
+			if filter.Role != "" && metric.Labels["node_role"] != filter.Role {
 				continue
 			}
 			if filter.Address != "" {
@@ -187,7 +187,7 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	if filter.Role != "" || filter.Address != "" {
 		filteredMetrics := make([]*metrics.AggregatedMetric, 0)
 		for _, metric := range aggregatedMetrics {
-			if filter.Role != "" && metric.NodeRole != filter.Role {
+			if filter.Role != "" && metric.Labels["node_role"] != filter.Role {
 				continue
 			}
 			if filter.Address != "" {

@@ -71,7 +71,6 @@ func createTestMetric(name string, value float64, labels map[string]string, time
 		Labels:      labels,
 		Timestamp:   timestamp,
 		AgentID:     "test-agent-1",
-		NodeRole:    "worker",
 		Description: "Test metric description",
 	}
 }
@@ -266,8 +265,8 @@ func TestHandleHealth_Success(t *testing.T) {
 	server, testRegistry := newTestServer(t)
 
 	ctx := context.Background()
-	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerName: "worker"}
-	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerName: "master"}
+	identity1 := registry.AgentIdentity{IP: "192.168.1.1", Port: 8080, Role: "worker", PodName: "test", ContainerNames: []string{"data"}}
+	identity2 := registry.AgentIdentity{IP: "192.168.1.2", Port: 8080, Role: "master", PodName: "test", ContainerNames: []string{"liaison"}}
 
 	_, err1 := testRegistry.RegisterAgent(ctx, identity1, registry.Address{IP: "192.168.1.1", Port: 8080})
 	require.NoError(t, err1)

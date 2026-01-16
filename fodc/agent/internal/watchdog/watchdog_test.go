@@ -93,7 +93,7 @@ func TestNewWatchdogWithConfig(t *testing.T) {
 	urls := []string{"http://localhost:2121/metrics"}
 	interval := 10 * time.Second
 
-	wd := NewWatchdogWithConfig(recorder, urls, interval, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, urls, interval, "worker", "test", []string{"data"})
 
 	assert.NotNil(t, wd)
 	assert.Equal(t, recorder, wd.recorder)
@@ -106,14 +106,14 @@ func TestNewWatchdogWithConfig(t *testing.T) {
 
 func TestWatchdog_Name(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	assert.Equal(t, "watchdog", wd.Name())
 }
 
 func TestWatchdog_PreRun(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	err := wd.PreRun(ctx)
@@ -138,7 +138,7 @@ http_requests_total{method="GET"} 100
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -161,7 +161,7 @@ func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -176,7 +176,7 @@ func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
 
 func TestWatchdog_PollMetrics_ConnectionFailure(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -197,7 +197,7 @@ func TestWatchdog_PollMetrics_InvalidMetricsFormat(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -225,7 +225,7 @@ func TestWatchdog_PollMetrics_RetryWithExponentialBackoff(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -253,7 +253,7 @@ func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	preRunErr := wd.PreRun(ctx)
@@ -280,7 +280,7 @@ http_requests_total{method="GET"} 100`
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -305,7 +305,7 @@ func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
 	}))
 	defer server.Close()
 
-	wd := NewWatchdogWithConfig(nil, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(nil, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -328,7 +328,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
 	recorder.SetUpdateErrors([]error{fmt.Errorf("recorder error")})
 
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -342,7 +342,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 
 func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -356,7 +356,7 @@ func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 
 func TestWatchdog_ExponentialBackoff(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	// Test exponential backoff calculation
 	backoff1 := wd.exponentialBackoff(initialBackoff)
@@ -388,7 +388,7 @@ func TestWatchdog_Serve_StartStop(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 100*time.Millisecond, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 100*time.Millisecond, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -431,7 +431,7 @@ func TestWatchdog_Serve_PollingIntervalAccuracy(t *testing.T) {
 
 	interval := 200 * time.Millisecond
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, interval, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, interval, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -472,7 +472,7 @@ func TestWatchdog_Serve_PollingIntervalAccuracy(t *testing.T) {
 
 func TestWatchdog_Serve_AlreadyRunning(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -504,7 +504,7 @@ func TestWatchdog_Serve_AlreadyRunning(t *testing.T) {
 
 func TestWatchdog_GracefulStop_NotRunning(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -532,7 +532,7 @@ func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 50*time.Millisecond, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 50*time.Millisecond, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -571,7 +571,7 @@ http_requests_total{method="POST"} 200
 	defer server.Close()
 
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	wd := NewWatchdogWithConfig(fr, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(fr, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -599,7 +599,7 @@ http_requests_total{method="GET"} 100`
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-hot", "test-pod", "data")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-hot", "test-pod", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -658,7 +658,7 @@ func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -684,7 +684,7 @@ func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "worker", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -719,7 +719,7 @@ http_requests_total{method="GET"} 100`
 	defer server2.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "worker", "test", []string{"data", "lifecycle"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -750,7 +750,7 @@ func TestWatchdog_PollMetrics_MultipleEndpoints_OneFails(t *testing.T) {
 	defer server2.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "worker", "test", []string{"data", "lifecycle"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -766,7 +766,7 @@ func TestWatchdog_PollMetrics_MultipleEndpoints_OneFails(t *testing.T) {
 
 func TestWatchdog_PollMetrics_NoEndpoints(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, []string{}, 10*time.Second, "worker", "test", "worker")
+	wd := NewWatchdogWithConfig(recorder, []string{}, 10*time.Second, "worker", "test", []string{})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
