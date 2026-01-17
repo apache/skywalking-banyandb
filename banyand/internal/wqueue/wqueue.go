@@ -220,3 +220,12 @@ func (q *Queue[S, O]) GetTimeRange(ts time.Time) timestamp.TimeRange {
 func (q *Queue[S, O]) GetNodes(shardID common.ShardID) []string {
 	return q.opts.GetNodes(shardID)
 }
+
+// Shards returns all shards in the queue.
+func (q *Queue[S, O]) Shards() []*Shard[S] {
+	q.RLock()
+	defer q.RUnlock()
+	result := make([]*Shard[S], len(q.sLst))
+	copy(result, q.sLst)
+	return result
+}
