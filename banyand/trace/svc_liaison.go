@@ -86,6 +86,23 @@ func NewLiaison(metadata metadata.Repo, pipeline queue.Server, omr observability
 	}, nil
 }
 
+type collectLiaisonInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	l *liaison
+}
+
+func (cl *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
+	}
+	liaisonInfo, collectErr := cl.l.CollectLiaisonInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), liaisonInfo)
+}
+
 // LiaisonService returns a new liaison service (deprecated - use NewLiaison).
 func LiaisonService(_ context.Context) (Service, error) {
 	return &liaison{}, nil
@@ -251,6 +268,15 @@ func (l *liaison) PreRun(ctx context.Context) error {
 		Str("dataPath", l.dataPath).
 		Msg("trace liaison service initialized")
 
+	if metaSvc, ok := l.metadata.(metadata.Service); ok {
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, l)
+	}
+
+	collectLiaisonInfoListener := &collectLiaisonInfoListener{l: l}
+	if subscribeErr := l.pipeline.Subscribe(data.TopicTraceCollectLiaisonInfo, collectLiaisonInfoListener); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to collect liaison info topic: %w", subscribeErr)
+	}
+
 	return l.pipeline.Subscribe(data.TopicTraceWrite, l.writeListener)
 }
 
@@ -284,6 +310,38 @@ func (l *liaison) Trace(metadata *commonv1.Metadata) (Trace, error) {
 
 func (l *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return l.schemaRepo.GetRemovalSegmentsTimeRange(group)
+}
+
+func (l *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
+	return nil, errors.New("collect data info is not supported on liaison node")
+}
+
+// CollectLiaisonInfo collects liaison node info.
+func (l *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{
+		PendingWriteDataCount:       0,
+		PendingSyncPartCount:        0,
+		PendingSyncDataSizeBytes:    0,
+		PendingHandoffPartCount:     0,
+		PendingHandoffDataSizeBytes: 0,
+	}
+	pendingWriteCount, writeErr := l.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	pendingSyncPartCount, pendingSyncDataSizeBytes, syncErr := l.schemaRepo.collectPendingSyncInfo(group)
+	if syncErr != nil {
+		return nil, fmt.Errorf("failed to collect pending sync info: %w", syncErr)
+	}
+	info.PendingSyncPartCount = pendingSyncPartCount
+	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	if l.handoffCtrl != nil {
+		partCount, totalSize := l.handoffCtrl.stats()
+		info.PendingHandoffPartCount = partCount
+		info.PendingHandoffDataSizeBytes = totalSize
+	}
+	return info, nil
 }
 
 // SetMetadata sets the metadata repository.

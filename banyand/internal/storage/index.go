@@ -94,6 +94,10 @@ func (s *seriesIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, e
 	return s.store.EnableExternalSegments()
 }
 
+func (s *seriesIndex) Stats() (dataCount int64, dataSizeBytes int64) {
+	return s.store.Stats()
+}
+
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {

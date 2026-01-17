@@ -152,14 +152,15 @@ type tsTable struct {
 	introductions chan *introduction
 	snapshot      *snapshot
 	*metrics
-	getNodes  func() []string
-	l         *logger.Logger
-	p         common.Position
-	root      string
-	group     string
-	gc        garbageCleaner
-	option    option
-	curPartID uint64
+	getNodes         func() []string
+	l                *logger.Logger
+	p                common.Position
+	root             string
+	group            string
+	gc               garbageCleaner
+	option           option
+	curPartID        uint64
+	pendingDataCount atomic.Int64
 	sync.RWMutex
 	shardID common.ShardID
 }
@@ -316,6 +317,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
+	tst.pendingDataCount.Add(int64(totalCount))
 	select {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():

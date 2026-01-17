@@ -38,7 +38,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -128,14 +132,20 @@ func CheckInterval(d time.Duration) WatcherOption {
 	}
 }
 
+var _ Registry = (*etcdSchemaRegistry)(nil)
+
 type etcdSchemaRegistry struct {
-	client        *clientv3.Client
-	closer        *run.Closer
-	l             *logger.Logger
-	watchers      map[Kind]*watcher
-	namespace     string
-	checkInterval time.Duration
-	mux           sync.RWMutex
+	client             *clientv3.Client
+	closer             *run.Closer
+	l                  *logger.Logger
+	watchers           map[Kind]*watcher
+	dataCollectors     map[commonv1.Catalog]DataInfoCollector
+	liaisonCollectors  map[commonv1.Catalog]LiaisonInfoCollector
+	dataBroadcaster    bus.Broadcaster
+	liaisonBroadcaster bus.Broadcaster
+	namespace          string
+	checkInterval      time.Duration
+	mux                sync.RWMutex
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -257,12 +267,14 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		return nil, err
 	}
 	reg := &etcdSchemaRegistry{
-		namespace:     registryConfig.namespace,
-		client:        client,
-		closer:        run.NewCloser(1),
-		l:             logger.GetLogger("schema-registry"),
-		checkInterval: registryConfig.checkInterval,
-		watchers:      make(map[Kind]*watcher),
+		namespace:         registryConfig.namespace,
+		client:            client,
+		closer:            run.NewCloser(1),
+		l:                 logger.GetLogger("schema-registry"),
+		checkInterval:     registryConfig.checkInterval,
+		watchers:          make(map[Kind]*watcher),
+		dataCollectors:    make(map[commonv1.Catalog]DataInfoCollector),
+		liaisonCollectors: make(map[commonv1.Catalog]LiaisonInfoCollector),
 	}
 	return reg, nil
 }
@@ -612,6 +624,172 @@ func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 	return path.Join(
 		listPrefixesForEntity(metadata.GetGroup(), entityPrefix),
 		metadata.GetName())
+}
+
+func (e *etcdSchemaRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
+	grp, getErr := e.GetGroup(ctx, group)
+	if getErr != nil {
+		return nil, getErr
+	}
+
+	localInfo, localErr := e.collectDataInfoLocal(ctx, grp.Catalog, group)
+	if localErr != nil {
+		return nil, localErr
+	}
+	localInfoList := []*databasev1.DataInfo{}
+	if localInfo != nil {
+		localInfoList = []*databasev1.DataInfo{localInfo}
+	}
+	if e.dataBroadcaster == nil {
+		return localInfoList, nil
+	}
+
+	var topic bus.Topic
+	switch grp.Catalog {
+	case commonv1.Catalog_CATALOG_MEASURE:
+		topic = data.TopicMeasureCollectDataInfo
+	case commonv1.Catalog_CATALOG_STREAM:
+		topic = data.TopicStreamCollectDataInfo
+	case commonv1.Catalog_CATALOG_TRACE:
+		topic = data.TopicTraceCollectDataInfo
+	default:
+		return nil, fmt.Errorf("unsupported catalog type: %v", grp.Catalog)
+	}
+	remoteInfo := e.broadcastCollectDataInfo(topic, group)
+	return append(localInfoList, remoteInfo...), nil
+}
+
+func (e *etcdSchemaRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) []*databasev1.DataInfo {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	futures, broadcastErr := e.dataBroadcaster.Broadcast(5*time.Second, topic, message)
+	if broadcastErr != nil {
+		e.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
+		return []*databasev1.DataInfo{}
+	}
+
+	dataInfoList := make([]*databasev1.DataInfo, 0, len(futures))
+	for _, future := range futures {
+		msg, getErr := future.Get()
+		if getErr != nil {
+			e.l.Warn().Err(getErr).Str("group", group).Msg("failed to get collect data info response")
+			continue
+		}
+		msgData := msg.Data()
+		switch d := msgData.(type) {
+		case *databasev1.DataInfo:
+			if d != nil {
+				dataInfoList = append(dataInfoList, d)
+			}
+		case *common.Error:
+			e.l.Warn().Str("error", d.Error()).Str("group", group).Msg("error collecting data info from node")
+		}
+	}
+	return dataInfoList
+}
+
+func (e *etcdSchemaRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
+	e.mux.RLock()
+	collector, hasCollector := e.dataCollectors[catalog]
+	e.mux.RUnlock()
+	if hasCollector && collector != nil {
+		return collector.CollectDataInfo(ctx, group)
+	}
+	return nil, nil
+}
+
+func (e *etcdSchemaRegistry) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
+	grp, getErr := e.GetGroup(ctx, group)
+	if getErr != nil {
+		return nil, getErr
+	}
+
+	localInfo, localErr := e.collectLiaisonInfoLocal(ctx, grp.Catalog, group)
+	if localErr != nil {
+		return nil, localErr
+	}
+	localInfoList := []*databasev1.LiaisonInfo{}
+	if localInfo != nil {
+		localInfoList = []*databasev1.LiaisonInfo{localInfo}
+	}
+	if e.liaisonBroadcaster == nil {
+		return localInfoList, nil
+	}
+
+	var topic bus.Topic
+	switch grp.Catalog {
+	case commonv1.Catalog_CATALOG_MEASURE:
+		topic = data.TopicMeasureCollectLiaisonInfo
+	case commonv1.Catalog_CATALOG_STREAM:
+		topic = data.TopicStreamCollectLiaisonInfo
+	case commonv1.Catalog_CATALOG_TRACE:
+		topic = data.TopicTraceCollectLiaisonInfo
+	default:
+		return nil, fmt.Errorf("unsupported catalog type: %v", grp.Catalog)
+	}
+	remoteInfo := e.broadcastCollectLiaisonInfo(topic, group)
+	return append(localInfoList, remoteInfo...), nil
+}
+
+func (e *etcdSchemaRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	futures, broadcastErr := e.liaisonBroadcaster.Broadcast(5*time.Second, topic, message)
+	if broadcastErr != nil {
+		e.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect liaison info request")
+		return []*databasev1.LiaisonInfo{}
+	}
+
+	liaisonInfoList := make([]*databasev1.LiaisonInfo, 0, len(futures))
+	for _, future := range futures {
+		msg, getErr := future.Get()
+		if getErr != nil {
+			e.l.Warn().Err(getErr).Str("group", group).Msg("failed to get collect liaison info response")
+			continue
+		}
+		msgData := msg.Data()
+		switch d := msgData.(type) {
+		case *databasev1.LiaisonInfo:
+			if d != nil {
+				liaisonInfoList = append(liaisonInfoList, d)
+			}
+		case *common.Error:
+			e.l.Warn().Str("error", d.Error()).Str("group", group).Msg("error collecting liaison info from node")
+		}
+	}
+	return liaisonInfoList
+}
+
+func (e *etcdSchemaRegistry) collectLiaisonInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.LiaisonInfo, error) {
+	e.mux.RLock()
+	collector, hasCollector := e.liaisonCollectors[catalog]
+	e.mux.RUnlock()
+	if hasCollector && collector != nil {
+		return collector.CollectLiaisonInfo(ctx, group)
+	}
+	return nil, nil
+}
+
+func (e *etcdSchemaRegistry) RegisterDataCollector(catalog commonv1.Catalog, collector DataInfoCollector) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.dataCollectors[catalog] = collector
+}
+
+func (e *etcdSchemaRegistry) RegisterLiaisonCollector(catalog commonv1.Catalog, collector LiaisonInfoCollector) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.liaisonCollectors[catalog] = collector
+}
+
+func (e *etcdSchemaRegistry) SetDataBroadcaster(broadcaster bus.Broadcaster) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.dataBroadcaster = broadcaster
+}
+
+func (e *etcdSchemaRegistry) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.liaisonBroadcaster = broadcaster
 }
 
 func extractTLSConfig(cfg *etcdSchemaRegistryConfig) *tls.Config {

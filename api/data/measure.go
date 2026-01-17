@@ -93,3 +93,9 @@ var MeasureSeriesSyncKindVersion = common.KindVersion{
 
 // TopicMeasureSeriesSync is the measure series sync topic.
 var TopicMeasureSeriesSync = bus.BiTopic(MeasureSeriesSyncKindVersion.String())
+
+// TopicMeasureCollectDataInfo is the topic for collecting data info from data nodes.
+var TopicMeasureCollectDataInfo = bus.BiTopic("measure-collect-data-info")
+
+// TopicMeasureCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
+var TopicMeasureCollectLiaisonInfo = bus.BiTopic("measure-collect-liaison-info")

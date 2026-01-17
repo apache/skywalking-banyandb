@@ -148,7 +148,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
 		obsservice.UpdatePath(s.dataPath)
 	}
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_TRACE, &s.schemaRepo)
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, s)
+	}
+	subErr := s.pipeline.Subscribe(data.TopicTraceCollectDataInfo, &collectDataInfoListener{s: s})
+	if subErr != nil {
+		return fmt.Errorf("failed to subscribe to TopicTraceCollectDataInfo: %w", subErr)
+	}
 
 	// Initialize snapshot directory
 	s.snapshotDir = filepath.Join(path, "snapshots")
@@ -501,6 +509,37 @@ func (s *standaloneDeleteTraceSegmentsListener) Rev(_ context.Context, message b
 	s.s.l.Info().Msg("test")
 	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
+}
+
+func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
+}
+
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{}
+	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	return info, nil
+}
+
+type collectDataInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
+	}
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), dataInfo)
 }
 
 // NewService returns a new service.
