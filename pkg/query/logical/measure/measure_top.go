@@ -27,14 +27,14 @@ import (
 
 // TopElement seals a sortable value and its data point which this value belongs to.
 type TopElement struct {
-	dp    *measurev1.DataPoint
+	idp   *measurev1.InternalDataPoint
 	value int64
 }
 
 // NewTopElement returns a TopElement.
-func NewTopElement(dp *measurev1.DataPoint, value int64) TopElement {
+func NewTopElement(idp *measurev1.InternalDataPoint, value int64) TopElement {
 	return TopElement{
-		dp:    dp,
+		idp:   idp,
 		value: value,
 	}
 }

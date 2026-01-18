@@ -102,12 +102,12 @@ func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) 
 	g.topNStream.Purge()
 	for iter.Next() {
 		dpp := iter.Current()
-		for _, dp := range dpp {
-			value := dp.GetFields()[g.fieldRef.Spec.FieldIdx].
+		for _, idp := range dpp {
+			value := idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].
 				GetValue().
 				GetInt().
 				GetValue()
-			g.topNStream.Insert(NewTopElement(dp, value))
+			g.topNStream.Insert(NewTopElement(idp, value))
 		}
 	}
 	return newTopIterator(g.topNStream.Elements()), nil
@@ -130,8 +130,8 @@ func (ami *topIterator) Next() bool {
 	return ami.index < len(ami.elements)
 }
 
-func (ami *topIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{ami.elements[ami.index].dp}
+func (ami *topIterator) Current() []*measurev1.InternalDataPoint {
+	return []*measurev1.InternalDataPoint{ami.elements[ami.index].idp}
 }
 
 func (ami *topIterator) Close() error {

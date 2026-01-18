@@ -46,6 +46,19 @@ func (m *mockIterator) Close() error {
 	return nil
 }
 
+func makeComparableDP(sid uint64, seconds, nanos int64, version int64, sortField byte) *comparableDataPoint {
+	return &comparableDataPoint{
+		InternalDataPoint: &measurev1.InternalDataPoint{
+			DataPoint: &measurev1.DataPoint{
+				Sid:       sid,
+				Timestamp: &timestamppb.Timestamp{Seconds: seconds, Nanos: int32(nanos)},
+				Version:   version,
+			},
+		},
+		sortField: []byte{sortField},
+	}
+}
+
 func TestSortedMIterator(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -60,8 +73,8 @@ func TestSortedMIterator(t *testing.T) {
 		{
 			name: "all data points are the same",
 			data: []*comparableDataPoint{
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
+				makeComparableDP(1, 1, 1, 1, 1),
+				makeComparableDP(1, 1, 1, 1, 1),
 			},
 			want: []*measurev1.DataPoint{
 				{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1},
@@ -70,8 +83,8 @@ func TestSortedMIterator(t *testing.T) {
 		{
 			name: "identical data points with different sort fields",
 			data: []*comparableDataPoint{
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{2}},
+				makeComparableDP(1, 1, 1, 1, 1),
+				makeComparableDP(1, 1, 1, 1, 2),
 			},
 			want: []*measurev1.DataPoint{
 				{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1},
@@ -81,8 +94,8 @@ func TestSortedMIterator(t *testing.T) {
 		{
 			name: "different data points with different sort fields",
 			data: []*comparableDataPoint{
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 2, Nanos: 2}, Version: 1}, sortField: []byte{2}},
+				makeComparableDP(1, 1, 1, 1, 1),
+				makeComparableDP(1, 2, 2, 1, 2),
 			},
 			want: []*measurev1.DataPoint{
 				{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1},
@@ -92,9 +105,9 @@ func TestSortedMIterator(t *testing.T) {
 		{
 			name: "identical data points with different versions",
 			data: []*comparableDataPoint{
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 2, Nanos: 2}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 2}, sortField: []byte{1}},
+				makeComparableDP(1, 1, 1, 1, 1),
+				makeComparableDP(1, 2, 2, 1, 1),
+				makeComparableDP(1, 1, 1, 2, 1),
 			},
 			want: []*measurev1.DataPoint{
 				{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 2},
@@ -102,17 +115,17 @@ func TestSortedMIterator(t *testing.T) {
 			},
 		},
 		{
-			name: "identical data points with different versions",
+			name: "multiple sids with different versions",
 			data: []*comparableDataPoint{
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 2, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 1}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 2}, sortField: []byte{1}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 2, Nanos: 2}, Version: 2}, sortField: []byte{2}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 2, Nanos: 2}, Version: 1}, sortField: []byte{2}},
-				{DataPoint: &measurev1.DataPoint{Sid: 2, Timestamp: &timestamppb.Timestamp{Seconds: 2, Nanos: 2}, Version: 2}, sortField: []byte{2}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 3, Nanos: 3}, Version: 1}, sortField: []byte{3}},
-				{DataPoint: &measurev1.DataPoint{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 3, Nanos: 3}, Version: 2}, sortField: []byte{3}},
-				{DataPoint: &measurev1.DataPoint{Sid: 3, Timestamp: &timestamppb.Timestamp{Seconds: 3, Nanos: 3}, Version: 2}, sortField: []byte{3}},
+				makeComparableDP(1, 1, 1, 1, 1),
+				makeComparableDP(2, 1, 1, 1, 1),
+				makeComparableDP(1, 1, 1, 2, 1),
+				makeComparableDP(1, 2, 2, 2, 2),
+				makeComparableDP(1, 2, 2, 1, 2),
+				makeComparableDP(2, 2, 2, 2, 2),
+				makeComparableDP(1, 3, 3, 1, 3),
+				makeComparableDP(1, 3, 3, 2, 3),
+				makeComparableDP(3, 3, 3, 2, 3),
 			},
 			want: []*measurev1.DataPoint{
 				{Sid: 1, Timestamp: &timestamppb.Timestamp{Seconds: 1, Nanos: 1}, Version: 2},
@@ -135,7 +148,7 @@ func TestSortedMIterator(t *testing.T) {
 
 			got := make([]*measurev1.DataPoint, 0)
 			for iter.Next() {
-				got = append(got, iter.Current()[0])
+				got = append(got, iter.Current()[0].GetDataPoint())
 			}
 
 			slices.SortFunc(got, func(a, b *measurev1.DataPoint) int {

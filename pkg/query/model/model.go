@@ -71,6 +71,7 @@ type MeasureResult struct {
 	Error       error
 	Timestamps  []int64
 	Versions    []int64
+	ShardIDs    []common.ShardID
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID

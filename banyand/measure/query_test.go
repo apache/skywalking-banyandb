@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
 
@@ -1295,7 +1296,8 @@ func TestQueryResult(t *testing.T) {
 				}
 
 				if diff := cmp.Diff(got, tt.want,
-					protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
+					protocmp.IgnoreUnknown(), protocmp.Transform(),
+					cmpopts.IgnoreFields(model.MeasureResult{}, "ShardIDs")); diff != "" {
 					t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
 				}
 			}
@@ -1512,7 +1514,8 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 				got = append(got, *r)
 			}
 			if diff := cmp.Diff(got, tt.want,
-				protocmp.IgnoreUnknown(), protocmp.Transform()); diff != "" {
+				protocmp.IgnoreUnknown(), protocmp.Transform(),
+				cmpopts.IgnoreFields(model.MeasureResult{}, "ShardIDs")); diff != "" {
 				t.Errorf("Unexpected []pbv1.Result (-got +want):\n%s", diff)
 			}
 		})
