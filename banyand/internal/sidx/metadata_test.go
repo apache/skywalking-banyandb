@@ -453,6 +453,121 @@ func TestPartMetadata_Serialization(t *testing.T) {
 	assert.Equal(t, original.ID, restored.ID)
 }
 
+func TestPartMetadata_SerializationWithTimestamps(t *testing.T) {
+	tests := []struct {
+		name           string
+		original       *partMetadata
+		expectTimestamps bool
+	}{
+		{
+			name: "metadata with timestamps",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          intPtr(1000000000),
+				MaxTimestamp:          intPtr(2000000000),
+			},
+			expectTimestamps: true,
+		},
+		{
+			name: "metadata without timestamps",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          nil,
+				MaxTimestamp:          nil,
+			},
+			expectTimestamps: false,
+		},
+		{
+			name: "metadata with only min timestamp",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          intPtr(1000000000),
+				MaxTimestamp:          nil,
+			},
+			expectTimestamps: false, // Only one timestamp, so not "fully set" for range operations
+		},
+		{
+			name: "metadata with only max timestamp",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          nil,
+				MaxTimestamp:          intPtr(2000000000),
+			},
+			expectTimestamps: false, // Only one timestamp, so not "fully set" for range operations
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test marshaling
+			data, err := tt.original.marshal()
+			require.NoError(t, err)
+			assert.NotEmpty(t, data)
+
+			// Test unmarshaling
+			restored, err := unmarshalPartMetadata(data)
+			require.NoError(t, err)
+
+			// Verify all fields match
+			assert.Equal(t, tt.original.CompressedSizeBytes, restored.CompressedSizeBytes)
+			assert.Equal(t, tt.original.UncompressedSizeBytes, restored.UncompressedSizeBytes)
+			assert.Equal(t, tt.original.TotalCount, restored.TotalCount)
+			assert.Equal(t, tt.original.BlocksCount, restored.BlocksCount)
+			assert.Equal(t, tt.original.MinKey, restored.MinKey)
+			assert.Equal(t, tt.original.MaxKey, restored.MaxKey)
+			assert.Equal(t, tt.original.ID, restored.ID)
+
+			// Verify timestamp fields
+			if tt.expectTimestamps {
+				require.NotNil(t, restored.MinTimestamp, "MinTimestamp should not be nil")
+				require.NotNil(t, restored.MaxTimestamp, "MaxTimestamp should not be nil")
+				assert.Equal(t, *tt.original.MinTimestamp, *restored.MinTimestamp)
+				assert.Equal(t, *tt.original.MaxTimestamp, *restored.MaxTimestamp)
+			} else {
+				// When timestamps are not both set, verify they are preserved as-is
+				// Timestamps are independent optional fields - they don't require both to be set
+				if tt.original.MinTimestamp == nil {
+					assert.Nil(t, restored.MinTimestamp, "MinTimestamp should be nil when originally nil")
+				} else {
+					require.NotNil(t, restored.MinTimestamp, "MinTimestamp should be preserved when set")
+					assert.Equal(t, *tt.original.MinTimestamp, *restored.MinTimestamp)
+				}
+				if tt.original.MaxTimestamp == nil {
+					assert.Nil(t, restored.MaxTimestamp, "MaxTimestamp should be nil when originally nil")
+				} else {
+					require.NotNil(t, restored.MaxTimestamp, "MaxTimestamp should be preserved when set")
+					assert.Equal(t, *tt.original.MaxTimestamp, *restored.MaxTimestamp)
+				}
+			}
+		})
+	}
+}
+
+
 func TestBlockMetadata_Serialization(t *testing.T) {
 	original := &blockMetadata{
 		seriesID:  common.SeriesID(123),
@@ -559,6 +674,82 @@ func TestPartMetadata_JSONFormat(t *testing.T) {
 	assert.Contains(t, jsonStr, "compressedSizeBytes")
 	assert.Contains(t, jsonStr, "minKey")
 	assert.Contains(t, jsonStr, "maxKey")
+}
+
+func TestPartMetadata_JSONFormatWithTimestamps(t *testing.T) {
+	tests := []struct {
+		name           string
+		original       *partMetadata
+		expectTimestampFields bool
+	}{
+		{
+			name: "JSON with timestamps includes timestamp fields",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          intPtr(1000000000),
+				MaxTimestamp:          intPtr(2000000000),
+			},
+			expectTimestampFields: true,
+		},
+		{
+			name: "JSON without timestamps omits timestamp fields",
+			original: &partMetadata{
+				CompressedSizeBytes:   1000,
+				UncompressedSizeBytes: 2000,
+				TotalCount:            50,
+				BlocksCount:           5,
+				MinKey:                10,
+				MaxKey:                1000,
+				ID:                    12345,
+				MinTimestamp:          nil,
+				MaxTimestamp:          nil,
+			},
+			expectTimestampFields: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := tt.original.marshal()
+			require.NoError(t, err)
+
+			// Verify it's valid JSON
+			var parsed map[string]interface{}
+			err = json.Unmarshal(data, &parsed)
+			require.NoError(t, err)
+
+			// Verify expected fields are present
+			assert.Equal(t, float64(1000), parsed["compressedSizeBytes"])
+			assert.Equal(t, float64(2000), parsed["uncompressedSizeBytes"])
+			assert.Equal(t, float64(50), parsed["totalCount"])
+			assert.Equal(t, float64(5), parsed["blocksCount"])
+			assert.Equal(t, float64(10), parsed["minKey"])
+			assert.Equal(t, float64(1000), parsed["maxKey"])
+			assert.Equal(t, float64(12345), parsed["id"])
+
+			// Verify timestamp fields based on omitempty behavior
+			jsonStr := string(data)
+			if tt.expectTimestampFields {
+				assert.Contains(t, jsonStr, "min_timestamp")
+				assert.Contains(t, jsonStr, "max_timestamp")
+				_, hasMinTimestamp := parsed["min_timestamp"]
+				_, hasMaxTimestamp := parsed["max_timestamp"]
+				assert.True(t, hasMinTimestamp, "min_timestamp should be present in JSON")
+				assert.True(t, hasMaxTimestamp, "max_timestamp should be present in JSON")
+				assert.Equal(t, float64(1000000000), parsed["min_timestamp"])
+				assert.Equal(t, float64(2000000000), parsed["max_timestamp"])
+			} else {
+				assert.NotContains(t, jsonStr, "min_timestamp", "min_timestamp should be omitted when nil")
+				assert.NotContains(t, jsonStr, "max_timestamp", "max_timestamp should be omitted when nil")
+			}
+		})
+	}
 }
 
 func TestBlockMetadata_AccessorMethods(t *testing.T) {
@@ -678,6 +869,33 @@ func TestMetadata_Reset(t *testing.T) {
 	assert.Equal(t, dataBlock{}, bm.dataBlock)
 	assert.Equal(t, dataBlock{}, bm.keysBlock)
 	assert.Equal(t, 0, len(bm.tagsBlocks))
+}
+
+func TestMetadata_ResetWithTimestamps(t *testing.T) {
+	// Test partMetadata reset with timestamps
+	pm := &partMetadata{
+		CompressedSizeBytes:   1000,
+		UncompressedSizeBytes: 2000,
+		TotalCount:            50,
+		BlocksCount:           5,
+		MinKey:                10,
+		MaxKey:                1000,
+		ID:                    12345,
+		MinTimestamp:          intPtr(1000000000),
+		MaxTimestamp:          intPtr(2000000000),
+	}
+
+	pm.reset()
+
+	assert.Equal(t, uint64(0), pm.CompressedSizeBytes)
+	assert.Equal(t, uint64(0), pm.UncompressedSizeBytes)
+	assert.Equal(t, uint64(0), pm.TotalCount)
+	assert.Equal(t, uint64(0), pm.BlocksCount)
+	assert.Equal(t, int64(0), pm.MinKey)
+	assert.Equal(t, int64(0), pm.MaxKey)
+	assert.Equal(t, uint64(0), pm.ID)
+	assert.Nil(t, pm.MinTimestamp, "MinTimestamp should be nil after reset")
+	assert.Nil(t, pm.MaxTimestamp, "MaxTimestamp should be nil after reset")
 }
 
 func TestBlockMetadata_CopyFrom(t *testing.T) {

@@ -754,11 +754,19 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 		if (i-blockStart) > maxBlockLength || accumulatedSize >= maxUncompressedBlockSize || i == len(es.seriesIDs) || seriesChanged {
 			// Extract elements for current series
 			seriesUserKeys := es.userKeys[blockStart:i]
+			// Ensure timestamps slice has the same length as other slices
+			var seriesTimestamps []int64
+			if len(es.timestamps) >= i {
+				seriesTimestamps = es.timestamps[blockStart:i]
+			} else {
+				// Fallback: create empty slice if timestamps not populated (backward compatibility)
+				seriesTimestamps = make([]int64, i-blockStart)
+			}
 			seriesData := es.data[blockStart:i]
 			seriesTags := es.tags[blockStart:i]
 
 			// Write elements for this series
-			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesData, seriesTags)
+			bw.MustWriteElements(currentSeriesID, seriesUserKeys, seriesTimestamps, seriesData, seriesTags)
 
 			if i < len(es.seriesIDs) {
 				currentSeriesID = es.seriesIDs[i]

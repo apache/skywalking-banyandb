@@ -333,11 +333,22 @@ func processIndexRules(stm *trace, tracesInTable *tracesInTable, req *tracev1.Wr
 		data[0] = byte(idFormatV1) // Control bit indicating new format
 		copy(data[1:], traceID)
 
+		// Extract timestamp from request for time range filtering
+		var timestamp int64
+		if stm.schema.TimestampTagName != "" {
+			if tsIdx, tsErr := getTagIndex(stm, stm.schema.TimestampTagName, specMap); tsErr == nil && tsIdx < len(req.Tags) {
+				if tsTag := req.Tags[tsIdx].GetTimestamp(); tsTag != nil {
+					timestamp = tsTag.AsTime().UnixNano()
+				}
+			}
+		}
+
 		writeReq := sidx.WriteRequest{
-			Data:     data,
-			Tags:     filteredSidxTags,
-			SeriesID: series.ID,
-			Key:      key,
+			Data:      data,
+			Tags:      filteredSidxTags,
+			SeriesID:  series.ID,
+			Key:       key,
+			Timestamp: timestamp,
 		}
 
 		sidxName := indexRule.GetMetadata().GetName()

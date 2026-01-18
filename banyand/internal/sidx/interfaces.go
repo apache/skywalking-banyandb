@@ -94,10 +94,11 @@ type SIDX interface {
 // WriteRequest contains data for a single write operation within a batch.
 // The user provides the ordering key as an int64 value that sidx treats opaquely.
 type WriteRequest struct {
-	Data     []byte
-	Tags     []Tag
-	SeriesID common.SeriesID
-	Key      int64
+	Data      []byte
+	Tags      []Tag
+	SeriesID  common.SeriesID
+	Key       int64
+	Timestamp int64 // Unix nanoseconds timestamp for time range filtering
 }
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
@@ -107,6 +108,8 @@ type QueryRequest struct {
 	Order         *index.OrderBy
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64 // Unix nanoseconds - for part-level selection only
+	MaxTimestamp  *int64 // Unix nanoseconds - for part-level selection only
 	SeriesIDs     []common.SeriesID
 	TagProjection []model.TagProjection
 	MaxBatchSize  int
@@ -127,6 +130,8 @@ type ScanQueryRequest struct {
 	OnProgress    ScanProgressFunc
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64 // Unix nanoseconds - for part-level selection only
+	MaxTimestamp  *int64 // Unix nanoseconds - for part-level selection only
 	MaxBatchSize  int
 	// OnProgress is an optional callback for progress reporting during scan.
 	// Called after processing each part with the current progress.
@@ -376,6 +381,8 @@ func (qr *QueryRequest) Reset() {
 	qr.MaxBatchSize = 0
 	qr.MinKey = nil
 	qr.MaxKey = nil
+	qr.MinTimestamp = nil
+	qr.MaxTimestamp = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
@@ -414,6 +421,21 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.MaxKey = &maxKey
 	} else {
 		qr.MaxKey = nil
+	}
+
+	// Copy timestamp range pointers
+	if other.MinTimestamp != nil {
+		minTimestamp := *other.MinTimestamp
+		qr.MinTimestamp = &minTimestamp
+	} else {
+		qr.MinTimestamp = nil
+	}
+
+	if other.MaxTimestamp != nil {
+		maxTimestamp := *other.MaxTimestamp
+		qr.MaxTimestamp = &maxTimestamp
+	} else {
+		qr.MaxTimestamp = nil
 	}
 }
 

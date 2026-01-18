@@ -470,6 +470,8 @@ func createTestElements(testElems []testElement) *elements {
 	for _, te := range testElems {
 		elems.seriesIDs = append(elems.seriesIDs, te.seriesID)
 		elems.userKeys = append(elems.userKeys, te.userKey)
+		// Use userKey as timestamp for tests (common pattern when key = timestamp)
+		elems.timestamps = append(elems.timestamps, te.userKey)
 
 		// Copy data
 		dataCopy := make([]byte, len(te.data))

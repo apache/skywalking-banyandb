@@ -46,6 +46,10 @@ type partMetadata struct {
 	MinKey int64 `json:"minKey"` // Minimum user key in part
 	MaxKey int64 `json:"maxKey"` // Maximum user key in part
 
+	// Timestamp range (optional, for time-based part selection)
+	MinTimestamp *int64 `json:"min_timestamp,omitempty"` // Minimum timestamp in part (Unix nanoseconds)
+	MaxTimestamp *int64 `json:"max_timestamp,omitempty"` // Maximum timestamp in part (Unix nanoseconds)
+
 	// Identity
 	ID        uint64 `json:"id"`        // Unique part identifier
 	SegmentID int64  `json:"segmentID"` // Segment identifier
@@ -140,6 +144,8 @@ func (pm *partMetadata) reset() {
 	pm.BlocksCount = 0
 	pm.MinKey = 0
 	pm.MaxKey = 0
+	pm.MinTimestamp = nil
+	pm.MaxTimestamp = nil
 	pm.ID = 0
 }
 
