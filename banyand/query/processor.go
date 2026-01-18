@@ -341,7 +341,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "measure")
 	if buildErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
-			return
+		return
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")

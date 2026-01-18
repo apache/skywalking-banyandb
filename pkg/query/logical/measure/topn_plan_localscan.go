@@ -212,6 +212,10 @@ func (ei *topNMIterator) Next() bool {
 			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
 		}
+		shardID := uint32(0)
+		if i < len(r.ShardIDs) {
+			shardID = uint32(r.ShardIDs[i])
+		}
 		fieldName, entityNames, values, entities := topNValue.Values()
 		for j := range entities {
 			dp := &measurev1.DataPoint{
@@ -239,7 +243,7 @@ func (ei *topNMIterator) Next() bool {
 					},
 				},
 			})
-			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: 0})
+			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
 		}
 	}
 	return true
