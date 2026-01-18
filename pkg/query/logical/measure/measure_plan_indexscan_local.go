@@ -280,11 +280,10 @@ type resultMIterator struct {
 	result           model.MeasureQueryResult
 	hiddenTags       logical.HiddenTagSet
 	err              error
-	current          []*measurev1.DataPoint
+	current          []*measurev1.InternalDataPoint
 	projectionTags   []model.TagProjection
 	projectionFields []string
 	i                int
-	currentShardID   common.ShardID
 }
 
 func (ei *resultMIterator) Next() bool {
@@ -306,7 +305,6 @@ func (ei *resultMIterator) Next() bool {
 	}
 	ei.current = ei.current[:0]
 	ei.i = 0
-	ei.currentShardID = r.ShardID
 	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
 	for idx := range r.TagFamilies {
 		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
@@ -367,18 +365,21 @@ func (ei *resultMIterator) Next() bool {
 				})
 			}
 		}
-		ei.current = append(ei.current, dp)
+		var shardID common.ShardID
+		if len(r.ShardIDs) > i {
+			shardID = r.ShardIDs[i]
+		}
+		ei.current = append(ei.current, &measurev1.InternalDataPoint{
+			DataPoint: dp,
+			ShardId:   uint32(shardID),
+		})
 	}
 
 	return true
 }
 
-func (ei *resultMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{ei.current[ei.i]}
-}
-
-func (ei *resultMIterator) CurrentShardID() common.ShardID {
-	return ei.currentShardID
+func (ei *resultMIterator) Current() []*measurev1.InternalDataPoint {
+	return []*measurev1.InternalDataPoint{ei.current[ei.i]}
 }
 
 func (ei *resultMIterator) Close() error {

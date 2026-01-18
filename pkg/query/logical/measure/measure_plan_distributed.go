@@ -299,7 +299,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				}
 				dataPointCount += len(d.DataPoints)
 				see = append(see,
-					newSortableElements(extractDataPoints(d.DataPoints),
+					newSortableElements(d.DataPoints,
 						t.sortByTime, t.sortTagSpec))
 			case *common.Error:
 				err = multierr.Append(err, fmt.Errorf("data node error: %s", d.Error()))
@@ -349,25 +349,26 @@ func (t *distributedPlan) Limit(maxVal int) {
 var _ sort.Comparable = (*comparableDataPoint)(nil)
 
 type comparableDataPoint struct {
-	*measurev1.DataPoint
+	*measurev1.InternalDataPoint
 	sortField []byte
 }
 
-func newComparableElement(e *measurev1.DataPoint, sortByTime bool, sortTagSpec logical.TagSpec) (*comparableDataPoint, error) {
+func newComparableElement(idp *measurev1.InternalDataPoint, sortByTime bool, sortTagSpec logical.TagSpec) (*comparableDataPoint, error) {
+	dp := idp.GetDataPoint()
 	var sortField []byte
 	if sortByTime {
-		sortField = convert.Uint64ToBytes(uint64(e.Timestamp.AsTime().UnixNano()))
+		sortField = convert.Uint64ToBytes(uint64(dp.Timestamp.AsTime().UnixNano()))
 	} else {
 		var err error
-		sortField, err = pbv1.MarshalTagValue(e.TagFamilies[sortTagSpec.TagFamilyIdx].Tags[sortTagSpec.TagIdx].Value)
+		sortField, err = pbv1.MarshalTagValue(dp.TagFamilies[sortTagSpec.TagFamilyIdx].Tags[sortTagSpec.TagIdx].Value)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return &comparableDataPoint{
-		DataPoint: e,
-		sortField: sortField,
+		InternalDataPoint: idp,
+		sortField:         sortField,
 	}, nil
 }
 
@@ -379,13 +380,13 @@ var _ sort.Iterator[*comparableDataPoint] = (*sortableElements)(nil)
 
 type sortableElements struct {
 	cur          *comparableDataPoint
-	dataPoints   []*measurev1.DataPoint
+	dataPoints   []*measurev1.InternalDataPoint
 	sortTagSpec  logical.TagSpec
 	index        int
 	isSortByTime bool
 }
 
-func newSortableElements(dataPoints []*measurev1.DataPoint, isSortByTime bool, sortTagSpec logical.TagSpec) *sortableElements {
+func newSortableElements(dataPoints []*measurev1.InternalDataPoint, isSortByTime bool, sortTagSpec logical.TagSpec) *sortableElements {
 	return &sortableElements{
 		dataPoints:   dataPoints,
 		isSortByTime: isSortByTime,
@@ -398,8 +399,8 @@ func (*sortableElements) Close() error {
 }
 
 func (s *sortableElements) Next() bool {
-	return s.iter(func(e *measurev1.DataPoint) (*comparableDataPoint, error) {
-		return newComparableElement(e, s.isSortByTime, s.sortTagSpec)
+	return s.iter(func(idp *measurev1.InternalDataPoint) (*comparableDataPoint, error) {
+		return newComparableElement(idp, s.isSortByTime, s.sortTagSpec)
 	})
 }
 
@@ -407,7 +408,7 @@ func (s *sortableElements) Val() *comparableDataPoint {
 	return s.cur
 }
 
-func (s *sortableElements) iter(fn func(*measurev1.DataPoint) (*comparableDataPoint, error)) bool {
+func (s *sortableElements) iter(fn func(*measurev1.InternalDataPoint) (*comparableDataPoint, error)) bool {
 	if s.index >= len(s.dataPoints) {
 		return false
 	}
@@ -425,8 +426,8 @@ var _ executor.MIterator = (*sortedMIterator)(nil)
 type sortedMIterator struct {
 	sort.Iterator[*comparableDataPoint]
 	data        *list.List
-	uniqueData  map[uint64]*measurev1.DataPoint
-	cur         *measurev1.DataPoint
+	uniqueData  map[uint64]*measurev1.InternalDataPoint
+	cur         *measurev1.InternalDataPoint
 	initialized bool
 	closed      bool
 }
@@ -441,7 +442,7 @@ func (s *sortedMIterator) init() {
 		return
 	}
 	s.data = list.New()
-	s.uniqueData = make(map[uint64]*measurev1.DataPoint)
+	s.uniqueData = make(map[uint64]*measurev1.InternalDataPoint)
 	s.loadDps()
 }
 
@@ -455,9 +456,9 @@ func (s *sortedMIterator) Next() bool {
 			return false
 		}
 	}
-	dp := s.data.Front()
-	s.data.Remove(dp)
-	s.cur = dp.Value.(*measurev1.DataPoint)
+	idp := s.data.Front()
+	s.data.Remove(idp)
+	s.cur = idp.Value.(*measurev1.InternalDataPoint)
 	return true
 }
 
@@ -469,7 +470,7 @@ func (s *sortedMIterator) loadDps() {
 		delete(s.uniqueData, k)
 	}
 	first := s.Iterator.Val()
-	s.uniqueData[hashDataPoint(first.DataPoint)] = first.DataPoint
+	s.uniqueData[hashDataPoint(first.GetDataPoint())] = first.InternalDataPoint
 	for {
 		if !s.Iterator.Next() {
 			s.closed = true
@@ -477,13 +478,13 @@ func (s *sortedMIterator) loadDps() {
 		}
 		v := s.Iterator.Val()
 		if bytes.Equal(first.SortedField(), v.SortedField()) {
-			key := hashDataPoint(v.DataPoint)
+			key := hashDataPoint(v.GetDataPoint())
 			if existed, ok := s.uniqueData[key]; ok {
-				if v.DataPoint.Version > existed.Version {
-					s.uniqueData[key] = v.DataPoint
+				if v.GetDataPoint().Version > existed.GetDataPoint().Version {
+					s.uniqueData[key] = v.InternalDataPoint
 				}
 			} else {
-				s.uniqueData[key] = v.DataPoint
+				s.uniqueData[key] = v.InternalDataPoint
 			}
 		} else {
 			break
@@ -494,13 +495,8 @@ func (s *sortedMIterator) loadDps() {
 	}
 }
 
-func (s *sortedMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{s.cur}
-}
-
-func (s *sortedMIterator) CurrentShardID() common.ShardID {
-	// In distributed query, data comes from multiple shards, so shard ID is not applicable
-	return 0
+func (s *sortedMIterator) Current() []*measurev1.InternalDataPoint {
+	return []*measurev1.InternalDataPoint{s.cur}
 }
 
 func (s *sortedMIterator) Close() error {
@@ -523,7 +519,7 @@ func hashDataPoint(dp *measurev1.DataPoint) uint64 {
 }
 
 type pushedDownAggregatedIterator struct {
-	dataPoints []*measurev1.DataPoint
+	dataPoints []*measurev1.InternalDataPoint
 	index      int
 }
 
@@ -535,16 +531,11 @@ func (s *pushedDownAggregatedIterator) Next() bool {
 	return true
 }
 
-func (s *pushedDownAggregatedIterator) Current() []*measurev1.DataPoint {
+func (s *pushedDownAggregatedIterator) Current() []*measurev1.InternalDataPoint {
 	if s.index == 0 || s.index > len(s.dataPoints) {
 		return nil
 	}
-	return []*measurev1.DataPoint{s.dataPoints[s.index-1]}
-}
-
-func (s *pushedDownAggregatedIterator) CurrentShardID() common.ShardID {
-	// In distributed query with aggregation, data comes from multiple shards, so shard ID is not applicable
-	return 0
+	return []*measurev1.InternalDataPoint{s.dataPoints[s.index-1]}
 }
 
 func (s *pushedDownAggregatedIterator) Close() error {
@@ -553,15 +544,15 @@ func (s *pushedDownAggregatedIterator) Close() error {
 
 // deduplicateAggregatedDataPointsWithShard removes duplicate aggregated results from multiple replicas
 // of the same shard, while preserving results from different shards.
-func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.DataPoint, error) {
+func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
-		return extractDataPoints(dataPoints), nil
+		return dataPoints, nil
 	}
 	// key = hash(shard_id, group_key)
 	// Same shard with same group key will be deduplicated
 	// Different shards with same group key will be preserved
 	groupMap := make(map[uint64]struct{})
-	result := make([]*measurev1.DataPoint, 0, len(dataPoints))
+	result := make([]*measurev1.InternalDataPoint, 0, len(dataPoints))
 	for _, idp := range dataPoints {
 		groupKey, keyErr := formatGroupByKey(idp.DataPoint, groupByTagsRefs)
 		if keyErr != nil {
@@ -571,7 +562,7 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 		key := hashWithShard(uint64(idp.ShardId), groupKey)
 		if _, exists := groupMap[key]; !exists {
 			groupMap[key] = struct{}{}
-			result = append(result, idp.DataPoint)
+			result = append(result, idp)
 		}
 	}
 	return result, nil
@@ -583,13 +574,4 @@ func hashWithShard(shardID, groupKey uint64) uint64 {
 	h = (h ^ shardID) * prime64
 	h = (h ^ groupKey) * prime64
 	return h
-}
-
-// extractDataPoints extracts DataPoint from InternalDataPoint slice.
-func extractDataPoints(idps []*measurev1.InternalDataPoint) []*measurev1.DataPoint {
-	result := make([]*measurev1.DataPoint, len(idps))
-	for idx, idp := range idps {
-		result[idx] = idp.DataPoint
-	}
-	return result
 }

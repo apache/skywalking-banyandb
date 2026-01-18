@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -99,11 +98,7 @@ func (l *limitIterator) Close() error {
 	return l.inner.Close()
 }
 
-func (l *limitIterator) CurrentShardID() common.ShardID {
-	return l.inner.CurrentShardID()
-}
-
-func (l *limitIterator) Current() []*measurev1.DataPoint {
+func (l *limitIterator) Current() []*measurev1.InternalDataPoint {
 	return l.inner.Current()
 }
 

@@ -25,7 +25,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -98,7 +97,7 @@ func (t *topNMerger) Schema() logical.Schema {
 
 type topNMergingIterator struct {
 	iters      []executor.MIterator
-	currentDps []*measurev1.DataPoint
+	currentDps []*measurev1.InternalDataPoint
 	currentIt  int
 }
 
@@ -126,18 +125,11 @@ func (t *topNMergingIterator) Next() bool {
 	return false
 }
 
-func (t *topNMergingIterator) Current() []*measurev1.DataPoint {
+func (t *topNMergingIterator) Current() []*measurev1.InternalDataPoint {
 	if len(t.currentDps) == 0 {
 		return nil
 	}
-	return []*measurev1.DataPoint{t.currentDps[0]}
-}
-
-func (t *topNMergingIterator) CurrentShardID() common.ShardID {
-	if t.currentIt < len(t.iters) {
-		return t.iters[t.currentIt].CurrentShardID()
-	}
-	return 0
+	return []*measurev1.InternalDataPoint{t.currentDps[0]}
 }
 
 func (t *topNMergingIterator) Close() error {

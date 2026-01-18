@@ -238,18 +238,13 @@ func extractTagValuesFromInternalDataPoints(dataPoints []*measurev1.InternalData
 	return tagValueMap
 }
 
-// collectInternalDataPoints collects InternalDataPoints (with ShardId) from the iterator.
+// collectInternalDataPoints collects InternalDataPoints from the iterator.
 func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.InternalDataPoint {
 	result := make([]*measurev1.InternalDataPoint, 0)
 	for mIterator.Next() {
 		current := mIterator.Current()
 		if len(current) > 0 {
-			dp := current[0]
-			internalDp := &measurev1.InternalDataPoint{
-				DataPoint: dp,
-				ShardId:   uint32(mIterator.CurrentShardID()),
-			}
-			result = append(result, internalDp)
+			result = append(result, current[0])
 		}
 	}
 	return result
@@ -401,7 +396,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 			r++
 			current := mIterator.Current()
 			if len(current) > 0 {
-				result = append(result, current[0])
+				result = append(result, current[0].GetDataPoint())
 			}
 		}
 	}()

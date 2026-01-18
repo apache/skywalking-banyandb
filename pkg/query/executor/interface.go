@@ -21,7 +21,6 @@ package executor
 import (
 	"context"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -50,9 +49,7 @@ type MeasureExecutionContext interface {
 type MIterator interface {
 	Next() bool
 
-	Current() []*measurev1.DataPoint
-
-	CurrentShardID() common.ShardID
+	Current() []*measurev1.InternalDataPoint
 
 	Close() error
 }
