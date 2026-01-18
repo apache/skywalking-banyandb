@@ -32,7 +32,7 @@ lists:
                 value: entity_5
         value:
           int:
-            value: "500"
+            value: "600"
       - entity:
           - key: entity_id
             value:
@@ -40,4 +40,4 @@ lists:
                 value: entity_3
         value:
           int:
-            value: "300"
+            value: "230"

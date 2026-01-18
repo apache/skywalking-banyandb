@@ -194,9 +194,11 @@ func (taggr *topNPostProcessor) Put(entityValues pbv1.EntityValues, val int64, t
 	}
 
 	if item, exist := timeline.items[key]; exist {
-		item.val = val
-		item.version = version
-		heap.Fix(timeline.queue, item.index)
+		if version >= item.version {
+			item.val = val
+			item.version = version
+			heap.Fix(timeline.queue, item.index)
+		}
 
 		return
 	}
@@ -233,8 +235,9 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 
 	if taggr.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		for _, timeline := range taggr.timelines {
-			for _, nonAggItem := range timeline.items {
-				result = append(result, nonAggItem)
+			for timeline.queue.Len() > 0 {
+				item := heap.Pop(timeline.queue).(*topNAggregatorItem)
+				result = append(result, item)
 			}
 		}
 		clear(taggr.timelines)

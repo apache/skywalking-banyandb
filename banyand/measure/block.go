@@ -670,8 +670,6 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 	topNPostAggregator PostProcessor,
 ) {
 	r.SID = bc.bm.seriesID
-	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
-	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	var indexValue map[string]*modelv1.TagValue
 	if storedIndexValue != nil {
 		indexValue = storedIndexValue[r.SID]
@@ -733,7 +731,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 			for _, e := range entityList {
 				entityValues = append(entityValues, e)
 			}
-			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, r.Versions[len(r.Versions)-1])
 		}
 
 		topNValue.Reset()
@@ -774,12 +772,12 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 				BinaryData: buf,
 			},
 		}
+		r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	}
 }
 
 func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue) {
 	r.SID = bc.bm.seriesID
-	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
 	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	var indexValue map[string]*modelv1.TagValue
 	if storedIndexValue != nil {

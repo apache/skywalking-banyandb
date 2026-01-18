@@ -54,7 +54,7 @@
     "fields": [
       {
         "int": {
-          "value": 300
+          "value": 230
         }
       }
     ]
@@ -94,7 +94,7 @@
     "fields": [
       {
         "int": {
-          "value": 500
+          "value": 600
         }
       }
     ]
