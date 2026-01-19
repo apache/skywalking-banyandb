@@ -19,6 +19,7 @@ package watchdog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -89,14 +90,14 @@ func (m *mockMetricsRecorder) SetUpdateErrors(errors []error) {
 
 func TestNewWatchdogWithConfig(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	url := "http://localhost:2121/metrics"
+	urls := []string{"http://localhost:2121/metrics"}
 	interval := 10 * time.Second
 
-	wd := NewWatchdogWithConfig(recorder, url, interval)
+	wd := NewWatchdogWithConfig(recorder, urls, interval, "datanode-cold", "test", []string{"data"})
 
 	assert.NotNil(t, wd)
 	assert.Equal(t, recorder, wd.recorder)
-	assert.Equal(t, url, wd.url)
+	assert.Equal(t, urls, wd.urls)
 	assert.Equal(t, interval, wd.interval)
 	assert.NotNil(t, wd.ctx)
 	assert.NotNil(t, wd.cancel)
@@ -105,14 +106,14 @@ func TestNewWatchdogWithConfig(t *testing.T) {
 
 func TestWatchdog_Name(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:2121/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	assert.Equal(t, "watchdog", wd.Name())
 }
 
 func TestWatchdog_PreRun(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:2121/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	err := wd.PreRun(ctx)
@@ -137,7 +138,7 @@ http_requests_total{method="GET"} 100
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -160,7 +161,7 @@ func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -175,7 +176,7 @@ func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
 
 func TestWatchdog_PollMetrics_ConnectionFailure(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:99999/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -196,7 +197,7 @@ func TestWatchdog_PollMetrics_InvalidMetricsFormat(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -224,7 +225,7 @@ func TestWatchdog_PollMetrics_RetryWithExponentialBackoff(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -252,7 +253,7 @@ func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	preRunErr := wd.PreRun(ctx)
@@ -265,7 +266,7 @@ func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
-	assert.Equal(t, context.Canceled, err)
+	assert.True(t, errors.Is(err, context.Canceled), "error should wrap context.Canceled")
 }
 
 func TestWatchdog_PollAndForward_Success(t *testing.T) {
@@ -279,7 +280,7 @@ http_requests_total{method="GET"} 100`
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -304,7 +305,7 @@ func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
 	}))
 	defer server.Close()
 
-	wd := NewWatchdogWithConfig(nil, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(nil, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -327,7 +328,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
 	recorder.SetUpdateErrors([]error{fmt.Errorf("recorder error")})
 
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -341,7 +342,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 
 func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:99999/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:99999/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -355,7 +356,7 @@ func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 
 func TestWatchdog_ExponentialBackoff(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:2121/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	// Test exponential backoff calculation
 	backoff1 := wd.exponentialBackoff(initialBackoff)
@@ -387,7 +388,7 @@ func TestWatchdog_Serve_StartStop(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 100*time.Millisecond)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 100*time.Millisecond, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -430,7 +431,7 @@ func TestWatchdog_Serve_PollingIntervalAccuracy(t *testing.T) {
 
 	interval := 200 * time.Millisecond
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, interval)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, interval, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -471,7 +472,7 @@ func TestWatchdog_Serve_PollingIntervalAccuracy(t *testing.T) {
 
 func TestWatchdog_Serve_AlreadyRunning(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:2121/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -503,7 +504,7 @@ func TestWatchdog_Serve_AlreadyRunning(t *testing.T) {
 
 func TestWatchdog_GracefulStop_NotRunning(t *testing.T) {
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, "http://localhost:2121/metrics", 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{"http://localhost:2121/metrics"}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -531,7 +532,7 @@ func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 50*time.Millisecond)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 50*time.Millisecond, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -570,7 +571,7 @@ http_requests_total{method="POST"} 200
 	defer server.Close()
 
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	wd := NewWatchdogWithConfig(fr, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(fr, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -584,6 +585,61 @@ http_requests_total{method="POST"} 200
 	datasources := fr.GetDatasources()
 	assert.Len(t, datasources, 1)
 	assert.NotNil(t, datasources[0])
+}
+
+func TestWatchdog_EnrichMetricsWithAgentLabels(t *testing.T) {
+	metricsText := `# HELP cpu_usage CPU usage percentage
+cpu_usage{instance="localhost"} 75.5
+http_requests_total{method="GET"} 100`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText))
+	}))
+	defer server.Close()
+
+	recorder := &mockMetricsRecorder{}
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-hot", "test-pod", []string{"data"})
+
+	ctx := context.Background()
+	preRunErr := wd.PreRun(ctx)
+	require.NoError(t, preRunErr)
+
+	rawMetrics, pollErr := wd.pollMetrics(ctx)
+	require.NoError(t, pollErr)
+	require.NotEmpty(t, rawMetrics)
+
+	// Verify that all metrics have agent identity labels
+	for _, metric := range rawMetrics {
+		hasNodeRole := false
+		hasPodName := false
+		hasContainerName := false
+		for _, label := range metric.Labels {
+			if label.Name == "node_role" && label.Value == "datanode-hot" {
+				hasNodeRole = true
+			}
+			if label.Name == "pod_name" && label.Value == "test-pod" {
+				hasPodName = true
+			}
+			if label.Name == "container_name" && label.Value == "data" {
+				hasContainerName = true
+			}
+		}
+		assert.True(t, hasNodeRole, "metric %s should have node_role label", metric.Name)
+		assert.True(t, hasPodName, "metric %s should have pod_name label", metric.Name)
+		assert.True(t, hasContainerName, "metric %s should have container_name label", metric.Name)
+	}
+
+	// Verify original labels are preserved
+	cpuMetric := rawMetrics[0]
+	assert.Equal(t, "cpu_usage", cpuMetric.Name)
+	hasInstanceLabel := false
+	for _, label := range cpuMetric.Labels {
+		if label.Name == "instance" && label.Value == "localhost" {
+			hasInstanceLabel = true
+		}
+	}
+	assert.True(t, hasInstanceLabel, "original labels should be preserved")
 }
 
 func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
@@ -602,7 +658,7 @@ func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -628,7 +684,7 @@ func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
 	defer server.Close()
 
 	recorder := &mockMetricsRecorder{}
-	wd := NewWatchdogWithConfig(recorder, server.URL, 10*time.Second)
+	wd := NewWatchdogWithConfig(recorder, []string{server.URL}, 10*time.Second, "datanode-cold", "test", []string{"data"})
 
 	ctx := context.Background()
 	preRunErr := wd.PreRun(ctx)
@@ -641,4 +697,84 @@ func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
 	allMetrics := recorder.GetMetrics()
 	assert.Len(t, allMetrics, 1)
 	assert.Len(t, allMetrics[0], 0) // Empty metrics array
+}
+
+func TestWatchdog_PollMetrics_MultipleEndpoints(t *testing.T) {
+	metricsText1 := `# HELP http_requests_total Total number of HTTP requests
+http_requests_total{method="GET"} 100`
+	metricsText2 := testMetricsCPUUsage
+
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText1))
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText2))
+	}))
+	defer server2.Close()
+
+	recorder := &mockMetricsRecorder{}
+	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "datanode-cold", "test", []string{"data", "lifecycle"})
+
+	ctx := context.Background()
+	preRunErr := wd.PreRun(ctx)
+	require.NoError(t, preRunErr)
+
+	rawMetrics, err := wd.pollMetrics(ctx)
+
+	require.NoError(t, err)
+	assert.Len(t, rawMetrics, 2)
+	assert.Equal(t, "http_requests_total", rawMetrics[0].Name)
+	assert.Equal(t, 100.0, rawMetrics[0].Value)
+	assert.Equal(t, "cpu_usage", rawMetrics[1].Name)
+	assert.Equal(t, 75.5, rawMetrics[1].Value)
+}
+
+func TestWatchdog_PollMetrics_MultipleEndpoints_OneFails(t *testing.T) {
+	metricsText := testMetricsCPUUsage
+
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText))
+	}))
+	defer server2.Close()
+
+	recorder := &mockMetricsRecorder{}
+	wd := NewWatchdogWithConfig(recorder, []string{server1.URL, server2.URL}, 10*time.Second, "datanode-cold", "test", []string{"data", "lifecycle"})
+
+	ctx := context.Background()
+	preRunErr := wd.PreRun(ctx)
+	require.NoError(t, preRunErr)
+
+	rawMetrics, err := wd.pollMetrics(ctx)
+
+	require.NoError(t, err)
+	assert.Len(t, rawMetrics, 1)
+	assert.Equal(t, "cpu_usage", rawMetrics[0].Name)
+	assert.Equal(t, 75.5, rawMetrics[0].Value)
+}
+
+func TestWatchdog_PollMetrics_NoEndpoints(t *testing.T) {
+	recorder := &mockMetricsRecorder{}
+	wd := NewWatchdogWithConfig(recorder, []string{}, 10*time.Second, "datanode-cold", "test", []string{})
+
+	ctx := context.Background()
+	preRunErr := wd.PreRun(ctx)
+	require.NoError(t, preRunErr)
+
+	rawMetrics, err := wd.pollMetrics(ctx)
+
+	assert.Error(t, err)
+	assert.Nil(t, rawMetrics)
+	assert.Contains(t, err.Error(), "no metrics endpoints configured")
 }

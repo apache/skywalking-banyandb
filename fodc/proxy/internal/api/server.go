@@ -99,7 +99,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	filter := &metrics.Filter{
 		Role:    r.URL.Query().Get("role"),
-		Address: r.URL.Query().Get("address"),
+		PodName: r.URL.Query().Get("pod_name"),
 	}
 
 	ctx := r.Context()
@@ -110,15 +110,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if filter.Role != "" || filter.Address != "" {
+	if filter.Role != "" || filter.PodName != "" {
 		filteredMetrics := make([]*metrics.AggregatedMetric, 0)
 		for _, metric := range aggregatedMetrics {
-			if filter.Role != "" && metric.NodeRole != filter.Role {
+			if filter.Role != "" && metric.Labels["node_role"] != filter.Role {
 				continue
 			}
-			if filter.Address != "" {
-				addressMatch := strings.Contains(metric.Labels["ip"], filter.Address) ||
-					strings.Contains(fmt.Sprintf("%s:%s", metric.Labels["ip"], metric.Labels["port"]), filter.Address)
+			if filter.PodName != "" {
+				addressMatch := metric.Labels["pod_name"] == filter.PodName
 				if !addressMatch {
 					continue
 				}
@@ -165,7 +164,7 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 
 	filter := &metrics.Filter{
 		Role:    r.URL.Query().Get("role"),
-		Address: r.URL.Query().Get("address"),
+		PodName: r.URL.Query().Get("pod_name"),
 	}
 
 	ctx := r.Context()
@@ -184,15 +183,14 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if filter.Role != "" || filter.Address != "" {
+	if filter.Role != "" || filter.PodName != "" {
 		filteredMetrics := make([]*metrics.AggregatedMetric, 0)
 		for _, metric := range aggregatedMetrics {
-			if filter.Role != "" && metric.NodeRole != filter.Role {
+			if filter.Role != "" && metric.Labels["node_role"] != filter.Role {
 				continue
 			}
-			if filter.Address != "" {
-				addressMatch := strings.Contains(metric.Labels["ip"], filter.Address) ||
-					strings.Contains(fmt.Sprintf("%s:%s", metric.Labels["ip"], metric.Labels["port"]), filter.Address)
+			if filter.PodName != "" {
+				addressMatch := metric.Labels["pod_name"] == filter.PodName
 				if !addressMatch {
 					continue
 				}
@@ -365,15 +363,12 @@ func (s *Server) formatMetricsWindowJSON(aggregatedMetrics []*metrics.Aggregated
 				description: metric.Description,
 				labels:      make(map[string]string),
 				agentID:     metric.AgentID,
-				ip:          metric.Labels["ip"],
-				port:        metric.Labels["port"],
+				podName:     metric.Labels["pod_name"],
 				data:        make([]map[string]interface{}, 0),
 			}
 
 			for key, value := range metric.Labels {
-				if key != "ip" && key != "port" {
-					tsMetric.labels[key] = value
-				}
+				tsMetric.labels[key] = value
 			}
 
 			metricMap[key] = tsMetric
@@ -411,14 +406,8 @@ func (s *Server) formatMetricsWindowJSON(aggregatedMetrics []*metrics.Aggregated
 			"description": tsMetric.description,
 			"labels":      tsMetric.labels,
 			"agent_id":    tsMetric.agentID,
-			"ip":          tsMetric.ip,
-			"port":        tsMetric.port,
+			"pod_name":    tsMetric.podName,
 			"data":        tsMetric.data,
-		}
-
-		portInt, parseErr := strconv.Atoi(tsMetric.port)
-		if parseErr == nil {
-			item["port"] = portInt
 		}
 
 		result = append(result, item)
@@ -431,9 +420,7 @@ func (s *Server) formatMetricsWindowJSON(aggregatedMetrics []*metrics.Aggregated
 func (s *Server) getMetricKey(metric *metrics.AggregatedMetric) string {
 	labelParts := make([]string, 0, len(metric.Labels))
 	for key, value := range metric.Labels {
-		if key != "ip" && key != "port" {
-			labelParts = append(labelParts, fmt.Sprintf("%s=%s", key, value))
-		}
+		labelParts = append(labelParts, fmt.Sprintf("%s=%s", key, value))
 	}
 	sort.Strings(labelParts)
 	return fmt.Sprintf("%s|%s|%s", metric.Name, metric.AgentID, strings.Join(labelParts, ","))
@@ -470,7 +457,6 @@ type timeSeriesMetric struct {
 	description string
 	labels      map[string]string
 	agentID     string
-	ip          string
-	port        string
+	podName     string
 	data        []map[string]interface{}
 }

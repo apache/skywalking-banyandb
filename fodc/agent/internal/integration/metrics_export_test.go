@@ -169,7 +169,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Create Watchdog with short polling interval for testing
 		pollInterval := 2 * time.Second
-		wd = watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
+		wd = watchdog.NewWatchdogWithConfig(fr, []string{metricsEndpoint}, pollInterval, "datanode-hot", "test", []string{"data"})
 
 		ctx := context.Background()
 		preRunErr := wd.PreRun(ctx)
@@ -294,7 +294,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		// Step 4: Parse Prometheus format and verify exported metrics match buffered metrics
 		// Strip timestamps from metric lines before parsing (Prometheus format includes optional timestamps)
 		bodyWithoutTimestamps := stripTimestampsFromPrometheusFormat(body)
-		parsedMetrics, parseErr := fodcmetrics.Parse(bodyWithoutTimestamps)
+		parsedMetrics, parseErr := fodcmetrics.ParseWithAgentLabels(bodyWithoutTimestamps, "", "", "")
 		Expect(parseErr).NotTo(HaveOccurred(), "Should be able to parse Prometheus format")
 
 		Expect(len(parsedMetrics)).To(BeNumerically(">", 0), "Should have parsed at least one metric")
@@ -560,7 +560,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if result != "" {
 				// Strip timestamps before parsing (Prometheus format includes optional timestamps)
 				resultWithoutTimestamps := stripTimestampsFromPrometheusFormat(result)
-				_, parseErr := fodcmetrics.Parse(resultWithoutTimestamps)
+				_, parseErr := fodcmetrics.ParseWithAgentLabels(resultWithoutTimestamps, "", "", "")
 				Expect(parseErr).NotTo(HaveOccurred(),
 					fmt.Sprintf("Scrape result %d should be valid Prometheus format", i))
 			}
@@ -575,8 +575,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if firstResult != "" && lastResult != "" {
 				firstResultWithoutTimestamps := stripTimestampsFromPrometheusFormat(firstResult)
 				lastResultWithoutTimestamps := stripTimestampsFromPrometheusFormat(lastResult)
-				firstMetrics, firstErr := fodcmetrics.Parse(firstResultWithoutTimestamps)
-				lastMetrics, lastErr := fodcmetrics.Parse(lastResultWithoutTimestamps)
+				firstMetrics, firstErr := fodcmetrics.ParseWithAgentLabels(firstResultWithoutTimestamps, "", "", "")
+				lastMetrics, lastErr := fodcmetrics.ParseWithAgentLabels(lastResultWithoutTimestamps, "", "", "")
 
 				if firstErr == nil && lastErr == nil {
 					// Both should have metrics (may have different values)

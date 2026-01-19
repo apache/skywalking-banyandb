@@ -120,9 +120,9 @@ func ValidateMetricsBufferAlignment(fr interface{}) error {
 // NewProxyClient creates a new ProxyClient instance for testing.
 func NewProxyClient(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
+	podName string,
+	containerNames []string,
 	labels map[string]string,
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
@@ -136,9 +136,9 @@ func NewProxyClient(
 	}
 	return proxy.NewClient(
 		proxyAddr,
-		nodeIP,
-		nodePort,
 		nodeRole,
+		podName,
+		containerNames,
 		labels,
 		heartbeatInterval,
 		reconnectInterval,
@@ -195,9 +195,9 @@ func (w *ProxyClientWrapper) Disconnect() error {
 // NewProxyClientWrapper creates a wrapped ProxyClient for testing.
 func NewProxyClientWrapper(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
+	podName string,
+	containerNames []string,
 	labels map[string]string,
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
@@ -206,9 +206,9 @@ func NewProxyClientWrapper(
 ) *ProxyClientWrapper {
 	client := NewProxyClient(
 		proxyAddr,
-		nodeIP,
-		nodePort,
 		nodeRole,
+		podName,
+		containerNames,
 		labels,
 		heartbeatInterval,
 		reconnectInterval,

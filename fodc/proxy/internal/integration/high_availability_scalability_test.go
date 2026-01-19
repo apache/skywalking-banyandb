@@ -117,9 +117,9 @@ var _ = Describe("High Availability and Scalability", func() {
 			fr := testhelper.NewFlightRecorder(capacitySize)
 			client := testhelper.NewProxyClientWrapper(
 				proxyGRPCAddr,
-				ip,
-				port,
 				role,
+				ip+":"+strconv.Itoa(port),
+				[]string{"data"},
 				map[string]string{"zone": "zone-" + strconv.Itoa(idx%3)},
 				2*time.Second,
 				1*time.Second,
@@ -190,12 +190,19 @@ var _ = Describe("High Availability and Scalability", func() {
 		time.Sleep(500 * time.Millisecond)
 
 		By("populating each Flight Recorder with sample metrics")
+		agentRoles := []string{"liaison", "datanode-hot", "datanode-warm", "datanode-cold"}
 		for idx, agent := range agents {
+			role := agentRoles[idx%len(agentRoles)]
 			metric := testhelper.RawMetric{
-				Name:   "ha_metric",
-				Value:  float64(idx + 1),
-				Desc:   "High availability metric",
-				Labels: []testhelper.Label{{Name: "agent_idx", Value: strconv.Itoa(idx)}},
+				Name:  "ha_metric",
+				Value: float64(idx + 1),
+				Desc:  "High availability metric",
+				Labels: []testhelper.Label{
+					{Name: "agent_idx", Value: strconv.Itoa(idx)},
+					{Name: "node_role", Value: role},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			}
 			Expect(testhelper.UpdateMetrics(agent.flightRecorder, []testhelper.RawMetric{metric})).To(Succeed())
 		}
@@ -243,7 +250,7 @@ var _ = Describe("High Availability and Scalability", func() {
 			agentIDs[metric["agent_id"].(string)] = true
 			labels := metric["labels"].(map[string]interface{})
 			Expect(labels["node_role"]).NotTo(BeNil())
-			Expect(metric["ip"]).NotTo(BeEmpty())
+			Expect(labels["pod_name"]).NotTo(BeEmpty())
 		}
 		Expect(len(agentIDs)).To(Equal(highAvailabilityAgentCount))
 
@@ -262,9 +269,9 @@ var _ = Describe("High Availability and Scalability", func() {
 			// Create a new client instance (connection manager cannot be restarted after disconnect)
 			newClient := testhelper.NewProxyClientWrapper(
 				proxyGRPCAddr,
-				agent.nodeIP,
-				agent.nodePort,
 				agent.nodeRole,
+				"test",
+				[]string{"data"},
 				map[string]string{"zone": "zone-" + strconv.Itoa(idx%3)},
 				2*time.Second,
 				1*time.Second,
@@ -295,11 +302,17 @@ var _ = Describe("High Availability and Scalability", func() {
 		time.Sleep(2 * time.Second) // Wait for new client instances to establish metrics streams
 		for idx := 0; idx < reconnectSubsetSize; idx++ {
 			agent := agents[idx]
+			role := agentRoles[idx%len(agentRoles)]
 			Expect(testhelper.UpdateMetrics(agent.flightRecorder, []testhelper.RawMetric{{
-				Name:   fmt.Sprintf("reconnect_metric_%d", idx),
-				Value:  float64(idx + 1000),
-				Desc:   "reconnect metric",
-				Labels: []testhelper.Label{{Name: "agent_idx", Value: strconv.Itoa(idx)}},
+				Name:  fmt.Sprintf("reconnect_metric_%d", idx),
+				Value: float64(idx + 1000),
+				Desc:  "reconnect metric",
+				Labels: []testhelper.Label{
+					{Name: "agent_idx", Value: strconv.Itoa(idx)},
+					{Name: "node_role", Value: role},
+					{Name: "pod_name", Value: "test"},
+					{Name: "container_name", Value: "data"},
+				},
 			}})).To(Succeed())
 		}
 
