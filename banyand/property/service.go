@@ -76,6 +76,7 @@ type service struct {
 	repairTreeSlotCount      int
 	maxDiskUsagePercent      int
 	maxFileSnapshotNum       int
+	minFileSnapshotAge       time.Duration
 	repairEnabled            bool
 }
 
@@ -84,7 +85,8 @@ func (s *service) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "property-root-path", "/tmp", "the root path of database")
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
-	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "property-min-file-snapshot-age", time.Hour, "the minimum age for file snapshots to be eligible for deletion")
 	flagS.DurationVar(&s.expireTimeout, "property-expire-delete-timeout", time.Hour*24*7, "the duration of the expired data needs to be deleted")
 	flagS.IntVar(&s.repairTreeSlotCount, "property-repair-tree-slot-count", 32, "the slot count of the repair tree")
 	flagS.StringVar(&s.repairBuildTreeCron, "property-repair-build-tree-cron", "@every 1h", "the cron expression for repairing the build tree")
