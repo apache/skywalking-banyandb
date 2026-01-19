@@ -126,8 +126,9 @@ func (w *writeCallback) prepareTracesInGroup(dst map[string]*tracesInGroup, meta
 
 func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *tracev1.InternalWriteRequest, ts int64) (*tracesInTable, error) {
 	var et *tracesInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eg.tables {
-		if eg.tables[i].timeRange.Contains(ts) {
+		if eg.tables[i].timeRange.Contains(ts) && eg.tables[i].shardID == shardID {
 			et = eg.tables[i]
 			break
 		}
@@ -150,7 +151,6 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 			eg.segments = append(eg.segments, segment)
 		}
 
-		shardID := common.ShardID(writeEvent.ShardId)
 		tstb, err := segment.CreateTSTableIfNotExist(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create ts table: %w", err)
@@ -166,6 +166,7 @@ func (w *writeCallback) prepareTracesInTable(eg *tracesInGroup, writeEvent *trac
 				docs:        make(index.Documents, 0),
 				docIDsAdded: make(map[uint64]struct{}),
 			},
+			shardID: shardID,
 		}
 		et.traces.reset()
 		eg.tables = append(eg.tables, et)

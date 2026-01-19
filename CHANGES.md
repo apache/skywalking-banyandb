@@ -17,6 +17,7 @@ Release Notes.
 - Persist series metadata in liaison queue for measure, stream and trace models.
 - Update the dump tool to support analyzing the parts with smeta files.
 - Activate the property repair mechanism by default.
+- Add snapshot time retention policy to ensure the snapshot only can be deleted after the configured minimum age(time).
 
 ### Bug Fixes
 
@@ -26,6 +27,8 @@ Release Notes.
 - Fix panic in measure block merger when merging blocks with overlapping timestamps.
 - Fix unsupported empty string tag bug.
 - Fix duplicate elements in stream query results by implementing element ID-based deduplication across scan, merge, and result building stages.
+- Fix data written to the wrong shard and related stream queries.
+- Fix the lifecycle panic when the trace has no sidx.
 
 ### Document
 

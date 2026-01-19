@@ -57,10 +57,10 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		conn := dialLiaison()
 		defer conn.Close()
 
-		// With 2 data nodes and 3 max retries, we need 2 * (1 initial + 3 retries) = 8 failures
-		// to ensure parts permanently fail
+		// With 2 data nodes, 2 shards, and 3 max retries:
+		// 2 nodes * 2 shards * (1 initial + 3 retries) = 16 failures needed
 		injector, cleanup := withChunkedSyncFailureInjector(map[string]int{
-			data.TopicStreamPartSync.String(): 2 * (DefaultMaxRetries + 1),
+			data.TopicStreamPartSync.String(): 2 * 2 * (DefaultMaxRetries + 1),
 		})
 		defer cleanup()
 
@@ -70,7 +70,7 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		g.By("waiting for injected stream sync failures")
 		gomega.Eventually(func() int {
 			return injector.attemptsFor(data.TopicStreamPartSync.String())
-		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.BeNumerically(">=", 2*(DefaultMaxRetries+1)))
+		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.BeNumerically(">=", 2*2*(DefaultMaxRetries+1)))
 
 		g.By("waiting for stream failed-parts directory to be populated")
 		gomega.Eventually(func() string {
@@ -85,8 +85,8 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		conn := dialLiaison()
 		defer conn.Close()
 
-		// With 2 data nodes, 2 shards (2 parts), and 3 max retries:
-		// 2 parts * 2 nodes * (1 initial + 3 retries) = 16 failures needed
+		// With 2 data nodes, 2 shards, and 3 max retries:
+		// 2 nodes * 2 shards * (1 initial + 3 retries) = 16 failures needed
 		injector, cleanup := withChunkedSyncFailureInjector(map[string]int{
 			data.TopicMeasurePartSync.String(): 2 * 2 * (DefaultMaxRetries + 1),
 		})
@@ -113,8 +113,8 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		conn := dialLiaison()
 		defer conn.Close()
 
-		// With 2 data nodes and 3 max retries, we need 2 * (1 initial + 3 retries) = 8 failures
-		// to ensure parts permanently fail
+		// With 1 node , 2 shards, and 3 max retries:
+		// 1 node * 2 shards * (1 initial + 3 retries) = 8 failures needed
 		injector, cleanup := withChunkedSyncFailureInjector(map[string]int{
 			data.TopicTracePartSync.String(): 2 * (DefaultMaxRetries + 1),
 		})
@@ -141,10 +141,10 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		conn := dialLiaison()
 		defer conn.Close()
 
-		// With 2 data nodes and 3 max retries, inject connection-level errors
+		// With 2 data nodes, 2 shards, and 3 max retries, inject connection-level errors
 		// that cause syncPartsToNodesHelper to return an error
 		injector, cleanup := withChunkedSyncErrorInjector(map[string]int{
-			data.TopicStreamPartSync.String(): 2 * (DefaultMaxRetries + 1),
+			data.TopicStreamPartSync.String(): 2 * 2 * (DefaultMaxRetries + 1),
 		})
 		defer cleanup()
 
@@ -155,7 +155,7 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		g.By("waiting for injected stream connection errors")
 		gomega.Eventually(func() int {
 			return injector.attemptsFor(data.TopicStreamPartSync.String())
-		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.BeNumerically(">=", 2*(DefaultMaxRetries+1)))
+		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.BeNumerically(">=", 2*2*(DefaultMaxRetries+1)))
 
 		g.By("waiting for stream failed-parts directory to be populated")
 		gomega.Eventually(func() string {
@@ -198,7 +198,7 @@ var _ = g.Describe("Chunked sync failure handling", g.Ordered, func() {
 		conn := dialLiaison()
 		defer conn.Close()
 
-		// With 2 data nodes and 3 max retries, inject connection-level errors
+		// With 1 node, 2 shards, and 3 max retries, inject connection-level errors
 		injector, cleanup := withChunkedSyncErrorInjector(map[string]int{
 			data.TopicTracePartSync.String(): 2 * (DefaultMaxRetries + 1),
 		})

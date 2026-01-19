@@ -81,6 +81,7 @@ type standalone struct {
 	option                option
 	retentionConfig       storage.RetentionConfig
 	maxFileSnapshotNum    int
+	minFileSnapshotAge    time.Duration
 }
 
 func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -184,7 +185,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "stream-retention-force-cleanup-enabled", false,
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
-	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "stream-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	return flagS
 }
 
