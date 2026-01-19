@@ -79,7 +79,7 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 		if !pw.overlapsKeyRange(minKey, maxKey) {
 			continue
 		}
-		if !pw.overlapsTimeRange(req.MinTimestamp, req.MaxTimestamp) {
+		if !pw.overlapsTimeRange(nil, nil) {
 			continue
 		}
 		filteredParts = append(filteredParts, pw)

@@ -253,7 +253,7 @@ func generateHugeElements(start, end int64, seriesIDBase common.SeriesID) *eleme
 			{Name: "service", Value: []byte("test-service"), ValueType: pbv1.ValueTypeStr},
 		}
 		data := make([]byte, 50)
-		es.mustAppend(seriesID, i, int64(i)*1000000000, data, tags)
+		es.mustAppend(seriesID, i, i*1000000000, data, tags)
 	}
 	return es
 }
