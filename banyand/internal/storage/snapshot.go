@@ -60,7 +60,7 @@ func DeleteStaleSnapshots(root string, maxNum int, minAge time.Duration, lfs fs.
 	now := time.Now()
 	for i := 0; i < len(snapshots)-maxNum; i++ {
 		snapshotName := snapshots[i].Name()
-		// If the min age not set, then only keep using the max num to delete
+		// If the min age is not set, then only keep using the max num to delete
 		if minAge == 0 {
 			lfs.MustRMAll(filepath.Join(root, snapshotName))
 			continue

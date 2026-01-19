@@ -289,7 +289,7 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 	sourceShardID common.ShardID,
 	sidxPath string,
 ) ([]queue.StreamingPartData, []func(), error) {
-	// If the sidx not exist, then ignore for the life cycle
+	// If the sidx does not exist, then ignore for the life cycle
 	if !mv.lfs.IsExist(sidxPath) {
 		return nil, nil, nil
 	}
