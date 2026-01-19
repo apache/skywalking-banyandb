@@ -37,9 +37,9 @@ type tag struct {
 
 // elements is a collection of elements optimized for batch operations.
 type elements struct {
-	seriesIDs []common.SeriesID // Pooled slice
-	userKeys  []int64           // Pooled slice (replaces timestamps)
-	timestamps []int64          // Pooled slice of timestamps (Unix nanoseconds)
+	seriesIDs  []common.SeriesID // Pooled slice
+	userKeys   []int64            // Pooled slice (replaces timestamps)
+	timestamps []int64            // Pooled slice of timestamps (Unix nanoseconds)
 	data      [][]byte          // Pooled slice of slices
 	tags      [][]*tag          // Pooled slice of tag pointer slices
 }

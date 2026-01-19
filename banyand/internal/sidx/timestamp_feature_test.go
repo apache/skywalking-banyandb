@@ -41,7 +41,7 @@ func TestTimestampFeature_ManifestJSON(t *testing.T) {
 	// Create a part with timestamps
 	partID := uint64(1)
 	partPath := filepath.Join(dir, "part_001")
-	fileSystem.MkdirPanicIfExist(partPath, 0755)
+	fileSystem.MkdirPanicIfExist(partPath, 0o755)
 
 	// Create part metadata with timestamps
 	pm := &partMetadata{
@@ -93,7 +93,7 @@ func TestTimestampFeature_ManifestJSONWithoutTimestamps(t *testing.T) {
 	// Create a part without timestamps
 	partID := uint64(2)
 	partPath := filepath.Join(dir, "part_002")
-	fileSystem.MkdirPanicIfExist(partPath, 0755)
+	fileSystem.MkdirPanicIfExist(partPath, 0o755)
 
 	// Create part metadata without timestamps
 	pm := &partMetadata{
@@ -141,7 +141,7 @@ func TestTimestampFeature_ReadManifestWithTimestamps(t *testing.T) {
 	// Create a part with timestamps
 	partID := uint64(3)
 	partPath := filepath.Join(dir, "part_003")
-	fileSystem.MkdirPanicIfExist(partPath, 0755)
+	fileSystem.MkdirPanicIfExist(partPath, 0o755)
 
 	originalMinTimestamp := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
 	originalMaxTimestamp := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC).UnixNano()
@@ -285,7 +285,7 @@ func TestTimestampFeature_VerifyManifestFile(t *testing.T) {
 
 	partID := uint64(999)
 	partPath := filepath.Join(dir, "part_999")
-	fileSystem.MkdirPanicIfExist(partPath, 0755)
+	fileSystem.MkdirPanicIfExist(partPath, 0o755)
 
 	// Create metadata with timestamps
 	minTs := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()

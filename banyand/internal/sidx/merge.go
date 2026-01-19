@@ -189,7 +189,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, part
 	releaseDecoder()
 	var result partMetadata
 	bw.Flush(&result)
-	
+
 	// Recompute timestamp ranges from source parts
 	// (timestamps are not stored in blocks, only in part metadata)
 	recomputeTimestampRanges(&result, parts)

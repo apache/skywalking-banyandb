@@ -161,7 +161,7 @@ func (s *sidx) prepareStreamingResources(
 	minKey, maxKey := extractKeyRange(req)
 	asc := extractOrdering(req)
 
-	parts := selectPartsForQuery(snap, minKey, maxKey, req.MinTimestamp, req.MaxTimestamp)
+	parts := selectPartsForQuery(snap, minKey, maxKey, nil, nil)
 	if span != nil {
 		span.Tagf("min_key", "%d", minKey)
 		span.Tagf("max_key", "%d", maxKey)
