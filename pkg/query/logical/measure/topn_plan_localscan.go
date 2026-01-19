@@ -31,9 +31,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -53,6 +51,7 @@ type unresolvedLocalScan struct {
 	conditions  []*modelv1.Condition
 	groupByTags []string
 	sort        modelv1.Sort
+	number      int32
 }
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -103,6 +102,8 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 				},
 			},
 			FieldProjection: fieldProjection,
+			Sort:            uls.sort,
+			Number:          uls.number,
 		},
 		ec: uls.ec,
 	}, nil
@@ -195,8 +196,8 @@ func (ei *topNMIterator) Next() bool {
 	ei.current = ei.current[:0]
 	topNValue := measure.GenerateTopNValue()
 	defer measure.ReleaseTopNValue(topNValue)
-	decoder := generateTopNValuesDecoder()
-	defer releaseTopNValuesDecoder(decoder)
+	decoder := measure.GenerateTopNValuesDecoder()
+	defer measure.ReleaseTopNValuesDecoder(decoder)
 
 	for i := range r.Timestamps {
 		fv := r.Fields[0].Values[i]
@@ -260,18 +261,3 @@ func (ei *topNMIterator) Close() error {
 	}
 	return ei.err
 }
-
-func generateTopNValuesDecoder() *encoding.BytesBlockDecoder {
-	v := topNValuesDecoderPool.Get()
-	if v == nil {
-		return &encoding.BytesBlockDecoder{}
-	}
-	return v
-}
-
-func releaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
-	d.Reset()
-	topNValuesDecoderPool.Put(d)
-}
-
-var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder")
