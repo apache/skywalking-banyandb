@@ -340,7 +340,7 @@ func (s *stream) indexSort(ctx context.Context, sqo model.StreamQueryOptions, ta
 	if err != nil {
 		return nil, err
 	}
-	desc := sqo.Order != nil && sqo.Order.Index == nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
+	desc := sqo.Order != nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
 	return itersort.NewItemIter[*index.DocumentResult](iters, desc), nil
 }
 
