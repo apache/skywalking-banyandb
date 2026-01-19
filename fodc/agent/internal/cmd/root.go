@@ -92,7 +92,7 @@ func init() {
 		"FODC Proxy gRPC address")
 	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
 		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
-	rootCmd.Flags().StringSliceVar(&containerNames, "container-name", []string{},
+	rootCmd.Flags().StringSliceVar(&containerNames, "container-names", []string{},
 		"Names of the containers corresponding to each poll-metrics-port. Must have one-to-one correspondence with poll-metrics-ports.")
 	rootCmd.Flags().StringVar(&podName, "pod-name", "",
 		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
@@ -122,7 +122,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("poll-metrics-ports cannot be empty")
 	}
 	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
-		return fmt.Errorf("container-name count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+		return fmt.Errorf("container-names count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
 	}
 	metricsEndpoints := generateMetricsEndpoints(pollMetricsPorts)
 
