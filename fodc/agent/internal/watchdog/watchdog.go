@@ -262,6 +262,9 @@ func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string, cont
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("metrics endpoint not found: %s", url)
+		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
