@@ -25,6 +25,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testNodeRole     = "datanode-hot"
+	testContainerName = "data"
+)
+
 func TestParse_BasicGaugeMetric(t *testing.T) {
 	text := `cpu_usage 75.5`
 
@@ -1075,9 +1080,9 @@ func TestParse_WithAgentIdentityLabels(t *testing.T) {
 	text := `cpu_usage{instance="localhost"} 75.5
 http_requests_total{method="GET"} 100`
 
-	nodeRole := "datanode-hot"
+	nodeRole := testNodeRole
 	podName := "test-pod"
-	containerName := "data"
+	containerName := testContainerName
 
 	metrics, err := ParseWithAgentLabels(text, nodeRole, podName, containerName)
 
@@ -1102,7 +1107,7 @@ http_requests_total{method="GET"} 100`
 				hasInstanceLabel = true
 			}
 		case "node_role":
-			if label.Value == "datanode-hot" {
+			if label.Value == testNodeRole {
 				hasNodeRole = true
 			}
 		case "pod_name":
@@ -1110,7 +1115,7 @@ http_requests_total{method="GET"} 100`
 				hasPodName = true
 			}
 		case "container_name":
-			if label.Value == "data" {
+			if label.Value == testContainerName {
 				hasContainerName = true
 			}
 		}
@@ -1137,7 +1142,7 @@ http_requests_total{method="GET"} 100`
 				hasMethodLabel = true
 			}
 		case "node_role":
-			if label.Value == "datanode-hot" {
+			if label.Value == testNodeRole {
 				hasNodeRole = true
 			}
 		case "pod_name":
@@ -1145,7 +1150,7 @@ http_requests_total{method="GET"} 100`
 				hasPodName = true
 			}
 		case "container_name":
-			if label.Value == "data" {
+			if label.Value == testContainerName {
 				hasContainerName = true
 			}
 		}
@@ -1173,7 +1178,7 @@ func countAgentLabels(nodeRole, podName, containerName string) int {
 func TestParse_WithPartialAgentIdentityLabels(t *testing.T) {
 	text := `cpu_usage 75.5`
 
-	metrics, err := ParseWithAgentLabels(text, "datanode-hot", "", "data")
+	metrics, err := ParseWithAgentLabels(text, testNodeRole, "", testContainerName)
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -1181,10 +1186,10 @@ func TestParse_WithPartialAgentIdentityLabels(t *testing.T) {
 	hasNodeRole := false
 	hasContainerName := false
 	for _, label := range metrics[0].Labels {
-		if label.Name == "node_role" && label.Value == "datanode-hot" {
+		if label.Name == "node_role" && label.Value == testNodeRole {
 			hasNodeRole = true
 		}
-		if label.Name == "container_name" && label.Value == "data" {
+		if label.Name == "container_name" && label.Value == testContainerName {
 			hasContainerName = true
 		}
 	}
