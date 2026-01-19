@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	testNodeRole     = "datanode-hot"
+	testNodeRole      = "datanode-hot"
 	testContainerName = "data"
 )
 
