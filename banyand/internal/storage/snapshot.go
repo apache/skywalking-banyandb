@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// SnapshotTimeFormat is the timestamp snapshot directory prefix.
 const SnapshotTimeFormat = "20060102150405"
 
 // ParseSnapshotTimestamp extracts the creation time from a snapshot directory name.

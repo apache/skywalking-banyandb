@@ -65,10 +65,10 @@ func TestDeleteStaleSnapshotsWithCount(t *testing.T) {
 
 func TestParseSnapshotTimestamp(t *testing.T) {
 	tests := []struct {
+		expectTime  time.Time
 		name        string
 		snapshotDir string
 		expectErr   bool
-		expectTime  time.Time
 	}{
 		{
 			name:        "valid snapshot name",
@@ -114,12 +114,12 @@ func TestParseSnapshotTimestamp(t *testing.T) {
 func TestDeleteStaleSnapshotsWithMinAge(t *testing.T) {
 	tests := []struct {
 		name                  string
+		snapshotAges          []time.Duration
 		maxNum                int
 		minAge                time.Duration
-		snapshotAges          []time.Duration
 		expectedRemaining     int
-		validateOldestDeleted bool
 		oldestDeletedAge      time.Duration
+		validateOldestDeleted bool
 	}{
 		{
 			name:              "all snapshots within age threshold - no deletion",
