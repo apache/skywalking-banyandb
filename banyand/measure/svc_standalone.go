@@ -79,6 +79,7 @@ type standalone struct {
 	retentionConfig    storage.RetentionConfig
 	cc                 storage.CacheConfig
 	maxFileSnapshotNum int
+	minFileSnapshotAge time.Duration
 }
 
 func (s *standalone) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -182,6 +183,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
 	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "measure-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.cc.MaxCacheSize = run.Bytes(100 * 1024 * 1024)
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
 	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
