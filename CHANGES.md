@@ -27,6 +27,7 @@ Release Notes.
 - Fix panic in measure block merger when merging blocks with overlapping timestamps.
 - Fix unsupported empty string tag bug.
 - Fix duplicate elements in stream query results by implementing element ID-based deduplication across scan, merge, and result building stages.
+- Fix data written to the wrong shard and related stream queries.
 - Fix the lifecycle got panic when the trace no sidx. 
 
 ### Document

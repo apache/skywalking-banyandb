@@ -76,8 +76,8 @@ var (
 	labelRegex      = regexp.MustCompile(`(\w+)="([^"]+)"`)
 )
 
-// Parse parses Prometheus text format metrics and returns structured RawMetric objects.
-func Parse(text string) ([]RawMetric, error) {
+// ParseWithAgentLabels parses Prometheus text format metrics and returns structured RawMetric objects.
+func ParseWithAgentLabels(text string, nodeRole, podName, containerName string) ([]RawMetric, error) {
 	lines := strings.Split(text, "\n")
 	var metrics []RawMetric
 	helpMap := make(map[string]string)
@@ -111,6 +111,26 @@ func Parse(text string) ([]RawMetric, error) {
 					Value: labelMatch[2],
 				})
 			}
+		}
+
+		// Add agent identity labels if provided
+		if nodeRole != "" {
+			labels = append(labels, Label{
+				Name:  "node_role",
+				Value: nodeRole,
+			})
+		}
+		if podName != "" {
+			labels = append(labels, Label{
+				Name:  "pod_name",
+				Value: podName,
+			})
+		}
+		if containerName != "" {
+			labels = append(labels, Label{
+				Name:  "container_name",
+				Value: containerName,
+			})
 		}
 
 		value, parseErr := strconv.ParseFloat(valueStr, 64)

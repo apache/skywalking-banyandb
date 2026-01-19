@@ -45,29 +45,37 @@ const (
 
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
-	client       *http.Client
-	log          *logger.Logger
-	cancel       context.CancelFunc
-	recorder     MetricsRecorder
-	ctx          context.Context
-	url          string
-	wg           sync.WaitGroup
-	mu           sync.RWMutex
+	recorder MetricsRecorder
+	log      *logger.Logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	client   *http.Client
+
+	nodeRole       string
+	podName        string
+	urls           []string
+	containerNames []string
+
 	interval     time.Duration
 	retryBackoff time.Duration
+	mu           sync.RWMutex
+	wg           sync.WaitGroup
 	isRunning    bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
-func NewWatchdogWithConfig(recorder MetricsRecorder, url string, interval time.Duration) *Watchdog {
+func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval time.Duration, nodeRole, podName string, containerNames []string) *Watchdog {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watchdog{
-		recorder:     recorder,
-		url:          url,
-		interval:     interval,
-		ctx:          ctx,
-		cancel:       cancel,
-		retryBackoff: initialBackoff,
+		recorder:       recorder,
+		urls:           urls,
+		interval:       interval,
+		ctx:            ctx,
+		cancel:         cancel,
+		retryBackoff:   initialBackoff,
+		nodeRole:       nodeRole,
+		podName:        podName,
+		containerNames: containerNames,
 	}
 }
 
@@ -87,8 +95,14 @@ func (w *Watchdog) PreRun(_ context.Context) error {
 			IdleConnTimeout:     30 * time.Second,
 		},
 	}
+	if len(w.containerNames) != len(w.urls) && len(w.containerNames) > 0 {
+		w.log.Warn().
+			Int("urls_count", len(w.urls)).
+			Int("container_names_count", len(w.containerNames)).
+			Msg("Container names count doesn't match URLs count. Endpoints without matching container names will use empty container_name label")
+	}
 	w.log.Info().
-		Str("endpoint", w.url).
+		Strs("endpoints", w.urls).
 		Dur("interval", w.interval).
 		Msg("Watchdog initialized")
 	return nil
@@ -186,11 +200,43 @@ func (w *Watchdog) pollAndForward() error {
 	return nil
 }
 
-// pollMetrics fetches raw metrics text from endpoint and parses them.
+// pollMetrics fetches raw metrics text from all endpoints and parses them.
 func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error) {
+	if len(w.urls) == 0 {
+		return nil, fmt.Errorf("no metrics endpoints configured")
+	}
+	allMetrics := make([]metrics.RawMetric, 0)
+	var lastErr error
+	for idx, url := range w.urls {
+		containerName := ""
+		if idx < len(w.containerNames) {
+			containerName = w.containerNames[idx]
+		}
+		endpointMetrics, pollErr := w.pollMetricsFromEndpoint(ctx, url, containerName)
+		if pollErr != nil {
+			w.log.Warn().
+				Str("endpoint", url).
+				Err(pollErr).
+				Msg("Failed to poll metrics from endpoint")
+			lastErr = pollErr
+			continue
+		}
+		allMetrics = append(allMetrics, endpointMetrics...)
+		w.log.Info().
+			Str("endpoint", url).
+			Int("count", len(endpointMetrics)).
+			Msg("Successfully polled metrics from endpoint")
+	}
+	if len(allMetrics) == 0 && lastErr != nil {
+		return nil, fmt.Errorf("failed to poll metrics from any endpoint: %w", lastErr)
+	}
+	return allMetrics, nil
+}
+
+// pollMetricsFromEndpoint fetches raw metrics text from a single endpoint and parses them.
+func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string, containerName string) ([]metrics.RawMetric, error) {
 	var lastErr error
 	currentBackoff := w.retryBackoff
-
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			select {
@@ -199,32 +245,32 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			case <-time.After(currentBackoff):
 			}
 			w.log.Info().
+				Str("endpoint", url).
 				Int("attempt", attempt+1).
 				Dur("backoff", currentBackoff).
 				Msg("Retrying metrics poll")
 		}
-
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, w.url, nil)
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if reqErr != nil {
 			lastErr = fmt.Errorf("failed to create request: %w", reqErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		resp, respErr := w.client.Do(req)
 		if respErr != nil {
 			lastErr = fmt.Errorf("failed to fetch metrics: %w", respErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("metrics endpoint not found: %s", url)
+		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
@@ -232,26 +278,17 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
-		parsedMetrics, parseErr := metrics.Parse(string(body))
+		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(string(body), w.nodeRole, w.podName, containerName)
 		if parseErr != nil {
 			lastErr = fmt.Errorf("failed to parse metrics: %w", parseErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-
-		w.log.Info().
-			Int("count", len(parsedMetrics)).
-			Int("attempt", attempt+1).
-			Msg("Successfully parsed metrics from endpoint")
-
 		w.mu.Lock()
 		w.retryBackoff = initialBackoff
 		w.mu.Unlock()
-
 		return parsedMetrics, nil
 	}
-
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
