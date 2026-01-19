@@ -114,15 +114,15 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQu
 
 func (w *writeQueueCallback) prepareElementsInTable(eq *elementsInQueue, writeEvent *streamv1.InternalWriteRequest, ts int64) (*elementsInTable, error) {
 	var et *elementsInTable
+	shardID := common.ShardID(writeEvent.ShardId)
 	for i := range eq.tables {
-		if eq.tables[i].timeRange.Contains(ts) {
+		if eq.tables[i].timeRange.Contains(ts) && eq.tables[i].shardID == shardID {
 			et = eq.tables[i]
 			break
 		}
 	}
 
 	if et == nil {
-		shardID := common.ShardID(writeEvent.ShardId)
 		shard, err := eq.queue.GetOrCreateShard(shardID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot create shard: %w", err)
@@ -252,9 +252,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					// Send to all nodes for this shard
 					for _, node := range nodes {
 						message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-						_, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamLocalIndexWrite, message)
+						future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamLocalIndexWrite, message)
 						if publishErr != nil {
 							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
+							continue
+						}
+						_, getErr := future.Get()
+						if getErr != nil {
+							w.l.Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish local index")
+							continue
 						}
 					}
 				}
