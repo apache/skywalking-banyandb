@@ -736,7 +736,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Parse metrics
 		bodyWithoutTimestamps := stripTimestampsFromPrometheusFormat(body)
-		parsedMetrics, parseErr := fodcmetrics.Parse(bodyWithoutTimestamps)
+		parsedMetrics, parseErr := fodcmetrics.ParseWithAgentLabels(bodyWithoutTimestamps, "", "", "")
 		Expect(parseErr).NotTo(HaveOccurred())
 
 		// Verify KTM metrics are present in exported format
