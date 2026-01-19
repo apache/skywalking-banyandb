@@ -95,6 +95,12 @@ func (w *Watchdog) PreRun(_ context.Context) error {
 			IdleConnTimeout:     30 * time.Second,
 		},
 	}
+	if len(w.containerNames) != len(w.urls) && len(w.containerNames) > 0 {
+		w.log.Warn().
+			Int("urls_count", len(w.urls)).
+			Int("container_names_count", len(w.containerNames)).
+			Msg("Container names count doesn't match URLs count. Endpoints without matching container names will use empty container_name label")
+	}
 	w.log.Info().
 		Strs("endpoints", w.urls).
 		Dur("interval", w.interval).

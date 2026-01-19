@@ -1075,15 +1075,22 @@ func TestParse_WithAgentIdentityLabels(t *testing.T) {
 	text := `cpu_usage{instance="localhost"} 75.5
 http_requests_total{method="GET"} 100`
 
-	metrics, err := ParseWithAgentLabels(text, "datanode-hot", "test-pod", "data")
+	nodeRole := "datanode-hot"
+	podName := "test-pod"
+	containerName := "data"
+
+	metrics, err := ParseWithAgentLabels(text, nodeRole, podName, containerName)
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
 
+	expectedAgentLabelCount := countAgentLabels(nodeRole, podName, containerName)
+
 	// Verify first metric has agent identity labels
 	cpuMetric := metrics[0]
 	assert.Equal(t, "cpu_usage", cpuMetric.Name)
-	require.Len(t, cpuMetric.Labels, 4) // instance + 3 agent labels
+	expectedCPULabelCount := 1 + expectedAgentLabelCount
+	require.Len(t, cpuMetric.Labels, expectedCPULabelCount)
 	hasInstanceLabel := false
 	hasNodeRole := false
 	hasPodName := false
@@ -1116,7 +1123,9 @@ http_requests_total{method="GET"} 100`
 	// Verify second metric also has agent identity labels
 	httpMetric := metrics[1]
 	assert.Equal(t, "http_requests_total", httpMetric.Name)
-	require.Len(t, httpMetric.Labels, 4) // method + 3 agent labels
+	// http_requests_total has 1 original label (method), plus agent labels
+	expectedHTTPLabelCount := 1 + expectedAgentLabelCount
+	require.Len(t, httpMetric.Labels, expectedHTTPLabelCount)
 	hasMethodLabel := false
 	hasNodeRole = false
 	hasPodName = false
@@ -1145,6 +1154,20 @@ http_requests_total{method="GET"} 100`
 	assert.True(t, hasNodeRole, "should have node_role label")
 	assert.True(t, hasPodName, "should have pod_name label")
 	assert.True(t, hasContainerName, "should have container_name label")
+}
+
+func countAgentLabels(nodeRole, podName, containerName string) int {
+	count := 0
+	if nodeRole != "" {
+		count++
+	}
+	if podName != "" {
+		count++
+	}
+	if containerName != "" {
+		count++
+	}
+	return count
 }
 
 func TestParse_WithPartialAgentIdentityLabels(t *testing.T) {
