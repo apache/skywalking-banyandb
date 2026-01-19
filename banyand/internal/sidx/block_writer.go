@@ -331,6 +331,8 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block, timestamps 
 	bw.minKeyLast = minKey
 
 	// Update timestamp ranges
+	// Note: timestamps with value 0 are skipped as they indicate "not set"
+	// (see WriteRequest.Timestamp comment for details)
 	if len(timestamps) > 0 {
 		for _, ts := range timestamps {
 			if ts != 0 {
