@@ -40,6 +40,9 @@
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
+    - [InternalDataPoint](#banyandb-measure-v1-InternalDataPoint)
+    - [InternalQueryRequest](#banyandb-measure-v1-InternalQueryRequest)
+    - [InternalQueryResponse](#banyandb-measure-v1-InternalQueryResponse)
     - [QueryRequest](#banyandb-measure-v1-QueryRequest)
     - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
     - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
@@ -901,6 +904,56 @@ DataPoint is stored in Measures
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  |  |
 | value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalDataPoint"></a>
+
+### InternalDataPoint
+InternalDataPoint wraps DataPoint with shard information for internal use.
+Used in distributed query to distinguish data from different shards.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_point | [DataPoint](#banyandb-measure-v1-DataPoint) |  | The actual data point |
+| shard_id | [uint32](#uint32) |  | The shard id where this data point comes from |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalQueryRequest"></a>
+
+### InternalQueryRequest
+InternalQueryRequest is the internal request for distributed query.
+Wraps QueryRequest for extensibility.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [QueryRequest](#banyandb-measure-v1-QueryRequest) |  | The actual query request |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalQueryResponse"></a>
+
+### InternalQueryResponse
+InternalQueryResponse is the internal response for distributed query.
+Contains shard information for proper deduplication.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data_points | [InternalDataPoint](#banyandb-measure-v1-InternalDataPoint) | repeated | data_points with shard information |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
 
 
 
@@ -4962,6 +5015,7 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-measure-v1-QueryRequest) | [QueryResponse](#banyandb-measure-v1-QueryResponse) |  |
+| InternalQuery | [InternalQueryRequest](#banyandb-measure-v1-InternalQueryRequest) | [InternalQueryResponse](#banyandb-measure-v1-InternalQueryResponse) | InternalQuery is used for internal distributed query between liaison and data nodes. Returns InternalQueryResponse with shard information for proper deduplication. |
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |

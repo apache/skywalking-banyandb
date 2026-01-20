@@ -46,6 +46,10 @@ service MeasureService {
     };
   }
 
+  // InternalQuery is used for internal distributed query between liaison and data nodes.
+  // Returns InternalQueryResponse with shard information for proper deduplication.
+  rpc InternalQuery(InternalQueryRequest) returns (InternalQueryResponse);
+
   rpc Write(stream WriteRequest) returns (stream WriteResponse);
   rpc TopN(TopNRequest) returns (TopNResponse) {
     option (google.api.http) = {

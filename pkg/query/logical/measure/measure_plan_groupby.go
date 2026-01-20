@@ -129,24 +129,24 @@ func (g *groupBy) hash(ec context.Context) (mit executor.MIterator, err error) {
 		err = multierr.Append(err, iter.Close())
 	}()
 
-	groupMap := make(map[uint64][]*measurev1.DataPoint)
+	groupMap := make(map[uint64][]*measurev1.InternalDataPoint)
 	groupLst := make([]uint64, 0)
 	for iter.Next() {
 		dataPoints := iter.Current()
-		for _, dp := range dataPoints {
-			key, innerErr := formatGroupByKey(dp, g.groupByTagsRefs)
+		for _, idp := range dataPoints {
+			key, innerErr := formatGroupByKey(idp.GetDataPoint(), g.groupByTagsRefs)
 			if innerErr != nil {
 				return nil, innerErr
 			}
 			group, ok := groupMap[key]
 			if !ok {
-				group = make([]*measurev1.DataPoint, 0)
+				group = make([]*measurev1.InternalDataPoint, 0)
 				groupLst = append(groupLst, key)
 			}
 			if group == nil {
 				return nil, errors.New("aggregation op does not exist")
 			}
-			group = append(group, dp)
+			group = append(group, idp)
 			groupMap[key] = group
 		}
 	}
@@ -184,12 +184,12 @@ func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.T
 }
 
 type groupIterator struct {
-	groupMap map[uint64][]*measurev1.DataPoint
+	groupMap map[uint64][]*measurev1.InternalDataPoint
 	groupLst []uint64
 	index    int
 }
 
-func newGroupIterator(groupedMap map[uint64][]*measurev1.DataPoint, groupLst []uint64) executor.MIterator {
+func newGroupIterator(groupedMap map[uint64][]*measurev1.InternalDataPoint, groupLst []uint64) executor.MIterator {
 	return &groupIterator{
 		groupMap: groupedMap,
 		groupLst: groupLst,
@@ -205,7 +205,7 @@ func (gmi *groupIterator) Next() bool {
 	return true
 }
 
-func (gmi *groupIterator) Current() []*measurev1.DataPoint {
+func (gmi *groupIterator) Current() []*measurev1.InternalDataPoint {
 	key := gmi.groupLst[gmi.index]
 	return gmi.groupMap[key]
 }
@@ -218,9 +218,9 @@ func (gmi *groupIterator) Close() error {
 type groupSortIterator struct {
 	iter            executor.MIterator
 	err             error
-	cdp             *measurev1.DataPoint
+	cdp             *measurev1.InternalDataPoint
 	groupByTagsRefs [][]*logical.TagRef
-	current         []*measurev1.DataPoint
+	current         []*measurev1.InternalDataPoint
 	index           int
 	key             uint64
 	closed          bool
@@ -245,12 +245,12 @@ func (gmi *groupSortIterator) Next() bool {
 		gmi.current = append(gmi.current, gmi.cdp)
 	}
 	for {
-		dp, ok := gmi.nextDP()
+		idp, ok := gmi.nextDP()
 		if !ok {
 			gmi.closed = true
 			return len(gmi.current) > 0
 		}
-		k, err := formatGroupByKey(dp, gmi.groupByTagsRefs)
+		k, err := formatGroupByKey(idp.GetDataPoint(), gmi.groupByTagsRefs)
 		if err != nil {
 			gmi.closed = true
 			gmi.err = err
@@ -260,15 +260,15 @@ func (gmi *groupSortIterator) Next() bool {
 			gmi.key = k
 		}
 		if gmi.key != k {
-			gmi.cdp = dp
+			gmi.cdp = idp
 			gmi.key = k
 			return true
 		}
-		gmi.current = append(gmi.current, dp)
+		gmi.current = append(gmi.current, idp)
 	}
 }
 
-func (gmi *groupSortIterator) Current() []*measurev1.DataPoint {
+func (gmi *groupSortIterator) Current() []*measurev1.InternalDataPoint {
 	return gmi.current
 }
 
@@ -277,7 +277,7 @@ func (gmi *groupSortIterator) Close() error {
 	return multierr.Combine(gmi.err, gmi.iter.Close())
 }
 
-func (gmi *groupSortIterator) nextDP() (*measurev1.DataPoint, bool) {
+func (gmi *groupSortIterator) nextDP() (*measurev1.InternalDataPoint, bool) {
 	if gmi.index < 0 {
 		if ok := gmi.iter.Next(); !ok {
 			return nil, false
