@@ -289,6 +289,7 @@ func TestDeduplicateAggregatedDataPointsWithShard(t *testing.T) {
 				t.Errorf("got %d data points, want %d", len(got), tc.wantLen)
 				return
 			}
+
 			for i, dp := range got {
 				if dp.ShardId != tc.wantShardIDs[i] {
 					t.Errorf("data point %d: got shard %d, want %d", i, dp.ShardId, tc.wantShardIDs[i])
