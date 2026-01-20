@@ -758,7 +758,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
-				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
+				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())
