@@ -1097,7 +1097,7 @@ func (r *repairScheduler) saveHasBuildTree() error {
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(path.Dir(r.scheduleBasicFile), storage.FilePerm)
+	err = os.MkdirAll(path.Dir(r.scheduleBasicFile), storage.DirPerm)
 	if err != nil {
 		return fmt.Errorf("creating directory for repair build tree file %s failure: %w", r.scheduleBasicFile, err)
 	}
