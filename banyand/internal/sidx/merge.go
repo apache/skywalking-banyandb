@@ -45,6 +45,14 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
+	if d := s.l.Debug(); d.Enabled() {
+		if len(partsToMerge) != len(partIDtoMerge) {
+			d.Int("parts_to_merge_count", len(partsToMerge)).
+				Int("part_ids_to_merge_count", len(partIDtoMerge)).
+				Str("root", s.root).
+				Msg("parts to merge count does not match part ids to merge count")
+		}
+	}
 
 	// Create new merged part
 	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)

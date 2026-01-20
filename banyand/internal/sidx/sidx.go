@@ -157,6 +157,14 @@ func (s *sidx) Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, 
 		newPW := newPartWrapper(nil, mustOpenPart(pw.ID(), partPath, s.fileSystem))
 		flushIntro.flushed[newPW.ID()] = newPW
 	}
+	if len(flushIntro.flushed) != len(partIDsToFlush) {
+		if d := s.l.Debug(); d.Enabled() {
+			d.Int("flushed_count", len(flushIntro.flushed)).
+				Str("root", s.root).
+				Int("part_ids_to_flush_count", len(partIDsToFlush)).
+				Msg("part ids to flush count does not match flushed count")
+		}
+	}
 	return flushIntro, nil
 }
 
