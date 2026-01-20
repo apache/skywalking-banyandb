@@ -207,9 +207,9 @@ func TestDeduplicateAggregatedDataPointsWithShard(t *testing.T) {
 		name            string
 		dataPoints      []*measurev1.InternalDataPoint
 		groupByTagsRefs [][]*logical.TagRef
-		wantLen         int
 		wantShardIDs    []uint32
 		wantTagValues   []string
+		wantLen         int
 		expectErr       bool
 	}{
 		{
