@@ -29,6 +29,7 @@ Release Notes.
 - Fix duplicate elements in stream query results by implementing element ID-based deduplication across scan, merge, and result building stages.
 - Fix data written to the wrong shard and related stream queries.
 - Fix the lifecycle panic when the trace has no sidx.
+- Fix panic in sidx merge and flush operations when part counts don't match expectations.
 
 ### Document
 
