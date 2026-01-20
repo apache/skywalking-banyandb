@@ -46,36 +46,36 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
-	connManager        *connManager
+	logger             *logger.Logger
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
-	logger             *logger.Logger
+	connManager        *connManager
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
-	client             fodcv1.FODCServiceClient
-	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
+	registrationStream fodcv1.FODCService_RegisterAgentClient
+	client             fodcv1.FODCServiceClient
 
-	proxyAddr string
-	nodeIP    string
-	nodeRole  string
-	agentID   string
+	proxyAddr      string
+	nodeRole       string
+	podName        string
+	agentID        string
+	containerNames []string
 
-	nodePort          int
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
-	disconnected      bool
 	streamsMu         sync.RWMutex   // Protects streams only
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
+	disconnected      bool
 }
 
 // NewClient creates a new Client instance.
 func NewClient(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
+	podName string,
+	containerNames []string,
 	labels map[string]string,
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
@@ -86,9 +86,9 @@ func NewClient(
 	client := &Client{
 		connManager:       connMgr,
 		proxyAddr:         proxyAddr,
-		nodeIP:            nodeIP,
-		nodePort:          nodePort,
 		nodeRole:          nodeRole,
+		podName:           podName,
+		containerNames:    containerNames,
 		labels:            labels,
 		heartbeatInterval: heartbeatInterval,
 		reconnectInterval: reconnectInterval,
@@ -150,12 +150,10 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 	}
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: c.nodeRole,
-		Labels:   c.labels,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 	}
 
 	if sendErr := stream.Send(req); sendErr != nil {
@@ -418,12 +416,10 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 	c.streamsMu.RUnlock()
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: c.nodeRole,
-		Labels:   c.labels,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 	}
 
 	if sendErr := registrationStream.Send(req); sendErr != nil {

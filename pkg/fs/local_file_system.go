@@ -309,6 +309,11 @@ func (fs *localFileSystem) MustGetTotalSpace(path string) uint64 {
 	return usage.Total
 }
 
+func (fs *localFileSystem) IsExist(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(string) bool) error {
 	fi, err := os.Stat(srcPath)
 	if err != nil {

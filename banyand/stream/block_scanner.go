@@ -119,7 +119,7 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 	}()
 	var parts []*part
 	var size, offset int
-	filterIndex := make(map[uint64]posting.List)
+	filterIndex := make(map[*part]posting.List)
 	for i := range tabs {
 		filter, filterTS, err := search(ctx, qo, qo.sortedSids, tabs[i], tr)
 		if err != nil {
@@ -140,7 +140,7 @@ func getBlockScanner(ctx context.Context, segment storage.Segment[*tsTable, *opt
 		}
 		finalizers = append(finalizers, snp.decRef)
 		for j := offset; j < offset+size; j++ {
-			filterIndex[parts[j].partMetadata.ID] = filter
+			filterIndex[parts[j]] = filter
 		}
 		offset += size
 	}
@@ -200,7 +200,7 @@ func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, 
 type scanFinalizer func()
 
 type blockScanner struct {
-	filterIndex map[uint64]posting.List
+	filterIndex map[*part]posting.List
 	l           *logger.Logger
 	pm          protector.Memory
 	parts       [][]*part
@@ -245,7 +245,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		})
 		bs := &batch.bss[len(batch.bss)-1]
 		bs.qo.copyFrom(&bsn.qo)
-		bs.qo.elementFilter = bsn.filterIndex[p.p.partMetadata.ID]
+		bs.qo.elementFilter = bsn.filterIndex[p.p]
 		bs.bm.copyFrom(p.curBlock)
 		quota := bsn.pm.AvailableBytes()
 		for i := range batch.bss {

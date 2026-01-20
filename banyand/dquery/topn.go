@@ -29,7 +29,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/query"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -55,12 +54,8 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	}
 	n := time.Now()
 	now := bus.MessageID(request.TimeRange.Begin.Nanos)
-	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
-		resp = bus.NewMessage(now, common.NewError("unspecified requested sort direction"))
-		return
-	}
-	if request.GetAgg() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-		resp = bus.NewMessage(now, common.NewError("unspecified requested aggregation function"))
+	if err := t.validateRequest(request); err != nil {
+		resp = bus.NewMessage(now, common.NewError("%s", err.Error()))
 		return
 	}
 	if e := t.log.Debug(); e.Enabled() {
@@ -116,7 +111,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	var allErr error
-	aggregator := query.CreateTopNPostAggregator(request.GetTopN(),
+	aggregator := measure.CreateTopNPostProcessor(request.GetTopN(),
 		agg, request.GetFieldValueSort())
 	var tags []string
 	var responseCount int
@@ -142,7 +137,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					_ = aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(l.Timestamp.AsTime().UnixMilli()))
+					aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
 				}
 			}
 		}
@@ -158,7 +153,12 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
 		return
 	}
-	lists := aggregator.Val(tags)
+	lists, err := aggregator.Val(tags)
+	if err != nil {
+		resp = bus.NewMessage(now, common.NewError("failed to post-aggregate %s: %v", request.GetName(), err))
+		return
+	}
+
 	if span != nil {
 		span.Tagf("list_count", "%d", len(lists))
 	}
@@ -205,4 +205,14 @@ func (s *sortedTopNList) Next() bool {
 
 func (s *sortedTopNList) Val() *comparableTopNItem {
 	return &comparableTopNItem{s.Items[s.index-1]}
+}
+
+func (t *topNQueryProcessor) validateRequest(request *measurev1.TopNRequest) error {
+	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
+		return errors.New("unspecified requested sort direction")
+	}
+	if request.GetAgg() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		return errors.New("unspecified requested aggregation function")
+	}
+	return nil
 }

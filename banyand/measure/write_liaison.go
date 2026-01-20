@@ -229,8 +229,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 		if err != nil {
 			return nil, fmt.Errorf("cannot get or create shard: %w", err)
 		}
-		dpt = newDpt(nil, queue.GetTimeRange(t), stm.schema.IndexMode, shard.SubQueue())
-		dpt.shardID = shardID
+		dpt = newDpt(nil, queue.GetTimeRange(t), stm.schema.IndexMode, shard.SubQueue(), shardID)
 		dpg.tables = append(dpg.tables, dpt)
 	}
 

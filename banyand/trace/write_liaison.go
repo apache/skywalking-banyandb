@@ -255,9 +255,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				// Send to all nodes for this shard
 				for _, node := range nodes {
 					message := bus.NewMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, combinedData)
-					_, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
+					future, publishErr := w.tire2Client.Publish(ctx, data.TopicTraceSidxSeriesWrite, message)
 					if publishErr != nil {
 						w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						continue
+					}
+					_, getErr := future.Get()
+					if getErr != nil {
+						w.l.Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish series index")
+						continue
 					}
 				}
 			}

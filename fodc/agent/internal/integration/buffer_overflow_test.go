@@ -85,7 +85,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Create Watchdog with short polling interval for testing
 		pollInterval := 1 * time.Second // Faster polling to generate more data
-		wd = watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
+		wd = watchdog.NewWatchdogWithConfig(fr, []string{metricsEndpoint}, pollInterval, "datanode-hot", "test", []string{"data"})
 
 		ctx := context.Background()
 		preRunErr := wd.PreRun(ctx)

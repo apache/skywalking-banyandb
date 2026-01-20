@@ -25,10 +25,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testNodeRole      = "datanode-hot"
+	testContainerName = "data"
+)
+
 func TestParse_BasicGaugeMetric(t *testing.T) {
 	text := `cpu_usage 75.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -41,7 +46,7 @@ func TestParse_BasicGaugeMetric(t *testing.T) {
 func TestParse_BasicCounterMetric(t *testing.T) {
 	text := `http_requests_total 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -52,7 +57,7 @@ func TestParse_BasicCounterMetric(t *testing.T) {
 func TestParse_MetricWithSingleLabel(t *testing.T) {
 	text := `http_requests_total{method="GET"} 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -66,7 +71,7 @@ func TestParse_MetricWithSingleLabel(t *testing.T) {
 func TestParse_MetricWithMultipleLabels(t *testing.T) {
 	text := `http_requests_total{method="GET",status="200"} 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -83,7 +88,7 @@ func TestParse_HELPLineParsing(t *testing.T) {
 	text := `# HELP http_requests_total Total number of HTTP requests
 http_requests_total 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -97,7 +102,7 @@ func TestParse_HELPWithMultipleMetrics(t *testing.T) {
 http_requests_total 1234
 cpu_usage 75.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -112,7 +117,7 @@ func TestParse_TYPELineIgnored(t *testing.T) {
 # TYPE http_requests_total counter
 http_requests_total 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -128,7 +133,7 @@ http_requests_total 1234
 cpu_usage 75.5
 `
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -142,7 +147,7 @@ func TestParse_CommentsIgnored(t *testing.T) {
 # Another comment
 http_requests_total 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -153,7 +158,7 @@ http_requests_total 1234`
 func TestParse_LabelWithQuotedValues(t *testing.T) {
 	text := `http_requests_total{method="GET",path="/api/v1/users"} 1234`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -167,7 +172,7 @@ func TestParse_LabelWithQuotedValues(t *testing.T) {
 func TestParse_LabelWithSpecialCharacters(t *testing.T) {
 	text := `metric_name{label1="value with spaces",label2="value-with-dashes",label3="value_with_underscores"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -180,7 +185,7 @@ func TestParse_LabelWithSpecialCharacters(t *testing.T) {
 func TestParse_LabelWithEscapedQuotes(t *testing.T) {
 	text := `metric_name{label1="value\"with\"quotes"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -194,7 +199,7 @@ func TestParse_LabelWithEscapedQuotes(t *testing.T) {
 func TestParse_EmptyLabels(t *testing.T) {
 	text := `metric_name{} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// The regex `([^}]+)` requires at least one character between braces
@@ -205,7 +210,7 @@ func TestParse_EmptyLabels(t *testing.T) {
 func TestParse_MetricWithoutLabels(t *testing.T) {
 	text := `metric_name 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -218,7 +223,7 @@ func TestParse_FloatValues(t *testing.T) {
 memory_usage 0.123
 disk_usage 99.99`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 3)
@@ -231,7 +236,7 @@ func TestParse_IntegerValues(t *testing.T) {
 	text := `http_requests_total 1234
 cpu_count 8`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -243,7 +248,7 @@ func TestParse_ScientificNotation(t *testing.T) {
 	text := `large_number 1.23e+10
 small_number 1.23e-5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -260,7 +265,7 @@ http_request_duration_seconds_bucket{le="+Inf"} 300
 http_request_duration_seconds_count 300
 http_request_duration_seconds_sum 45.2`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 5)
@@ -284,7 +289,7 @@ http_request_duration_seconds{quantile="0.99"} 0.250
 http_request_duration_seconds_sum 45.2
 http_request_duration_seconds_count 300`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 5)
@@ -304,7 +309,7 @@ http_requests_total{method="POST",status="200"} 567
 http_requests_total{method="GET",status="404"} 89
 http_requests_total{method="POST",status="500"} 12`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 4)
@@ -319,7 +324,7 @@ http_requests_total{method="POST",status="500"} 12`
 func TestParse_InvalidValueFormat(t *testing.T) {
 	text := `metric_name invalid_value`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	assert.Error(t, err)
 	assert.Nil(t, metrics)
@@ -329,7 +334,7 @@ func TestParse_InvalidValueFormat(t *testing.T) {
 func TestParse_MetricNameStartingWithDigit(t *testing.T) {
 	text := `123invalid_name 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	// The regex \w+ matches word characters (letters, digits, underscore)
 	// So "123invalid_name" is parsed as a valid metric name
@@ -344,7 +349,7 @@ func TestParse_MetricNameWithUnderscores(t *testing.T) {
 cpu_usage_percentage 75.5
 banyandb_stream_tst_inverted_index_total_doc_count 12345`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 3)
@@ -357,7 +362,7 @@ func TestParse_MetricNameWithNumbers(t *testing.T) {
 	text := `metric_name_123 42.0
 cpu0_usage 75.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -369,7 +374,7 @@ func TestParse_WhitespaceHandling(t *testing.T) {
 	text := `  cpu_usage  75.5  
   http_requests_total{method="GET"}  1234  `
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -383,7 +388,7 @@ func TestParse_MultipleMetricsSameName(t *testing.T) {
 	text := `http_requests_total{method="GET"} 100
 http_requests_total{method="POST"} 200`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -397,7 +402,7 @@ func TestParse_HELPWithoutMatchingMetric(t *testing.T) {
 	text := `# HELP nonexistent_metric This metric doesn't exist
 cpu_usage 75.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -408,7 +413,7 @@ cpu_usage 75.5`
 func TestParse_EmptyString(t *testing.T) {
 	text := ``
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	assert.Empty(t, metrics)
@@ -419,7 +424,7 @@ func TestParse_OnlyComments(t *testing.T) {
 # TYPE some_metric counter
 # This is a comment`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	assert.Empty(t, metrics)
@@ -428,7 +433,7 @@ func TestParse_OnlyComments(t *testing.T) {
 func TestParse_LabelValueWithEqualsSign(t *testing.T) {
 	text := `metric_name{label="value=with=equals"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -439,7 +444,7 @@ func TestParse_LabelValueWithEqualsSign(t *testing.T) {
 func TestParse_LabelValueWithColon(t *testing.T) {
 	text := `metric_name{label="value:with:colons"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -450,7 +455,7 @@ func TestParse_LabelValueWithColon(t *testing.T) {
 func TestParse_LabelValueWithSlashes(t *testing.T) {
 	text := `metric_name{path="/api/v1/users"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -472,7 +477,7 @@ func TestParse_LargeMetricsOutput(t *testing.T) {
 
 	text := builder.String()
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	assert.Len(t, metrics, 1000)
@@ -500,7 +505,7 @@ func TestParse_PerformanceWithLargeOutput(t *testing.T) {
 
 	text := builder.String()
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	assert.Len(t, metrics, 10000)
@@ -581,7 +586,7 @@ func TestMetricKey_String_LabelsSortedByValue(t *testing.T) {
 func TestParse_LabelWithUnicodeCharacters(t *testing.T) {
 	text := `metric_name{label="value-with-unicode-测试"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -593,7 +598,7 @@ func TestParse_NegativeValues(t *testing.T) {
 	text := `temperature -10.5
 delta -0.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -605,7 +610,7 @@ func TestParse_ZeroValue(t *testing.T) {
 	text := `metric_name 0
 metric_name2 0.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -616,7 +621,7 @@ metric_name2 0.0`
 func TestParse_LabelOrderPreserved(t *testing.T) {
 	text := `metric_name{label1="value1",label2="value2",label3="value3"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -630,7 +635,7 @@ func TestParse_LabelOrderPreserved(t *testing.T) {
 func TestParse_MetricWithPlusInf(t *testing.T) {
 	text := `metric_name{le="+Inf"} 100`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -641,7 +646,7 @@ func TestParse_MetricWithPlusInf(t *testing.T) {
 func TestParse_MetricWithMinusInf(t *testing.T) {
 	text := `metric_name{le="-Inf"} 100`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -654,7 +659,7 @@ func TestParse_MalformedHELPLine(t *testing.T) {
 # HELP proper_metric Proper description
 proper_metric 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -666,7 +671,7 @@ func TestParse_HELPLineWithExtraSpaces(t *testing.T) {
 	text := `# HELP    metric_name    Description with extra spaces    
 metric_name 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -679,7 +684,7 @@ func TestParse_IncompleteMetricLine(t *testing.T) {
 	text := `metric_name{label="value"
 complete_metric 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -690,7 +695,7 @@ func TestParse_MetricLineWithoutValue(t *testing.T) {
 	text := `metric_name{label="value"}
 complete_metric 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -701,7 +706,7 @@ func TestParse_MetricLineWithOnlyName(t *testing.T) {
 	text := `metric_name
 complete_metric 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -712,7 +717,7 @@ func TestParse_VeryLongMetricName(t *testing.T) {
 	longName := strings.Repeat("a", 1000)
 	text := longName + " 42.0"
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -723,7 +728,7 @@ func TestParse_VeryLongLabelValue(t *testing.T) {
 	longValue := strings.Repeat("a", 1000)
 	text := `metric_name{label="` + longValue + `"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -734,7 +739,7 @@ func TestParse_VeryLongLabelValue(t *testing.T) {
 func TestParse_TabsInsteadOfSpaces(t *testing.T) {
 	text := "metric_name\t42.0\nmetric_name2 100.0"
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// Tabs are treated as whitespace and trimmed
@@ -752,7 +757,7 @@ func TestParse_TabsInsteadOfSpaces(t *testing.T) {
 func TestParse_MixedLineEndings(t *testing.T) {
 	text := "metric_name1 42.0\r\nmetric_name2 100.0\nmetric_name3 200.0\r"
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(metrics), 2)
@@ -762,7 +767,7 @@ func TestParse_VeryLargeNumber(t *testing.T) {
 	text := `large_number 1.7976931348623157e+308
 small_number 2.2250738585072014e-308`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -773,7 +778,7 @@ small_number 2.2250738585072014e-308`
 func TestParse_NaNValue(t *testing.T) {
 	text := `metric_name NaN`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	// NaN should parse but we need to check if it's handled correctly
 	if err == nil {
@@ -790,7 +795,7 @@ func TestParse_InfValue(t *testing.T) {
 metric_name2 -Inf
 metric_name3 Inf`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	// Inf values should parse
 	require.NoError(t, err)
@@ -802,7 +807,7 @@ func TestParse_MalformedLabelSyntax(t *testing.T) {
 metric_name2{label="unclosed 42.0
 metric_name3{label="proper"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// Only properly formatted metrics should be parsed
@@ -815,7 +820,7 @@ metric_name3{label="proper"} 42.0`
 func TestParse_LabelWithCommaInValue(t *testing.T) {
 	text := `metric_name{label="value,with,commas"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -826,7 +831,7 @@ func TestParse_LabelWithCommaInValue(t *testing.T) {
 func TestParse_LabelWithBracesInValue(t *testing.T) {
 	text := `metric_name{label="value{with}braces"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// The regex `[^}]+` stops at the first }, so braces in label values cause parsing issues
@@ -838,7 +843,7 @@ func TestParse_MultipleSpacesBetweenComponents(t *testing.T) {
 	text := `metric_name    42.0
 metric_name2 100.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// Whitespace is trimmed, so multiple spaces should still parse
@@ -856,7 +861,7 @@ metric_name2 100.0`
 func TestParse_LabelWithNewlineInValue(t *testing.T) {
 	text := "metric_name{label=\"value\nwith\nnewlines\"} 42.0"
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	// The regex `[^"]+` stops at newlines, so this won't parse correctly
@@ -869,7 +874,7 @@ func TestParse_HELPLineBeforeMetricWithSameName(t *testing.T) {
 http_requests_total{method="GET"} 100
 http_requests_total{method="POST"} 200`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -883,7 +888,7 @@ func TestParse_HELPLineAfterMetric(t *testing.T) {
 # HELP http_requests_total Total requests
 http_requests_total{method="GET"} 200`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -941,7 +946,7 @@ func TestParse_RealWorldExampleFromDesignDoc(t *testing.T) {
 banyandb_stream_tst_inverted_index_total_doc_count{index="test"} 12345
 cpu_usage{host="server1"} 75.5`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 2)
@@ -968,7 +973,7 @@ http_request_duration_seconds_bucket{le="+Inf"} 300
 http_request_duration_seconds_count 300
 http_request_duration_seconds_sum 45.2`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 5)
@@ -992,7 +997,7 @@ http_request_duration_seconds{quantile="0.99"} 0.250
 http_request_duration_seconds_sum 45.2
 http_request_duration_seconds_count 300`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 5)
@@ -1012,7 +1017,7 @@ http_requests_total{method="POST",status="200"} 567
 http_requests_total{method="GET",status="404"} 89
 http_requests_total{method="POST",status="500"} 12`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 4)
@@ -1027,7 +1032,7 @@ http_requests_total{method="POST",status="500"} 12`
 func TestParse_LabelValueWithBackslash(t *testing.T) {
 	text := `metric_name{label="value\\with\\backslashes"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -1039,7 +1044,7 @@ func TestParse_LabelValueWithBackslash(t *testing.T) {
 func TestParse_MetricNameWithHyphens(t *testing.T) {
 	text := `metric-name 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	// The regex \w+ only matches word characters (letters, digits, underscore)
 	// So hyphens are not matched, this should fail or skip
@@ -1052,7 +1057,7 @@ func TestParse_MetricNameWithHyphens(t *testing.T) {
 func TestParse_LabelNameWithNumbers(t *testing.T) {
 	text := `metric_name{label123="value"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -1063,10 +1068,143 @@ func TestParse_LabelNameWithNumbers(t *testing.T) {
 func TestParse_LabelValueWithNumbers(t *testing.T) {
 	text := `metric_name{label="value123"} 42.0`
 
-	metrics, err := Parse(text)
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
 
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
 	require.Len(t, metrics[0].Labels, 1)
 	assert.Equal(t, "value123", metrics[0].Labels[0].Value)
+}
+
+func TestParse_WithAgentIdentityLabels(t *testing.T) {
+	text := `cpu_usage{instance="localhost"} 75.5
+http_requests_total{method="GET"} 100`
+
+	nodeRole := testNodeRole
+	podName := "test-pod"
+	containerName := testContainerName
+
+	metrics, err := ParseWithAgentLabels(text, nodeRole, podName, containerName)
+
+	require.NoError(t, err)
+	require.Len(t, metrics, 2)
+
+	expectedAgentLabelCount := countAgentLabels(nodeRole, podName, containerName)
+
+	// Verify first metric has agent identity labels
+	cpuMetric := metrics[0]
+	assert.Equal(t, "cpu_usage", cpuMetric.Name)
+	expectedCPULabelCount := 1 + expectedAgentLabelCount
+	require.Len(t, cpuMetric.Labels, expectedCPULabelCount)
+	hasInstanceLabel := false
+	hasNodeRole := false
+	hasPodName := false
+	hasContainerName := false
+	for _, label := range cpuMetric.Labels {
+		switch label.Name {
+		case "instance":
+			if label.Value == "localhost" {
+				hasInstanceLabel = true
+			}
+		case "node_role":
+			if label.Value == testNodeRole {
+				hasNodeRole = true
+			}
+		case "pod_name":
+			if label.Value == "test-pod" {
+				hasPodName = true
+			}
+		case "container_name":
+			if label.Value == testContainerName {
+				hasContainerName = true
+			}
+		}
+	}
+	assert.True(t, hasInstanceLabel, "original labels should be preserved")
+	assert.True(t, hasNodeRole, "should have node_role label")
+	assert.True(t, hasPodName, "should have pod_name label")
+	assert.True(t, hasContainerName, "should have container_name label")
+
+	// Verify second metric also has agent identity labels
+	httpMetric := metrics[1]
+	assert.Equal(t, "http_requests_total", httpMetric.Name)
+	// http_requests_total has 1 original label (method), plus agent labels
+	expectedHTTPLabelCount := 1 + expectedAgentLabelCount
+	require.Len(t, httpMetric.Labels, expectedHTTPLabelCount)
+	hasMethodLabel := false
+	hasNodeRole = false
+	hasPodName = false
+	hasContainerName = false
+	for _, label := range httpMetric.Labels {
+		switch label.Name {
+		case "method":
+			if label.Value == "GET" {
+				hasMethodLabel = true
+			}
+		case "node_role":
+			if label.Value == testNodeRole {
+				hasNodeRole = true
+			}
+		case "pod_name":
+			if label.Value == "test-pod" {
+				hasPodName = true
+			}
+		case "container_name":
+			if label.Value == testContainerName {
+				hasContainerName = true
+			}
+		}
+	}
+	assert.True(t, hasMethodLabel, "original labels should be preserved")
+	assert.True(t, hasNodeRole, "should have node_role label")
+	assert.True(t, hasPodName, "should have pod_name label")
+	assert.True(t, hasContainerName, "should have container_name label")
+}
+
+func countAgentLabels(nodeRole, podName, containerName string) int {
+	count := 0
+	if nodeRole != "" {
+		count++
+	}
+	if podName != "" {
+		count++
+	}
+	if containerName != "" {
+		count++
+	}
+	return count
+}
+
+func TestParse_WithPartialAgentIdentityLabels(t *testing.T) {
+	text := `cpu_usage 75.5`
+
+	metrics, err := ParseWithAgentLabels(text, testNodeRole, "", testContainerName)
+
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	require.Len(t, metrics[0].Labels, 2) // node_role + container_name (no pod_name)
+	hasNodeRole := false
+	hasContainerName := false
+	for _, label := range metrics[0].Labels {
+		if label.Name == "node_role" && label.Value == testNodeRole {
+			hasNodeRole = true
+		}
+		if label.Name == "container_name" && label.Value == testContainerName {
+			hasContainerName = true
+		}
+	}
+	assert.True(t, hasNodeRole, "should have node_role label")
+	assert.True(t, hasContainerName, "should have container_name label")
+}
+
+func TestParse_WithoutAgentIdentityLabels(t *testing.T) {
+	text := `cpu_usage{instance="localhost"} 75.5`
+
+	metrics, err := ParseWithAgentLabels(text, "", "", "")
+
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	require.Len(t, metrics[0].Labels, 1) // Only original label
+	assert.Equal(t, "instance", metrics[0].Labels[0].Name)
+	assert.Equal(t, "localhost", metrics[0].Labels[0].Value)
 }
