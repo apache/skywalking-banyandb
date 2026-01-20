@@ -56,7 +56,7 @@ services:
       file: ../../../docker/base-compose.yml
       service: oap
     environment:
-      SW_STORAGE_BANYANDB_COMPATIBLE_SERVER_API_VERSIONS: "0.9,0.10"
+      SW_STORAGE_BANYANDB_COMPATIBLE_SERVER_API_VERSIONS: "0.10"
     networks:
       - e2e
     volumes:
