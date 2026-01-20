@@ -22,7 +22,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 var (
@@ -45,10 +44,6 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 		if _, ok := partIDtoMerge[pw.ID()]; ok {
 			partsToMerge = append(partsToMerge, pw)
 		}
-	}
-
-	if len(partsToMerge) != len(partIDtoMerge) {
-		logger.Panicf("not enough parts to merge: %d", len(partsToMerge))
 	}
 
 	// Create new merged part
