@@ -74,6 +74,7 @@ type standalone struct {
 	option             option
 	retentionConfig    storage.RetentionConfig
 	maxFileSnapshotNum int
+	minFileSnapshotAge time.Duration
 }
 
 func (s *standalone) FlagSet() *run.FlagSet {
@@ -90,7 +91,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "trace-retention-force-cleanup-enabled", false,
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
-	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 2, "the maximum number of file snapshots")
+	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 10, "the maximum number of file snapshots")
+	fs.DurationVar(&s.minFileSnapshotAge, "trace-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
 	// Additional flags can be added here
@@ -446,7 +448,7 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 	}
 	d.snapshotMux.Lock()
 	defer d.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.lfs)
+	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
 	for _, g := range gg {
@@ -479,7 +481,7 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 
 func (d *standaloneSnapshotListener) snapshotName() string {
 	d.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), d.snapshotSeq)
 }
 
 type standaloneDeleteTraceSegmentsListener struct {
