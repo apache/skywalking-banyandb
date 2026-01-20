@@ -222,17 +222,8 @@ func executeMeasurePlan(ctx context.Context, queryCriteria *measurev1.QueryReque
 func extractTagValuesFromInternalDataPoints(dataPoints []*measurev1.InternalDataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
 	tagValueMap := make(map[string][]*modelv1.TagValue)
 	for _, idp := range dataPoints {
-		dp := idp.DataPoint
-		if dp == nil {
-			continue
-		}
-		for _, tagFamily := range dp.GetTagFamilies() {
-			for _, tag := range tagFamily.GetTags() {
-				tagName := tag.GetKey()
-				if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
-					tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
-				}
-			}
+		if idp.DataPoint != nil {
+			extractTagValuesFromDataPoint(idp.DataPoint, groupByTags, tagValueMap)
 		}
 	}
 	return tagValueMap
@@ -254,16 +245,21 @@ func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.Intern
 func extractTagValuesFromDataPoints(dataPoints []*measurev1.DataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
 	tagValueMap := make(map[string][]*modelv1.TagValue)
 	for _, dp := range dataPoints {
-		for _, tagFamily := range dp.GetTagFamilies() {
-			for _, tag := range tagFamily.GetTags() {
-				tagName := tag.GetKey()
-				if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
-					tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
-				}
+		extractTagValuesFromDataPoint(dp, groupByTags, tagValueMap)
+	}
+	return tagValueMap
+}
+
+// extractTagValuesFromDataPoint extracts tag values from a single DataPoint and appends to tagValueMap.
+func extractTagValuesFromDataPoint(dp *measurev1.DataPoint, groupByTags []string, tagValueMap map[string][]*modelv1.TagValue) {
+	for _, tagFamily := range dp.GetTagFamilies() {
+		for _, tag := range tagFamily.GetTags() {
+			tagName := tag.GetKey()
+			if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
+				tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
 			}
 		}
 	}
-	return tagValueMap
 }
 
 // getGroupByTags extracts group by tag names from query criteria.

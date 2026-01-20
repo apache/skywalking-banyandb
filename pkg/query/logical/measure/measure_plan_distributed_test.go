@@ -25,7 +25,10 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 type mockIterator struct {
@@ -167,6 +170,133 @@ func TestSortedMIterator(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got,
 				protocmp.Transform(), protocmp.IgnoreUnknown()); diff != "" {
 				t.Errorf("sortedMIterator mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func makeInternalDP(shardID uint32, tagValue string) *measurev1.InternalDataPoint {
+	return &measurev1.InternalDataPoint{
+		ShardId: shardID,
+		DataPoint: &measurev1.DataPoint{
+			TagFamilies: []*modelv1.TagFamily{
+				{
+					Name: "default",
+					Tags: []*modelv1.Tag{
+						{Key: "group_tag", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: tagValue}}}},
+					},
+				},
+			},
+		},
+	}
+}
+
+func makeGroupByTagsRefs() [][]*logical.TagRef {
+	return [][]*logical.TagRef{
+		{
+			{
+				Tag:  &logical.Tag{},
+				Spec: &logical.TagSpec{TagFamilyIdx: 0, TagIdx: 0, Spec: &databasev1.TagSpec{Type: databasev1.TagType_TAG_TYPE_STRING}},
+			},
+		},
+	}
+}
+
+func TestDeduplicateAggregatedDataPointsWithShard(t *testing.T) {
+	testCases := []struct {
+		name            string
+		dataPoints      []*measurev1.InternalDataPoint
+		groupByTagsRefs [][]*logical.TagRef
+		wantLen         int
+		wantShardIDs    []uint32
+		wantTagValues   []string
+		expectErr       bool
+	}{
+		{
+			name:            "empty groupByTagsRefs returns all data points",
+			dataPoints:      []*measurev1.InternalDataPoint{makeInternalDP(1, "a"), makeInternalDP(2, "a")},
+			groupByTagsRefs: nil,
+			wantLen:         2,
+			wantShardIDs:    []uint32{1, 2},
+			wantTagValues:   []string{"a", "a"},
+		},
+		{
+			name:            "deduplicate replicas of same shard with same group key",
+			dataPoints:      []*measurev1.InternalDataPoint{makeInternalDP(1, "a"), makeInternalDP(1, "a")},
+			groupByTagsRefs: makeGroupByTagsRefs(),
+			wantLen:         1,
+			wantShardIDs:    []uint32{1},
+			wantTagValues:   []string{"a"},
+		},
+		{
+			name:            "preserve data from different shards with same group key",
+			dataPoints:      []*measurev1.InternalDataPoint{makeInternalDP(1, "a"), makeInternalDP(2, "a")},
+			groupByTagsRefs: makeGroupByTagsRefs(),
+			wantLen:         2,
+			wantShardIDs:    []uint32{1, 2},
+			wantTagValues:   []string{"a", "a"},
+		},
+		{
+			name: "preserve data from same shard with different group keys",
+			dataPoints: []*measurev1.InternalDataPoint{
+				makeInternalDP(1, "a"),
+				makeInternalDP(1, "b"),
+			},
+			groupByTagsRefs: makeGroupByTagsRefs(),
+			wantLen:         2,
+			wantShardIDs:    []uint32{1, 1},
+			wantTagValues:   []string{"a", "b"},
+		},
+		{
+			name: "complex scenario: multiple shards and group keys with replicas",
+			dataPoints: []*measurev1.InternalDataPoint{
+				makeInternalDP(1, "a"),
+				makeInternalDP(1, "a"), // replica, should be deduplicated
+				makeInternalDP(2, "a"), // different shard, keep
+				makeInternalDP(1, "b"), // different group key, keep
+				makeInternalDP(2, "b"), // different shard, keep
+				makeInternalDP(2, "b"), // replica, should be deduplicated
+			},
+			groupByTagsRefs: makeGroupByTagsRefs(),
+			wantLen:         4,
+			wantShardIDs:    []uint32{1, 2, 1, 2},
+			wantTagValues:   []string{"a", "a", "b", "b"},
+		},
+		{
+			name:            "empty data points",
+			dataPoints:      []*measurev1.InternalDataPoint{},
+			groupByTagsRefs: makeGroupByTagsRefs(),
+			wantLen:         0,
+			wantShardIDs:    []uint32{},
+			wantTagValues:   []string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := deduplicateAggregatedDataPointsWithShard(tc.dataPoints, tc.groupByTagsRefs)
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if len(got) != tc.wantLen {
+				t.Errorf("got %d data points, want %d", len(got), tc.wantLen)
+				return
+			}
+			for i, dp := range got {
+				if dp.ShardId != tc.wantShardIDs[i] {
+					t.Errorf("data point %d: got shard %d, want %d", i, dp.ShardId, tc.wantShardIDs[i])
+				}
+				tagValue := dp.DataPoint.GetTagFamilies()[0].GetTags()[0].GetValue().GetStr().GetValue()
+				if tagValue != tc.wantTagValues[i] {
+					t.Errorf("data point %d: got tag value %s, want %s", i, tagValue, tc.wantTagValues[i])
+				}
 			}
 		})
 	}
