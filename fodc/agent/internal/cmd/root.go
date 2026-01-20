@@ -43,7 +43,7 @@ import (
 
 const (
 	defaultPollInterval                 = 10 * time.Second
-	defaultMetricsEndpoint              = "http://localhost:2121/metrics"
+	defaultPollMetricsPorts             = "2121"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
 	defaultProxyAddr                    = "localhost:17900"
@@ -53,14 +53,14 @@ const (
 
 var (
 	pollInterval                 time.Duration
-	metricsEndpoint              string
+	pollMetricsPorts             []string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
 	proxyAddr                    string
-	nodeIP                       string
-	nodePort                     int
 	nodeRole                     string
 	nodeLabels                   string
+	podName                      string
+	containerNames               []string
 	heartbeatInterval            time.Duration
 	reconnectInterval            time.Duration
 	rootCmd                      = &cobra.Command{
@@ -81,8 +81,8 @@ func Execute() error {
 func init() {
 	rootCmd.Flags().DurationVar(&pollInterval, "poll-metrics-interval", defaultPollInterval,
 		"Interval at which the Watchdog polls metrics from the BanyanDB container")
-	rootCmd.Flags().StringVar(&metricsEndpoint, "metrics-endpoint", defaultMetricsEndpoint,
-		"URL of the BanyanDB metrics endpoint to poll from")
+	rootCmd.Flags().StringSliceVar(&pollMetricsPorts, "poll-metrics-ports", []string{defaultPollMetricsPorts},
+		"Ports of the BanyanDB metrics endpoints to poll from (can be specified multiple times or comma-separated)")
 	rootCmd.Flags().IntVar(&maxMetricsMemoryUsagePercent, "max-metrics-memory-usage-percentage",
 		defaultMaxMetricsMemoryUsagePercent,
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
@@ -90,12 +90,12 @@ func init() {
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
 	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
 		"FODC Proxy gRPC address")
-	rootCmd.Flags().StringVar(&nodeIP, "node-ip", "",
-		"IP address for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
-	rootCmd.Flags().IntVar(&nodePort, "node-port", 0,
-		"Port number for this BanyanDB node's primary gRPC address. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
 		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringSliceVar(&containerNames, "container-name", []string{},
+		"Names of the containers corresponding to each poll-metrics-port. Must have one-to-one correspondence with poll-metrics-ports.")
+	rootCmd.Flags().StringVar(&podName, "pod-name", "",
+		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
 		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
@@ -114,18 +114,24 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	log := logger.GetLogger("fodc")
-	log.Info().
-		Str("endpoint", metricsEndpoint).
-		Dur("interval", pollInterval).
-		Str("prometheus-listen-addr", prometheusListenAddr).
-		Msg("Starting FODC agent")
 
 	if pollInterval <= 0 {
 		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
-	if metricsEndpoint == "" {
-		return fmt.Errorf("metrics-endpoint cannot be empty")
+	if len(pollMetricsPorts) == 0 {
+		return fmt.Errorf("poll-metrics-ports cannot be empty")
 	}
+	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
+		return fmt.Errorf("container-name count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+	}
+	metricsEndpoints := generateMetricsEndpoints(pollMetricsPorts)
+
+	log.Info().
+		Strs("poll-metrics-ports", pollMetricsPorts).
+		Strs("metrics-endpoints", metricsEndpoints).
+		Dur("interval", pollInterval).
+		Str("prometheus-listen-addr", prometheusListenAddr).
+		Msg("Starting FODC agent")
 	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
 		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
 	}
@@ -179,7 +185,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
 	}
 
-	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoint, pollInterval)
+	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval, nodeRole, podName, containerNames)
 
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
@@ -190,7 +196,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	stopCh := wd.Serve()
 
 	var proxyClient *proxy.Client
-	if proxyAddr != "" && nodeIP != "" && nodePort > 0 && nodeRole != "" {
+	if proxyAddr != "" && podName != "" && nodeRole != "" {
 		labelsMap, parseErr := parseLabels(nodeLabels)
 		if parseErr != nil {
 			_ = metricsServer.Stop()
@@ -198,9 +204,9 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		}
 		proxyClient = proxy.NewClient(
 			proxyAddr,
-			nodeIP,
-			nodePort,
 			nodeRole,
+			podName,
+			containerNames,
 			labelsMap,
 			heartbeatInterval,
 			reconnectInterval,
@@ -219,12 +225,11 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 		log.Info().
 			Str("proxy_addr", proxyAddr).
-			Str("node_ip", nodeIP).
-			Int("node_port", nodePort).
+			Str("pod_name", podName).
 			Str("node_role", nodeRole).
 			Msg("Proxy client started")
 	} else {
-		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --node-ip, --node-port, --node-role)")
+		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -287,4 +292,14 @@ func parseLabels(labelsStr string) (map[string]string, error) {
 	}
 
 	return labels, nil
+}
+
+// generateMetricsEndpoints generates metrics endpoint URLs from port numbers.
+func generateMetricsEndpoints(ports []string) []string {
+	endpoints := make([]string, 0, len(ports))
+	for _, port := range ports {
+		endpoint := fmt.Sprintf("http://localhost:%s/metrics", port)
+		endpoints = append(endpoints, endpoint)
+	}
+	return endpoints
 }

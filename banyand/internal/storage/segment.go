@@ -721,7 +721,7 @@ func loadSegments[T TSTable, O any](root, prefix string, parser *segmentControll
 		}); err != nil {
 		return err
 	}
-	sort.Slice(startTimeLst, func(i, j int) bool { return i < j })
+	sort.Slice(startTimeLst, func(i, j int) bool { return startTimeLst[i].Before(startTimeLst[j]) })
 	for i, start := range startTimeLst {
 		var end time.Time
 		if i < len(startTimeLst)-1 {

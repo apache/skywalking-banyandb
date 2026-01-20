@@ -305,7 +305,6 @@
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
-    - [Address](#banyandb-fodc-v1-Address)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
@@ -4707,22 +4706,6 @@ Phase represents the current phase of the deletion task.
 
 
 
-<a name="banyandb-fodc-v1-Address"></a>
-
-### Address
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| ip | [string](#string) |  |  |
-| port | [int32](#int32) |  |  |
-
-
-
-
-
-
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -4768,7 +4751,8 @@ Phase represents the current phase of the deletion task.
 | ----- | ---- | ----- | ----------- |
 | node_role | [string](#string) |  |  |
 | labels | [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry) | repeated |  |
-| primary_address | [Address](#banyandb-fodc-v1-Address) |  |  |
+| pod_name | [string](#string) |  |  |
+| container_names | [string](#string) | repeated |  |
 
 
 
