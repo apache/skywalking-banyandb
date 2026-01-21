@@ -64,6 +64,8 @@ type MeasureQueryOptions struct {
 	Entities        [][]*modelv1.TagValue
 	TagProjection   []TagProjection
 	FieldProjection []string
+	Sort            modelv1.Sort
+	Number          int32
 }
 
 // MeasureResult is the result of a query.
@@ -71,6 +73,7 @@ type MeasureResult struct {
 	Error       error
 	Timestamps  []int64
 	Versions    []int64
+	ShardIDs    []common.ShardID
 	TagFamilies []TagFamily
 	Fields      []Field
 	SID         common.SeriesID
@@ -198,10 +201,16 @@ func (sr *StreamResult) CopyFrom(tmp, other *StreamResult) bool {
 		heap.Push(h, other)
 	}
 
+	seenElementIDs := make(map[uint64]bool)
+
 	// Pop from heap to build tmp with topN
 	for h.Len() > 0 && tmp.Len() < tmp.topN {
 		res := heap.Pop(h).(*StreamResult)
-		tmp.CopySingleFrom(res)
+		elementID := res.ElementIDs[res.idx]
+		if !seenElementIDs[elementID] {
+			seenElementIDs[elementID] = true
+			tmp.CopySingleFrom(res)
+		}
 		res.idx++
 		if res.idx < res.Len() {
 			heap.Push(h, res)
@@ -296,10 +305,15 @@ func MergeStreamResults(results []*StreamResult, topN int, asc bool) *StreamResu
 	}
 
 	mergedResult := NewStreamResult(topN, asc)
+	seenElementIDs := make(map[uint64]bool)
 
 	for h.Len() > 0 && mergedResult.Len() < topN {
 		sr := heap.Pop(h).(*StreamResult)
-		mergedResult.CopySingleFrom(sr)
+		elementID := sr.ElementIDs[sr.idx]
+		if !seenElementIDs[elementID] {
+			seenElementIDs[elementID] = true
+			mergedResult.CopySingleFrom(sr)
+		}
 		sr.idx++
 		if sr.idx < sr.Len() {
 			heap.Push(h, sr)

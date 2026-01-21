@@ -31,9 +31,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -53,6 +51,7 @@ type unresolvedLocalScan struct {
 	conditions  []*modelv1.Condition
 	groupByTags []string
 	sort        modelv1.Sort
+	number      int32
 }
 
 func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
@@ -103,6 +102,8 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 				},
 			},
 			FieldProjection: fieldProjection,
+			Sort:            uls.sort,
+			Number:          uls.number,
 		},
 		ec: uls.ec,
 	}, nil
@@ -176,7 +177,7 @@ func (i *localScan) Schema() logical.Schema {
 type topNMIterator struct {
 	result  model.MeasureQueryResult
 	err     error
-	current []*measurev1.DataPoint
+	current []*measurev1.InternalDataPoint
 }
 
 func (ei *topNMIterator) Next() bool {
@@ -195,8 +196,8 @@ func (ei *topNMIterator) Next() bool {
 	ei.current = ei.current[:0]
 	topNValue := measure.GenerateTopNValue()
 	defer measure.ReleaseTopNValue(topNValue)
-	decoder := generateTopNValuesDecoder()
-	defer releaseTopNValuesDecoder(decoder)
+	decoder := measure.GenerateTopNValuesDecoder()
+	defer measure.ReleaseTopNValuesDecoder(decoder)
 
 	for i := range r.Timestamps {
 		fv := r.Fields[0].Values[i]
@@ -211,6 +212,10 @@ func (ei *topNMIterator) Next() bool {
 		if err != nil {
 			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
+		}
+		shardID := uint32(0)
+		if i < len(r.ShardIDs) {
+			shardID = uint32(r.ShardIDs[i])
 		}
 		fieldName, entityNames, values, entities := topNValue.Values()
 		for j := range entities {
@@ -239,13 +244,13 @@ func (ei *topNMIterator) Next() bool {
 					},
 				},
 			})
-			ei.current = append(ei.current, dp)
+			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
 		}
 	}
 	return true
 }
 
-func (ei *topNMIterator) Current() []*measurev1.DataPoint {
+func (ei *topNMIterator) Current() []*measurev1.InternalDataPoint {
 	return ei.current
 }
 
@@ -256,18 +261,3 @@ func (ei *topNMIterator) Close() error {
 	}
 	return ei.err
 }
-
-func generateTopNValuesDecoder() *encoding.BytesBlockDecoder {
-	v := topNValuesDecoderPool.Get()
-	if v == nil {
-		return &encoding.BytesBlockDecoder{}
-	}
-	return v
-}
-
-func releaseTopNValuesDecoder(d *encoding.BytesBlockDecoder) {
-	d.Reset()
-	topNValuesDecoderPool.Put(d)
-}
-
-var topNValuesDecoderPool = pool.Register[*encoding.BytesBlockDecoder]("topn-valueDecoder")

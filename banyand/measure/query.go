@@ -71,6 +71,11 @@ type queryOptions struct {
 	maxTimestamp int64
 }
 
+type topNQueryOptions struct {
+	sortDirection modelv1.Sort
+	number        int32
+}
+
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	if mqo.TimeRange == nil {
 		return nil, errors.New("invalid query options: timeRange are required")
@@ -115,7 +120,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	sids, tables, caches, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
+	sids, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
 	if err != nil {
 		return nil, err
 	}
@@ -161,10 +166,15 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		if s == nil {
 			continue
 		}
+		oldLen := len(parts)
 		parts, n = s.getParts(parts, caches[i], qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
+		}
+		// Set shard ID for newly added parts
+		for j := oldLen; j < len(parts); j++ {
+			parts[j].shardID = tableShardIDs[i]
 		}
 		result.snapshots = append(result.snapshots, s)
 	}
@@ -190,6 +200,13 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
+	if mqo.Name == "_top_n_result" {
+		result.topNQueryOptions = &topNQueryOptions{
+			sortDirection: mqo.Sort,
+			number:        mqo.Number,
+		}
+	}
+
 	return &result, nil
 }
 
@@ -200,7 +217,7 @@ type tagNameWithType struct {
 
 func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
 	segments []storage.Segment[*tsTable, option],
-) (sl []common.SeriesID, tables []*tsTable, caches []storage.Cache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) (sl []common.SeriesID, tables []*tsTable, tableShardIDs []common.ShardID, caches []storage.Cache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	newTagProjection []model.TagProjection, err error,
 ) {
 	var indexProjection []index.FieldKey
@@ -254,11 +271,12 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			Projection:  indexProjection,
 		})
 		if err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 		if len(sd.SeriesList) > 0 {
-			tt, cc := segments[i].Tables()
+			tt, shardIDs, cc := segments[i].TablesWithShardIDs()
 			tables = append(tables, tt...)
+			tableShardIDs = append(tableShardIDs, shardIDs...)
 			caches = append(caches, cc...)
 
 			// Create segResult for this segment
@@ -348,7 +366,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 		}
 	}
 
-	return sl, tables, caches, storedIndexValue, newTagProjection, nil
+	return sl, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, nil
 }
 
 func (m *measure) buildStoredIndexValue(
@@ -503,6 +521,7 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
+		bc.shardID = p.p.shardID
 		result.data = append(result.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
 		if quota >= 0 && totalBlockBytes > uint64(quota) {
@@ -675,6 +694,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 
 type queryResult struct {
 	ctx              context.Context
+	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	tagProjection    []model.TagProjection
@@ -842,6 +862,13 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var lastVersion int64
 	var lastSid common.SeriesID
 
+	var topNPostAggregator PostProcessor
+
+	if qr.topNQueryOptions != nil {
+		topNPostAggregator = CreateTopNPostProcessor(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
+			qr.topNQueryOptions.sortDirection)
+	}
+
 	for qr.Len() > 0 {
 		topBC := qr.data[0]
 		if lastSid != 0 && topBC.bm.seriesID != lastSid {
@@ -851,7 +878,9 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topBC.versions[topBC.idx] > lastVersion {
+			if topNPostAggregator != nil {
+				topBC.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+			} else if topBC.versions[topBC.idx] > lastVersion {
 				topBC.replace(result, storedIndexValue)
 			}
 		} else {

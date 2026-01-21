@@ -445,6 +445,7 @@ type blockCursor struct {
 	idx                 int
 	minTimestamp        int64
 	maxTimestamp        int64
+	shardID             common.ShardID
 }
 
 func (bc *blockCursor) reset() {
@@ -497,6 +498,9 @@ func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[co
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.Versions = append(r.Versions, bc.versions[idx:offset]...)
+	for i := 0; i < size; i++ {
+		r.ShardIDs = append(r.ShardIDs, bc.shardID)
+	}
 	if desc {
 		slices.Reverse(r.Timestamps)
 		slices.Reverse(r.Versions)
@@ -595,6 +599,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.Versions = append(r.Versions, bc.versions[bc.idx])
+	r.ShardIDs = append(r.ShardIDs, bc.shardID)
 	var indexValue map[string]*modelv1.TagValue
 	if storedIndexValue != nil {
 		indexValue = storedIndexValue[r.SID]
@@ -666,9 +671,118 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	}
 }
 
+func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	topNPostAggregator PostProcessor,
+) {
+	r.SID = bc.bm.seriesID
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[r.SID]
+	}
+	for i := range r.TagFamilies {
+		tfName := r.TagFamilies[i].Name
+		var cf *columnFamily
+		for j := range r.TagFamilies[i].Tags {
+			tagName := r.TagFamilies[i].Tags[j].Name
+			if indexValue != nil && indexValue[tagName] != nil {
+				r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = indexValue[tagName]
+				continue
+			}
+			if cf == nil {
+				for i := range bc.tagFamilies {
+					if bc.tagFamilies[i].name == tfName {
+						cf = &bc.tagFamilies[i]
+						break
+					}
+				}
+			}
+			for _, c := range cf.columns {
+				if c.name == tagName {
+					schemaType, hasSchemaType := bc.schemaTagTypes[tagName]
+					if hasSchemaType && c.valueType == schemaType {
+						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = mustDecodeTagValue(c.valueType, c.values[bc.idx])
+					} else {
+						r.TagFamilies[i].Tags[j].Values[len(r.TagFamilies[i].Tags[j].Values)-1] = pbv1.NullTagValue
+					}
+					break
+				}
+			}
+		}
+	}
+
+	topNValue := GenerateTopNValue()
+	defer ReleaseTopNValue(topNValue)
+	decoder := GenerateTopNValuesDecoder()
+	defer ReleaseTopNValuesDecoder(decoder)
+
+	uTimestamps := uint64(bc.timestamps[bc.idx])
+
+	for i, c := range bc.fields.columns {
+		srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
+		destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
+
+		topNValue.Reset()
+
+		if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
+			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+			continue
+		}
+
+		valueName := topNValue.valueName
+		entityTagNames := topNValue.entityTagNames
+
+		for j, entityList := range topNValue.entities {
+			entityValues := make(pbv1.EntityValues, 0, len(entityList))
+			for _, e := range entityList {
+				entityValues = append(entityValues, e)
+			}
+			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, r.Versions[len(r.Versions)-1])
+		}
+
+		topNValue.Reset()
+		if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
+			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+			continue
+		}
+
+		for j, entityList := range topNValue.entities {
+			entityValues := make(pbv1.EntityValues, 0, len(entityList))
+			for _, e := range entityList {
+				entityValues = append(entityValues, e)
+			}
+			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
+		}
+
+		items, err := topNPostAggregator.Flush()
+		if err != nil {
+			log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
+			continue
+		}
+
+		topNValue.Reset()
+		topNValue.setMetadata(valueName, entityTagNames)
+
+		for _, item := range items {
+			topNValue.addValue(item.val, item.values)
+		}
+
+		buf, err := topNValue.marshal(make([]byte, 0, 128))
+		if err != nil {
+			log.Error().Err(err).Msg("failed to marshal topN value, skip current batch")
+			continue
+		}
+
+		r.Fields[i].Values[len(r.Fields[i].Values)-1] = &modelv1.FieldValue{
+			Value: &modelv1.FieldValue_BinaryData{
+				BinaryData: buf,
+			},
+		}
+		r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
+	}
+}
+
 func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue) {
 	r.SID = bc.bm.seriesID
-	r.Timestamps[len(r.Timestamps)-1] = bc.timestamps[bc.idx]
 	r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	var indexValue map[string]*modelv1.TagValue
 	if storedIndexValue != nil {

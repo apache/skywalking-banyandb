@@ -66,6 +66,7 @@ type part struct {
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
+	shardID              common.ShardID
 }
 
 func (p *part) close() {

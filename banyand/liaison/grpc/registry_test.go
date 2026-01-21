@@ -189,7 +189,7 @@ func setupForRegistry() func() {
 	tcp := grpc.NewServer(context.TODO(), pipeline, pipeline, pipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: nr,
 		PropertyNodeRegistry:       nr,
-	}, metricSvc, nil)
+	}, metricSvc, nil, nil)
 	preloadStreamSvc := &preloadStreamService{metaSvc: metaSvc}
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()

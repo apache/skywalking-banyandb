@@ -360,3 +360,76 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 		return recvErr
 	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
 }
+
+// loadDataWithElementIDMap loads data with element IDs specified in the data file for deduplication tests.
+func loadDataWithElementIDMap(stream streamv1.StreamService_WriteClient, metadata *commonv1.Metadata, dataFile string, baseTime time.Time, interval time.Duration) {
+	var templates []map[string]interface{}
+	content, err := dataFS.ReadFile("testdata/" + dataFile)
+	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+	bb, _ := base64.StdEncoding.DecodeString("YWJjMTIzIT8kKiYoKSctPUB+")
+
+	for idx, template := range templates {
+		// Extract element_id from the template (required for deduplication tests)
+		elementIDStr, ok := template["element_id"].(string)
+		gm.Expect(ok).To(gm.BeTrue(), "element_id is required in data file for deduplication tests")
+		elementID, parseErr := strconv.Atoi(elementIDStr)
+		gm.Expect(parseErr).ShouldNot(gm.HaveOccurred())
+		// Create a copy without element_id for tag family parsing
+		templateCopy := make(map[string]interface{})
+		for k, v := range template {
+			if k != "element_id" {
+				templateCopy[k] = v
+			}
+		}
+		rawSearchTagFamily, errMarshal := json.Marshal(templateCopy)
+		gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+		searchTagFamily := &modelv1.TagFamilyForWrite{}
+		gm.Expect(protojson.Unmarshal(rawSearchTagFamily, searchTagFamily)).ShouldNot(gm.HaveOccurred())
+		e := &streamv1.ElementValue{
+			ElementId: strconv.Itoa(elementID),
+			Timestamp: timestamppb.New(baseTime.Add(interval * time.Duration(idx))),
+			TagFamilies: []*modelv1.TagFamilyForWrite{
+				{
+					Tags: []*modelv1.TagValue{
+						{
+							Value: &modelv1.TagValue_BinaryData{
+								BinaryData: bb,
+							},
+						},
+					},
+				},
+			},
+		}
+		e.TagFamilies = append(e.TagFamilies, searchTagFamily)
+		errInner := stream.Send(&streamv1.WriteRequest{
+			Metadata:  metadata,
+			Element:   e,
+			MessageId: uint64(time.Now().UnixNano()),
+		})
+		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
+	}
+}
+
+// WriteDeduplicationTest writes data with element IDs specified in the data file for deduplication tests.
+func WriteDeduplicationTest(conn *grpclib.ClientConn, name string, baseTime time.Time, interval time.Duration) {
+	metadata := &commonv1.Metadata{
+		Name:  name,
+		Group: "default",
+	}
+	schema := databasev1.NewStreamRegistryServiceClient(conn)
+	resp, err := schema.Get(context.Background(), &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	metadata = resp.GetStream().GetMetadata()
+
+	c := streamv1.NewStreamServiceClient(conn)
+	ctx := context.Background()
+	writeClient, err := c.Write(ctx)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	loadDataWithElementIDMap(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
+	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+	gm.Eventually(func() error {
+		_, err := writeClient.Recv()
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+}

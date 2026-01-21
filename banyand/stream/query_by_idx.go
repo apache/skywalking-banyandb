@@ -194,6 +194,7 @@ func (qr *idxResult) loadSortingData(ctx context.Context) *model.StreamResult {
 	qo.schemaTagTypes = qr.qo.schemaTagTypes
 	qr.elementIDsSorted = qr.elementIDsSorted[:0]
 	count, searchedSize := 1, 0
+	seenElementIDs := make(map[uint64]bool)
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		span, _ := tracer.StartSpan(ctx, "load-sorting-data")
@@ -214,6 +215,12 @@ func (qr *idxResult) loadSortingData(ctx context.Context) *model.StreamResult {
 			count--
 			continue
 		}
+		// Deduplicate element IDs
+		if seenElementIDs[val.DocID] {
+			count--
+			continue
+		}
+		seenElementIDs[val.DocID] = true
 		qo.elementFilter.Insert(val.DocID)
 		if val.Timestamp > qo.maxTimestamp {
 			qo.maxTimestamp = val.Timestamp
@@ -285,7 +292,10 @@ func (qr *idxResult) mergeByTagValue() *model.StreamResult {
 		data.copyAllTo(tmp, false)
 		var idx int
 		for idx = prevIdx; idx < len(tmp.Timestamps); idx++ {
-			elementIDToIdx[tmp.ElementIDs[idx]] = idx
+			// Keep the first occurrence of each element ID
+			if _, exists := elementIDToIdx[tmp.ElementIDs[idx]]; !exists {
+				elementIDToIdx[tmp.ElementIDs[idx]] = idx
+			}
 		}
 		prevIdx = idx
 	}
@@ -307,7 +317,13 @@ func (qr *idxResult) mergeByTagValue() *model.StreamResult {
 		}
 		r.TagFamilies = append(r.TagFamilies, tf)
 	}
+	seenElementIDs := make(map[uint64]bool)
 	for _, id := range qr.elementIDsSorted {
+		// Deduplicate: only process each element ID once
+		if seenElementIDs[id] {
+			continue
+		}
+		seenElementIDs[id] = true
 		idx, ok := elementIDToIdx[id]
 		if !ok {
 			continue

@@ -229,8 +229,7 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 		if err != nil {
 			return nil, fmt.Errorf("cannot get or create shard: %w", err)
 		}
-		dpt = newDpt(nil, queue.GetTimeRange(t), stm.schema.IndexMode, shard.SubQueue())
-		dpt.shardID = shardID
+		dpt = newDpt(nil, queue.GetTimeRange(t), stm.schema.IndexMode, shard.SubQueue(), shardID)
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
@@ -238,6 +237,6 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint)
+	w.schemaRepo.inFlow(stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil
 }

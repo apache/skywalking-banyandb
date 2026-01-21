@@ -146,10 +146,17 @@ func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQuery
 	for idx := range r.TagFamilies {
 		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
 	}
+	seenElementIDs := make(map[uint64]bool)
 	for i := range r.Timestamps {
+		elementID := r.ElementIDs[i]
+		// Deduplicate: skip if we've already seen this element ID
+		if seenElementIDs[elementID] {
+			continue
+		}
+		seenElementIDs[elementID] = true
 		e := &streamv1.Element{
 			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-			ElementId: hex.EncodeToString(convert.Uint64ToBytes(r.ElementIDs[i])),
+			ElementId: hex.EncodeToString(convert.Uint64ToBytes(elementID)),
 		}
 
 		for _, proj := range projectionTags {

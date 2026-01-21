@@ -19,7 +19,7 @@
 NAME := fodc
 BINARIES := $(NAME)-proxy
 
-IMG_NAME := skywalking-fodc-proxy
+IMG_NAME := skywalking-banyandb-fodc-proxy
 
 # Override SOURCE_DIR to match the actual Go module path structure
 SOURCE_DIR := fodc/proxy

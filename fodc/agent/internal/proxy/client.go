@@ -46,36 +46,36 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
-	connManager        *connManager
+	logger             *logger.Logger
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
-	logger             *logger.Logger
+	connManager        *connManager
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
-	client             fodcv1.FODCServiceClient
-	registrationStream fodcv1.FODCService_RegisterAgentClient
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
+	registrationStream fodcv1.FODCService_RegisterAgentClient
+	client             fodcv1.FODCServiceClient
 
-	proxyAddr string
-	nodeIP    string
-	nodeRole  string
-	agentID   string
+	proxyAddr      string
+	nodeRole       string
+	podName        string
+	agentID        string
+	containerNames []string
 
-	nodePort          int
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
-	disconnected      bool
 	streamsMu         sync.RWMutex   // Protects streams only
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
+	disconnected      bool
 }
 
 // NewClient creates a new Client instance.
 func NewClient(
 	proxyAddr string,
-	nodeIP string,
-	nodePort int,
 	nodeRole string,
+	podName string,
+	containerNames []string,
 	labels map[string]string,
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
@@ -86,9 +86,9 @@ func NewClient(
 	client := &Client{
 		connManager:       connMgr,
 		proxyAddr:         proxyAddr,
-		nodeIP:            nodeIP,
-		nodePort:          nodePort,
 		nodeRole:          nodeRole,
+		podName:           podName,
+		containerNames:    containerNames,
 		labels:            labels,
 		heartbeatInterval: heartbeatInterval,
 		reconnectInterval: reconnectInterval,
@@ -150,12 +150,10 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 	}
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: c.nodeRole,
-		Labels:   c.labels,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 	}
 
 	if sendErr := stream.Send(req); sendErr != nil {
@@ -418,12 +416,10 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 	c.streamsMu.RUnlock()
 
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole: c.nodeRole,
-		Labels:   c.labels,
-		PrimaryAddress: &fodcv1.Address{
-			Ip:   c.nodeIP,
-			Port: int32(c.nodePort),
-		},
+		NodeRole:       c.nodeRole,
+		Labels:         c.labels,
+		PodName:        c.podName,
+		ContainerNames: c.containerNames,
 	}
 
 	if sendErr := registrationStream.Send(req); sendErr != nil {
@@ -440,6 +436,46 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 	}
 
 	return nil
+}
+
+// cleanupStreams cleans up streams without stopping the connection manager.
+func (c *Client) cleanupStreams() {
+	c.streamsMu.Lock()
+	if c.heartbeatTicker != nil {
+		c.heartbeatTicker.Stop()
+		c.heartbeatTicker = nil
+	}
+
+	oldStopCh := c.stopCh
+	c.stopCh = make(chan struct{})
+	c.streamsMu.Unlock()
+
+	if oldStopCh != nil {
+		select {
+		case <-oldStopCh:
+		default:
+			close(oldStopCh)
+		}
+	}
+
+	c.heartbeatWg.Wait()
+
+	c.streamsMu.Lock()
+	if c.registrationStream != nil {
+		if closeErr := c.registrationStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing registration stream")
+		}
+		c.registrationStream = nil
+	}
+
+	if c.metricsStream != nil {
+		if closeErr := c.metricsStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
+		}
+		c.metricsStream = nil
+	}
+	c.client = nil
+	c.streamsMu.Unlock()
 }
 
 // Disconnect closes connection to Proxy.
@@ -494,10 +530,14 @@ func (c *Client) Start(ctx context.Context) error {
 	c.connManager.start(ctx)
 
 	for {
+		c.streamsMu.RLock()
+		stopCh := c.stopCh
+		c.streamsMu.RUnlock()
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-c.stopCh:
+		case <-stopCh:
 			return nil
 		default:
 		}
@@ -510,18 +550,14 @@ func (c *Client) Start(ctx context.Context) error {
 
 		if regErr := c.StartRegistrationStream(ctx); regErr != nil {
 			c.logger.Error().Err(regErr).Msg("Failed to start registration stream, reconnecting...")
-			if disconnectErr := c.Disconnect(); disconnectErr != nil {
-				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
-			}
+			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
 
 		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
-			if disconnectErr := c.Disconnect(); disconnectErr != nil {
-				c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect before retry")
-			}
+			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
 		}
@@ -533,11 +569,15 @@ func (c *Client) Start(ctx context.Context) error {
 
 // handleRegistrationStream handles the registration stream.
 func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FODCService_RegisterAgentClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -565,11 +605,15 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 
 // handleMetricsStream handles the metrics stream.
 func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCService_StreamMetricsClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -645,6 +689,9 @@ func (c *Client) reconnect(ctx context.Context) {
 	c.heartbeatWg.Wait()
 	c.streamsMu.Lock()
 
+	if !c.disconnected {
+		close(c.stopCh)
+	}
 	c.stopCh = make(chan struct{})
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
@@ -667,6 +714,9 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	if connResult.err != nil {
 		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
+		if disconnectErr := c.Disconnect(); disconnectErr != nil {
+			c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect")
+		}
 		return
 	}
 

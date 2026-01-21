@@ -160,7 +160,9 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	// TODO: to support all aggregation functions
 	needCompletePushDownAgg := criteria.GetAgg() != nil &&
 		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN) &&
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN ||
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM ||
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT) &&
 		criteria.GetTop() == nil
 
 	// parse fields
@@ -179,9 +181,13 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 
 	if criteria.GetAgg() != nil {
+		aggrFunc := criteria.GetAgg().GetFunction()
+		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
+			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
-			criteria.GetAgg().GetFunction(),
+			aggrFunc,
 			criteria.GetGroupBy() != nil,
 		)
 		pushedLimit = math.MaxInt

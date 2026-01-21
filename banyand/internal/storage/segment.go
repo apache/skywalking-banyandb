@@ -141,6 +141,19 @@ func (s *segment[T, O]) Tables() (tt []T, cc []Cache) {
 	return tt, cc
 }
 
+// TablesWithShardIDs returns tables with their corresponding shard IDs.
+func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID, cc []Cache) {
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, sh := range *sLst {
+			tt = append(tt, sh.table)
+			shardIDs = append(shardIDs, sh.id)
+			cc = append(cc, sh.shardCache)
+		}
+	}
+	return tt, shardIDs, cc
+}
+
 func (s *segment[T, O]) incRef(ctx context.Context) error {
 	s.lastAccessed.Store(time.Now().UnixNano())
 	if atomic.LoadInt32(&s.refCount) <= 0 {
@@ -708,7 +721,7 @@ func loadSegments[T TSTable, O any](root, prefix string, parser *segmentControll
 		}); err != nil {
 		return err
 	}
-	sort.Slice(startTimeLst, func(i, j int) bool { return i < j })
+	sort.Slice(startTimeLst, func(i, j int) bool { return startTimeLst[i].Before(startTimeLst[j]) })
 	for i, start := range startTimeLst {
 		var end time.Time
 		if i < len(startTimeLst)-1 {

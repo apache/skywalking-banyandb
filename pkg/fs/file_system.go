@@ -124,6 +124,8 @@ type FileSystem interface {
 	MustGetTotalSpace(path string) uint64
 	// CreateHardLink creates hard links in destPath for files in srcPath that pass the filter.
 	CreateHardLink(srcPath, destPath string, filter func(string) bool) error
+	// IsExist checks if the directory/file exists or not.
+	IsExist(path string) bool
 }
 
 // DirEntry is the interface that wraps the basic information about a file or directory.
