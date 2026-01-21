@@ -24,6 +24,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -279,7 +280,7 @@ type resultMIterator struct {
 	result           model.MeasureQueryResult
 	hiddenTags       logical.HiddenTagSet
 	err              error
-	current          []*measurev1.DataPoint
+	current          []*measurev1.InternalDataPoint
 	projectionTags   []model.TagProjection
 	projectionFields []string
 	i                int
@@ -364,14 +365,21 @@ func (ei *resultMIterator) Next() bool {
 				})
 			}
 		}
-		ei.current = append(ei.current, dp)
+		var shardID common.ShardID
+		if len(r.ShardIDs) > i {
+			shardID = r.ShardIDs[i]
+		}
+		ei.current = append(ei.current, &measurev1.InternalDataPoint{
+			DataPoint: dp,
+			ShardId:   uint32(shardID),
+		})
 	}
 
 	return true
 }
 
-func (ei *resultMIterator) Current() []*measurev1.DataPoint {
-	return []*measurev1.DataPoint{ei.current[ei.i]}
+func (ei *resultMIterator) Current() []*measurev1.InternalDataPoint {
+	return []*measurev1.InternalDataPoint{ei.current[ei.i]}
 }
 
 func (ei *resultMIterator) Close() error {

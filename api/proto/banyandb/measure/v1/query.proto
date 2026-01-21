@@ -55,6 +55,31 @@ message QueryResponse {
   common.v1.Trace trace = 2;
 }
 
+// InternalDataPoint wraps DataPoint with shard information for internal use.
+// Used in distributed query to distinguish data from different shards.
+message InternalDataPoint {
+  // The actual data point
+  DataPoint data_point = 1;
+  // The shard id where this data point comes from
+  uint32 shard_id = 2;
+}
+
+// InternalQueryRequest is the internal request for distributed query.
+// Wraps QueryRequest for extensibility.
+message InternalQueryRequest {
+  // The actual query request
+  QueryRequest request = 1;
+}
+
+// InternalQueryResponse is the internal response for distributed query.
+// Contains shard information for proper deduplication.
+message InternalQueryResponse {
+  // data_points with shard information
+  repeated InternalDataPoint data_points = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
+}
+
 // QueryRequest is the request contract for query.
 message QueryRequest {
   // groups indicate where the data points are stored.

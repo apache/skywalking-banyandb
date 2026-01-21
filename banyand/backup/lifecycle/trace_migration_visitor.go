@@ -289,6 +289,10 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 	sourceShardID common.ShardID,
 	sidxPath string,
 ) ([]queue.StreamingPartData, []func(), error) {
+	// If the sidx does not exist, then ignore for the life cycle
+	if !mv.lfs.IsExist(sidxPath) {
+		return nil, nil, nil
+	}
 	// Sidx structure: sidx/{index-name}/{part-id}/files
 	// Find all index directories in the sidx directory
 	entries := mv.lfs.ReadDir(sidxPath)

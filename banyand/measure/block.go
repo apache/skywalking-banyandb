@@ -445,6 +445,7 @@ type blockCursor struct {
 	idx                 int
 	minTimestamp        int64
 	maxTimestamp        int64
+	shardID             common.ShardID
 }
 
 func (bc *blockCursor) reset() {
@@ -497,6 +498,9 @@ func (bc *blockCursor) copyAllTo(r *model.MeasureResult, storedIndexValue map[co
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[idx:offset]...)
 	r.Versions = append(r.Versions, bc.versions[idx:offset]...)
+	for i := 0; i < size; i++ {
+		r.ShardIDs = append(r.ShardIDs, bc.shardID)
+	}
 	if desc {
 		slices.Reverse(r.Timestamps)
 		slices.Reverse(r.Versions)
@@ -595,6 +599,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 	r.SID = bc.bm.seriesID
 	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
 	r.Versions = append(r.Versions, bc.versions[bc.idx])
+	r.ShardIDs = append(r.ShardIDs, bc.shardID)
 	var indexValue map[string]*modelv1.TagValue
 	if storedIndexValue != nil {
 		indexValue = storedIndexValue[r.SID]

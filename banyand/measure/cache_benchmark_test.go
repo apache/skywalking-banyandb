@@ -330,7 +330,7 @@ func (m *measure) QueryWithCache(ctx context.Context, mqo model.MeasureQueryOpti
 		}
 	}
 
-	sids, tables, _, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
+	sids, tables, _, _, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
 	if err != nil {
 		return nil, err
 	}
