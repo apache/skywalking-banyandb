@@ -236,6 +236,15 @@ func (t *trace) prepareSIDXStreaming(
 		seriesIDs = []common.SeriesID{1}
 	}
 
+	// Extract timestamps from TimeRange for time-based part selection optimization
+	var minTimestamp, maxTimestamp *int64
+	if tqo.TimeRange != nil {
+		minTs := tqo.TimeRange.Start.UnixNano()
+		maxTs := tqo.TimeRange.End.UnixNano()
+		minTimestamp = &minTs
+		maxTimestamp = &maxTs
+	}
+
 	req := sidx.QueryRequest{
 		Filter:       tqo.SkippingFilter,
 		TagFilter:    tqo.TagFilter,
@@ -243,6 +252,8 @@ func (t *trace) prepareSIDXStreaming(
 		MaxBatchSize: tqo.MaxTraceSize,
 		MinKey:       &tqo.MinVal,
 		MaxKey:       &tqo.MaxVal,
+		MinTimestamp: minTimestamp,
+		MaxTimestamp: maxTimestamp,
 		SeriesIDs:    seriesIDs,
 	}
 	if tqo.TagProjection != nil {
