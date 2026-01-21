@@ -54,6 +54,7 @@ const (
 var (
 	_ bus.MessageListener            = (*streamQueryProcessor)(nil)
 	_ bus.MessageListener            = (*measureQueryProcessor)(nil)
+	_ bus.MessageListener            = (*measureInternalQueryProcessor)(nil)
 	_ bus.MessageListener            = (*traceQueryProcessor)(nil)
 	_ executor.TraceExecutionContext = trace.Trace(nil)
 )
@@ -161,6 +162,129 @@ type measureQueryProcessor struct {
 	*bus.UnImplementedHealthyListener
 }
 
+// measureExecutionContext holds the common execution context for measure queries.
+type measureExecutionContext struct {
+	ml       *logger.Logger
+	ecc      []executor.MeasureExecutionContext
+	metadata []*commonv1.Metadata
+	schemas  []logical.Schema
+}
+
+// buildMeasureContext builds the execution context for a measure query.
+func buildMeasureContext(measureService measure.Service, log *logger.Logger, queryCriteria *measurev1.QueryRequest, logPrefix string) (*measureExecutionContext, error) {
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var ecc []executor.MeasureExecutionContext
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, ecErr := measureService.Measure(meta)
+		if ecErr != nil {
+			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
+		}
+		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if schemaErr != nil {
+			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
+		}
+		ecc = append(ecc, ec)
+		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
+	}
+	ml := log.Named(logPrefix, queryCriteria.Groups[0], queryCriteria.Name)
+	return &measureExecutionContext{
+		metadata: metadata,
+		schemas:  schemas,
+		ecc:      ecc,
+		ml:       ml,
+	}, nil
+}
+
+// executeMeasurePlan executes the measure query plan and returns the iterator.
+func executeMeasurePlan(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext) (executor.MIterator, logical.Plan, error) {
+	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc)
+	if planErr != nil {
+		return nil, nil, fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
+	}
+	if e := mctx.ml.Debug(); e.Enabled() {
+		e.Str("plan", plan.String()).Msg("query plan")
+	}
+	mIterator, execErr := plan.(executor.MeasureExecutable).Execute(ctx)
+	if execErr != nil {
+		mctx.ml.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
+		return nil, nil, fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.GetName(), execErr)
+	}
+	return mIterator, plan, nil
+}
+
+// extractTagValuesFromInternalDataPoints extracts tag values from InternalDataPoints for RewriteAggTopNResult.
+func extractTagValuesFromInternalDataPoints(dataPoints []*measurev1.InternalDataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
+	tagValueMap := make(map[string][]*modelv1.TagValue)
+	for _, idp := range dataPoints {
+		if idp.DataPoint != nil {
+			extractTagValuesFromDataPoint(idp.DataPoint, groupByTags, tagValueMap)
+		}
+	}
+	return tagValueMap
+}
+
+// collectInternalDataPoints collects InternalDataPoints from the iterator.
+func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.InternalDataPoint {
+	result := make([]*measurev1.InternalDataPoint, 0)
+	for mIterator.Next() {
+		current := mIterator.Current()
+		if len(current) > 0 {
+			result = append(result, current[0])
+		}
+	}
+	return result
+}
+
+// extractTagValuesFromDataPoints extracts tag values from DataPoints for RewriteAggTopNResult.
+func extractTagValuesFromDataPoints(dataPoints []*measurev1.DataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
+	tagValueMap := make(map[string][]*modelv1.TagValue)
+	for _, dp := range dataPoints {
+		extractTagValuesFromDataPoint(dp, groupByTags, tagValueMap)
+	}
+	return tagValueMap
+}
+
+// extractTagValuesFromDataPoint extracts tag values from a single DataPoint and appends to tagValueMap.
+func extractTagValuesFromDataPoint(dp *measurev1.DataPoint, groupByTags []string, tagValueMap map[string][]*modelv1.TagValue) {
+	for _, tagFamily := range dp.GetTagFamilies() {
+		for _, tag := range tagFamily.GetTags() {
+			tagName := tag.GetKey()
+			if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
+				tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
+			}
+		}
+	}
+}
+
+// getGroupByTags extracts group by tag names from query criteria.
+func getGroupByTags(queryCriteria *measurev1.QueryRequest) []string {
+	groupByTags := make([]string, 0)
+	if queryCriteria.GetGroupBy() != nil {
+		for _, tagFamily := range queryCriteria.GetGroupBy().GetTagProjection().GetTagFamilies() {
+			groupByTags = append(groupByTags, tagFamily.GetTags()...)
+		}
+	}
+	return groupByTags
+}
+
+// buildRewriteQueryCriteria builds the rewrite query criteria for RewriteAggTopNResult.
+func buildRewriteQueryCriteria(queryCriteria *measurev1.QueryRequest, rewrittenCriteria *modelv1.Criteria) *measurev1.QueryRequest {
+	return &measurev1.QueryRequest{
+		Groups:          queryCriteria.Groups,
+		Name:            queryCriteria.Name,
+		TimeRange:       queryCriteria.TimeRange,
+		Criteria:        rewrittenCriteria,
+		TagProjection:   queryCriteria.TagProjection,
+		FieldProjection: queryCriteria.FieldProjection,
+	}
+}
+
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
@@ -182,36 +306,14 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		if len(result) == 0 {
 			return
 		}
-		groupByTags := make([]string, 0)
-		if queryCriteria.GetGroupBy() != nil {
-			for _, tagFamily := range queryCriteria.GetGroupBy().GetTagProjection().GetTagFamilies() {
-				groupByTags = append(groupByTags, tagFamily.GetTags()...)
-			}
-		}
-		tagValueMap := make(map[string][]*modelv1.TagValue)
-		for _, dp := range result {
-			for _, tagFamily := range dp.GetTagFamilies() {
-				for _, tag := range tagFamily.GetTags() {
-					tagName := tag.GetKey()
-					if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
-						tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
-					}
-				}
-			}
-		}
-		rewriteCriteria, err := rewriteCriteria(tagValueMap)
-		if err != nil {
-			p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
+		groupByTags := getGroupByTags(queryCriteria)
+		tagValueMap := extractTagValuesFromDataPoints(result, groupByTags)
+		rewrittenCriteria, rewriteErr := rewriteCriteria(tagValueMap)
+		if rewriteErr != nil {
+			p.log.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
 			return
 		}
-		rewriteQueryCriteria := &measurev1.QueryRequest{
-			Groups:          queryCriteria.Groups,
-			Name:            queryCriteria.Name,
-			TimeRange:       queryCriteria.TimeRange,
-			Criteria:        rewriteCriteria,
-			TagProjection:   queryCriteria.TagProjection,
-			FieldProjection: queryCriteria.FieldProjection,
-		}
+		rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
 		resp = p.executeQuery(ctx, rewriteQueryCriteria)
 		dataPoints, handleErr := handleResponse(resp)
 		if handleErr != nil {
@@ -226,43 +328,32 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 	n := time.Now()
 	now := n.UnixNano()
 	defer func() {
-		if err := recover(); err != nil {
-			p.log.Error().Interface("err", err).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
+		if recoverErr := recover(); recoverErr != nil {
+			p.log.Error().Interface("err", recoverErr).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.MeasureExecutionContext
-	for i := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
-		}
-		ec, err := p.measureService.Measure(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
-			return
-		}
-		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
-			return
-		}
-		ecc = append(ecc, ec)
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
+
+	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "measure")
+	if buildErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
+		return
 	}
-	ml := p.log.Named("measure", queryCriteria.Groups[0], queryCriteria.Name)
-	if e := ml.Debug(); e.Enabled() {
+	if e := mctx.ml.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	plan, err := logical_measure.Analyze(queryCriteria, metadata, schemas, ecc)
-	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.GetName(), err))
+	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
+	if execErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
 	}
+	defer func() {
+		if closeErr := mIterator.Close(); closeErr != nil {
+			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		}
+	}()
+
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
@@ -286,26 +377,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		}()
 	}
 
-	if e := ml.Debug(); e.Enabled() {
-		e.Str("plan", plan.String()).Msg("query plan")
-	}
-
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(ctx)
-	if err != nil {
-		ml.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", queryCriteria.GetName(), err))
-		return
-	}
-	defer func() {
-		if err = mIterator.Close(); err != nil {
-			ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
-			if span != nil {
-				span.Error(fmt.Errorf("fail to close the query plan: %w", err))
-			}
-		}
-	}()
-
-	result := make([]*measurev1.DataPoint, 0)
+	var result []*measurev1.DataPoint
 	func() {
 		var r int
 		if tracer != nil {
@@ -320,12 +392,13 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 			r++
 			current := mIterator.Current()
 			if len(current) > 0 {
-				result = append(result, current[0])
+				result = append(result, current[0].GetDataPoint())
 			}
 		}
 	}()
+
 	qr := &measurev1.QueryResponse{DataPoints: result}
-	if e := ml.Debug(); e.Enabled() {
+	if e := mctx.ml.Debug(); e.Enabled() {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
 	}
 	resp = bus.NewMessage(bus.MessageID(now), qr)
@@ -348,6 +421,118 @@ func handleResponse(resp bus.Message) ([]*measurev1.DataPoint, *common.Error) {
 	default:
 		return nil, common.NewError("unexpected response data type: %T", d)
 	}
+}
+
+type measureInternalQueryProcessor struct {
+	measureService measure.Service
+	*queryService
+	*bus.UnImplementedHealthyListener
+}
+
+func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	internalRequest, ok := message.Data().(*measurev1.InternalQueryRequest)
+	n := time.Now()
+	now := n.UnixNano()
+	if !ok {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
+		return
+	}
+	queryCriteria := internalRequest.GetRequest()
+	if queryCriteria == nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query request is nil"))
+		return
+	}
+	// Handle RewriteAggTopNResult: double the top number for initial query
+	if queryCriteria.RewriteAggTopNResult {
+		queryCriteria.Top.Number *= 2
+	}
+	defer func() {
+		if recoverErr := recover(); recoverErr != nil {
+			p.log.Error().Interface("err", recoverErr).RawJSON("req", logger.Proto(queryCriteria)).Str("stack", string(debug.Stack())).Msg("panic")
+			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
+		}
+	}()
+
+	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "internal-measure")
+	if buildErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
+		return
+	}
+	if e := mctx.ml.Debug(); e.Enabled() {
+		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
+	}
+
+	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
+	if execErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+		return
+	}
+	defer func() {
+		if closeErr := mIterator.Close(); closeErr != nil {
+			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		}
+	}()
+
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+		span.Tag("plan", plan.String())
+		defer func() {
+			respData := resp.Data()
+			switch d := respData.(type) {
+			case *measurev1.InternalQueryResponse:
+				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
+				d.Trace = tracer.ToProto()
+				span.Stop()
+			case *common.Error:
+				span.Error(errors.New(d.Error()))
+				span.Stop()
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
+			default:
+				panic("unexpected data type")
+			}
+		}()
+	}
+
+	result := collectInternalDataPoints(mIterator)
+
+	// Handle RewriteAggTopNResult: rewrite query to get original data with Timestamp
+	if queryCriteria.RewriteAggTopNResult && len(result) > 0 {
+		groupByTags := getGroupByTags(queryCriteria)
+		tagValueMap := extractTagValuesFromInternalDataPoints(result, groupByTags)
+		rewrittenCriteria, rewriteErr := rewriteCriteria(tagValueMap)
+		if rewriteErr != nil {
+			mctx.ml.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
+		} else {
+			rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
+			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx)
+			if rewriteExecErr != nil {
+				mctx.ml.Error().Err(rewriteExecErr).RawJSON("req", logger.Proto(rewriteQueryCriteria)).Msg("fail to execute the rewrite query plan")
+			} else {
+				defer func() {
+					if closeErr := rewriteIterator.Close(); closeErr != nil {
+						mctx.ml.Error().Err(closeErr).Msg("fail to close the rewrite query plan")
+					}
+				}()
+				result = collectInternalDataPoints(rewriteIterator)
+			}
+		}
+	}
+
+	qr := &measurev1.InternalQueryResponse{DataPoints: result}
+	if e := mctx.ml.Debug(); e.Enabled() {
+		e.RawJSON("ret", logger.Proto(qr)).Msg("got an internal measure response")
+	}
+	resp = bus.NewMessage(bus.MessageID(now), qr)
+	if !queryCriteria.Trace && p.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > p.slowQuery {
+			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(result)).Msg("internal measure slow query")
+		}
+	}
+	return
 }
 
 func rewriteCriteria(tagValueMap map[string][]*modelv1.TagValue) (*modelv1.Criteria, error) {

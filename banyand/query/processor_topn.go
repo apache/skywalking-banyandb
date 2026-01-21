@@ -176,7 +176,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			r++
 			current := mIterator.Current()
 			if len(current) > 0 {
-				result = append(result, current[0])
+				result = append(result, current[0].GetDataPoint())
 			}
 		}
 	}()

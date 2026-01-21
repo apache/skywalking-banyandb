@@ -160,14 +160,16 @@ func (ami *aggGroupIterator[N]) Next() bool {
 	return ami.prev.Next()
 }
 
-func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
+func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if ami.err != nil {
 		return nil
 	}
 	ami.aggrFunc.Reset()
 	group := ami.prev.Current()
 	var resultDp *measurev1.DataPoint
-	for _, dp := range group {
+	var shardID uint32
+	for _, idp := range group {
+		dp := idp.GetDataPoint()
 		value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
 			GetValue()
 		v, err := aggregation.FromFieldValue[N](value)
@@ -179,6 +181,7 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
 		if resultDp != nil {
 			continue
 		}
+		shardID = idp.GetShardId()
 		resultDp = &measurev1.DataPoint{
 			TagFamilies: dp.TagFamilies,
 		}
@@ -197,7 +200,7 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.DataPoint {
 			Value: val,
 		},
 	}
-	return []*measurev1.DataPoint{resultDp}
+	return []*measurev1.InternalDataPoint{{DataPoint: resultDp, ShardId: shardID}}
 }
 
 func (ami *aggGroupIterator[N]) Close() error {
@@ -232,7 +235,8 @@ func (ami *aggAllIterator[N]) Next() bool {
 	var resultDp *measurev1.DataPoint
 	for ami.prev.Next() {
 		group := ami.prev.Current()
-		for _, dp := range group {
+		for _, idp := range group {
+			dp := idp.GetDataPoint()
 			value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
 				GetValue()
 			v, err := aggregation.FromFieldValue[N](value)
@@ -267,11 +271,12 @@ func (ami *aggAllIterator[N]) Next() bool {
 	return true
 }
 
-func (ami *aggAllIterator[N]) Current() []*measurev1.DataPoint {
+func (ami *aggAllIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if ami.result == nil {
 		return nil
 	}
-	return []*measurev1.DataPoint{ami.result}
+	// For aggregation across all data, shard ID is not applicable
+	return []*measurev1.InternalDataPoint{{DataPoint: ami.result, ShardId: 0}}
 }
 
 func (ami *aggAllIterator[N]) Close() error {
