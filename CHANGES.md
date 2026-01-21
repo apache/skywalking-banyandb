@@ -16,6 +16,7 @@ Release Notes.
 - Support writing data with specifications.
 - Persist series metadata in liaison queue for measure, stream and trace models.
 - Update the dump tool to support analyzing the parts with smeta files.
+- Add replication integration test for measure.
 - Activate the property repair mechanism by default.
 - Add snapshot time retention policy to ensure the snapshot only can be deleted after the configured minimum age(time).
 
