@@ -89,6 +89,8 @@ type QueryRequest struct {
 	Order         *index.OrderBy
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64 // Optional minimum timestamp (Unix nanoseconds) for time range filtering
+	MaxTimestamp  *int64 // Optional maximum timestamp (Unix nanoseconds) for time range filtering
 	SeriesIDs     []common.SeriesID
 	TagProjection []model.TagProjection
 	MaxBatchSize  int
@@ -109,6 +111,8 @@ type ScanQueryRequest struct {
 	OnProgress    ScanProgressFunc
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64 // Optional minimum timestamp (Unix nanoseconds) for time range filtering
+	MaxTimestamp  *int64 // Optional maximum timestamp (Unix nanoseconds) for time range filtering
 	MaxBatchSize  int
 	// OnProgress is an optional callback for progress reporting during scan.
 	// Called after processing each part with the current progress.
@@ -335,6 +339,10 @@ func (qr QueryRequest) Validate() error {
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
+	// Validate timestamp range
+	if qr.MinTimestamp != nil && qr.MaxTimestamp != nil && *qr.MinTimestamp > *qr.MaxTimestamp {
+		return fmt.Errorf("MinTimestamp cannot be greater than MaxTimestamp")
+	}
 	return nil
 }
 
@@ -345,6 +353,10 @@ func (sqr ScanQueryRequest) Validate() error {
 	}
 	if sqr.MinKey != nil && sqr.MaxKey != nil && *sqr.MinKey > *sqr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
+	}
+	// Validate timestamp range
+	if sqr.MinTimestamp != nil && sqr.MaxTimestamp != nil && *sqr.MinTimestamp > *sqr.MaxTimestamp {
+		return fmt.Errorf("MinTimestamp cannot be greater than MaxTimestamp")
 	}
 	return nil
 }
@@ -358,6 +370,8 @@ func (qr *QueryRequest) Reset() {
 	qr.MaxBatchSize = 0
 	qr.MinKey = nil
 	qr.MaxKey = nil
+	qr.MinTimestamp = nil
+	qr.MaxTimestamp = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
@@ -396,6 +410,21 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.MaxKey = &maxKey
 	} else {
 		qr.MaxKey = nil
+	}
+
+	// Copy timestamp range pointers
+	if other.MinTimestamp != nil {
+		minTimestamp := *other.MinTimestamp
+		qr.MinTimestamp = &minTimestamp
+	} else {
+		qr.MinTimestamp = nil
+	}
+
+	if other.MaxTimestamp != nil {
+		maxTimestamp := *other.MaxTimestamp
+		qr.MaxTimestamp = &maxTimestamp
+	} else {
+		qr.MaxTimestamp = nil
 	}
 }
 
