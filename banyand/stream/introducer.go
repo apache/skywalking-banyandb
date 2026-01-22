@@ -221,7 +221,7 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 	}
 
 	next := nextIntroduction.memPart
-	tst.pendingDataCount.Add(-int64(next.mp.partMetadata.TotalCount))
+	tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
 	nextSnp := cur.copyAllTo(epoch)
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart

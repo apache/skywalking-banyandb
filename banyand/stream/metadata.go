@@ -250,7 +250,7 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific.
+// CollectDataInfo collects data info for a specific group.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")
@@ -328,9 +328,7 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 			PartCount:     0,
 		}
 	}
-	tst.RLock()
-	defer tst.RUnlock()
-	snapshot := tst.snapshot
+	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
 		return &databasev1.ShardInfo{
 			ShardId:       shardID,
@@ -339,6 +337,7 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 			PartCount:     0,
 		}
 	}
+	defer snapshot.decRef()
 	var totalCount, compressedSize, uncompressedSize, partCount uint64
 	for _, pw := range snapshot.parts {
 		if pw.p != nil {
@@ -391,10 +390,9 @@ func (sr *schemaRepo) collectPendingWriteInfo(groupName string) (int64, error) {
 			return 0, nil
 		}
 		var pendingWriteCount int64
-		for _, shard := range queue.Shards() {
-			tst := shard.SubQueue()
-			if tst != nil {
-				pendingWriteCount += tst.pendingDataCount.Load()
+		for _, sq := range queue.SubQueues() {
+			if sq != nil {
+				pendingWriteCount += sq.getPendingDataCount()
 			}
 		}
 		return pendingWriteCount, nil
@@ -418,8 +416,9 @@ func (sr *schemaRepo) collectPendingWriteInfo(groupName string) (int64, error) {
 	for _, segment := range segments {
 		tables, _ := segment.Tables()
 		for _, tst := range tables {
-			pendingWriteCount += tst.pendingDataCount.Load()
+			pendingWriteCount += tst.getPendingDataCount()
 		}
+		segment.DecRef()
 	}
 	return pendingWriteCount, nil
 }
@@ -439,11 +438,9 @@ func (sr *schemaRepo) collectPendingSyncInfo(groupName string) (partCount int64,
 	if queue == nil {
 		return 0, 0, nil
 	}
-	for _, shard := range queue.Shards() {
-		tst := shard.SubQueue()
-		if tst != nil {
-			tst.RLock()
-			snapshot := tst.snapshot
+	for _, sq := range queue.SubQueues() {
+		if sq != nil {
+			snapshot := sq.currentSnapshot()
 			if snapshot != nil {
 				for _, pw := range snapshot.parts {
 					if pw.mp == nil && pw.p != nil && pw.p.partMetadata.TotalCount > 0 {
@@ -451,8 +448,8 @@ func (sr *schemaRepo) collectPendingSyncInfo(groupName string) (partCount int64,
 						totalSizeBytes += int64(pw.p.partMetadata.CompressedSizeBytes)
 					}
 				}
+				snapshot.decRef()
 			}
-			tst.RUnlock()
 		}
 	}
 	return partCount, totalSizeBytes, nil

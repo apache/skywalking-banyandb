@@ -221,11 +221,13 @@ func (q *Queue[S, O]) GetNodes(shardID common.ShardID) []string {
 	return q.opts.GetNodes(shardID)
 }
 
-// Shards returns all shards in the queue.
-func (q *Queue[S, O]) Shards() []*Shard[S] {
+// SubQueues returns sub-queues from all shards in the queue.
+func (q *Queue[S, O]) SubQueues() []S {
 	q.RLock()
 	defer q.RUnlock()
-	result := make([]*Shard[S], len(q.sLst))
-	copy(result, q.sLst)
+	result := make([]S, 0, len(q.sLst))
+	for _, shard := range q.sLst {
+		result = append(result, shard.sq)
+	}
 	return result
 }
