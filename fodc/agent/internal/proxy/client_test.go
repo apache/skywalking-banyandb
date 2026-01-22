@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
@@ -802,18 +801,7 @@ func TestProxyClient_SendClusterState_NoStream(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
 
-	ctx := context.Background()
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{},
-				Evictable:  []string{},
-			},
-		},
-	}
-
-	err := pc.SendClusterState(ctx, clusterState)
+	err := pc.sendClusterData()
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster state stream not established")
@@ -831,17 +819,7 @@ func TestProxyClient_SendClusterState_Success(t *testing.T) {
 	pc.clusterStateStream = mockStream
 	pc.streamsMu.Unlock()
 
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
-				Evictable:  []string{},
-			},
-		},
-	}
-
-	err := pc.SendClusterState(ctx, clusterState)
+	err := pc.sendClusterData()
 
 	require.NoError(t, err)
 	mockStream.mu.Lock()

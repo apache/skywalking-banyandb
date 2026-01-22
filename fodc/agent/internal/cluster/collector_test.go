@@ -30,8 +30,9 @@ import (
 )
 
 type mockClusterStateHandler struct {
-	states []*databasev1.GetClusterStateResponse
-	mu     sync.RWMutex
+	states      []*databasev1.GetClusterStateResponse
+	currentNode *databasev1.Node
+	mu          sync.RWMutex
 }
 
 func (m *mockClusterStateHandler) OnClusterStateUpdate(state *databasev1.GetClusterStateResponse) {
@@ -40,10 +41,22 @@ func (m *mockClusterStateHandler) OnClusterStateUpdate(state *databasev1.GetClus
 	m.states = append(m.states, state)
 }
 
+func (m *mockClusterStateHandler) OnCurrentNodeUpdate(node *databasev1.Node) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentNode = node
+}
+
 func (m *mockClusterStateHandler) GetStates() []*databasev1.GetClusterStateResponse {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.states
+}
+
+func (m *mockClusterStateHandler) GetCurrentNode() *databasev1.Node {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentNode
 }
 
 func TestNewCollector(t *testing.T) {

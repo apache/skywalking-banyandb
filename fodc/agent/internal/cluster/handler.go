@@ -18,33 +18,44 @@
 package cluster
 
 import (
-	"context"
 	"sync"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// ProxySender sends cluster state to proxy.
-type ProxySender interface {
-	// SendClusterState sends cluster state to proxy.
-	SendClusterState(ctx context.Context, clusterState *databasev1.GetClusterStateResponse) error
-}
-
-// Handler handles cluster state updates and sends them to proxy.
+// Handler handles cluster state updates and stores cluster data.
 type Handler struct {
-	log         *logger.Logger
-	proxySender ProxySender
-	ctx         context.Context
-	mu          sync.RWMutex
+	log          *logger.Logger
+	currentNode  *databasev1.Node
+	clusterState *databasev1.GetClusterStateResponse
+	mu           sync.RWMutex
 }
 
 // NewHandler creates a new cluster state handler.
-func NewHandler(ctx context.Context, proxySender ProxySender, log *logger.Logger) *Handler {
+func NewHandler(log *logger.Logger) *Handler {
 	return &Handler{
-		log:         log,
-		proxySender: proxySender,
-		ctx:         ctx,
+		log: log,
+	}
+}
+
+// OnCurrentNodeUpdate is called when current node info is fetched.
+func (h *Handler) OnCurrentNodeUpdate(node *databasev1.Node) {
+	if node == nil {
+		if h.log != nil {
+			h.log.Warn().Msg("Received nil current node")
+		}
+		return
+	}
+	h.mu.Lock()
+	h.currentNode = node
+	h.mu.Unlock()
+	if h.log != nil {
+		nodeName := ""
+		if node.Metadata != nil {
+			nodeName = node.Metadata.Name
+		}
+		h.log.Info().Str("node_name", nodeName).Msg("Updated current node info")
 	}
 }
 
@@ -56,24 +67,19 @@ func (h *Handler) OnClusterStateUpdate(state *databasev1.GetClusterStateResponse
 		}
 		return
 	}
-
-	if h.proxySender == nil {
-		if h.log != nil {
-			h.log.Warn().Msg("Proxy sender not available, skipping cluster state update")
-		}
-		return
-	}
-
-	if sendErr := h.proxySender.SendClusterState(h.ctx, state); sendErr != nil {
-		if h.log != nil {
-			h.log.Error().Err(sendErr).Msg("Failed to send cluster state to proxy")
-		}
-		return
-	}
-
+	h.mu.Lock()
+	h.clusterState = state
+	h.mu.Unlock()
 	if h.log != nil {
 		h.log.Debug().
 			Int("route_tables_count", len(state.RouteTables)).
-			Msg("Sent cluster state to proxy")
+			Msg("Updated cluster state")
 	}
+}
+
+// GetClusterData returns the current node info and cluster state.
+func (h *Handler) GetClusterData() (*databasev1.Node, *databasev1.GetClusterStateResponse) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.currentNode, h.clusterState
 }

@@ -20,6 +20,7 @@ syntax = "proto3";
 package banyandb.fodc.v1;
 
 import "google/protobuf/timestamp.proto";
+import "banyandb/database/v1/database.proto";
 import "banyandb/database/v1/rpc.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
@@ -69,10 +70,12 @@ message StreamMetricsResponse {
 }
 
 message StreamClusterStateRequest {
-  banyandb.database.v1.GetClusterStateResponse cluster_state = 1;
-  google.protobuf.Timestamp timestamp = 2;
+  banyandb.database.v1.Node current_node = 1;
+  banyandb.database.v1.GetClusterStateResponse cluster_state = 2;
+  google.protobuf.Timestamp timestamp = 3;
 }
 
 message StreamClusterStateResponse {
-  // Empty for now, can be extended for future cluster state requests
+  // Request cluster data from agent
+  bool request_cluster_data = 1;
 }

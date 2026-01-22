@@ -220,16 +220,13 @@ func runFODC(_ *cobra.Command, _ []string) error {
 			fr,
 			log,
 		)
-
 		proxyCtx, proxyCancel := context.WithCancel(ctx)
 		defer proxyCancel()
-
 		go func() {
 			if startErr := proxyClient.Start(proxyCtx); startErr != nil {
 				log.Error().Err(startErr).Msg("Proxy client error")
 			}
 		}()
-
 		if clusterStateAddr != "" {
 			if collectorErr := proxyClient.StartClusterStateCollector(proxyCtx, clusterStateAddr, clusterStatePollInterval); collectorErr != nil {
 				_ = metricsServer.Stop()
@@ -239,7 +236,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 				return fmt.Errorf("failed to start cluster state collector: %w", collectorErr)
 			}
 		}
-
 		log.Info().
 			Str("proxy_addr", proxyAddr).
 			Str("pod_name", podName).
@@ -263,17 +259,14 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	// Graceful shutdown
 	wd.GracefulStop()
-
 	if proxyClient != nil {
 		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
 			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
 		}
 	}
-
 	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
 	}
-
 	return nil
 }
 

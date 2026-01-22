@@ -32,7 +32,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
@@ -59,6 +58,7 @@ type Client struct {
 	flightRecorder     *flightrecorder.FlightRecorder
 	connManager        *connManager
 	clusterCollector   ClusterStateCollector
+	clusterHandler     *cluster.Handler
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
@@ -276,25 +276,28 @@ func (c *Client) StartClusterStateStream(ctx context.Context) error {
 	return nil
 }
 
-// SendClusterState sends cluster state to Proxy.
-func (c *Client) SendClusterState(ctx context.Context, clusterState *databasev1.GetClusterStateResponse) error {
+// sendClusterData sends cluster data to Proxy.
+func (c *Client) sendClusterData() error {
 	c.streamsMu.RLock()
 	if c.disconnected || c.clusterStateStream == nil {
 		c.streamsMu.RUnlock()
 		return fmt.Errorf("cluster state stream not established")
 	}
 	clusterStateStream := c.clusterStateStream
+	handler := c.clusterHandler
 	c.streamsMu.RUnlock()
-
+	if handler == nil {
+		return fmt.Errorf("cluster handler not available")
+	}
+	currentNode, clusterState := handler.GetClusterData()
 	req := &fodcv1.StreamClusterStateRequest{
+		CurrentNode:  currentNode,
 		ClusterState: clusterState,
 		Timestamp:    timestamppb.Now(),
 	}
-
 	if sendErr := clusterStateStream.Send(req); sendErr != nil {
-		return fmt.Errorf("failed to send cluster state: %w", sendErr)
+		return fmt.Errorf("failed to send cluster data: %w", sendErr)
 	}
-
 	return nil
 }
 
@@ -303,7 +306,6 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 	c.streamsMu.RLock()
 	stopCh := c.stopCh
 	c.streamsMu.RUnlock()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -312,8 +314,7 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 			return
 		default:
 		}
-
-		_, recvErr := stream.Recv()
+		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Cluster state stream closed by Proxy, reconnecting...")
 			go c.reconnect(ctx)
@@ -330,6 +331,12 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 			c.logger.Error().Err(recvErr).Msg("Error receiving from cluster state stream, reconnecting...")
 			go c.reconnect(ctx)
 			return
+		}
+		if resp != nil && resp.RequestClusterData {
+			c.logger.Debug().Msg("Received cluster data request from proxy")
+			if sendErr := c.sendClusterData(); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send cluster data to proxy")
+			}
 		}
 	}
 }
@@ -594,23 +601,19 @@ func (c *Client) StartClusterStateCollector(ctx context.Context, lifecycleAddr s
 	if lifecycleAddr == "" {
 		return nil
 	}
-
-	clusterHandler := cluster.NewHandler(ctx, c, c.logger)
+	clusterHandler := cluster.NewHandler(c.logger)
 	clusterCollector := cluster.NewCollector(clusterHandler, lifecycleAddr, pollInterval)
-
 	if startErr := clusterCollector.Start(); startErr != nil {
 		return fmt.Errorf("failed to start cluster state collector: %w", startErr)
 	}
-
 	c.streamsMu.Lock()
 	c.clusterCollector = clusterCollector
+	c.clusterHandler = clusterHandler
 	c.streamsMu.Unlock()
-
 	c.logger.Info().
 		Str("lifecycle_addr", lifecycleAddr).
 		Dur("poll_interval", pollInterval).
 		Msg("Cluster state collector started")
-
 	return nil
 }
 

@@ -4752,6 +4752,7 @@ Phase represents the current phase of the deletion task.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| current_node | [banyandb.database.v1.Node](#banyandb-database-v1-Node) |  |  |
 | cluster_state | [banyandb.database.v1.GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
@@ -4763,7 +4764,12 @@ Phase represents the current phase of the deletion task.
 <a name="banyandb-fodc-v1-StreamClusterStateResponse"></a>
 
 ### StreamClusterStateResponse
-Empty for now, can be extended for future cluster state requests
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_cluster_data | [bool](#bool) |  | Request cluster data from agent |
 
 
 

@@ -18,29 +18,15 @@
 package cluster
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
-
-type mockProxySender struct {
-	states []*databasev1.GetClusterStateResponse
-	err    error
-}
-
-func (m *mockProxySender) SendClusterState(_ context.Context, state *databasev1.GetClusterStateResponse) error {
-	if m.err != nil {
-		return m.err
-	}
-	m.states = append(m.states, state)
-	return nil
-}
 
 func initTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
@@ -50,24 +36,15 @@ func initTestLogger(t *testing.T) *logger.Logger {
 }
 
 func TestNewHandler(t *testing.T) {
-	ctx := context.Background()
-	proxySender := &mockProxySender{}
 	log := initTestLogger(t)
-
-	handler := NewHandler(ctx, proxySender, log)
-
+	handler := NewHandler(log)
 	require.NotNil(t, handler)
-	assert.Equal(t, proxySender, handler.proxySender)
-	assert.Equal(t, ctx, handler.ctx)
 	assert.Equal(t, log, handler.log)
 }
 
 func TestHandler_OnClusterStateUpdate_Success(t *testing.T) {
-	ctx := context.Background()
-	proxySender := &mockProxySender{}
 	log := initTestLogger(t)
-	handler := NewHandler(ctx, proxySender, log)
-
+	handler := NewHandler(log)
 	clusterState := &databasev1.GetClusterStateResponse{
 		RouteTables: map[string]*databasev1.RouteTable{
 			"test": {
@@ -77,65 +54,62 @@ func TestHandler_OnClusterStateUpdate_Success(t *testing.T) {
 			},
 		},
 	}
-
 	handler.OnClusterStateUpdate(clusterState)
-
-	require.Len(t, proxySender.states, 1)
-	assert.Equal(t, clusterState, proxySender.states[0])
+	_, retrievedState := handler.GetClusterData()
+	assert.Equal(t, clusterState, retrievedState)
 }
 
 func TestHandler_OnClusterStateUpdate_NilState(t *testing.T) {
-	ctx := context.Background()
-	proxySender := &mockProxySender{}
 	log := initTestLogger(t)
-	handler := NewHandler(ctx, proxySender, log)
-
+	handler := NewHandler(log)
 	handler.OnClusterStateUpdate(nil)
-
-	// Should not send nil state
-	assert.Empty(t, proxySender.states)
+	_, retrievedState := handler.GetClusterData()
+	assert.Nil(t, retrievedState)
 }
 
-func TestHandler_OnClusterStateUpdate_SendError(t *testing.T) {
-	ctx := context.Background()
-	proxySender := &mockProxySender{
-		err: errors.New("send failed"),
-	}
+func TestHandler_OnCurrentNodeUpdate_Success(t *testing.T) {
 	log := initTestLogger(t)
-	handler := NewHandler(ctx, proxySender, log)
+	handler := NewHandler(log)
+	currentNode := &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: "test-node",
+		},
+		GrpcAddress: "localhost:17913",
+	}
+	handler.OnCurrentNodeUpdate(currentNode)
+	retrievedNode, _ := handler.GetClusterData()
+	assert.Equal(t, currentNode, retrievedNode)
+}
 
+func TestHandler_OnCurrentNodeUpdate_Nil(t *testing.T) {
+	log := initTestLogger(t)
+	handler := NewHandler(log)
+	handler.OnCurrentNodeUpdate(nil)
+	retrievedNode, _ := handler.GetClusterData()
+	assert.Nil(t, retrievedNode)
+}
+
+func TestHandler_GetClusterData(t *testing.T) {
+	log := initTestLogger(t)
+	handler := NewHandler(log)
+	currentNode := &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: "test-node",
+		},
+		GrpcAddress: "localhost:17913",
+	}
 	clusterState := &databasev1.GetClusterStateResponse{
 		RouteTables: map[string]*databasev1.RouteTable{
 			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
+				Registered: []*databasev1.Node{currentNode},
+				Active:     []string{"test-node"},
 				Evictable:  []string{},
 			},
 		},
 	}
-
-	// Should not panic on error
+	handler.OnCurrentNodeUpdate(currentNode)
 	handler.OnClusterStateUpdate(clusterState)
-
-	// State was attempted to be sent
-	assert.Empty(t, proxySender.states)
-}
-
-func TestHandler_OnClusterStateUpdate_NoProxySender(t *testing.T) {
-	ctx := context.Background()
-	log := initTestLogger(t)
-	handler := NewHandler(ctx, nil, log)
-
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
-				Evictable:  []string{},
-			},
-		},
-	}
-
-	// Should not panic when proxySender is nil
-	handler.OnClusterStateUpdate(clusterState)
+	retrievedNode, retrievedState := handler.GetClusterData()
+	assert.Equal(t, currentNode, retrievedNode)
+	assert.Equal(t, clusterState, retrievedState)
 }
