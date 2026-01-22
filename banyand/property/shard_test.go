@@ -110,7 +110,7 @@ func TestMergeDeleted(t *testing.T) {
 				_ = db.close()
 			})
 
-			newShard, err := db.loadShard(context.Background(), 0)
+			newShard, err := db.loadShard(context.Background(), testPropertyGroup, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -319,7 +319,7 @@ func TestRepair(t *testing.T) {
 				_ = db.close()
 			})
 
-			newShard, err := db.loadShard(context.Background(), 0)
+			newShard, err := db.loadShard(context.Background(), testPropertyGroup, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
