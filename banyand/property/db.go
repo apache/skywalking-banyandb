@@ -66,7 +66,7 @@ type database struct {
 	lock                fs.File
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
-	groups              atomic.Pointer[map[string]*groupShards]
+	groups              sync.Map
 	location            string
 	repairBaseDir       string
 	flushInterval       time.Duration
@@ -170,20 +170,18 @@ func (db *database) update(ctx context.Context, shardID common.ShardID, id []byt
 }
 
 func (db *database) delete(ctx context.Context, docIDs [][]byte) error {
-	groupsMap := db.groups.Load()
-	if groupsMap == nil {
-		return nil
-	}
 	var err error
-	for _, gs := range *groupsMap {
+	db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
 		if sLst == nil {
-			continue
+			return true
 		}
 		for _, s := range *sLst {
 			multierr.AppendInto(&err, s.delete(ctx, docIDs))
 		}
-	}
+		return true
+	})
 	return err
 }
 
@@ -192,15 +190,11 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if err != nil {
 		return nil, err
 	}
-	groupsMap := db.groups.Load()
-	if groupsMap == nil {
-		return nil, nil
-	}
 	requestedGroups := make(map[string]bool, len(req.Groups))
 	for _, g := range req.Groups {
 		requestedGroups[g] = true
 	}
-	shards := db.collectGroupShards(groupsMap, requestedGroups)
+	shards := db.collectGroupShards(requestedGroups)
 	if len(shards) == 0 {
 		return nil, nil
 	}
@@ -248,20 +242,23 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	return result, nil
 }
 
-func (db *database) collectGroupShards(groupsMap *map[string]*groupShards, requestedGroups map[string]bool) []*shard {
+func (db *database) collectGroupShards(requestedGroups map[string]bool) []*shard {
 	var shards []*shard
-	for groupName, gs := range *groupsMap {
+	db.groups.Range(func(key, value any) bool {
+		groupName := key.(string)
 		if len(requestedGroups) > 0 {
 			if _, ok := requestedGroups[groupName]; !ok {
-				continue
+				return true
 			}
 		}
+		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
 		if sLst == nil {
-			continue
+			return true
 		}
 		shards = append(shards, *sLst...)
-	}
+		return true
+	})
 	return shards
 }
 
@@ -288,46 +285,33 @@ func (db *database) loadShard(ctx context.Context, group string, id common.Shard
 
 	gs.mu.Lock()
 	sLst := gs.shards.Load()
-	if sLst == nil {
-		sLst = &[]*shard{}
+	var oldList []*shard
+	if sLst != nil {
+		oldList = *sLst
 	}
-	newList := append(*sLst, sd)
+	newList := make([]*shard, len(oldList)+1)
+	copy(newList, oldList)
+	newList[len(oldList)] = sd
 	gs.shards.Store(&newList)
 	gs.mu.Unlock()
 	return sd, nil
 }
 
 func (db *database) getOrCreateGroupShards(group string) *groupShards {
-	groupsMap := db.groups.Load()
-	if groupsMap != nil {
-		if gs, ok := (*groupsMap)[group]; ok {
-			return gs
-		}
-	}
 	gs := &groupShards{
 		group:    group,
 		location: filepath.Join(db.location, group),
 	}
-	if groupsMap == nil {
-		newMap := make(map[string]*groupShards)
-		newMap[group] = gs
-		db.groups.Store(&newMap)
-	} else {
-		(*groupsMap)[group] = gs
-		db.groups.Store(groupsMap)
-	}
-	return gs
+	actual, _ := db.groups.LoadOrStore(group, gs)
+	return actual.(*groupShards)
 }
 
 func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
-	groupsMap := db.groups.Load()
-	if groupsMap == nil {
-		return nil, false
-	}
-	gs, ok := (*groupsMap)[group]
+	value, ok := db.groups.Load(group)
 	if !ok {
 		return nil, false
 	}
+	gs := value.(*groupShards)
 	sLst := gs.shards.Load()
 	if sLst == nil {
 		return nil, false
@@ -347,19 +331,18 @@ func (db *database) close() error {
 	if db.repairScheduler != nil {
 		db.repairScheduler.close()
 	}
-	groupsMap := db.groups.Load()
 	var err error
-	if groupsMap != nil {
-		for _, gs := range *groupsMap {
-			sLst := gs.shards.Load()
-			if sLst == nil {
-				continue
-			}
-			for _, s := range *sLst {
-				multierr.AppendInto(&err, s.close())
-			}
+	db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
+		sLst := gs.shards.Load()
+		if sLst == nil {
+			return true
 		}
-	}
+		for _, s := range *sLst {
+			multierr.AppendInto(&err, s.close())
+		}
+		return true
+	})
 	db.lock.Close()
 	return err
 }
@@ -368,19 +351,17 @@ func (db *database) collect() {
 	if db.closed.Load() {
 		return
 	}
-	groupsMap := db.groups.Load()
-	if groupsMap == nil {
-		return
-	}
-	for _, gs := range *groupsMap {
+	db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
 		if sLst == nil {
-			continue
+			return true
 		}
 		for _, s := range *sLst {
 			s.store.CollectMetrics()
 		}
-	}
+		return true
+	})
 }
 
 func (db *database) repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {

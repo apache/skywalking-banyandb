@@ -406,15 +406,12 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 				return "", newSpaceErr
 			}
 			result.appendStop(defFunc)
-			groupsMap := db.groups.Load()
-			if groupsMap == nil {
-				return snapshotDir, nil
-			}
 			var snpError error
-			for _, gs := range *groupsMap {
+			db.groups.Range(func(_, value any) bool {
+				gs := value.(*groupShards)
 				sLst := gs.shards.Load()
 				if sLst == nil {
-					continue
+					return true
 				}
 				for _, s := range *sLst {
 					snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
@@ -423,7 +420,8 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 						snpError = multierr.Append(snpError, e)
 					}
 				}
-			}
+				return true
+			})
 			return snapshotDir, snpError
 		})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

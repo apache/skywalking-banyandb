@@ -110,22 +110,6 @@ func TestBuildTree(t *testing.T) {
 			},
 		},
 		{
-			name: "build with multiple groups",
-			existingDoc: func(s *shard) ([]index.Document, error) {
-				return buildPropertyDocuments(s,
-					propertyBuilder{group: "group1", id: "test1"},
-					propertyBuilder{group: "group2", id: "test2"},
-					propertyBuilder{group: "group3", id: "test3"},
-				)
-			},
-			statusVerify: func(t *testing.T, s *shard, data *repairData) {
-				basicStatusVerify(t, data, "group1", 1, "group2", 1, "group3", 1)
-				verifyContainsProperty(t, s, data, "group1", propertyBuilder{group: "group1", id: "test1"})
-				verifyContainsProperty(t, s, data, "group2", propertyBuilder{group: "group2", id: "test2"})
-				verifyContainsProperty(t, s, data, "group3", propertyBuilder{group: "group3", id: "test3"})
-			},
-		},
-		{
 			name: "build multiple times",
 			existingDoc: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,

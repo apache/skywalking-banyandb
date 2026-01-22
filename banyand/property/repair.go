@@ -1107,28 +1107,27 @@ func (r *repairScheduler) doBuildTree() (err error) {
 			r.l.Err(saveStatusErr).Msgf("saving repair build tree status failure")
 		}
 	}()
-	groupsMap := r.db.groups.Load()
-	if groupsMap == nil {
-		return nil
-	}
 	hasUpdates := false
-	for _, gs := range *groupsMap {
+	var checkErr error
+	r.db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
 		if sLst == nil {
-			continue
+			return true
 		}
 		for _, s := range *sLst {
-			hasUpdates, err = s.repairState.checkHasUpdates()
-			if err != nil {
-				return err
+			hasUpdates, checkErr = s.repairState.checkHasUpdates()
+			if checkErr != nil {
+				return false
 			}
 			if hasUpdates {
-				break
+				return false
 			}
 		}
-		if hasUpdates {
-			break
-		}
+		return true
+	})
+	if checkErr != nil {
+		return checkErr
 	}
 	// if no updates, skip the repair
 	if !hasUpdates {

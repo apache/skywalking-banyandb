@@ -234,19 +234,17 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	defer s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
-	groupsMap := s.s.db.groups.Load()
-	if groupsMap == nil {
-		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-	}
-	for _, gs := range *groupsMap {
+	var snapshotResult *databasev1.Snapshot
+	s.s.db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
 		if sLst == nil {
-			continue
+			return true
 		}
 		for _, shardRef := range *sLst {
 			select {
 			case <-ctx.Done():
-				return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+				return false
 			default:
 			}
 			snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
@@ -255,15 +253,19 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			if snapshotErr != nil {
 				s.s.l.Error().Err(snapshotErr).Str("group", shardRef.group).
 					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
-				return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
+				snapshotResult = &databasev1.Snapshot{
 					Name:    sn,
 					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
 					Error:   snapshotErr.Error(),
-				})
+				}
+				return false
 			}
 		}
+		return true
+	})
+	if snapshotResult != nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snapshotResult)
 	}
-
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
 		Name:    sn,
 		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
