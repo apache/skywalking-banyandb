@@ -244,6 +244,14 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 		for _, shardRef := range *sLst {
 			select {
 			case <-ctx.Done():
+				// Context cancelled: record an error snapshot and stop iteration.
+				if err := ctx.Err(); err != nil {
+					snapshotResult = &databasev1.Snapshot{
+						Name:    sn,
+						Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+						Error:   err.Error(),
+					}
+				}
 				return false
 			default:
 			}
