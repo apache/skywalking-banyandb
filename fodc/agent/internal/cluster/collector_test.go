@@ -30,8 +30,8 @@ import (
 )
 
 type mockClusterStateHandler struct {
-	states      []*databasev1.GetClusterStateResponse
 	currentNode *databasev1.Node
+	states      []*databasev1.GetClusterStateResponse
 	mu          sync.RWMutex
 }
 
@@ -101,7 +101,8 @@ func TestCollector_Start_AfterStop(t *testing.T) {
 	collector.Stop()
 
 	// Attempt to start should fail
-	err := collector.Start()
+	ctx := context.Background()
+	err := collector.Start(ctx)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stopped and cannot be restarted")

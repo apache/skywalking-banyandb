@@ -38,8 +38,8 @@ const (
 	maxBackoff     = 5 * time.Second
 )
 
-// ClusterStateHandler handles cluster state updates.
-type ClusterStateHandler interface {
+// StateHandler handles cluster state updates.
+type StateHandler interface {
 	// OnClusterStateUpdate is called when cluster state is updated.
 	OnClusterStateUpdate(state *databasev1.GetClusterStateResponse)
 	// OnCurrentNodeUpdate is called when current node info is fetched.
@@ -48,20 +48,21 @@ type ClusterStateHandler interface {
 
 // Collector collects cluster state from BanyanDB node via gRPC.
 type Collector struct {
-	handler         ClusterStateHandler
 	log             *logger.Logger
 	closer          *run.Closer
 	conn            *grpc.ClientConn
+	handler         StateHandler
 	clusterClient   databasev1.ClusterStateServiceClient
 	nodeQueryClient databasev1.NodeQueryServiceClient
-	lifecycleAddr   string
-	interval        time.Duration
-	nodeFetchedCh   chan struct{}
-	mu              sync.RWMutex
+
+	nodeFetchedCh chan struct{}
+	lifecycleAddr string
+	interval      time.Duration
+	mu            sync.RWMutex
 }
 
 // NewCollector creates a new cluster state collector.
-func NewCollector(handler ClusterStateHandler, lifecycleAddr string, interval time.Duration) *Collector {
+func NewCollector(handler StateHandler, lifecycleAddr string, interval time.Duration) *Collector {
 	return &Collector{
 		handler:       handler,
 		lifecycleAddr: lifecycleAddr,
@@ -72,7 +73,7 @@ func NewCollector(handler ClusterStateHandler, lifecycleAddr string, interval ti
 }
 
 // Start starts the cluster state collector.
-func (c *Collector) Start() error {
+func (c *Collector) Start(ctx context.Context) error {
 	if c.closer.Closed() {
 		return fmt.Errorf("cluster state collector has been stopped and cannot be restarted")
 	}
@@ -98,7 +99,7 @@ func (c *Collector) Start() error {
 	c.clusterClient = databasev1.NewClusterStateServiceClient(c.conn)
 	c.nodeQueryClient = databasev1.NewNodeQueryServiceClient(c.conn)
 
-	go c.collectLoop()
+	go c.collectLoop(ctx)
 
 	c.log.Info().
 		Str("lifecycle_addr", c.lifecycleAddr).
@@ -127,41 +128,40 @@ func (c *Collector) Stop() {
 }
 
 // collectLoop continuously collects cluster state.
-func (c *Collector) collectLoop() {
+func (c *Collector) collectLoop(ctx context.Context) {
 	defer c.closer.Done()
-	c.fetchCurrentNodeOnce()
+	c.fetchCurrentNodeOnce(ctx)
 	close(c.nodeFetchedCh)
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
-	c.collectClusterState()
+	c.collectClusterState(ctx)
 	for {
 		select {
 		case <-c.closer.CloseNotify():
 			return
 		case <-ticker.C:
-			c.collectClusterState()
+			c.collectClusterState(ctx)
 		}
 	}
 }
 
 // collectClusterState performs a single collection operation.
-func (c *Collector) collectClusterState() {
-	state, collectErr := c.fetchClusterState(c.closer.Ctx())
+func (c *Collector) collectClusterState(ctx context.Context) {
+	state, collectErr := c.fetchClusterState(ctx)
 	if collectErr != nil {
 		if c.log != nil {
 			c.log.Error().Err(collectErr).Msg("Failed to fetch cluster state")
 		}
 		return
 	}
-
 	if state != nil && c.handler != nil {
 		c.handler.OnClusterStateUpdate(state)
 	}
 }
 
 // fetchCurrentNodeOnce fetches current node info once from BanyanDB node via gRPC.
-func (c *Collector) fetchCurrentNodeOnce() {
-	node, fetchErr := c.fetchCurrentNode(c.closer.Ctx())
+func (c *Collector) fetchCurrentNodeOnce(ctx context.Context) {
+	node, fetchErr := c.fetchCurrentNode(ctx)
 	if fetchErr != nil {
 		if c.log != nil {
 			c.log.Error().Err(fetchErr).Msg("Failed to fetch current node info")

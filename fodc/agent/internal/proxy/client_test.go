@@ -37,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+const testAgentID = "test-agent-id"
+
 // revive:disable-next-line:exported
 var NewProxyClient = NewClient
 
@@ -487,7 +489,7 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 	// Add successful response
 	mockStream.AddResponse(&fodcv1.RegisterAgentResponse{
 		Success:                  true,
-		AgentId:                  "test-agent-id",
+		AgentId:                  testAgentID,
 		HeartbeatIntervalSeconds: 10,
 		Message:                  "registered",
 	})
@@ -497,7 +499,7 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 	require.NoError(t, err)
 	agentID := pc.agentID
 	heartbeatInterval := pc.heartbeatInterval
-	assert.Equal(t, "test-agent-id", agentID)
+	assert.Equal(t, testAgentID, agentID)
 	assert.Equal(t, 10*time.Second, heartbeatInterval)
 }
 
@@ -672,13 +674,13 @@ func TestProxyClient_StartMetricsStream_Success(t *testing.T) {
 		require.True(t, ok)
 		agentIDs := md.Get("agent_id")
 		require.Len(t, agentIDs, 1)
-		assert.Equal(t, "test-agent-id", agentIDs[0])
+		assert.Equal(t, testAgentID, agentIDs[0])
 		return mockStream, nil
 	}
 
 	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.agentID = "test-agent-id"
+	pc.agentID = testAgentID
 	pc.streamsMu.Unlock()
 
 	err := pc.StartMetricsStream(ctx)
@@ -703,7 +705,7 @@ func TestProxyClient_StartMetricsStream_StreamError(t *testing.T) {
 
 	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.agentID = "test-agent-id"
+	pc.agentID = testAgentID
 	pc.streamsMu.Unlock()
 
 	err := pc.StartMetricsStream(ctx)
@@ -756,13 +758,13 @@ func TestProxyClient_StartClusterStateStream_Success(t *testing.T) {
 		require.True(t, ok)
 		agentIDs := md.Get("agent_id")
 		require.Len(t, agentIDs, 1)
-		assert.Equal(t, "test-agent-id", agentIDs[0])
+		assert.Equal(t, testAgentID, agentIDs[0])
 		return mockStream, nil
 	}
 
 	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.agentID = "test-agent-id"
+	pc.agentID = testAgentID
 	pc.streamsMu.Unlock()
 
 	err := pc.StartClusterStateStream(ctx)
@@ -787,7 +789,7 @@ func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
 
 	pc.streamsMu.Lock()
 	pc.client = mockClient
-	pc.agentID = "test-agent-id"
+	pc.agentID = testAgentID
 	pc.streamsMu.Unlock()
 
 	err := pc.StartClusterStateStream(ctx)

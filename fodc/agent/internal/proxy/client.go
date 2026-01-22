@@ -47,7 +47,7 @@ type MetricsRequestFilter struct {
 
 // ClusterStateCollector represents a cluster state collector interface.
 type ClusterStateCollector interface {
-	Start() error
+	Start(ctx context.Context) error
 	Stop()
 }
 
@@ -603,7 +603,7 @@ func (c *Client) StartClusterStateCollector(ctx context.Context, lifecycleAddr s
 	}
 	clusterHandler := cluster.NewHandler(c.logger)
 	clusterCollector := cluster.NewCollector(clusterHandler, lifecycleAddr, pollInterval)
-	if startErr := clusterCollector.Start(); startErr != nil {
+	if startErr := clusterCollector.Start(ctx); startErr != nil {
 		return fmt.Errorf("failed to start cluster state collector: %w", startErr)
 	}
 	c.streamsMu.Lock()
