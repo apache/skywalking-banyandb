@@ -70,12 +70,12 @@ var (
 )
 
 type shard struct {
-	store       index.SeriesStore
-	l           *logger.Logger
-	repairState *repair
-	location    string
-	id          common.ShardID
-
+	store             index.SeriesStore
+	l                 *logger.Logger
+	repairState       *repair
+	location          string
+	group             string
+	id                common.ShardID
 	expireToDeleteSec int64
 }
 
@@ -88,21 +88,23 @@ func (s *shard) close() error {
 
 func (db *database) newShard(
 	ctx context.Context,
+	group string,
 	id common.ShardID,
 	_ int64,
 	deleteExpireSec int64,
 	repairBaseDir string,
 	repairTreeSlotCount int,
 ) (*shard, error) {
-	location := path.Join(db.location, fmt.Sprintf(shardTemplate, int(id)))
+	location := path.Join(db.location, group, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
 		id:                id,
+		group:             group,
 		l:                 logger.Fetch(ctx, sName),
 		location:          location,
 		expireToDeleteSec: deleteExpireSec,
 	}
-	metricsFactory := db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"shard": sName}))
+	metricsFactory := db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
 	opts := inverted.StoreOpts{
 		Path:                 location,
 		Logger:               si.l,
@@ -114,7 +116,7 @@ func (db *database) newShard(
 	if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
-	repairBaseDir = path.Join(repairBaseDir, sName)
+	repairBaseDir = path.Join(repairBaseDir, group, sName)
 	si.repairState = newRepair(location, repairBaseDir, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
 		metricsFactory, repairBatchSearchSize, repairTreeSlotCount, db.repairScheduler)
 	return si, nil

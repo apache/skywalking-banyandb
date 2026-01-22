@@ -406,13 +406,22 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 				return "", newSpaceErr
 			}
 			result.appendStop(defFunc)
-			sList := db.sLst.Load()
+			groupsMap := db.groups.Load()
+			if groupsMap == nil {
+				return snapshotDir, nil
+			}
 			var snpError error
-			for _, s := range *sList {
-				snpDir := path.Join(snapshotDir, filepath.Base(s.location))
-				lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-				if e := s.store.TakeFileSnapshot(snpDir); e != nil {
-					snpError = multierr.Append(snpError, e)
+			for _, gs := range *groupsMap {
+				sLst := gs.shards.Load()
+				if sLst == nil {
+					continue
+				}
+				for _, s := range *sLst {
+					snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
+					lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+					if e := s.store.TakeFileSnapshot(snpDir); e != nil {
+						snpError = multierr.Append(snpError, e)
+					}
 				}
 			}
 			return snapshotDir, snpError
@@ -441,11 +450,13 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 
 	result.appendStop(messenger.GracefulStop)
 
-	// initialize shard in to db
-	for i := int32(0); i < node.shardCount; i++ {
-		shardID := common.ShardID(i)
-		_, err = db.loadShard(context.Background(), shardID)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	// initialize shard in to db for each group
+	for _, g := range groups {
+		for i := int32(0); i < node.shardCount; i++ {
+			shardID := common.ShardID(i)
+			_, err = db.loadShard(context.Background(), g.name, shardID)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
 	}
 
 	// adding data to the node
@@ -477,7 +488,7 @@ func (w *repairGossipClientWrapper) Rev(ctx context.Context, t gossip.Trace, nex
 }
 
 func applyPropertyUpdate(db *database, p property) {
-	s, err := db.loadShard(context.Background(), common.ShardID(p.shard))
+	s, err := db.loadShard(context.Background(), p.group, common.ShardID(p.shard))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	update := &propertyv1.Property{
 		Metadata: &commonv1.Metadata{
@@ -496,7 +507,7 @@ func applyPropertyUpdate(db *database, p property) {
 }
 
 func queryPropertyWithVerify(db *database, p property) {
-	s, err := db.loadShard(context.Background(), common.ShardID(p.shard))
+	s, err := db.loadShard(context.Background(), p.group, common.ShardID(p.shard))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{

@@ -18,6 +18,9 @@ Release Notes.
 - Update the dump tool to support analyzing the parts with smeta files.
 - Activate the property repair mechanism by default.
 - Add snapshot time retention policy to ensure the snapshot only can be deleted after the configured minimum age(time).
+- **Breaking Change**: Change the data storage path structure for property model:
+  - From: `<data-dir>/property/<shard>/...`
+  - To: `<data-dir>/property/group/<shard>/...`
 
 ### Bug Fixes
 

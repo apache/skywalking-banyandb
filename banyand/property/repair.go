@@ -73,7 +73,7 @@ type repair struct {
 	snapshotDir               string
 	statePath                 string
 	composeSlotAppendFilePath string
-	composeTreeFilePathFmt    string
+	composeTreeFilePath       string
 	treeSlotCount             int
 	batchSearchSize           int
 }
@@ -94,7 +94,7 @@ func newRepair(
 		snapshotDir:               path.Join(repairPath, "snapshot"),
 		statePath:                 path.Join(repairPath, "state.json"),
 		composeSlotAppendFilePath: path.Join(repairPath, "state-append-%d.tmp"),
-		composeTreeFilePathFmt:    path.Join(repairPath, "state-tree-%s.data"),
+		composeTreeFilePath:       path.Join(repairPath, "state-tree.data"),
 		batchSearchSize:           batchSearchSize,
 		metrics:                   newRepairMetrics(metricsFactory),
 		scheduler:                 scheduler,
@@ -124,8 +124,8 @@ func (r *repair) checkHasUpdates() (bool, error) {
 	return true, nil
 }
 
-func (r *repair) buildStatus(ctx context.Context, snapshotPath string, group string) (err error) {
-	r.l.Debug().Msgf("starting building status from snapshot path %s, group: %s", snapshotPath, group)
+func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err error) {
+	r.l.Debug().Msgf("starting building status from snapshot path %s", snapshotPath)
 	startTime := time.Now()
 	defer func() {
 		r.metrics.totalBuildTreeFinished.Inc(1)
@@ -142,14 +142,9 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string, group str
 	sort.Sort(snapshotIDList(items))
 
 	blugeConf := bluge.DefaultConfig(snapshotPath)
-	err = r.buildTree(ctx, blugeConf, group)
+	err = r.buildTree(ctx, blugeConf)
 	if err != nil {
 		return fmt.Errorf("building trees failure: %w", err)
-	}
-	// if only update a specific group, the repair base status file doesn't need to update
-	// because not all the group have been processed
-	if group != "" {
-		return nil
 	}
 
 	var latestSnapshotID uint64
@@ -175,7 +170,7 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string, group str
 	return nil
 }
 
-func (r *repair) buildTree(ctx context.Context, conf bluge.Config, group string) error {
+func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
 	reader, err := bluge.OpenReader(conf)
 	if err != nil {
 		// means no data found
@@ -188,9 +183,6 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config, group string)
 		_ = reader.Close()
 	}()
 	query := bluge.Query(bluge.NewMatchAllQuery())
-	if group != "" {
-		query = bluge.NewTermQuery(group).SetField(groupField)
-	}
 	topNSearch := bluge.NewTopNSearch(r.batchSearchSize, query)
 	topNSearch.SortBy([]string{
 		fmt.Sprintf("+%s", groupField),
@@ -200,32 +192,19 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config, group string)
 	})
 
 	var latestProperty *searchingProperty
-	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePathFmt, r.treeSlotCount, r.l)
+	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePath, r.treeSlotCount, r.l)
 	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, shaValue string) error {
 		if len(sortValue) != 4 {
 			return fmt.Errorf("unexpected sort value length: %d", len(sortValue))
 		}
-		group := convert.BytesToString(sortValue[0])
+		groupName := convert.BytesToString(sortValue[0])
 		name := convert.BytesToString(sortValue[1])
-		entity := r.buildLeafNodeEntity(group, name, convert.BytesToString(sortValue[2]))
+		entity := r.buildLeafNodeEntity(groupName, name, convert.BytesToString(sortValue[2]))
 
-		s := newSearchingProperty(group, shaValue, entity)
-		if latestProperty != nil {
-			if latestProperty.group != group {
-				// if the group have changed, we need to append the latest property to the tree composer, and compose builder
-				// the entity is changed, need to save the property
-				if err = treeComposer.append(latestProperty.entityID, latestProperty.shaValue); err != nil {
-					return fmt.Errorf("appending property to tree composer failure: %w", err)
-				}
-				err = treeComposer.composeNextGroupAndSave(latestProperty.group)
-				if err != nil {
-					return fmt.Errorf("composing group failure: %w", err)
-				}
-			} else if latestProperty.entityID != entity {
-				// the entity is changed, need to save the property
-				if err = treeComposer.append(latestProperty.entityID, latestProperty.shaValue); err != nil {
-					return fmt.Errorf("appending property to tree composer failure: %w", err)
-				}
+		s := newSearchingProperty(groupName, shaValue, entity)
+		if latestProperty != nil && latestProperty.entityID != entity {
+			if appendErr := treeComposer.append(latestProperty.entityID, latestProperty.shaValue); appendErr != nil {
+				return fmt.Errorf("appending property to tree composer failure: %w", appendErr)
 			}
 		}
 		latestProperty = s
@@ -239,9 +218,8 @@ func (r *repair) buildTree(ctx context.Context, conf bluge.Config, group string)
 		if err = treeComposer.append(latestProperty.entityID, latestProperty.shaValue); err != nil {
 			return fmt.Errorf("appending latest property to tree composer failure: %w", err)
 		}
-		err = treeComposer.composeNextGroupAndSave(latestProperty.group)
-		if err != nil {
-			return fmt.Errorf("composing last group failure: %w", err)
+		if err = treeComposer.composeAndSave(); err != nil {
+			return fmt.Errorf("composing tree failure: %w", err)
 		}
 	}
 
@@ -371,17 +349,15 @@ type repairTreeFileReader struct {
 	paging *repairTreeReaderPage
 }
 
-func (r *repair) treeReader(group string) (repairTreeReader, error) {
+func (r *repair) treeReader() (repairTreeReader, error) {
 	r.scheduler.treeLocker.RLock()
 	defer r.scheduler.treeLocker.RUnlock()
-	groupFile := fmt.Sprintf(r.composeTreeFilePathFmt, group)
-	file, err := os.OpenFile(groupFile, os.O_RDONLY, os.ModePerm)
+	file, err := os.OpenFile(r.composeTreeFilePath, os.O_RDONLY, os.ModePerm)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// if the file does not exist, it means no repair tree for this group
 			return nil, nil
 		}
-		return nil, fmt.Errorf("opening repair tree file %s failure: %w", group, err)
+		return nil, fmt.Errorf("opening repair tree file failure: %w", err)
 	}
 	reader := &repairTreeFileReader{
 		file:   file,
@@ -389,7 +365,7 @@ func (r *repair) treeReader(group string) (repairTreeReader, error) {
 	}
 	if err = reader.readFoot(); err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("reading footer from repair tree file %s failure: %w", groupFile, err)
+		return nil, fmt.Errorf("reading footer from repair tree file failure: %w", err)
 	}
 	return reader, nil
 }
@@ -679,15 +655,15 @@ func (s snapshotIDList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 type repairTreeComposer struct {
 	l             *logger.Logger
 	appendFileFmt string
-	treeFileFmt   string
+	treeFilePath  string
 	slotFiles     []*repairSlotFile
 	slotCount     int
 }
 
-func newRepairTreeComposer(appendSlotFilePathFmt, treeFilePathFmt string, slotCount int, l *logger.Logger) *repairTreeComposer {
+func newRepairTreeComposer(appendSlotFilePathFmt, treeFilePath string, slotCount int, l *logger.Logger) *repairTreeComposer {
 	return &repairTreeComposer{
 		appendFileFmt: appendSlotFilePathFmt,
-		treeFileFmt:   treeFilePathFmt,
+		treeFilePath:  treeFilePath,
 		slotCount:     slotCount,
 		slotFiles:     make([]*repairSlotFile, slotCount),
 		l:             l,
@@ -710,31 +686,30 @@ func (r *repairTreeComposer) append(id, shaVal string) (err error) {
 	return file.append(idBytes, shaValBytes)
 }
 
-// composeNextGroupAndSave composes the current group of slot files into a repair tree file.
+// composeAndSave composes the slot files into a repair tree file.
 // tree file format: [leaf nodes]+[slot nodes]+[root node]+[metadata]
 // leaf nodes: each node contains: [entity]+[sha value]
 // slot nodes: each node contains: [slot index]+[sha value]+[leaf nodes start offset]+[leaf nodes count]
 // root node: contains [sha value]
 // metadata: contains footer([slot nodes start offset]+[slot nodes count]+[root node start offset]+[root node length])+[footer length(data binary)]
-func (r *repairTreeComposer) composeNextGroupAndSave(group string) (err error) {
-	treeFilePath := fmt.Sprintf(r.treeFileFmt, group)
-	treeBuilder, err := newRepairTreeBuilder(treeFilePath)
+func (r *repairTreeComposer) composeAndSave() (err error) {
+	treeBuilder, err := newRepairTreeBuilder(r.treeFilePath)
 	if err != nil {
-		return fmt.Errorf("creating repair tree builder for group %s failure: %w", group, err)
+		return fmt.Errorf("creating repair tree builder failure: %w", err)
 	}
 	defer func() {
 		if closeErr := treeBuilder.close(); closeErr != nil {
-			err = multierr.Append(err, fmt.Errorf("closing repair tree builder for group %s failure: %w", group, closeErr))
+			err = multierr.Append(err, fmt.Errorf("closing repair tree builder failure: %w", closeErr))
 		}
 	}()
-	for i, f := range r.slotFiles {
+	for idx, f := range r.slotFiles {
 		if f == nil {
 			continue
 		}
 		if err = treeBuilder.appendSlot(f); err != nil {
-			return fmt.Errorf("appending slot file %s to repair tree builder for group %s failure: %w", f.path, group, err)
+			return fmt.Errorf("appending slot file %s to repair tree builder failure: %w", f.path, err)
 		}
-		r.slotFiles[i] = nil
+		r.slotFiles[idx] = nil
 	}
 	return treeBuilder.build()
 }
@@ -1132,15 +1107,24 @@ func (r *repairScheduler) doBuildTree() (err error) {
 			r.l.Err(saveStatusErr).Msgf("saving repair build tree status failure")
 		}
 	}()
-	sLst := r.db.sLst.Load()
-	if sLst == nil {
+	groupsMap := r.db.groups.Load()
+	if groupsMap == nil {
 		return nil
 	}
 	hasUpdates := false
-	for _, s := range *sLst {
-		hasUpdates, err = s.repairState.checkHasUpdates()
-		if err != nil {
-			return err
+	for _, gs := range *groupsMap {
+		sLst := gs.shards.Load()
+		if sLst == nil {
+			continue
+		}
+		for _, s := range *sLst {
+			hasUpdates, err = s.repairState.checkHasUpdates()
+			if err != nil {
+				return err
+			}
+			if hasUpdates {
+				break
+			}
 		}
 		if hasUpdates {
 			break
@@ -1166,41 +1150,53 @@ func (r *repairScheduler) buildingTree(shards []common.ShardID, group string, fo
 	}
 	defer r.treeLocker.Unlock()
 
-	buildAll := len(shards) == 0
-
-	// take a new snapshot first
 	snapshotPath, err := r.buildSnapshotFunc(r.closer.Ctx())
 	if err != nil {
 		return fmt.Errorf("taking snapshot failure: %w", err)
 	}
-	return walkDir(snapshotPath, "shard-", func(suffix string) error {
-		id, err := strconv.Atoi(suffix)
-		if err != nil {
-			return err
+
+	for _, groupDir := range lfs.ReadDir(snapshotPath) {
+		if !groupDir.IsDir() {
+			continue
 		}
-		if !buildAll {
+		groupName := groupDir.Name()
+		if group != "" && groupName != group {
+			continue
+		}
+		groupPath := path.Join(snapshotPath, groupName)
+		walkErr := walkDir(groupPath, "shard-", func(suffix string) error {
+			id, parseErr := strconv.Atoi(suffix)
+			if parseErr != nil {
+				return parseErr
+			}
 			// if not building all shards, check if the shard is in the list
-			found := false
-			for _, s := range shards {
-				if s == common.ShardID(id) {
-					found = true
-					break
+			if len(shards) > 0 {
+				found := false
+				for _, s := range shards {
+					if s == common.ShardID(id) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil // skip this shard
 				}
 			}
-			if !found {
-				return nil // skip this shard
+			s, loadErr := r.db.loadShard(r.closer.Ctx(), groupName, common.ShardID(id))
+			if loadErr != nil {
+				return fmt.Errorf("loading shard %d failure: %w", id, loadErr)
 			}
+			buildErr := s.repairState.buildStatus(r.closer.Ctx(), path.Join(groupPath, fmt.Sprintf("shard-%s", suffix)))
+			if buildErr != nil {
+				return fmt.Errorf("building status for shard %d failure: %w", id, buildErr)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return walkErr
 		}
-		s, err := r.db.loadShard(r.closer.Ctx(), common.ShardID(id))
-		if err != nil {
-			return fmt.Errorf("loading shard %d failure: %w", id, err)
-		}
-		err = s.repairState.buildStatus(r.closer.Ctx(), path.Join(snapshotPath, fmt.Sprintf("shard-%s", suffix)), group)
-		if err != nil {
-			return fmt.Errorf("building status for shard %d failure: %w", id, err)
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func (r *repairScheduler) documentUpdatesNotify() {

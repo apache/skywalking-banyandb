@@ -234,27 +234,33 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	defer s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
-	shardsRef := s.s.db.sLst.Load()
-	if shardsRef == nil {
+	groupsMap := s.s.db.groups.Load()
+	if groupsMap == nil {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
-	shards := *shardsRef
-	for _, shard := range shards {
-		select {
-		case <-ctx.Done():
-			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-		default:
+	for _, gs := range *groupsMap {
+		sLst := gs.shards.Load()
+		if sLst == nil {
+			continue
 		}
-		snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, filepath.Base(shard.location))
-		lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-		err := shard.store.TakeFileSnapshot(snpDir)
-		if err != nil {
-			s.s.l.Error().Err(err).Str("shard", filepath.Base(shard.location)).Msg("fail to take shard snapshot")
-			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
-				Name:    sn,
-				Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-				Error:   err.Error(),
-			})
+		for _, shardRef := range *sLst {
+			select {
+			case <-ctx.Done():
+				return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+			default:
+			}
+			snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
+			lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
+			if snapshotErr != nil {
+				s.s.l.Error().Err(snapshotErr).Str("group", shardRef.group).
+					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
+				return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
+					Name:    sn,
+					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+					Error:   snapshotErr.Error(),
+				})
+			}
 		}
 	}
 
