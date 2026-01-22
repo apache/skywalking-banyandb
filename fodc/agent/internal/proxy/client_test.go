@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
@@ -49,8 +50,9 @@ func initTestLogger(t *testing.T) *logger.Logger {
 
 // mockFODCServiceClient implements fodcv1.FODCServiceClient for testing.
 type mockFODCServiceClient struct {
-	registerAgentFunc func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_RegisterAgentClient, error)
-	streamMetricsFunc func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error)
+	registerAgentFunc      func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_RegisterAgentClient, error)
+	streamMetricsFunc      func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error)
+	streamClusterStateFunc func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error)
 }
 
 func (m *mockFODCServiceClient) RegisterAgent(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_RegisterAgentClient, error) {
@@ -63,6 +65,13 @@ func (m *mockFODCServiceClient) RegisterAgent(ctx context.Context, opts ...grpc.
 func (m *mockFODCServiceClient) StreamMetrics(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error) {
 	if m.streamMetricsFunc != nil {
 		return m.streamMetricsFunc(ctx, opts...)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockFODCServiceClient) StreamClusterState(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+	if m.streamClusterStateFunc != nil {
+		return m.streamClusterStateFunc(ctx, opts...)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -240,6 +249,94 @@ func (m *mockStreamMetricsClient) SendMsg(_ interface{}) error {
 }
 
 func (m *mockStreamMetricsClient) RecvMsg(_ interface{}) error {
+	return nil
+}
+
+// mockStreamClusterStateClient implements fodcv1.FODCService_StreamClusterStateClient for testing.
+type mockStreamClusterStateClient struct {
+	ctx           context.Context
+	recvChan      chan *fodcv1.StreamClusterStateResponse
+	sendErr       error
+	recvErr       error
+	sentRequests  []*fodcv1.StreamClusterStateRequest
+	recvResponses []*fodcv1.StreamClusterStateResponse
+	mu            sync.Mutex
+}
+
+func newMockStreamClusterStateClient(ctx context.Context) *mockStreamClusterStateClient {
+	return &mockStreamClusterStateClient{
+		ctx:           ctx,
+		sentRequests:  make([]*fodcv1.StreamClusterStateRequest, 0),
+		recvResponses: make([]*fodcv1.StreamClusterStateResponse, 0),
+		recvChan:      make(chan *fodcv1.StreamClusterStateResponse, 10),
+	}
+}
+
+func (m *mockStreamClusterStateClient) Send(req *fodcv1.StreamClusterStateRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.sentRequests = append(m.sentRequests, req)
+	return nil
+}
+
+func (m *mockStreamClusterStateClient) Recv() (*fodcv1.StreamClusterStateResponse, error) {
+	m.mu.Lock()
+	recvErr := m.recvErr
+	m.mu.Unlock()
+	if recvErr != nil {
+		return nil, recvErr
+	}
+	select {
+	case resp := <-m.recvChan:
+		return resp, nil
+	case <-m.ctx.Done():
+		return nil, m.ctx.Err()
+	case <-time.After(500 * time.Millisecond):
+		return nil, io.EOF
+	}
+}
+
+func (m *mockStreamClusterStateClient) SetRecvError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvErr = err
+}
+
+func (m *mockStreamClusterStateClient) SetSendError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sendErr = err
+}
+
+func (m *mockStreamClusterStateClient) AddResponse(resp *fodcv1.StreamClusterStateResponse) {
+	m.recvChan <- resp
+}
+
+func (m *mockStreamClusterStateClient) CloseSend() error {
+	close(m.recvChan)
+	return nil
+}
+
+func (m *mockStreamClusterStateClient) Context() context.Context {
+	return m.ctx
+}
+
+func (m *mockStreamClusterStateClient) Header() (metadata.MD, error) {
+	return nil, nil
+}
+
+func (m *mockStreamClusterStateClient) Trailer() metadata.MD {
+	return nil
+}
+
+func (m *mockStreamClusterStateClient) SendMsg(_ interface{}) error {
+	return nil
+}
+
+func (m *mockStreamClusterStateClient) RecvMsg(_ interface{}) error {
 	return nil
 }
 
@@ -614,6 +711,163 @@ func TestProxyClient_StartMetricsStream_StreamError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create metrics stream")
+}
+
+func TestProxyClient_StartClusterStateStream_NotConnected(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+	err := pc.StartClusterStateStream(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "client not connected")
+}
+
+func TestProxyClient_StartClusterStateStream_NoAgentID(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	mockClient := &mockFODCServiceClient{}
+	pc.streamsMu.Lock()
+	pc.client = mockClient
+	pc.streamsMu.Unlock()
+
+	ctx := context.Background()
+	err := pc.StartClusterStateStream(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "agent ID not available")
+}
+
+func TestProxyClient_StartClusterStateStream_Success(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+	mockClient := &mockFODCServiceClient{}
+	mockStream := newMockStreamClusterStateClient(ctx)
+
+	mockClient.streamClusterStateFunc = func(ctxParam context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+		// Verify metadata contains agent_id
+		md, ok := metadata.FromOutgoingContext(ctxParam)
+		require.True(t, ok)
+		agentIDs := md.Get("agent_id")
+		require.Len(t, agentIDs, 1)
+		assert.Equal(t, "test-agent-id", agentIDs[0])
+		return mockStream, nil
+	}
+
+	pc.streamsMu.Lock()
+	pc.client = mockClient
+	pc.agentID = "test-agent-id"
+	pc.streamsMu.Unlock()
+
+	err := pc.StartClusterStateStream(ctx)
+
+	require.NoError(t, err)
+	pc.streamsMu.RLock()
+	clusterStateStream := pc.clusterStateStream
+	pc.streamsMu.RUnlock()
+	assert.NotNil(t, clusterStateStream)
+}
+
+func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+	mockClient := &mockFODCServiceClient{}
+	mockClient.streamClusterStateFunc = func(_ context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+		return nil, errors.New("stream creation failed")
+	}
+
+	pc.streamsMu.Lock()
+	pc.client = mockClient
+	pc.agentID = "test-agent-id"
+	pc.streamsMu.Unlock()
+
+	err := pc.StartClusterStateStream(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create cluster state stream")
+}
+
+func TestProxyClient_SendClusterState_NoStream(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+	clusterState := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{},
+				Active:     []string{},
+				Evictable:  []string{},
+			},
+		},
+	}
+
+	err := pc.SendClusterState(ctx, clusterState)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster state stream not established")
+}
+
+func TestProxyClient_SendClusterState_Success(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+	mockStream := newMockStreamClusterStateClient(ctx)
+
+	pc.streamsMu.Lock()
+	pc.clusterStateStream = mockStream
+	pc.streamsMu.Unlock()
+
+	clusterState := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{},
+				Active:     []string{"node1"},
+				Evictable:  []string{},
+			},
+		},
+	}
+
+	err := pc.SendClusterState(ctx, clusterState)
+
+	require.NoError(t, err)
+	mockStream.mu.Lock()
+	sentRequests := mockStream.sentRequests
+	mockStream.mu.Unlock()
+
+	require.Len(t, sentRequests, 1)
+	assert.NotNil(t, sentRequests[0].ClusterState)
+	assert.Equal(t, 1, len(sentRequests[0].ClusterState.RouteTables))
+}
+
+func TestProxyClient_StartClusterStateCollector_EmptyAddr(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+
+	ctx := context.Background()
+
+	// Should return nil when lifecycleAddr is empty
+	err := pc.StartClusterStateCollector(ctx, "", 30*time.Second)
+
+	require.NoError(t, err)
+	pc.streamsMu.RLock()
+	clusterCollector := pc.clusterCollector
+	pc.streamsMu.RUnlock()
+	assert.Nil(t, clusterCollector)
 }
 
 func TestProxyClient_SendHeartbeat_NoStream(t *testing.T) {

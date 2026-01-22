@@ -32,7 +32,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
-	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -42,17 +42,18 @@ import (
 )
 
 const (
-	defaultPollInterval                 = 10 * time.Second
+	defaultMetricsPollInterval          = 10 * time.Second
 	defaultPollMetricsPorts             = "2121"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
 	defaultProxyAddr                    = "localhost:17900"
 	defaultHeartbeatInterval            = 10 * time.Second
 	defaultReconnectInterval            = 5 * time.Second
+	defaultClusterStatePollInterval     = 30 * time.Second
 )
 
 var (
-	pollInterval                 time.Duration
+	metricsPollInterval          time.Duration
 	pollMetricsPorts             []string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
@@ -63,6 +64,8 @@ var (
 	containerNames               []string
 	heartbeatInterval            time.Duration
 	reconnectInterval            time.Duration
+	clusterStateAddr             string
+	clusterStatePollInterval     time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -79,7 +82,7 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.Flags().DurationVar(&pollInterval, "poll-metrics-interval", defaultPollInterval,
+	rootCmd.Flags().DurationVar(&metricsPollInterval, "poll-metrics-interval", defaultMetricsPollInterval,
 		"Interval at which the Watchdog polls metrics from the BanyanDB container")
 	rootCmd.Flags().StringSliceVar(&pollMetricsPorts, "poll-metrics-ports", []string{defaultPollMetricsPorts},
 		"Ports of the BanyanDB metrics endpoints to poll from (can be specified multiple times or comma-separated)")
@@ -102,6 +105,10 @@ func init() {
 		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
 		"Interval for reconnection attempts when connection to Proxy is lost")
+	rootCmd.Flags().StringVar(&clusterStateAddr, "cluster-state-addr", "",
+		"Address of the BanyanDB node's lifecycle gRPC endpoint to poll cluster state from (e.g., localhost:17914). If empty, cluster state polling is disabled.")
+	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
+		"Interval at which to poll cluster state from the BanyanDB lifecycle service")
 }
 
 // runFODC is the main function for the FODC agent.
@@ -115,7 +122,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	log := logger.GetLogger("fodc")
 
-	if pollInterval <= 0 {
+	if metricsPollInterval <= 0 {
 		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
 	if len(pollMetricsPorts) == 0 {
@@ -129,7 +136,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	log.Info().
 		Strs("poll-metrics-ports", pollMetricsPorts).
 		Strs("metrics-endpoints", metricsEndpoints).
-		Dur("interval", pollInterval).
+		Dur("interval", metricsPollInterval).
 		Str("prometheus-listen-addr", prometheusListenAddr).
 		Msg("Starting FODC agent")
 	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
@@ -185,7 +192,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
 	}
 
-	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval, nodeRole, podName, containerNames)
+	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
 
 	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
@@ -222,6 +229,16 @@ func runFODC(_ *cobra.Command, _ []string) error {
 				log.Error().Err(startErr).Msg("Proxy client error")
 			}
 		}()
+
+		if clusterStateAddr != "" {
+			if collectorErr := proxyClient.StartClusterStateCollector(proxyCtx, clusterStateAddr, clusterStatePollInterval); collectorErr != nil {
+				_ = metricsServer.Stop()
+				if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
+					log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
+				}
+				return fmt.Errorf("failed to start cluster state collector: %w", collectorErr)
+			}
+		}
 
 		log.Info().
 			Str("proxy_addr", proxyAddr).

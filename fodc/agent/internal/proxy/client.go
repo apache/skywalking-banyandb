@@ -32,8 +32,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
-	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -44,17 +46,25 @@ type MetricsRequestFilter struct {
 	EndTime   *time.Time
 }
 
+// ClusterStateCollector represents a cluster state collector interface.
+type ClusterStateCollector interface {
+	Start() error
+	Stop()
+}
+
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
 	logger             *logger.Logger
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
 	connManager        *connManager
+	clusterCollector   ClusterStateCollector
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
+	clusterStateStream fodcv1.FODCService_StreamClusterStateClient
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
@@ -228,6 +238,100 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 		Msg("Metrics stream established with Proxy")
 
 	return nil
+}
+
+// StartClusterStateStream establishes bi-directional cluster state stream with Proxy.
+func (c *Client) StartClusterStateStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamClusterState(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create cluster state stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.clusterStateStream = stream
+	c.streamsMu.Unlock()
+
+	go c.handleClusterStateStream(ctx, stream)
+
+	c.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Cluster state stream established with Proxy")
+
+	return nil
+}
+
+// SendClusterState sends cluster state to Proxy.
+func (c *Client) SendClusterState(ctx context.Context, clusterState *databasev1.GetClusterStateResponse) error {
+	c.streamsMu.RLock()
+	if c.disconnected || c.clusterStateStream == nil {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("cluster state stream not established")
+	}
+	clusterStateStream := c.clusterStateStream
+	c.streamsMu.RUnlock()
+
+	req := &fodcv1.StreamClusterStateRequest{
+		ClusterState: clusterState,
+		Timestamp:    timestamppb.Now(),
+	}
+
+	if sendErr := clusterStateStream.Send(req); sendErr != nil {
+		return fmt.Errorf("failed to send cluster state: %w", sendErr)
+	}
+
+	return nil
+}
+
+// handleClusterStateStream handles the cluster state stream.
+func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FODCService_StreamClusterStateClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+
+		_, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Cluster state stream closed by Proxy, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Cluster state stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from cluster state stream, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+	}
 }
 
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
@@ -474,8 +578,40 @@ func (c *Client) cleanupStreams() {
 		}
 		c.metricsStream = nil
 	}
+
+	if c.clusterStateStream != nil {
+		if closeErr := c.clusterStateStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing cluster state stream")
+		}
+		c.clusterStateStream = nil
+	}
 	c.client = nil
 	c.streamsMu.Unlock()
+}
+
+// StartClusterStateCollector starts the cluster state collector if configured.
+func (c *Client) StartClusterStateCollector(ctx context.Context, lifecycleAddr string, pollInterval time.Duration) error {
+	if lifecycleAddr == "" {
+		return nil
+	}
+
+	clusterHandler := cluster.NewHandler(ctx, c, c.logger)
+	clusterCollector := cluster.NewCollector(clusterHandler, lifecycleAddr, pollInterval)
+
+	if startErr := clusterCollector.Start(); startErr != nil {
+		return fmt.Errorf("failed to start cluster state collector: %w", startErr)
+	}
+
+	c.streamsMu.Lock()
+	c.clusterCollector = clusterCollector
+	c.streamsMu.Unlock()
+
+	c.logger.Info().
+		Str("lifecycle_addr", lifecycleAddr).
+		Dur("poll_interval", pollInterval).
+		Msg("Cluster state collector started")
+
+	return nil
 }
 
 // Disconnect closes connection to Proxy.
@@ -493,7 +629,14 @@ func (c *Client) Disconnect() error {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
 	}
+
+	clusterCollector := c.clusterCollector
 	c.streamsMu.Unlock()
+
+	// Stop cluster state collector if running
+	if clusterCollector != nil {
+		clusterCollector.Stop()
+	}
 
 	// Wait for heartbeat goroutine to exit before closing streams
 	c.heartbeatWg.Wait()
@@ -511,6 +654,13 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
 		}
 		c.metricsStream = nil
+	}
+
+	if c.clusterStateStream != nil {
+		if closeErr := c.clusterStateStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing cluster state stream")
+		}
+		c.clusterStateStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -557,6 +707,13 @@ func (c *Client) Start(ctx context.Context) error {
 
 		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
+			c.cleanupStreams()
+			time.Sleep(c.reconnectInterval)
+			continue
+		}
+
+		if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
+			c.logger.Error().Err(clusterStateErr).Msg("Failed to start cluster state stream, reconnecting...")
 			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
@@ -701,6 +858,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.metricsStream.CloseSend()
 		c.metricsStream = nil
 	}
+	if c.clusterStateStream != nil {
+		_ = c.clusterStateStream.CloseSend()
+		c.clusterStateStream = nil
+	}
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
@@ -733,6 +894,11 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
+		return
+	}
+
+	if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
+		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream")
 		return
 	}
 

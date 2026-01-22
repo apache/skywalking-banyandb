@@ -307,6 +307,8 @@
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
+    - [StreamClusterStateRequest](#banyandb-fodc-v1-StreamClusterStateRequest)
+    - [StreamClusterStateResponse](#banyandb-fodc-v1-StreamClusterStateResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
   
@@ -1058,6 +1060,8 @@ TopNList contains a series of topN items
 | ----- | ---- | ----- | ----------- |
 | entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated |  |
 | value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
+| version | [int64](#int64) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 
@@ -4740,6 +4744,32 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamClusterStateRequest"></a>
+
+### StreamClusterStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| cluster_state | [banyandb.database.v1.GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamClusterStateResponse"></a>
+
+### StreamClusterStateResponse
+Empty for now, can be extended for future cluster state requests
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamMetricsRequest"></a>
 
 ### StreamMetricsRequest
@@ -4787,6 +4817,7 @@ Phase represents the current phase of the deletion task.
 | ----------- | ------------ | ------------- | ------------|
 | RegisterAgent | [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest) stream | [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse) stream | Bi-directional stream for agent registration and heartbeat |
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
+| StreamClusterState | [StreamClusterStateRequest](#banyandb-fodc-v1-StreamClusterStateRequest) stream | [StreamClusterStateResponse](#banyandb-fodc-v1-StreamClusterStateResponse) stream | Bi-directional stream for cluster state |
 
  
 
