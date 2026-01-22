@@ -36,6 +36,7 @@ var (
 		TopicStreamQuery.String():               TopicStreamQuery,
 		TopicMeasureWrite.String():              TopicMeasureWrite,
 		TopicMeasureQuery.String():              TopicMeasureQuery,
+		TopicInternalMeasureQuery.String():      TopicInternalMeasureQuery,
 		TopicTopNQuery.String():                 TopicTopNQuery,
 		TopicPropertyDelete.String():            TopicPropertyDelete,
 		TopicPropertyQuery.String():             TopicPropertyQuery,
@@ -77,6 +78,9 @@ var (
 		},
 		TopicMeasureQuery: func() proto.Message {
 			return &measurev1.QueryRequest{}
+		},
+		TopicInternalMeasureQuery: func() proto.Message {
+			return &measurev1.InternalQueryRequest{}
 		},
 		TopicTopNQuery: func() proto.Message {
 			return &measurev1.TopNRequest{}
@@ -163,6 +167,9 @@ var (
 		},
 		TopicMeasureQuery: func() proto.Message {
 			return &measurev1.QueryResponse{}
+		},
+		TopicInternalMeasureQuery: func() proto.Message {
+			return &measurev1.InternalQueryResponse{}
 		},
 		TopicTopNQuery: func() proto.Message {
 			return &measurev1.TopNResponse{}
