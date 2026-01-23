@@ -311,26 +311,17 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		fmt.Printf("===MEAN_DEBUG Execute: needCompletePushDownAgg=true, received %d pushedDownAggDps\n", len(pushedDownAggDps))
-		if t.queryTemplate.Agg != nil {
-			fmt.Printf("===MEAN_DEBUG Execute: Agg function=%v, fieldName=%s\n", t.queryTemplate.Agg.GetFunction(), t.queryTemplate.Agg.FieldName)
-		}
 		if t.queryTemplate.Agg != nil &&
 			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
-			fmt.Printf("===MEAN_DEBUG Execute: entering mean aggregation merge path\n")
 			mergedDps, mergeErr := mergeMeanAggregation(pushedDownAggDps,
 				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
 			if mergeErr != nil {
-				fmt.Printf("===MEAN_DEBUG Execute: mergeMeanAggregation error: %v\n", mergeErr)
 				return nil, multierr.Append(err, mergeErr)
 			}
-			fmt.Printf("===MEAN_DEBUG Execute: mergeMeanAggregation returned %d mergedDps\n", len(mergedDps))
 			deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(mergedDps, t.groupByTagsRefs)
 			if dedupErr != nil {
-				fmt.Printf("===MEAN_DEBUG Execute: deduplicateAggregatedDataPointsWithShard error: %v\n", dedupErr)
 				return nil, multierr.Append(err, dedupErr)
 			}
-			fmt.Printf("===MEAN_DEBUG Execute: deduplicateAggregatedDataPointsWithShard returned %d deduplicatedDps\n", len(deduplicatedDps))
 			return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 		}
 		// For other aggregation functions (MIN/MAX/SUM/COUNT), deduplicate by shard
@@ -759,14 +750,9 @@ type meanGroup struct {
 
 // mergeMeanAggregation merges mean aggregation results (sum and count) from multiple data nodes.
 func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName string, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
-	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: received %d dataPoints, fieldName=%s\n", len(dataPoints), fieldName)
 	groupMap := make(map[uint64]*meanGroup)
-	for idx, idp := range dataPoints {
+	for _, idp := range dataPoints {
 		dp := idp.GetDataPoint()
-		fmt.Printf("===MEAN_DEBUG dataPoint[%d]: shardID=%d, fields count=%d\n", idx, idp.ShardId, len(dp.Fields))
-		for fieldIdx, field := range dp.Fields {
-			fmt.Printf("===MEAN_DEBUG   field[%d]: name=%s, value=%v\n", fieldIdx, field.Name, field.Value)
-		}
 		var groupKey uint64
 		if len(groupByTagsRefs) > 0 {
 			var keyErr error
@@ -774,7 +760,6 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 			if keyErr != nil {
 				return nil, keyErr
 			}
-			fmt.Printf("===MEAN_DEBUG   groupKey=%d\n", groupKey)
 		}
 		var sumVal int64
 		var countVal int64
@@ -788,27 +773,22 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 					sumVal = intVal.Value
 					isFloat = false
 					sumFound = true
-					fmt.Printf("===MEAN_DEBUG   found sum (int): %d\n", sumVal)
 				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
 					sumFloat = floatVal.Value
 					isFloat = true
 					sumFound = true
-					fmt.Printf("===MEAN_DEBUG   found sum (float): %f\n", sumFloat)
 				}
 			} else if field.Name == fieldName+"_count" {
 				if intVal := field.Value.GetInt(); intVal != nil {
 					countVal = intVal.Value
 					countFound = true
-					fmt.Printf("===MEAN_DEBUG   found count (int): %d\n", countVal)
 				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
 					countFloat = floatVal.Value
 					countFound = true
-					fmt.Printf("===MEAN_DEBUG   found count (float): %f\n", countFloat)
 				}
 			}
 		}
 		if !sumFound || !countFound {
-			fmt.Printf("===MEAN_DEBUG   WARNING: sumFound=%v, countFound=%v, skipping\n", sumFound, countFound)
 			continue
 		}
 		if _, exists := groupMap[groupKey]; !exists {
@@ -823,16 +803,13 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 		if isFloat {
 			mg.sumFloat += sumFloat
 			mg.countFloat += countFloat
-			fmt.Printf("===MEAN_DEBUG   accumulated (float): sum=%f, count=%f\n", mg.sumFloat, mg.countFloat)
 		} else {
 			mg.sumInt += sumVal
 			mg.countInt += countVal
-			fmt.Printf("===MEAN_DEBUG   accumulated (int): sum=%d, count=%d\n", mg.sumInt, mg.countInt)
 		}
 	}
-	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: groupMap size=%d\n", len(groupMap))
 	result := make([]*measurev1.InternalDataPoint, 0, len(groupMap))
-	for groupKey, mg := range groupMap {
+	for _, mg := range groupMap {
 		var meanVal *modelv1.FieldValue
 		switch {
 		case mg.countFloat > 0:
@@ -842,7 +819,6 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 					Float: &modelv1.Float{Value: mean},
 				},
 			}
-			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: mean (float)=%f (sum=%f, count=%f)\n", groupKey, mean, mg.sumFloat, mg.countFloat)
 		case mg.countInt > 0:
 			mean := mg.sumInt / mg.countInt
 			meanVal = &modelv1.FieldValue{
@@ -850,9 +826,7 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 					Int: &modelv1.Int{Value: mean},
 				},
 			}
-			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: mean (int)=%d (sum=%d, count=%d)\n", groupKey, mean, mg.sumInt, mg.countInt)
 		default:
-			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: skipping (no count)\n", groupKey)
 			continue
 		}
 		mg.dataPoint.Fields = []*measurev1.DataPoint_Field{
@@ -866,6 +840,5 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 			ShardId:   mg.shardID,
 		})
 	}
-	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: returning %d results\n", len(result))
 	return result, nil
 }

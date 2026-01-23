@@ -109,17 +109,14 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 ) (*aggregationPlan[N], error) {
 	var aggrFunc aggregation.Func[N]
 	var err error
-	fmt.Printf("===MEAN_DEBUG newAggregationPlan: isDistributedMean=%v, aggrFunc=%v\n", gba.isDistributedMean, gba.aggrFunc)
 	if gba.isDistributedMean {
 		var zero N
 		aggrFunc = &distributedMeanFunc[N]{zero: zero}
-		fmt.Printf("===MEAN_DEBUG newAggregationPlan: created distributedMeanFunc\n")
 	} else {
 		aggrFunc, err = aggregation.NewFunc[N](gba.aggrFunc)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("===MEAN_DEBUG newAggregationPlan: created regular aggregation func\n")
 	}
 	return &aggregationPlan[N]{
 		Parent: &logical.Parent{
@@ -252,7 +249,6 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 		if meanFunc, ok := ami.aggrFunc.(DistributedMeanFunc[N]); ok {
 			sumVal := meanFunc.Sum()
 			countVal := meanFunc.Count()
-			fmt.Printf("===MEAN_DEBUG aggGroupIterator: fieldName=%s, sum=%v, count=%v\n", ami.aggregationFieldRef.Field.Name, sumVal, countVal)
 			sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
 			if sumErr != nil {
 				ami.err = sumErr
@@ -273,9 +269,6 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 					Value: countFieldVal,
 				},
 			}
-			fmt.Printf("===MEAN_DEBUG aggGroupIterator: returning fields: %s_sum=%v, %s_count=%v\n",
-				ami.aggregationFieldRef.Field.Name, sumFieldVal,
-				ami.aggregationFieldRef.Field.Name, countFieldVal)
 		} else {
 			ami.err = fmt.Errorf("aggrFunc is not DistributedMeanFunc")
 			return nil
@@ -357,7 +350,6 @@ func (ami *aggAllIterator[N]) Next() bool {
 		if meanFunc, ok := ami.aggrFunc.(DistributedMeanFunc[N]); ok {
 			sumVal := meanFunc.Sum()
 			countVal := meanFunc.Count()
-			fmt.Printf("===MEAN_DEBUG aggAllIterator: fieldName=%s, sum=%v, count=%v\n", ami.aggregationFieldRef.Field.Name, sumVal, countVal)
 			sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
 			if sumErr != nil {
 				ami.err = sumErr
@@ -378,9 +370,6 @@ func (ami *aggAllIterator[N]) Next() bool {
 					Value: countFieldVal,
 				},
 			}
-			fmt.Printf("===MEAN_DEBUG aggAllIterator: returning fields: %s_sum=%v, %s_count=%v\n",
-				ami.aggregationFieldRef.Field.Name, sumFieldVal,
-				ami.aggregationFieldRef.Field.Name, countFieldVal)
 		} else {
 			ami.err = fmt.Errorf("aggrFunc is not DistributedMeanFunc")
 			return false
