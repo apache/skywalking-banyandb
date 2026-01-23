@@ -311,27 +311,23 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		if t.queryTemplate.Agg != nil &&
-			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
-			mergedDps, mergeErr := mergeMeanAggregation(pushedDownAggDps,
-				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
-			if mergeErr != nil {
-				return nil, multierr.Append(err, mergeErr)
-			}
-			deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(mergedDps, t.groupByTagsRefs)
-			if dedupErr != nil {
-				return nil, multierr.Append(err, dedupErr)
-			}
-			return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
-		}
-		// For other aggregation functions (MIN/MAX/SUM/COUNT), deduplicate by shard
-		// When there's no groupBy, we need to deduplicate by shard_id to remove duplicates from replicas
+		// deduplicate: remove duplicate results from multiple replicas of the same shard
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
 		}
-		// If there's no groupBy, we need to merge results from different shards
-		// For MIN/MAX, take the min/max; for SUM/COUNT, sum them up
+		// merge: for MEAN, merge sum and count from different shards with same groupKey
+		if t.queryTemplate.Agg != nil &&
+			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+			mergedDps, mergeErr := mergeMeanAggregation(deduplicatedDps,
+				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
+			if mergeErr != nil {
+				return nil, multierr.Append(err, mergeErr)
+			}
+			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
+		}
+		// For other aggregation functions (MIN/MAX/SUM/COUNT), if there's no groupBy,
+		// we need to merge results from different shards
 		if len(t.groupByTagsRefs) == 0 && len(deduplicatedDps) > 1 && t.queryTemplate.Agg != nil {
 			mergedDps := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
 			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
