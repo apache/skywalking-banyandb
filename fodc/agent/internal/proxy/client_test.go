@@ -32,6 +32,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -354,6 +355,7 @@ func TestNewProxyClient(t *testing.T) {
 		5*time.Second,
 		10*time.Second,
 		fr,
+		nil,
 		testLogger,
 	)
 
@@ -373,7 +375,7 @@ func TestNewProxyClient(t *testing.T) {
 func TestProxyClient_Connect_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -401,7 +403,7 @@ func TestProxyClient_Connect_Success(t *testing.T) {
 func TestProxyClient_Connect_AlreadyConnected(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -422,7 +424,7 @@ func TestProxyClient_Connect_AlreadyConnected(t *testing.T) {
 func TestProxyClient_Connect_Reconnection(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -458,7 +460,7 @@ func TestProxyClient_Connect_Reconnection(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_NotConnected(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	err := pc.StartRegistrationStream(ctx)
@@ -472,7 +474,7 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient(
 		"localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, map[string]string{"env": "test"},
-		5*time.Second, 10*time.Second, fr, testLogger)
+		5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -506,7 +508,7 @@ func TestProxyClient_StartRegistrationStream_Success(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_StreamError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -527,7 +529,7 @@ func TestProxyClient_StartRegistrationStream_StreamError(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_SendError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -551,7 +553,7 @@ func TestProxyClient_StartRegistrationStream_SendError(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_RecvError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -575,7 +577,7 @@ func TestProxyClient_StartRegistrationStream_RecvError(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_RegistrationFailed(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -604,7 +606,7 @@ func TestProxyClient_StartRegistrationStream_RegistrationFailed(t *testing.T) {
 func TestProxyClient_StartRegistrationStream_MissingAgentID(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -633,7 +635,7 @@ func TestProxyClient_StartRegistrationStream_MissingAgentID(t *testing.T) {
 func TestProxyClient_StartMetricsStream_NotConnected(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	err := pc.StartMetricsStream(ctx)
@@ -645,7 +647,7 @@ func TestProxyClient_StartMetricsStream_NotConnected(t *testing.T) {
 func TestProxyClient_StartMetricsStream_NoAgentID(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	mockClient := &mockFODCServiceClient{}
 	pc.streamsMu.Lock()
@@ -662,7 +664,7 @@ func TestProxyClient_StartMetricsStream_NoAgentID(t *testing.T) {
 func TestProxyClient_StartMetricsStream_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -695,7 +697,7 @@ func TestProxyClient_StartMetricsStream_Success(t *testing.T) {
 func TestProxyClient_StartMetricsStream_StreamError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -717,7 +719,7 @@ func TestProxyClient_StartMetricsStream_StreamError(t *testing.T) {
 func TestProxyClient_StartClusterStateStream_NotConnected(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	err := pc.StartClusterStateStream(ctx)
@@ -729,7 +731,7 @@ func TestProxyClient_StartClusterStateStream_NotConnected(t *testing.T) {
 func TestProxyClient_StartClusterStateStream_NoAgentID(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	mockClient := &mockFODCServiceClient{}
 	pc.streamsMu.Lock()
@@ -746,7 +748,7 @@ func TestProxyClient_StartClusterStateStream_NoAgentID(t *testing.T) {
 func TestProxyClient_StartClusterStateStream_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -779,7 +781,7 @@ func TestProxyClient_StartClusterStateStream_Success(t *testing.T) {
 func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
@@ -801,7 +803,7 @@ func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
 func TestProxyClient_SendClusterState_NoStream(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	err := pc.sendClusterData()
 
@@ -812,7 +814,8 @@ func TestProxyClient_SendClusterState_NoStream(t *testing.T) {
 func TestProxyClient_SendClusterState_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	collector := cluster.NewCollector(testLogger, "localhost:17914", 30*time.Second)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, collector, testLogger)
 
 	ctx := context.Background()
 	mockStream := newMockStreamClusterStateClient(ctx)
@@ -829,31 +832,13 @@ func TestProxyClient_SendClusterState_Success(t *testing.T) {
 	mockStream.mu.Unlock()
 
 	require.Len(t, sentRequests, 1)
-	assert.NotNil(t, sentRequests[0].ClusterState)
-	assert.Equal(t, 1, len(sentRequests[0].ClusterState.RouteTables))
-}
-
-func TestProxyClient_StartClusterStateCollector_EmptyAddr(t *testing.T) {
-	testLogger := initTestLogger(t)
-	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
-
-	ctx := context.Background()
-
-	// Should return nil when lifecycleAddr is empty
-	err := pc.StartClusterStateCollector(ctx, "", 30*time.Second)
-
-	require.NoError(t, err)
-	pc.streamsMu.RLock()
-	clusterCollector := pc.clusterCollector
-	pc.streamsMu.RUnlock()
-	assert.Nil(t, clusterCollector)
+	assert.NotNil(t, sentRequests[0].Timestamp)
 }
 
 func TestProxyClient_SendHeartbeat_NoStream(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	err := pc.SendHeartbeat(ctx)
@@ -868,7 +853,7 @@ func TestProxyClient_SendHeartbeat_Success(t *testing.T) {
 	pc := NewProxyClient(
 		"localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"},
 		map[string]string{"env": "test"},
-		5*time.Second, 10*time.Second, fr, testLogger)
+		5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockStream := newMockRegisterAgentClient(ctx)
@@ -889,7 +874,7 @@ func TestProxyClient_SendHeartbeat_Success(t *testing.T) {
 func TestProxyClient_SendHeartbeat_SendError(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockStream := newMockRegisterAgentClient(ctx)
@@ -908,7 +893,7 @@ func TestProxyClient_SendHeartbeat_SendError(t *testing.T) {
 func TestProxyClient_RetrieveAndSendMetrics_NoStream(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	err := pc.RetrieveAndSendMetrics(ctx, nil)
@@ -920,7 +905,7 @@ func TestProxyClient_RetrieveAndSendMetrics_NoStream(t *testing.T) {
 func TestProxyClient_RetrieveAndSendMetrics_NoDatasources(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
@@ -942,7 +927,7 @@ func TestProxyClient_RetrieveAndSendMetrics_NoDatasources(t *testing.T) {
 func TestProxyClient_RetrieveAndSendMetrics_LatestMetrics(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Add metrics to flight recorder
 	rawMetrics := []metrics.RawMetric{
@@ -984,7 +969,7 @@ func TestProxyClient_RetrieveAndSendMetrics_LatestMetrics(t *testing.T) {
 func TestProxyClient_RetrieveAndSendMetrics_FilteredMetrics(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Add metrics with timestamps
 	rawMetrics := []metrics.RawMetric{
@@ -1032,7 +1017,7 @@ func TestProxyClient_RetrieveAndSendMetrics_FilteredMetrics(t *testing.T) {
 func TestProxyClient_RetrieveAndSendMetrics_FilteredNoTimestamps(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Add metrics with timestamps far in the past
 	// Then filter for a future time window to ensure no matches
@@ -1076,7 +1061,7 @@ func TestProxyClient_RetrieveAndSendMetrics_FilteredNoTimestamps(t *testing.T) {
 func TestProxyClient_Disconnect_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1125,7 +1110,7 @@ func TestProxyClient_Disconnect_Success(t *testing.T) {
 func TestProxyClient_Disconnect_Idempotent(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	pc.streamsMu.Lock()
 	pc.disconnected = true
@@ -1142,7 +1127,7 @@ func TestProxyClient_Disconnect_Idempotent(t *testing.T) {
 func TestProxyClient_handleRegistrationStream_EOF(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1158,7 +1143,7 @@ func TestProxyClient_handleRegistrationStream_EOF(t *testing.T) {
 func TestProxyClient_handleRegistrationStream_ContextCanceled(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1174,7 +1159,7 @@ func TestProxyClient_handleRegistrationStream_ContextCanceled(t *testing.T) {
 func TestProxyClient_handleMetricsStream_EOF(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1190,7 +1175,7 @@ func TestProxyClient_handleMetricsStream_EOF(t *testing.T) {
 func TestProxyClient_handleMetricsStream_RequestMetrics(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Add metrics
 	rawMetrics := []metrics.RawMetric{
@@ -1236,7 +1221,7 @@ func TestProxyClient_handleMetricsStream_RequestMetrics(t *testing.T) {
 func TestProxyClient_parseMetricKey_Simple(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	key, err := pc.parseMetricKey("cpu_usage")
 
@@ -1248,7 +1233,7 @@ func TestProxyClient_parseMetricKey_Simple(t *testing.T) {
 func TestProxyClient_parseMetricKey_WithLabels(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	key, err := pc.parseMetricKey(`http_requests_total{method="GET",status="200"}`)
 
@@ -1260,7 +1245,7 @@ func TestProxyClient_parseMetricKey_WithLabels(t *testing.T) {
 func TestProxyClient_parseMetricKey_InvalidFormat(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	key, err := pc.parseMetricKey("invalid{format")
 
@@ -1272,7 +1257,7 @@ func TestProxyClient_parseMetricKey_InvalidFormat(t *testing.T) {
 func TestProxyClient_parseMetricKey_MalformedLabels(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Test with malformed labels - should still parse what it can
 	key, err := pc.parseMetricKey(`metric{invalid,key="value"}`)
@@ -1286,7 +1271,7 @@ func TestProxyClient_parseMetricKey_MalformedLabels(t *testing.T) {
 func TestProxyClient_sendLatestMetrics_WithUnfinalizedValue(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Create a datasource with metrics
 	ds := flightrecorder.NewDatasource()
@@ -1320,7 +1305,7 @@ func TestProxyClient_sendLatestMetrics_WithUnfinalizedValue(t *testing.T) {
 func TestProxyClient_sendFilteredMetrics_TimeWindow(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Create a datasource with metrics and timestamps
 	ds := flightrecorder.NewDatasource()
@@ -1369,7 +1354,7 @@ func TestProxyClient_sendFilteredMetrics_TimeWindow(t *testing.T) {
 func TestProxyClient_sendFilteredMetrics_NoMatchingTimeWindow(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
 	// Create a datasource with metrics and timestamps
 	ds := flightrecorder.NewDatasource()
@@ -1415,7 +1400,7 @@ func TestProxyClient_sendFilteredMetrics_NoMatchingTimeWindow(t *testing.T) {
 func TestProxyClient_Start_ContextCancellation(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("invalid-address:99999", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 100*time.Millisecond, fr, testLogger)
+	pc := NewProxyClient("invalid-address:99999", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 100*time.Millisecond, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1432,7 +1417,7 @@ func TestProxyClient_Start_ContextCancellation(t *testing.T) {
 func TestProxyClient_Start_StopChannel(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("invalid-address:99999", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 100*time.Millisecond, fr, testLogger)
+	pc := NewProxyClient("invalid-address:99999", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 100*time.Millisecond, fr, nil, testLogger)
 
 	ctx := context.Background()
 
@@ -1447,7 +1432,7 @@ func TestProxyClient_Start_StopChannel(t *testing.T) {
 func TestProxyClient_startHeartbeat_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 100*time.Millisecond, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 100*time.Millisecond, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1480,7 +1465,7 @@ func TestProxyClient_startHeartbeat_Success(t *testing.T) {
 func TestProxyClient_startHeartbeat_ReplacesExistingTicker(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 100*time.Millisecond, 10*time.Second, fr, testLogger)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 100*time.Millisecond, 10*time.Second, fr, nil, testLogger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

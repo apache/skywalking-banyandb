@@ -143,6 +143,7 @@ func NewProxyClient(
 		heartbeatInterval,
 		reconnectInterval,
 		frTyped,
+		nil,
 		logger,
 	)
 }

@@ -107,7 +107,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := &metrics.Filter{
-		Role:    r.URL.Query().Get("role"),
+		Role:    r.URL.Query().Get("node_role"),
 		PodName: r.URL.Query().Get("pod_name"),
 	}
 

@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
@@ -58,8 +59,6 @@ var (
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
 	proxyAddr                    string
-	nodeRole                     string
-	nodeLabels                   string
 	podName                      string
 	containerNames               []string
 	heartbeatInterval            time.Duration
@@ -93,14 +92,10 @@ func init() {
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
 	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
 		"FODC Proxy gRPC address")
-	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
-		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringVar(&podName, "pod-name", "",
+		"Name of the Kubernetes pod. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringSliceVar(&containerNames, "container-names", []string{},
 		"Names of the containers corresponding to each poll-metrics-port. Must have one-to-one correspondence with poll-metrics-ports.")
-	rootCmd.Flags().StringVar(&podName, "pod-name", "",
-		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
-	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
-		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
@@ -113,141 +108,59 @@ func init() {
 
 // runFODC is the main function for the FODC agent.
 func runFODC(_ *cobra.Command, _ []string) error {
-	if initErr := logger.Init(logger.Logging{
-		Env:   "prod",
-		Level: "info",
-	}); initErr != nil {
+	if initErr := logger.Init(logger.Logging{Env: "prod", Level: "info"}); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
-
 	log := logger.GetLogger("fodc")
 
-	if metricsPollInterval <= 0 {
-		return fmt.Errorf("poll-metrics-interval must be greater than 0")
-	}
-	if len(pollMetricsPorts) == 0 {
-		return fmt.Errorf("poll-metrics-ports cannot be empty")
-	}
-	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
-		return fmt.Errorf("container-names count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+	if validateErr := validateFlags(); validateErr != nil {
+		return validateErr
 	}
 	metricsEndpoints := generateMetricsEndpoints(pollMetricsPorts)
+	log.Info().Strs("endpoints", metricsEndpoints).Dur("interval", metricsPollInterval).Msg("Starting FODC agent")
 
-	log.Info().
-		Strs("poll-metrics-ports", pollMetricsPorts).
-		Strs("metrics-endpoints", metricsEndpoints).
-		Dur("interval", metricsPollInterval).
-		Str("prometheus-listen-addr", prometheusListenAddr).
-		Msg("Starting FODC agent")
-	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
-		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
-	}
-
-	memoryLimit, memLimitErr := cgroups.MemoryLimit()
-	if memLimitErr != nil {
-		// On non-Linux systems (e.g., macOS), cgroups are not available
-		// This is expected and not an error condition
-		if runtime.GOOS != "linux" || strings.Contains(memLimitErr.Error(), "mountinfo") {
-			log.Debug().Err(memLimitErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
-		} else {
-			log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
-		}
-		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
-	}
-
-	var capacitySize int64
-	if memoryLimit > 0 {
-		capacitySize = (memoryLimit * int64(maxMetricsMemoryUsagePercent)) / 100
-	} else {
-		// If memory limit is unlimited (-1) or invalid, use a reasonable default
-		// Default to 100MB for metrics storage
-		capacitySize = 100 * 1024 * 1024
-		log.Info().Msg("Memory limit is unlimited or invalid, using default capacity of 100MB")
-	}
-
-	log.Info().
-		Int64("memory-limit-bytes", memoryLimit).
-		Int("memory-usage-percent", maxMetricsMemoryUsagePercent).
-		Int64("capacity-size-bytes", capacitySize).
-		Msg("Flight Recorder capacity configured")
-
+	capacitySize := calculateCapacity(log)
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
 
-	// Create Prometheus registry
-	promReg := prometheus.NewRegistry()
-	datasourceCollector := exporter.NewDatasourceCollector(fr)
-
-	// Create and start Prometheus metrics server
-	metricsServer, serverCreateErr := server.NewServer(server.Config{
+	metricsServer, serverErr := server.NewServer(server.Config{
 		ListenAddr:        prometheusListenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
 		ShutdownTimeout:   5 * time.Second,
 	})
-	if serverCreateErr != nil {
-		return fmt.Errorf("failed to create metrics server: %w", serverCreateErr)
+	if serverErr != nil {
+		return fmt.Errorf("failed to create metrics server: %w", serverErr)
+	}
+	serverErrCh, startErr := metricsServer.Start(prometheus.NewRegistry(), exporter.NewDatasourceCollector(fr))
+	if startErr != nil {
+		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
 
-	serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
-	if serverStartErr != nil {
-		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
+	ctx := context.Background()
+	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStateAddr, clusterStatePollInterval)
+	if clusterErr != nil {
+		_ = metricsServer.Stop()
+		return clusterErr
+	}
+
+	var nodeRole string
+	var nodeLabels map[string]string
+	if clusterCollector != nil {
+		nodeRole, nodeLabels = clusterCollector.GetNodeInfo()
+		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
 
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
-
-	ctx := context.Background()
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
+		cluster.StopCollector(clusterCollector)
 		_ = metricsServer.Stop()
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
-
 	stopCh := wd.Serve()
 
-	var proxyClient *proxy.Client
-	if proxyAddr != "" && podName != "" && nodeRole != "" {
-		labelsMap, parseErr := parseLabels(nodeLabels)
-		if parseErr != nil {
-			_ = metricsServer.Stop()
-			return fmt.Errorf("failed to parse node labels: %w", parseErr)
-		}
-		proxyClient = proxy.NewClient(
-			proxyAddr,
-			nodeRole,
-			podName,
-			containerNames,
-			labelsMap,
-			heartbeatInterval,
-			reconnectInterval,
-			fr,
-			log,
-		)
-		proxyCtx, proxyCancel := context.WithCancel(ctx)
-		defer proxyCancel()
-		go func() {
-			if startErr := proxyClient.Start(proxyCtx); startErr != nil {
-				log.Error().Err(startErr).Msg("Proxy client error")
-			}
-		}()
-		if clusterStateAddr != "" {
-			if collectorErr := proxyClient.StartClusterStateCollector(proxyCtx, clusterStateAddr, clusterStatePollInterval); collectorErr != nil {
-				_ = metricsServer.Stop()
-				if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
-					log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
-				}
-				return fmt.Errorf("failed to start cluster state collector: %w", collectorErr)
-			}
-		}
-		log.Info().
-			Str("proxy_addr", proxyAddr).
-			Str("pod_name", podName).
-			Str("node_role", nodeRole).
-			Msg("Proxy client started")
-	} else {
-		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
-	}
+	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
 	select {
 	case <-sigCh:
 		log.Info().Msg("Received shutdown signal")
@@ -257,12 +170,13 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		log.Error().Err(err).Msg("Metrics server error")
 	}
 
-	// Graceful shutdown
 	wd.GracefulStop()
 	if proxyClient != nil {
 		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
 			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
 		}
+	} else {
+		cluster.StopCollector(clusterCollector)
 	}
 	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
@@ -270,46 +184,71 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// parseLabels parses a comma-separated labels string into a map.
-// Format: key1=value1,key2=value2.
-func parseLabels(labelsStr string) (map[string]string, error) {
-	labels := make(map[string]string)
-	if labelsStr == "" {
-		return labels, nil
+func validateFlags() error {
+	if metricsPollInterval <= 0 {
+		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
-
-	pairs := strings.Split(labelsStr, ",")
-	for idx, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid label format at position %d: %q (expected key=value)", idx, pair)
-		}
-
-		key := strings.TrimSpace(kv[0])
-		value := strings.TrimSpace(kv[1])
-		if key == "" {
-			return nil, fmt.Errorf("empty label key at position %d: %q", idx, pair)
-		}
-		if value == "" {
-			return nil, fmt.Errorf("empty label value at position %d: %q", idx, pair)
-		}
-		labels[key] = value
+	if len(pollMetricsPorts) == 0 {
+		return fmt.Errorf("poll-metrics-ports cannot be empty")
 	}
-
-	return labels, nil
+	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
+		return fmt.Errorf("container-names count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+	}
+	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
+		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
+	}
+	return nil
 }
 
-// generateMetricsEndpoints generates metrics endpoint URLs from port numbers.
+func calculateCapacity(log *logger.Logger) int64 {
+	memoryLimit, memErr := cgroups.MemoryLimit()
+	if memErr != nil {
+		if runtime.GOOS != "linux" || strings.Contains(memErr.Error(), "mountinfo") {
+			log.Debug().Err(memErr).Msg("Cgroup memory limit not available, using default")
+		} else {
+			log.Warn().Err(memErr).Msg("Failed to get cgroup memory limit, using default")
+		}
+		memoryLimit = 1024 * 1024 * 1024
+	}
+	var capacitySize int64
+	if memoryLimit > 0 {
+		capacitySize = (memoryLimit * int64(maxMetricsMemoryUsagePercent)) / 100
+	} else {
+		capacitySize = 100 * 1024 * 1024
+		log.Info().Msg("Memory limit is unlimited or invalid, using default capacity of 100MB")
+	}
+	log.Info().
+		Int64("memory-limit-bytes", memoryLimit).
+		Int("memory-usage-percent", maxMetricsMemoryUsagePercent).
+		Int64("capacity-size-bytes", capacitySize).
+		Msg("Flight Recorder capacity configured")
+	return capacitySize
+}
+
+func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder,
+	nodeRole string, nodeLabels map[string]string, collector *cluster.Collector,
+) *proxy.Client {
+	if proxyAddr == "" || podName == "" || nodeRole == "" {
+		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
+		return nil
+	}
+	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
+		heartbeatInterval, reconnectInterval, fr, collector, log)
+	proxyCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		defer cancel()
+		if startErr := client.Start(proxyCtx); startErr != nil {
+			log.Error().Err(startErr).Msg("Proxy client error")
+		}
+	}()
+	log.Info().Str("proxy_addr", proxyAddr).Str("pod_name", podName).Str("node_role", nodeRole).Msg("Proxy client started")
+	return client
+}
+
 func generateMetricsEndpoints(ports []string) []string {
 	endpoints := make([]string, 0, len(ports))
 	for _, port := range ports {
-		endpoint := fmt.Sprintf("http://localhost:%s/metrics", port)
-		endpoints = append(endpoints, endpoint)
+		endpoints = append(endpoints, fmt.Sprintf("http://localhost:%s/metrics", port))
 	}
 	return endpoints
 }

@@ -23,72 +23,136 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseLabels_Empty(t *testing.T) {
-	labels, err := parseLabels("")
+func TestGenerateMetricsEndpoints_SinglePort(t *testing.T) {
+	endpoints := generateMetricsEndpoints([]string{"2121"})
 
+	assert.Len(t, endpoints, 1)
+	assert.Equal(t, "http://localhost:2121/metrics", endpoints[0])
+}
+
+func TestGenerateMetricsEndpoints_MultiplePorts(t *testing.T) {
+	endpoints := generateMetricsEndpoints([]string{"2121", "2122", "2123"})
+
+	assert.Len(t, endpoints, 3)
+	assert.Equal(t, "http://localhost:2121/metrics", endpoints[0])
+	assert.Equal(t, "http://localhost:2122/metrics", endpoints[1])
+	assert.Equal(t, "http://localhost:2123/metrics", endpoints[2])
+}
+
+func TestGenerateMetricsEndpoints_Empty(t *testing.T) {
+	endpoints := generateMetricsEndpoints([]string{})
+
+	assert.Empty(t, endpoints)
+}
+
+func TestValidateFlags_Valid(t *testing.T) {
+	// Save original values
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	origContainers := containerNames
+	origMemPercent := maxMetricsMemoryUsagePercent
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+		containerNames = origContainers
+		maxMetricsMemoryUsagePercent = origMemPercent
+	}()
+
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{"2121"}
+	containerNames = []string{"banyandb"}
+	maxMetricsMemoryUsagePercent = 10
+
+	err := validateFlags()
 	assert.NoError(t, err)
-	assert.Empty(t, labels)
 }
 
-func TestParseLabels_SingleLabel(t *testing.T) {
-	labels, err := parseLabels("env=test")
+func TestValidateFlags_ZeroInterval(t *testing.T) {
+	origInterval := metricsPollInterval
+	defer func() { metricsPollInterval = origInterval }()
 
-	assert.NoError(t, err)
-	assert.Len(t, labels, 1)
-	assert.Equal(t, "test", labels["env"])
-}
+	metricsPollInterval = 0
 
-func TestParseLabels_MultipleLabels(t *testing.T) {
-	labels, err := parseLabels("env=test,region=us-west-1,zone=1a")
-
-	assert.NoError(t, err)
-	assert.Len(t, labels, 3)
-	assert.Equal(t, "test", labels["env"])
-	assert.Equal(t, "us-west-1", labels["region"])
-	assert.Equal(t, "1a", labels["zone"])
-}
-
-func TestParseLabels_WithSpaces(t *testing.T) {
-	labels, err := parseLabels(" env = test , region = us-west-1 ")
-
-	assert.NoError(t, err)
-	assert.Len(t, labels, 2)
-	assert.Equal(t, "test", labels["env"])
-	assert.Equal(t, "us-west-1", labels["region"])
-}
-
-func TestParseLabels_InvalidFormat(t *testing.T) {
-	_, err := parseLabels("invalid,key=value,noequals")
-
+	err := validateFlags()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid label format")
+	assert.Contains(t, err.Error(), "poll-metrics-interval must be greater than 0")
 }
 
-func TestParseLabels_EmptyValues(t *testing.T) {
-	_, err := parseLabels("key1=,key2=value2,=invalid")
+func TestValidateFlags_EmptyPorts(t *testing.T) {
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+	}()
 
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{}
+
+	err := validateFlags()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty label")
+	assert.Contains(t, err.Error(), "poll-metrics-ports cannot be empty")
 }
 
-func TestParseLabels_MissingEquals(t *testing.T) {
-	_, err := parseLabels("validkey=value,invalidlabel")
+func TestValidateFlags_ContainerCountMismatch(t *testing.T) {
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	origContainers := containerNames
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+		containerNames = origContainers
+	}()
 
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{"2121", "2122"}
+	containerNames = []string{"banyandb"}
+
+	err := validateFlags()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid label format")
-	assert.Contains(t, err.Error(), "invalidlabel")
+	assert.Contains(t, err.Error(), "container-names count")
 }
 
-func TestParseLabels_EmptyKey(t *testing.T) {
-	_, err := parseLabels("=value")
+func TestValidateFlags_InvalidMemoryPercent(t *testing.T) {
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	origContainers := containerNames
+	origMemPercent := maxMetricsMemoryUsagePercent
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+		containerNames = origContainers
+		maxMetricsMemoryUsagePercent = origMemPercent
+	}()
 
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{"2121"}
+	containerNames = []string{}
+	maxMetricsMemoryUsagePercent = 150
+
+	err := validateFlags()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty label key")
+	assert.Contains(t, err.Error(), "max-metrics-memory-usage-percentage must be between 0 and 100")
 }
 
-func TestParseLabels_EmptyValue(t *testing.T) {
-	_, err := parseLabels("key=")
+func TestValidateFlags_NegativeMemoryPercent(t *testing.T) {
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	origContainers := containerNames
+	origMemPercent := maxMetricsMemoryUsagePercent
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+		containerNames = origContainers
+		maxMetricsMemoryUsagePercent = origMemPercent
+	}()
 
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{"2121"}
+	containerNames = []string{}
+	maxMetricsMemoryUsagePercent = -10
+
+	err := validateFlags()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty label value")
+	assert.Contains(t, err.Error(), "max-metrics-memory-usage-percentage must be between 0 and 100")
 }

@@ -46,19 +46,13 @@ type MetricsRequestFilter struct {
 }
 
 // ClusterStateCollector represents a cluster state collector interface.
-type ClusterStateCollector interface {
-	Start(ctx context.Context) error
-	Stop()
-}
-
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
 	logger             *logger.Logger
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
 	connManager        *connManager
-	clusterCollector   ClusterStateCollector
-	clusterHandler     *cluster.Handler
+	clusterCollector   *cluster.Collector
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
@@ -90,6 +84,7 @@ func NewClient(
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
 	flightRecorder *flightrecorder.FlightRecorder,
+	clusterCollector *cluster.Collector,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
@@ -103,11 +98,11 @@ func NewClient(
 		heartbeatInterval: heartbeatInterval,
 		reconnectInterval: reconnectInterval,
 		flightRecorder:    flightRecorder,
+		clusterCollector:  clusterCollector,
 		logger:            logger,
 		stopCh:            make(chan struct{}),
 		reconnectCh:       make(chan struct{}, 1),
 	}
-
 	connMgr.setHeartbeatChecker(client.SendHeartbeat)
 	return client
 }
@@ -284,12 +279,13 @@ func (c *Client) sendClusterData() error {
 		return fmt.Errorf("cluster state stream not established")
 	}
 	clusterStateStream := c.clusterStateStream
-	handler := c.clusterHandler
+	collector := c.clusterCollector
 	c.streamsMu.RUnlock()
-	if handler == nil {
-		return fmt.Errorf("cluster handler not available")
+	if collector == nil {
+		return fmt.Errorf("cluster collector not available")
 	}
-	currentNode, clusterState := handler.GetClusterData()
+	currentNode := collector.GetCurrentNode()
+	clusterState := collector.GetClusterState()
 	req := &fodcv1.StreamClusterStateRequest{
 		CurrentNode:  currentNode,
 		ClusterState: clusterState,
@@ -596,27 +592,6 @@ func (c *Client) cleanupStreams() {
 	c.streamsMu.Unlock()
 }
 
-// StartClusterStateCollector starts the cluster state collector if configured.
-func (c *Client) StartClusterStateCollector(ctx context.Context, lifecycleAddr string, pollInterval time.Duration) error {
-	if lifecycleAddr == "" {
-		return nil
-	}
-	clusterHandler := cluster.NewHandler(c.logger)
-	clusterCollector := cluster.NewCollector(clusterHandler, lifecycleAddr, pollInterval)
-	if startErr := clusterCollector.Start(ctx); startErr != nil {
-		return fmt.Errorf("failed to start cluster state collector: %w", startErr)
-	}
-	c.streamsMu.Lock()
-	c.clusterCollector = clusterCollector
-	c.clusterHandler = clusterHandler
-	c.streamsMu.Unlock()
-	c.logger.Info().
-		Str("lifecycle_addr", lifecycleAddr).
-		Dur("poll_interval", pollInterval).
-		Msg("Cluster state collector started")
-	return nil
-}
-
 // Disconnect closes connection to Proxy.
 func (c *Client) Disconnect() error {
 	c.streamsMu.Lock()
@@ -633,13 +608,7 @@ func (c *Client) Disconnect() error {
 		c.heartbeatTicker = nil
 	}
 
-	clusterCollector := c.clusterCollector
 	c.streamsMu.Unlock()
-
-	// Stop cluster state collector if running
-	if clusterCollector != nil {
-		clusterCollector.Stop()
-	}
 
 	// Wait for heartbeat goroutine to exit before closing streams
 	c.heartbeatWg.Wait()

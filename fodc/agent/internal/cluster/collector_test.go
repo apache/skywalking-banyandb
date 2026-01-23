@@ -19,104 +19,163 @@ package cluster
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type mockClusterStateHandler struct {
-	currentNode *databasev1.Node
-	states      []*databasev1.GetClusterStateResponse
-	mu          sync.RWMutex
-}
-
-func (m *mockClusterStateHandler) OnClusterStateUpdate(state *databasev1.GetClusterStateResponse) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.states = append(m.states, state)
-}
-
-func (m *mockClusterStateHandler) OnCurrentNodeUpdate(node *databasev1.Node) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.currentNode = node
-}
-
-func (m *mockClusterStateHandler) GetStates() []*databasev1.GetClusterStateResponse {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.states
-}
-
-func (m *mockClusterStateHandler) GetCurrentNode() *databasev1.Node {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.currentNode
+func initTestLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	initErr := logger.Init(logger.Logging{Env: "dev", Level: "debug"})
+	require.NoError(t, initErr)
+	return logger.GetLogger("test", "cluster")
 }
 
 func TestNewCollector(t *testing.T) {
-	handler := &mockClusterStateHandler{}
-	collector := NewCollector(handler, "localhost:17914", 10*time.Second)
-
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
 	require.NotNil(t, collector)
 	assert.Equal(t, "localhost:17914", collector.lifecycleAddr)
 	assert.Equal(t, 10*time.Second, collector.interval)
-	assert.Equal(t, handler, collector.handler)
 	assert.NotNil(t, collector.closer)
 	assert.False(t, collector.closer.Closed())
 }
 
 func TestCollector_Stop_NotStarted(t *testing.T) {
-	handler := &mockClusterStateHandler{}
-	collector := NewCollector(handler, "localhost:17914", 10*time.Second)
-
-	// Should not panic when stopping a collector that hasn't started
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
 	collector.Stop()
-
 	assert.True(t, collector.closer.Closed())
 }
 
 func TestCollector_Stop_MultipleCalls(t *testing.T) {
-	handler := &mockClusterStateHandler{}
-	collector := NewCollector(handler, "localhost:17914", 10*time.Second)
-
-	// Multiple Stop calls should be safe
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
 	collector.Stop()
 	collector.Stop()
 	collector.Stop()
-
 	assert.True(t, collector.closer.Closed())
 }
 
 func TestCollector_Start_AfterStop(t *testing.T) {
-	handler := &mockClusterStateHandler{}
-	collector := NewCollector(handler, "localhost:17914", 10*time.Second)
-
-	// Stop before starting
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
 	collector.Stop()
-
-	// Attempt to start should fail
 	ctx := context.Background()
 	err := collector.Start(ctx)
-
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stopped and cannot be restarted")
 	assert.True(t, collector.closer.Closed())
 }
 
 func TestCollector_FetchClusterState_NoClient(t *testing.T) {
-	handler := &mockClusterStateHandler{}
-	collector := NewCollector(handler, "localhost:17914", 10*time.Second)
-
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
 	ctx := context.Background()
 	state, err := collector.fetchClusterState(ctx)
-
 	assert.Error(t, err)
 	assert.Nil(t, state)
 	assert.Contains(t, err.Error(), "gRPC client not initialized")
+}
+
+func TestCollector_FetchCurrentNode_NoClient(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	ctx := context.Background()
+	node, err := collector.fetchCurrentNode(ctx)
+	assert.Error(t, err)
+	assert.Nil(t, node)
+	assert.Contains(t, err.Error(), "node query client not initialized")
+}
+
+func TestCollector_GetCurrentNode_InitialNil(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	assert.Nil(t, collector.GetCurrentNode())
+}
+
+func TestCollector_GetClusterState_InitialNil(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	assert.Nil(t, collector.GetClusterState())
+}
+
+func TestCollector_UpdateCurrentNode(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	node := &databasev1.Node{
+		Metadata:    &commonv1.Metadata{Name: "test-node"},
+		GrpcAddress: "localhost:17913",
+		Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+		Labels:      map[string]string{"tier": "hot"},
+	}
+	collector.updateCurrentNode(node)
+	assert.Equal(t, node, collector.GetCurrentNode())
+}
+
+func TestCollector_UpdateClusterState(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	state := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{},
+				Active:     []string{"node1"},
+				Evictable:  []string{},
+			},
+		},
+	}
+	collector.updateClusterState(state)
+	assert.Equal(t, state, collector.GetClusterState())
+}
+
+func TestCollector_GetNodeInfo(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	node := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "test-node"},
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+		Labels:   map[string]string{"tier": "hot", "zone": "us-west"},
+	}
+	collector.updateCurrentNode(node)
+	nodeRole, nodeLabels := collector.GetNodeInfo()
+	assert.Equal(t, "hot", nodeRole)
+	assert.Equal(t, map[string]string{"tier": "hot", "zone": "us-west"}, nodeLabels)
+}
+
+func TestCollector_GetNodeInfo_NoNode(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, "localhost:17914", 10*time.Second)
+	nodeRole, nodeLabels := collector.GetNodeInfo()
+	assert.Equal(t, "", nodeRole)
+	assert.Nil(t, nodeLabels)
+}
+
+func TestNodeRoleFromNode(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     *databasev1.Node
+		expected string
+	}{
+		{"nil node", nil, "unknown"},
+		{"empty roles", &databasev1.Node{}, "unknown"},
+		{"liaison", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}}, "liaison"},
+		{"meta", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_META}}, "meta"},
+		{"data without tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}}, "data"},
+		{"data with hot tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "hot"}}, "hot"},
+		{"data with warm tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "warm"}}, "warm"},
+		{"data with cold tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "cold"}}, "cold"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NodeRoleFromNode(tt.node)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
