@@ -35,7 +35,7 @@ func TestNewServer(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 
 	server := NewServer(service, "localhost:0", 1024*1024, testLogger)
 
@@ -51,7 +51,7 @@ func TestServer_StartStop(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 
 	server := NewServer(service, "localhost:0", 1024*1024, testLogger)
 
@@ -69,7 +69,7 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 
 	server := NewServer(service, "localhost:0", 1024*1024, testLogger)
 
@@ -82,7 +82,7 @@ func TestServer_Start_InvalidAddress(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 
 	server := NewServer(service, "invalid-address", 1024*1024, testLogger)
 

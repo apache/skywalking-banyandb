@@ -33,6 +33,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -40,10 +41,11 @@ import (
 
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
-	metricsStream fodcv1.FODCService_StreamMetricsServer
-	lastActivity  time.Time
-	agentID       string
-	mu            sync.RWMutex
+	metricsStream      fodcv1.FODCService_StreamMetricsServer
+	clusterStateStream fodcv1.FODCService_StreamClusterStateServer
+	lastActivity       time.Time
+	agentID            string
+	mu                 sync.RWMutex
 }
 
 // updateActivity updates the last activity time.
@@ -67,6 +69,13 @@ func (ac *agentConnection) setMetricsStream(stream fodcv1.FODCService_StreamMetr
 	ac.metricsStream = stream
 }
 
+// setClusterStateStream sets the cluster state stream.
+func (ac *agentConnection) setClusterStateStream(stream fodcv1.FODCService_StreamClusterStateServer) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.clusterStateStream = stream
+}
+
 // sendMetricsRequest sends a metrics request to the agent via the metrics stream.
 func (ac *agentConnection) sendMetricsRequest(resp *fodcv1.StreamMetricsResponse) error {
 	ac.mu.RLock()
@@ -80,25 +89,49 @@ func (ac *agentConnection) sendMetricsRequest(resp *fodcv1.StreamMetricsResponse
 	return nil
 }
 
+// sendClusterDataRequest sends a cluster data request to the agent via the cluster state stream.
+func (ac *agentConnection) sendClusterDataRequest() error {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if ac.clusterStateStream == nil {
+		return fmt.Errorf("cluster state stream not established for agent ID: %s", ac.agentID)
+	}
+	resp := &fodcv1.StreamClusterStateResponse{
+		RequestClusterData: true,
+	}
+	if sendErr := ac.clusterStateStream.Send(resp); sendErr != nil {
+		return fmt.Errorf("failed to send cluster data request: %w", sendErr)
+	}
+	return nil
+}
+
 // FODCService implements the FODC gRPC service.
 type FODCService struct {
 	fodcv1.UnimplementedFODCServiceServer
-	registry          *registry.AgentRegistry
-	metricsAggregator *metrics.Aggregator
-	logger            *logger.Logger
-	connections       map[string]*agentConnection
-	connectionsMu     sync.RWMutex
-	heartbeatInterval time.Duration
+	registry            *registry.AgentRegistry
+	metricsAggregator   *metrics.Aggregator
+	clusterStateManager *cluster.Manager
+	logger              *logger.Logger
+	connections         map[string]*agentConnection
+	connectionsMu       sync.RWMutex
+	heartbeatInterval   time.Duration
 }
 
 // NewFODCService creates a new FODCService instance.
-func NewFODCService(registry *registry.AgentRegistry, metricsAggregator *metrics.Aggregator, logger *logger.Logger, heartbeatInterval time.Duration) *FODCService {
+func NewFODCService(
+	registry *registry.AgentRegistry,
+	metricsAggregator *metrics.Aggregator,
+	clusterStateManager *cluster.Manager,
+	logger *logger.Logger,
+	heartbeatInterval time.Duration,
+) *FODCService {
 	return &FODCService{
-		registry:          registry,
-		metricsAggregator: metricsAggregator,
-		logger:            logger,
-		connections:       make(map[string]*agentConnection),
-		heartbeatInterval: heartbeatInterval,
+		registry:            registry,
+		metricsAggregator:   metricsAggregator,
+		clusterStateManager: clusterStateManager,
+		logger:              logger,
+		connections:         make(map[string]*agentConnection),
+		heartbeatInterval:   heartbeatInterval,
 	}
 }
 
@@ -214,8 +247,6 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 		s.logger.Error().Msg("Agent ID not found in context metadata or peer address")
 		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
 	}
-
-	defer s.cleanupConnection(agentID)
 
 	s.connectionsMu.Lock()
 	existingConn, exists := s.connections[agentID]
@@ -351,4 +382,86 @@ func (s *FODCService) getAgentIDFromPeer(ctx context.Context) string {
 	}
 
 	return ""
+}
+
+// StreamClusterState handles bi-directional cluster state streaming.
+func (s *FODCService) StreamClusterState(stream fodcv1.FODCService_StreamClusterStateServer) error {
+	ctx := stream.Context()
+	agentID := s.getAgentIDFromContext(ctx)
+	if agentID == "" {
+		agentID = s.getAgentIDFromPeer(ctx)
+		if agentID != "" {
+			s.logger.Warn().
+				Str("agent_id", agentID).
+				Msg("Agent ID not found in metadata, using peer address fallback (this may be unreliable)")
+		}
+	}
+	if agentID == "" {
+		s.logger.Error().Msg("Agent ID not found in context metadata or peer address")
+		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
+	}
+
+	s.connectionsMu.Lock()
+	existingConn, exists := s.connections[agentID]
+	if exists {
+		existingConn.setClusterStateStream(stream)
+		existingConn.updateActivity()
+	} else {
+		agentConn := &agentConnection{
+			agentID:            agentID,
+			clusterStateStream: stream,
+			lastActivity:       time.Now(),
+		}
+		s.connections[agentID] = agentConn
+	}
+	s.connectionsMu.Unlock()
+	for {
+		req, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			s.logger.Debug().Str("agent_id", agentID).Msg("Cluster state stream closed by agent")
+			return nil
+		}
+		if recvErr != nil {
+			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+				s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Cluster state stream closed")
+			} else if st, ok := status.FromError(recvErr); ok {
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
+					s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Cluster state stream closed")
+				} else {
+					s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving cluster state")
+				}
+			} else {
+				s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving cluster state")
+			}
+			return recvErr
+		}
+		if s.clusterStateManager != nil {
+			nodeName := ""
+			if req.CurrentNode != nil && req.CurrentNode.Metadata != nil {
+				nodeName = req.CurrentNode.Metadata.Name
+			}
+			routeTableCount := 0
+			if req.ClusterState != nil {
+				routeTableCount = len(req.ClusterState.RouteTables)
+			}
+			s.clusterStateManager.UpdateClusterState(agentID, req.CurrentNode, req.ClusterState)
+			s.logger.Debug().
+				Str("agent_id", agentID).
+				Str("node_name", nodeName).
+				Int("route_tables_count", routeTableCount).
+				Msg("Received cluster data from agent")
+		}
+	}
+}
+
+// RequestClusterData requests cluster data from an agent via the cluster state stream.
+func (s *FODCService) RequestClusterData(agentID string) error {
+	s.connectionsMu.RLock()
+	agentConn, exists := s.connections[agentID]
+	s.connectionsMu.RUnlock()
+	if !exists {
+		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
+	}
+	return agentConn.sendClusterDataRequest()
 }

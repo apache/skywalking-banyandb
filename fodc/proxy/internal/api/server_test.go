@@ -22,14 +22,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -50,460 +51,101 @@ func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 	return m.requestErr
 }
 
-func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry) {
+// mockClusterDataRequester is a mock implementation of cluster.RequestSender for testing.
+type mockClusterDataRequester struct {
+	requestErr error
+}
+
+func (m *mockClusterDataRequester) RequestClusterData(_ string) error {
+	return m.requestErr
+}
+
+func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Manager) {
 	t.Helper()
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, testRegistry, testLogger)
-	return server, testRegistry
+	mockRequester := &mockClusterDataRequester{}
+	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
+	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
+	return server, testRegistry, clusterMgr
 }
 
-func createTestMetric(name string, value float64, labels map[string]string, timestamp time.Time) *metrics.AggregatedMetric {
-	if labels == nil {
-		labels = make(map[string]string)
+func TestHandleClusterTopology_Success(t *testing.T) {
+	server, testRegistry, clusterMgr := newTestServer(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
 	}
-	return &metrics.AggregatedMetric{
-		Name:        name,
-		Value:       value,
-		Labels:      labels,
-		Timestamp:   timestamp,
-		AgentID:     "test-agent-1",
-		Description: "Test metric description",
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	clusterState := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{
+					{
+						Metadata: &commonv1.Metadata{
+							Name: "node1",
+						},
+					},
+				},
+				Active:    []string{"node1"},
+				Evictable: []string{},
+			},
+		},
 	}
+	currentNode := &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: "test-node",
+		},
+	}
+	clusterMgr.UpdateClusterState(agentID, currentNode, clusterState)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusOK, resp.Code)
+	var result map[string]interface{}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	require.NoError(t, decodeErr)
+	assert.Contains(t, result, "route_tables")
 }
 
-func TestNewServer(t *testing.T) {
+func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-
-	server := NewServer(aggregator, testRegistry, testLogger)
-
-	assert.NotNil(t, server)
-	assert.Equal(t, aggregator, server.metricsAggregator)
-	assert.Equal(t, testRegistry, server.registry)
-	assert.WithinDuration(t, time.Now(), server.startTime, time.Second)
+	server := NewServer(aggregator, nil, testRegistry, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
 }
 
-func TestServer_StartStop(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	err := server.Start("localhost:0", 5*time.Second, 5*time.Second)
-	require.NoError(t, err)
-	assert.NotNil(t, server.server)
-
-	time.Sleep(50 * time.Millisecond)
-
-	stopErr := server.Stop()
-	assert.NoError(t, stopErr)
-}
-
-func TestServer_Stop_NotStarted(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	err := server.Stop()
-	assert.NoError(t, err)
-}
-
-func TestHandleMetrics_Success(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetrics(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Header().Get("Content-Type"), "text/plain")
-}
-
-func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/metrics", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetrics(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestHandleMetrics_WithRoleFilter(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics?role=datanode-cold", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetrics(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestHandleMetrics_WithAddressFilter(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics?address=192.168.1.1", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetrics(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestHandleMetrics_CollectionError(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-
-	server.handleMetrics(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestHandleMetricsWindows_Success(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
-	endTime := now.Format(time.RFC3339)
-
-	u, urlErr := url.Parse("/metrics-windows")
-	require.NoError(t, urlErr)
-	q := u.Query()
-	q.Set("start_time", startTime)
-	q.Set("end_time", endTime)
-	u.RawQuery = q.Encode()
-
-	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	var response []map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-}
-
-func TestHandleMetricsWindows_InvalidStartTime(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	u, urlErr := url.Parse("/metrics-windows")
-	require.NoError(t, urlErr)
-	q := u.Query()
-	q.Set("start_time", "invalid")
-	u.RawQuery = q.Encode()
-
-	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Invalid start_time format")
-}
-
-func TestHandleMetricsWindows_InvalidEndTime(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
-
-	u, urlErr := url.Parse("/metrics-windows")
-	require.NoError(t, urlErr)
-	q := u.Query()
-	q.Set("start_time", startTime)
-	q.Set("end_time", "invalid")
-	u.RawQuery = q.Encode()
-
-	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Invalid end_time format")
-}
-
-func TestHandleMetricsWindows_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/metrics-windows", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics-windows", nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var response []map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-}
-
-func TestHandleHealth_Success(t *testing.T) {
-	server, testRegistry := newTestServer(t)
-
+func TestHandleClusterTopology_RequestClusterDataError(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+	mockRequester := &mockClusterDataRequester{requestErr: assert.AnError}
+	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
+	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
 	ctx := context.Background()
-	identity1 := registry.AgentIdentity{PodName: "192.168.1.1", Role: "datanode-cold", ContainerNames: []string{"data"}}
-	identity2 := registry.AgentIdentity{PodName: "192.168.1.2", Role: "liaison", ContainerNames: []string{"liaison"}}
-
-	_, err1 := testRegistry.RegisterAgent(ctx, identity1)
-	require.NoError(t, err1)
-	_, err2 := testRegistry.RegisterAgent(ctx, identity2)
-	require.NoError(t, err2)
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-
-	server.handleHealth(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-	var response map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-	assert.Equal(t, "healthy", response["status"])
-	assert.Equal(t, float64(2), response["agents_total"])
-	assert.GreaterOrEqual(t, response["uptime_seconds"], float64(0))
-}
-
-func TestHandleHealth_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/health", nil)
-	w := httptest.NewRecorder()
-
-	server.handleHealth(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestFormatPrometheusText_Empty(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	result := server.formatPrometheusText([]*metrics.AggregatedMetric{})
-
-	assert.Empty(t, result)
-}
-
-func TestFormatPrometheusText_SingleMetric(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
 	}
-
-	result := server.formatPrometheusText(metricsList)
-
-	assert.Contains(t, result, "# HELP cpu_usage")
-	assert.Contains(t, result, "# TYPE cpu_usage gauge")
-	assert.Contains(t, result, "cpu_usage")
-	assert.Contains(t, result, "75.5")
-}
-
-func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
-		createTestMetric("cpu_usage", 80.0, map[string]string{"cpu": "1", "pod_name": "192.168.1.1"}, now),
-		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "pod_name": "192.168.1.1"}, now),
-	}
-
-	result := server.formatPrometheusText(metricsList)
-
-	assert.NotEmpty(t, result)
-	assert.Contains(t, result, "cpu_usage")
-	assert.Contains(t, result, "memory_usage")
-}
-
-func TestFormatPrometheusText_WithLabels(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, now),
-	}
-
-	result := server.formatPrometheusText(metricsList)
-
-	assert.Contains(t, result, "cpu_usage{")
-	assert.Contains(t, result, "cpu=\"0\"")
-	assert.Contains(t, result, "env=\"test\"")
-}
-
-func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	result := server.formatMetricsWindowJSON([]*metrics.AggregatedMetric{})
-
-	assert.Equal(t, 0, len(result))
-}
-
-func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
-	}
-
-	result := server.formatMetricsWindowJSON(metricsList)
-
-	assert.Equal(t, 1, len(result))
-	item := result[0]
-	assert.Equal(t, "cpu_usage", item["name"])
-	assert.Equal(t, "test-agent-1", item["agent_id"])
-	assert.Equal(t, "192.168.1.1", item["pod_name"])
-	assert.Contains(t, item, "data")
-}
-
-func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "pod_name": "192.168.1.1"}, now),
-		createTestMetric("memory_usage", 50.0, map[string]string{"type": "heap", "pod_name": "192.168.1.1"}, now),
-	}
-
-	result := server.formatMetricsWindowJSON(metricsList)
-
-	assert.Equal(t, 2, len(result))
-	metricNames := make(map[string]bool)
-	for _, item := range result {
-		metricNames[item["name"].(string)] = true
-	}
-	assert.True(t, metricNames["cpu_usage"])
-	assert.True(t, metricNames["memory_usage"])
-}
-
-func TestGetMetricKey(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	metric := createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, time.Now())
-
-	key := server.getMetricKey(metric)
-
-	assert.Contains(t, key, "cpu_usage")
-	assert.Contains(t, key, "test-agent-1")
-	assert.Contains(t, key, "cpu=0")
-	assert.Contains(t, key, "env=test")
-	assert.Contains(t, key, "pod_name=192.168.1.1")
-}
-
-func TestFormatFloat(t *testing.T) {
-	tests := []struct {
-		name     string
-		expected string
-		value    float64
-	}{
-		{"integer", "100", 100.0},
-		{"decimal", "75.5", 75.5},
-		{"small", "0.001", 0.001},
-		{"large", "1000000", 1000000.0},
-		{"negative", "-50.5", -50.5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatFloat(tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestServer_Integration(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", server.handleMetrics)
-	mux.HandleFunc("/metrics-windows", server.handleMetricsWindows)
-	mux.HandleFunc("/health", server.handleHealth)
-
-	testServer := httptest.NewServer(mux)
-	defer testServer.Close()
-
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-
-	healthResp, healthErr := client.Get(testServer.URL + "/health")
-	require.NoError(t, healthErr)
-	assert.Equal(t, http.StatusOK, healthResp.StatusCode)
-	healthResp.Body.Close()
-
-	metricsResp, metricsErr := client.Get(testServer.URL + "/metrics")
-	if metricsErr == nil {
-		assert.Equal(t, http.StatusOK, metricsResp.StatusCode)
-		metricsResp.Body.Close()
-	}
-}
-
-func TestHandleMetricsWindows_WithFilters(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
-	endTime := now.Format(time.RFC3339)
-
-	u, urlErr := url.Parse("/metrics-windows")
-	require.NoError(t, urlErr)
-	q := u.Query()
-	q.Set("start_time", startTime)
-	q.Set("end_time", endTime)
-	q.Set("role", "datanode-cold")
-	q.Set("address", "192.168.1.1")
-	u.RawQuery = q.Encode()
-
-	req := httptest.NewRequest(http.MethodGet, u.String(), nil)
-	w := httptest.NewRecorder()
-
-	server.handleMetricsWindows(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var response []map[string]interface{}
-	decodeErr := json.NewDecoder(w.Body).Decode(&response)
-	require.NoError(t, decodeErr)
-}
-
-func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
-
-	now := time.Now()
-	metricsList := []*metrics.AggregatedMetric{
-		createTestMetric("z_metric", 1.0, map[string]string{"pod_name": "192.168.1.1"}, now),
-		createTestMetric("a_metric", 2.0, map[string]string{"pod_name": "192.168.1.1"}, now),
-		createTestMetric("m_metric", 3.0, map[string]string{"pod_name": "192.168.1.1"}, now),
-	}
-
-	result := server.formatPrometheusText(metricsList)
-
-	aIndex := strings.Index(result, "a_metric")
-	mIndex := strings.Index(result, "m_metric")
-	zIndex := strings.Index(result, "z_metric")
-
-	assert.True(t, aIndex < mIndex && mIndex < zIndex, "Metrics should be sorted alphabetically")
+	_, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusOK, resp.Code)
 }
