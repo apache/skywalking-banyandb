@@ -55,7 +55,13 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.MeasureExecutionContext) (logical.Plan, error) {
+func Analyze(
+	criteria *measurev1.QueryRequest,
+	metadata []*commonv1.Metadata,
+	ss []logical.Schema,
+	ecc []executor.MeasureExecutionContext,
+	isDistributed bool,
+) (logical.Plan, error) {
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to metadata count %d", len(ss), len(metadata))
 	}
@@ -119,10 +125,19 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 	}
 
 	if criteria.GetAgg() != nil {
+		// Check if this is a distributed mean aggregation that needs to return sum and count
+		// This happens when the query is pushed down from liaison node to data node
+		isDistributedMean := false
+		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
+			criteria.GetGroupBy() != nil &&
+			criteria.GetTop() == nil {
+			isDistributedMean = true
+		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
+			isDistributedMean,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -162,7 +177,8 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
 			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN ||
 			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT) &&
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT ||
+			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN) &&
 		criteria.GetTop() == nil
 
 	// parse fields
@@ -175,22 +191,23 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
-	if criteria.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, false)
-		pushedLimit = math.MaxInt
-	}
-
-	if criteria.GetAgg() != nil {
-		aggrFunc := criteria.GetAgg().GetFunction()
-		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
-			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+	// When needCompletePushDownAgg is true, aggregation is already done on data nodes,
+	// so we should not create groupBy and aggregation plans on liaison node
+	if !needCompletePushDownAgg {
+		if criteria.GetGroupBy() != nil {
+			plan = newUnresolvedGroupBy(plan, groupByTags, false)
+			pushedLimit = math.MaxInt
 		}
-		plan = newUnresolvedAggregation(plan,
-			logical.NewField(criteria.GetAgg().GetFieldName()),
-			aggrFunc,
-			criteria.GetGroupBy() != nil,
-		)
-		pushedLimit = math.MaxInt
+
+		if criteria.GetAgg() != nil {
+			plan = newUnresolvedAggregation(plan,
+				logical.NewField(criteria.GetAgg().GetFieldName()),
+				criteria.GetAgg().GetFunction(),
+				criteria.GetGroupBy() != nil,
+				false,
+			)
+			pushedLimit = math.MaxInt
+		}
 	}
 
 	if criteria.GetTop() != nil {

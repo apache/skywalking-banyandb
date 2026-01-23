@@ -311,9 +311,39 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
+		fmt.Printf("===MEAN_DEBUG Execute: needCompletePushDownAgg=true, received %d pushedDownAggDps\n", len(pushedDownAggDps))
+		if t.queryTemplate.Agg != nil {
+			fmt.Printf("===MEAN_DEBUG Execute: Agg function=%v, fieldName=%s\n", t.queryTemplate.Agg.GetFunction(), t.queryTemplate.Agg.FieldName)
+		}
+		if t.queryTemplate.Agg != nil &&
+			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+			fmt.Printf("===MEAN_DEBUG Execute: entering mean aggregation merge path\n")
+			mergedDps, mergeErr := mergeMeanAggregation(pushedDownAggDps,
+				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
+			if mergeErr != nil {
+				fmt.Printf("===MEAN_DEBUG Execute: mergeMeanAggregation error: %v\n", mergeErr)
+				return nil, multierr.Append(err, mergeErr)
+			}
+			fmt.Printf("===MEAN_DEBUG Execute: mergeMeanAggregation returned %d mergedDps\n", len(mergedDps))
+			deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(mergedDps, t.groupByTagsRefs)
+			if dedupErr != nil {
+				fmt.Printf("===MEAN_DEBUG Execute: deduplicateAggregatedDataPointsWithShard error: %v\n", dedupErr)
+				return nil, multierr.Append(err, dedupErr)
+			}
+			fmt.Printf("===MEAN_DEBUG Execute: deduplicateAggregatedDataPointsWithShard returned %d deduplicatedDps\n", len(deduplicatedDps))
+			return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
+		}
+		// For other aggregation functions (MIN/MAX/SUM/COUNT), deduplicate by shard
+		// When there's no groupBy, we need to deduplicate by shard_id to remove duplicates from replicas
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
+		}
+		// If there's no groupBy, we need to merge results from different shards
+		// For MIN/MAX, take the min/max; for SUM/COUNT, sum them up
+		if len(t.groupByTagsRefs) == 0 && len(deduplicatedDps) > 1 && t.queryTemplate.Agg != nil {
+			mergedDps := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
+			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
 		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
@@ -568,10 +598,274 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 	return result, nil
 }
 
+// mergeNonGroupByAggregation merges aggregation results from multiple shards when there's no groupBy.
+// For MIN/MAX, takes the min/max value; for SUM/COUNT, sums them up.
+func mergeNonGroupByAggregation(dataPoints []*measurev1.InternalDataPoint, agg *measurev1.QueryRequest_Aggregation) []*measurev1.InternalDataPoint {
+	if len(dataPoints) == 0 {
+		return nil
+	}
+	if len(dataPoints) == 1 {
+		return dataPoints
+	}
+	// Deduplicate by shard_id first (keep the one with highest version)
+	shardMap := make(map[uint32]*measurev1.InternalDataPoint)
+	for _, idp := range dataPoints {
+		existing, exists := shardMap[idp.ShardId]
+		if !exists || idp.GetDataPoint().Version > existing.GetDataPoint().Version {
+			shardMap[idp.ShardId] = idp
+		}
+	}
+	// Now merge results from different shards
+	deduplicatedDps := make([]*measurev1.InternalDataPoint, 0, len(shardMap))
+	for _, idp := range shardMap {
+		deduplicatedDps = append(deduplicatedDps, idp)
+	}
+	if len(deduplicatedDps) == 1 {
+		return deduplicatedDps
+	}
+	// Merge aggregation results based on function type
+	fieldName := agg.FieldName
+	var result *measurev1.InternalDataPoint
+	switch agg.Function {
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
+		result = deduplicatedDps[0]
+		for i := 1; i < len(deduplicatedDps); i++ {
+			dp := deduplicatedDps[i].GetDataPoint()
+			resultDp := result.GetDataPoint()
+			fieldVal := getFieldValue(dp, fieldName)
+			resultFieldVal := getFieldValue(resultDp, fieldName)
+			if fieldVal != nil && resultFieldVal != nil {
+				if compareLess(fieldVal, resultFieldVal) {
+					result = deduplicatedDps[i]
+				}
+			}
+		}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
+		result = deduplicatedDps[0]
+		for i := 1; i < len(deduplicatedDps); i++ {
+			dp := deduplicatedDps[i].GetDataPoint()
+			resultDp := result.GetDataPoint()
+			fieldVal := getFieldValue(dp, fieldName)
+			resultFieldVal := getFieldValue(resultDp, fieldName)
+			if fieldVal != nil && resultFieldVal != nil {
+				if compareGreater(fieldVal, resultFieldVal) {
+					result = deduplicatedDps[i]
+				}
+			}
+		}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+		// Sum all values
+		result = deduplicatedDps[0]
+		resultDp := result.GetDataPoint()
+		var sumInt int64
+		var sumFloat float64
+		isFloat := false
+		for _, idp := range deduplicatedDps {
+			dp := idp.GetDataPoint()
+			fieldVal := getFieldValue(dp, fieldName)
+			if fieldVal == nil {
+				continue
+			}
+			switch v := fieldVal.Value.(type) {
+			case *modelv1.FieldValue_Int:
+				if !isFloat {
+					sumInt += v.Int.Value
+				} else {
+					sumFloat += float64(v.Int.Value)
+				}
+			case *modelv1.FieldValue_Float:
+				if !isFloat {
+					isFloat = true
+					sumFloat = float64(sumInt) + v.Float.Value
+				} else {
+					sumFloat += v.Float.Value
+				}
+			}
+		}
+		// Update the result field value
+		for i, field := range resultDp.Fields {
+			if field.Name == fieldName {
+				if isFloat {
+					resultDp.Fields[i].Value = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sumFloat}}}
+				} else {
+					resultDp.Fields[i].Value = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sumInt}}}
+				}
+				break
+			}
+		}
+	default:
+		// For other functions, just return the first one (should not happen for needCompletePushDownAgg)
+		return deduplicatedDps[:1]
+	}
+	return []*measurev1.InternalDataPoint{result}
+}
+
+// getFieldValue extracts the field value from a data point.
+func getFieldValue(dp *measurev1.DataPoint, fieldName string) *modelv1.FieldValue {
+	for _, field := range dp.Fields {
+		if field.Name == fieldName {
+			return field.Value
+		}
+	}
+	return nil
+}
+
+// compareLess compares two field values and returns true if the first is less than the second.
+func compareLess(v1, v2 *modelv1.FieldValue) bool {
+	switch val1 := v1.Value.(type) {
+	case *modelv1.FieldValue_Int:
+		if val2, ok := v2.Value.(*modelv1.FieldValue_Int); ok {
+			return val1.Int.Value < val2.Int.Value
+		}
+	case *modelv1.FieldValue_Float:
+		if val2, ok := v2.Value.(*modelv1.FieldValue_Float); ok {
+			return val1.Float.Value < val2.Float.Value
+		}
+	}
+	return false
+}
+
+// compareGreater compares two field values and returns true if the first is greater than the second.
+func compareGreater(v1, v2 *modelv1.FieldValue) bool {
+	switch val1 := v1.Value.(type) {
+	case *modelv1.FieldValue_Int:
+		if val2, ok := v2.Value.(*modelv1.FieldValue_Int); ok {
+			return val1.Int.Value > val2.Int.Value
+		}
+	case *modelv1.FieldValue_Float:
+		if val2, ok := v2.Value.(*modelv1.FieldValue_Float); ok {
+			return val1.Float.Value > val2.Float.Value
+		}
+	}
+	return false
+}
+
 // hashWithShard combines shard_id and group_key into a single hash.
 func hashWithShard(shardID, groupKey uint64) uint64 {
 	h := uint64(offset64)
 	h = (h ^ shardID) * prime64
 	h = (h ^ groupKey) * prime64
 	return h
+}
+
+type meanGroup struct {
+	dataPoint  *measurev1.DataPoint
+	shardID    uint32
+	sumInt     int64
+	countInt   int64
+	sumFloat   float64
+	countFloat float64
+}
+
+// mergeMeanAggregation merges mean aggregation results (sum and count) from multiple data nodes.
+func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName string, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
+	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: received %d dataPoints, fieldName=%s\n", len(dataPoints), fieldName)
+	groupMap := make(map[uint64]*meanGroup)
+	for idx, idp := range dataPoints {
+		dp := idp.GetDataPoint()
+		fmt.Printf("===MEAN_DEBUG dataPoint[%d]: shardID=%d, fields count=%d\n", idx, idp.ShardId, len(dp.Fields))
+		for fieldIdx, field := range dp.Fields {
+			fmt.Printf("===MEAN_DEBUG   field[%d]: name=%s, value=%v\n", fieldIdx, field.Name, field.Value)
+		}
+		var groupKey uint64
+		if len(groupByTagsRefs) > 0 {
+			var keyErr error
+			groupKey, keyErr = formatGroupByKey(dp, groupByTagsRefs)
+			if keyErr != nil {
+				return nil, keyErr
+			}
+			fmt.Printf("===MEAN_DEBUG   groupKey=%d\n", groupKey)
+		}
+		var sumVal int64
+		var countVal int64
+		var sumFloat float64
+		var countFloat float64
+		var isFloat bool
+		var sumFound, countFound bool
+		for _, field := range dp.Fields {
+			if field.Name == fieldName+"_sum" {
+				if intVal := field.Value.GetInt(); intVal != nil {
+					sumVal = intVal.Value
+					isFloat = false
+					sumFound = true
+					fmt.Printf("===MEAN_DEBUG   found sum (int): %d\n", sumVal)
+				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
+					sumFloat = floatVal.Value
+					isFloat = true
+					sumFound = true
+					fmt.Printf("===MEAN_DEBUG   found sum (float): %f\n", sumFloat)
+				}
+			} else if field.Name == fieldName+"_count" {
+				if intVal := field.Value.GetInt(); intVal != nil {
+					countVal = intVal.Value
+					countFound = true
+					fmt.Printf("===MEAN_DEBUG   found count (int): %d\n", countVal)
+				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
+					countFloat = floatVal.Value
+					countFound = true
+					fmt.Printf("===MEAN_DEBUG   found count (float): %f\n", countFloat)
+				}
+			}
+		}
+		if !sumFound || !countFound {
+			fmt.Printf("===MEAN_DEBUG   WARNING: sumFound=%v, countFound=%v, skipping\n", sumFound, countFound)
+			continue
+		}
+		if _, exists := groupMap[groupKey]; !exists {
+			groupMap[groupKey] = &meanGroup{
+				dataPoint: &measurev1.DataPoint{
+					TagFamilies: dp.TagFamilies,
+				},
+				shardID: idp.ShardId,
+			}
+		}
+		mg := groupMap[groupKey]
+		if isFloat {
+			mg.sumFloat += sumFloat
+			mg.countFloat += countFloat
+			fmt.Printf("===MEAN_DEBUG   accumulated (float): sum=%f, count=%f\n", mg.sumFloat, mg.countFloat)
+		} else {
+			mg.sumInt += sumVal
+			mg.countInt += countVal
+			fmt.Printf("===MEAN_DEBUG   accumulated (int): sum=%d, count=%d\n", mg.sumInt, mg.countInt)
+		}
+	}
+	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: groupMap size=%d\n", len(groupMap))
+	result := make([]*measurev1.InternalDataPoint, 0, len(groupMap))
+	for groupKey, mg := range groupMap {
+		var meanVal *modelv1.FieldValue
+		switch {
+		case mg.countFloat > 0:
+			mean := mg.sumFloat / mg.countFloat
+			meanVal = &modelv1.FieldValue{
+				Value: &modelv1.FieldValue_Float{
+					Float: &modelv1.Float{Value: mean},
+				},
+			}
+			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: mean (float)=%f (sum=%f, count=%f)\n", groupKey, mean, mg.sumFloat, mg.countFloat)
+		case mg.countInt > 0:
+			mean := mg.sumInt / mg.countInt
+			meanVal = &modelv1.FieldValue{
+				Value: &modelv1.FieldValue_Int{
+					Int: &modelv1.Int{Value: mean},
+				},
+			}
+			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: mean (int)=%d (sum=%d, count=%d)\n", groupKey, mean, mg.sumInt, mg.countInt)
+		default:
+			fmt.Printf("===MEAN_DEBUG   result[groupKey=%d]: skipping (no count)\n", groupKey)
+			continue
+		}
+		mg.dataPoint.Fields = []*measurev1.DataPoint_Field{
+			{
+				Name:  fieldName,
+				Value: meanVal,
+			},
+		}
+		result = append(result, &measurev1.InternalDataPoint{
+			DataPoint: mg.dataPoint,
+			ShardId:   mg.shardID,
+		})
+	}
+	fmt.Printf("===MEAN_DEBUG mergeMeanAggregation: returning %d results\n", len(result))
+	return result, nil
 }

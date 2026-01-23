@@ -202,8 +202,13 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 }
 
 // executeMeasurePlan executes the measure query plan and returns the iterator.
-func executeMeasurePlan(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext) (executor.MIterator, logical.Plan, error) {
-	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc)
+func executeMeasurePlan(
+	ctx context.Context,
+	queryCriteria *measurev1.QueryRequest,
+	mctx *measureExecutionContext,
+	isDistributed bool,
+) (executor.MIterator, logical.Plan, error) {
+	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, isDistributed)
 	if planErr != nil {
 		return nil, nil, fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
 	}
@@ -343,7 +348,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
+	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
@@ -462,7 +467,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
 	}
 
-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
+	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, true)
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
@@ -507,7 +512,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 			mctx.ml.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
 		} else {
 			rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
-			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx)
+			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx, true)
 			if rewriteExecErr != nil {
 				mctx.ml.Error().Err(rewriteExecErr).RawJSON("req", logger.Proto(rewriteQueryCriteria)).Msg("fail to execute the rewrite query plan")
 			} else {
