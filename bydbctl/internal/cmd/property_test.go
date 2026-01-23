@@ -758,7 +758,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
-				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
+				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())
@@ -1027,26 +1028,36 @@ func deleteData(rootCmd *cobra.Command, addr, group, name, id string, success bo
 }
 
 func generateInvertedStore(rootPath string) (index.SeriesStore, error) {
-	shardParent := path.Join(rootPath, "property", "data")
-	list, err := os.ReadDir(shardParent)
+	dataParent := path.Join(rootPath, "property", "data")
+	groupList, err := os.ReadDir(dataParent)
 	if err != nil {
-		return nil, fmt.Errorf("read dir %s error: %w", shardParent, err)
+		return nil, fmt.Errorf("read dir %s error: %w", dataParent, err)
 	}
-	if len(list) == 0 {
-		return nil, fmt.Errorf("no shard found in %s", shardParent)
+	if len(groupList) == 0 {
+		return nil, fmt.Errorf("no group found in %s", dataParent)
 	}
-	for _, e := range list {
-		if !e.Type().IsDir() {
+	for _, groupEntry := range groupList {
+		if !groupEntry.Type().IsDir() {
 			continue
 		}
-		_, found := strings.CutPrefix(e.Name(), "shard-")
-		if !found {
+		groupPath := path.Join(dataParent, groupEntry.Name())
+		shardList, readErr := os.ReadDir(groupPath)
+		if readErr != nil {
 			continue
 		}
-		return inverted.NewStore(
-			inverted.StoreOpts{
-				Path: path.Join(shardParent, e.Name()),
-			})
+		for _, shardEntry := range shardList {
+			if !shardEntry.Type().IsDir() {
+				continue
+			}
+			_, found := strings.CutPrefix(shardEntry.Name(), "shard-")
+			if !found {
+				continue
+			}
+			return inverted.NewStore(
+				inverted.StoreOpts{
+					Path: path.Join(groupPath, shardEntry.Name()),
+				})
+		}
 	}
 	return nil, fmt.Errorf("no shard found in %s", rootPath)
 }
@@ -1083,7 +1094,7 @@ func registerNodeToMessenger(m gossip.Messenger, nodeID, gossipRepairAddr string
 }
 
 func getRepairTreeFilePath(nodeDir, group string) string {
-	return path.Join(nodeDir, "property", "repairs", "shard0", fmt.Sprintf("state-tree-%s.data", group))
+	return path.Join(nodeDir, "property", "repairs", group, "shard0", "state-tree.data")
 }
 
 func getRepairTreeModTime(nodeDir, group string) (time.Time, error) {

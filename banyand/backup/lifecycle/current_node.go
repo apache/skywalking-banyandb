@@ -15,16 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package apiversion contains the version of the API.
-package apiversion
+package lifecycle
 
-// Version is the version of the API.
-const Version = "0.10"
+import (
+	"context"
 
-// Revision is the revision of the API. Building with -ldflags -X.
-var revision string
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+)
 
-// GetRevision returns the revision of the API.
-func GetRevision() string {
-	return revision
+func (l *lifecycleService) GetCurrentNode(_ context.Context, _ *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
+	return &databasev1.GetCurrentNodeResponse{
+		Node: l.currentNode,
+	}, nil
 }

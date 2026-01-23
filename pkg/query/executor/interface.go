@@ -49,7 +49,7 @@ type MeasureExecutionContext interface {
 type MIterator interface {
 	Next() bool
 
-	Current() []*measurev1.DataPoint
+	Current() []*measurev1.InternalDataPoint
 
 	Close() error
 }

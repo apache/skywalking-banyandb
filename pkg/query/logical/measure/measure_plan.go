@@ -98,7 +98,7 @@ func (l *limitIterator) Close() error {
 	return l.inner.Close()
 }
 
-func (l *limitIterator) Current() []*measurev1.DataPoint {
+func (l *limitIterator) Current() []*measurev1.InternalDataPoint {
 	return l.inner.Current()
 }
 

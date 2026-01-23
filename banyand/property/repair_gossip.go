@@ -43,25 +43,25 @@ type repairGossipBase struct {
 }
 
 func (b *repairGossipBase) getTreeReader(ctx context.Context, group string, shardID uint32) (repairTreeReader, bool, error) {
-	s, err := b.scheduler.db.loadShard(ctx, common.ShardID(shardID))
+	s, err := b.scheduler.db.loadShard(ctx, group, common.ShardID(shardID))
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to load shard %d: %w", shardID, err)
 	}
-	tree, err := s.repairState.treeReader(group)
+	tree, err := s.repairState.treeReader()
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to get tree reader for group %s: %w", group, err)
 	}
 	if tree == nil {
 		// if the tree is nil, but the state file exist, means the tree(group) is empty
-		stateExist, err := s.repairState.stateFileExist()
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to check state file existence for group %s: %w", group, err)
+		stateExist, stateErr := s.repairState.stateFileExist()
+		if stateErr != nil {
+			return nil, false, fmt.Errorf("failed to check state file existence for group %s: %w", group, stateErr)
 		}
 		if !stateExist {
 			// check has scheduled or not
-			stateExist, err = b.scheduler.checkHasBuildTree()
-			if err != nil {
-				return nil, false, fmt.Errorf("failed to check if the tree state file exists: %w", err)
+			stateExist, stateErr = b.scheduler.checkHasBuildTree()
+			if stateErr != nil {
+				return nil, false, fmt.Errorf("failed to check if the tree state file exists: %w", stateErr)
 			}
 		}
 		// if the tree is nil, it means the tree is no data
@@ -256,9 +256,9 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 		return nil
 	}
 
-	syncShard, err := r.scheduler.db.loadShard(ctx, common.ShardID(request.ShardId))
-	if err != nil {
-		return errors.Wrapf(gossip.ErrAbortPropagation, "shard %d load failure on client side: %v", request.ShardId, err)
+	syncShard, loadShardErr := r.scheduler.db.loadShard(ctx, request.Group, common.ShardID(request.ShardId))
+	if loadShardErr != nil {
+		return errors.Wrapf(gossip.ErrAbortPropagation, "shard %d load failure on client side: %v", request.ShardId, loadShardErr)
 	}
 	firstTreeSummaryResp := true
 
@@ -924,7 +924,7 @@ func (r *repairGossipServer) recvMsgAndWaitReadNextDiffer(
 			}
 			return fmt.Errorf("failed to receive missing or sync request: %w", err)
 		}
-		syncShard, err := r.scheduler.db.loadShard(s.Context(), common.ShardID(shardID))
+		syncShard, err := r.scheduler.db.loadShard(s.Context(), group, common.ShardID(shardID))
 		if err != nil {
 			return fmt.Errorf("shard %d load failure on server side: %w", shardID, err)
 		}
