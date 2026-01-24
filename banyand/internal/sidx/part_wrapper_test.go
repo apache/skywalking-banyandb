@@ -577,13 +577,13 @@ func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 
 func TestPartWrapper_OverlapsTimeRange(t *testing.T) {
 	tests := []struct {
-		name          string
-		partMin       *int64
-		partMax       *int64
-		queryMin      *int64
-		queryMax      *int64
-		expected      bool
-		description   string
+		partMin     *int64
+		partMax     *int64
+		queryMin    *int64
+		queryMax    *int64
+		name        string
+		description string
+		expected    bool
 	}{
 		{
 			name:        "complete_overlap",
@@ -718,7 +718,7 @@ func TestPartWrapper_OverlapsTimeRange(t *testing.T) {
 			p := &part{
 				path: "/test/part/001",
 				partMetadata: &partMetadata{
-					ID:          1,
+					ID:           1,
 					MinTimestamp: tt.partMin,
 					MaxTimestamp: tt.partMax,
 				},
@@ -755,7 +755,7 @@ func TestPartWrapper_OverlapsTimeRange_EdgeCases(t *testing.T) {
 		p := &part{
 			path: "/test/part/001",
 			partMetadata: &partMetadata{
-				ID:          1,
+				ID:           1,
 				MinTimestamp: intPtr(1000000000),
 				MaxTimestamp: intPtr(2000000000),
 			},
@@ -770,7 +770,7 @@ func TestPartWrapper_OverlapsTimeRange_EdgeCases(t *testing.T) {
 		p := &part{
 			path: "/test/part/001",
 			partMetadata: &partMetadata{
-				ID:          1,
+				ID:           1,
 				MinTimestamp: intPtr(1000000000),
 				MaxTimestamp: intPtr(2000000000),
 			},
@@ -785,7 +785,7 @@ func TestPartWrapper_OverlapsTimeRange_EdgeCases(t *testing.T) {
 		p := &part{
 			path: "/test/part/001",
 			partMetadata: &partMetadata{
-				ID:          1,
+				ID:           1,
 				MinTimestamp: intPtr(1000000000),
 				MaxTimestamp: intPtr(2000000000),
 			},
@@ -796,4 +796,3 @@ func TestPartWrapper_OverlapsTimeRange_EdgeCases(t *testing.T) {
 		pw.release()
 	})
 }
-

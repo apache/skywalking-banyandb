@@ -239,10 +239,10 @@ func (t *trace) prepareSIDXStreaming(
 	// Extract timestamps from TimeRange for time-based part selection optimization
 	var minTimestamp, maxTimestamp *int64
 	if tqo.TimeRange != nil {
-		minTs := tqo.TimeRange.Start.UnixNano()
-		maxTs := tqo.TimeRange.End.UnixNano()
-		minTimestamp = &minTs
-		maxTimestamp = &maxTs
+		minTS := tqo.TimeRange.Start.UnixNano()
+		maxTS := tqo.TimeRange.End.UnixNano()
+		minTimestamp = &minTS
+		maxTimestamp = &maxTS
 	}
 
 	req := sidx.QueryRequest{

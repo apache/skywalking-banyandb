@@ -31,7 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// TestTimestampFeature_ManifestJSON verifies that timestamps are correctly written to manifest.json
+// TestTimestampFeature_ManifestJSON verifies that timestamps are correctly written to manifest.json.
 func TestTimestampFeature_ManifestJSON(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -45,7 +45,7 @@ func TestTimestampFeature_ManifestJSON(t *testing.T) {
 
 	// Create part metadata with timestamps
 	pm := &partMetadata{
-		ID:                     partID,
+		ID:                    partID,
 		CompressedSizeBytes:   1000,
 		UncompressedSizeBytes: 2000,
 		TotalCount:            50,
@@ -83,7 +83,7 @@ func TestTimestampFeature_ManifestJSON(t *testing.T) {
 	t.Logf("✓ Manifest.json contains timestamps: min_timestamp=%v, max_timestamp=%v", minTimestamp, maxTimestamp)
 }
 
-// TestTimestampFeature_ManifestJSONWithoutTimestamps verifies omitempty behavior
+// TestTimestampFeature_ManifestJSONWithoutTimestamps verifies omitempty behavior.
 func TestTimestampFeature_ManifestJSONWithoutTimestamps(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -97,7 +97,7 @@ func TestTimestampFeature_ManifestJSONWithoutTimestamps(t *testing.T) {
 
 	// Create part metadata without timestamps
 	pm := &partMetadata{
-		ID:                     partID,
+		ID:                    partID,
 		CompressedSizeBytes:   1000,
 		UncompressedSizeBytes: 2000,
 		TotalCount:            50,
@@ -131,7 +131,7 @@ func TestTimestampFeature_ManifestJSONWithoutTimestamps(t *testing.T) {
 	t.Logf("✓ Manifest.json correctly omits timestamps when nil (omitempty behavior)")
 }
 
-// TestTimestampFeature_ReadManifestWithTimestamps verifies we can read back timestamps
+// TestTimestampFeature_ReadManifestWithTimestamps verifies we can read back timestamps.
 func TestTimestampFeature_ReadManifestWithTimestamps(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -148,7 +148,7 @@ func TestTimestampFeature_ReadManifestWithTimestamps(t *testing.T) {
 
 	// Create and write part metadata with timestamps
 	pm := &partMetadata{
-		ID:                     partID,
+		ID:                    partID,
 		CompressedSizeBytes:   1000,
 		UncompressedSizeBytes: 2000,
 		TotalCount:            50,
@@ -182,7 +182,7 @@ func TestTimestampFeature_ReadManifestWithTimestamps(t *testing.T) {
 	t.Logf("✓ Successfully read back timestamps from manifest.json: min=%d, max=%d", *restored.MinTimestamp, *restored.MaxTimestamp)
 }
 
-// TestTimestampFeature_BlockWriterFlush verifies block writer sets timestamps correctly
+// TestTimestampFeature_BlockWriterFlush verifies block writer sets timestamps correctly.
 func TestTimestampFeature_BlockWriterFlush(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -220,14 +220,14 @@ func TestTimestampFeature_BlockWriterFlush(t *testing.T) {
 	// Verify the block writer mechanism for timestamp tracking
 	// The block writer tracks timestamps in mustWriteBlock when:
 	// 1. len(timestamps) > 0
-	// 2. timestamps contain non-zero values  
+	// 2. timestamps contain non-zero values
 	// 3. The block is actually written (b.Len() > 0)
-	
+
 	// Verify metadata structure is correct
 	assert.Equal(t, uint64(3), pm.TotalCount, "TotalCount should match number of elements")
 	assert.Equal(t, int64(100), pm.MinKey, "MinKey should be set")
 	assert.Equal(t, int64(300), pm.MaxKey, "MaxKey should be set")
-	
+
 	// The Flush method correctly handles timestamp fields in partMetadata
 	// Timestamps are set if bw.hasTimestamp is true (set during mustWriteBlock)
 	// This test verifies the structure supports timestamps; the actual tracking
@@ -241,7 +241,7 @@ func TestTimestampFeature_BlockWriterFlush(t *testing.T) {
 	}
 }
 
-// TestTimestampFeature_BlockWriterFlushWithoutTimestamps verifies block writer handles missing timestamps
+// TestTimestampFeature_BlockWriterFlushWithoutTimestamps verifies block writer handles missing timestamps.
 func TestTimestampFeature_BlockWriterFlushWithoutTimestamps(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -276,7 +276,7 @@ func TestTimestampFeature_BlockWriterFlushWithoutTimestamps(t *testing.T) {
 	t.Logf("✓ Block writer correctly handles missing timestamps (nil)")
 }
 
-// TestTimestampFeature_VerifyManifestFile creates a real manifest.json and shows its contents
+// TestTimestampFeature_VerifyManifestFile creates a real manifest.json and shows its contents.
 func TestTimestampFeature_VerifyManifestFile(t *testing.T) {
 	dir, defFn := test.Space(require.New(t))
 	defer defFn()
@@ -288,19 +288,19 @@ func TestTimestampFeature_VerifyManifestFile(t *testing.T) {
 	fileSystem.MkdirPanicIfExist(partPath, 0o755)
 
 	// Create metadata with timestamps
-	minTs := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
-	maxTs := time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC).UnixNano()
+	minTS := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	maxTS := time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC).UnixNano()
 
 	pm := &partMetadata{
-		ID:                     partID,
+		ID:                    partID,
 		CompressedSizeBytes:   5000,
 		UncompressedSizeBytes: 10000,
 		TotalCount:            100,
 		BlocksCount:           10,
 		MinKey:                1,
 		MaxKey:                1000,
-		MinTimestamp:          intPtr(minTs),
-		MaxTimestamp:          intPtr(maxTs),
+		MinTimestamp:          intPtr(minTS),
+		MaxTimestamp:          intPtr(maxTS),
 	}
 
 	// Write manifest
