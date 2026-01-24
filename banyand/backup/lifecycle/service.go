@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -70,6 +71,7 @@ var _ service = (*lifecycleService)(nil)
 
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
+	databasev1.UnimplementedNodeQueryServiceServer
 	metadata          metadata.Repo
 	omr               observability.MetricsRegistry
 	pm                protector.Memory
@@ -79,6 +81,7 @@ type lifecycleService struct {
 	grpcServer        *grpclib.Server
 	httpSrv           *http.Server
 	tlsReloader       *pkgtls.Reloader
+	currentNode       *databasev1.Node
 	clientCloser      context.CancelFunc
 	stopCh            chan struct{}
 	measureRoot       string
@@ -164,6 +167,16 @@ func (l *lifecycleService) Validate() error {
 			if l.lifecycleKeyFile == "" {
 				return errors.New("missing key file when TLS is enabled")
 			}
+		}
+		l.currentNode = &databasev1.Node{
+			Metadata: &commonv1.Metadata{
+				Name: l.lifecycleGRPCAddr,
+			},
+			GrpcAddress: l.lifecycleGRPCAddr,
+			HttpAddress: l.lifecycleHTTPAddr,
+			Roles:       make([]databasev1.Role, 0),
+			Labels:      common.ParseNodeFlags(),
+			CreatedAt:   timestamppb.Now(),
 		}
 	}
 	return nil
@@ -309,6 +322,7 @@ func (l *lifecycleService) startServers() {
 
 	l.grpcServer = grpclib.NewServer(opts...)
 	databasev1.RegisterClusterStateServiceServer(l.grpcServer, l)
+	databasev1.RegisterNodeQueryServiceServer(l.grpcServer, l)
 	grpc_health_v1.RegisterHealthServer(l.grpcServer, health.NewServer())
 
 	// Setup HTTP server

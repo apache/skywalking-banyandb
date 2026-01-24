@@ -1111,6 +1111,8 @@ TopNList contains a series of topN items
 | ----- | ---- | ----- | ----------- |
 | entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated |  |
 | value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
+| version | [int64](#int64) |  |  |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 
 
 
