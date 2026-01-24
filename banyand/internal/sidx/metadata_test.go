@@ -455,8 +455,8 @@ func TestPartMetadata_Serialization(t *testing.T) {
 
 func TestPartMetadata_SerializationWithTimestamps(t *testing.T) {
 	tests := []struct {
-		name           string
-		original       *partMetadata
+		original         *partMetadata
+		name             string
 		expectTimestamps bool
 	}{
 		{
@@ -566,7 +566,6 @@ func TestPartMetadata_SerializationWithTimestamps(t *testing.T) {
 		})
 	}
 }
-
 
 func TestBlockMetadata_Serialization(t *testing.T) {
 	original := &blockMetadata{
@@ -678,8 +677,8 @@ func TestPartMetadata_JSONFormat(t *testing.T) {
 
 func TestPartMetadata_JSONFormatWithTimestamps(t *testing.T) {
 	tests := []struct {
-		name           string
-		original       *partMetadata
+		original              *partMetadata
+		name                  string
 		expectTimestampFields bool
 	}{
 		{

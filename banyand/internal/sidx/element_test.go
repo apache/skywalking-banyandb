@@ -139,7 +139,7 @@ func TestSizeCalculation(t *testing.T) {
 		es := generateElements()
 		es.seriesIDs = []common.SeriesID{1, 2}
 		es.userKeys = []int64{100, 200}
-		es.timestamps = []int64{100, 200} // Initialize timestamps
+		es.timestamps = []int64{100, 200}                    // Initialize timestamps
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
 		// Create tag pointers
 		tag1 := generateTag()

@@ -573,16 +573,16 @@ func cloneBytes(src []byte) []byte {
 
 func TestRecomputeTimestampRanges(t *testing.T) {
 	tests := []struct {
+		expected *partMetadata
 		name     string
 		parts    []*partWrapper
-		expected *partMetadata
 	}{
 		{
 			name: "single part with timestamps",
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: intPtr(1000000000),
 						MaxTimestamp: intPtr(2000000000),
 					},
@@ -598,21 +598,21 @@ func TestRecomputeTimestampRanges(t *testing.T) {
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: intPtr(1000000000),
 						MaxTimestamp: intPtr(2000000000),
 					},
 				}),
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          2,
+						ID:           2,
 						MinTimestamp: intPtr(500000000),
 						MaxTimestamp: intPtr(1500000000),
 					},
 				}),
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          3,
+						ID:           3,
 						MinTimestamp: intPtr(2500000000),
 						MaxTimestamp: intPtr(3000000000),
 					},
@@ -628,21 +628,21 @@ func TestRecomputeTimestampRanges(t *testing.T) {
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: intPtr(1000000000),
 						MaxTimestamp: intPtr(2000000000),
 					},
 				}),
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          2,
+						ID:           2,
 						MinTimestamp: nil,
 						MaxTimestamp: nil,
 					},
 				}),
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          3,
+						ID:           3,
 						MinTimestamp: intPtr(500000000),
 						MaxTimestamp: intPtr(1500000000),
 					},
@@ -658,14 +658,14 @@ func TestRecomputeTimestampRanges(t *testing.T) {
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: nil,
 						MaxTimestamp: nil,
 					},
 				}),
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          2,
+						ID:           2,
 						MinTimestamp: nil,
 						MaxTimestamp: nil,
 					},
@@ -681,7 +681,7 @@ func TestRecomputeTimestampRanges(t *testing.T) {
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: intPtr(1000000000),
 						MaxTimestamp: intPtr(2000000000),
 					},
@@ -700,7 +700,7 @@ func TestRecomputeTimestampRanges(t *testing.T) {
 			parts: []*partWrapper{
 				newPartWrapper(nil, &part{
 					partMetadata: &partMetadata{
-						ID:          1,
+						ID:           1,
 						MinTimestamp: intPtr(1000000000),
 						MaxTimestamp: intPtr(2000000000),
 					},

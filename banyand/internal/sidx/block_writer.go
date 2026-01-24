@@ -198,24 +198,26 @@ func (sw *writers) GetTagWriters(tagName string) (*writer, *writer, *writer) {
 }
 
 // blockWriter handles writing blocks to files.
+//
+//nolint:govet // struct layout optimized for readability; field alignment acceptable
 type blockWriter struct {
 	writers                    writers
 	metaData                   []byte
 	primaryBlockData           []byte
 	primaryBlockMetadata       primaryBlockMetadata
-	totalBlocksCount           uint64
-	maxKey                     int64
+	minKey                     int64
+	minKeyLast                 int64
 	totalUncompressedSizeBytes uint64
 	totalCount                 uint64
-	minKey                     int64
+	totalBlocksCount           uint64
 	totalMinKey                int64
 	totalMaxKey                int64
-	minKeyLast                 int64
+	maxKey                     int64
 	totalMinTimestamp          int64
 	totalMaxTimestamp          int64
-	hasTimestamp               bool
-	sidFirst                   common.SeriesID
 	sidLast                    common.SeriesID
+	sidFirst                   common.SeriesID
+	hasTimestamp               bool
 	hasWrittenBlocks           bool
 }
 

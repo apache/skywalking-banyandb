@@ -193,7 +193,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, part
 	// Recompute timestamp ranges from source parts
 	// (timestamps are not stored in blocks, only in part metadata)
 	recomputeTimestampRanges(&result, parts)
-	
+
 	return &result, nil
 }
 
@@ -201,7 +201,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, part
 func recomputeTimestampRanges(result *partMetadata, parts []*partWrapper) {
 	var minTimestamp *int64
 	var maxTimestamp *int64
-	
+
 	for _, pw := range parts {
 		if pw.p == nil || pw.p.partMetadata == nil {
 			continue
@@ -218,7 +218,7 @@ func recomputeTimestampRanges(result *partMetadata, parts []*partWrapper) {
 			}
 		}
 	}
-	
+
 	if minTimestamp != nil && maxTimestamp != nil {
 		result.MinTimestamp = minTimestamp
 		result.MaxTimestamp = maxTimestamp
