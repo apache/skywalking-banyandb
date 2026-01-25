@@ -49,21 +49,22 @@ const (
 )
 
 type tsTable struct {
-	fileSystem    fs.FileSystem
-	pm            protector.Memory
-	metrics       *metrics
-	index         *elementIndex
-	snapshot      *snapshot
-	loopCloser    *run.Closer
-	getNodes      func() []string
-	l             *logger.Logger
-	introductions chan *introduction
-	p             common.Position
-	group         string
-	root          string
-	gc            garbageCleaner
-	option        option
-	curPartID     uint64
+	fileSystem       fs.FileSystem
+	pm               protector.Memory
+	metrics          *metrics
+	index            *elementIndex
+	snapshot         *snapshot
+	loopCloser       *run.Closer
+	getNodes         func() []string
+	l                *logger.Logger
+	introductions    chan *introduction
+	p                common.Position
+	group            string
+	root             string
+	gc               garbageCleaner
+	option           option
+	curPartID        uint64
+	pendingDataCount atomic.Int64
 	sync.RWMutex
 	shardID common.ShardID
 }

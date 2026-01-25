@@ -294,6 +294,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 			SeriesIndexInfo: seriesIndexInfo,
 		}
 		segmentInfoList = append(segmentInfoList, segmentInfo)
+		segment.DecRef()
 	}
 	dataInfo := &databasev1.DataInfo{
 		Node:          node,

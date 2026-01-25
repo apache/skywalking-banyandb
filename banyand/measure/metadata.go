@@ -417,6 +417,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 			SeriesIndexInfo: seriesIndexInfo,
 		}
 		segmentInfoList = append(segmentInfoList, segmentInfo)
+		segment.DecRef()
 	}
 	dataInfo := &databasev1.DataInfo{
 		Node:          node,
@@ -857,6 +858,7 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
 	}
 }

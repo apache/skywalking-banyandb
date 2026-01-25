@@ -48,22 +48,23 @@ const (
 )
 
 type tsTable struct {
-	pm            protector.Memory
-	fileSystem    fs.FileSystem
-	handoffCtrl   *handoffController
-	metrics       *metrics
-	snapshot      *snapshot
-	loopCloser    *run.Closer
-	getNodes      func() []string
-	l             *logger.Logger
-	sidxMap       map[string]sidx.SIDX
-	introductions chan *introduction
-	p             common.Position
-	root          string
-	group         string
-	gc            garbageCleaner
-	option        option
-	curPartID     uint64
+	pm               protector.Memory
+	fileSystem       fs.FileSystem
+	handoffCtrl      *handoffController
+	metrics          *metrics
+	snapshot         *snapshot
+	loopCloser       *run.Closer
+	getNodes         func() []string
+	l                *logger.Logger
+	sidxMap          map[string]sidx.SIDX
+	introductions    chan *introduction
+	p                common.Position
+	root             string
+	group            string
+	gc               garbageCleaner
+	option           option
+	curPartID        uint64
+	pendingDataCount atomic.Int64
 	sync.RWMutex
 	shardID common.ShardID
 }
