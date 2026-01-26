@@ -700,6 +700,119 @@ func (rs *groupRegistryServer) Exist(ctx context.Context, req *databasev1.GroupR
 	return nil, err
 }
 
+func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.GroupRegistryServiceInspectRequest) (
+	*databasev1.GroupRegistryServiceInspectResponse, error,
+) {
+	g := req.GetGroup()
+	rs.metrics.totalRegistryStarted.Inc(1, g, "group", "inspect")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "group", "inspect")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "group", "inspect")
+	}()
+	group, err := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, g)
+	if err != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		return nil, err
+	}
+	schemaInfo, schemaErr := rs.collectSchemaInfo(ctx, g)
+	if schemaErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		return nil, schemaErr
+	}
+	dataInfo, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
+	if dataErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		return nil, dataErr
+	}
+	liaisonInfo, liaisonErr := rs.schemaRegistry.CollectLiaisonInfo(ctx, g)
+	if liaisonErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		return nil, liaisonErr
+	}
+	return &databasev1.GroupRegistryServiceInspectResponse{
+		Group:       group,
+		SchemaInfo:  schemaInfo,
+		DataInfo:    dataInfo,
+		LiaisonInfo: liaisonInfo,
+	}, nil
+}
+
+func (rs *groupRegistryServer) Query(_ context.Context, _ *databasev1.GroupRegistryServiceQueryRequest) (
+	*databasev1.GroupRegistryServiceQueryResponse, error,
+) {
+	return nil, status.Error(codes.Unimplemented, "Query method not implemented yet")
+}
+
+func (rs *groupRegistryServer) collectSchemaInfo(ctx context.Context, group string) (*databasev1.SchemaInfo, error) {
+	opt := schema.ListOpt{Group: group}
+	streams, streamsErr := rs.schemaRegistry.StreamRegistry().ListStream(ctx, opt)
+	if streamsErr != nil {
+		return nil, streamsErr
+	}
+	streamNames := make([]string, 0, len(streams))
+	for _, s := range streams {
+		streamNames = append(streamNames, s.GetMetadata().GetName())
+	}
+	measures, measuresErr := rs.schemaRegistry.MeasureRegistry().ListMeasure(ctx, opt)
+	if measuresErr != nil {
+		return nil, measuresErr
+	}
+	measureNames := make([]string, 0, len(measures))
+	for _, m := range measures {
+		measureNames = append(measureNames, m.GetMetadata().GetName())
+	}
+	traces, tracesErr := rs.schemaRegistry.TraceRegistry().ListTrace(ctx, opt)
+	if tracesErr != nil {
+		return nil, tracesErr
+	}
+	traceNames := make([]string, 0, len(traces))
+	for _, t := range traces {
+		traceNames = append(traceNames, t.GetMetadata().GetName())
+	}
+	properties, propertiesErr := rs.schemaRegistry.PropertyRegistry().ListProperty(ctx, opt)
+	if propertiesErr != nil {
+		return nil, propertiesErr
+	}
+	propertyNames := make([]string, 0, len(properties))
+	for _, p := range properties {
+		propertyNames = append(propertyNames, p.GetMetadata().GetName())
+	}
+	indexRules, indexRulesErr := rs.schemaRegistry.IndexRuleRegistry().ListIndexRule(ctx, opt)
+	if indexRulesErr != nil {
+		return nil, indexRulesErr
+	}
+	indexRuleNames := make([]string, 0, len(indexRules))
+	for _, ir := range indexRules {
+		indexRuleNames = append(indexRuleNames, ir.GetMetadata().GetName())
+	}
+	indexRuleBindings, indexRuleBindingsErr := rs.schemaRegistry.IndexRuleBindingRegistry().ListIndexRuleBinding(ctx, opt)
+	if indexRuleBindingsErr != nil {
+		return nil, indexRuleBindingsErr
+	}
+	bindingNames := make([]string, 0, len(indexRuleBindings))
+	for _, irb := range indexRuleBindings {
+		bindingNames = append(bindingNames, irb.GetMetadata().GetName())
+	}
+	topNAggs, topNAggsErr := rs.schemaRegistry.TopNAggregationRegistry().ListTopNAggregation(ctx, opt)
+	if topNAggsErr != nil {
+		return nil, topNAggsErr
+	}
+	topNNames := make([]string, 0, len(topNAggs))
+	for _, tn := range topNAggs {
+		topNNames = append(topNNames, tn.GetMetadata().GetName())
+	}
+	return &databasev1.SchemaInfo{
+		Streams:           streamNames,
+		Measures:          measureNames,
+		Traces:            traceNames,
+		Properties:        propertyNames,
+		IndexRules:        indexRuleNames,
+		IndexRuleBindings: bindingNames,
+		TopnAggregations:  topNNames,
+	}, nil
+}
+
 type topNAggregationRegistryServer struct {
 	databasev1.UnimplementedTopNAggregationRegistryServiceServer
 	schemaRegistry metadata.Repo

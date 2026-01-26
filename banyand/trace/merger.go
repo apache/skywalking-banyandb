@@ -320,6 +320,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	pm.MaxTimestamp = maxTimestamp
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
+	tf.reset()
 	tt.mustWriteTagType(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenFilePart(partID, root, fileSystem)

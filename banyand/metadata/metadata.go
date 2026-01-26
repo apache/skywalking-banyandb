@@ -26,6 +26,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -52,6 +53,8 @@ type Repo interface {
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
+	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string) ([]*databasev1.LiaisonInfo, error)
 }
 
 // Service is the metadata repository.
@@ -62,4 +65,8 @@ type Service interface {
 	run.Config
 	SchemaRegistry() schema.Registry
 	SetMetricsRegistry(omr observability.MetricsRegistry)
+	SetDataBroadcaster(broadcaster bus.Broadcaster)
+	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
+	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)
+	RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector)
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -78,10 +79,13 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 
 type clientService struct {
 	schemaRegistry           schema.Registry
+	infoCollectorRegistry    *schema.InfoCollectorRegistry
 	dnsDiscovery             *dns.Service
 	fileDiscovery            *file.Service
 	closer                   *run.Closer
 	nodeInfo                 *databasev1.Node
+	dataBroadcaster          bus.Broadcaster
+	liaisonBroadcaster       bus.Broadcaster
 	etcdTLSCertFile          string
 	dnsCACertPaths           []string
 	etcdPassword             string
@@ -241,6 +245,14 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			break
 		}
 		return err
+	}
+
+	s.infoCollectorRegistry = schema.NewInfoCollectorRegistry(l, s.schemaRegistry)
+	if s.dataBroadcaster != nil {
+		s.infoCollectorRegistry.SetDataBroadcaster(s.dataBroadcaster)
+	}
+	if s.liaisonBroadcaster != nil {
+		s.infoCollectorRegistry.SetLiaisonBroadcaster(s.liaisonBroadcaster)
 	}
 
 	if s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
@@ -541,6 +553,30 @@ func (s *clientService) Subjects(ctx context.Context, indexRule *databasev1.Inde
 	}
 
 	return foundSubjects, subjectErr
+}
+
+func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
+	return s.infoCollectorRegistry.CollectDataInfo(ctx, group)
+}
+
+func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
+	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group)
+}
+
+func (s *clientService) RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector) {
+	s.infoCollectorRegistry.RegisterDataCollector(catalog, collector)
+}
+
+func (s *clientService) RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector) {
+	s.infoCollectorRegistry.RegisterLiaisonCollector(catalog, collector)
+}
+
+func (s *clientService) SetDataBroadcaster(broadcaster bus.Broadcaster) {
+	s.dataBroadcaster = broadcaster
+}
+
+func (s *clientService) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
+	s.liaisonBroadcaster = broadcaster
 }
 
 func contains(s []string, e string) bool {

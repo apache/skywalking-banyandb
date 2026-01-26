@@ -653,6 +653,21 @@ func (hc *handoffController) getTotalSize() uint64 {
 	return hc.currentTotalSize
 }
 
+// stats returns handoff statistics including part count and total size.
+func (hc *handoffController) stats() (partCount int64, totalSize int64) {
+	hc.mu.RLock()
+	defer hc.mu.RUnlock()
+	var count int64
+	for _, nodeQueue := range hc.nodeQueues {
+		pending, listErr := nodeQueue.listPending()
+		if listErr != nil {
+			continue
+		}
+		count += int64(len(pending))
+	}
+	return count, int64(hc.getTotalSize())
+}
+
 // canEnqueue checks if adding a part of the given size would exceed the total size limit.
 func (hc *handoffController) canEnqueue(partSize uint64) bool {
 	if hc.maxTotalSizeBytes == 0 {
