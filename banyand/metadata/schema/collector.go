@@ -31,7 +31,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-type infoCollectorRegistry struct {
+// GroupGetter provides method to get group metadata.
+type GroupGetter interface {
+	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
+}
+
+// InfoCollectorRegistry manages data and liaison info collectors.
+type InfoCollectorRegistry struct {
+	groupGetter        GroupGetter
 	dataCollectors     map[commonv1.Catalog]DataInfoCollector
 	liaisonCollectors  map[commonv1.Catalog]LiaisonInfoCollector
 	dataBroadcaster    bus.Broadcaster
@@ -40,8 +47,10 @@ type infoCollectorRegistry struct {
 	mux                sync.RWMutex
 }
 
-func newInfoCollectorRegistry(l *logger.Logger) *infoCollectorRegistry {
-	return &infoCollectorRegistry{
+// NewInfoCollectorRegistry creates a new InfoCollectorRegistry.
+func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCollectorRegistry {
+	return &InfoCollectorRegistry{
+		groupGetter:       groupGetter,
 		dataCollectors:    make(map[commonv1.Catalog]DataInfoCollector),
 		liaisonCollectors: make(map[commonv1.Catalog]LiaisonInfoCollector),
 		l:                 l,
@@ -49,8 +58,12 @@ func newInfoCollectorRegistry(l *logger.Logger) *infoCollectorRegistry {
 }
 
 // CollectDataInfo collects data information from both local and remote data nodes.
-func (icr *infoCollectorRegistry) CollectDataInfo(ctx context.Context, catalog commonv1.Catalog, group string) ([]*databasev1.DataInfo, error) {
-	localInfo, localErr := icr.collectDataInfoLocal(ctx, catalog, group)
+func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
+	g, getErr := icr.groupGetter.GetGroup(ctx, group)
+	if getErr != nil {
+		return nil, getErr
+	}
+	localInfo, localErr := icr.collectDataInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {
 		return nil, localErr
 	}
@@ -63,7 +76,7 @@ func (icr *infoCollectorRegistry) CollectDataInfo(ctx context.Context, catalog c
 	}
 
 	var topic bus.Topic
-	switch catalog {
+	switch g.Catalog {
 	case commonv1.Catalog_CATALOG_MEASURE:
 		topic = data.TopicMeasureCollectDataInfo
 	case commonv1.Catalog_CATALOG_STREAM:
@@ -71,13 +84,13 @@ func (icr *infoCollectorRegistry) CollectDataInfo(ctx context.Context, catalog c
 	case commonv1.Catalog_CATALOG_TRACE:
 		topic = data.TopicTraceCollectDataInfo
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %v", catalog)
+		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
 	remoteInfo := icr.broadcastCollectDataInfo(topic, group)
 	return append(localInfoList, remoteInfo...), nil
 }
 
-func (icr *infoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) []*databasev1.DataInfo {
+func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) []*databasev1.DataInfo {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
 	futures, broadcastErr := icr.dataBroadcaster.Broadcast(5*time.Second, topic, message)
 	if broadcastErr != nil {
@@ -105,7 +118,7 @@ func (icr *infoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 	return dataInfoList
 }
 
-func (icr *infoCollectorRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
+func (icr *InfoCollectorRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.dataCollectors[catalog]
 	icr.mux.RUnlock()
@@ -116,8 +129,12 @@ func (icr *infoCollectorRegistry) collectDataInfoLocal(ctx context.Context, cata
 }
 
 // CollectLiaisonInfo collects liaison information from both local and remote liaison nodes.
-func (icr *infoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, catalog commonv1.Catalog, group string) ([]*databasev1.LiaisonInfo, error) {
-	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, catalog, group)
+func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
+	g, getErr := icr.groupGetter.GetGroup(ctx, group)
+	if getErr != nil {
+		return nil, getErr
+	}
+	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {
 		return nil, localErr
 	}
@@ -130,7 +147,7 @@ func (icr *infoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, catalo
 	}
 
 	var topic bus.Topic
-	switch catalog {
+	switch g.Catalog {
 	case commonv1.Catalog_CATALOG_MEASURE:
 		topic = data.TopicMeasureCollectLiaisonInfo
 	case commonv1.Catalog_CATALOG_STREAM:
@@ -138,13 +155,13 @@ func (icr *infoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, catalo
 	case commonv1.Catalog_CATALOG_TRACE:
 		topic = data.TopicTraceCollectLiaisonInfo
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %v", catalog)
+		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
 	remoteInfo := icr.broadcastCollectLiaisonInfo(topic, group)
 	return append(localInfoList, remoteInfo...), nil
 }
 
-func (icr *infoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
+func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
 	futures, broadcastErr := icr.liaisonBroadcaster.Broadcast(5*time.Second, topic, message)
 	if broadcastErr != nil {
@@ -172,7 +189,7 @@ func (icr *infoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, g
 	return liaisonInfoList
 }
 
-func (icr *infoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.LiaisonInfo, error) {
+func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.LiaisonInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.liaisonCollectors[catalog]
 	icr.mux.RUnlock()
@@ -183,28 +200,28 @@ func (icr *infoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, c
 }
 
 // RegisterDataCollector registers a data info collector for a specific catalog.
-func (icr *infoCollectorRegistry) RegisterDataCollector(catalog commonv1.Catalog, collector DataInfoCollector) {
+func (icr *InfoCollectorRegistry) RegisterDataCollector(catalog commonv1.Catalog, collector DataInfoCollector) {
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.dataCollectors[catalog] = collector
 }
 
 // RegisterLiaisonCollector registers a liaison info collector for a specific catalog.
-func (icr *infoCollectorRegistry) RegisterLiaisonCollector(catalog commonv1.Catalog, collector LiaisonInfoCollector) {
+func (icr *InfoCollectorRegistry) RegisterLiaisonCollector(catalog commonv1.Catalog, collector LiaisonInfoCollector) {
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.liaisonCollectors[catalog] = collector
 }
 
 // SetDataBroadcaster sets the broadcaster for data info collection.
-func (icr *infoCollectorRegistry) SetDataBroadcaster(broadcaster bus.Broadcaster) {
+func (icr *InfoCollectorRegistry) SetDataBroadcaster(broadcaster bus.Broadcaster) {
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.dataBroadcaster = broadcaster
 }
 
 // SetLiaisonBroadcaster sets the broadcaster for liaison info collection.
-func (icr *infoCollectorRegistry) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
+func (icr *InfoCollectorRegistry) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.liaisonBroadcaster = broadcaster

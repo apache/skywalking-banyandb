@@ -27,7 +27,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
 var errUnsupportedEntityType = errors.New("unsupported entity type")
@@ -82,12 +81,6 @@ type Registry interface {
 	Register(context.Context, Metadata, bool) error
 	Compact(context.Context, int64) error
 	StartWatcher()
-	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, error)
-	CollectLiaisonInfo(context.Context, string) ([]*databasev1.LiaisonInfo, error)
-	RegisterDataCollector(commonv1.Catalog, DataInfoCollector)
-	RegisterLiaisonCollector(commonv1.Catalog, LiaisonInfoCollector)
-	SetDataBroadcaster(bus.Broadcaster)
-	SetLiaisonBroadcaster(bus.Broadcaster)
 }
 
 // TypeMeta defines the identity and type of an Event.

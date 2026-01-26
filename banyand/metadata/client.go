@@ -79,6 +79,7 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 
 type clientService struct {
 	schemaRegistry           schema.Registry
+	infoCollectorRegistry    *schema.InfoCollectorRegistry
 	dnsDiscovery             *dns.Service
 	fileDiscovery            *file.Service
 	closer                   *run.Closer
@@ -246,11 +247,12 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		return err
 	}
 
+	s.infoCollectorRegistry = schema.NewInfoCollectorRegistry(l, s.schemaRegistry)
 	if s.dataBroadcaster != nil {
-		s.schemaRegistry.SetDataBroadcaster(s.dataBroadcaster)
+		s.infoCollectorRegistry.SetDataBroadcaster(s.dataBroadcaster)
 	}
 	if s.liaisonBroadcaster != nil {
-		s.schemaRegistry.SetLiaisonBroadcaster(s.liaisonBroadcaster)
+		s.infoCollectorRegistry.SetLiaisonBroadcaster(s.liaisonBroadcaster)
 	}
 
 	if s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
@@ -554,19 +556,19 @@ func (s *clientService) Subjects(ctx context.Context, indexRule *databasev1.Inde
 }
 
 func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
-	return s.schemaRegistry.CollectDataInfo(ctx, group)
+	return s.infoCollectorRegistry.CollectDataInfo(ctx, group)
 }
 
 func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
-	return s.schemaRegistry.CollectLiaisonInfo(ctx, group)
+	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group)
 }
 
 func (s *clientService) RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector) {
-	s.schemaRegistry.RegisterDataCollector(catalog, collector)
+	s.infoCollectorRegistry.RegisterDataCollector(catalog, collector)
 }
 
 func (s *clientService) RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector) {
-	s.schemaRegistry.RegisterLiaisonCollector(catalog, collector)
+	s.infoCollectorRegistry.RegisterLiaisonCollector(catalog, collector)
 }
 
 func (s *clientService) SetDataBroadcaster(broadcaster bus.Broadcaster) {

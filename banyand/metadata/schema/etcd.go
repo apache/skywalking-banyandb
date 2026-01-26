@@ -39,7 +39,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -132,7 +131,6 @@ func CheckInterval(d time.Duration) WatcherOption {
 var _ Registry = (*etcdSchemaRegistry)(nil)
 
 type etcdSchemaRegistry struct {
-	*infoCollectorRegistry
 	client        *clientv3.Client
 	closer        *run.Closer
 	l             *logger.Logger
@@ -262,13 +260,12 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	}
 	schemaLogger := logger.GetLogger("schema-registry")
 	reg := &etcdSchemaRegistry{
-		infoCollectorRegistry: newInfoCollectorRegistry(schemaLogger),
-		namespace:             registryConfig.namespace,
-		client:                client,
-		closer:                run.NewCloser(1),
-		l:                     schemaLogger,
-		checkInterval:         registryConfig.checkInterval,
-		watchers:              make(map[Kind]*watcher),
+		namespace:     registryConfig.namespace,
+		client:        client,
+		closer:        run.NewCloser(1),
+		l:             schemaLogger,
+		checkInterval: registryConfig.checkInterval,
+		watchers:      make(map[Kind]*watcher),
 	}
 	return reg, nil
 }
@@ -618,22 +615,6 @@ func formatKey(entityPrefix string, metadata *commonv1.Metadata) string {
 	return path.Join(
 		listPrefixesForEntity(metadata.GetGroup(), entityPrefix),
 		metadata.GetName())
-}
-
-func (e *etcdSchemaRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
-	grp, getErr := e.GetGroup(ctx, group)
-	if getErr != nil {
-		return nil, getErr
-	}
-	return e.infoCollectorRegistry.CollectDataInfo(ctx, grp.Catalog, group)
-}
-
-func (e *etcdSchemaRegistry) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
-	grp, getErr := e.GetGroup(ctx, group)
-	if getErr != nil {
-		return nil, getErr
-	}
-	return e.infoCollectorRegistry.CollectLiaisonInfo(ctx, grp.Catalog, group)
 }
 
 func extractTLSConfig(cfg *etcdSchemaRegistryConfig) *tls.Config {
