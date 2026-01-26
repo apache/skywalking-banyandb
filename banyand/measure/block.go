@@ -777,6 +777,9 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 				BinaryData: buf,
 			},
 		}
+	}
+
+	if bc.versions[bc.idx] >= r.Versions[len(r.Versions)-1] {
 		r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	}
 }
