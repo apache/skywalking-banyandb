@@ -163,14 +163,14 @@ func TestNodeRoleFromNode(t *testing.T) {
 		node     *databasev1.Node
 		expected string
 	}{
-		{"nil node", nil, "unknown"},
-		{"empty roles", &databasev1.Node{}, "unknown"},
-		{"liaison", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}}, "liaison"},
-		{"meta", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_META}}, "meta"},
-		{"data without tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}}, "data"},
-		{"data with hot tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "hot"}}, "hot"},
-		{"data with warm tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "warm"}}, "warm"},
-		{"data with cold tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "cold"}}, "cold"},
+		{"nil node", nil, "UNKNOWN"},
+		{"empty roles", &databasev1.Node{}, "UNKNOWN"},
+		{"liaison", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}}, "LIAISON"},
+	{"meta", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_META}}, "UNKNOWN"},
+		{"data without tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}}, "DATA"},
+	{"data with hot tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "hot"}}, "DATA_HOT"},
+	{"data with warm tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "warm"}}, "DATA_WARM"},
+	{"data with cold tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "cold"}}, "DATA_COLD"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

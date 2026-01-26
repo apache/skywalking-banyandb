@@ -21,6 +21,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -273,24 +274,25 @@ func (c *Collector) fetchClusterState(ctx context.Context) (*databasev1.GetClust
 // NodeRoleFromNode determines the node role string from the Node's role and labels.
 func NodeRoleFromNode(node *databasev1.Node) string {
 	if node == nil || len(node.Roles) == 0 {
-		return "unknown"
+		return "UNKNOWN"
 	}
-	role := node.Roles[0]
-	switch role {
-	case databasev1.Role_ROLE_LIAISON:
-		return "liaison"
-	case databasev1.Role_ROLE_DATA:
-		if node.Labels != nil {
-			if tier, ok := node.Labels["tier"]; ok && tier != "" {
-				return tier
+	for _, r := range node.Roles {
+		switch r {
+		case databasev1.Role_ROLE_LIAISON:
+			return "LIAISON"
+		case databasev1.Role_ROLE_DATA:
+			if node.Labels != nil {
+				if tier, ok := node.Labels["tier"]; ok && tier != "" {
+					return "DATA_" + strings.ToUpper(tier)
+				}
 			}
+			return "DATA"
+		default:
+			return "UNKNOWN"
 		}
-		return "data"
-	case databasev1.Role_ROLE_META:
-		return "meta"
-	default:
-		return "unknown"
 	}
+
+	return "UNKNOWN"
 }
 
 // StartCollector creates and starts a cluster state collector.

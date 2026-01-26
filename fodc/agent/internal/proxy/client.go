@@ -45,7 +45,6 @@ type MetricsRequestFilter struct {
 	EndTime   *time.Time
 }
 
-// ClusterStateCollector represents a cluster state collector interface.
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
 	logger             *logger.Logger
