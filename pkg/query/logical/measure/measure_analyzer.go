@@ -129,7 +129,6 @@ func Analyze(
 		// This happens when the query is pushed down from liaison node to data node
 		isDistributedMean := false
 		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
-			criteria.GetGroupBy() != nil &&
 			criteria.GetTop() == nil {
 			isDistributedMean = true
 		}
@@ -172,14 +171,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
-	// TODO: to support all aggregation functions
-	needCompletePushDownAgg := criteria.GetAgg() != nil &&
-		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN) &&
-		criteria.GetTop() == nil
+	needCompletePushDownAgg := criteria.GetAgg() != nil && criteria.GetTop() == nil
 
 	// parse fields
 	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)

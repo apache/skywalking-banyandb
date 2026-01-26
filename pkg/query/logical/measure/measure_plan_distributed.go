@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -329,7 +330,10 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		// For other aggregation functions (MIN/MAX/SUM/COUNT), if there's no groupBy,
 		// we need to merge results from different shards
 		if len(t.groupByTagsRefs) == 0 && len(deduplicatedDps) > 1 && t.queryTemplate.Agg != nil {
-			mergedDps := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
+			mergedDps, mergeErr := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
+			if mergeErr != nil {
+				return nil, multierr.Append(err, mergeErr)
+			}
 			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
 		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
@@ -586,13 +590,16 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 }
 
 // mergeNonGroupByAggregation merges aggregation results from multiple shards when there's no groupBy.
-// For MIN/MAX, takes the min/max value; for SUM/COUNT, sums them up.
-func mergeNonGroupByAggregation(dataPoints []*measurev1.InternalDataPoint, agg *measurev1.QueryRequest_Aggregation) []*measurev1.InternalDataPoint {
+// Uses aggregation.Func to properly merge results according to the aggregation function type.
+func mergeNonGroupByAggregation(
+	dataPoints []*measurev1.InternalDataPoint,
+	agg *measurev1.QueryRequest_Aggregation,
+) ([]*measurev1.InternalDataPoint, error) {
 	if len(dataPoints) == 0 {
-		return nil
+		return nil, nil
 	}
 	if len(dataPoints) == 1 {
-		return dataPoints
+		return dataPoints, nil
 	}
 	// Deduplicate by shard_id first (keep the one with highest version)
 	shardMap := make(map[uint32]*measurev1.InternalDataPoint)
@@ -608,83 +615,76 @@ func mergeNonGroupByAggregation(dataPoints []*measurev1.InternalDataPoint, agg *
 		deduplicatedDps = append(deduplicatedDps, idp)
 	}
 	if len(deduplicatedDps) == 1 {
-		return deduplicatedDps
+		return deduplicatedDps, nil
 	}
-	// Merge aggregation results based on function type
+	// Determine field type from the first data point
 	fieldName := agg.FieldName
-	var result *measurev1.InternalDataPoint
-	switch agg.Function {
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
-		result = deduplicatedDps[0]
-		for i := 1; i < len(deduplicatedDps); i++ {
-			dp := deduplicatedDps[i].GetDataPoint()
-			resultDp := result.GetDataPoint()
-			fieldVal := getFieldValue(dp, fieldName)
-			resultFieldVal := getFieldValue(resultDp, fieldName)
-			if fieldVal != nil && resultFieldVal != nil {
-				if compareLess(fieldVal, resultFieldVal) {
-					result = deduplicatedDps[i]
-				}
-			}
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
-		result = deduplicatedDps[0]
-		for i := 1; i < len(deduplicatedDps); i++ {
-			dp := deduplicatedDps[i].GetDataPoint()
-			resultDp := result.GetDataPoint()
-			fieldVal := getFieldValue(dp, fieldName)
-			resultFieldVal := getFieldValue(resultDp, fieldName)
-			if fieldVal != nil && resultFieldVal != nil {
-				if compareGreater(fieldVal, resultFieldVal) {
-					result = deduplicatedDps[i]
-				}
-			}
-		}
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
-		// Sum all values
-		result = deduplicatedDps[0]
-		resultDp := result.GetDataPoint()
-		var sumInt int64
-		var sumFloat float64
-		isFloat := false
-		for _, idp := range deduplicatedDps {
-			dp := idp.GetDataPoint()
-			fieldVal := getFieldValue(dp, fieldName)
-			if fieldVal == nil {
-				continue
-			}
-			switch v := fieldVal.Value.(type) {
-			case *modelv1.FieldValue_Int:
-				if !isFloat {
-					sumInt += v.Int.Value
-				} else {
-					sumFloat += float64(v.Int.Value)
-				}
-			case *modelv1.FieldValue_Float:
-				if !isFloat {
-					isFloat = true
-					sumFloat = float64(sumInt) + v.Float.Value
-				} else {
-					sumFloat += v.Float.Value
-				}
-			}
-		}
-		// Update the result field value
-		for i, field := range resultDp.Fields {
-			if field.Name == fieldName {
-				if isFloat {
-					resultDp.Fields[i].Value = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sumFloat}}}
-				} else {
-					resultDp.Fields[i].Value = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sumInt}}}
-				}
-				break
-			}
-		}
-	default:
-		// For other functions, just return the first one (should not happen for needCompletePushDownAgg)
-		return deduplicatedDps[:1]
+	firstFieldVal := getFieldValue(deduplicatedDps[0].GetDataPoint(), fieldName)
+	if firstFieldVal == nil {
+		return deduplicatedDps[:1], nil
 	}
-	return []*measurev1.InternalDataPoint{result}
+	// Create aggregation function based on field type
+	var isInt bool
+	switch firstFieldVal.Value.(type) {
+	case *modelv1.FieldValue_Int:
+		isInt = true
+	case *modelv1.FieldValue_Float:
+		isInt = false
+	default:
+		return deduplicatedDps[:1], nil
+	}
+	// Merge using aggregation.Func
+	if isInt {
+		return mergeNonGroupByAggregationWithFunc[int64](deduplicatedDps, agg, fieldName)
+	}
+	return mergeNonGroupByAggregationWithFunc[float64](deduplicatedDps, agg, fieldName)
+}
+
+// mergeNonGroupByAggregationWithFunc merges aggregation results using aggregation.Func.
+func mergeNonGroupByAggregationWithFunc[N aggregation.Number](
+	dataPoints []*measurev1.InternalDataPoint,
+	agg *measurev1.QueryRequest_Aggregation,
+	fieldName string,
+) ([]*measurev1.InternalDataPoint, error) {
+	// Create aggregation function
+	aggrFunc, aggrErr := aggregation.NewFunc[N](agg.Function)
+	if aggrErr != nil {
+		return nil, fmt.Errorf("failed to create aggregation function: %w", aggrErr)
+	}
+	// Feed aggregated values from each shard into the aggregation function
+	for _, idp := range dataPoints {
+		dp := idp.GetDataPoint()
+		fieldVal := getFieldValue(dp, fieldName)
+		if fieldVal == nil {
+			continue
+		}
+		val, fromErr := aggregation.FromFieldValue[N](fieldVal)
+		if fromErr != nil {
+			return nil, fmt.Errorf("failed to convert field value: %w", fromErr)
+		}
+		aggrFunc.In(val)
+	}
+	resultVal := aggrFunc.Val()
+	resultFieldVal, toErr := aggregation.ToFieldValue(resultVal)
+	if toErr != nil {
+		return nil, fmt.Errorf("failed to convert result value: %w", toErr)
+	}
+	// Create a new result data point (don't modify the original)
+	firstDp := dataPoints[0].GetDataPoint()
+	resultDp := &measurev1.DataPoint{
+		TagFamilies: firstDp.TagFamilies,
+		Fields: []*measurev1.DataPoint_Field{
+			{
+				Name:  fieldName,
+				Value: resultFieldVal,
+			},
+		},
+	}
+	result := &measurev1.InternalDataPoint{
+		DataPoint: resultDp,
+		ShardId:   dataPoints[0].ShardId,
+	}
+	return []*measurev1.InternalDataPoint{result}, nil
 }
 
 // getFieldValue extracts the field value from a data point.
@@ -695,36 +695,6 @@ func getFieldValue(dp *measurev1.DataPoint, fieldName string) *modelv1.FieldValu
 		}
 	}
 	return nil
-}
-
-// compareLess compares two field values and returns true if the first is less than the second.
-func compareLess(v1, v2 *modelv1.FieldValue) bool {
-	switch val1 := v1.Value.(type) {
-	case *modelv1.FieldValue_Int:
-		if val2, ok := v2.Value.(*modelv1.FieldValue_Int); ok {
-			return val1.Int.Value < val2.Int.Value
-		}
-	case *modelv1.FieldValue_Float:
-		if val2, ok := v2.Value.(*modelv1.FieldValue_Float); ok {
-			return val1.Float.Value < val2.Float.Value
-		}
-	}
-	return false
-}
-
-// compareGreater compares two field values and returns true if the first is greater than the second.
-func compareGreater(v1, v2 *modelv1.FieldValue) bool {
-	switch val1 := v1.Value.(type) {
-	case *modelv1.FieldValue_Int:
-		if val2, ok := v2.Value.(*modelv1.FieldValue_Int); ok {
-			return val1.Int.Value > val2.Int.Value
-		}
-	case *modelv1.FieldValue_Float:
-		if val2, ok := v2.Value.(*modelv1.FieldValue_Float); ok {
-			return val1.Float.Value > val2.Float.Value
-		}
-	}
-	return false
 }
 
 // hashWithShard combines shard_id and group_key into a single hash.
