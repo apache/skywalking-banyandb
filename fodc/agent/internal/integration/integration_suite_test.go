@@ -45,6 +45,7 @@ func TestFODCIntegration(t *testing.T) {
 }
 
 var (
+	banyanDBGRPCAddr string
 	banyanDBHTTPAddr string
 	deferFunc        func()
 	goods            []gleak.Goroutine
@@ -58,7 +59,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	})).To(Succeed())
 	// Start BanyanDB once for all tests
 	var cleanup func()
-	_, banyanDBHTTPAddr, cleanup = setup.Standalone(
+	banyanDBGRPCAddr, banyanDBHTTPAddr, cleanup = setup.Standalone(
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2121",
 	)
@@ -96,9 +97,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		return nil
 	}, flags.EventuallyTimeout, 500*time.Millisecond).Should(Succeed())
 
-	return []byte(banyanDBHTTPAddr)
+	return []byte(fmt.Sprintf("%s|%s", banyanDBGRPCAddr, banyanDBHTTPAddr))
 }, func(address []byte) {
-	banyanDBHTTPAddr = string(address)
+	parts := strings.Split(string(address), "|")
+	Expect(parts).To(HaveLen(2))
+	banyanDBGRPCAddr = parts[0]
+	banyanDBHTTPAddr = parts[1]
 })
 
 var _ = SynchronizedAfterSuite(func() {}, func() {})

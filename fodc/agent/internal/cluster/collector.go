@@ -142,7 +142,7 @@ func (c *Collector) WaitForNodeFetched(ctx context.Context) error {
 
 func (c *Collector) collectLoop(ctx context.Context) {
 	defer c.closer.Done()
-	c.fetchCurrentNodeOnce(ctx)
+	c.pollCurrentNode(ctx)
 	close(c.nodeFetchedCh)
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -157,7 +157,7 @@ func (c *Collector) collectLoop(ctx context.Context) {
 	}
 }
 
-func (c *Collector) fetchCurrentNodeOnce(ctx context.Context) {
+func (c *Collector) pollCurrentNode(ctx context.Context) {
 	node, fetchErr := c.fetchCurrentNode(ctx)
 	if fetchErr != nil {
 		if c.log != nil {
@@ -183,6 +183,7 @@ func (c *Collector) updateCurrentNode(node *databasev1.Node) {
 		if node.Metadata != nil {
 			nodeName = node.Metadata.Name
 		}
+		c.log.Info().Interface("node", node).Msg("Node details for debugging")
 		c.log.Info().Str("node_name", nodeName).Msg("Updated current node info")
 	}
 }
@@ -233,6 +234,7 @@ func (c *Collector) fetchCurrentNode(ctx context.Context) (*databasev1.Node, err
 
 func (c *Collector) collectClusterState(ctx context.Context) {
 	state, collectErr := c.fetchClusterState(ctx)
+	c.log.Info().Interface("state", state).Msg("Cluster state details for debugging")
 	if collectErr != nil {
 		if c.log != nil {
 			c.log.Error().Err(collectErr).Msg("Failed to fetch cluster state")
@@ -274,7 +276,7 @@ func (c *Collector) fetchClusterState(ctx context.Context) (*databasev1.GetClust
 // NodeRoleFromNode determines the node role string from the Node's role and labels.
 func NodeRoleFromNode(node *databasev1.Node) string {
 	if node == nil || len(node.Roles) == 0 {
-		return "UNKNOWN"
+		return "DATA_HOT"
 	}
 	for _, r := range node.Roles {
 		switch r {

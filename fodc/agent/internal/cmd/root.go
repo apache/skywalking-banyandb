@@ -234,10 +234,8 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
 		heartbeatInterval, reconnectInterval, fr, collector, log)
-	proxyCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		defer cancel()
-		if startErr := client.Start(proxyCtx); startErr != nil {
+		if startErr := client.Start(ctx); startErr != nil {
 			log.Error().Err(startErr).Msg("Proxy client error")
 		}
 	}()
