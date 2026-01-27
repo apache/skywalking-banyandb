@@ -18,6 +18,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func TestServer_StartStop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Stop the server
-	stopErr := server.Stop()
+	stopErr := server.Stop(context.Background())
 	assert.NoError(t, stopErr)
 	assert.False(t, server.IsStarted())
 
@@ -133,7 +134,7 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 	assert.Contains(t, startErr2.Error(), "server is already started")
 
 	// Clean up
-	server.Stop()
+	server.Stop(context.Background())
 }
 
 func TestServer_Stop_NotStarted(t *testing.T) {
@@ -146,7 +147,7 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	assert.False(t, server.IsStarted())
 
 	// Try to stop without starting - should fail
-	stopErr := server.Stop()
+	stopErr := server.Stop(context.Background())
 	assert.Error(t, stopErr)
 	assert.Contains(t, stopErr.Error(), "server is not started")
 }
@@ -170,7 +171,7 @@ func TestServer_Start_RegistryAlreadyHasCollector(t *testing.T) {
 	assert.True(t, server.IsStarted())
 
 	// Stop the server
-	require.NoError(t, server.Stop())
+	require.NoError(t, server.Stop(context.Background()))
 	assert.False(t, server.IsStarted())
 
 	// Check that no errors were sent on the error channel
@@ -215,7 +216,7 @@ func TestServer_IsStarted(t *testing.T) {
 	assert.True(t, server.IsStarted())
 
 	// Stop the server
-	stopErr := server.Stop()
+	stopErr := server.Stop(context.Background())
 	require.NoError(t, stopErr)
 	assert.False(t, server.IsStarted())
 }
