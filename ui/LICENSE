@@ -76,7 +76,7 @@ MIT licenses
     @tanstack/match-sorter-utils 8.19.4 MIT
     @tanstack/query-core 5.90.10 MIT
     @tanstack/vue-query 5.91.2 MIT
-    @types/lodash 4.17.20 MIT
+    @types/lodash 4.17.23 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.16 MIT
     @vue/compiler-core 3.5.24 MIT
@@ -111,8 +111,8 @@ MIT licenses
     js-yaml 4.1.1 MIT
     jsonfile 6.2.0 MIT
     lie 3.3.0 MIT
-    lodash 4.17.21 MIT
-    lodash-es 4.17.21 MIT
+    lodash 4.17.23 MIT
+    lodash-es 4.17.23 MIT
     lodash-unified 1.0.3 MIT
     magic-string 0.30.21 MIT
     memoize-one 6.0.0 MIT
