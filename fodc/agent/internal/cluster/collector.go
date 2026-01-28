@@ -41,8 +41,8 @@ const (
 	nodeInfoFetchTimeout = 30 * time.Second
 )
 
-// ClusterTopology represents processed cluster data for a single endpoint.
-type ClusterTopology struct {
+// TopologyMap represents processed cluster data for a single endpoint.
+type TopologyMap struct {
 	Nodes []*databasev1.Node    `json:"nodes"`
 	Calls []*fodcv1.ClusterCall `json:"calls"`
 }
@@ -61,7 +61,7 @@ type Collector struct {
 	closer          *run.Closer
 	clients         []*endpointClient
 	currentNodes    map[string]*databasev1.Node
-	clusterTopology ClusterTopology
+	clusterTopology TopologyMap
 	nodeFetchedCh   chan struct{}
 	addrs           []string
 	interval        time.Duration
@@ -78,7 +78,7 @@ func NewCollector(log *logger.Logger, addrs []string, interval time.Duration) *C
 		nodeFetchedCh:   make(chan struct{}),
 		clients:         make([]*endpointClient, 0, len(addrs)),
 		currentNodes:    make(map[string]*databasev1.Node),
-		clusterTopology: ClusterTopology{},
+		clusterTopology: TopologyMap{},
 	}
 }
 
@@ -142,7 +142,7 @@ func (c *Collector) GetCurrentNodes() map[string]*databasev1.Node {
 }
 
 // GetClusterTopology returns the aggregated cluster topology across all endpoints.
-func (c *Collector) GetClusterTopology() ClusterTopology {
+func (c *Collector) GetClusterTopology() TopologyMap {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.clusterTopology
@@ -230,7 +230,7 @@ func (c *Collector) updateClusterStates(states map[string]*databasev1.GetCluster
 func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Node, clusterStates map[string]*databasev1.GetClusterStateResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	merged := ClusterTopology{
+	merged := TopologyMap{
 		Nodes: make([]*databasev1.Node, 0),
 		Calls: make([]*fodcv1.ClusterCall, 0),
 	}
@@ -302,8 +302,12 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 	for _, call := range callMap {
 		merged.Calls = append(merged.Calls, call)
 	}
-	c.clusterTopology = ClusterTopology(merged)
-	c.log.Debug().Int("endpoints_count", len(allAddrs)).Int("nodes_count", len(merged.Nodes)).Int("calls_count", len(merged.Calls)).Msg("Processed cluster topology from all endpoints")
+	c.clusterTopology = merged
+	c.log.Debug().
+		Int("endpoints_count", len(allAddrs)).
+		Int("nodes_count", len(merged.Nodes)).
+		Int("calls_count", len(merged.Calls)).
+		Msg("Processed cluster topology from all endpoints")
 }
 
 func (c *Collector) fetchCurrentNodes(ctx context.Context) map[string]*databasev1.Node {
