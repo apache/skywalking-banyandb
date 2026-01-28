@@ -42,7 +42,7 @@ type Manager struct {
 }
 
 type agentTopology struct {
-	topology *fodcv1.ClusterTopology
+	topology *fodcv1.Topology
 	agentID  string
 }
 
@@ -67,7 +67,7 @@ func (m *Manager) SetGRPCService(grpcService RequestSender) {
 }
 
 // UpdateClusterTopology updates cluster topology for a specific agent.
-func (m *Manager) UpdateClusterTopology(agentID string, topology *fodcv1.ClusterTopology) {
+func (m *Manager) UpdateClusterTopology(agentID string, topology *fodcv1.Topology) {
 	m.clusterTopologyMu.Lock()
 	defer m.clusterTopologyMu.Unlock()
 	m.clusterTopology[agentID] = &agentTopology{
@@ -96,18 +96,18 @@ func (m *Manager) RemoveTopology(agentID string) {
 }
 
 // CollectClusterTopology requests and collects cluster topology from all agents.
-func (m *Manager) CollectClusterTopology() *fodcv1.ClusterTopology {
+func (m *Manager) CollectClusterTopology() *fodcv1.Topology {
 	if m.registry == nil {
-		return &fodcv1.ClusterTopology{
+		return &fodcv1.Topology{
 			Nodes: make([]*databasev1.Node, 0),
-			Calls: make([]*fodcv1.ClusterCall, 0),
+			Calls: make([]*fodcv1.Call, 0),
 		}
 	}
 	agents := m.registry.ListAgents()
 	if len(agents) == 0 {
-		return &fodcv1.ClusterTopology{
+		return &fodcv1.Topology{
 			Nodes: make([]*databasev1.Node, 0),
-			Calls: make([]*fodcv1.ClusterCall, 0),
+			Calls: make([]*fodcv1.Call, 0),
 		}
 	}
 	if m.grpcService != nil {
@@ -125,19 +125,19 @@ func (m *Manager) CollectClusterTopology() *fodcv1.ClusterTopology {
 }
 
 // GetClusterTopology returns aggregated cluster topology from all agents.
-func (m *Manager) GetClusterTopology() *fodcv1.ClusterTopology {
+func (m *Manager) GetClusterTopology() *fodcv1.Topology {
 	m.clusterTopologyMu.RLock()
 	defer m.clusterTopologyMu.RUnlock()
 
 	if len(m.clusterTopology) == 0 {
-		return &fodcv1.ClusterTopology{
+		return &fodcv1.Topology{
 			Nodes: make([]*databasev1.Node, 0),
-			Calls: make([]*fodcv1.ClusterCall, 0),
+			Calls: make([]*fodcv1.Call, 0),
 		}
 	}
 
 	nodeMap := make(map[string]*databasev1.Node)
-	callMap := make(map[string]*fodcv1.ClusterCall)
+	callMap := make(map[string]*fodcv1.Call)
 
 	for _, topology := range m.clusterTopology {
 		if topology.topology == nil {
@@ -160,12 +160,12 @@ func (m *Manager) GetClusterTopology() *fodcv1.ClusterTopology {
 		aggregatedNodes = append(aggregatedNodes, node)
 	}
 
-	aggregatedCalls := make([]*fodcv1.ClusterCall, 0, len(callMap))
+	aggregatedCalls := make([]*fodcv1.Call, 0, len(callMap))
 	for _, call := range callMap {
 		aggregatedCalls = append(aggregatedCalls, call)
 	}
 
-	return &fodcv1.ClusterTopology{
+	return &fodcv1.Topology{
 		Nodes: aggregatedNodes,
 		Calls: aggregatedCalls,
 	}

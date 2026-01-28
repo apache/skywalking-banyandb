@@ -44,7 +44,7 @@ const (
 // TopologyMap represents processed cluster data for a single endpoint.
 type TopologyMap struct {
 	Nodes []*databasev1.Node    `json:"nodes"`
-	Calls []*fodcv1.ClusterCall `json:"calls"`
+	Calls []*fodcv1.Call `json:"calls"`
 }
 
 // endpointClient holds gRPC connection and clients for a single endpoint.
@@ -219,11 +219,6 @@ func (c *Collector) updateClusterStates(states map[string]*databasev1.GetCluster
 	}
 	c.mu.Unlock()
 	c.processClusterStates(currentNodesCopy, states)
-	for addr, state := range states {
-		if state != nil {
-			c.log.Debug().Str("addr", addr).Int("route_tables_count", len(state.RouteTables)).Msg("Updated cluster state")
-		}
-	}
 	c.log.Info().Int("states_count", len(states)).Msg("Updated cluster states from all endpoints")
 }
 
@@ -232,10 +227,10 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 	defer c.mu.Unlock()
 	merged := TopologyMap{
 		Nodes: make([]*databasev1.Node, 0),
-		Calls: make([]*fodcv1.ClusterCall, 0),
+		Calls: make([]*fodcv1.Call, 0),
 	}
 	nodeMap := make(map[string]*databasev1.Node)
-	callMap := make(map[string]*fodcv1.ClusterCall)
+	callMap := make(map[string]*fodcv1.Call)
 	allAddrs := make(map[string]bool)
 	for addr := range currentNodes {
 		allAddrs[addr] = true
@@ -276,7 +271,7 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 				for activeName := range activeSet {
 					if activeName != currentNodeName {
 						callID := fmt.Sprintf("%s-%s", currentNodeName, activeName)
-						callMap[callID] = &fodcv1.ClusterCall{
+						callMap[callID] = &fodcv1.Call{
 							Id:     callID,
 							Target: currentNodeName,
 							Source: activeName,

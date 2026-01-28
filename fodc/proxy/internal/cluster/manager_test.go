@@ -59,9 +59,9 @@ func TestManager_UpdateClusterTopology(t *testing.T) {
 			Name: "test-node",
 		},
 	}
-	topology := &fodcv1.ClusterTopology{
+	topology := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{node},
-		Calls: []*fodcv1.ClusterCall{
+		Calls: []*fodcv1.Call{
 			{
 				Id:     "call-1",
 				Target: "target-node",
@@ -86,13 +86,13 @@ func TestManager_RemoveAgentState(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	topology := &fodcv1.ClusterTopology{
+	topology := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{
 			{
 				Metadata: &commonv1.Metadata{Name: "test-node"},
 			},
 		},
-		Calls: []*fodcv1.ClusterCall{},
+		Calls: []*fodcv1.Call{},
 	}
 
 	mgr.UpdateClusterTopology("agent1", topology)
@@ -110,13 +110,13 @@ func TestManager_GetClusterTopology_MultipleAgents(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	topology1 := &fodcv1.ClusterTopology{
+	topology1 := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{
 			{
 				Metadata: &commonv1.Metadata{Name: "node1"},
 			},
 		},
-		Calls: []*fodcv1.ClusterCall{
+		Calls: []*fodcv1.Call{
 			{
 				Id:     "call-1",
 				Target: "node1",
@@ -125,13 +125,13 @@ func TestManager_GetClusterTopology_MultipleAgents(t *testing.T) {
 		},
 	}
 
-	topology2 := &fodcv1.ClusterTopology{
+	topology2 := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{
 			{
 				Metadata: &commonv1.Metadata{Name: "node2"},
 			},
 		},
-		Calls: []*fodcv1.ClusterCall{
+		Calls: []*fodcv1.Call{
 			{
 				Id:     "call-2",
 				Target: "node2",

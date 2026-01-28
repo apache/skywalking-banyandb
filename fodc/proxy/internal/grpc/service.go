@@ -42,7 +42,7 @@ import (
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
 	metricsStream      fodcv1.FODCService_StreamMetricsServer
-	clusterStateStream fodcv1.FODCService_StreamClusterStateServer
+	clusterStateStream fodcv1.FODCService_StreamClusterTopologyServer
 	lastActivity       time.Time
 	agentID            string
 	mu                 sync.RWMutex
@@ -70,7 +70,7 @@ func (ac *agentConnection) setMetricsStream(stream fodcv1.FODCService_StreamMetr
 }
 
 // setClusterStateStream sets the cluster state stream.
-func (ac *agentConnection) setClusterStateStream(stream fodcv1.FODCService_StreamClusterStateServer) {
+func (ac *agentConnection) setClusterStateStream(stream fodcv1.FODCService_StreamClusterTopologyServer) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	ac.clusterStateStream = stream
@@ -96,8 +96,8 @@ func (ac *agentConnection) sendClusterDataRequest() error {
 	if ac.clusterStateStream == nil {
 		return fmt.Errorf("cluster state stream not established for agent ID: %s", ac.agentID)
 	}
-	resp := &fodcv1.StreamClusterStateResponse{
-		RequestClusterData: true,
+	resp := &fodcv1.StreamClusterTopologyResponse{
+		RequestTopology: true,
 	}
 	if sendErr := ac.clusterStateStream.Send(resp); sendErr != nil {
 		return fmt.Errorf("failed to send cluster data request: %w", sendErr)
@@ -384,8 +384,8 @@ func (s *FODCService) getAgentIDFromPeer(ctx context.Context) string {
 	return ""
 }
 
-// StreamClusterState handles bi-directional cluster state streaming.
-func (s *FODCService) StreamClusterState(stream fodcv1.FODCService_StreamClusterStateServer) error {
+// StreamClusterTopology handles bi-directional cluster topology streaming.
+func (s *FODCService) StreamClusterTopology(stream fodcv1.FODCService_StreamClusterTopologyServer) error {
 	ctx := stream.Context()
 	agentID := s.getAgentIDFromContext(ctx)
 	if agentID == "" {
@@ -439,11 +439,11 @@ func (s *FODCService) StreamClusterState(stream fodcv1.FODCService_StreamCluster
 		if s.clusterStateManager != nil {
 			nodeCount := 0
 			callCount := 0
-			if req.ClusterTopology != nil {
-				nodeCount = len(req.ClusterTopology.Nodes)
-				callCount = len(req.ClusterTopology.Calls)
+			if req.Topology != nil {
+				nodeCount = len(req.Topology.Nodes)
+				callCount = len(req.Topology.Calls)
 			}
-			s.clusterStateManager.UpdateClusterTopology(agentID, req.ClusterTopology)
+			s.clusterStateManager.UpdateClusterTopology(agentID, req.Topology)
 			s.logger.Debug().
 				Str("agent_id", agentID).
 				Int("nodes_count", nodeCount).

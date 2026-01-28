@@ -54,7 +54,7 @@ func initTestLogger(t *testing.T) *logger.Logger {
 type mockFODCServiceClient struct {
 	registerAgentFunc      func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_RegisterAgentClient, error)
 	streamMetricsFunc      func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error)
-	streamClusterStateFunc func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error)
+	streamClusterStateFunc func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamClusterTopologyClient, error)
 }
 
 func (m *mockFODCServiceClient) RegisterAgent(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_RegisterAgentClient, error) {
@@ -71,7 +71,7 @@ func (m *mockFODCServiceClient) StreamMetrics(ctx context.Context, opts ...grpc.
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockFODCServiceClient) StreamClusterState(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+func (m *mockFODCServiceClient) StreamClusterTopology(ctx context.Context, opts ...grpc.CallOption) (fodcv1.FODCService_StreamClusterTopologyClient, error) {
 	if m.streamClusterStateFunc != nil {
 		return m.streamClusterStateFunc(ctx, opts...)
 	}
@@ -254,27 +254,27 @@ func (m *mockStreamMetricsClient) RecvMsg(_ interface{}) error {
 	return nil
 }
 
-// mockStreamClusterStateClient implements fodcv1.FODCService_StreamClusterStateClient for testing.
+// mockStreamClusterStateClient implements fodcv1.FODCService_StreamClusterTopologyClient for testing.
 type mockStreamClusterStateClient struct {
 	ctx           context.Context
-	recvChan      chan *fodcv1.StreamClusterStateResponse
+	recvChan      chan *fodcv1.StreamClusterTopologyResponse
 	sendErr       error
 	recvErr       error
-	sentRequests  []*fodcv1.StreamClusterStateRequest
-	recvResponses []*fodcv1.StreamClusterStateResponse
+	sentRequests  []*fodcv1.StreamClusterTopologyRequest
+	recvResponses []*fodcv1.StreamClusterTopologyResponse
 	mu            sync.Mutex
 }
 
 func newMockStreamClusterStateClient(ctx context.Context) *mockStreamClusterStateClient {
 	return &mockStreamClusterStateClient{
 		ctx:           ctx,
-		sentRequests:  make([]*fodcv1.StreamClusterStateRequest, 0),
-		recvResponses: make([]*fodcv1.StreamClusterStateResponse, 0),
-		recvChan:      make(chan *fodcv1.StreamClusterStateResponse, 10),
+		sentRequests:  make([]*fodcv1.StreamClusterTopologyRequest, 0),
+		recvResponses: make([]*fodcv1.StreamClusterTopologyResponse, 0),
+		recvChan:      make(chan *fodcv1.StreamClusterTopologyResponse, 10),
 	}
 }
 
-func (m *mockStreamClusterStateClient) Send(req *fodcv1.StreamClusterStateRequest) error {
+func (m *mockStreamClusterStateClient) Send(req *fodcv1.StreamClusterTopologyRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.sendErr != nil {
@@ -284,7 +284,7 @@ func (m *mockStreamClusterStateClient) Send(req *fodcv1.StreamClusterStateReques
 	return nil
 }
 
-func (m *mockStreamClusterStateClient) Recv() (*fodcv1.StreamClusterStateResponse, error) {
+func (m *mockStreamClusterStateClient) Recv() (*fodcv1.StreamClusterTopologyResponse, error) {
 	m.mu.Lock()
 	recvErr := m.recvErr
 	m.mu.Unlock()
@@ -313,7 +313,7 @@ func (m *mockStreamClusterStateClient) SetSendError(err error) {
 	m.sendErr = err
 }
 
-func (m *mockStreamClusterStateClient) AddResponse(resp *fodcv1.StreamClusterStateResponse) {
+func (m *mockStreamClusterStateClient) AddResponse(resp *fodcv1.StreamClusterTopologyResponse) {
 	m.recvChan <- resp
 }
 
@@ -754,7 +754,7 @@ func TestProxyClient_StartClusterStateStream_Success(t *testing.T) {
 	mockClient := &mockFODCServiceClient{}
 	mockStream := newMockStreamClusterStateClient(ctx)
 
-	mockClient.streamClusterStateFunc = func(ctxParam context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+	mockClient.streamClusterStateFunc = func(ctxParam context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterTopologyClient, error) {
 		// Verify metadata contains agent_id
 		md, ok := metadata.FromOutgoingContext(ctxParam)
 		require.True(t, ok)
@@ -785,7 +785,7 @@ func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
 
 	ctx := context.Background()
 	mockClient := &mockFODCServiceClient{}
-	mockClient.streamClusterStateFunc = func(_ context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterStateClient, error) {
+	mockClient.streamClusterStateFunc = func(_ context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamClusterTopologyClient, error) {
 		return nil, errors.New("stream creation failed")
 	}
 
@@ -833,7 +833,7 @@ func TestProxyClient_SendClusterTopology_Success(t *testing.T) {
 
 	require.Len(t, sentRequests, 1)
 	assert.NotNil(t, sentRequests[0].Timestamp)
-	assert.NotNil(t, sentRequests[0].ClusterTopology)
+	assert.NotNil(t, sentRequests[0].Topology)
 }
 
 func TestProxyClient_SendHeartbeat_NoStream(t *testing.T) {

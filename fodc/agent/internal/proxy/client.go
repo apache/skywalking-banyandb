@@ -57,7 +57,7 @@ type Client struct {
 	labels             map[string]string
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
-	clusterStateStream fodcv1.FODCService_StreamClusterStateClient
+	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
@@ -252,7 +252,7 @@ func (c *Client) StartClusterStateStream(ctx context.Context) error {
 	md := metadata.New(map[string]string{"agent_id": agentID})
 	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
 
-	stream, streamErr := client.StreamClusterState(ctxWithMetadata)
+	stream, streamErr := client.StreamClusterTopology(ctxWithMetadata)
 	if streamErr != nil {
 		return fmt.Errorf("failed to create cluster state stream: %w", streamErr)
 	}
@@ -287,8 +287,8 @@ func (c *Client) sendClusterTopology() error {
 	if len(topology.Nodes) == 0 && len(topology.Calls) == 0 {
 		return fmt.Errorf("no cluster topology available to send")
 	}
-	req := &fodcv1.StreamClusterStateRequest{
-		ClusterTopology: &fodcv1.ClusterTopology{
+	req := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
 			Nodes: topology.Nodes,
 			Calls: topology.Calls,
 		},
@@ -305,7 +305,7 @@ func (c *Client) sendClusterTopology() error {
 }
 
 // handleClusterStateStream handles the cluster state stream.
-func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FODCService_StreamClusterStateClient) {
+func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FODCService_StreamClusterTopologyClient) {
 	c.streamsMu.RLock()
 	stopCh := c.stopCh
 	c.streamsMu.RUnlock()
@@ -335,7 +335,7 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 			go c.reconnect(ctx)
 			return
 		}
-		if resp != nil && resp.RequestClusterData {
+		if resp != nil && resp.RequestTopology {
 			c.logger.Debug().Msg("Received cluster data request from proxy")
 			if sendErr := c.sendClusterTopology(); sendErr != nil {
 				c.logger.Error().Err(sendErr).Msg("Failed to send cluster topology to proxy")

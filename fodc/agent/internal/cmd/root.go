@@ -101,11 +101,9 @@ func init() {
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
 		"Interval for reconnection attempts when connection to Proxy is lost")
 	rootCmd.Flags().StringSliceVar(&clusterStatePorts, "cluster-state-ports", []string{},
-		"Ports of the BanyanDB node's lifecycle gRPC endpoint to poll cluster state from "+
-			"(can be specified multiple times or comma-separated, e.g., 17914,17915). "+
-			"If empty, cluster state polling is disabled.")
+		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
-		"Interval at which to poll cluster state from the BanyanDB lifecycle service")
+		"Interval at which to poll cluster state from the BanyanDB nodes")
 }
 
 // runFODC is the main function for the FODC agent.

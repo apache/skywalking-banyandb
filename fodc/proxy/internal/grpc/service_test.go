@@ -809,25 +809,25 @@ func (m *mockAddr) String() string {
 	return m.addr
 }
 
-// mockStreamClusterStateServer implements fodcv1.FODCService_StreamClusterStateServer for testing.
+// mockStreamClusterStateServer implements fodcv1.FODCService_StreamClusterTopologyServer for testing.
 type mockStreamClusterStateServer struct {
 	ctx           context.Context
 	recvErr       error
 	sendErr       error
-	sentResponses []*fodcv1.StreamClusterStateResponse
-	recvRequests  []*fodcv1.StreamClusterStateRequest
+	sentResponses []*fodcv1.StreamClusterTopologyResponse
+	recvRequests  []*fodcv1.StreamClusterTopologyRequest
 	mu            sync.Mutex
 }
 
 func newMockStreamClusterStateServer(ctx context.Context) *mockStreamClusterStateServer {
 	return &mockStreamClusterStateServer{
 		ctx:           ctx,
-		sentResponses: make([]*fodcv1.StreamClusterStateResponse, 0),
-		recvRequests:  make([]*fodcv1.StreamClusterStateRequest, 0),
+		sentResponses: make([]*fodcv1.StreamClusterTopologyResponse, 0),
+		recvRequests:  make([]*fodcv1.StreamClusterTopologyRequest, 0),
 	}
 }
 
-func (m *mockStreamClusterStateServer) Send(resp *fodcv1.StreamClusterStateResponse) error {
+func (m *mockStreamClusterStateServer) Send(resp *fodcv1.StreamClusterTopologyResponse) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.sendErr != nil {
@@ -837,7 +837,7 @@ func (m *mockStreamClusterStateServer) Send(resp *fodcv1.StreamClusterStateRespo
 	return nil
 }
 
-func (m *mockStreamClusterStateServer) Recv() (*fodcv1.StreamClusterStateRequest, error) {
+func (m *mockStreamClusterStateServer) Recv() (*fodcv1.StreamClusterTopologyRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.recvErr != nil {
@@ -863,16 +863,16 @@ func (m *mockStreamClusterStateServer) SetSendError(err error) {
 	m.sendErr = err
 }
 
-func (m *mockStreamClusterStateServer) AddRequest(req *fodcv1.StreamClusterStateRequest) {
+func (m *mockStreamClusterStateServer) AddRequest(req *fodcv1.StreamClusterTopologyRequest) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recvRequests = append(m.recvRequests, req)
 }
 
-func (m *mockStreamClusterStateServer) GetSentResponses() []*fodcv1.StreamClusterStateResponse {
+func (m *mockStreamClusterStateServer) GetSentResponses() []*fodcv1.StreamClusterTopologyResponse {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	result := make([]*fodcv1.StreamClusterStateResponse, len(m.sentResponses))
+	result := make([]*fodcv1.StreamClusterTopologyResponse, len(m.sentResponses))
 	copy(result, m.sentResponses)
 	return result
 }
@@ -916,8 +916,8 @@ func TestStreamClusterTopology_Success(t *testing.T) {
 	})
 	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
 	mockStream := newMockStreamClusterStateServer(ctxWithMetadata)
-	clusterStateReq := &fodcv1.StreamClusterStateRequest{
-		ClusterTopology: &fodcv1.ClusterTopology{
+	clusterStateReq := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
 			Nodes: []*databasev1.Node{
 				{
 					Metadata: &commonv1.Metadata{
@@ -925,7 +925,7 @@ func TestStreamClusterTopology_Success(t *testing.T) {
 					},
 				},
 			},
-			Calls: []*fodcv1.ClusterCall{
+			Calls: []*fodcv1.Call{
 				{
 					Id:     "call-1",
 					Target: "target-node",
@@ -937,7 +937,7 @@ func TestStreamClusterTopology_Success(t *testing.T) {
 	}
 	mockStream.AddRequest(clusterStateReq)
 	mockStream.SetRecvError(io.EOF)
-	streamErr := service.StreamClusterState(mockStream)
+	streamErr := service.StreamClusterTopology(mockStream)
 	assert.NoError(t, streamErr)
 	service.connectionsMu.RLock()
 	conn, exists := service.connections[agentID]
@@ -951,8 +951,8 @@ func TestStreamClusterTopology_NoAgentID(t *testing.T) {
 	service, _ := newTestService(t)
 	ctx := context.Background()
 	mockStream := newMockStreamClusterStateServer(ctx)
-	clusterStateReq := &fodcv1.StreamClusterStateRequest{
-		ClusterTopology: &fodcv1.ClusterTopology{
+	clusterStateReq := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
 			Nodes: []*databasev1.Node{
 				{
 					Metadata: &commonv1.Metadata{
@@ -960,7 +960,7 @@ func TestStreamClusterTopology_NoAgentID(t *testing.T) {
 					},
 				},
 			},
-			Calls: []*fodcv1.ClusterCall{
+			Calls: []*fodcv1.Call{
 				{
 					Id:     "call-1",
 					Target: "target-node",
@@ -972,7 +972,7 @@ func TestStreamClusterTopology_NoAgentID(t *testing.T) {
 	}
 	mockStream.AddRequest(clusterStateReq)
 	mockStream.SetRecvError(io.EOF)
-	streamErr := service.StreamClusterState(mockStream)
+	streamErr := service.StreamClusterTopology(mockStream)
 	assert.Error(t, streamErr)
 	assert.Contains(t, streamErr.Error(), "agent ID not found")
 }
@@ -995,7 +995,7 @@ func TestStreamClusterTopology_RecvError(t *testing.T) {
 	mockStream := newMockStreamClusterStateServer(ctxWithMetadata)
 	testErr := errors.New("recv error")
 	mockStream.SetRecvError(testErr)
-	streamErr := service.StreamClusterState(mockStream)
+	streamErr := service.StreamClusterTopology(mockStream)
 	assert.Error(t, streamErr)
 }
 
@@ -1021,7 +1021,7 @@ func TestRequestClusterData_Success(t *testing.T) {
 	assert.NoError(t, requestErr)
 	responses := mockStream.GetSentResponses()
 	require.Len(t, responses, 1)
-	assert.True(t, responses[0].RequestClusterData)
+	assert.True(t, responses[0].RequestTopology)
 }
 
 func TestRequestClusterData_NoConnection(t *testing.T) {

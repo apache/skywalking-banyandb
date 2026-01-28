@@ -223,7 +223,7 @@ func TestCollector_ProcessClusterData(t *testing.T) {
 	assert.Contains(t, topology.Nodes, currentNode)
 	assert.Contains(t, topology.Nodes, registeredNode1)
 	assert.Contains(t, topology.Nodes, registeredNode2)
-	topologyCallMap := make(map[string]*fodcv1.ClusterCall)
+	topologyCallMap := make(map[string]*fodcv1.Call)
 	for _, call := range topology.Calls {
 		topologyCallMap[call.Id] = call
 	}
@@ -296,7 +296,7 @@ func TestCollector_MergeMultipleEndpoints(t *testing.T) {
 	assert.True(t, nodeNames["node-2"])
 	assert.True(t, nodeNames["registered-1"])
 	assert.True(t, nodeNames["registered-2"])
-	callMap := make(map[string]*fodcv1.ClusterCall)
+	callMap := make(map[string]*fodcv1.Call)
 	for _, call := range topology.Calls {
 		callMap[call.Id] = call
 	}

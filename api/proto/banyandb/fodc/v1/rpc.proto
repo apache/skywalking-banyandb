@@ -33,8 +33,8 @@ service FODCService {
   // Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests)
   rpc StreamMetrics(stream StreamMetricsRequest) returns (stream StreamMetricsResponse);
 
-  // Bi-directional stream for cluster state
-  rpc StreamClusterState(stream StreamClusterStateRequest) returns (stream StreamClusterStateResponse);
+  // Bi-directional stream for cluster topology
+  rpc StreamClusterTopology(stream StreamClusterTopologyRequest) returns (stream StreamClusterTopologyResponse);
 }
 
 message RegisterAgentRequest {
@@ -69,23 +69,23 @@ message StreamMetricsResponse {
   google.protobuf.Timestamp end_time = 2; // Optional end time for time window
 }
 
-message ClusterCall {
+message Call {
   string id = 1;
   string target = 2;
   string source = 3;
 }
 
-message ClusterTopology {
+message Topology {
   repeated banyandb.database.v1.Node nodes = 1;
-  repeated ClusterCall calls = 2;
+  repeated Call calls = 2;
 }
 
-message StreamClusterStateRequest {
+message StreamClusterTopologyRequest {
   google.protobuf.Timestamp timestamp = 1;
-  ClusterTopology cluster_topology = 2;
+  Topology topology = 2;
 }
 
-message StreamClusterStateResponse {
-  // Request cluster data from agent
-  bool request_cluster_data = 1;
+message StreamClusterTopologyResponse {
+  // Request topology from agent
+  bool request_topology = 1;
 }

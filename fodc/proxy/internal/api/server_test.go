@@ -84,7 +84,7 @@ func TestHandleClusterTopology_Success(t *testing.T) {
 	}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
-	topology := &fodcv1.ClusterTopology{
+	topology := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{
 			{
 				Metadata: &commonv1.Metadata{
@@ -97,7 +97,7 @@ func TestHandleClusterTopology_Success(t *testing.T) {
 				},
 			},
 		},
-		Calls: []*fodcv1.ClusterCall{
+		Calls: []*fodcv1.Call{
 			{
 				Id:     "call-1",
 				Target: "test-node",
@@ -110,7 +110,7 @@ func TestHandleClusterTopology_Success(t *testing.T) {
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)
 	assert.Equal(t, http.StatusOK, resp.Code)
-	var result fodcv1.ClusterTopology
+	var result fodcv1.Topology
 	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, decodeErr)
 	assert.Equal(t, 2, len(result.Nodes))

@@ -305,17 +305,17 @@
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
-    - [ClusterCall](#banyandb-fodc-v1-ClusterCall)
-    - [ClusterTopology](#banyandb-fodc-v1-ClusterTopology)
+    - [Call](#banyandb-fodc-v1-Call)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
-    - [StreamClusterStateRequest](#banyandb-fodc-v1-StreamClusterStateRequest)
-    - [StreamClusterStateResponse](#banyandb-fodc-v1-StreamClusterStateResponse)
+    - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
+    - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
+    - [Topology](#banyandb-fodc-v1-Topology)
   
     - [FODCService](#banyandb-fodc-v1-FODCService)
   
@@ -4712,9 +4712,9 @@ Phase represents the current phase of the deletion task.
 
 
 
-<a name="banyandb-fodc-v1-ClusterCall"></a>
+<a name="banyandb-fodc-v1-Call"></a>
 
-### ClusterCall
+### Call
 
 
 
@@ -4723,22 +4723,6 @@ Phase represents the current phase of the deletion task.
 | id | [string](#string) |  |  |
 | target | [string](#string) |  |  |
 | source | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="banyandb-fodc-v1-ClusterTopology"></a>
-
-### ClusterTopology
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| nodes | [banyandb.database.v1.Node](#banyandb-database-v1-Node) | repeated |  |
-| calls | [ClusterCall](#banyandb-fodc-v1-ClusterCall) | repeated |  |
 
 
 
@@ -4832,31 +4816,31 @@ Phase represents the current phase of the deletion task.
 
 
 
-<a name="banyandb-fodc-v1-StreamClusterStateRequest"></a>
+<a name="banyandb-fodc-v1-StreamClusterTopologyRequest"></a>
 
-### StreamClusterStateRequest
+### StreamClusterTopologyRequest
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
-| cluster_topology | [ClusterTopology](#banyandb-fodc-v1-ClusterTopology) |  |  |
+| topology | [Topology](#banyandb-fodc-v1-Topology) |  |  |
 
 
 
 
 
 
-<a name="banyandb-fodc-v1-StreamClusterStateResponse"></a>
+<a name="banyandb-fodc-v1-StreamClusterTopologyResponse"></a>
 
-### StreamClusterStateResponse
+### StreamClusterTopologyResponse
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| request_cluster_data | [bool](#bool) |  | Request cluster data from agent |
+| request_topology | [bool](#bool) |  | Request topology from agent |
 
 
 
@@ -4894,6 +4878,22 @@ Phase represents the current phase of the deletion task.
 
 
 
+
+<a name="banyandb-fodc-v1-Topology"></a>
+
+### Topology
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [banyandb.database.v1.Node](#banyandb-database-v1-Node) | repeated |  |
+| calls | [Call](#banyandb-fodc-v1-Call) | repeated |  |
+
+
+
+
+
  
 
  
@@ -4910,7 +4910,7 @@ Phase represents the current phase of the deletion task.
 | ----------- | ------------ | ------------- | ------------|
 | RegisterAgent | [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest) stream | [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse) stream | Bi-directional stream for agent registration and heartbeat |
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
-| StreamClusterState | [StreamClusterStateRequest](#banyandb-fodc-v1-StreamClusterStateRequest) stream | [StreamClusterStateResponse](#banyandb-fodc-v1-StreamClusterStateResponse) stream | Bi-directional stream for cluster state |
+| StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 
  
 
