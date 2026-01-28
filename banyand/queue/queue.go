@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	grpclib "google.golang.org/grpc"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
@@ -63,6 +65,7 @@ type Server interface {
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
 	SetRouteProviders(providers map[string]route.TableProvider)
+	AddGrpcHandlerCallback(func(*grpclib.Server))
 }
 
 // BatchPublisher is the interface for publishing data in batch.

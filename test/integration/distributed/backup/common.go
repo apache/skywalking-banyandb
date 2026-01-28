@@ -34,9 +34,9 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -95,9 +95,9 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	<-server.ReadyNotify()
 	ginkgo.By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
+	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+		etcd.Namespace(metadatclient.DefaultNamespace),
+		etcd.ConfigureServerEndpoints([]string{ep}),
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer schemaRegistry.Close()

@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -361,7 +362,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	repairLocation, repairLocationDefer, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	result.appendStop(repairLocationDefer)
-	mockGroup := schema.NewMockGroup(ctrl)
+	mockGroup := etcd.NewMockGroup(ctrl)
 	groupDefines := make([]*commonv1.Group, 0, len(groups))
 	for _, g := range groups {
 		groupDefines = append(groupDefines, &commonv1.Group{

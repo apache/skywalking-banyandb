@@ -41,9 +41,9 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -120,7 +120,7 @@ func (h *dataNodeHandle) stop(etcdEndpoint string) {
 }
 
 func (h *dataNodeHandle) etcdKey() string {
-	return fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, h.grpcPort)
+	return fmt.Sprintf("/%s/nodes/%s:%d", metadatclient.DefaultNamespace, nodeHost, h.grpcPort)
 }
 
 type liaisonHandle struct {
@@ -198,7 +198,7 @@ func (l *liaisonHandle) stop(etcdEndpoint string) {
 }
 
 func (l *liaisonHandle) etcdKey() string {
-	return fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, l.serverPort)
+	return fmt.Sprintf("/%s/nodes/%s:%d", metadatclient.DefaultNamespace, nodeHost, l.serverPort)
 }
 
 type suiteInfo struct {
@@ -265,9 +265,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	<-etcdServer.ReadyNotify()
 	etcdEndpoint = clientEP
 
-	registry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{clientEP}),
+	registry, err := etcd.NewEtcdSchemaRegistry(
+		etcd.Namespace(metadatclient.DefaultNamespace),
+		etcd.ConfigureServerEndpoints([]string{clientEP}),
 	)
 	Expect(err).NotTo(HaveOccurred())
 	defer registry.Close()

@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+// Package etcd implements schema registry with etcd as the backend storage.
+package etcd
 
 import (
 	"context"
@@ -39,6 +40,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -49,25 +51,25 @@ const (
 )
 
 var (
-	_ Stream           = (*etcdSchemaRegistry)(nil)
-	_ IndexRuleBinding = (*etcdSchemaRegistry)(nil)
-	_ IndexRule        = (*etcdSchemaRegistry)(nil)
-	_ Measure          = (*etcdSchemaRegistry)(nil)
-	_ Trace            = (*etcdSchemaRegistry)(nil)
-	_ Group            = (*etcdSchemaRegistry)(nil)
+	_ schema.Stream           = (*etcdSchemaRegistry)(nil)
+	_ schema.IndexRuleBinding = (*etcdSchemaRegistry)(nil)
+	_ schema.IndexRule        = (*etcdSchemaRegistry)(nil)
+	_ schema.Measure          = (*etcdSchemaRegistry)(nil)
+	_ schema.Trace            = (*etcdSchemaRegistry)(nil)
+	_ schema.Group            = (*etcdSchemaRegistry)(nil)
 
 	errUnexpectedNumberOfEntities = errors.New("unexpected number of entities")
 	errConcurrentModification     = errors.New("concurrent modification of entities")
-)
 
-// HasMetadata allows getting Metadata.
-type HasMetadata interface {
-	GetMetadata() *commonv1.Metadata
-	proto.Message
-}
+	statusDataLoss  = status.New(codes.DataLoss, "banyandb: resource corrupts.")
+	errGRPCDataLoss = statusDataLoss.Err()
+)
 
 // RegistryOption is the option to create Registry.
 type RegistryOption func(*etcdSchemaRegistryConfig)
+
+// WatcherOption is a placeholder for watcher configuration.
+type WatcherOption func(*WatcherConfig)
 
 // Namespace sets the namespace of the registry.
 func Namespace(namespace string) RegistryOption {
@@ -121,20 +123,20 @@ func ConfigureWatchCheckInterval(d time.Duration) RegistryOption {
 
 // CheckInterval sets the interval to check the watcher.
 func CheckInterval(d time.Duration) WatcherOption {
-	return func(wc *watcherConfig) {
+	return func(wc *WatcherConfig) {
 		if d >= minCheckInterval {
 			wc.checkInterval = d
 		}
 	}
 }
 
-var _ Registry = (*etcdSchemaRegistry)(nil)
+var _ schema.Registry = (*etcdSchemaRegistry)(nil)
 
 type etcdSchemaRegistry struct {
 	client        *clientv3.Client
 	closer        *run.Closer
 	l             *logger.Logger
-	watchers      map[Kind]*watcher
+	watchers      map[schema.Kind]*watcher
 	namespace     string
 	checkInterval time.Duration
 	mux           sync.RWMutex
@@ -151,16 +153,16 @@ type etcdSchemaRegistryConfig struct {
 	checkInterval   time.Duration
 }
 
-func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler EventHandler) {
+func (e *etcdSchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
 	// Validate kind
-	if kind&KindMask != kind {
+	if kind&schema.KindMask != kind {
 		panic(fmt.Sprintf("invalid kind %d", kind))
 	}
 	e.mux.Lock()
 	defer e.mux.Unlock()
-	var kinds []Kind
-	for i := 0; i < KindSize; i++ {
-		ki := Kind(1 << i)
+	var kinds []schema.Kind
+	for i := 0; i < schema.KindSize; i++ {
+		ki := schema.Kind(1 << i)
 		if kind&ki > 0 {
 			kinds = append(kinds, ki)
 		}
@@ -182,7 +184,7 @@ func (e *etcdSchemaRegistry) RegisterHandler(name string, kind Kind, handler Eve
 	}
 }
 
-func (e *etcdSchemaRegistry) registerToWatcher(name string, kind Kind, revision int64, handler EventHandler) {
+func (e *etcdSchemaRegistry) registerToWatcher(name string, kind schema.Kind, revision int64, handler schema.EventHandler) {
 	if w, ok := e.watchers[kind]; ok {
 		e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to an existing watcher")
 		w.AddHandler(handler)
@@ -192,14 +194,14 @@ func (e *etcdSchemaRegistry) registerToWatcher(name string, kind Kind, revision 
 		return
 	}
 	e.l.Info().Str("name", name).Stringer("kind", kind).Msg("registering to a new watcher")
-	w := e.NewWatcher(name, kind, revision, CheckInterval(e.checkInterval))
+	w := e.newWatcherForKind(name, kind, revision, CheckInterval(e.checkInterval))
 	w.AddHandler(handler)
 	e.watchers[kind] = w
 }
 
 func (e *etcdSchemaRegistry) Compact(ctx context.Context, revision int64) error {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return schema.ErrClosed
 	}
 	defer e.closer.Done()
 	_, err := e.client.Compact(ctx, revision)
@@ -226,7 +228,7 @@ func (e *etcdSchemaRegistry) Close() error {
 }
 
 // NewEtcdSchemaRegistry returns a Registry powered by Etcd.
-func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
+func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, error) {
 	registryConfig := &etcdSchemaRegistryConfig{}
 	for _, opt := range options {
 		opt(registryConfig)
@@ -265,7 +267,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 		closer:        run.NewCloser(1),
 		l:             schemaLogger,
 		checkInterval: registryConfig.checkInterval,
-		watchers:      make(map[Kind]*watcher),
+		watchers:      make(map[schema.Kind]*watcher),
 	}
 	return reg, nil
 }
@@ -284,7 +286,7 @@ func (e *etcdSchemaRegistry) prependNamespace(key string) string {
 
 func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.Message) error {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return schema.ErrClosed
 	}
 	defer e.closer.Done()
 	key = e.prependNamespace(key)
@@ -293,7 +295,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrGRPCResourceNotFound
+		return schema.ErrGRPCResourceNotFound
 	}
 	if resp.Count > 1 {
 		return errUnexpectedNumberOfEntities
@@ -301,7 +303,7 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 	if err = proto.Unmarshal(resp.Kvs[0].Value, message); err != nil {
 		return err
 	}
-	if messageWithMetadata, ok := message.(HasMetadata); ok {
+	if messageWithMetadata, ok := message.(schema.HasMetadata); ok {
 		// Assign readonly fields
 		messageWithMetadata.GetMetadata().CreateRevision = resp.Kvs[0].CreateRevision
 		messageWithMetadata.GetMetadata().ModRevision = resp.Kvs[0].ModRevision
@@ -312,12 +314,12 @@ func (e *etcdSchemaRegistry) get(ctx context.Context, key string, message proto.
 // update will first ensure the existence of the entity with the metadata,
 // and overwrite the existing value if so.
 // Otherwise, it will return ErrGRPCResourceNotFound.
-func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int64, error) {
+func (e *etcdSchemaRegistry) update(ctx context.Context, metadata schema.Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return 0, ErrClosed
+		return 0, schema.ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.key()
+	key, err := metadataKey(metadata)
 	if err != nil {
 		return 0, err
 	}
@@ -335,14 +337,14 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int
 	}
 	replace := getResp.Count > 0
 	if !replace {
-		return 0, ErrGRPCResourceNotFound
+		return 0, schema.ErrGRPCResourceNotFound
 	}
 	existingVal, innerErr := metadata.Kind.Unmarshal(getResp.Kvs[0])
 	if innerErr != nil {
 		return 0, innerErr
 	}
 	// directly return if we have the same entity
-	if metadata.equal(existingVal) {
+	if metadata.Equal(existingVal) {
 		return 0, nil
 	}
 
@@ -367,12 +369,12 @@ func (e *etcdSchemaRegistry) update(ctx context.Context, metadata Metadata) (int
 // create will first check existence of the entity with the metadata,
 // and put the value if it does not exist.
 // Otherwise, it will return ErrGRPCAlreadyExists.
-func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int64, error) {
+func (e *etcdSchemaRegistry) create(ctx context.Context, metadata schema.Metadata) (int64, error) {
 	if !e.closer.AddRunning() {
-		return 0, ErrClosed
+		return 0, schema.ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.key()
+	key, err := metadataKey(metadata)
 	if err != nil {
 		return 0, err
 	}
@@ -390,13 +392,13 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 	}
 	replace := getResp.Count > 0
 	if replace {
-		return 0, ErrGRPCAlreadyExists
+		return 0, schema.ErrGRPCAlreadyExists
 	}
 	putResp, err := e.client.Put(ctx, key, string(val))
 	if err != nil {
 		s, ok := status.FromError(err)
 		if ok && s.Code() == codes.AlreadyExists {
-			return 0, ErrGRPCAlreadyExists
+			return 0, schema.ErrGRPCAlreadyExists
 		}
 		return 0, err
 	}
@@ -404,9 +406,9 @@ func (e *etcdSchemaRegistry) create(ctx context.Context, metadata Metadata) (int
 	return putResp.Header.Revision, nil
 }
 
-func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, kind Kind) ([]proto.Message, error) {
+func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, kind schema.Kind) ([]proto.Message, error) {
 	if !e.closer.AddRunning() {
-		return nil, ErrClosed
+		return nil, schema.ErrClosed
 	}
 	defer e.closer.Done()
 	prefix = e.prependNamespace(prefix)
@@ -425,12 +427,12 @@ func (e *etcdSchemaRegistry) listWithPrefix(ctx context.Context, prefix string, 
 	return entities, nil
 }
 
-func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (bool, error) {
+func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata schema.Metadata) (bool, error) {
 	if !e.closer.AddRunning() {
-		return false, ErrClosed
+		return false, schema.ErrClosed
 	}
 	defer e.closer.Done()
-	key, err := metadata.key()
+	key, err := metadataKey(metadata)
 	if err != nil {
 		return false, err
 	}
@@ -447,9 +449,9 @@ func (e *etcdSchemaRegistry) delete(ctx context.Context, metadata Metadata) (boo
 
 const leaseDuration = 5 * time.Second
 
-func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, forced bool) error {
+func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata schema.Metadata, forced bool) error {
 	if !e.closer.AddRunning() {
-		return ErrClosed
+		return schema.ErrClosed
 	}
 	defer e.closer.Done()
 
@@ -480,15 +482,15 @@ func (e *etcdSchemaRegistry) Register(ctx context.Context, metadata Metadata, fo
 	return nil
 }
 
-func (e *etcdSchemaRegistry) prepareKey(metadata Metadata) (string, error) {
-	key, err := metadata.key()
+func (e *etcdSchemaRegistry) prepareKey(metadata schema.Metadata) (string, error) {
+	key, err := metadataKey(metadata)
 	if err != nil {
 		return "", err
 	}
 	return e.prependNamespace(key), nil
 }
 
-func (e *etcdSchemaRegistry) prepareValue(metadata Metadata) (string, error) {
+func (e *etcdSchemaRegistry) prepareValue(metadata schema.Metadata) (string, error) {
 	val, err := proto.Marshal(metadata.Spec.(proto.Message))
 	if err != nil {
 		return "", err
@@ -512,7 +514,7 @@ func (e *etcdSchemaRegistry) putKeyVal(ctx context.Context, key, val string, lea
 		}
 		if !response.Succeeded {
 			tr := pb.TxnResponse(*response)
-			return errors.Wrapf(ErrGRPCAlreadyExists, "key %s, response: %s", key, tr.String())
+			return errors.Wrapf(schema.ErrGRPCAlreadyExists, "key %s, response: %s", key, tr.String())
 		}
 	}
 	return nil
@@ -590,9 +592,9 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 	}
 }
 
-func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
-	wc := watcherConfig{
-		key:           e.prependNamespace(kind.key()),
+func (e *etcdSchemaRegistry) newWatcherForKind(name string, kind schema.Kind, revision int64, opts ...WatcherOption) *watcher {
+	wc := WatcherConfig{
+		key:           e.prependNamespace(kindKeyPrefix(kind)),
 		kind:          kind,
 		revision:      revision,
 		checkInterval: 5 * time.Minute, // Default value

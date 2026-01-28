@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var topNAggregationKeyPrefix = "/topnagg/"
@@ -37,11 +38,11 @@ func (e *etcdSchemaRegistry) GetTopNAggregation(ctx context.Context, metadata *c
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error) {
+func (e *etcdSchemaRegistry) ListTopNAggregation(ctx context.Context, opt schema.ListOpt) ([]*databasev1.TopNAggregation, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, topNAggregationKeyPrefix), KindTopNAggregation)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, topNAggregationKeyPrefix), schema.KindTopNAggregation)
 	if err != nil {
 		return nil, err
 	}
@@ -59,9 +60,9 @@ func (e *etcdSchemaRegistry) CreateTopNAggregation(ctx context.Context, topNAggr
 	if err := validate.TopNAggregation(topNAggregation); err != nil {
 		return err
 	}
-	_, err := e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindTopNAggregation,
+	_, err := e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
 			Name:  topNAggregation.GetMetadata().GetName(),
 		},
@@ -77,9 +78,9 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 	if err := validate.TopNAggregation(topNAggregation); err != nil {
 		return err
 	}
-	_, err := e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindTopNAggregation,
+	_, err := e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindTopNAggregation,
 			Group: topNAggregation.GetMetadata().GetGroup(),
 			Name:  topNAggregation.GetMetadata().GetName(),
 		},
@@ -89,9 +90,9 @@ func (e *etcdSchemaRegistry) UpdateTopNAggregation(ctx context.Context, topNAggr
 }
 
 func (e *etcdSchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindTopNAggregation,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindTopNAggregation,
 			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},

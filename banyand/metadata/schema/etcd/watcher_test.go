@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema_test
+package etcd_test
 
 import (
 	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
+	"testing"
 
 	ginkgo "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -31,6 +31,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -40,6 +41,8 @@ type mockedHandler struct {
 	data                 map[string]schema.Metadata
 	addOrUpdateCalledNum *atomic.Int32
 	deleteCalledNum      *atomic.Int32
+	initRevisions        []int64
+	skipInit             bool
 	sync.RWMutex
 }
 
@@ -49,6 +52,13 @@ func newMockedHandler() *mockedHandler {
 		addOrUpdateCalledNum: &atomic.Int32{},
 		deleteCalledNum:      &atomic.Int32{},
 	}
+}
+
+func (m *mockedHandler) OnInit(_ []schema.Kind) (bool, []int64) {
+	if m.skipInit {
+		return true, m.initRevisions
+	}
+	return false, nil
 }
 
 func (m *mockedHandler) OnAddOrUpdate(obj schema.Metadata) {
@@ -73,6 +83,11 @@ func (m *mockedHandler) Data() map[string]any {
 		ret[k] = v
 	}
 	return ret
+}
+
+func TestPropertyRepairIntegrated(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Property Repair Integrated Test Suite", ginkgo.Label("integration", "slow", "property_repair", "full_data"))
 }
 
 var _ = ginkgo.Describe("Watcher", func() {
@@ -109,9 +124,9 @@ var _ = ginkgo.Describe("Watcher", func() {
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		registry, err = schema.NewEtcdSchemaRegistry(
-			schema.Namespace("test"),
-			schema.ConfigureServerEndpoints(endpoints),
+		registry, err = etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace("test"),
+			etcd.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	})
@@ -177,12 +192,8 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}
 
 		// Start the watcher
-		watcher := registry.NewWatcher("test", schema.KindMeasure, -1)
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		registry.RegisterHandler("test", schema.KindMeasure, mockedObj)
+		registry.StartWatcher()
 		gomega.Eventually(func() bool {
 			_, ok := mockedObj.Data()["testkey1"]
 			if !ok {
@@ -196,12 +207,8 @@ var _ = ginkgo.Describe("Watcher", func() {
 		}, flags.EventuallyTimeout).Should(gomega.BeTrue())
 	})
 	ginkgo.It("should handle watch events", func() {
-		watcher := registry.NewWatcher("test", schema.KindStream, -1)
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		registry.RegisterHandler("test", schema.KindStream, mockedObj)
+		registry.StartWatcher()
 		err := registry.CreateGroup(context.Background(), &commonv1.Group{
 			Metadata: &commonv1.Metadata{
 				Name: "testgroup-stream",
@@ -321,12 +328,8 @@ var _ = ginkgo.Describe("Watcher", func() {
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Second))
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		registry.RegisterHandler("test", schema.KindMeasure, mockedObj)
+		registry.StartWatcher()
 
 		gomega.Eventually(func() int {
 			return len(mockedObj.Data())
@@ -336,12 +339,8 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should detect deletions", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Second))
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		registry.RegisterHandler("test", schema.KindMeasure, mockedObj)
+		registry.StartWatcher()
 
 		groupName := "testgroup-delete"
 		measureName := "delete-key"
@@ -405,12 +404,8 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should recover state after compaction", func() {
-		watcher := registry.NewWatcher("test", schema.KindMeasure, -1, schema.CheckInterval(1*time.Hour))
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		registry.RegisterHandler("test", schema.KindMeasure, mockedObj)
+		registry.StartWatcher()
 
 		groupName := "testgroup-compact"
 		measureName := "compact-key"
@@ -513,17 +508,15 @@ var _ = ginkgo.Describe("Watcher", func() {
 		err = registry.Close()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// Recreate registry for this test
-		registry, err = schema.NewEtcdSchemaRegistry(
-			schema.Namespace("test"),
-			schema.ConfigureServerEndpoints(endpoints),
+		registry, err = etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace("test"),
+			etcd.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		watcher := registry.NewWatcher("test", schema.KindNode, -1, schema.CheckInterval(1*time.Hour))
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		mockedObj.skipInit = true
+		mockedObj.initRevisions = []int64{-1}
+		registry.RegisterHandler("test", schema.KindNode, mockedObj)
+		registry.StartWatcher()
 		gomega.Consistently(func() int {
 			return int(mockedObj.addOrUpdateCalledNum.Load())
 		}, flags.ConsistentlyTimeout).Should(gomega.BeZero())
@@ -543,17 +536,15 @@ var _ = ginkgo.Describe("Watcher", func() {
 		err = registry.Close()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// Recreate registry for this test
-		registry, err = schema.NewEtcdSchemaRegistry(
-			schema.Namespace("test"),
-			schema.ConfigureServerEndpoints(endpoints),
+		registry, err = etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace("test"),
+			etcd.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		watcher := registry.NewWatcher("test", schema.KindNode, 0, schema.CheckInterval(1*time.Hour))
-		watcher.AddHandler(mockedObj)
-		watcher.Start()
-		ginkgo.DeferCleanup(func() {
-			watcher.Close()
-		})
+		mockedObj.skipInit = true
+		mockedObj.initRevisions = []int64{0}
+		registry.RegisterHandler("test", schema.KindNode, mockedObj)
+		registry.StartWatcher()
 		gomega.Eventually(func() int {
 			return int(mockedObj.addOrUpdateCalledNum.Load())
 		}, flags.EventuallyTimeout).Should(gomega.Equal(1))

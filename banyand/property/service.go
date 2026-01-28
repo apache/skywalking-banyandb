@@ -209,6 +209,10 @@ func (s *service) GetRouteTable() *databasev1.RouteTable {
 	return s.gossipMessenger.GetRouteTable()
 }
 
+func (s *service) GetGossIPMessenger() gossip.Messenger {
+	return s.gossipMessenger
+}
+
 // NewService returns a new service.
 func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
 	return &service{

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 const propertyKeyPrefix = "/properties/"
@@ -43,9 +44,9 @@ func (e *etcdSchemaRegistry) CreateProperty(ctx context.Context, property *datab
 	if err = validate.Group(g); err != nil {
 		return err
 	}
-	_, err = e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindProperty,
+	_, err = e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindProperty,
 			Group: property.GetMetadata().GetGroup(),
 			Name:  property.GetMetadata().GetName(),
 		},
@@ -55,9 +56,9 @@ func (e *etcdSchemaRegistry) CreateProperty(ctx context.Context, property *datab
 }
 
 func (e *etcdSchemaRegistry) DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindProperty,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindProperty,
 			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},
@@ -72,11 +73,11 @@ func (e *etcdSchemaRegistry) GetProperty(ctx context.Context, metadata *commonv1
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, opt ListOpt) ([]*databasev1.Property, error) {
+func (e *etcdSchemaRegistry) ListProperty(ctx context.Context, opt schema.ListOpt) ([]*databasev1.Property, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, propertyKeyPrefix), KindProperty)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, propertyKeyPrefix), schema.KindProperty)
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +107,12 @@ func (e *etcdSchemaRegistry) UpdateProperty(ctx context.Context, property *datab
 		return err
 	}
 	if prev == nil {
-		return errors.WithMessagef(ErrGRPCResourceNotFound, "property %s not found", property.GetMetadata().GetName())
+		return errors.WithMessagef(schema.ErrGRPCResourceNotFound, "property %s not found", property.GetMetadata().GetName())
 	}
 
-	_, err = e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:        KindProperty,
+	_, err = e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:        schema.KindProperty,
 			Group:       property.GetMetadata().GetGroup(),
 			Name:        property.GetMetadata().GetName(),
 			ModRevision: property.GetMetadata().GetModRevision(),

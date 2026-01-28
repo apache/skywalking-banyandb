@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema_test
+package etcd_test
 
 import (
 	"context"
@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -116,7 +117,7 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 	req.NoError(err)
 	req.NotNil(server)
 	<-server.ReadyNotify()
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(schema.ConfigureServerEndpoints(endpoints))
+	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(etcd.ConfigureServerEndpoints(endpoints))
 	req.NoError(err)
 	req.NotNil(server)
 	return schemaRegistry, func() {

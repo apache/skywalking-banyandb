@@ -25,6 +25,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -187,10 +188,10 @@ var _ = Describe("Property Schema Operation", func() {
 		createGroup := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: ui-template
+ name: ui-template
 catalog: CATALOG_PROPERTY
 resource_opts:
-  shard_num: 2
+ shard_num: 2
 `))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
@@ -206,13 +207,13 @@ resource_opts:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -226,13 +227,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -260,13 +261,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -278,15 +279,15 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "update", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
-  - name: version
-    type: TAG_TYPE_STRING
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
+ - name: version
+   type: TAG_TYPE_STRING
 `))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -311,13 +312,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -344,13 +345,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -361,11 +362,11 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: endpoint
-  group: ui-template
+ name: endpoint
+ group: ui-template
 tags:
 - name: content
-  type: TAG_TYPE_STRING
+ type: TAG_TYPE_STRING
 `))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -681,10 +682,10 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 name: _property_gossip_trace_stream
 groups: ["_property_gossip"]
 projection:
-  tagFamilies:
-    - name: searchable
-      tags:
-        - trace_id`))
+ tagFamilies:
+   - name: searchable
+     tags:
+       - trace_id`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -1121,4 +1122,9 @@ func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime t
 		}
 		return allRegenerated
 	}, flags.EventuallyTimeout).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
+}
+
+func TestPropertyRepairIntegrated(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Property Repair Integrated Test Suite", Label("integration", "slow", "property_repair", "full_data"))
 }

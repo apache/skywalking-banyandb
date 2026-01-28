@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -29,19 +29,22 @@ import (
 	v3rpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type watchEventHandler interface {
-	OnAddOrUpdate(Metadata)
-	OnDelete(Metadata)
+	OnAddOrUpdate(schema.Metadata)
+	OnDelete(schema.Metadata)
 }
-type watcherConfig struct {
+
+// WatcherConfig holds the configuration for the watcher.
+type WatcherConfig struct {
 	key           string
 	revision      int64
-	kind          Kind
+	kind          schema.Kind
 	checkInterval time.Duration
 }
 
@@ -59,13 +62,13 @@ type watcher struct {
 	key           string
 	handlers      []watchEventHandler
 	revision      int64
-	kind          Kind
+	kind          schema.Kind
 	checkInterval time.Duration
 	mu            sync.RWMutex
 	startOnce     sync.Once
 }
 
-func newWatcher(cli *clientv3.Client, wc watcherConfig, l *logger.Logger) *watcher {
+func newWatcher(cli *clientv3.Client, wc WatcherConfig, l *logger.Logger) *watcher {
 	if wc.checkInterval == 0 {
 		nBig, err := rand.Int(rand.Reader, big.NewInt(int64(5*time.Minute)))
 		if err != nil {
@@ -283,7 +286,7 @@ func (w *watcher) periodicSync() {
 	w.l.Debug().Int64("new_revision", w.revision).Msg("updated watcher revision after sync")
 }
 
-func (w *watcher) getFromStore(key string) (*Metadata, error) {
+func (w *watcher) getFromStore(key string) (*schema.Metadata, error) {
 	resp, err := w.cli.Get(w.closer.Ctx(), key)
 	if err != nil {
 		return nil, err

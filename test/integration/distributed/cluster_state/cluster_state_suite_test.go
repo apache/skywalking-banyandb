@@ -30,9 +30,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -78,9 +78,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	)
 	Expect(err).ShouldNot(HaveOccurred())
 	<-server.ReadyNotify()
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
+	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+		etcd.Namespace(metadatclient.DefaultNamespace),
+		etcd.ConfigureServerEndpoints([]string{ep}),
 	)
 	Expect(err).NotTo(HaveOccurred())
 	defer schemaRegistry.Close()

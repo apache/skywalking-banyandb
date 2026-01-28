@@ -32,8 +32,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -175,9 +176,9 @@ func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLo
 	}
 
 	if schemaLoaders != nil {
-		schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-			schema.Namespace(metadata.DefaultNamespace),
-			schema.ConfigureServerEndpoints([]string{endpoint}),
+		schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace(metadatclient.DefaultNamespace),
+			etcd.ConfigureServerEndpoints([]string{endpoint}),
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer schemaRegistry.Close()
@@ -275,7 +276,7 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		testflags.EventuallyTimeout).Should(gomega.Succeed())
 
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
-		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
+		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadatclient.DefaultNamespace, nodeHost, ports[0]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
 
 	return addr, fmt.Sprintf("%s:%d", host, ports[1]), closeFn
@@ -360,7 +361,7 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Eventually(func() (map[string]*databasev1.Node, error) {
-		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[2]))
+		return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", metadatclient.DefaultNamespace, nodeHost, ports[2]))
 	}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
 	return grpcAddr, httpAddr, func() {
 		fmt.Printf("Liaison %d write queue path: %s\n", ports[0], path)

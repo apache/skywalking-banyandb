@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -24,15 +24,16 @@ import (
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var nodeKeyPrefix = "/nodes/"
 
 func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
 	if role == databasev1.Role_ROLE_UNSPECIFIED {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, KindNode)
+	messages, err := e.listWithPrefix(ctx, nodeKeyPrefix, schema.KindNode)
 	if err != nil {
 		return nil, err
 	}
@@ -50,9 +51,9 @@ func (e *etcdSchemaRegistry) ListNode(ctx context.Context, role databasev1.Role)
 }
 
 func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.Node, forced bool) error {
-	return e.Register(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind: KindNode,
+	return e.Register(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindNode,
 			Name: node.Metadata.Name,
 		},
 		Spec: node,
@@ -60,9 +61,9 @@ func (e *etcdSchemaRegistry) RegisterNode(ctx context.Context, node *databasev1.
 }
 
 func (e *etcdSchemaRegistry) UpdateNode(ctx context.Context, node *databasev1.Node) error {
-	_, err := e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind: KindNode,
+	_, err := e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindNode,
 			Name: node.Metadata.Name,
 		},
 		Spec: node,

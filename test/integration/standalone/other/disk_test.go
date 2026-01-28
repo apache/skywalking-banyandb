@@ -32,9 +32,9 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -92,9 +92,9 @@ var _ = g.Describe("Disk", func() {
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 		<-server.ReadyNotify()
 		g.By("Loading schema")
-		schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-			schema.Namespace(metadata.DefaultNamespace),
-			schema.ConfigureServerEndpoints([]string{ep}),
+		schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace(metadatclient.DefaultNamespace),
+			etcd.ConfigureServerEndpoints([]string{ep}),
 		)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		defer schemaRegistry.Close()

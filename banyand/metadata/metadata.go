@@ -38,11 +38,18 @@ type IndexFilter interface {
 	Subjects(ctx context.Context, indexRule *databasev1.IndexRule, catalog commonv1.Catalog) ([]schema.Spec, error)
 }
 
+// HandlerRegister provides methods to register schema event handlers.
+type HandlerRegister interface {
+	// RegisterHandler registers a schema event handler.
+	RegisterHandler(string, schema.Kind, schema.EventHandler)
+}
+
 // Repo is the facade to interact with the metadata repository.
 //
 //go:generate mockgen -destination=repo_mock.go -package=metadata github.com/apache/skywalking-banyandb/banyand/metadata Repo
 type Repo interface {
 	IndexFilter
+	HandlerRegister
 	StreamRegistry() schema.Stream
 	IndexRuleRegistry() schema.IndexRule
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
@@ -50,7 +57,6 @@ type Repo interface {
 	TraceRegistry() schema.Trace
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
-	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
 	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, error)

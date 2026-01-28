@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var (
@@ -41,11 +42,11 @@ func (e *etcdSchemaRegistry) GetIndexRuleBinding(ctx context.Context, metadata *
 	return &indexRuleBinding, nil
 }
 
-func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error) {
+func (e *etcdSchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt schema.ListOpt) ([]*databasev1.IndexRuleBinding, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), KindIndexRuleBinding)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleBindingKeyPrefix), schema.KindIndexRuleBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -63,9 +64,9 @@ func (e *etcdSchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRu
 	if err := validate.IndexRuleBinding(indexRuleBinding); err != nil {
 		return err
 	}
-	_, err := e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRuleBinding,
+	_, err := e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
 			Group: indexRuleBinding.GetMetadata().GetGroup(),
 		},
@@ -81,9 +82,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 	if err := validate.IndexRuleBinding(indexRuleBinding); err != nil {
 		return err
 	}
-	_, err := e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRuleBinding,
+	_, err := e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRuleBinding,
 			Name:  indexRuleBinding.GetMetadata().GetName(),
 			Group: indexRuleBinding.GetMetadata().GetGroup(),
 		},
@@ -93,9 +94,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRu
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRuleBinding,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRuleBinding,
 			Name:  metadata.GetName(),
 			Group: metadata.GetGroup(),
 		},
@@ -113,11 +114,11 @@ func (e *etcdSchemaRegistry) GetIndexRule(ctx context.Context, metadata *commonv
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error) {
+func (e *etcdSchemaRegistry) ListIndexRule(ctx context.Context, opt schema.ListOpt) ([]*databasev1.IndexRule, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), KindIndexRule)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, indexRuleKeyPrefix), schema.KindIndexRule)
 	if err != nil {
 		return nil, err
 	}
@@ -144,9 +145,9 @@ func (e *etcdSchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *dat
 	if err := validate.IndexRule(indexRule); err != nil {
 		return err
 	}
-	_, err := e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRule,
+	_, err := e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
 			Group: indexRule.GetMetadata().GetGroup(),
 		},
@@ -169,9 +170,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 	if err := validate.IndexRule(indexRule); err != nil {
 		return err
 	}
-	_, err := e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRule,
+	_, err := e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRule,
 			Name:  indexRule.GetMetadata().GetName(),
 			Group: indexRule.GetMetadata().GetGroup(),
 		},
@@ -181,9 +182,9 @@ func (e *etcdSchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *dat
 }
 
 func (e *etcdSchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindIndexRule,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindIndexRule,
 			Name:  metadata.GetName(),
 			Group: metadata.GetGroup(),
 		},

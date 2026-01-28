@@ -31,7 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -49,7 +49,7 @@ import (
 func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(true, false)
+	metaSvc, err := metadatclient.NewClient(true, false)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

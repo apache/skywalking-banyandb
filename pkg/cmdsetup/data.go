@@ -26,7 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
+	schemaProperty "github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
@@ -44,7 +45,7 @@ import (
 func newDataCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(true, false)
+	metaSvc, err := metadatclient.NewClient(true, false)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -61,6 +62,8 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	pipeline.SetRouteProviders(map[string]route.TableProvider{
 		"property": propertySvc,
 	})
+	propertySchemaService := schemaProperty.NewServer(propertySvc, metricSvc, metaSvc, pm)
+	pipeline.AddGrpcHandlerCallback(propertySchemaService.RegisterGRPCServices)
 
 	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, propertyStreamPipeline)
 	if err != nil {
@@ -87,6 +90,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		metricsPipeline,
 		metricSvc,
 		pm,
+		propertySchemaService,
 		pipeline,
 		propertyStreamPipeline,
 		propertySvc,

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -43,11 +44,11 @@ func (e *etcdSchemaRegistry) GetMeasure(ctx context.Context, metadata *commonv1.
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error) {
+func (e *etcdSchemaRegistry) ListMeasure(ctx context.Context, opt schema.ListOpt) ([]*databasev1.Measure, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, measureKeyPrefix), KindMeasure)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, measureKeyPrefix), schema.KindMeasure)
 	if err != nil {
 		return nil, err
 	}
@@ -78,9 +79,9 @@ func (e *etcdSchemaRegistry) CreateMeasure(ctx context.Context, measure *databas
 	if err := validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
-	return e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindMeasure,
+	return e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindMeasure,
 			Group: measure.GetMetadata().GetGroup(),
 			Name:  measure.GetMetadata().GetName(),
 		},
@@ -113,14 +114,14 @@ func (e *etcdSchemaRegistry) UpdateMeasure(ctx context.Context, measure *databas
 		return 0, err
 	}
 	if prev == nil {
-		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "measure %s not found", measure.GetMetadata().GetName())
+		return 0, errors.WithMessagef(schema.ErrGRPCResourceNotFound, "measure %s not found", measure.GetMetadata().GetName())
 	}
 	if err := validateMeasureUpdate(prev, measure); err != nil {
-		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
+		return 0, errors.WithMessagef(schema.ErrInputInvalid, "validation failed: %s", err)
 	}
-	return e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:        KindMeasure,
+	return e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:        schema.KindMeasure,
 			Group:       measure.GetMetadata().GetGroup(),
 			Name:        measure.GetMetadata().GetName(),
 			ModRevision: measure.GetMetadata().GetModRevision(),
@@ -193,9 +194,9 @@ func validateMeasureUpdate(prevMeasure, newMeasure *databasev1.Measure) error {
 }
 
 func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindMeasure,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindMeasure,
 			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},
@@ -203,7 +204,7 @@ func (e *etcdSchemaRegistry) DeleteMeasure(ctx context.Context, metadata *common
 }
 
 func (e *etcdSchemaRegistry) TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error) {
-	aggregations, err := e.ListTopNAggregation(ctx, ListOpt{Group: metadata.GetGroup()})
+	aggregations, err := e.ListTopNAggregation(ctx, schema.ListOpt{Group: metadata.GetGroup()})
 	if err != nil {
 		return nil, err
 	}

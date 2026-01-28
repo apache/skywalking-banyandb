@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var traceKeyPrefix = "/traces/"
@@ -38,8 +39,8 @@ func (e *etcdSchemaRegistry) GetTrace(ctx context.Context, metadata *commonv1.Me
 	return &trace, nil
 }
 
-func (e *etcdSchemaRegistry) ListTrace(ctx context.Context, opt ListOpt) ([]*databasev1.Trace, error) {
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, traceKeyPrefix), KindTrace)
+func (e *etcdSchemaRegistry) ListTrace(ctx context.Context, opt schema.ListOpt) ([]*databasev1.Trace, error) {
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, traceKeyPrefix), schema.KindTrace)
 	if err != nil {
 		return nil, err
 	}
@@ -65,9 +66,9 @@ func (e *etcdSchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.
 	if err := validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
-	return e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindTrace,
+	return e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindTrace,
 			Group: trace.GetMetadata().GetGroup(),
 			Name:  trace.GetMetadata().GetName(),
 		},
@@ -95,14 +96,14 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 		return 0, err
 	}
 	if prev == nil {
-		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
+		return 0, errors.WithMessagef(schema.ErrGRPCResourceNotFound, "trace %s not found", trace.GetMetadata().GetName())
 	}
 	if err := validate.TraceUpdate(prev, trace); err != nil {
-		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
+		return 0, errors.WithMessagef(schema.ErrInputInvalid, "validation failed: %s", err)
 	}
-	return e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:        KindTrace,
+	return e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:        schema.KindTrace,
 			Group:       trace.GetMetadata().GetGroup(),
 			Name:        trace.GetMetadata().GetName(),
 			ModRevision: trace.GetMetadata().GetModRevision(),
@@ -112,9 +113,9 @@ func (e *etcdSchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.
 }
 
 func (e *etcdSchemaRegistry) DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindTrace,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindTrace,
 			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},

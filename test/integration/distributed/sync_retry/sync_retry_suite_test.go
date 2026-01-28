@@ -27,9 +27,9 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -87,9 +87,9 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		},
 	}, cleanupFuncs...)
 
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{clientEP}),
+	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+		etcd.Namespace(metadatclient.DefaultNamespace),
+		etcd.ConfigureServerEndpoints([]string{clientEP}),
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer schemaRegistry.Close()
