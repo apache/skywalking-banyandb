@@ -63,7 +63,7 @@ var (
 	containerNames               []string
 	heartbeatInterval            time.Duration
 	reconnectInterval            time.Duration
-	clusterStateAddr             string
+	clusterStatePorts            []string
 	clusterStatePollInterval     time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
@@ -100,8 +100,8 @@ func init() {
 		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
 		"Interval for reconnection attempts when connection to Proxy is lost")
-	rootCmd.Flags().StringVar(&clusterStateAddr, "cluster-state-addr", "",
-		"Address of the BanyanDB node's lifecycle gRPC endpoint to poll cluster state from (e.g., localhost:17914). If empty, cluster state polling is disabled.")
+	rootCmd.Flags().StringSliceVar(&clusterStatePorts, "cluster-state-ports", []string{},
+		"Ports of the BanyanDB node's lifecycle gRPC endpoint to poll cluster state from (can be specified multiple times or comma-separated, e.g., 17914,17915). If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
 		"Interval at which to poll cluster state from the BanyanDB lifecycle service")
 }
@@ -136,7 +136,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	ctx := context.Background()
-	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStateAddr, clusterStatePollInterval)
+	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStatePorts, clusterStatePollInterval)
 	if clusterErr != nil {
 		_ = metricsServer.Stop()
 		return clusterErr

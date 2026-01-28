@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -40,29 +41,44 @@ const (
 	nodeInfoFetchTimeout = 30 * time.Second
 )
 
-// Collector collects cluster state from BanyanDB node via gRPC and stores the data.
-type Collector struct {
-	log             *logger.Logger
-	closer          *run.Closer
+// ClusterTopology represents processed cluster data for a single endpoint.
+type ClusterTopology struct {
+	Nodes []*databasev1.Node    `json:"nodes"`
+	Calls []*fodcv1.ClusterCall `json:"calls"`
+}
+
+// endpointClient holds gRPC connection and clients for a single endpoint.
+type endpointClient struct {
 	conn            *grpc.ClientConn
 	clusterClient   databasev1.ClusterStateServiceClient
 	nodeQueryClient databasev1.NodeQueryServiceClient
-	currentNode     *databasev1.Node
-	clusterState    *databasev1.GetClusterStateResponse
+	addr            string
+}
+
+// Collector collects cluster state from BanyanDB nodes via gRPC and stores the data.
+type Collector struct {
+	log             *logger.Logger
+	closer          *run.Closer
+	clients         []*endpointClient
+	currentNodes    map[string]*databasev1.Node
+	clusterTopology ClusterTopology
 	nodeFetchedCh   chan struct{}
-	lifecycleAddr   string
+	addrs           []string
 	interval        time.Duration
 	mu              sync.RWMutex
 }
 
 // NewCollector creates a new cluster state collector.
-func NewCollector(log *logger.Logger, lifecycleAddr string, interval time.Duration) *Collector {
+func NewCollector(log *logger.Logger, addrs []string, interval time.Duration) *Collector {
 	return &Collector{
-		log:           log,
-		lifecycleAddr: lifecycleAddr,
-		interval:      interval,
-		closer:        run.NewCloser(0),
-		nodeFetchedCh: make(chan struct{}),
+		log:             log,
+		addrs:           addrs,
+		interval:        interval,
+		closer:          run.NewCloser(0),
+		nodeFetchedCh:   make(chan struct{}),
+		clients:         make([]*endpointClient, 0, len(addrs)),
+		currentNodes:    make(map[string]*databasev1.Node),
+		clusterTopology: ClusterTopology{},
 	}
 }
 
@@ -74,60 +90,74 @@ func (c *Collector) Start(ctx context.Context) error {
 	if !c.closer.AddRunning() {
 		return fmt.Errorf("cluster state collector is already started and cannot be started again")
 	}
-	if c.log == nil {
-		c.log = logger.GetLogger("cluster-collector")
+	for _, addr := range c.addrs {
+		conn, connErr := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if connErr != nil {
+			c.closeAllConnections()
+			c.closer.Done()
+			return fmt.Errorf("failed to create gRPC connection to %s: %w", addr, connErr)
+		}
+		client := &endpointClient{
+			conn:            conn,
+			clusterClient:   databasev1.NewClusterStateServiceClient(conn),
+			nodeQueryClient: databasev1.NewNodeQueryServiceClient(conn),
+			addr:            addr,
+		}
+		c.clients = append(c.clients, client)
 	}
-	var connErr error
-	c.conn, connErr = grpc.NewClient(c.lifecycleAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if connErr != nil {
-		c.closer.Done()
-		return fmt.Errorf("failed to create gRPC connection: %w", connErr)
-	}
-	c.clusterClient = databasev1.NewClusterStateServiceClient(c.conn)
-	c.nodeQueryClient = databasev1.NewNodeQueryServiceClient(c.conn)
 	go c.collectLoop(ctx)
-	c.log.Info().Str("lifecycle_addr", c.lifecycleAddr).Dur("interval", c.interval).Msg("Cluster state collector started")
+	c.log.Info().Strs("addrs", c.addrs).Dur("interval", c.interval).Msg("Cluster state collector started")
 	return nil
+}
+
+func (c *Collector) closeAllConnections() {
+	for _, client := range c.clients {
+		if client.conn != nil {
+			if closeErr := client.conn.Close(); closeErr != nil {
+				c.log.Warn().Str("addr", client.addr).Err(closeErr).Msg("Error closing gRPC connection")
+			}
+		}
+	}
+	c.clients = nil
 }
 
 // Stop stops the cluster state collector.
 func (c *Collector) Stop() {
 	c.closer.CloseThenWait()
 	c.mu.Lock()
-	if c.conn != nil {
-		if closeErr := c.conn.Close(); closeErr != nil && c.log != nil {
-			c.log.Warn().Err(closeErr).Msg("Error closing gRPC connection")
-		}
-		c.conn = nil
-	}
+	c.closeAllConnections()
 	c.mu.Unlock()
-	if c.log != nil {
-		c.log.Info().Msg("Cluster state collector stopped")
+	c.log.Info().Msg("Cluster state collector stopped")
+}
+
+// GetCurrentNodes returns all current node info, keyed by endpoint address.
+func (c *Collector) GetCurrentNodes() map[string]*databasev1.Node {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result := make(map[string]*databasev1.Node, len(c.currentNodes))
+	for addr, node := range c.currentNodes {
+		result[addr] = node
 	}
+	return result
 }
 
-// GetCurrentNode returns the current node info.
-func (c *Collector) GetCurrentNode() *databasev1.Node {
+// GetClusterTopology returns the aggregated cluster topology across all endpoints.
+func (c *Collector) GetClusterTopology() ClusterTopology {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.currentNode
+	return c.clusterTopology
 }
 
-// GetClusterState returns the cluster state.
-func (c *Collector) GetClusterState() *databasev1.GetClusterStateResponse {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.clusterState
-}
-
-// GetNodeInfo returns the processed node role and labels from the current node.
+// GetNodeInfo returns the processed node role and labels from the first available current node.
 func (c *Collector) GetNodeInfo() (nodeRole string, nodeLabels map[string]string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.currentNode == nil {
-		return "", nil
+	for _, node := range c.currentNodes {
+		if node != nil {
+			return NodeRoleFromNode(node), node.Labels
+		}
 	}
-	return NodeRoleFromNode(c.currentNode), c.currentNode.Labels
+	return "", nil
 }
 
 // WaitForNodeFetched waits until the current node info has been fetched.
@@ -158,53 +188,145 @@ func (c *Collector) collectLoop(ctx context.Context) {
 }
 
 func (c *Collector) pollCurrentNode(ctx context.Context) {
-	node, fetchErr := c.fetchCurrentNode(ctx)
-	if fetchErr != nil {
-		if c.log != nil {
-			c.log.Error().Err(fetchErr).Msg("Failed to fetch current node info")
-		}
+	nodes := c.fetchCurrentNodes(ctx)
+	if len(nodes) == 0 {
+		c.log.Error().Msg("Failed to fetch current node info from any endpoint")
 		return
 	}
-	c.updateCurrentNode(node)
+	c.updateCurrentNodes(nodes)
 }
 
-func (c *Collector) updateCurrentNode(node *databasev1.Node) {
-	if node == nil {
-		if c.log != nil {
-			c.log.Warn().Msg("Received nil current node")
-		}
+func (c *Collector) updateCurrentNodes(nodes map[string]*databasev1.Node) {
+	if len(nodes) == 0 {
+		c.log.Warn().Msg("Received empty current nodes map")
 		return
 	}
 	c.mu.Lock()
-	c.currentNode = node
+	c.currentNodes = nodes
 	c.mu.Unlock()
-	if c.log != nil {
-		nodeName := ""
-		if node.Metadata != nil {
-			nodeName = node.Metadata.Name
-		}
-		c.log.Info().Interface("node", node).Msg("Node details for debugging")
-		c.log.Info().Str("node_name", nodeName).Msg("Updated current node info")
-	}
+	c.log.Info().Int("nodes_count", len(nodes)).Msg("Updated current nodes from all endpoints")
 }
 
-func (c *Collector) updateClusterState(state *databasev1.GetClusterStateResponse) {
-	if state == nil {
-		if c.log != nil {
-			c.log.Warn().Msg("Received nil cluster state")
-		}
+func (c *Collector) updateClusterStates(states map[string]*databasev1.GetClusterStateResponse) {
+	if len(states) == 0 {
+		c.log.Warn().Msg("Received empty cluster states map")
 		return
 	}
 	c.mu.Lock()
-	c.clusterState = state
-	c.mu.Unlock()
-	if c.log != nil {
-		c.log.Debug().Int("route_tables_count", len(state.RouteTables)).Msg("Updated cluster state")
+	currentNodesCopy := make(map[string]*databasev1.Node, len(c.currentNodes))
+	for addr, node := range c.currentNodes {
+		currentNodesCopy[addr] = node
 	}
+	c.mu.Unlock()
+	c.processClusterStates(currentNodesCopy, states)
+	for addr, state := range states {
+		if state != nil {
+			c.log.Debug().Str("addr", addr).Int("route_tables_count", len(state.RouteTables)).Msg("Updated cluster state")
+		}
+	}
+	c.log.Info().Int("states_count", len(states)).Msg("Updated cluster states from all endpoints")
 }
 
-func (c *Collector) fetchCurrentNode(ctx context.Context) (*databasev1.Node, error) {
-	if c.nodeQueryClient == nil {
+func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Node, clusterStates map[string]*databasev1.GetClusterStateResponse) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	merged := ClusterTopology{
+		Nodes: make([]*databasev1.Node, 0),
+		Calls: make([]*fodcv1.ClusterCall, 0),
+	}
+	nodeMap := make(map[string]*databasev1.Node)
+	callMap := make(map[string]*fodcv1.ClusterCall)
+	allAddrs := make(map[string]bool)
+	for addr := range currentNodes {
+		allAddrs[addr] = true
+	}
+	for addr := range clusterStates {
+		allAddrs[addr] = true
+	}
+	for addrStr := range allAddrs {
+		currentNode := currentNodes[addrStr]
+		var clusterState *databasev1.GetClusterStateResponse
+		if clusterStates != nil {
+			clusterState = clusterStates[addrStr]
+		}
+		if currentNode != nil {
+			if currentNode.Metadata != nil && currentNode.Metadata.Name != "" {
+				nodeMap[currentNode.Metadata.Name] = currentNode
+			}
+			currentNodeName := ""
+			if currentNode.Metadata != nil {
+				currentNodeName = currentNode.Metadata.Name
+			}
+			if clusterState != nil && currentNodeName != "" {
+				activeSet := make(map[string]bool)
+				for _, routeTable := range clusterState.RouteTables {
+					if routeTable != nil {
+						for _, registeredNode := range routeTable.Registered {
+							if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
+								nodeMap[registeredNode.Metadata.Name] = registeredNode
+							}
+						}
+						for _, activeName := range routeTable.Active {
+							if activeName != "" {
+								activeSet[activeName] = true
+							}
+						}
+					}
+				}
+				for activeName := range activeSet {
+					if activeName != currentNodeName {
+						callID := fmt.Sprintf("%s-%s", currentNodeName, activeName)
+						callMap[callID] = &fodcv1.ClusterCall{
+							Id:     callID,
+							Target: currentNodeName,
+							Source: activeName,
+						}
+					}
+				}
+			}
+		} else if clusterState != nil {
+			for _, routeTable := range clusterState.RouteTables {
+				if routeTable != nil {
+					for _, registeredNode := range routeTable.Registered {
+						if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
+							nodeMap[registeredNode.Metadata.Name] = registeredNode
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, node := range nodeMap {
+		merged.Nodes = append(merged.Nodes, node)
+	}
+	for _, call := range callMap {
+		merged.Calls = append(merged.Calls, call)
+	}
+	c.clusterTopology = ClusterTopology(merged)
+	c.log.Debug().Int("endpoints_count", len(allAddrs)).Int("nodes_count", len(merged.Nodes)).Int("calls_count", len(merged.Calls)).Msg("Processed cluster topology from all endpoints")
+}
+
+func (c *Collector) fetchCurrentNodes(ctx context.Context) map[string]*databasev1.Node {
+	if len(c.clients) == 0 {
+		return nil
+	}
+	nodes := make(map[string]*databasev1.Node)
+	for _, client := range c.clients {
+		node, fetchErr := c.fetchCurrentNodeFromEndpoint(ctx, client)
+		if fetchErr != nil {
+			c.log.Warn().Str("addr", client.addr).Err(fetchErr).Msg("Failed to fetch current node from endpoint")
+			continue
+		}
+		if node != nil {
+			nodes[client.addr] = node
+			c.log.Info().Str("addr", client.addr).Msg("Successfully fetched current node from endpoint")
+		}
+	}
+	return nodes
+}
+
+func (c *Collector) fetchCurrentNodeFromEndpoint(ctx context.Context, client *endpointClient) (*databasev1.Node, error) {
+	if client.nodeQueryClient == nil {
 		return nil, fmt.Errorf("node query client not initialized")
 	}
 	var resp *databasev1.GetCurrentNodeResponse
@@ -220,32 +342,55 @@ func (c *Collector) fetchCurrentNode(ctx context.Context) (*databasev1.Node, err
 			backoff = min(backoff*2, maxBackoff)
 		}
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, respErr = c.nodeQueryClient.GetCurrentNode(reqCtx, &databasev1.GetCurrentNodeRequest{})
+		resp, respErr = client.nodeQueryClient.GetCurrentNode(reqCtx, &databasev1.GetCurrentNodeRequest{})
 		cancel()
 		if respErr == nil {
 			return resp.GetNode(), nil
 		}
-		if attempt < maxRetries-1 && c.log != nil {
-			c.log.Warn().Int("attempt", attempt+1).Int("max_retries", maxRetries).Err(respErr).Msg("Failed to fetch current node, retrying")
+		if attempt < maxRetries-1 {
+			c.log.Warn().Str("addr", client.addr).Int("attempt", attempt+1).Int("max_retries", maxRetries).Err(respErr).Msg("Failed to fetch current node, retrying")
 		}
 	}
 	return nil, fmt.Errorf("failed to fetch current node after %d attempts: %w", maxRetries, respErr)
 }
 
 func (c *Collector) collectClusterState(ctx context.Context) {
-	state, collectErr := c.fetchClusterState(ctx)
-	c.log.Info().Interface("state", state).Msg("Cluster state details for debugging")
-	if collectErr != nil {
-		if c.log != nil {
-			c.log.Error().Err(collectErr).Msg("Failed to fetch cluster state")
+	states := c.fetchClusterStates(ctx)
+	if len(states) > 0 {
+		for addr, state := range states {
+			if state != nil {
+				c.log.Info().Str("addr", addr).Interface("state", state).Msg("Cluster state details for debugging")
+			}
 		}
+	}
+	if len(states) == 0 {
+		c.log.Error().Msg("Failed to fetch cluster state from any endpoint")
 		return
 	}
-	c.updateClusterState(state)
+	c.updateClusterStates(states)
 }
 
-func (c *Collector) fetchClusterState(ctx context.Context) (*databasev1.GetClusterStateResponse, error) {
-	if c.clusterClient == nil {
+func (c *Collector) fetchClusterStates(ctx context.Context) map[string]*databasev1.GetClusterStateResponse {
+	if len(c.clients) == 0 {
+		return nil
+	}
+	states := make(map[string]*databasev1.GetClusterStateResponse)
+	for _, client := range c.clients {
+		state, fetchErr := c.fetchClusterStateFromEndpoint(ctx, client)
+		if fetchErr != nil {
+			c.log.Warn().Str("addr", client.addr).Err(fetchErr).Msg("Failed to fetch cluster state from endpoint")
+			continue
+		}
+		if state != nil {
+			states[client.addr] = state
+			c.log.Info().Str("addr", client.addr).Msg("Successfully fetched cluster state from endpoint")
+		}
+	}
+	return states
+}
+
+func (c *Collector) fetchClusterStateFromEndpoint(ctx context.Context, client *endpointClient) (*databasev1.GetClusterStateResponse, error) {
+	if client.clusterClient == nil {
 		return nil, fmt.Errorf("gRPC client not initialized")
 	}
 	var resp *databasev1.GetClusterStateResponse
@@ -261,13 +406,13 @@ func (c *Collector) fetchClusterState(ctx context.Context) (*databasev1.GetClust
 			backoff = min(backoff*2, maxBackoff)
 		}
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		resp, respErr = c.clusterClient.GetClusterState(reqCtx, &databasev1.GetClusterStateRequest{})
+		resp, respErr = client.clusterClient.GetClusterState(reqCtx, &databasev1.GetClusterStateRequest{})
 		cancel()
 		if respErr == nil {
 			return resp, nil
 		}
-		if attempt < maxRetries-1 && c.log != nil {
-			c.log.Warn().Int("attempt", attempt+1).Int("max_retries", maxRetries).Err(respErr).Msg("Failed to fetch cluster state, retrying")
+		if attempt < maxRetries-1 {
+			c.log.Warn().Str("addr", client.addr).Int("attempt", attempt+1).Int("max_retries", maxRetries).Err(respErr).Msg("Failed to fetch cluster state, retrying")
 		}
 	}
 	return nil, fmt.Errorf("failed to fetch cluster state after %d attempts: %w", maxRetries, respErr)
@@ -293,17 +438,26 @@ func NodeRoleFromNode(node *databasev1.Node) string {
 			return "UNKNOWN"
 		}
 	}
-
 	return "UNKNOWN"
 }
 
+// GenerateClusterStateAddrs generates cluster state gRPC addresses from the given ports.
+func GenerateClusterStateAddrs(ports []string) []string {
+	addrs := make([]string, 0, len(ports))
+	for _, port := range ports {
+		addrs = append(addrs, fmt.Sprintf("localhost:%s", port))
+	}
+	return addrs
+}
+
 // StartCollector creates and starts a cluster state collector.
-func StartCollector(ctx context.Context, log *logger.Logger, addr string, interval time.Duration) (*Collector, error) {
-	if addr == "" {
+func StartCollector(ctx context.Context, log *logger.Logger, ports []string, interval time.Duration) (*Collector, error) {
+	if len(ports) == 0 {
 		return nil, nil
 	}
-	log.Info().Str("addr", addr).Msg("Starting cluster state collector")
-	collector := NewCollector(log, addr, interval)
+	addrs := GenerateClusterStateAddrs(ports)
+	log.Info().Strs("addrs", addrs).Msg("Starting cluster state collector")
+	collector := NewCollector(log, addrs, interval)
 	if startErr := collector.Start(ctx); startErr != nil {
 		return nil, fmt.Errorf("failed to start cluster collector: %w", startErr)
 	}
@@ -313,7 +467,7 @@ func StartCollector(ctx context.Context, log *logger.Logger, addr string, interv
 		collector.Stop()
 		return nil, fmt.Errorf("failed to fetch node info: %w", waitErr)
 	}
-	if collector.GetCurrentNode() == nil {
+	if len(collector.GetCurrentNodes()) == 0 {
 		collector.Stop()
 		return nil, fmt.Errorf("no node info received from lifecycle service")
 	}

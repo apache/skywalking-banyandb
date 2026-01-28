@@ -24,7 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -43,32 +45,40 @@ func TestNewManager(t *testing.T) {
 
 	require.NotNil(t, mgr)
 	assert.Equal(t, log, mgr.log)
-	assert.NotNil(t, mgr.states)
-	assert.Empty(t, mgr.states)
+	assert.NotNil(t, mgr.clusterTopology)
+	assert.Empty(t, mgr.clusterTopology)
 }
 
-func TestManager_UpdateClusterState(t *testing.T) {
+func TestManager_UpdateClusterTopology(t *testing.T) {
 	log := initTestLogger(t)
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
-				Evictable:  []string{},
+	node := &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: "test-node",
+		},
+	}
+	topology := &fodcv1.ClusterTopology{
+		Nodes: []*databasev1.Node{node},
+		Calls: []*fodcv1.ClusterCall{
+			{
+				Id:     "call-1",
+				Target: "target-node",
+				Source: "source-node",
 			},
 		},
 	}
 
-	mgr.UpdateClusterState("agent1", nil, clusterState)
+	mgr.UpdateClusterTopology("agent1", topology)
 
-	// Verify state was stored
-	aggregatedState := mgr.GetClusterState()
-	require.NotNil(t, aggregatedState)
-	assert.Equal(t, 1, len(aggregatedState.RouteTables))
-	assert.Equal(t, 1, len(aggregatedState.RouteTables["test"].Active))
+	// Verify topology was stored
+	aggregatedTopology := mgr.GetClusterTopology()
+	require.NotNil(t, aggregatedTopology)
+	assert.Equal(t, 1, len(aggregatedTopology.Nodes))
+	assert.Equal(t, 1, len(aggregatedTopology.Calls))
+	assert.Equal(t, "test-node", aggregatedTopology.Nodes[0].Metadata.Name)
+	assert.Equal(t, "call-1", aggregatedTopology.Calls[0].Id)
 }
 
 func TestManager_RemoveAgentState(t *testing.T) {
@@ -76,67 +86,68 @@ func TestManager_RemoveAgentState(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
-				Evictable:  []string{},
+	topology := &fodcv1.ClusterTopology{
+		Nodes: []*databasev1.Node{
+			{
+				Metadata: &commonv1.Metadata{Name: "test-node"},
 			},
 		},
+		Calls: []*fodcv1.ClusterCall{},
 	}
 
-	mgr.UpdateClusterState("agent1", nil, clusterState)
-	mgr.RemoveAgentState("agent1")
+	mgr.UpdateClusterTopology("agent1", topology)
+	mgr.RemoveTopology("agent1")
 
-	// Verify state was removed
-	aggregatedState := mgr.GetClusterState()
-	require.NotNil(t, aggregatedState)
-	assert.Empty(t, aggregatedState.RouteTables)
+	// Verify topology was removed
+	aggregatedTopology := mgr.GetClusterTopology()
+	require.NotNil(t, aggregatedTopology)
+	assert.Empty(t, aggregatedTopology.Nodes)
+	assert.Empty(t, aggregatedTopology.Calls)
 }
 
-func TestManager_GetClusterState_Empty(t *testing.T) {
+func TestManager_GetClusterTopology_MultipleAgents(t *testing.T) {
 	log := initTestLogger(t)
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	clusterState := mgr.GetClusterState()
-
-	require.NotNil(t, clusterState)
-	assert.Empty(t, clusterState.RouteTables)
-}
-
-func TestManager_GetClusterState_MultipleAgents(t *testing.T) {
-	log := initTestLogger(t)
-	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
-	mgr := NewManager(testRegistry, nil, log)
-
-	clusterState1 := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"route1": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node1"},
-				Evictable:  []string{},
+	topology1 := &fodcv1.ClusterTopology{
+		Nodes: []*databasev1.Node{
+			{
+				Metadata: &commonv1.Metadata{Name: "node1"},
+			},
+		},
+		Calls: []*fodcv1.ClusterCall{
+			{
+				Id:     "call-1",
+				Target: "node1",
+				Source: "node2",
 			},
 		},
 	}
 
-	clusterState2 := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"route2": {
-				Registered: []*databasev1.Node{},
-				Active:     []string{"node2"},
-				Evictable:  []string{},
+	topology2 := &fodcv1.ClusterTopology{
+		Nodes: []*databasev1.Node{
+			{
+				Metadata: &commonv1.Metadata{Name: "node2"},
+			},
+		},
+		Calls: []*fodcv1.ClusterCall{
+			{
+				Id:     "call-2",
+				Target: "node2",
+				Source: "node3",
 			},
 		},
 	}
 
-	mgr.UpdateClusterState("agent1", nil, clusterState1)
-	mgr.UpdateClusterState("agent2", nil, clusterState2)
+	mgr.UpdateClusterTopology("agent1", topology1)
+	mgr.UpdateClusterTopology("agent2", topology2)
 
-	aggregatedState := mgr.GetClusterState()
+	aggregatedTopology := mgr.GetClusterTopology()
 
-	require.NotNil(t, aggregatedState)
-	// Should have 2 route tables with agent prefixes
-	assert.Equal(t, 2, len(aggregatedState.RouteTables))
+	require.NotNil(t, aggregatedTopology)
+	// Should have 2 unique nodes (node1 and node2)
+	assert.Equal(t, 2, len(aggregatedTopology.Nodes))
+	// Should have 2 unique calls
+	assert.Equal(t, 2, len(aggregatedTopology.Calls))
 }

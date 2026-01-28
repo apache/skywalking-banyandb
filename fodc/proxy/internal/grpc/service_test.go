@@ -900,7 +900,7 @@ func (m *mockStreamClusterStateServer) SendHeader(_ metadata.MD) error {
 func (m *mockStreamClusterStateServer) SetTrailer(_ metadata.MD) {
 }
 
-func TestStreamClusterState_Success(t *testing.T) {
+func TestStreamClusterTopology_Success(t *testing.T) {
 	initTestLogger(t)
 	service, testRegistry := newTestService(t)
 	ctx := context.Background()
@@ -917,17 +917,19 @@ func TestStreamClusterState_Success(t *testing.T) {
 	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
 	mockStream := newMockStreamClusterStateServer(ctxWithMetadata)
 	clusterStateReq := &fodcv1.StreamClusterStateRequest{
-		CurrentNode: &databasev1.Node{
-			Metadata: &commonv1.Metadata{
-				Name: "test-node",
+		ClusterTopology: &fodcv1.ClusterTopology{
+			Nodes: []*databasev1.Node{
+				{
+					Metadata: &commonv1.Metadata{
+						Name: "test-node",
+					},
+				},
 			},
-		},
-		ClusterState: &databasev1.GetClusterStateResponse{
-			RouteTables: map[string]*databasev1.RouteTable{
-				"test": {
-					Registered: []*databasev1.Node{},
-					Active:     []string{"node1"},
-					Evictable:  []string{},
+			Calls: []*fodcv1.ClusterCall{
+				{
+					Id:     "call-1",
+					Target: "target-node",
+					Source: "source-node",
 				},
 			},
 		},
@@ -944,17 +946,29 @@ func TestStreamClusterState_Success(t *testing.T) {
 	assert.NotNil(t, conn)
 }
 
-func TestStreamClusterState_NoAgentID(t *testing.T) {
+func TestStreamClusterTopology_NoAgentID(t *testing.T) {
 	initTestLogger(t)
 	service, _ := newTestService(t)
 	ctx := context.Background()
 	mockStream := newMockStreamClusterStateServer(ctx)
 	clusterStateReq := &fodcv1.StreamClusterStateRequest{
-		CurrentNode: &databasev1.Node{
-			Metadata: &commonv1.Metadata{
-				Name: "test-node",
+		ClusterTopology: &fodcv1.ClusterTopology{
+			Nodes: []*databasev1.Node{
+				{
+					Metadata: &commonv1.Metadata{
+						Name: "test-node",
+					},
+				},
+			},
+			Calls: []*fodcv1.ClusterCall{
+				{
+					Id:     "call-1",
+					Target: "target-node",
+					Source: "source-node",
+				},
 			},
 		},
+		Timestamp: timestamppb.Now(),
 	}
 	mockStream.AddRequest(clusterStateReq)
 	mockStream.SetRecvError(io.EOF)
@@ -963,7 +977,7 @@ func TestStreamClusterState_NoAgentID(t *testing.T) {
 	assert.Contains(t, streamErr.Error(), "agent ID not found")
 }
 
-func TestStreamClusterState_RecvError(t *testing.T) {
+func TestStreamClusterTopology_RecvError(t *testing.T) {
 	initTestLogger(t)
 	service, testRegistry := newTestService(t)
 	ctx := context.Background()

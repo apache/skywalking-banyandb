@@ -305,6 +305,8 @@
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
+    - [ClusterCall](#banyandb-fodc-v1-ClusterCall)
+    - [ClusterTopology](#banyandb-fodc-v1-ClusterTopology)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
@@ -4710,6 +4712,39 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-ClusterCall"></a>
+
+### ClusterCall
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| target | [string](#string) |  |  |
+| source | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-ClusterTopology"></a>
+
+### ClusterTopology
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [banyandb.database.v1.Node](#banyandb-database-v1-Node) | repeated |  |
+| calls | [ClusterCall](#banyandb-fodc-v1-ClusterCall) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -4805,9 +4840,8 @@ Phase represents the current phase of the deletion task.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| current_node | [banyandb.database.v1.Node](#banyandb-database-v1-Node) |  |  |
-| cluster_state | [banyandb.database.v1.GetClusterStateResponse](#banyandb-database-v1-GetClusterStateResponse) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| cluster_topology | [ClusterTopology](#banyandb-fodc-v1-ClusterTopology) |  |  |
 
 
 

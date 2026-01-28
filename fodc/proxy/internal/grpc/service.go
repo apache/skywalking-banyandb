@@ -437,20 +437,18 @@ func (s *FODCService) StreamClusterState(stream fodcv1.FODCService_StreamCluster
 			return recvErr
 		}
 		if s.clusterStateManager != nil {
-			nodeName := ""
-			if req.CurrentNode != nil && req.CurrentNode.Metadata != nil {
-				nodeName = req.CurrentNode.Metadata.Name
+			nodeCount := 0
+			callCount := 0
+			if req.ClusterTopology != nil {
+				nodeCount = len(req.ClusterTopology.Nodes)
+				callCount = len(req.ClusterTopology.Calls)
 			}
-			routeTableCount := 0
-			if req.ClusterState != nil {
-				routeTableCount = len(req.ClusterState.RouteTables)
-			}
-			s.clusterStateManager.UpdateClusterState(agentID, req.CurrentNode, req.ClusterState)
+			s.clusterStateManager.UpdateClusterTopology(agentID, req.ClusterTopology)
 			s.logger.Debug().
 				Str("agent_id", agentID).
-				Str("node_name", nodeName).
-				Int("route_tables_count", routeTableCount).
-				Msg("Received cluster data from agent")
+				Int("nodes_count", nodeCount).
+				Int("calls_count", callCount).
+				Msg("Received cluster topology from agent")
 		}
 	}
 }

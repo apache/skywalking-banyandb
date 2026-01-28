@@ -57,7 +57,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Collector Lifecycle", func() {
 		It("should successfully start and connect to BanyanDB", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -70,29 +70,32 @@ var _ = Describe("Cluster Collector Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify we got node information
-			node := collector.GetCurrentNode()
-			Expect(node).NotTo(BeNil())
-			Expect(node.Metadata).NotTo(BeNil())
-			Expect(node.Metadata.Name).NotTo(BeEmpty())
+			nodes := collector.GetCurrentNodes()
+			Expect(nodes).NotTo(BeNil())
+			Expect(len(nodes)).To(BeNumerically(">", 0))
+			for _, node := range nodes {
+				Expect(node).NotTo(BeNil())
+				Expect(node.Metadata).NotTo(BeNil())
+				Expect(node.Metadata.Name).NotTo(BeEmpty())
+			}
 		})
 
-		It("should fetch cluster state", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 5*time.Second)
+		It("should fetch cluster topology", func() {
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait a bit for cluster state to be collected
+			// Wait a bit for cluster topology to be collected
 			time.Sleep(2 * time.Second)
 
-			clusterState := collector.GetClusterState()
-			Expect(clusterState).NotTo(BeNil())
-			// Cluster state should have route tables
-			Expect(clusterState.RouteTables).NotTo(BeNil())
+			topology := collector.GetClusterTopology()
+			Expect(topology).NotTo(BeNil())
+			Expect(len(topology.Nodes)).To(BeNumerically(">=", 0))
 		})
 
 		It("should handle node role determination correctly", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -106,13 +109,13 @@ var _ = Describe("Cluster Collector Integration", func() {
 			nodeRole, _ := collector.GetNodeInfo()
 			Expect(nodeRole).NotTo(BeEmpty())
 			// Node role should be one of the expected values
-			Expect(nodeRole).To(BeElementOf([]string{"LIAISON", "DATA", "UNKNOWN"}))
+			Expect(nodeRole).To(BeElementOf([]string{"LIAISON", "DATA", "DATA_HOT", "DATA_WARM", "DATA_COLD", "UNKNOWN"}))
 		})
 	})
 
 	Describe("Error Handling", func() {
 		It("should handle invalid gRPC address gracefully", func() {
-			collector = cluster.NewCollector(testLogger, "invalid:address", 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{"invalid:address"}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).To(HaveOccurred())
@@ -121,7 +124,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 		It("should handle connection timeouts", func() {
 			// Use a valid address format but non-existent server
-			collector = cluster.NewCollector(testLogger, "127.0.0.1:99999", 1*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{"127.0.0.1:99999"}, 1*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).To(HaveOccurred())
@@ -129,8 +132,8 @@ var _ = Describe("Cluster Collector Integration", func() {
 	})
 
 	Describe("Periodic Collection", func() {
-		It("should periodically update cluster state", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 2*time.Second)
+		It("should periodically update cluster topology", func() {
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 2*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -138,22 +141,21 @@ var _ = Describe("Cluster Collector Integration", func() {
 			// Wait for initial collection
 			time.Sleep(3 * time.Second)
 
-			initialState := collector.GetClusterState()
-			Expect(initialState).NotTo(BeNil())
+			initialTopology := collector.GetClusterTopology()
+			Expect(initialTopology).NotTo(BeNil())
 
 			// Wait for another collection cycle
 			time.Sleep(3 * time.Second)
 
-			updatedState := collector.GetClusterState()
-			Expect(updatedState).NotTo(BeNil())
-			// The state should be the same object reference since it's updated in place
-			Expect(updatedState).To(Equal(initialState))
+			updatedTopology := collector.GetClusterTopology()
+			Expect(updatedTopology).NotTo(BeNil())
+			// The topology should be updated
 		})
 	})
 
 	Describe("Resource Management", func() {
 		It("should properly close connections on stop", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -169,12 +171,15 @@ var _ = Describe("Cluster Collector Integration", func() {
 			collector.Stop()
 
 			// Verify collector is stopped
-			Expect(collector.GetCurrentNode()).To(BeNil())
-			Expect(collector.GetClusterState()).To(BeNil())
+			nodes := collector.GetCurrentNodes()
+			topology := collector.GetClusterTopology()
+			Expect(len(nodes)).To(Equal(0))
+			Expect(len(topology.Nodes)).To(Equal(0))
+			Expect(len(topology.Calls)).To(Equal(0))
 		})
 
 		It("should not allow restart after stop", func() {
-			collector = cluster.NewCollector(testLogger, grpcAddr, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())

@@ -30,6 +30,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
@@ -83,35 +84,38 @@ func TestHandleClusterTopology_Success(t *testing.T) {
 	}
 	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
 	require.NoError(t, registerErr)
-	clusterState := &databasev1.GetClusterStateResponse{
-		RouteTables: map[string]*databasev1.RouteTable{
-			"test": {
-				Registered: []*databasev1.Node{
-					{
-						Metadata: &commonv1.Metadata{
-							Name: "node1",
-						},
-					},
+	topology := &fodcv1.ClusterTopology{
+		Nodes: []*databasev1.Node{
+			{
+				Metadata: &commonv1.Metadata{
+					Name: "node1",
 				},
-				Active:    []string{"node1"},
-				Evictable: []string{},
+			},
+			{
+				Metadata: &commonv1.Metadata{
+					Name: "test-node",
+				},
+			},
+		},
+		Calls: []*fodcv1.ClusterCall{
+			{
+				Id:     "call-1",
+				Target: "test-node",
+				Source: "node1",
 			},
 		},
 	}
-	currentNode := &databasev1.Node{
-		Metadata: &commonv1.Metadata{
-			Name: "test-node",
-		},
-	}
-	clusterMgr.UpdateClusterState(agentID, currentNode, clusterState)
+	clusterMgr.UpdateClusterTopology(agentID, topology)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)
 	assert.Equal(t, http.StatusOK, resp.Code)
-	var result map[string]interface{}
+	var result fodcv1.ClusterTopology
 	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, decodeErr)
-	assert.Contains(t, result, "route_tables")
+	assert.Equal(t, 2, len(result.Nodes))
+	assert.Equal(t, 1, len(result.Calls))
+	assert.Equal(t, "call-1", result.Calls[0].Id)
 }
 
 func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {

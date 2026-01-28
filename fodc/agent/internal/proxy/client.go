@@ -270,8 +270,8 @@ func (c *Client) StartClusterStateStream(ctx context.Context) error {
 	return nil
 }
 
-// sendClusterData sends cluster data to Proxy.
-func (c *Client) sendClusterData() error {
+// sendClusterTopology sends cluster topology to Proxy.
+func (c *Client) sendClusterTopology() error {
 	c.streamsMu.RLock()
 	if c.disconnected || c.clusterStateStream == nil {
 		c.streamsMu.RUnlock()
@@ -283,16 +283,24 @@ func (c *Client) sendClusterData() error {
 	if collector == nil {
 		return fmt.Errorf("cluster collector not available")
 	}
-	currentNode := collector.GetCurrentNode()
-	clusterState := collector.GetClusterState()
+	topology := collector.GetClusterTopology()
+	if len(topology.Nodes) == 0 && len(topology.Calls) == 0 {
+		return fmt.Errorf("no cluster topology available to send")
+	}
 	req := &fodcv1.StreamClusterStateRequest{
-		CurrentNode:  currentNode,
-		ClusterState: clusterState,
-		Timestamp:    timestamppb.Now(),
+		ClusterTopology: &fodcv1.ClusterTopology{
+			Nodes: topology.Nodes,
+			Calls: topology.Calls,
+		},
+		Timestamp: timestamppb.Now(),
 	}
 	if sendErr := clusterStateStream.Send(req); sendErr != nil {
-		return fmt.Errorf("failed to send cluster data: %w", sendErr)
+		return fmt.Errorf("failed to send cluster topology: %w", sendErr)
 	}
+	c.logger.Info().
+		Int("nodes_count", len(topology.Nodes)).
+		Int("calls_count", len(topology.Calls)).
+		Msg("Successfully sent cluster topology to proxy")
 	return nil
 }
 
@@ -329,8 +337,8 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 		}
 		if resp != nil && resp.RequestClusterData {
 			c.logger.Debug().Msg("Received cluster data request from proxy")
-			if sendErr := c.sendClusterData(); sendErr != nil {
-				c.logger.Error().Err(sendErr).Msg("Failed to send cluster data to proxy")
+			if sendErr := c.sendClusterTopology(); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send cluster topology to proxy")
 			}
 		}
 	}

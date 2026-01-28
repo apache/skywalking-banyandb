@@ -800,21 +800,21 @@ func TestProxyClient_StartClusterStateStream_StreamError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to create cluster state stream")
 }
 
-func TestProxyClient_SendClusterState_NoStream(t *testing.T) {
+func TestProxyClient_SendClusterTopology_NoStream(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, testLogger)
 
-	err := pc.sendClusterData()
+	err := pc.sendClusterTopology()
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster state stream not established")
 }
 
-func TestProxyClient_SendClusterState_Success(t *testing.T) {
+func TestProxyClient_SendClusterTopology_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	collector := cluster.NewCollector(testLogger, "localhost:17914", 30*time.Second)
+	collector := cluster.NewCollector(testLogger, []string{"localhost:17914"}, 30*time.Second)
 	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, collector, testLogger)
 
 	ctx := context.Background()
@@ -824,7 +824,7 @@ func TestProxyClient_SendClusterState_Success(t *testing.T) {
 	pc.clusterStateStream = mockStream
 	pc.streamsMu.Unlock()
 
-	err := pc.sendClusterData()
+	err := pc.sendClusterTopology()
 
 	require.NoError(t, err)
 	mockStream.mu.Lock()
@@ -833,6 +833,7 @@ func TestProxyClient_SendClusterState_Success(t *testing.T) {
 
 	require.Len(t, sentRequests, 1)
 	assert.NotNil(t, sentRequests[0].Timestamp)
+	assert.NotNil(t, sentRequests[0].ClusterTopology)
 }
 
 func TestProxyClient_SendHeartbeat_NoStream(t *testing.T) {

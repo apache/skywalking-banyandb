@@ -69,10 +69,20 @@ message StreamMetricsResponse {
   google.protobuf.Timestamp end_time = 2; // Optional end time for time window
 }
 
+message ClusterCall {
+  string id = 1;
+  string target = 2;
+  string source = 3;
+}
+
+message ClusterTopology {
+  repeated banyandb.database.v1.Node nodes = 1;
+  repeated ClusterCall calls = 2;
+}
+
 message StreamClusterStateRequest {
-  banyandb.database.v1.Node current_node = 1;
-  banyandb.database.v1.GetClusterStateResponse cluster_state = 2;
-  google.protobuf.Timestamp timestamp = 3;
+  google.protobuf.Timestamp timestamp = 1;
+  ClusterTopology cluster_topology = 2;
 }
 
 message StreamClusterStateResponse {

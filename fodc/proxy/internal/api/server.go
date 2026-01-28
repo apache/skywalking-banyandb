@@ -407,10 +407,10 @@ func (s *Server) handleClusterTopology(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cluster topology collector not available", http.StatusServiceUnavailable)
 		return
 	}
-	clusterState := s.clusterStateCollector.CollectClusterState()
+	clusterTopology := s.clusterStateCollector.CollectClusterTopology()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if encodeErr := json.NewEncoder(w).Encode(clusterState); encodeErr != nil {
+	if encodeErr := json.NewEncoder(w).Encode(clusterTopology); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode cluster topology response")
 	}
 }
