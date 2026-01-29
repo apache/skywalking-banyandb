@@ -317,7 +317,7 @@ func TestCollector_GetNodeInfo(t *testing.T) {
 	}
 	collector.updateCurrentNodes(nodes)
 	nodeRole, nodeLabels := collector.GetNodeInfo()
-	assert.Equal(t, "DATA_HOT", nodeRole)
+	assert.Equal(t, "ROLE_DATA", nodeRole)
 	assert.Equal(t, map[string]string{"tier": "hot", "zone": "us-west"}, nodeLabels)
 }
 
@@ -353,14 +353,14 @@ func TestNodeRoleFromNode(t *testing.T) {
 		node     *databasev1.Node
 		expected string
 	}{
-		{"nil node", nil, "DATA_HOT"},
-		{"empty roles", &databasev1.Node{}, "DATA_HOT"},
-		{"liaison", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}}, "LIAISON"},
-		{"meta", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_META}}, "UNKNOWN"},
-		{"data without tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}}, "DATA"},
-		{"data with hot tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "hot"}}, "DATA_HOT"},
-		{"data with warm tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "warm"}}, "DATA_WARM"},
-		{"data with cold tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "cold"}}, "DATA_COLD"},
+		{"nil node", nil, "ROLE_UNSPECIFIED"},
+		{"empty roles", &databasev1.Node{}, "ROLE_UNSPECIFIED"},
+		{"liaison", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}}, "ROLE_LIAISON"},
+		{"meta", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_META}}, "ROLE_UNSPECIFIED"},
+		{"data without tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}}, "ROLE_DATA"},
+		{"data with hot tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "hot"}}, "ROLE_DATA"},
+		{"data with warm tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "warm"}}, "ROLE_DATA"},
+		{"data with cold tier", &databasev1.Node{Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}, Labels: map[string]string{"tier": "cold"}}, "ROLE_DATA"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

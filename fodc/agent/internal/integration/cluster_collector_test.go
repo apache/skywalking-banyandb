@@ -116,8 +116,8 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 			nodeRole, _ := collector.GetNodeInfo()
 			Expect(nodeRole).NotTo(BeEmpty(), "Expected node role to be determined from fetched nodes")
-			// Node role should be one of the expected values
-			Expect(nodeRole).To(BeElementOf([]string{"LIAISON", "DATA", "DATA_HOT", "DATA_WARM", "DATA_COLD", "UNKNOWN"}))
+			// Node role should be one of the expected protobuf enum values
+			Expect(nodeRole).To(BeElementOf([]string{"ROLE_LIAISON", "ROLE_DATA", "ROLE_UNSPECIFIED"}))
 		})
 	})
 

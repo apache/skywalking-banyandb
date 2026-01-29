@@ -293,9 +293,6 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 		merged.Calls = append(merged.Calls, call)
 	}
 	c.clusterTopology = merged
-	c.log.Info().
-		Interface("merged", merged).
-		Msg("Processed cluster topology from all endpoints")
 }
 
 func (c *Collector) fetchCurrentNodes(ctx context.Context) map[string]*databasev1.Node {
