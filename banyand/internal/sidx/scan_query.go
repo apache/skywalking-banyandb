@@ -73,9 +73,21 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 		Tags:    tagsMap,
 	}
 
-	// Scan all parts
-	totalParts := len(snap.parts)
-	for partIdx, pw := range snap.parts {
+	// Filter parts by key and time range
+	var filteredParts []*partWrapper
+	for _, pw := range snap.parts {
+		if !pw.overlapsKeyRange(minKey, maxKey) {
+			continue
+		}
+		if !pw.overlapsTimeRange(req.MinTimestamp, req.MaxTimestamp) {
+			continue
+		}
+		filteredParts = append(filteredParts, pw)
+	}
+
+	// Scan filtered parts
+	totalParts := len(filteredParts)
+	for partIdx, pw := range filteredParts {
 		var err error
 		if currentBatch, err = s.scanPart(ctx, pw, req, minKey, maxKey, &results, currentBatch, maxBatchSize); err != nil {
 			return nil, err
