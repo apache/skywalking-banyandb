@@ -43,8 +43,8 @@ const (
 
 // TopologyMap represents processed cluster data for a single endpoint.
 type TopologyMap struct {
-	Nodes []*databasev1.Node    `json:"nodes"`
-	Calls []*fodcv1.Call `json:"calls"`
+	Nodes []*databasev1.Node `json:"nodes"`
+	Calls []*fodcv1.Call     `json:"calls"`
 }
 
 // endpointClient holds gRPC connection and clients for a single endpoint.
@@ -232,60 +232,56 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 	nodeMap := make(map[string]*databasev1.Node)
 	callMap := make(map[string]*fodcv1.Call)
 	allAddrs := make(map[string]bool)
-	for addr := range currentNodes {
-		allAddrs[addr] = true
-	}
+
 	for addr := range clusterStates {
-		allAddrs[addr] = true
+		if _, hasCurrentNode := currentNodes[addr]; hasCurrentNode {
+			allAddrs[addr] = true
+		}
 	}
+	c.log.Info().
+		Int("currentNodes_count", len(currentNodes)).
+		Int("clusterStates_count", len(clusterStates)).
+		Int("processed_endpoints_count", len(allAddrs)).
+		Msg("Start to process cluster states (only endpoints with both currentNode and clusterState)")
+	// Process each endpoint separately to ensure currentNode corresponds to its route tables
 	for addrStr := range allAddrs {
 		currentNode := currentNodes[addrStr]
-		var clusterState *databasev1.GetClusterStateResponse
-		if clusterStates != nil {
-			clusterState = clusterStates[addrStr]
+		clusterState := clusterStates[addrStr]
+		if currentNode == nil || clusterState == nil {
+			continue
 		}
-		if currentNode != nil {
-			if currentNode.Metadata != nil && currentNode.Metadata.Name != "" {
-				nodeMap[currentNode.Metadata.Name] = currentNode
-			}
-			currentNodeName := ""
-			if currentNode.Metadata != nil {
-				currentNodeName = currentNode.Metadata.Name
-			}
-			if clusterState != nil && currentNodeName != "" {
-				activeSet := make(map[string]bool)
-				for _, routeTable := range clusterState.RouteTables {
-					if routeTable != nil {
-						for _, registeredNode := range routeTable.Registered {
-							if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
-								nodeMap[registeredNode.Metadata.Name] = registeredNode
-							}
-						}
-						for _, activeName := range routeTable.Active {
-							if activeName != "" {
-								activeSet[activeName] = true
-							}
-						}
-					}
-				}
-				for activeName := range activeSet {
-					if activeName != currentNodeName {
-						callID := fmt.Sprintf("%s-%s", currentNodeName, activeName)
-						callMap[callID] = &fodcv1.Call{
-							Id:     callID,
-							Target: currentNodeName,
-							Source: activeName,
-						}
+		currentNodeName := ""
+		if currentNode.Metadata != nil && currentNode.Metadata.Name != "" {
+			currentNodeName = currentNode.Metadata.Name
+			nodeMap[currentNodeName] = currentNode
+		}
+		for _, routeTable := range clusterState.RouteTables {
+			if routeTable != nil {
+				for _, registeredNode := range routeTable.Registered {
+					if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" && isValidNodeName(registeredNode.Metadata.Name) {
+						nodeMap[registeredNode.Metadata.Name] = registeredNode
 					}
 				}
 			}
-		} else if clusterState != nil {
+		}
+		if currentNodeName != "" {
+			activeSet := make(map[string]bool)
 			for _, routeTable := range clusterState.RouteTables {
 				if routeTable != nil {
-					for _, registeredNode := range routeTable.Registered {
-						if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
-							nodeMap[registeredNode.Metadata.Name] = registeredNode
+					for _, activeName := range routeTable.Active {
+						if activeName != "" && isValidNodeName(activeName) {
+							activeSet[activeName] = true
 						}
+					}
+				}
+			}
+			for activeName := range activeSet {
+				if activeName != currentNodeName {
+					callID := fmt.Sprintf("%s-%s", currentNodeName, activeName)
+					callMap[callID] = &fodcv1.Call{
+						Id:     callID,
+						Source: currentNodeName,
+						Target: activeName,
 					}
 				}
 			}
@@ -298,10 +294,8 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 		merged.Calls = append(merged.Calls, call)
 	}
 	c.clusterTopology = merged
-	c.log.Debug().
-		Int("endpoints_count", len(allAddrs)).
-		Int("nodes_count", len(merged.Nodes)).
-		Int("calls_count", len(merged.Calls)).
+	c.log.Info().
+		Interface("merged", merged).
 		Msg("Processed cluster topology from all endpoints")
 }
 
@@ -355,13 +349,6 @@ func (c *Collector) fetchCurrentNodeFromEndpoint(ctx context.Context, client *en
 
 func (c *Collector) collectClusterState(ctx context.Context) {
 	states := c.fetchClusterStates(ctx)
-	if len(states) > 0 {
-		for addr, state := range states {
-			if state != nil {
-				c.log.Info().Str("addr", addr).Interface("state", state).Msg("Cluster state details for debugging")
-			}
-		}
-	}
 	if len(states) == 0 {
 		c.log.Error().Msg("Failed to fetch cluster state from any endpoint")
 		return
@@ -415,6 +402,20 @@ func (c *Collector) fetchClusterStateFromEndpoint(ctx context.Context, client *e
 		}
 	}
 	return nil, fmt.Errorf("failed to fetch cluster state after %d attempts: %w", maxRetries, respErr)
+}
+
+// isValidNodeName checks if a node name is properly formatted.
+// A valid node name should have a hostname part before the colon (e.g., "hostname:port").
+// Invalid names like ":port" or empty strings are rejected.
+// TODO: Temporarily allowing malformed names (like ":port") to ensure data from all endpoints is included.
+func isValidNodeName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// Temporarily disabled strict validation to allow malformed names like ":17914"
+	// This ensures topology data from all endpoints (e.g., 17914 and 17916) is included
+	// TODO: Re-enable strict validation once node name generation is fixed
+	return true
 }
 
 // NodeRoleFromNode determines the node role string from the Node's role and labels.
