@@ -74,17 +74,6 @@ func (m *Manager) UpdateClusterTopology(agentID string, topology *fodcv1.Topolog
 		topology: topology,
 		agentID:  agentID,
 	}
-	nodeCount := 0
-	callCount := 0
-	if topology != nil {
-		nodeCount = len(topology.Nodes)
-		callCount = len(topology.Calls)
-	}
-	m.log.Debug().
-		Str("agent_id", agentID).
-		Int("nodes_count", nodeCount).
-		Int("calls_count", callCount).
-		Msg("Updated cluster topology from agent")
 }
 
 // RemoveTopology removes cluster topology for a specific agent.

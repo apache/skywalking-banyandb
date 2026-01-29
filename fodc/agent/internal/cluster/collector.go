@@ -21,7 +21,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -243,7 +242,7 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 		Int("clusterStates_count", len(clusterStates)).
 		Int("processed_endpoints_count", len(allAddrs)).
 		Msg("Start to process cluster states (only endpoints with both currentNode and clusterState)")
-	// Process each endpoint separately to ensure currentNode corresponds to its route tables
+
 	for addrStr := range allAddrs {
 		currentNode := currentNodes[addrStr]
 		clusterState := clusterStates[addrStr]
@@ -258,7 +257,7 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 		for _, routeTable := range clusterState.RouteTables {
 			if routeTable != nil {
 				for _, registeredNode := range routeTable.Registered {
-					if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" && isValidNodeName(registeredNode.Metadata.Name) {
+					if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
 						nodeMap[registeredNode.Metadata.Name] = registeredNode
 					}
 				}
@@ -269,7 +268,7 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 			for _, routeTable := range clusterState.RouteTables {
 				if routeTable != nil {
 					for _, activeName := range routeTable.Active {
-						if activeName != "" && isValidNodeName(activeName) {
+						if activeName != "" {
 							activeSet[activeName] = true
 						}
 					}
@@ -404,41 +403,22 @@ func (c *Collector) fetchClusterStateFromEndpoint(ctx context.Context, client *e
 	return nil, fmt.Errorf("failed to fetch cluster state after %d attempts: %w", maxRetries, respErr)
 }
 
-// isValidNodeName checks if a node name is properly formatted.
-// A valid node name should have a hostname part before the colon (e.g., "hostname:port").
-// Invalid names like ":port" or empty strings are rejected.
-// TODO: Temporarily allowing malformed names (like ":port") to ensure data from all endpoints is included.
-func isValidNodeName(name string) bool {
-	if name == "" {
-		return false
-	}
-	// Temporarily disabled strict validation to allow malformed names like ":17914"
-	// This ensures topology data from all endpoints (e.g., 17914 and 17916) is included
-	// TODO: Re-enable strict validation once node name generation is fixed
-	return true
-}
-
 // NodeRoleFromNode determines the node role string from the Node's role and labels.
 func NodeRoleFromNode(node *databasev1.Node) string {
 	if node == nil || len(node.Roles) == 0 {
-		return "DATA_HOT"
+		return databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
 	}
 	for _, r := range node.Roles {
 		switch r {
 		case databasev1.Role_ROLE_LIAISON:
-			return "LIAISON"
+			return databasev1.Role_name[int32(databasev1.Role_ROLE_LIAISON)]
 		case databasev1.Role_ROLE_DATA:
-			if node.Labels != nil {
-				if tier, ok := node.Labels["tier"]; ok && tier != "" {
-					return "DATA_" + strings.ToUpper(tier)
-				}
-			}
-			return "DATA"
+			return databasev1.Role_name[int32(databasev1.Role_ROLE_DATA)]
 		default:
-			return "UNKNOWN"
+			return databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
 		}
 	}
-	return "UNKNOWN"
+	return databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
 }
 
 // GenerateClusterStateAddrs generates cluster state gRPC addresses from the given ports.
