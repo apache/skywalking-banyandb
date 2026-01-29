@@ -33,7 +33,6 @@ var _ = Describe("Cluster Collector Integration", func() {
 	var (
 		testLogger       *logger.Logger
 		collector        *cluster.Collector
-		grpcAddr         string
 		collectionCtx    context.Context
 		collectionCancel context.CancelFunc
 	)
@@ -41,9 +40,8 @@ var _ = Describe("Cluster Collector Integration", func() {
 	BeforeEach(func() {
 		testLogger = logger.GetLogger("test", "cluster-integration")
 
-		// Use the gRPC address from the BanyanDB setup
-		grpcAddr = banyanDBGRPCAddr
-
+		// Use both liaison and data node addresses for the collector
+		// Liaison node provides cluster state, data node provides node information
 		collectionCtx, collectionCancel = context.WithCancel(context.Background())
 	})
 
@@ -58,26 +56,23 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Collector Lifecycle", func() {
 		It("should successfully start and connect to BanyanDB", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait for node info to be fetched
+			// Wait for node info fetch attempt to complete
 			waitCtx, waitCancel := context.WithTimeout(collectionCtx, 30*time.Second)
 			defer waitCancel()
 
 			err = collector.WaitForNodeFetched(waitCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify we got node information
-			// Note: WaitForNodeFetched() may return even if no nodes were fetched,
-			// so we need to wait for nodes to actually be fetched using Eventually
-			Eventually(func() map[string]*databasev1.Node {
-				return collector.GetCurrentNodes()
-			}, 30*time.Second, 500*time.Millisecond).ShouldNot(BeEmpty(), "Expected at least one node to be fetched")
-
+			// Check if nodes are available (NodeQueryService may not be implemented in standalone setup)
 			nodes := collector.GetCurrentNodes()
+			nodeRole, _ := collector.GetNodeInfo()
+
+			// Nodes should be available in distributed setup
 			Expect(nodes).NotTo(BeNil())
 			Expect(len(nodes)).To(BeNumerically(">", 0))
 			for _, node := range nodes {
@@ -85,10 +80,11 @@ var _ = Describe("Cluster Collector Integration", func() {
 				Expect(node.Metadata).NotTo(BeNil())
 				Expect(node.Metadata.Name).NotTo(BeEmpty())
 			}
+			Expect(nodeRole).NotTo(BeEmpty())
 		})
 
 		It("should fetch cluster topology", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -102,7 +98,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 		})
 
 		It("should handle node role determination correctly", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -130,17 +126,17 @@ var _ = Describe("Cluster Collector Integration", func() {
 			collector = cluster.NewCollector(testLogger, []string{"invalid:address"}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
-			// grpc.NewClient may not validate addresses immediately, so Start() might succeed
-			// but connection will fail later. Check if Start() fails or wait for connection failure.
-			if err == nil {
-				// If Start() succeeded, wait for node fetch to fail
-				waitCtx, waitCancel := context.WithTimeout(collectionCtx, 10*time.Second)
-				defer waitCancel()
-				fetchErr := collector.WaitForNodeFetched(waitCtx)
-				Expect(fetchErr).To(HaveOccurred())
-			} else {
-				Expect(err.Error()).To(ContainSubstring("failed to create gRPC connection"))
-			}
+			Expect(err).NotTo(HaveOccurred(), "Collector should start successfully even with invalid address")
+
+			// Wait for node fetch attempt to complete
+			waitCtx, waitCancel := context.WithTimeout(collectionCtx, 10*time.Second)
+			defer waitCancel()
+			fetchErr := collector.WaitForNodeFetched(waitCtx)
+			Expect(fetchErr).NotTo(HaveOccurred(), "WaitForNodeFetched should succeed as fetch attempt completes")
+
+			// Verify no nodes were fetched due to invalid address
+			nodes := collector.GetCurrentNodes()
+			Expect(nodes).To(BeEmpty(), "No nodes should be fetched with invalid address")
 		})
 
 		It("should handle connection timeouts", func() {
@@ -148,23 +144,23 @@ var _ = Describe("Cluster Collector Integration", func() {
 			collector = cluster.NewCollector(testLogger, []string{"127.0.0.1:99999"}, 1*time.Second)
 
 			err := collector.Start(collectionCtx)
-			// grpc.NewClient may not validate addresses immediately, so Start() might succeed
-			// but connection will fail later. Check if Start() fails or wait for connection failure.
-			if err == nil {
-				// If Start() succeeded, wait for node fetch to fail
-				waitCtx, waitCancel := context.WithTimeout(collectionCtx, 10*time.Second)
-				defer waitCancel()
-				fetchErr := collector.WaitForNodeFetched(waitCtx)
-				Expect(fetchErr).To(HaveOccurred())
-			} else {
-				Expect(err).To(HaveOccurred())
-			}
+			Expect(err).NotTo(HaveOccurred(), "Collector should start successfully even with unreachable address")
+
+			// Wait for node fetch attempt to complete
+			waitCtx, waitCancel := context.WithTimeout(collectionCtx, 10*time.Second)
+			defer waitCancel()
+			fetchErr := collector.WaitForNodeFetched(waitCtx)
+			Expect(fetchErr).NotTo(HaveOccurred(), "WaitForNodeFetched should succeed as fetch attempt completes")
+
+			// Verify no nodes were fetched due to connection failure
+			nodes := collector.GetCurrentNodes()
+			Expect(nodes).To(BeEmpty(), "No nodes should be fetched with unreachable server")
 		})
 	})
 
 	Describe("Periodic Collection", func() {
 		It("should periodically update cluster topology", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 2*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 2*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -186,7 +182,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Resource Management", func() {
 		It("should properly close connections on stop", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -223,7 +219,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 		})
 
 		It("should not allow restart after stop", func() {
-			collector = cluster.NewCollector(testLogger, []string{grpcAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())

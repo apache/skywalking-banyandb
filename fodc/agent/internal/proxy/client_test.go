@@ -21,9 +21,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +33,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
@@ -815,6 +819,32 @@ func TestProxyClient_SendClusterTopology_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	collector := cluster.NewCollector(testLogger, []string{"localhost:17914"}, 30*time.Second)
+
+	// Populate collector with test topology data using unsafe to access private field
+	testNode := &databasev1.Node{
+		Metadata:    &commonv1.Metadata{Name: "test-node"},
+		GrpcAddress: "localhost:17913",
+		Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+	testTopology := cluster.TopologyMap{
+		Nodes: []*databasev1.Node{testNode},
+		Calls: []*fodcv1.Call{
+			{
+				Id:     "test-call-1",
+				Source: "test-node",
+				Target: "other-node",
+			},
+		},
+	}
+	// Use unsafe to set the private clusterTopology field
+	collectorValue := reflect.ValueOf(collector).Elem()
+	clusterTopologyField := collectorValue.FieldByName("clusterTopology")
+	if clusterTopologyField.IsValid() {
+		// Get the address of the field and use unsafe to set it
+		fieldPtr := unsafe.Pointer(clusterTopologyField.UnsafeAddr())
+		*(*cluster.TopologyMap)(fieldPtr) = testTopology
+	}
+
 	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, collector, testLogger)
 
 	ctx := context.Background()

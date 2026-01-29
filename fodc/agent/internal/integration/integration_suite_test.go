@@ -29,7 +29,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -47,6 +49,7 @@ func TestFODCIntegration(t *testing.T) {
 var (
 	banyanDBGRPCAddr string
 	banyanDBHTTPAddr string
+	dataNodeGRPCAddr string
 	deferFunc        func()
 	goods            []gleak.Goroutine
 )
@@ -57,13 +60,45 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		Env:   "dev",
 		Level: flags.LogLevel,
 	})).To(Succeed())
-	// Start BanyanDB once for all tests
-	var cleanup func()
-	banyanDBGRPCAddr, banyanDBHTTPAddr, cleanup = setup.Standalone(
+
+	// Set up distributed BanyanDB environment
+	// 1. Start etcd server
+	ports, err := test.AllocateFreePorts(2)
+	Expect(err).NotTo(HaveOccurred())
+	dir, spaceDef, err := test.NewSpace()
+	Expect(err).NotTo(HaveOccurred())
+	etcdEp := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
+	etcdServer, err := embeddedetcd.NewServer(
+		embeddedetcd.ConfigureListener([]string{etcdEp}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
+		embeddedetcd.RootDir(dir),
+		embeddedetcd.AutoCompactionMode("periodic"),
+		embeddedetcd.AutoCompactionRetention("1h"),
+		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
+	)
+	Expect(err).ShouldNot(HaveOccurred())
+	<-etcdServer.ReadyNotify()
+
+	// 2. Start data node
+	var dataNodeCloseFn func()
+	dataNodeGRPCAddr, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(etcdEp,
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2121",
 	)
-	deferFunc = cleanup
+
+	// 3. Start liaison node
+	var liaisonCloseFn func()
+	banyanDBGRPCAddr, banyanDBHTTPAddr, liaisonCloseFn = setup.LiaisonNodeWithHTTP(etcdEp,
+		"--observability-modes=prometheus",
+		"--observability-listener-addr=:2122",
+	)
+
+	deferFunc = func() {
+		liaisonCloseFn()
+		dataNodeCloseFn()
+		_ = etcdServer.Close()
+		<-etcdServer.StopNotify()
+		spaceDef()
+	}
 
 	// Wait for HTTP endpoint to be ready
 	Eventually(helpers.HTTPHealthCheck(banyanDBHTTPAddr, ""), flags.EventuallyTimeout).Should(Succeed())
@@ -81,7 +116,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	if host == "" {
 		host = defaultLocalhost
 	}
-	metricsAddr := fmt.Sprintf("%s:2121", host)
+	metricsAddr := fmt.Sprintf("%s:2122", host)
 
 	// Wait for metrics endpoint to be accessible
 	Eventually(func() error {
@@ -97,12 +132,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		return nil
 	}, flags.EventuallyTimeout, 500*time.Millisecond).Should(Succeed())
 
-	return []byte(fmt.Sprintf("%s|%s", banyanDBGRPCAddr, banyanDBHTTPAddr))
+	return []byte(fmt.Sprintf("%s|%s|%s", banyanDBGRPCAddr, banyanDBHTTPAddr, dataNodeGRPCAddr))
 }, func(address []byte) {
 	parts := strings.Split(string(address), "|")
-	Expect(parts).To(HaveLen(2))
+	Expect(parts).To(HaveLen(3))
 	banyanDBGRPCAddr = parts[0]
 	banyanDBHTTPAddr = parts[1]
+	dataNodeGRPCAddr = parts[2]
 })
 
 var _ = SynchronizedAfterSuite(func() {}, func() {})
