@@ -22,9 +22,6 @@ import (
 	"fmt"
 	"sync"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
@@ -33,14 +30,8 @@ import (
 
 // NodeWithStringRoles represents a node with roles as strings instead of numeric enum values.
 type NodeWithStringRoles struct {
-	Metadata  *commonv1.Metadata     `json:"metadata"`
-	CreatedAt *timestamppb.Timestamp `json:"created_at"`
-	Roles     []string               `json:"roles"`
-	Labels    map[string]string      `json:"labels"`
-
-	GrpcAddress                     string `json:"grpc_address"`
-	HttpAddress                     string `json:"http_address"`
-	PropertyRepairGossipGrpcAddress string `json:"property_repair_gossip_grpc_address"`
+	*databasev1.Node
+	Roles []string `json:"roles"`
 }
 
 // TopologyMap represents processed cluster data with string roles.
@@ -235,13 +226,8 @@ func convertNodeToStringRoles(node *databasev1.Node) *NodeWithStringRoles {
 		return nil
 	}
 	return &NodeWithStringRoles{
-		Metadata:                        node.Metadata,
-		Roles:                           convertRolesToStrings(node.Roles),
-		GrpcAddress:                     node.GrpcAddress,
-		HttpAddress:                     node.HttpAddress,
-		CreatedAt:                       node.CreatedAt,
-		Labels:                          node.Labels,
-		PropertyRepairGossipGrpcAddress: node.PropertyRepairGossipGrpcAddress,
+		Node:  node,
+		Roles: convertRolesToStrings(node.Roles),
 	}
 }
 
