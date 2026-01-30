@@ -168,10 +168,12 @@ var _ = Describe("Cluster Topology Integration", func() {
 		// Start agent 1
 		Expect(proxyClient1.Connect(agentCtx1)).To(Succeed())
 		Expect(proxyClient1.StartRegistrationStream(agentCtx1)).To(Succeed())
+		Expect(proxyClient1.StartClusterStateStream(agentCtx1)).To(Succeed())
 
 		// Start agent 2
 		Expect(proxyClient2.Connect(agentCtx2)).To(Succeed())
 		Expect(proxyClient2.StartRegistrationStream(agentCtx2)).To(Succeed())
+		Expect(proxyClient2.StartClusterStateStream(agentCtx2)).To(Succeed())
 
 		// Wait for agents to register
 		Eventually(func() int {
@@ -182,7 +184,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		agents := agentRegistry.ListAgents()
 		Expect(len(agents)).To(Equal(2))
 
-		// Update topology for both agents
+		// Prepare topology data
 		testTopology1 := &fodcv1.Topology{
 			Nodes: []*databasev1.Node{
 				{
@@ -192,7 +194,6 @@ var _ = Describe("Cluster Topology Integration", func() {
 				},
 			},
 		}
-		clusterManager.UpdateClusterTopology(agents[0].AgentID, testTopology1)
 
 		testTopology2 := &fodcv1.Topology{
 			Nodes: []*databasev1.Node{
@@ -203,10 +204,30 @@ var _ = Describe("Cluster Topology Integration", func() {
 				},
 			},
 		}
+
+		// Start collection in a goroutine - this sets up channels
+		ctx := context.Background()
+		done := make(chan *cluster.TopologyMap)
+		go func() {
+			done <- clusterManager.CollectClusterTopology(ctx)
+		}()
+
+		// Give it a moment to set up channels and request data
+		time.Sleep(100 * time.Millisecond)
+
+		// Update topology for both agents - this sends to collection channels
+		clusterManager.UpdateClusterTopology(agents[0].AgentID, testTopology1)
 		clusterManager.UpdateClusterTopology(agents[1].AgentID, testTopology2)
 
-		// Verify topology aggregation - collect fresh data
-		topology := clusterManager.CollectClusterTopology(context.Background())
+		// Wait for collection to complete
+		var topology *cluster.TopologyMap
+		select {
+		case topology = <-done:
+		case <-time.After(5 * time.Second):
+			Fail("Collection timed out")
+		}
+
+		Expect(topology).NotTo(BeNil())
 		Expect(len(topology.Nodes)).To(BeNumerically(">=", 2))
 
 		// Check that both agents are present

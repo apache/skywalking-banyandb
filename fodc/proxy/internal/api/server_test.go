@@ -54,14 +54,30 @@ func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 
 // mockClusterDataRequester is a mock implementation of cluster.RequestSender for testing.
 type mockClusterDataRequester struct {
-	requestErr error
+	requestErr  error
+	topologies  map[string]*fodcv1.Topology
+	clusterMgr  *cluster.Manager
 }
 
-func (m *mockClusterDataRequester) RequestClusterData(_ string) error {
-	return m.requestErr
+func (m *mockClusterDataRequester) RequestClusterData(agentID string) error {
+	if m.requestErr != nil {
+		return m.requestErr
+	}
+	// Simulate agent responding with topology
+	if topology, exists := m.topologies[agentID]; exists && m.clusterMgr != nil {
+		m.clusterMgr.UpdateClusterTopology(agentID, topology)
+	}
+	return nil
 }
 
-func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Manager) {
+func (m *mockClusterDataRequester) setTopology(agentID string, topology *fodcv1.Topology) {
+	if m.topologies == nil {
+		m.topologies = make(map[string]*fodcv1.Topology)
+	}
+	m.topologies[agentID] = topology
+}
+
+func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Manager, *mockClusterDataRequester) {
 	t.Helper()
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
@@ -70,12 +86,13 @@ func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Man
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 	mockRequester := &mockClusterDataRequester{}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
+	mockRequester.clusterMgr = clusterMgr
 	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
-	return server, testRegistry, clusterMgr
+	return server, testRegistry, clusterMgr, mockRequester
 }
 
 func TestHandleClusterTopology_Success(t *testing.T) {
-	server, testRegistry, clusterMgr := newTestServer(t)
+	server, testRegistry, _, mockRequester := newTestServer(t)
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
 		PodName:        "test-pod",
@@ -105,7 +122,7 @@ func TestHandleClusterTopology_Success(t *testing.T) {
 			},
 		},
 	}
-	clusterMgr.UpdateClusterTopology(agentID, topology)
+	mockRequester.setTopology(agentID, topology)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)

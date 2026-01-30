@@ -106,13 +106,8 @@ func (m *Manager) RemoveTopology(agentID string) {
 	}
 }
 
-// CollectClusterTopology requests and collects cluster topology from all agents.
+// CollectClusterTopology requests and collects cluster topology from all agents with context.
 func (m *Manager) CollectClusterTopology(ctx context.Context) *TopologyMap {
-	return m.CollectClusterTopologyWithContext(ctx)
-}
-
-// CollectClusterTopologyWithContext requests and collects cluster topology from all agents with context.
-func (m *Manager) CollectClusterTopologyWithContext(ctx context.Context) *TopologyMap {
 	if m.registry == nil {
 		return &TopologyMap{
 			Nodes: make([]*NodeWithStringRoles, 0),

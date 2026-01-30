@@ -181,6 +181,11 @@ func (w *ProxyClientWrapper) StartMetricsStream(ctx context.Context) error {
 	return w.client.StartMetricsStream(ctx)
 }
 
+// StartClusterStateStream establishes bi-directional cluster state stream with Proxy.
+func (w *ProxyClientWrapper) StartClusterStateStream(ctx context.Context) error {
+	return w.client.StartClusterStateStream(ctx)
+}
+
 // Start starts the proxy client with automatic connection and stream setup.
 func (w *ProxyClientWrapper) Start(ctx context.Context) error {
 	w.ctx = ctx
