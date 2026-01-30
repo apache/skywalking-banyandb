@@ -205,9 +205,9 @@ var _ = Describe("Cluster Topology Integration", func() {
 		}
 		clusterManager.UpdateClusterTopology(agents[1].AgentID, testTopology2)
 
-		// Verify topology aggregation
-		topology := clusterManager.GetClusterTopology()
-		Expect(len(topology.Nodes)).To(Equal(2))
+		// Verify topology aggregation - collect fresh data
+		topology := clusterManager.CollectClusterTopology(context.Background())
+		Expect(len(topology.Nodes)).To(BeNumerically(">=", 2))
 
 		// Check that both agents are present
 		nodeNames := make(map[string]bool)

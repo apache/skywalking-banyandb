@@ -19,13 +19,19 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+)
+
+const (
+	defaultCollectionTimeout = 10 * time.Second
 )
 
 // NodeWithStringRoles represents a node with roles as strings instead of numeric enum values.
@@ -47,11 +53,12 @@ type RequestSender interface {
 
 // Manager manages cluster state from multiple agents.
 type Manager struct {
-	clusterTopology   map[string]*TopologyMap
-	log               *logger.Logger
-	registry          *registry.AgentRegistry
-	grpcService       RequestSender
-	clusterTopologyMu sync.RWMutex
+	log          *logger.Logger
+	registry     *registry.AgentRegistry
+	grpcService  RequestSender
+	collecting   map[string]chan *TopologyMap
+	mu           sync.RWMutex
+	collectingMu sync.RWMutex
 }
 
 // NewManager creates a new cluster state manager.
@@ -60,38 +67,52 @@ func NewManager(registry *registry.AgentRegistry, grpcService RequestSender, log
 		log = logger.GetLogger("cluster-manager")
 	}
 	return &Manager{
-		registry:        registry,
-		grpcService:     grpcService,
-		log:             log,
-		clusterTopology: make(map[string]*TopologyMap),
+		registry:    registry,
+		grpcService: grpcService,
+		log:         log,
+		collecting:  make(map[string]chan *TopologyMap),
 	}
 }
 
 // SetGRPCService sets the gRPC service for sending cluster data requests.
 func (m *Manager) SetGRPCService(grpcService RequestSender) {
-	m.clusterTopologyMu.Lock()
-	defer m.clusterTopologyMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.grpcService = grpcService
 }
 
 // UpdateClusterTopology updates cluster topology for a specific agent.
 func (m *Manager) UpdateClusterTopology(agentID string, topology *fodcv1.Topology) {
-	m.clusterTopologyMu.Lock()
-	defer m.clusterTopologyMu.Unlock()
 	topologyMap := convertTopologyToMap(topology)
-	m.clusterTopology[agentID] = topologyMap
+	m.collectingMu.RLock()
+	collectCh, exists := m.collecting[agentID]
+	m.collectingMu.RUnlock()
+	if exists {
+		select {
+		case collectCh <- topologyMap:
+		default:
+			m.log.Warn().Str("agent_id", agentID).Msg("Topology collection channel full, dropping topology")
+		}
+	}
 }
 
 // RemoveTopology removes cluster topology for a specific agent.
 func (m *Manager) RemoveTopology(agentID string) {
-	m.clusterTopologyMu.Lock()
-	defer m.clusterTopologyMu.Unlock()
-
-	delete(m.clusterTopology, agentID)
+	m.collectingMu.Lock()
+	defer m.collectingMu.Unlock()
+	if collectCh, exists := m.collecting[agentID]; exists {
+		close(collectCh)
+		delete(m.collecting, agentID)
+	}
 }
 
 // CollectClusterTopology requests and collects cluster topology from all agents.
-func (m *Manager) CollectClusterTopology() *TopologyMap {
+func (m *Manager) CollectClusterTopology(ctx context.Context) *TopologyMap {
+	return m.CollectClusterTopologyWithContext(ctx)
+}
+
+// CollectClusterTopologyWithContext requests and collects cluster topology from all agents with context.
+func (m *Manager) CollectClusterTopologyWithContext(ctx context.Context) *TopologyMap {
 	if m.registry == nil {
 		return &TopologyMap{
 			Nodes: make([]*NodeWithStringRoles, 0),
@@ -105,73 +126,90 @@ func (m *Manager) CollectClusterTopology() *TopologyMap {
 			Calls: make([]*fodcv1.Call, 0),
 		}
 	}
-	if m.grpcService != nil {
-		for _, agentInfo := range agents {
-			if requestErr := m.grpcService.RequestClusterData(agentInfo.AgentID); requestErr != nil {
-				m.log.Warn().Err(requestErr).Str("agent_id", agentInfo.AgentID).Msg("Failed to request cluster data from agent")
-			}
-		}
-	}
-	m.clusterTopologyMu.RLock()
-	if len(m.clusterTopology) == 0 {
-		m.clusterTopologyMu.RUnlock()
-		return &TopologyMap{
-			Nodes: make([]*NodeWithStringRoles, 0),
-			Calls: make([]*fodcv1.Call, 0),
-		}
-	}
-	nodeMap := make(map[string]*NodeWithStringRoles)
-	callMap := make(map[string]*fodcv1.Call)
-	for _, topologyMap := range m.clusterTopology {
-		if topologyMap == nil {
-			continue
-		}
-		for _, node := range topologyMap.Nodes {
-			if node != nil && node.Metadata != nil && node.Metadata.Name != "" {
-				nodeMap[node.Metadata.Name] = node
-			}
-		}
-		for _, call := range topologyMap.Calls {
-			if call != nil && call.Id != "" {
-				callMap[call.Id] = call
-			}
-		}
-	}
-	m.clusterTopologyMu.RUnlock()
-	aggregatedNodes := make([]*NodeWithStringRoles, 0, len(nodeMap))
-	for _, node := range nodeMap {
-		aggregatedNodes = append(aggregatedNodes, node)
-	}
-	aggregatedCalls := make([]*fodcv1.Call, 0, len(callMap))
-	for _, call := range callMap {
-		aggregatedCalls = append(aggregatedCalls, call)
-	}
-	result := &TopologyMap{
-		Nodes: aggregatedNodes,
-		Calls: aggregatedCalls,
-	}
+	collectChs := make(map[string]chan *TopologyMap)
+	agentIDs := make([]string, 0, len(agents))
+	m.collectingMu.Lock()
 	for _, agentInfo := range agents {
-		m.RemoveTopology(agentInfo.AgentID)
+		collectCh := make(chan *TopologyMap, 1)
+		collectChs[agentInfo.AgentID] = collectCh
+		m.collecting[agentInfo.AgentID] = collectCh
+		agentIDs = append(agentIDs, agentInfo.AgentID)
 	}
-	return result
+	m.collectingMu.Unlock()
+	defer func() {
+		m.collectingMu.Lock()
+		for _, agentID := range agentIDs {
+			if collectCh, exists := m.collecting[agentID]; exists {
+				close(collectCh)
+				delete(m.collecting, agentID)
+			}
+		}
+		m.collectingMu.Unlock()
+	}()
+	for _, agentInfo := range agents {
+		select {
+		case <-ctx.Done():
+			return &TopologyMap{
+				Nodes: make([]*NodeWithStringRoles, 0),
+				Calls: make([]*fodcv1.Call, 0),
+			}
+		default:
+		}
+		if m.grpcService != nil {
+			if requestErr := m.grpcService.RequestClusterData(agentInfo.AgentID); requestErr != nil {
+				m.log.Warn().
+					Err(requestErr).
+					Str("agent_id", agentInfo.AgentID).
+					Msg("Failed to request cluster data from agent")
+				m.collectingMu.Lock()
+				if collectCh, exists := m.collecting[agentInfo.AgentID]; exists {
+					close(collectCh)
+					delete(m.collecting, agentInfo.AgentID)
+				}
+				m.collectingMu.Unlock()
+				delete(collectChs, agentInfo.AgentID)
+			}
+		}
+	}
+	timeout := defaultCollectionTimeout
+	allTopologies := make([]*TopologyMap, 0)
+	var topologiesMu sync.Mutex
+	var wg sync.WaitGroup
+	for agentID, collectCh := range collectChs {
+		wg.Add(1)
+		go func(id string, ch chan *TopologyMap) {
+			defer wg.Done()
+			agentCtx, agentCancel := context.WithTimeout(ctx, timeout)
+			defer agentCancel()
+			select {
+			case <-agentCtx.Done():
+				m.log.Warn().
+					Str("agent_id", id).
+					Msg("Timeout waiting for topology from agent")
+			case topologyMap := <-ch:
+				if topologyMap != nil {
+					topologiesMu.Lock()
+					allTopologies = append(allTopologies, topologyMap)
+					topologiesMu.Unlock()
+				}
+			}
+		}(agentID, collectCh)
+	}
+	wg.Wait()
+	return m.aggregateTopologies(allTopologies)
 }
 
-// GetClusterTopology returns aggregated cluster topology from all agents.
-func (m *Manager) GetClusterTopology() *TopologyMap {
-	m.clusterTopologyMu.RLock()
-	defer m.clusterTopologyMu.RUnlock()
-
-	if len(m.clusterTopology) == 0 {
+// aggregateTopologies aggregates topology from multiple agents.
+func (m *Manager) aggregateTopologies(topologies []*TopologyMap) *TopologyMap {
+	if len(topologies) == 0 {
 		return &TopologyMap{
 			Nodes: make([]*NodeWithStringRoles, 0),
 			Calls: make([]*fodcv1.Call, 0),
 		}
 	}
-
 	nodeMap := make(map[string]*NodeWithStringRoles)
 	callMap := make(map[string]*fodcv1.Call)
-
-	for _, topologyMap := range m.clusterTopology {
+	for _, topologyMap := range topologies {
 		if topologyMap == nil {
 			continue
 		}
@@ -186,17 +224,14 @@ func (m *Manager) GetClusterTopology() *TopologyMap {
 			}
 		}
 	}
-
 	aggregatedNodes := make([]*NodeWithStringRoles, 0, len(nodeMap))
 	for _, node := range nodeMap {
 		aggregatedNodes = append(aggregatedNodes, node)
 	}
-
 	aggregatedCalls := make([]*fodcv1.Call, 0, len(callMap))
 	for _, call := range callMap {
 		aggregatedCalls = append(aggregatedCalls, call)
 	}
-
 	return &TopologyMap{
 		Nodes: aggregatedNodes,
 		Calls: aggregatedCalls,

@@ -18,6 +18,8 @@
 package cluster
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +32,43 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+type mockRequestSender struct {
+	requestErrors   map[string]error
+	requestedAgents []string
+	mu              sync.Mutex
+}
+
+func newMockRequestSender() *mockRequestSender {
+	return &mockRequestSender{
+		requestErrors:   make(map[string]error),
+		requestedAgents: make([]string, 0),
+	}
+}
+
+func (m *mockRequestSender) RequestClusterData(agentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestedAgents = append(m.requestedAgents, agentID)
+	if err, exists := m.requestErrors[agentID]; exists {
+		return err
+	}
+	return nil
+}
+
+func (m *mockRequestSender) GetRequestedAgents() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]string, len(m.requestedAgents))
+	copy(result, m.requestedAgents)
+	return result
+}
+
+func (m *mockRequestSender) SetRequestError(agentID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestErrors[agentID] = err
+}
 
 func initTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
@@ -45,8 +84,8 @@ func TestNewManager(t *testing.T) {
 
 	require.NotNil(t, mgr)
 	assert.Equal(t, log, mgr.log)
-	assert.NotNil(t, mgr.clusterTopology)
-	assert.Empty(t, mgr.clusterTopology)
+	assert.NotNil(t, mgr.collecting)
+	assert.Empty(t, mgr.collecting)
 }
 
 func TestManager_UpdateClusterTopology(t *testing.T) {
@@ -70,45 +109,56 @@ func TestManager_UpdateClusterTopology(t *testing.T) {
 		},
 	}
 
+	// Update topology without active collection - should not error
 	mgr.UpdateClusterTopology("agent1", topology)
 
-	// Verify topology was stored
-	aggregatedTopology := mgr.GetClusterTopology()
-	require.NotNil(t, aggregatedTopology)
-	assert.Equal(t, 1, len(aggregatedTopology.Nodes))
-	assert.Equal(t, 1, len(aggregatedTopology.Calls))
-	assert.Equal(t, "test-node", aggregatedTopology.Nodes[0].Metadata.Name)
-	assert.Equal(t, "call-1", aggregatedTopology.Calls[0].Id)
-}
-
-func TestManager_RemoveAgentState(t *testing.T) {
-	log := initTestLogger(t)
-	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
-	mgr := NewManager(testRegistry, nil, log)
-
-	topology := &fodcv1.Topology{
-		Nodes: []*databasev1.Node{
-			{
-				Metadata: &commonv1.Metadata{Name: "test-node"},
-			},
-		},
-		Calls: []*fodcv1.Call{},
-	}
-
-	mgr.UpdateClusterTopology("agent1", topology)
-	mgr.RemoveTopology("agent1")
-
-	// Verify topology was removed
-	aggregatedTopology := mgr.GetClusterTopology()
+	// With no agents registered, CollectClusterTopology should return empty
+	aggregatedTopology := mgr.CollectClusterTopology(context.Background())
 	require.NotNil(t, aggregatedTopology)
 	assert.Empty(t, aggregatedTopology.Nodes)
 	assert.Empty(t, aggregatedTopology.Calls)
 }
 
-func TestManager_GetClusterTopology_MultipleAgents(t *testing.T) {
+func TestManager_RemoveTopology(t *testing.T) {
 	log := initTestLogger(t)
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
+
+	// RemoveTopology should not error even if no collection is active
+	mgr.RemoveTopology("agent1")
+
+	// With no agents registered, CollectClusterTopology should return empty
+	aggregatedTopology := mgr.CollectClusterTopology(context.Background())
+	require.NotNil(t, aggregatedTopology)
+	assert.Empty(t, aggregatedTopology.Nodes)
+	assert.Empty(t, aggregatedTopology.Calls)
+}
+
+func TestManager_CollectClusterTopology_MultipleAgents(t *testing.T) {
+	log := initTestLogger(t)
+	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mockSender := newMockRequestSender()
+	mgr := NewManager(testRegistry, mockSender, log)
+
+	// Register agents
+	ctx := context.Background()
+	identity1 := registry.AgentIdentity{
+		Role:           "test-role",
+		PodName:        "test-pod-1",
+		ContainerNames: []string{"container1"},
+		Labels:         map[string]string{"env": "test"},
+	}
+	identity2 := registry.AgentIdentity{
+		Role:           "test-role",
+		PodName:        "test-pod-2",
+		ContainerNames: []string{"container2"},
+		Labels:         map[string]string{"env": "test"},
+	}
+	agentID1, err1 := testRegistry.RegisterAgent(ctx, identity1)
+	require.NoError(t, err1)
+	agentID2, err2 := testRegistry.RegisterAgent(ctx, identity2)
+	require.NoError(t, err2)
 
 	topology1 := &fodcv1.Topology{
 		Nodes: []*databasev1.Node{
@@ -140,14 +190,33 @@ func TestManager_GetClusterTopology_MultipleAgents(t *testing.T) {
 		},
 	}
 
-	mgr.UpdateClusterTopology("agent1", topology1)
-	mgr.UpdateClusterTopology("agent2", topology2)
+	// Start collection in a goroutine
+	done := make(chan *TopologyMap)
+	go func() {
+		done <- mgr.CollectClusterTopology(context.Background())
+	}()
 
-	aggregatedTopology := mgr.GetClusterTopology()
+	// Give it a moment to set up channels and request data
+	time.Sleep(50 * time.Millisecond)
 
-	require.NotNil(t, aggregatedTopology)
-	// Should have 2 unique nodes (node1 and node2)
-	assert.Equal(t, 2, len(aggregatedTopology.Nodes))
-	// Should have 2 unique calls
-	assert.Equal(t, 2, len(aggregatedTopology.Calls))
+	// Verify requests were made
+	requestedAgents := mockSender.GetRequestedAgents()
+	assert.Contains(t, requestedAgents, agentID1)
+	assert.Contains(t, requestedAgents, agentID2)
+
+	// Update topology - this should send to the collection channels
+	mgr.UpdateClusterTopology(agentID1, topology1)
+	mgr.UpdateClusterTopology(agentID2, topology2)
+
+	// Wait for collection to complete (with timeout)
+	select {
+	case aggregatedTopology := <-done:
+		require.NotNil(t, aggregatedTopology)
+		// Should have 2 unique nodes (node1 and node2)
+		assert.Equal(t, 2, len(aggregatedTopology.Nodes))
+		// Should have 2 unique calls
+		assert.Equal(t, 2, len(aggregatedTopology.Calls))
+	case <-time.After(2 * time.Second):
+		t.Fatal("Collection timed out")
+	}
 }

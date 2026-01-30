@@ -188,6 +188,7 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 	c.logger.Info().
 		Str("proxy_addr", c.proxyAddr).
 		Str("agent_id", resp.AgentId).
+		Str("node_role", c.nodeRole).
 		Dur("heartbeat_interval", c.heartbeatInterval).
 		Msg("Agent registered with Proxy")
 

@@ -237,12 +237,6 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 			allAddrs[addr] = true
 		}
 	}
-	c.log.Info().
-		Int("currentNodes_count", len(currentNodes)).
-		Int("clusterStates_count", len(clusterStates)).
-		Int("processed_endpoints_count", len(allAddrs)).
-		Msg("Start to process cluster states (only endpoints with both currentNode and clusterState)")
-
 	for addrStr := range allAddrs {
 		currentNode := currentNodes[addrStr]
 		clusterState := clusterStates[addrStr]
@@ -412,7 +406,7 @@ func NodeRoleFromNode(node *databasev1.Node) string {
 		case databasev1.Role_ROLE_DATA:
 			return databasev1.Role_name[int32(databasev1.Role_ROLE_DATA)]
 		default:
-			return databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
+			continue
 		}
 	}
 	return databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
