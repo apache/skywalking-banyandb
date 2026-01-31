@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -67,7 +68,7 @@ var (
 		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 	}}
 	// TopNTagNames is the tag names of the topN result measure.
-	TopNTagNames = []string{"name", "direction", "group", "source"}
+	TopNTagNames = []string{"name", "direction", "group", "parameters"}
 )
 
 // SchemaService allows querying schema information.
@@ -711,4 +712,36 @@ func GetTopNSchemaMetadata(group string) *commonv1.Metadata {
 
 func getKey(metadata *commonv1.Metadata) string {
 	return path.Join(metadata.GetGroup(), metadata.GetName())
+}
+
+// TopNParameters defines the structure for the "parameters" tag value (JSON).
+type TopNParameters struct {
+	// Limit defines the number of top items to be kept.
+	Limit int64 `json:"limit"`
+}
+
+// String implements the fmt.Stringer interface.
+func (p *TopNParameters) String() string {
+	if p == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+// ParseTopNParameters decodes the JSON metadata.
+func ParseTopNParameters(jsonStr string) (*TopNParameters, error) {
+	if jsonStr == "" {
+		return &TopNParameters{}, nil
+	}
+
+	p := &TopNParameters{}
+	err := json.Unmarshal([]byte(jsonStr), p)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }

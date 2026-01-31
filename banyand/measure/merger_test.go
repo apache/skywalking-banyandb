@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -211,6 +212,102 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			},
 			want: &blockPointer{block: mergedBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 4}}},
 		},
+		{
+			name: "Merge two topN blocks",
+			left: &blockPointer{
+				block: block{
+					timestamps: []int64{1, 2},
+					versions:   []int64{1, 2},
+					tagFamilies: []columnFamily{
+						{
+							name: "_topN",
+							columns: []column{
+								{
+									name: "name", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("value1"),
+										[]byte("value2"),
+									},
+								},
+								{
+									name: "direction", valueType: pbv1.ValueTypeInt64,
+									values: [][]byte{
+										convert.Int64ToBytes(2),
+										convert.Int64ToBytes(2),
+									},
+								},
+								{
+									name: "group", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("value3"),
+										[]byte("value4"),
+									},
+								},
+								{
+									name: "parameters", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("{\"limit\":1000}"),
+										[]byte("{\"limit\":1000}"),
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "value", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), leftTopNBinaryData}},
+						},
+					},
+				},
+			},
+			right: &blockPointer{
+				block: block{
+					timestamps: []int64{2, 3},
+					versions:   []int64{3, 4},
+					tagFamilies: []columnFamily{
+						{
+							name: "_topN",
+							columns: []column{
+								{
+									name: "name", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("value5"),
+										[]byte("value6"),
+									},
+								},
+								{
+									name: "direction", valueType: pbv1.ValueTypeInt64,
+									values: [][]byte{
+										convert.Int64ToBytes(2),
+										convert.Int64ToBytes(2),
+									},
+								},
+								{
+									name: "group", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("value7"),
+										[]byte("value8"),
+									},
+								},
+								{
+									name: "parameters", valueType: pbv1.ValueTypeStr,
+									values: [][]byte{
+										[]byte("{\"limit\":1000}"),
+										[]byte("{\"limit\":1000}"),
+									},
+								},
+							},
+						},
+					},
+					field: columnFamily{
+						columns: []column{
+							{name: "value", valueType: pbv1.ValueTypeStr, values: [][]byte{rightTopNBinaryData, []byte("field3")}},
+						},
+					},
+				},
+			},
+			want: &blockPointer{block: mergedTopNBlock, bm: blockMetadata{timestamps: timestampsMetadata{min: 1, max: 3}}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -223,6 +320,61 @@ func Test_mergeTwoBlocks(t *testing.T) {
 		})
 	}
 }
+
+var (
+	leftTopNValue = &TopNValue{
+		valueName:      "value",
+		entityTagNames: []string{"entity_id"},
+		values:         []int64{1000, 200, 300, 400, 500},
+		entities: [][]*modelv1.TagValue{
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+		},
+	}
+	rightTopNValue = &TopNValue{
+		valueName:      "value",
+		entityTagNames: []string{"entity_id"},
+		values:         []int64{550, 300, 530, 600, 400},
+		entities: [][]*modelv1.TagValue{
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_7"}}}},
+		},
+	}
+
+	mergedTopNValue = &TopNValue{
+		valueName:      "value",
+		entityTagNames: []string{"entity_id"},
+		values:         []int64{1000, 600, 550, 530, 400, 300, 200},
+		entities: [][]*modelv1.TagValue{
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_7"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
+		},
+	}
+
+	leftTopNBinaryData = func() []byte {
+		b, _ := leftTopNValue.marshal(make([]byte, 0, 256))
+		return b
+	}()
+	rightTopNBinaryData = func() []byte {
+		b, _ := rightTopNValue.marshal(make([]byte, 0, 256))
+		return b
+	}()
+	mergedTopNBinaryData = func() []byte {
+		b, _ := mergedTopNValue.marshal(make([]byte, 0, 256))
+		return b
+	}()
+)
 
 // Test_mergeTwoBlocks_edgeCase tests the edge case that previously caused panic:
 // runtime error: index out of range [-1] at merger.go:394.
@@ -326,6 +478,55 @@ var mergedBlock = block{
 	field: columnFamily{
 		columns: []column{
 			{name: "strField", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), []byte("field2"), []byte("field3"), []byte("field4")}},
+		},
+	},
+}
+
+var mergedTopNBlock = block{
+	timestamps: []int64{1, 2, 3},
+	versions:   []int64{1, 3, 4},
+	tagFamilies: []columnFamily{
+		{
+			name: "_topN",
+			columns: []column{
+				{
+					name: "name", valueType: pbv1.ValueTypeStr,
+					values: [][]byte{
+						[]byte("value1"),
+						[]byte("value5"),
+						[]byte("value6"),
+					},
+				},
+				{
+					name: "direction", valueType: pbv1.ValueTypeInt64,
+					values: [][]byte{
+						convert.Int64ToBytes(2),
+						convert.Int64ToBytes(2),
+						convert.Int64ToBytes(2),
+					},
+				},
+				{
+					name: "group", valueType: pbv1.ValueTypeStr,
+					values: [][]byte{
+						[]byte("value3"),
+						[]byte("value7"),
+						[]byte("value8"),
+					},
+				},
+				{
+					name: "parameters", valueType: pbv1.ValueTypeStr,
+					values: [][]byte{
+						[]byte("{\"limit\":1000}"),
+						[]byte("{\"limit\":1000}"),
+						[]byte("{\"limit\":1000}"),
+					},
+				},
+			},
+		},
+	},
+	field: columnFamily{
+		columns: []column{
+			{name: "value", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("field1"), mergedTopNBinaryData, []byte("field3")}},
 		},
 	},
 }

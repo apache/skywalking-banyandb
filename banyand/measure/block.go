@@ -731,13 +731,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 		valueName := topNValue.valueName
 		entityTagNames := topNValue.entityTagNames
 
-		for j, entityList := range topNValue.entities {
-			entityValues := make(pbv1.EntityValues, 0, len(entityList))
-			for _, e := range entityList {
-				entityValues = append(entityValues, e)
-			}
-			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, r.Versions[len(r.Versions)-1])
-		}
+		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamps, r.Versions[len(r.Versions)-1])
 
 		topNValue.Reset()
 		if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
@@ -745,13 +739,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 			continue
 		}
 
-		for j, entityList := range topNValue.entities {
-			entityValues := make(pbv1.EntityValues, 0, len(entityList))
-			for _, e := range entityList {
-				entityValues = append(entityValues, e)
-			}
-			topNPostAggregator.Put(entityValues, topNValue.values[j], uTimestamps, bc.versions[bc.idx])
-		}
+		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamps, bc.versions[bc.idx])
 
 		items, err := topNPostAggregator.Flush()
 		if err != nil {
@@ -779,7 +767,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 		}
 	}
 
-	if bc.versions[bc.idx] >= r.Versions[len(r.Versions)-1] {
+	if bc.versions[bc.idx] > r.Versions[len(r.Versions)-1] {
 		r.Versions[len(r.Versions)-1] = bc.versions[bc.idx]
 	}
 }
@@ -955,16 +943,8 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 	if offset <= b.idx {
 		return
 	}
-	if len(bi.tagFamilies) == 0 && len(b.tagFamilies) > 0 {
-		fullTagAppend(bi, b, offset)
-	} else {
-		if err := fastTagAppend(bi, b, offset); err != nil {
-			if log.Debug().Enabled() {
-				log.Debug().Msgf("fastTagMerge failed: %v; falling back to fullTagMerge", err)
-			}
-			fullTagAppend(bi, b, offset)
-		}
-	}
+
+	bi.appendTagFamilies(b, offset)
 
 	if len(bi.field.columns) == 0 && len(b.field.columns) > 0 {
 		fullFieldAppend(bi, b, offset)
@@ -1148,6 +1128,95 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 				bi.field.columns[i].values = append(bi.field.columns[i].values, nil)
 			}
 		}
+	}
+}
+
+func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, right *blockPointer, rightIdx int, topNPostAggregator PostProcessor) {
+	topNValue := GenerateTopNValue()
+	defer ReleaseTopNValue(topNValue)
+	decoder := GenerateTopNValuesDecoder()
+	defer ReleaseTopNValuesDecoder(decoder)
+
+	uTimestamp := uint64(right.timestamps[rightIdx])
+	marshalBuf := make([]byte, 0, 128)
+	leftVer, rightVer := left.versions[leftIdx], right.versions[rightIdx]
+
+	for idx := range right.field.columns {
+		topNValue.Reset()
+		if err := topNValue.Unmarshal(left.field.columns[idx].values[leftIdx], decoder); err != nil {
+			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+			// avoid index out-of-bounds issues
+			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
+			continue
+		}
+
+		valueName := topNValue.valueName
+		entityTagNames := topNValue.entityTagNames
+
+		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, leftVer)
+
+		topNValue.Reset()
+		if err := topNValue.Unmarshal(right.field.columns[idx].values[rightIdx], decoder); err != nil {
+			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
+			continue
+		}
+
+		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, rightVer)
+
+		topNValue.Reset()
+		topNValue.setMetadata(valueName, entityTagNames)
+
+		items, err := topNPostAggregator.Flush()
+		if err != nil {
+			log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
+			continue
+		}
+
+		for _, item := range items {
+			topNValue.addValue(item.val, item.values)
+		}
+
+		marshalBuf = marshalBuf[:0]
+		buf, err := topNValue.marshal(marshalBuf)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to marshal merged topN value")
+			continue
+		}
+
+		bi.field.columns[idx].values = append(bi.field.columns[idx].values, buf)
+	}
+
+	bi.timestamps = append(bi.timestamps, right.timestamps[rightIdx])
+
+	if rightVer >= leftVer {
+		bi.appendTagFamilies(right, rightIdx+1)
+		bi.versions = append(bi.versions, rightVer)
+	} else {
+		bi.appendTagFamilies(left, leftIdx+1)
+		bi.versions = append(bi.versions, leftVer)
+	}
+}
+
+func (bi *blockPointer) appendTagFamilies(b *blockPointer, offset int) {
+	if len(bi.tagFamilies) == 0 && len(b.tagFamilies) > 0 {
+		fullTagAppend(bi, b, offset)
+		return
+	}
+
+	if err := fastTagAppend(bi, b, offset); err != nil {
+		if log.Debug().Enabled() {
+			log.Debug().Msgf("fastTagAppend failed: %v; falling back to fullTagAppend", err)
+		}
+		fullTagAppend(bi, b, offset)
+	}
+}
+
+func putEntitiesToAggregator(topNValue *TopNValue, aggregator PostProcessor, timestamp uint64, version int64) {
+	for i, entityList := range topNValue.entities {
+		entityValues := make(pbv1.EntityValues, len(entityList))
+		copy(entityValues, entityList)
+		aggregator.Put(entityValues, topNValue.values[i], timestamp, version)
 	}
 }
 
