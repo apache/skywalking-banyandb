@@ -86,6 +86,7 @@ type schemaRepo struct {
 	nodeID           string
 	path             string
 	closingGroupsMu  sync.RWMutex
+	role             databasev1.Role
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) *schemaRepo {
@@ -96,6 +97,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		pipeline:      svc.localPipeline,
 		nodeID:        nodeID,
 		closingGroups: make(map[string]struct{}),
+		role:          databasev1.Role_ROLE_DATA,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -114,6 +116,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grp
 		metadata:      svc.metadata,
 		pipeline:      pipeline,
 		closingGroups: make(map[string]struct{}),
+		role:          databasev1.Role_ROLE_LIAISON,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -369,6 +372,186 @@ func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, optio
 		return nil, fmt.Errorf("queue for group %s not found", groupName)
 	}
 	return db.(*wqueue.Queue[*tsTable, option]), nil
+}
+
+// CollectDataInfo collects data info for a specific group.
+func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	if sr.nodeID == "" {
+		return nil, nil
+	}
+	node, nodeErr := sr.metadata.NodeRegistry().GetNode(ctx, sr.nodeID)
+	if nodeErr != nil {
+		return nil, nodeErr
+	}
+	tsdb, tsdbErr := sr.loadTSDB(group)
+	if tsdbErr != nil {
+		return nil, tsdbErr
+	}
+	if tsdb == nil {
+		return nil, nil
+	}
+	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
+		Start: time.Unix(0, 0),
+		End:   time.Unix(0, timestamp.MaxNanoTime),
+	})
+	if segmentsErr != nil {
+		return nil, segmentsErr
+	}
+	var segmentInfoList []*databasev1.SegmentInfo
+	var totalDataSize int64
+	for _, segment := range segments {
+		timeRange := segment.GetTimeRange()
+		tables, _ := segment.Tables()
+		var shardInfoList []*databasev1.ShardInfo
+		for shardIdx, table := range tables {
+			shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
+			shardInfoList = append(shardInfoList, shardInfo)
+			totalDataSize += shardInfo.DataSizeBytes
+		}
+		seriesIndexInfo := sr.collectSeriesIndexInfo(segment)
+		totalDataSize += seriesIndexInfo.DataSizeBytes
+		segmentInfo := &databasev1.SegmentInfo{
+			SegmentId:       fmt.Sprintf("%d-%d", timeRange.Start.UnixNano(), timeRange.End.UnixNano()),
+			TimeRangeStart:  timeRange.Start.Format(time.RFC3339Nano),
+			TimeRangeEnd:    timeRange.End.Format(time.RFC3339Nano),
+			ShardInfo:       shardInfoList,
+			SeriesIndexInfo: seriesIndexInfo,
+		}
+		segmentInfoList = append(segmentInfoList, segmentInfo)
+		segment.DecRef()
+	}
+	dataInfo := &databasev1.DataInfo{
+		Node:          node,
+		SegmentInfo:   segmentInfoList,
+		DataSizeBytes: totalDataSize,
+	}
+	return dataInfo, nil
+}
+
+func (sr *schemaRepo) collectSeriesIndexInfo(segment storage.Segment[*tsTable, option]) *databasev1.SeriesIndexInfo {
+	indexDB := segment.IndexDB()
+	if indexDB == nil {
+		return &databasev1.SeriesIndexInfo{}
+	}
+	dataCount, dataSizeBytes := indexDB.Stats()
+	return &databasev1.SeriesIndexInfo{
+		DataCount:     dataCount,
+		DataSizeBytes: dataSizeBytes,
+	}
+}
+
+func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.ShardInfo {
+	tst, ok := table.(*tsTable)
+	if !ok {
+		return &databasev1.ShardInfo{
+			ShardId: shardID,
+		}
+	}
+	snapshot := tst.currentSnapshot()
+	if snapshot == nil {
+		return &databasev1.ShardInfo{
+			ShardId: shardID,
+		}
+	}
+	defer snapshot.decRef()
+	var totalCount, compressedSize, partCount uint64
+	for _, pw := range snapshot.parts {
+		if pw.p != nil {
+			totalCount += pw.p.partMetadata.TotalCount
+			compressedSize += pw.p.partMetadata.CompressedSizeBytes
+			partCount++
+		} else if pw.mp != nil {
+			totalCount += pw.mp.partMetadata.TotalCount
+			compressedSize += pw.mp.partMetadata.CompressedSizeBytes
+			partCount++
+		}
+	}
+	return &databasev1.ShardInfo{
+		ShardId:           shardID,
+		DataCount:         int64(totalCount),
+		DataSizeBytes:     int64(compressedSize),
+		PartCount:         int64(partCount),
+		InvertedIndexInfo: &databasev1.InvertedIndexInfo{},
+		SidxInfo:          &databasev1.SIDXInfo{},
+	}
+}
+
+func (sr *schemaRepo) collectPendingWriteInfo(groupName string) (int64, error) {
+	if sr == nil || sr.Repository == nil {
+		return 0, fmt.Errorf("schema repository is not initialized")
+	}
+	if sr.role == databasev1.Role_ROLE_LIAISON {
+		queue, queueErr := sr.loadQueue(groupName)
+		if queueErr != nil {
+			return 0, fmt.Errorf("failed to load queue: %w", queueErr)
+		}
+		if queue == nil {
+			return 0, nil
+		}
+		var pendingWriteCount int64
+		for _, sq := range queue.SubQueues() {
+			if sq != nil {
+				pendingWriteCount += sq.getPendingDataCount()
+			}
+		}
+		return pendingWriteCount, nil
+	}
+	// Standalone mode
+	tsdb, tsdbErr := sr.loadTSDB(groupName)
+	if tsdbErr != nil {
+		return 0, fmt.Errorf("failed to load TSDB: %w", tsdbErr)
+	}
+	if tsdb == nil {
+		return 0, fmt.Errorf("TSDB is nil for group %s", groupName)
+	}
+	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
+		Start: time.Unix(0, 0),
+		End:   time.Unix(0, timestamp.MaxNanoTime),
+	})
+	if segmentsErr != nil {
+		return 0, fmt.Errorf("failed to select segments: %w", segmentsErr)
+	}
+	var pendingWriteCount int64
+	for _, segment := range segments {
+		tables, _ := segment.Tables()
+		for _, tst := range tables {
+			pendingWriteCount += tst.getPendingDataCount()
+		}
+		segment.DecRef()
+	}
+	return pendingWriteCount, nil
+}
+
+func (sr *schemaRepo) collectPendingSyncInfo(groupName string) (partCount int64, totalSizeBytes int64, err error) {
+	if sr == nil || sr.Repository == nil {
+		return 0, 0, fmt.Errorf("schema repository is not initialized")
+	}
+	// Only liaison nodes collect pending sync info
+	if sr.role != databasev1.Role_ROLE_LIAISON {
+		return 0, 0, nil
+	}
+	queue, queueErr := sr.loadQueue(groupName)
+	if queueErr != nil {
+		return 0, 0, fmt.Errorf("failed to load queue: %w", queueErr)
+	}
+	if queue == nil {
+		return 0, 0, nil
+	}
+	for _, sq := range queue.SubQueues() {
+		if sq != nil {
+			snapshot := sq.currentSnapshot()
+			if snapshot != nil {
+				for _, pw := range snapshot.parts {
+					if pw.mp == nil && pw.p != nil && pw.p.partMetadata.TotalCount > 0 {
+						partCount++
+						totalSizeBytes += int64(pw.p.partMetadata.CompressedSizeBytes)
+					}
+				}
+				snapshot.decRef()
+			}
+		}
+	}
+	return partCount, totalSizeBytes, nil
 }
 
 func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchemaRegistry schema.Measure, group string) {
@@ -676,6 +859,7 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
 	}
 }
