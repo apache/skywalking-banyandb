@@ -828,6 +828,7 @@ type Store interface {
 	CollectMetrics(...string)
 	Reset()
 	TakeFileSnapshot(dst string) error
+	Stats() (dataCount int64, dataSizeBytes int64)
 }
 
 // Series represents a series in an index.

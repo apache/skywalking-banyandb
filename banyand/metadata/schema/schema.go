@@ -38,6 +38,16 @@ type EventHandler interface {
 	OnDelete(Metadata)
 }
 
+// DataInfoCollector provides methods to collect data node info.
+type DataInfoCollector interface {
+	CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error)
+}
+
+// LiaisonInfoCollector provides methods to collect liaison node info.
+type LiaisonInfoCollector interface {
+	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
+}
+
 // UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.
 type UnimplementedOnInitHandler struct{}
 
