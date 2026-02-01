@@ -115,7 +115,7 @@ var _ = Describe("Test Case 2: Buffer Overflow Handling", func() {
 
 		// Stop metrics server
 		if metricsServer != nil {
-			stopErr := metricsServer.Stop()
+			stopErr := metricsServer.Stop(context.Background())
 			Expect(stopErr).NotTo(HaveOccurred())
 		}
 	})

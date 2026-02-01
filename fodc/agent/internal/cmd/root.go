@@ -29,10 +29,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
-	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -56,6 +59,8 @@ var (
 	pollMetricsPorts             []string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
+	ktmEnabled                   bool
+	ktmInterval                  time.Duration
 	proxyAddr                    string
 	nodeRole                     string
 	nodeLabels                   string
@@ -102,6 +107,127 @@ func init() {
 		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
 		"Interval for reconnection attempts when connection to Proxy is lost")
+	rootCmd.Flags().BoolVar(&ktmEnabled, "ktm-enabled", false, "Enable Kernel Trace Module (eBPF)")
+	rootCmd.Flags().DurationVar(&ktmInterval, "ktm-interval", 10*time.Second, "Interval for KTM metrics collection")
+}
+
+func calculateCapacitySize(log *logger.Logger, maxMemoryUsagePercent int) int64 {
+	memoryLimit, memLimitErr := cgroups.MemoryLimit()
+	if memLimitErr != nil {
+		// On non-Linux systems (e.g., macOS), cgroups are not available
+		// This is expected and not an error condition
+		if runtime.GOOS != "linux" || strings.Contains(memLimitErr.Error(), "mountinfo") {
+			log.Debug().Err(memLimitErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
+		} else {
+			log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
+		}
+		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
+	}
+
+	var capacitySize int64
+	if memoryLimit > 0 {
+		capacitySize = (memoryLimit * int64(maxMemoryUsagePercent)) / 100
+	} else {
+		// If memory limit is unlimited (-1) or invalid, use a reasonable default
+		// Default to 100MB for metrics storage
+		capacitySize = 100 * 1024 * 1024
+		log.Info().Msg("Memory limit is unlimited or invalid, using default capacity of 100MB")
+	}
+
+	log.Info().
+		Int64("memory-limit-bytes", memoryLimit).
+		Int("memory-usage-percent", maxMemoryUsagePercent).
+		Int64("capacity-size-bytes", capacitySize).
+		Msg("Flight Recorder capacity configured")
+
+	return capacitySize
+}
+
+func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder) func() {
+	if !ktmEnabled {
+		return nil
+	}
+
+	// Check if running on Linux
+	if runtime.GOOS != "linux" {
+		log.Info().Str("os", runtime.GOOS).Msg("KTM is only supported on Linux, skipping initialization")
+		// Write ktm_status=0 (Disabled) to Flight Recorder
+		if updateErr := fr.Update([]fodcmetrics.RawMetric{
+			{
+				Name:  "ktm_status",
+				Value: 0,
+				Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+			},
+		}); updateErr != nil {
+			log.Warn().Err(updateErr).Msg("Failed to write ktm_status metric")
+		}
+		return nil
+	}
+
+	startStop, startErr := startKTM(ctx, *log.Logger, fr)
+	if startErr != nil {
+		log.Warn().Err(startErr).Msg("KTM startup failed, continuing without kernel tracing")
+		// Write ktm_status=0 (Disabled) to Flight Recorder
+		if updateErr := fr.Update([]fodcmetrics.RawMetric{
+			{
+				Name:  "ktm_status",
+				Value: 0,
+				Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+			},
+		}); updateErr != nil {
+			log.Warn().Err(updateErr).Msg("Failed to write ktm_status metric")
+		}
+		return nil
+	}
+	return startStop
+}
+
+func setupProxyClient(
+	ctx context.Context,
+	log *logger.Logger,
+	fr *flightrecorder.FlightRecorder,
+	metricsServer *server.Server,
+) (*proxy.Client, context.CancelFunc, error) {
+	if proxyAddr == "" || podName == "" || nodeRole == "" {
+		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
+		return nil, nil, nil
+	}
+
+	labelsMap, parseErr := parseLabels(nodeLabels)
+	if parseErr != nil {
+		if stopErr := metricsServer.Stop(ctx); stopErr != nil {
+			log.Warn().Err(stopErr).Msg("Failed to stop metrics server")
+		}
+		return nil, nil, fmt.Errorf("failed to parse node labels: %w", parseErr)
+	}
+
+	proxyClient := proxy.NewClient(
+		proxyAddr,
+		nodeRole,
+		podName,
+		containerNames,
+		labelsMap,
+		heartbeatInterval,
+		reconnectInterval,
+		fr,
+		log,
+	)
+
+	proxyCtx, proxyCancel := context.WithCancel(ctx)
+
+	go func() {
+		if startErr := proxyClient.Start(proxyCtx); startErr != nil {
+			log.Error().Err(startErr).Msg("Proxy client error")
+		}
+	}()
+
+	log.Info().
+		Str("proxy_addr", proxyAddr).
+		Str("pod_name", podName).
+		Str("node_role", nodeRole).
+		Msg("Proxy client started")
+
+	return proxyClient, proxyCancel, nil
 }
 
 // runFODC is the main function for the FODC agent.
@@ -136,33 +262,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
 	}
 
-	memoryLimit, memLimitErr := cgroups.MemoryLimit()
-	if memLimitErr != nil {
-		// On non-Linux systems (e.g., macOS), cgroups are not available
-		// This is expected and not an error condition
-		if runtime.GOOS != "linux" || strings.Contains(memLimitErr.Error(), "mountinfo") {
-			log.Debug().Err(memLimitErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
-		} else {
-			log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
-		}
-		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
-	}
-
-	var capacitySize int64
-	if memoryLimit > 0 {
-		capacitySize = (memoryLimit * int64(maxMetricsMemoryUsagePercent)) / 100
-	} else {
-		// If memory limit is unlimited (-1) or invalid, use a reasonable default
-		// Default to 100MB for metrics storage
-		capacitySize = 100 * 1024 * 1024
-		log.Info().Msg("Memory limit is unlimited or invalid, using default capacity of 100MB")
-	}
-
-	log.Info().
-		Int64("memory-limit-bytes", memoryLimit).
-		Int("memory-usage-percent", maxMetricsMemoryUsagePercent).
-		Int64("capacity-size-bytes", capacitySize).
-		Msg("Flight Recorder capacity configured")
+	capacitySize := calculateCapacitySize(log, maxMetricsMemoryUsagePercent)
 
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
 
@@ -188,48 +288,22 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval, nodeRole, podName, containerNames)
 
 	ctx := context.Background()
+
+	stopKTM := initializeKTM(ctx, log, fr)
+
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
-		_ = metricsServer.Stop()
+		_ = metricsServer.Stop(ctx)
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
 
 	stopCh := wd.Serve()
 
-	var proxyClient *proxy.Client
-	if proxyAddr != "" && podName != "" && nodeRole != "" {
-		labelsMap, parseErr := parseLabels(nodeLabels)
-		if parseErr != nil {
-			_ = metricsServer.Stop()
-			return fmt.Errorf("failed to parse node labels: %w", parseErr)
-		}
-		proxyClient = proxy.NewClient(
-			proxyAddr,
-			nodeRole,
-			podName,
-			containerNames,
-			labelsMap,
-			heartbeatInterval,
-			reconnectInterval,
-			fr,
-			log,
-		)
-
-		proxyCtx, proxyCancel := context.WithCancel(ctx)
+	proxyClient, proxyCancel, proxyErr := setupProxyClient(ctx, log, fr, metricsServer)
+	if proxyErr != nil {
+		return proxyErr
+	}
+	if proxyCancel != nil {
 		defer proxyCancel()
-
-		go func() {
-			if startErr := proxyClient.Start(proxyCtx); startErr != nil {
-				log.Error().Err(startErr).Msg("Proxy client error")
-			}
-		}()
-
-		log.Info().
-			Str("proxy_addr", proxyAddr).
-			Str("pod_name", podName).
-			Str("node_role", nodeRole).
-			Msg("Proxy client started")
-	} else {
-		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -247,17 +321,80 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	// Graceful shutdown
 	wd.GracefulStop()
 
+	if stopKTM != nil {
+		stopKTM()
+	}
+
 	if proxyClient != nil {
 		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
 			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
 		}
 	}
 
-	if shutdownErr := metricsServer.Stop(); shutdownErr != nil {
+	if shutdownErr := metricsServer.Stop(ctx); shutdownErr != nil {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
 	}
 
 	return nil
+}
+
+func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.FlightRecorder) (func(), error) {
+	if ktmInterval <= 0 {
+		return nil, fmt.Errorf("ktm-interval must be positive, got %v", ktmInterval)
+	}
+
+	ktmCfg := ktm.Config{
+		Enabled:  ktmEnabled,
+		Interval: ktmInterval,
+		Modules:  []string{"iomonitor"},
+	}
+
+	ktmSvc, createErr := ktm.NewKTM(ktmCfg, log)
+	if createErr != nil {
+		return nil, fmt.Errorf("failed to create KTM: %w", createErr)
+	}
+
+	if startErr := ktmSvc.Start(ctx); startErr != nil {
+		return nil, fmt.Errorf("failed to start KTM: %w", startErr)
+	}
+
+	stopBridgeCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(ktmInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopBridgeCh:
+				return
+			case <-ticker.C:
+				rawMetrics := ktmSvc.GetMetrics()
+				// Add ktm_status metric: 0=Disabled, 1=Degraded, 2=Full.
+				ktmStatus := 2.0 // Full mode (cgroup+comm)
+				if ktmSvc.IsDegraded() {
+					ktmStatus = 1.0 // Degraded mode (comm-only)
+				}
+				if len(rawMetrics) == 0 {
+					ktmStatus = 0.0
+				}
+				rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
+					Name:  "ktm_status",
+					Value: ktmStatus,
+					Desc:  "KTM status: 0=Disabled, 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+				})
+				if updateErr := fr.Update(rawMetrics); updateErr != nil {
+					log.Warn().Err(updateErr).Msg("Failed to update FlightRecorder with KTM metrics")
+				}
+			}
+		}
+	}()
+
+	return func() {
+		close(stopBridgeCh)
+		_ = ktmSvc.Stop()
+	}, nil
 }
 
 // parseLabels parses a comma-separated labels string into a map.
