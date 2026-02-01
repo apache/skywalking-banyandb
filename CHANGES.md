@@ -20,6 +20,9 @@ Release Notes.
 - Activate the property repair mechanism by default.
 - Add eBPF-based KTM I/O monitor for FODC agent.
 - Add snapshot time retention policy to ensure the snapshot only can be deleted after the configured minimum age(time).
+- **Breaking Change**: Change the data storage path structure for property model:
+  - From: `<data-dir>/property/data/shard-<id>/...`
+  - To: `<data-dir>/property/data/<group>/shard-<id>/...`
 
 ### Bug Fixes
 

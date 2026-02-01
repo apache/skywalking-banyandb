@@ -51,7 +51,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 	}
 
 	// Load shard 0
-	shard, err := db.loadShard(context.Background(), 0)
+	shard, err := db.loadShard(context.Background(), "test-group", 0)
 	if err != nil {
 		db.close()
 		panic(err)

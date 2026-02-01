@@ -200,7 +200,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	if mqo.Name == "_top_n_result" {
+	if mqo.Name == TopNSchemaName {
 		result.topNQueryOptions = &topNQueryOptions{
 			sortDirection: mqo.Sort,
 			number:        mqo.Number,
