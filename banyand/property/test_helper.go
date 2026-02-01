@@ -338,10 +338,10 @@ func (s *testService) DirectRepair(ctx context.Context, shardID uint64, id []byt
 
 // testServiceWithGossipRepair is a test Service with gossip messenger and full repair infrastructure.
 type testServiceWithGossipRepair struct {
-	*testService
 	gossipMessenger gossip.Messenger
-	gossipPort      uint32
-	cleanups        []func()
+	*testService
+	cleanups   []func()
+	gossipPort uint32
 }
 
 var _ Service = (*testServiceWithGossipRepair)(nil)
@@ -354,7 +354,6 @@ func NewTestServiceWithGossipRepair(dataDir, snapshotDir string, omr observabili
 	fileSystem fs.FileSystem, nodeID string, gossipPort int,
 ) (Service, func() error, error) {
 	l := logger.GetLogger("property-test-gossip-repair")
-	lfs := fileSystem
 
 	messenger := gossip.NewMessengerWithoutMetadata(omr, gossipPort)
 	if parseErr := messenger.FlagSet().Parse([]string{}); parseErr != nil {
@@ -385,7 +384,7 @@ func NewTestServiceWithGossipRepair(dataDir, snapshotDir string, omr observabili
 			}
 			for _, s := range *sLst {
 				shardSnpDir := path.Join(snpDir, s.group, filepath.Base(s.location))
-				lfs.MkdirPanicIfExist(shardSnpDir, storage.DirPerm)
+				fileSystem.MkdirPanicIfExist(shardSnpDir, storage.DirPerm)
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
@@ -410,9 +409,6 @@ func NewTestServiceWithGossipRepair(dataDir, snapshotDir string, omr observabili
 		return nil, nil, dbErr
 	}
 
-	// Save the build-tree status so that getTreeReader returns found=true for empty groups.
-	// This enables the gossip repair protocol to treat empty nodes as having an empty tree,
-	// allowing data to flow from nodes with data to empty nodes.
 	if saveErr := db.repairScheduler.saveHasBuildTree(); saveErr != nil {
 		return nil, nil, saveErr
 	}
