@@ -28,7 +28,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadataclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -67,7 +67,7 @@ var _ = g.Describe("Replication", func() {
 			gm.Expect(resp.GetMeasure().GetMetadata().GetGroup()).To(gm.Equal("replicated_group"))
 
 			g.By("Getting list of all nodes from etcd (includes data nodes + liaison)")
-			nodePath := "/" + metadata.DefaultNamespace + "/nodes"
+			nodePath := "/" + metadataclient.DefaultNamespace + "/nodes"
 			allNodes, err2 := helpers.ListKeys(etcdEndpoint, nodePath)
 			gm.Expect(err2).NotTo(gm.HaveOccurred())
 
