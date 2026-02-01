@@ -32,8 +32,8 @@ var (
 )
 
 type metrics struct {
-	tbMetrics
-	indexMetrics           *inverted.Metrics
+	indexMetrics *inverted.Metrics
+
 	totalWritten           meter.Counter
 	totalBatch             meter.Counter
 	totalBatchIntroLatency meter.Counter
@@ -66,6 +66,8 @@ type metrics struct {
 	totalMergedParts  meter.Counter
 	totalMergeLatency meter.Counter
 	totalMerged       meter.Counter
+
+	tbMetrics
 }
 
 func (tst *tsTable) incTotalWritten(delta int) {
@@ -250,6 +252,18 @@ func (tst *tsTable) incTotalMerged(delta int, typ string) {
 	tst.metrics.totalMerged.Inc(float64(delta), typ)
 }
 
+func (tst *tsTable) addPendingDataCount(delta int64) {
+	tst.pendingDataCount.Add(delta)
+	if tst.metrics == nil {
+		return
+	}
+	tst.metrics.tbMetrics.pendingDataCount.Add(float64(delta), tst.p.ShardLabelValues()...)
+}
+
+func (tst *tsTable) getPendingDataCount() int64 {
+	return tst.pendingDataCount.Load()
+}
+
 func (m *metrics) DeleteAll() {
 	if m == nil {
 		return
@@ -334,6 +348,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}
@@ -379,6 +394,7 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			totalFileBlocks:                factory.NewGauge("total_file_blocks", common.ShardLabelNames()...),
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
+			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}
@@ -442,6 +458,7 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFileBlocks.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 
@@ -457,4 +474,6 @@ type tbMetrics struct {
 	totalFileBlocks                meter.Gauge
 	totalFilePartBytes             meter.Gauge
 	totalFilePartUncompressedBytes meter.Gauge
+
+	pendingDataCount meter.Gauge
 }

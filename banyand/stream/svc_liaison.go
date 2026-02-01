@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,33 @@ func (s *liaison) LoadGroup(name string) (resourceSchema.Group, bool) {
 
 func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
+}
+
+func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
+	return nil, errors.New("collect data info is not supported on liaison node")
+}
+
+// CollectLiaisonInfo collects liaison node info.
+func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{
+		PendingWriteDataCount:       0,
+		PendingSyncPartCount:        0,
+		PendingSyncDataSizeBytes:    0,
+		PendingHandoffPartCount:     0,
+		PendingHandoffDataSizeBytes: 0,
+	}
+	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	pendingSyncPartCount, pendingSyncDataSizeBytes, syncErr := s.schemaRepo.collectPendingSyncInfo(group)
+	if syncErr != nil {
+		return nil, fmt.Errorf("failed to collect pending sync info: %w", syncErr)
+	}
+	info.PendingSyncPartCount = pendingSyncPartCount
+	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	return info, nil
 }
 
 func (s *liaison) FlagSet() *run.FlagSet {
@@ -155,6 +183,15 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	// Register chunked sync handler for stream data
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
 
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+	}
+
+	collectLiaisonInfoListener := &collectLiaisonInfoListener{s: s}
+	if subscribeErr := s.pipeline.Subscribe(data.TopicStreamCollectLiaisonInfo, collectLiaisonInfoListener); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to collect liaison info topic: %w", subscribeErr)
+	}
+
 	return s.pipeline.Subscribe(data.TopicStreamWrite, s.writeListener)
 }
 
@@ -180,4 +217,21 @@ func NewLiaison(metadata metadata.Repo, pipeline queue.Server, omr observability
 			tire2Client: tire2Client,
 		},
 	}, nil
+}
+
+type collectLiaisonInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	s *liaison
+}
+
+func (l *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
+	}
+	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), liaisonInfo)
 }
