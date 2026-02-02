@@ -47,7 +47,6 @@ var metadataScope = observability.RootScope.SubScope("metadata_property")
 
 // Server is the metadata property server that stores schema data as properties.
 type Server struct {
-	enabled           bool
 	propertyService   property.Service
 	omr               observability.MetricsRegistry
 	pm                protector.Memory
@@ -56,6 +55,7 @@ type Server struct {
 	repairScheduler   *repairScheduler
 	closer            *run.Closer
 	repairTriggerCron string
+	enabled           bool
 }
 
 // NewServer creates a new metadata property server.
