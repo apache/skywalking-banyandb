@@ -165,7 +165,7 @@ func (c *Collector) GetNodeInfo() (nodeRole string, nodeLabels map[string]string
 			return NodeRoleFromNode(node), node.Labels
 		}
 	}
-	return "", nil
+	return NodeRoleFromNode(nil), nil
 }
 
 // WaitForNodeFetched waits until the current node info has been fetched.
@@ -456,12 +456,12 @@ func StartCollector(ctx context.Context, log *logger.Logger, ports []string, int
 	waitCtx, cancel := context.WithTimeout(ctx, nodeInfoFetchTimeout)
 	defer cancel()
 	if waitErr := collector.WaitForNodeFetched(waitCtx); waitErr != nil {
-		collector.Stop()
-		return nil, fmt.Errorf("failed to fetch node info: %w", waitErr)
+		log.Warn().Err(waitErr).Msg("Failed to fetch node info from lifecycle service; continuing without initial node info")
+		return collector, nil
 	}
 	if len(collector.GetCurrentNodes()) == 0 {
-		collector.Stop()
-		return nil, fmt.Errorf("no node info received from lifecycle service")
+		log.Warn().Msg("No node info received from lifecycle service; continuing without initial node info")
+		return collector, nil
 	}
 	return collector, nil
 }

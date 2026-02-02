@@ -333,7 +333,7 @@ func TestCollector_GetNodeInfo_NoNode(t *testing.T) {
 	log := initTestLogger(t)
 	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	nodeRole, nodeLabels := collector.GetNodeInfo()
-	assert.Equal(t, "", nodeRole)
+	assert.Equal(t, "ROLE_UNSPECIFIED", nodeRole)
 	assert.Nil(t, nodeLabels)
 }
 
