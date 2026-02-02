@@ -366,7 +366,7 @@ metadata:
  group: ui-template
 tags:
 - name: content
- type: TAG_TYPE_STRING
+  type: TAG_TYPE_STRING
 `))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
