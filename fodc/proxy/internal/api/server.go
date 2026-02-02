@@ -112,7 +112,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	aggregatedMetrics, collectErr := s.metricsAggregator.GetLatestMetrics(ctx)
+	aggregatedMetrics, collectErr := s.metricsAggregator.GetLatestMetrics(ctx, filter)
 	if collectErr != nil {
 		s.logger.Error().Err(collectErr).Msg("Failed to collect metrics")
 		http.Error(w, "Failed to collect metrics", http.StatusInternalServerError)
@@ -183,7 +183,7 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	if startTimeStr != "" && endTimeStr != "" {
 		aggregatedMetrics, collectErr = s.metricsAggregator.GetMetricsWindow(ctx, startTime, endTime, filter)
 	} else {
-		aggregatedMetrics, collectErr = s.metricsAggregator.GetLatestMetrics(ctx)
+		aggregatedMetrics, collectErr = s.metricsAggregator.GetLatestMetrics(ctx, filter)
 	}
 
 	if collectErr != nil {

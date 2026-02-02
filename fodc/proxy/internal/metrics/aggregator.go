@@ -241,8 +241,10 @@ func (ma *Aggregator) ActiveCollections() int {
 }
 
 // GetLatestMetrics triggers on-demand collection from all agents.
-func (ma *Aggregator) GetLatestMetrics(ctx context.Context) ([]*AggregatedMetric, error) {
-	filter := &Filter{}
+func (ma *Aggregator) GetLatestMetrics(ctx context.Context, filter *Filter) ([]*AggregatedMetric, error) {
+	if filter == nil {
+		filter = &Filter{}
+	}
 	return ma.CollectMetricsFromAgents(ctx, filter)
 }
 
