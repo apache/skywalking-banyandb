@@ -213,7 +213,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		}()
 
 		// Give it a moment to set up channels and request data
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 
 		// Update topology for both agents - this sends to collection channels
 		clusterManager.UpdateClusterTopology(agents[0].AgentID, testTopology1)
