@@ -107,7 +107,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := &metrics.Filter{
-		Role:    r.URL.Query().Get("node_role"),
+		Role:    r.URL.Query().Get("role"),
 		PodName: r.URL.Query().Get("pod_name"),
 	}
 
@@ -172,7 +172,7 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := &metrics.Filter{
-		Role:    r.URL.Query().Get("node_role"),
+		Role:    r.URL.Query().Get("role"),
 		PodName: r.URL.Query().Get("pod_name"),
 	}
 
