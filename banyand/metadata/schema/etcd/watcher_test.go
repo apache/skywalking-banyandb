@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"testing"
 
 	ginkgo "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -83,11 +82,6 @@ func (m *mockedHandler) Data() map[string]any {
 		ret[k] = v
 	}
 	return ret
-}
-
-func TestPropertyRepairIntegrated(t *testing.T) {
-	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Property Repair Integrated Test Suite", ginkgo.Label("integration", "slow", "property_repair", "full_data"))
 }
 
 var _ = ginkgo.Describe("Watcher", func() {

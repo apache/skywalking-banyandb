@@ -25,7 +25,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1122,9 +1121,4 @@ func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime t
 		}
 		return allRegenerated
 	}, flags.EventuallyTimeout).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
-}
-
-func TestPropertyRepairIntegrated(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Property Repair Integrated Test Suite", Label("integration", "slow", "property_repair", "full_data"))
 }
