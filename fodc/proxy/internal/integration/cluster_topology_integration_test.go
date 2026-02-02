@@ -208,12 +208,16 @@ var _ = Describe("Cluster Topology Integration", func() {
 		// Start collection in a goroutine - this sets up channels
 		ctx := context.Background()
 		done := make(chan *cluster.TopologyMap)
+		channelsReady := make(chan struct{})
 		go func() {
+			// Wait a bit to ensure channels are set up before we start waiting
+			time.Sleep(100 * time.Millisecond)
+			close(channelsReady)
 			done <- clusterManager.CollectClusterTopology(ctx)
 		}()
 
-		// Give it a moment to set up channels and request data
-		time.Sleep(500 * time.Millisecond)
+		// Wait for channels to be set up
+		<-channelsReady
 
 		// Update topology for both agents - this sends to collection channels
 		clusterManager.UpdateClusterTopology(agents[0].AgentID, testTopology1)

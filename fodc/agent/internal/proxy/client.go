@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
@@ -281,12 +282,18 @@ func (c *Client) sendClusterTopology() error {
 	clusterStateStream := c.clusterStateStream
 	collector := c.clusterCollector
 	c.streamsMu.RUnlock()
+	var topology cluster.TopologyMap
 	if collector == nil {
-		return fmt.Errorf("cluster collector not available")
-	}
-	topology := collector.GetClusterTopology()
-	if len(topology.Nodes) == 0 && len(topology.Calls) == 0 {
-		return fmt.Errorf("no cluster topology available to send")
+		c.logger.Debug().Msg("Cluster collector not available, sending empty topology")
+		topology = cluster.TopologyMap{
+			Nodes: make([]*databasev1.Node, 0),
+			Calls: make([]*fodcv1.Call, 0),
+		}
+	} else {
+		topology = collector.GetClusterTopology()
+		if len(topology.Nodes) == 0 && len(topology.Calls) == 0 {
+			c.logger.Debug().Msg("No cluster topology available to send")
+		}
 	}
 	req := &fodcv1.StreamClusterTopologyRequest{
 		Topology: &fodcv1.Topology{
