@@ -149,6 +149,13 @@ func (c *Collector) GetClusterTopology() TopologyMap {
 	return c.clusterTopology
 }
 
+// SetClusterTopology sets the cluster topology data, primarily for tests.
+func (c *Collector) SetClusterTopology(topology TopologyMap) {
+	c.mu.Lock()
+	c.clusterTopology = topology
+	c.mu.Unlock()
+}
+
 // GetNodeInfo returns the processed node role and labels from the first available current node.
 func (c *Collector) GetNodeInfo() (nodeRole string, nodeLabels map[string]string) {
 	c.mu.RLock()

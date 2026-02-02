@@ -21,11 +21,9 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -836,14 +834,7 @@ func TestProxyClient_SendClusterTopology_Success(t *testing.T) {
 			},
 		},
 	}
-	// Use unsafe to set the private clusterTopology field
-	collectorValue := reflect.ValueOf(collector).Elem()
-	clusterTopologyField := collectorValue.FieldByName("clusterTopology")
-	if clusterTopologyField.IsValid() {
-		// Get the address of the field and use unsafe to set it
-		fieldPtr := unsafe.Pointer(clusterTopologyField.UnsafeAddr())
-		*(*cluster.TopologyMap)(fieldPtr) = testTopology
-	}
+	collector.SetClusterTopology(testTopology)
 
 	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, collector, testLogger)
 

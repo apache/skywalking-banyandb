@@ -19,8 +19,8 @@ syntax = "proto3";
 
 package banyandb.fodc.v1;
 
-import "google/protobuf/timestamp.proto";
 import "banyandb/database/v1/database.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
 
