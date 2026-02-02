@@ -75,3 +75,9 @@ var TraceSidxSeriesWriteKindVersion = common.KindVersion{
 
 // TopicTraceSidxSeriesWrite is the trace sidx series write topic.
 var TopicTraceSidxSeriesWrite = bus.BiTopic(TraceSidxSeriesWriteKindVersion.String())
+
+// TopicTraceCollectDataInfo is the topic for collecting data info from data nodes.
+var TopicTraceCollectDataInfo = bus.BiTopic("trace-collect-data-info")
+
+// TopicTraceCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
+var TopicTraceCollectLiaisonInfo = bus.BiTopic("trace-collect-liaison-info")
