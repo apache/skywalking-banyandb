@@ -168,6 +168,9 @@ func (s *store) CollectMetrics(labelValues ...string) {
 	s.metrics.cacheBytesSize.Set(float64(status.CacheBytesSize), labelValues...)
 	s.metrics.cacheMaxBytesSize.Set(float64(status.CacheMaxBytesSize), labelValues...)
 
+	if s.closer.Closed() {
+		return
+	}
 	r, err := s.writer.Reader()
 	if err != nil {
 		return
