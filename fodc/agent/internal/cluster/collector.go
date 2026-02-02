@@ -279,23 +279,23 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 			}
 		}
 		if currentNodeName != "" {
-			activeSet := make(map[string]bool)
+			registeredSet := make(map[string]bool)
 			for _, routeTable := range clusterState.RouteTables {
 				if routeTable != nil {
-					for _, activeName := range routeTable.Active {
-						if activeName != "" {
-							activeSet[activeName] = true
+					for _, registeredNode := range routeTable.Registered {
+						if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
+							registeredSet[registeredNode.Metadata.Name] = true
 						}
 					}
 				}
 			}
-			for activeName := range activeSet {
-				if activeName != currentNodeName {
-					callID := fmt.Sprintf("%s-%s", currentNodeName, activeName)
+			for registeredName := range registeredSet {
+				if registeredName != currentNodeName {
+					callID := fmt.Sprintf("%s-%s", currentNodeName, registeredName)
 					callMap[callID] = &fodcv1.Call{
 						Id:     callID,
 						Source: currentNodeName,
-						Target: activeName,
+						Target: registeredName,
 					}
 				}
 			}
