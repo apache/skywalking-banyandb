@@ -69,7 +69,7 @@ type Client struct {
 
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
-	streamsMu         sync.RWMutex   // Protects streams only
+	streamsMu         sync.RWMutex   // Protects streams and stream operations
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
 	disconnected      bool
 }
@@ -302,7 +302,14 @@ func (c *Client) sendClusterTopology() error {
 		},
 		Timestamp: timestamppb.Now(),
 	}
-	if sendErr := clusterStateStream.Send(req); sendErr != nil {
+	c.streamsMu.Lock()
+	if c.clusterStateStream != clusterStateStream {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("cluster state stream changed during send")
+	}
+	sendErr := clusterStateStream.Send(req)
+	c.streamsMu.Unlock()
+	if sendErr != nil {
 		return fmt.Errorf("failed to send cluster topology: %w", sendErr)
 	}
 	c.logger.Info().
@@ -368,7 +375,14 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			Metrics:   []*fodcv1.Metric{},
 			Timestamp: timestamppb.Now(),
 		}
-		if sendErr := metricsStream.Send(req); sendErr != nil {
+		c.streamsMu.Lock()
+		if c.metricsStream != metricsStream {
+			c.streamsMu.Unlock()
+			return fmt.Errorf("metrics stream changed during send")
+		}
+		sendErr := metricsStream.Send(req)
+		c.streamsMu.Unlock()
+		if sendErr != nil {
 			return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 		}
 		return nil
@@ -385,7 +399,14 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			c.streamsMu.Lock()
+			if c.metricsStream != metricsStream {
+				c.streamsMu.Unlock()
+				return fmt.Errorf("metrics stream changed during send")
+			}
+			sendErr := metricsStream.Send(req)
+			c.streamsMu.Unlock()
+			if sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
@@ -397,16 +418,37 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			c.streamsMu.Lock()
+			if c.metricsStream != metricsStream {
+				c.streamsMu.Unlock()
+				return fmt.Errorf("metrics stream changed during send")
+			}
+			sendErr := metricsStream.Send(req)
+			c.streamsMu.Unlock()
+			if sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
 		}
 
-		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		c.streamsMu.Lock()
+		if c.metricsStream != metricsStream {
+			c.streamsMu.Unlock()
+			return fmt.Errorf("metrics stream changed during send")
+		}
+		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		c.streamsMu.Unlock()
+		return sendErr
 	}
 
-	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	c.streamsMu.Lock()
+	if c.metricsStream != metricsStream {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("metrics stream changed during send")
+	}
+	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	c.streamsMu.Unlock()
+	return sendErr
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
