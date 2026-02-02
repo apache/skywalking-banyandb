@@ -56,7 +56,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Collector Lifecycle", func() {
 		It("should successfully start and connect to BanyanDB", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -84,7 +84,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 		})
 
 		It("should fetch cluster topology", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -98,7 +98,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 		})
 
 		It("should handle node role determination correctly", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -123,7 +123,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Error Handling", func() {
 		It("should handle invalid gRPC address gracefully", func() {
-			collector = cluster.NewCollector(testLogger, []string{"invalid:address"}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{"invalid:address"}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred(), "Collector should start successfully even with invalid address")
@@ -141,7 +141,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 		It("should handle connection timeouts", func() {
 			// Use a valid address format but non-existent server
-			collector = cluster.NewCollector(testLogger, []string{"127.0.0.1:99999"}, 1*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{"127.0.0.1:99999"}, 1*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred(), "Collector should start successfully even with unreachable address")
@@ -160,7 +160,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Periodic Collection", func() {
 		It("should periodically update cluster topology", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 2*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 2*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -182,7 +182,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 
 	Describe("Resource Management", func() {
 		It("should properly close connections on stop", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
@@ -219,7 +219,7 @@ var _ = Describe("Cluster Collector Integration", func() {
 		})
 
 		It("should not allow restart after stop", func() {
-			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second)
+			collector = cluster.NewCollector(testLogger, []string{banyanDBGRPCAddr, dataNodeGRPCAddr}, 5*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())

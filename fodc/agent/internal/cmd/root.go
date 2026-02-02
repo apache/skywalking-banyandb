@@ -136,7 +136,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	ctx := context.Background()
-	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStatePorts, clusterStatePollInterval)
+	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStatePorts, clusterStatePollInterval, podName)
 	if clusterErr != nil {
 		_ = metricsServer.Stop()
 		return clusterErr

@@ -54,9 +54,9 @@ func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 
 // mockClusterDataRequester is a mock implementation of cluster.RequestSender for testing.
 type mockClusterDataRequester struct {
-	requestErr  error
-	topologies  map[string]*fodcv1.Topology
-	clusterMgr  *cluster.Manager
+	requestErr error
+	topologies map[string]*fodcv1.Topology
+	clusterMgr *cluster.Manager
 }
 
 func (m *mockClusterDataRequester) RequestClusterData(agentID string) error {

@@ -40,34 +40,36 @@ func initTestLogger(t *testing.T) *logger.Logger {
 
 func TestNewCollector(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	require.NotNil(t, collector)
 	assert.Equal(t, []string{"localhost:17914"}, collector.addrs)
 	assert.Equal(t, 10*time.Second, collector.interval)
+	assert.Equal(t, "test-pod", collector.podName)
 	assert.NotNil(t, collector.closer)
 	assert.False(t, collector.closer.Closed())
 }
 
 func TestNewCollector_MultiplePorts(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second, "test-pod")
 	require.NotNil(t, collector)
 	assert.Equal(t, []string{"localhost:17914", "localhost:17915"}, collector.addrs)
 	assert.Equal(t, 10*time.Second, collector.interval)
+	assert.Equal(t, "test-pod", collector.podName)
 	assert.NotNil(t, collector.closer)
 	assert.False(t, collector.closer.Closed())
 }
 
 func TestCollector_Stop_NotStarted(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	collector.Stop()
 	assert.True(t, collector.closer.Closed())
 }
 
 func TestCollector_Stop_MultipleCalls(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	collector.Stop()
 	collector.Stop()
 	collector.Stop()
@@ -76,7 +78,7 @@ func TestCollector_Stop_MultipleCalls(t *testing.T) {
 
 func TestCollector_Start_AfterStop(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	collector.Stop()
 	ctx := context.Background()
 	err := collector.Start(ctx)
@@ -87,7 +89,7 @@ func TestCollector_Start_AfterStop(t *testing.T) {
 
 func TestCollector_FetchClusterStates_NoClient(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	ctx := context.Background()
 	states := collector.fetchClusterStates(ctx)
 	assert.Nil(t, states)
@@ -95,7 +97,7 @@ func TestCollector_FetchClusterStates_NoClient(t *testing.T) {
 
 func TestCollector_FetchCurrentNodes_NoClient(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	ctx := context.Background()
 	nodes := collector.fetchCurrentNodes(ctx)
 	assert.Nil(t, nodes)
@@ -103,14 +105,14 @@ func TestCollector_FetchCurrentNodes_NoClient(t *testing.T) {
 
 func TestCollector_GetCurrentNode_InitialNil(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	nodes := collector.GetCurrentNodes()
 	assert.Empty(t, nodes)
 }
 
 func TestCollector_GetClusterState_InitialNil(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	topology := collector.GetClusterTopology()
 	assert.Empty(t, topology.Nodes)
 	assert.Empty(t, topology.Calls)
@@ -118,7 +120,7 @@ func TestCollector_GetClusterState_InitialNil(t *testing.T) {
 
 func TestCollector_UpdateCurrentNodes(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	node := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "test-node"},
 		GrpcAddress: "localhost:17913",
@@ -136,7 +138,7 @@ func TestCollector_UpdateCurrentNodes(t *testing.T) {
 
 func TestCollector_UpdateClusterStates(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	state := &databasev1.GetClusterStateResponse{
 		RouteTables: map[string]*databasev1.RouteTable{
 			"test": {
@@ -156,7 +158,7 @@ func TestCollector_UpdateClusterStates(t *testing.T) {
 
 func TestCollector_MultipleEndpoints(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second, "test-pod")
 	node1 := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "test-node-1"},
 		GrpcAddress: "localhost:17913",
@@ -182,7 +184,8 @@ func TestCollector_MultipleEndpoints(t *testing.T) {
 
 func TestCollector_ProcessClusterData(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	podName := "test-pod"
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, podName)
 	currentNode := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "current-node"},
 		GrpcAddress: "localhost:17913",
@@ -223,6 +226,11 @@ func TestCollector_ProcessClusterData(t *testing.T) {
 	assert.Contains(t, topology.Nodes, currentNode)
 	assert.Contains(t, topology.Nodes, registeredNode1)
 	assert.Contains(t, topology.Nodes, registeredNode2)
+	// Verify pod_name label is added to all nodes
+	for _, node := range topology.Nodes {
+		assert.NotNil(t, node.Labels)
+		assert.Equal(t, podName, node.Labels["pod_name"])
+	}
 	topologyCallMap := make(map[string]*fodcv1.Call)
 	for _, call := range topology.Calls {
 		topologyCallMap[call.Id] = call
@@ -233,7 +241,7 @@ func TestCollector_ProcessClusterData(t *testing.T) {
 
 func TestCollector_MergeMultipleEndpoints(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second, "test-pod")
 	currentNode1 := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "node-1"},
 		GrpcAddress: "localhost:17913",
@@ -306,7 +314,7 @@ func TestCollector_MergeMultipleEndpoints(t *testing.T) {
 
 func TestCollector_GetNodeInfo(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	node := &databasev1.Node{
 		Metadata: &commonv1.Metadata{Name: "test-node"},
 		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
@@ -323,7 +331,7 @@ func TestCollector_GetNodeInfo(t *testing.T) {
 
 func TestCollector_GetNodeInfo_NoNode(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 	nodeRole, nodeLabels := collector.GetNodeInfo()
 	assert.Equal(t, "", nodeRole)
 	assert.Nil(t, nodeLabels)
@@ -372,7 +380,7 @@ func TestNodeRoleFromNode(t *testing.T) {
 
 func TestProcessClusterStates_EmptyInputs(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{}, 10*time.Second)
+	collector := NewCollector(log, []string{}, 10*time.Second, "")
 
 	// Test with empty inputs
 	collector.updateClusterStates(map[string]*databasev1.GetClusterStateResponse{})
@@ -383,7 +391,7 @@ func TestProcessClusterStates_EmptyInputs(t *testing.T) {
 
 func TestProcessClusterStates_SingleEndpoint(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 
 	currentNode := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "node-1"},
@@ -439,7 +447,7 @@ func TestProcessClusterStates_SingleEndpoint(t *testing.T) {
 
 func TestProcessClusterStates_MultipleEndpoints(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915"}, 10*time.Second, "test-pod")
 
 	currentNode1 := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "node-1"},
@@ -525,7 +533,7 @@ func TestProcessClusterStates_MultipleEndpoints(t *testing.T) {
 
 func TestProcessClusterStates_NoCurrentNodeForEndpoint(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 
 	// Only set cluster state, no current node for this endpoint
 	registeredNode := &databasev1.Node{
@@ -558,7 +566,7 @@ func TestProcessClusterStates_NoCurrentNodeForEndpoint(t *testing.T) {
 
 func TestProcessClusterStates_MalformedNodeNames(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
 
 	currentNode := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "node-1"},
@@ -608,7 +616,8 @@ func TestProcessClusterStates_MalformedNodeNames(t *testing.T) {
 
 func TestProcessClusterStates_NoSelfCalls(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second)
+	podName := "test-pod"
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, podName)
 
 	currentNode := &databasev1.Node{
 		Metadata:    &commonv1.Metadata{Name: "node-1"},
@@ -649,11 +658,110 @@ func TestProcessClusterStates_NoSelfCalls(t *testing.T) {
 	assert.Equal(t, "node-1-node-2", topology.Calls[0].Id)
 	assert.Equal(t, "node-1", topology.Calls[0].Source)
 	assert.Equal(t, "node-2", topology.Calls[0].Target)
+
+	// Verify pod_name label is added to all nodes
+	for _, node := range topology.Nodes {
+		assert.NotNil(t, node.Labels)
+		assert.Equal(t, podName, node.Labels["pod_name"])
+	}
+}
+
+func TestProcessClusterStates_PodNameLabel(t *testing.T) {
+	log := initTestLogger(t)
+	podName := "my-test-pod"
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, podName)
+
+	currentNode := &databasev1.Node{
+		Metadata:    &commonv1.Metadata{Name: "node-1"},
+		GrpcAddress: "localhost:17913",
+		Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+		Labels:      map[string]string{"existing": "label"},
+	}
+
+	registeredNode := &databasev1.Node{
+		Metadata:    &commonv1.Metadata{Name: "node-2"},
+		GrpcAddress: "localhost:17920",
+		Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+
+	clusterState := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{registeredNode},
+				Active:     []string{"node-2"},
+				Evictable:  []string{},
+			},
+		},
+	}
+
+	nodes := map[string]*databasev1.Node{
+		"localhost:17914": currentNode,
+	}
+	collector.updateCurrentNodes(nodes)
+
+	states := map[string]*databasev1.GetClusterStateResponse{
+		"localhost:17914": clusterState,
+	}
+	collector.updateClusterStates(states)
+
+	topology := collector.GetClusterTopology()
+	assert.Equal(t, 2, len(topology.Nodes))
+
+	// Verify pod_name label is added to all nodes
+	for _, node := range topology.Nodes {
+		assert.NotNil(t, node.Labels)
+		assert.Equal(t, podName, node.Labels["pod_name"])
+		if node.Metadata.Name == "node-1" {
+			// Verify existing labels are preserved
+			assert.Equal(t, "label", node.Labels["existing"])
+		}
+	}
+}
+
+func TestProcessClusterStates_EmptyPodName(t *testing.T) {
+	log := initTestLogger(t)
+	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "")
+
+	currentNode := &databasev1.Node{
+		Metadata:    &commonv1.Metadata{Name: "node-1"},
+		GrpcAddress: "localhost:17913",
+		Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+
+	clusterState := &databasev1.GetClusterStateResponse{
+		RouteTables: map[string]*databasev1.RouteTable{
+			"test": {
+				Registered: []*databasev1.Node{},
+				Active:     []string{},
+				Evictable:  []string{},
+			},
+		},
+	}
+
+	nodes := map[string]*databasev1.Node{
+		"localhost:17914": currentNode,
+	}
+	collector.updateCurrentNodes(nodes)
+
+	states := map[string]*databasev1.GetClusterStateResponse{
+		"localhost:17914": clusterState,
+	}
+	collector.updateClusterStates(states)
+
+	topology := collector.GetClusterTopology()
+	assert.Equal(t, 1, len(topology.Nodes))
+
+	// When podName is empty, pod_name label should not be added
+	node := topology.Nodes[0]
+	if node.Labels != nil {
+		_, hasPodName := node.Labels["pod_name"]
+		assert.False(t, hasPodName, "pod_name should not be added when podName is empty")
+	}
 }
 
 func TestProcessClusterStates_ComplexTopology(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915", "localhost:17916"}, 10*time.Second)
+	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915", "localhost:17916"}, 10*time.Second, "test-pod")
 
 	// Three current nodes
 	currentNode1 := &databasev1.Node{

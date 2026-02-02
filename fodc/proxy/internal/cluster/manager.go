@@ -37,7 +37,10 @@ const (
 // NodeWithStringRoles represents a node with roles as strings instead of numeric enum values.
 type NodeWithStringRoles struct {
 	*databasev1.Node
-	Roles []string `json:"roles"`
+
+	Status        *registry.AgentStatus `json:"status,omitempty"`
+	LastHeartbeat *time.Time            `json:"last_heartbeat,omitempty"`
+	Roles         []string              `json:"roles"`
 }
 
 // TopologyMap represents processed cluster data with string roles.
@@ -63,9 +66,6 @@ type Manager struct {
 
 // NewManager creates a new cluster state manager.
 func NewManager(registry *registry.AgentRegistry, grpcService RequestSender, log *logger.Logger) *Manager {
-	if log == nil {
-		log = logger.GetLogger("cluster-manager")
-	}
 	return &Manager{
 		registry:    registry,
 		grpcService: grpcService,
@@ -216,6 +216,24 @@ func (m *Manager) aggregateTopologies(topologies []*TopologyMap) *TopologyMap {
 		for _, call := range topologyMap.Calls {
 			if call != nil && call.Id != "" {
 				callMap[call.Id] = call
+			}
+		}
+	}
+	if m.registry != nil {
+		allAgents := m.registry.ListAgents()
+		for _, node := range nodeMap {
+			if node.Labels != nil {
+				if podName, hasPodName := node.Labels["pod_name"]; hasPodName && podName != "" {
+					for _, agentInfo := range allAgents {
+						if agentInfo.AgentIdentity.PodName == podName {
+							status := agentInfo.Status
+							lastHeartbeat := agentInfo.LastHeartbeat
+							node.Status = &status
+							node.LastHeartbeat = &lastHeartbeat
+							break
+						}
+					}
+				}
 			}
 		}
 	}

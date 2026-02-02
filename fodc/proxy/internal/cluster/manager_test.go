@@ -220,3 +220,132 @@ func TestManager_CollectClusterTopology_MultipleAgents(t *testing.T) {
 		t.Fatal("Collection timed out")
 	}
 }
+
+func TestManager_AggregateTopologies_WithPodNameAndAgentStatus(t *testing.T) {
+	log := initTestLogger(t)
+	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mgr := NewManager(testRegistry, nil, log)
+
+	// Register an agent
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		Role:           "ROLE_DATA",
+		PodName:        "test-pod-1",
+		ContainerNames: []string{"container1"},
+		Labels:         map[string]string{"env": "test"},
+	}
+	agentID, err := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, err)
+
+	// Update heartbeat
+	testRegistry.UpdateHeartbeat(agentID)
+	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
+	require.NoError(t, getErr)
+
+	// Create topology with nodes that have pod_name labels
+	node1 := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "node1"},
+		Labels:   map[string]string{"pod_name": "test-pod-1"},
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+	node2 := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "node2"},
+		Labels:   map[string]string{"pod_name": "test-pod-2"}, // No matching agent
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+	node3 := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "node3"},
+		// No pod_name label
+		Roles: []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+
+	topology := &fodcv1.Topology{
+		Nodes: []*databasev1.Node{node1, node2, node3},
+		Calls: []*fodcv1.Call{},
+	}
+
+	topologyMap := convertTopologyToMap(topology)
+	aggregatedTopology := mgr.aggregateTopologies([]*TopologyMap{topologyMap})
+
+	require.NotNil(t, aggregatedTopology)
+	assert.Equal(t, 3, len(aggregatedTopology.Nodes))
+
+	// Find nodes by name
+	nodeMap := make(map[string]*NodeWithStringRoles)
+	for _, node := range aggregatedTopology.Nodes {
+		if node.Metadata != nil {
+			nodeMap[node.Metadata.Name] = node
+		}
+	}
+
+	// node1 should have Status and LastHeartbeat from matching agent
+	node1Result := nodeMap["node1"]
+	require.NotNil(t, node1Result)
+	assert.NotNil(t, node1Result.Status)
+	assert.Equal(t, agentInfo.Status, *node1Result.Status)
+	assert.NotNil(t, node1Result.LastHeartbeat)
+	assert.WithinDuration(t, agentInfo.LastHeartbeat, *node1Result.LastHeartbeat, time.Second)
+
+	// node2 should not have Status/LastHeartbeat (no matching agent)
+	node2Result := nodeMap["node2"]
+	require.NotNil(t, node2Result)
+	assert.Nil(t, node2Result.Status)
+	assert.Nil(t, node2Result.LastHeartbeat)
+
+	// node3 should not have Status/LastHeartbeat (no pod_name label)
+	node3Result := nodeMap["node3"]
+	require.NotNil(t, node3Result)
+	assert.Nil(t, node3Result.Status)
+	assert.Nil(t, node3Result.LastHeartbeat)
+}
+
+func TestManager_AggregateTopologies_AgentStatusOffline(t *testing.T) {
+	log := initTestLogger(t)
+	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mgr := NewManager(testRegistry, nil, log)
+
+	// Register an agent
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		Role:           "ROLE_DATA",
+		PodName:        "offline-pod",
+		ContainerNames: []string{"container1"},
+		Labels:         map[string]string{"env": "test"},
+	}
+	agentID, err := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, err)
+
+	// Manually set agent to offline status by manipulating heartbeat timeout
+	// We'll wait for health check to mark it offline
+	time.Sleep(6 * time.Second) // Wait for health check to run
+
+	// Create topology with node that has matching pod_name
+	node := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "node1"},
+		Labels:   map[string]string{"pod_name": "offline-pod"},
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+
+	topology := &fodcv1.Topology{
+		Nodes: []*databasev1.Node{node},
+		Calls: []*fodcv1.Call{},
+	}
+
+	topologyMap := convertTopologyToMap(topology)
+	aggregatedTopology := mgr.aggregateTopologies([]*TopologyMap{topologyMap})
+
+	require.NotNil(t, aggregatedTopology)
+	assert.Equal(t, 1, len(aggregatedTopology.Nodes))
+
+	nodeResult := aggregatedTopology.Nodes[0]
+	require.NotNil(t, nodeResult)
+	// Even if agent is offline, Status should still be populated
+	assert.NotNil(t, nodeResult.Status)
+	// Status should reflect the agent's current status (may be offline)
+	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
+	if getErr == nil {
+		assert.Equal(t, agentInfo.Status, *nodeResult.Status)
+	}
+}

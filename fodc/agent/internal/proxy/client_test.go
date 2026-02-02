@@ -818,7 +818,7 @@ func TestProxyClient_SendClusterTopology_NoStream(t *testing.T) {
 func TestProxyClient_SendClusterTopology_Success(t *testing.T) {
 	testLogger := initTestLogger(t)
 	fr := flightrecorder.NewFlightRecorder(1000000)
-	collector := cluster.NewCollector(testLogger, []string{"localhost:17914"}, 30*time.Second)
+	collector := cluster.NewCollector(testLogger, []string{"localhost:17914"}, 30*time.Second, "test-pod")
 
 	// Populate collector with test topology data using unsafe to access private field
 	testNode := &databasev1.Node{

@@ -62,17 +62,19 @@ type Collector struct {
 	currentNodes    map[string]*databasev1.Node
 	clusterTopology TopologyMap
 	nodeFetchedCh   chan struct{}
+	podName         string
 	addrs           []string
 	interval        time.Duration
 	mu              sync.RWMutex
 }
 
 // NewCollector creates a new cluster state collector.
-func NewCollector(log *logger.Logger, addrs []string, interval time.Duration) *Collector {
+func NewCollector(log *logger.Logger, addrs []string, interval time.Duration, podName string) *Collector {
 	return &Collector{
 		log:             log,
 		addrs:           addrs,
 		interval:        interval,
+		podName:         podName,
 		closer:          run.NewCloser(0),
 		nodeFetchedCh:   make(chan struct{}),
 		clients:         make([]*endpointClient, 0, len(addrs)),
@@ -246,12 +248,24 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 		currentNodeName := ""
 		if currentNode.Metadata != nil && currentNode.Metadata.Name != "" {
 			currentNodeName = currentNode.Metadata.Name
+			if currentNode.Labels == nil {
+				currentNode.Labels = make(map[string]string)
+			}
+			if c.podName != "" {
+				currentNode.Labels["pod_name"] = c.podName
+			}
 			nodeMap[currentNodeName] = currentNode
 		}
 		for _, routeTable := range clusterState.RouteTables {
 			if routeTable != nil {
 				for _, registeredNode := range routeTable.Registered {
 					if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
+						if registeredNode.Labels == nil {
+							registeredNode.Labels = make(map[string]string)
+						}
+						if c.podName != "" {
+							registeredNode.Labels["pod_name"] = c.podName
+						}
 						nodeMap[registeredNode.Metadata.Name] = registeredNode
 					}
 				}
@@ -422,13 +436,13 @@ func GenerateClusterStateAddrs(ports []string) []string {
 }
 
 // StartCollector creates and starts a cluster state collector.
-func StartCollector(ctx context.Context, log *logger.Logger, ports []string, interval time.Duration) (*Collector, error) {
+func StartCollector(ctx context.Context, log *logger.Logger, ports []string, interval time.Duration, podName string) (*Collector, error) {
 	if len(ports) == 0 {
 		return nil, nil
 	}
 	addrs := GenerateClusterStateAddrs(ports)
 	log.Info().Strs("addrs", addrs).Msg("Starting cluster state collector")
-	collector := NewCollector(log, addrs, interval)
+	collector := NewCollector(log, addrs, interval, podName)
 	if startErr := collector.Start(ctx); startErr != nil {
 		return nil, fmt.Errorf("failed to start cluster collector: %w", startErr)
 	}
