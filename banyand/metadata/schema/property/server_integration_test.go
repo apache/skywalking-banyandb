@@ -190,9 +190,11 @@ func setupServer(propertySvc banyandProperty.Service) (*testEnv, *mockedHandler,
 	handlerRegister := newMockedHandler()
 	server := property.NewServer(propertySvc, omr, handlerRegister, pm)
 	flagSet := server.FlagSet()
-	var parseArgs []string
+	parseArgs := []string{
+		"--schema-property-server-enabled=true",
+	}
 	if propertySvcClose == nil && defFn == nil {
-		parseArgs = []string{"--metadata-property-server-repair-trigger-cron=@every 1s"}
+		parseArgs = append(parseArgs, "--schema-property-server-repair-trigger-cron=@every 1s")
 	}
 	parseErr := flagSet.Parse(parseArgs)
 	if parseErr != nil {

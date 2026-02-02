@@ -172,10 +172,10 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Backoff multiplier for retry intervals in file discovery mode")
 
 	// schema management configuration
-	fs.StringVar(&s.metadataRegistryMode, "metadata-registry-mode", "etcd",
-		"Metadata storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
-	fs.DurationVar(&s.propertySchemaSyncInterval, "property-schema-sync-interval", 20*time.Second,
-		"Interval to sync property-based schema with other nodes")
+	fs.StringVar(&s.metadataRegistryMode, "schema-registry-mode", "etcd",
+		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
+	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 20*time.Second,
+		"Interval to sync property-based schema in client side with other nodes")
 	return fs
 }
 

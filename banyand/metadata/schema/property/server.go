@@ -84,9 +84,9 @@ func (s *Server) Role() databasev1.Role {
 
 // FlagSet returns the flag set for configuration.
 func (s *Server) FlagSet() *run.FlagSet {
-	fs := run.NewFlagSet("metadata-property-server")
-	fs.BoolVar(&s.enabled, "metadata-property-server-enabled", false, "is enabled the metadata property server or not")
-	fs.StringVar(&s.repairTriggerCron, "metadata-property-server-repair-trigger-cron", defaultRepairCron, "the cron expression for repair trigger")
+	fs := run.NewFlagSet("schema-property-server")
+	fs.BoolVar(&s.enabled, "schema-property-server-enabled", false, "is enabled the metadata property server or not")
+	fs.StringVar(&s.repairTriggerCron, "schema-property-server-repair-trigger-cron", defaultRepairCron, "the cron expression for schema repair trigger")
 	return fs
 }
 
@@ -99,7 +99,7 @@ func (s *Server) Validate() error {
 		return errors.New("repair trigger cron is required")
 	}
 	if _, cronErr := cron.ParseStandard(s.repairTriggerCron); cronErr != nil {
-		return errors.New("metadata-property-server-repair-trigger-cron is not a valid cron expression")
+		return errors.New("schema-property-server-repair-trigger-cron is not a valid cron expression")
 	}
 	return nil
 }
