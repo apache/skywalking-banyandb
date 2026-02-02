@@ -47,6 +47,7 @@ var metadataScope = observability.RootScope.SubScope("metadata_property")
 
 // Server is the metadata property server that stores schema data as properties.
 type Server struct {
+	enabled           bool
 	propertyService   property.Service
 	omr               observability.MetricsRegistry
 	pm                protector.Memory
@@ -75,29 +76,39 @@ func (s *Server) Name() string {
 
 // Role returns the server role.
 func (s *Server) Role() databasev1.Role {
+	if !s.enabled {
+		return databasev1.Role_ROLE_UNSPECIFIED
+	}
 	return databasev1.Role_ROLE_META
 }
 
 // FlagSet returns the flag set for configuration.
 func (s *Server) FlagSet() *run.FlagSet {
-	fs := run.NewFlagSet("metadata-property")
-	fs.StringVar(&s.repairTriggerCron, "metadata-property-repair-trigger-cron", defaultRepairCron, "the cron expression for repair trigger")
+	fs := run.NewFlagSet("metadata-property-server")
+	fs.BoolVar(&s.enabled, "metadata-property-server-enabled", false, "is enabled the metadata property server or not")
+	fs.StringVar(&s.repairTriggerCron, "metadata-property-server-repair-trigger-cron", defaultRepairCron, "the cron expression for repair trigger")
 	return fs
 }
 
 // Validate validates the server configuration.
 func (s *Server) Validate() error {
+	if !s.enabled {
+		return nil
+	}
 	if s.repairTriggerCron == "" {
 		return errors.New("repair trigger cron is required")
 	}
 	if _, cronErr := cron.ParseStandard(s.repairTriggerCron); cronErr != nil {
-		return errors.New("metadata-property-repair-trigger-cron is not a valid cron expression")
+		return errors.New("metadata-property-server-repair-trigger-cron is not a valid cron expression")
 	}
 	return nil
 }
 
 // PreRun initializes the server.
 func (s *Server) PreRun(context.Context) error {
+	if !s.enabled {
+		return nil
+	}
 	s.l = logger.GetLogger(s.Name())
 	if s.propertyService == nil {
 		return errors.New("property service is not set")
@@ -118,6 +129,9 @@ func (s *Server) PreRun(context.Context) error {
 
 // Serve starts the server.
 func (s *Server) Serve() run.StopNotify {
+	if !s.enabled {
+		return s.closer.CloseNotify()
+	}
 	if startErr := s.repairScheduler.Start(); startErr != nil {
 		s.l.Error().Err(startErr).Msg("failed to start repair scheduler")
 	}
@@ -134,6 +148,9 @@ func (s *Server) GracefulStop() {
 
 // RegisterGRPCServices registers schema management services to gRPC server.
 func (s *Server) RegisterGRPCServices(grpcServer *grpc.Server) {
+	if !s.enabled {
+		return
+	}
 	grpcFactory := s.omr.With(metadataScope.SubScope("grpc"))
 	sm := newServerMetrics(grpcFactory)
 	schemav1.RegisterSchemaManagementServiceServer(grpcServer, &schemaManagementServer{
@@ -149,23 +166,23 @@ func (s *Server) RegisterGRPCServices(grpcServer *grpc.Server) {
 }
 
 func (s *Server) insert(ctx context.Context, prop *propertyv1.Property) error {
-	if s.closer.Closed() {
-		return errors.New("server is closed")
+	if s.closer.Closed() || !s.enabled {
+		return errors.New("server is closed or not enabled")
 	}
 	return s.propertyService.DirectInsert(ctx, prop.Metadata.Group, 0, property.GetPropertyID(prop), prop)
 }
 
 func (s *Server) update(ctx context.Context, prop *propertyv1.Property) error {
-	if s.closer.Closed() {
-		return errors.New("server is closed")
+	if s.closer.Closed() || !s.enabled {
+		return errors.New("server is closed or not enabled")
 	}
 	return s.propertyService.DirectUpdate(ctx, prop.Metadata.Group, 0, property.GetPropertyID(prop), prop)
 }
 
 // delete deletes a schema property.
 func (s *Server) delete(ctx context.Context, group, name, id string, updateAt *timestamppb.Timestamp) (bool, error) {
-	if s.closer.Closed() {
-		return false, errors.New("server is closed")
+	if s.closer.Closed() || !s.enabled {
+		return false, errors.New("server is closed or not enabled")
 	}
 	prop, getErr := s.propertyService.DirectGet(ctx, group, name, id)
 	if getErr != nil {
@@ -192,15 +209,15 @@ func (s *Server) delete(ctx context.Context, group, name, id string, updateAt *t
 }
 
 func (s *Server) get(ctx context.Context, group, name, id string) (*propertyv1.Property, error) {
-	if s.closer.Closed() {
-		return nil, errors.New("server is closed")
+	if s.closer.Closed() || !s.enabled {
+		return nil, errors.New("server is closed or not enabled")
 	}
 	return s.propertyService.DirectGet(ctx, group, name, id)
 }
 
 func (s *Server) list(ctx context.Context, req *propertyv1.QueryRequest) ([]*property.WithDeleteTime, error) {
-	if s.closer.Closed() {
-		return nil, errors.New("server is closed")
+	if s.closer.Closed() || !s.enabled {
+		return nil, errors.New("server is closed or not enabled")
 	}
 	return s.propertyService.DirectQuery(ctx, req)
 }

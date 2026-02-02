@@ -192,7 +192,7 @@ func setupServer(propertySvc banyandProperty.Service) (*testEnv, *mockedHandler,
 	flagSet := server.FlagSet()
 	var parseArgs []string
 	if propertySvcClose == nil && defFn == nil {
-		parseArgs = []string{"--metadata-property-repair-trigger-cron=@every 1s"}
+		parseArgs = []string{"--metadata-property-server-repair-trigger-cron=@every 1s"}
 	}
 	parseErr := flagSet.Parse(parseArgs)
 	if parseErr != nil {
