@@ -129,6 +129,7 @@ func (s *Server) GracefulStop() {
 	if s.repairScheduler != nil {
 		s.repairScheduler.Stop()
 	}
+	s.closer.CloseThenWait()
 }
 
 // RegisterGRPCServices registers schema management services to gRPC server.
