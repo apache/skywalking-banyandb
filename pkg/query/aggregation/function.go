@@ -44,6 +44,14 @@ func (m *meanFunc[N]) Reset() {
 	m.count = m.zero
 }
 
+func (m *meanFunc[N]) Sum() N {
+	return m.sum
+}
+
+func (m *meanFunc[N]) Count() N {
+	return m.count
+}
+
 type countFunc[N Number] struct {
 	count N
 	zero  N
@@ -61,6 +69,14 @@ func (c *countFunc[N]) Reset() {
 	c.count = c.zero
 }
 
+func (c *countFunc[N]) Sum() N {
+	return c.zero
+}
+
+func (c *countFunc[N]) Count() N {
+	return c.count
+}
+
 type sumFunc[N Number] struct {
 	sum  N
 	zero N
@@ -76,6 +92,14 @@ func (s sumFunc[N]) Val() N {
 
 func (s *sumFunc[N]) Reset() {
 	s.sum = s.zero
+}
+
+func (s *sumFunc[N]) Sum() N {
+	return s.sum
+}
+
+func (s *sumFunc[N]) Count() N {
+	return s.zero
 }
 
 type maxFunc[N Number] struct {
@@ -97,6 +121,14 @@ func (m *maxFunc[N]) Reset() {
 	m.val = m.min
 }
 
+func (m *maxFunc[N]) Sum() N {
+	return m.min
+}
+
+func (m *maxFunc[N]) Count() N {
+	return m.min
+}
+
 type minFunc[N Number] struct {
 	val N
 	max N
@@ -114,4 +146,46 @@ func (m minFunc[N]) Val() N {
 
 func (m *minFunc[N]) Reset() {
 	m.val = m.max
+}
+
+func (m *minFunc[N]) Sum() N {
+	return m.max
+}
+
+func (m *minFunc[N]) Count() N {
+	return m.max
+}
+
+// distributedMeanFunc is used for distributed mean aggregation, returning sum and count instead of mean.
+type distributedMeanFunc[N Number] struct {
+	sum   N
+	count N
+	zero  N
+}
+
+func (m *distributedMeanFunc[N]) In(val N) {
+	m.sum += val
+	m.count++
+}
+
+func (m *distributedMeanFunc[N]) Val() N {
+	// For distributed mean, this value is not used
+	return m.zero
+}
+
+func (m *distributedMeanFunc[N]) Sum() N {
+	return m.sum
+}
+
+func (m *distributedMeanFunc[N]) Count() N {
+	return m.count
+}
+
+func (m *distributedMeanFunc[N]) Reset() {
+	m.sum = m.zero
+	m.count = m.zero
+}
+
+func (m *distributedMeanFunc[N]) IsDistributedMean() bool {
+	return true
 }

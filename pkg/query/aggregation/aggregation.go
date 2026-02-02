@@ -36,6 +36,15 @@ type Func[N Number] interface {
 	In(N)
 	Val() N
 	Reset()
+	// Sum returns the sum of values for distributed mean aggregation.
+	Sum() N
+	// Count returns the count of values for distributed mean aggregation.
+	Count() N
+}
+
+// DistributedMean is an interface that identifies distributed mean aggregation functions.
+type DistributedMean interface {
+	IsDistributedMean() bool
 }
 
 // Number denotes the supported number types.
@@ -62,6 +71,19 @@ func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	}
 	result.Reset()
 	return result, nil
+}
+
+// NewDistributedMeanFunc returns a distributed mean aggregation function that returns sum and count instead of mean.
+func NewDistributedMeanFunc[N Number]() Func[N] {
+	return &distributedMeanFunc[N]{zero: zero[N]()}
+}
+
+// IsDistributedMean checks if the aggregation function is a distributed mean function.
+func IsDistributedMean[N Number](f Func[N]) bool {
+	if dm, ok := f.(DistributedMean); ok {
+		return dm.IsDistributedMean()
+	}
+	return false
 }
 
 // FromFieldValue transforms modelv1.FieldValue to Number.

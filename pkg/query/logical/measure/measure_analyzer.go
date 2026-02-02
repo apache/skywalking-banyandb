@@ -127,16 +127,15 @@ func Analyze(
 	if criteria.GetAgg() != nil {
 		// Check if this is a distributed mean aggregation that needs to return sum and count
 		// This happens when the query is pushed down from liaison node to data node
-		isDistributedMean := false
-		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
-			criteria.GetTop() == nil {
-			isDistributedMean = true
+		distributedMean := false
+		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+			distributedMean = true
 		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
-			isDistributedMean,
+			distributedMean,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -183,23 +182,25 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
-	// When needCompletePushDownAgg is true, aggregation is already done on data nodes,
-	// so we should not create groupBy and aggregation plans on liaison node
-	if !needCompletePushDownAgg {
-		if criteria.GetGroupBy() != nil {
-			plan = newUnresolvedGroupBy(plan, groupByTags, false)
-			pushedLimit = math.MaxInt
-		}
+	if criteria.GetGroupBy() != nil {
+		plan = newUnresolvedGroupBy(plan, groupByTags, false)
+		pushedLimit = math.MaxInt
+	}
 
-		if criteria.GetAgg() != nil {
-			plan = newUnresolvedAggregation(plan,
-				logical.NewField(criteria.GetAgg().GetFieldName()),
-				criteria.GetAgg().GetFunction(),
-				criteria.GetGroupBy() != nil,
-				false,
-			)
-			pushedLimit = math.MaxInt
+	if criteria.GetAgg() != nil {
+		aggrFunc := criteria.GetAgg().GetFunction()
+		// When aggregation is pushed down to data nodes, COUNT values from different shards
+		// should be merged using SUM at the liaison node
+		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
+			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
 		}
+		plan = newUnresolvedAggregation(plan,
+			logical.NewField(criteria.GetAgg().GetFieldName()),
+			aggrFunc,
+			criteria.GetGroupBy() != nil,
+			false,
+		)
+		pushedLimit = math.MaxInt
 	}
 
 	if criteria.GetTop() != nil {

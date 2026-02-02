@@ -39,11 +39,11 @@ var (
 )
 
 type unresolvedAggregation struct {
-	unresolvedInput   logical.UnresolvedPlan
-	aggregationField  *logical.Field
-	aggrFunc          modelv1.AggregationFunction
-	isGroup           bool
-	isDistributedMean bool
+	unresolvedInput  logical.UnresolvedPlan
+	aggregationField *logical.Field
+	aggrFunc         modelv1.AggregationFunction
+	isGroup          bool
+	distributedMean  bool
 }
 
 func newUnresolvedAggregation(
@@ -51,14 +51,14 @@ func newUnresolvedAggregation(
 	aggrField *logical.Field,
 	aggrFunc modelv1.AggregationFunction,
 	isGroup bool,
-	isDistributedMean bool,
+	distributedMean bool,
 ) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
-		unresolvedInput:   input,
-		aggrFunc:          aggrFunc,
-		aggregationField:  aggrField,
-		isGroup:           isGroup,
-		isDistributedMean: isDistributedMean,
+		unresolvedInput:  input,
+		aggrFunc:         aggrFunc,
+		aggregationField: aggrField,
+		isGroup:          isGroup,
+		distributedMean:  distributedMean,
 	}
 }
 
@@ -94,14 +94,6 @@ type aggregationPlan[N aggregation.Number] struct {
 	aggrFunc            aggregation.Func[N]
 	aggrType            modelv1.AggregationFunction
 	isGroup             bool
-	isDistributedMean   bool
-}
-
-// DistributedMeanFunc is used for distributed mean aggregation, returning sum and count.
-type DistributedMeanFunc[N aggregation.Number] interface {
-	aggregation.Func[N]
-	Sum() N
-	Count() N
 }
 
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
@@ -109,9 +101,8 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 ) (*aggregationPlan[N], error) {
 	var aggrFunc aggregation.Func[N]
 	var err error
-	if gba.isDistributedMean {
-		var zero N
-		aggrFunc = &distributedMeanFunc[N]{zero: zero}
+	if gba.distributedMean {
+		aggrFunc = aggregation.NewDistributedMeanFunc[N]()
 	} else {
 		aggrFunc, err = aggregation.NewFunc[N](gba.aggrFunc)
 		if err != nil {
@@ -127,37 +118,7 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 		aggrFunc:            aggrFunc,
 		aggregationFieldRef: fieldRef,
 		isGroup:             gba.isGroup,
-		isDistributedMean:   gba.isDistributedMean,
 	}, nil
-}
-
-type distributedMeanFunc[N aggregation.Number] struct {
-	sum   N
-	count N
-	zero  N
-}
-
-func (m *distributedMeanFunc[N]) In(val N) {
-	m.sum += val
-	m.count++
-}
-
-func (m *distributedMeanFunc[N]) Val() N {
-	// For distributed mean, this value is not used
-	return m.zero
-}
-
-func (m *distributedMeanFunc[N]) Sum() N {
-	return m.sum
-}
-
-func (m *distributedMeanFunc[N]) Count() N {
-	return m.count
-}
-
-func (m *distributedMeanFunc[N]) Reset() {
-	m.sum = m.zero
-	m.count = m.zero
 }
 
 func (g *aggregationPlan[N]) String() string {
@@ -181,9 +142,9 @@ func (g *aggregationPlan[N]) Execute(ec context.Context) (executor.MIterator, er
 		return nil, err
 	}
 	if g.isGroup {
-		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc, g.isDistributedMean), nil
+		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
 	}
-	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc, g.isDistributedMean), nil
+	return newAggAllIterator(iter, g.aggregationFieldRef, g.aggrFunc), nil
 }
 
 type aggGroupIterator[N aggregation.Number] struct {
@@ -191,20 +152,17 @@ type aggGroupIterator[N aggregation.Number] struct {
 	aggregationFieldRef *logical.FieldRef
 	aggrFunc            aggregation.Func[N]
 	err                 error
-	isDistributedMean   bool
 }
 
 func newAggGroupMIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
-	isDistributedMean bool,
 ) executor.MIterator {
 	return &aggGroupIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
-		isDistributedMean:   isDistributedMean,
 	}
 }
 
@@ -245,33 +203,28 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 		return nil
 	}
 	var fields []*measurev1.DataPoint_Field
-	if ami.isDistributedMean {
-		if meanFunc, ok := ami.aggrFunc.(DistributedMeanFunc[N]); ok {
-			sumVal := meanFunc.Sum()
-			countVal := meanFunc.Count()
-			sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
-			if sumErr != nil {
-				ami.err = sumErr
-				return nil
-			}
-			countFieldVal, countErr := aggregation.ToFieldValue(countVal)
-			if countErr != nil {
-				ami.err = countErr
-				return nil
-			}
-			fields = []*measurev1.DataPoint_Field{
-				{
-					Name:  ami.aggregationFieldRef.Field.Name + "_sum",
-					Value: sumFieldVal,
-				},
-				{
-					Name:  ami.aggregationFieldRef.Field.Name + "_count",
-					Value: countFieldVal,
-				},
-			}
-		} else {
-			ami.err = fmt.Errorf("aggrFunc is not DistributedMeanFunc")
+	if aggregation.IsDistributedMean(ami.aggrFunc) {
+		sumVal := ami.aggrFunc.Sum()
+		countVal := ami.aggrFunc.Count()
+		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
+		if sumErr != nil {
+			ami.err = sumErr
 			return nil
+		}
+		countFieldVal, countErr := aggregation.ToFieldValue(countVal)
+		if countErr != nil {
+			ami.err = countErr
+			return nil
+		}
+		fields = []*measurev1.DataPoint_Field{
+			{
+				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
+				Value: sumFieldVal,
+			},
+			{
+				Name:  ami.aggregationFieldRef.Field.Name + "_count",
+				Value: countFieldVal,
+			},
 		}
 	} else {
 		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
@@ -300,20 +253,17 @@ type aggAllIterator[N aggregation.Number] struct {
 	aggrFunc            aggregation.Func[N]
 	result              *measurev1.DataPoint
 	err                 error
-	isDistributedMean   bool
 }
 
 func newAggAllIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
 	aggrFunc aggregation.Func[N],
-	isDistributedMean bool,
 ) executor.MIterator {
 	return &aggAllIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
 		aggrFunc:            aggrFunc,
-		isDistributedMean:   isDistributedMean,
 	}
 }
 
@@ -346,33 +296,28 @@ func (ami *aggAllIterator[N]) Next() bool {
 		return false
 	}
 	var fields []*measurev1.DataPoint_Field
-	if ami.isDistributedMean {
-		if meanFunc, ok := ami.aggrFunc.(DistributedMeanFunc[N]); ok {
-			sumVal := meanFunc.Sum()
-			countVal := meanFunc.Count()
-			sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
-			if sumErr != nil {
-				ami.err = sumErr
-				return false
-			}
-			countFieldVal, countErr := aggregation.ToFieldValue(countVal)
-			if countErr != nil {
-				ami.err = countErr
-				return false
-			}
-			fields = []*measurev1.DataPoint_Field{
-				{
-					Name:  ami.aggregationFieldRef.Field.Name + "_sum",
-					Value: sumFieldVal,
-				},
-				{
-					Name:  ami.aggregationFieldRef.Field.Name + "_count",
-					Value: countFieldVal,
-				},
-			}
-		} else {
-			ami.err = fmt.Errorf("aggrFunc is not DistributedMeanFunc")
+	if aggregation.IsDistributedMean(ami.aggrFunc) {
+		sumVal := ami.aggrFunc.Sum()
+		countVal := ami.aggrFunc.Count()
+		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
+		if sumErr != nil {
+			ami.err = sumErr
 			return false
+		}
+		countFieldVal, countErr := aggregation.ToFieldValue(countVal)
+		if countErr != nil {
+			ami.err = countErr
+			return false
+		}
+		fields = []*measurev1.DataPoint_Field{
+			{
+				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
+				Value: sumFieldVal,
+			},
+			{
+				Name:  ami.aggregationFieldRef.Field.Name + "_count",
+				Value: countFieldVal,
+			},
 		}
 	} else {
 		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
