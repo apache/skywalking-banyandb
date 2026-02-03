@@ -62,7 +62,7 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 		heartbeatInterval := 2 * time.Second
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 
 		// Start gRPC server on random port
@@ -81,7 +81,7 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close() // Close listener so port is available for server
-		httpServer = api.NewServer(metricsAggregator, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, agentRegistry, testLogger)
 		// Start HTTP server using the address from the listener
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 

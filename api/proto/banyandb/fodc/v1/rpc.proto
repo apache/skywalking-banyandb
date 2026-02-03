@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.fodc.v1;
 
+import "banyandb/database/v1/database.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
@@ -30,6 +31,9 @@ service FODCService {
   // Bi-directional stream for metrics
   // Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests)
   rpc StreamMetrics(stream StreamMetricsRequest) returns (stream StreamMetricsResponse);
+
+  // Bi-directional stream for cluster topology
+  rpc StreamClusterTopology(stream StreamClusterTopologyRequest) returns (stream StreamClusterTopologyResponse);
 }
 
 message RegisterAgentRequest {
@@ -62,4 +66,25 @@ message Metric {
 message StreamMetricsResponse {
   google.protobuf.Timestamp start_time = 1; // Optional start time for time window
   google.protobuf.Timestamp end_time = 2; // Optional end time for time window
+}
+
+message Call {
+  string id = 1;
+  string target = 2;
+  string source = 3;
+}
+
+message Topology {
+  repeated banyandb.database.v1.Node nodes = 1;
+  repeated Call calls = 2;
+}
+
+message StreamClusterTopologyRequest {
+  google.protobuf.Timestamp timestamp = 1;
+  Topology topology = 2;
+}
+
+message StreamClusterTopologyResponse {
+  // Request topology from agent
+  bool request_topology = 1;
 }

@@ -32,8 +32,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
-	flightrecorder "github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -50,11 +52,13 @@ type Client struct {
 	heartbeatTicker    *time.Ticker
 	flightRecorder     *flightrecorder.FlightRecorder
 	connManager        *connManager
+	clusterCollector   *cluster.Collector
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
+	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
@@ -65,7 +69,7 @@ type Client struct {
 
 	heartbeatInterval time.Duration
 	reconnectInterval time.Duration
-	streamsMu         sync.RWMutex   // Protects streams only
+	streamsMu         sync.RWMutex   // Protects streams and stream operations
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
 	disconnected      bool
 }
@@ -80,6 +84,7 @@ func NewClient(
 	heartbeatInterval time.Duration,
 	reconnectInterval time.Duration,
 	flightRecorder *flightrecorder.FlightRecorder,
+	clusterCollector *cluster.Collector,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
@@ -93,11 +98,11 @@ func NewClient(
 		heartbeatInterval: heartbeatInterval,
 		reconnectInterval: reconnectInterval,
 		flightRecorder:    flightRecorder,
+		clusterCollector:  clusterCollector,
 		logger:            logger,
 		stopCh:            make(chan struct{}),
 		reconnectCh:       make(chan struct{}, 1),
 	}
-
 	connMgr.setHeartbeatChecker(client.SendHeartbeat)
 	return client
 }
@@ -184,6 +189,7 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 	c.logger.Info().
 		Str("proxy_addr", c.proxyAddr).
 		Str("agent_id", resp.AgentId).
+		Str("node_role", c.nodeRole).
 		Dur("heartbeat_interval", c.heartbeatInterval).
 		Msg("Agent registered with Proxy")
 
@@ -230,6 +236,129 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 	return nil
 }
 
+// StartClusterStateStream establishes bi-directional cluster state stream with Proxy.
+func (c *Client) StartClusterStateStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamClusterTopology(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create cluster state stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.clusterStateStream = stream
+	c.streamsMu.Unlock()
+
+	go c.handleClusterStateStream(ctx, stream)
+
+	c.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Cluster state stream established with Proxy")
+
+	return nil
+}
+
+// sendClusterTopology sends cluster topology to Proxy.
+func (c *Client) sendClusterTopology() error {
+	c.streamsMu.RLock()
+	if c.disconnected || c.clusterStateStream == nil {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("cluster state stream not established")
+	}
+	clusterStateStream := c.clusterStateStream
+	collector := c.clusterCollector
+	c.streamsMu.RUnlock()
+	var topology cluster.TopologyMap
+	if collector == nil {
+		c.logger.Debug().Msg("Cluster collector not available, sending empty topology")
+		topology = cluster.TopologyMap{
+			Nodes: make([]*databasev1.Node, 0),
+			Calls: make([]*fodcv1.Call, 0),
+		}
+	} else {
+		topology = collector.GetClusterTopology()
+		if len(topology.Nodes) == 0 && len(topology.Calls) == 0 {
+			c.logger.Debug().Msg("No cluster topology available to send")
+		}
+	}
+	req := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
+			Nodes: topology.Nodes,
+			Calls: topology.Calls,
+		},
+		Timestamp: timestamppb.Now(),
+	}
+	c.streamsMu.Lock()
+	if c.clusterStateStream != clusterStateStream {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("cluster state stream changed during send")
+	}
+	sendErr := clusterStateStream.Send(req)
+	c.streamsMu.Unlock()
+	if sendErr != nil {
+		return fmt.Errorf("failed to send cluster topology: %w", sendErr)
+	}
+	c.logger.Info().
+		Int("nodes_count", len(topology.Nodes)).
+		Int("calls_count", len(topology.Calls)).
+		Msg("Successfully sent cluster topology to proxy")
+	return nil
+}
+
+// handleClusterStateStream handles the cluster state stream.
+func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FODCService_StreamClusterTopologyClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Cluster state stream closed by Proxy, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Cluster state stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from cluster state stream, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+		if resp != nil && resp.RequestTopology {
+			c.logger.Debug().Msg("Received cluster data request from proxy")
+			if sendErr := c.sendClusterTopology(); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send cluster topology to proxy")
+			}
+		}
+	}
+}
+
 // RetrieveAndSendMetrics retrieves metrics from Flight Recorder when requested by Proxy.
 func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsRequestFilter) error {
 	c.streamsMu.RLock()
@@ -246,7 +375,14 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			Metrics:   []*fodcv1.Metric{},
 			Timestamp: timestamppb.Now(),
 		}
-		if sendErr := metricsStream.Send(req); sendErr != nil {
+		c.streamsMu.Lock()
+		if c.metricsStream != metricsStream {
+			c.streamsMu.Unlock()
+			return fmt.Errorf("metrics stream changed during send")
+		}
+		sendErr := metricsStream.Send(req)
+		c.streamsMu.Unlock()
+		if sendErr != nil {
 			return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 		}
 		return nil
@@ -263,7 +399,14 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			c.streamsMu.Lock()
+			if c.metricsStream != metricsStream {
+				c.streamsMu.Unlock()
+				return fmt.Errorf("metrics stream changed during send")
+			}
+			sendErr := metricsStream.Send(req)
+			c.streamsMu.Unlock()
+			if sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
@@ -275,16 +418,37 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 				Metrics:   []*fodcv1.Metric{},
 				Timestamp: timestamppb.Now(),
 			}
-			if sendErr := metricsStream.Send(req); sendErr != nil {
+			c.streamsMu.Lock()
+			if c.metricsStream != metricsStream {
+				c.streamsMu.Unlock()
+				return fmt.Errorf("metrics stream changed during send")
+			}
+			sendErr := metricsStream.Send(req)
+			c.streamsMu.Unlock()
+			if sendErr != nil {
 				return fmt.Errorf("failed to send empty metrics response: %w", sendErr)
 			}
 			return nil
 		}
 
-		return c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		c.streamsMu.Lock()
+		if c.metricsStream != metricsStream {
+			c.streamsMu.Unlock()
+			return fmt.Errorf("metrics stream changed during send")
+		}
+		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		c.streamsMu.Unlock()
+		return sendErr
 	}
 
-	return c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	c.streamsMu.Lock()
+	if c.metricsStream != metricsStream {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("metrics stream changed during send")
+	}
+	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	c.streamsMu.Unlock()
+	return sendErr
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -474,6 +638,13 @@ func (c *Client) cleanupStreams() {
 		}
 		c.metricsStream = nil
 	}
+
+	if c.clusterStateStream != nil {
+		if closeErr := c.clusterStateStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing cluster state stream")
+		}
+		c.clusterStateStream = nil
+	}
 	c.client = nil
 	c.streamsMu.Unlock()
 }
@@ -493,6 +664,7 @@ func (c *Client) Disconnect() error {
 		c.heartbeatTicker.Stop()
 		c.heartbeatTicker = nil
 	}
+
 	c.streamsMu.Unlock()
 
 	// Wait for heartbeat goroutine to exit before closing streams
@@ -511,6 +683,13 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing metrics stream")
 		}
 		c.metricsStream = nil
+	}
+
+	if c.clusterStateStream != nil {
+		if closeErr := c.clusterStateStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing cluster state stream")
+		}
+		c.clusterStateStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -557,6 +736,13 @@ func (c *Client) Start(ctx context.Context) error {
 
 		if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 			c.logger.Error().Err(metricsErr).Msg("Failed to start metrics stream, reconnecting...")
+			c.cleanupStreams()
+			time.Sleep(c.reconnectInterval)
+			continue
+		}
+
+		if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
+			c.logger.Error().Err(clusterStateErr).Msg("Failed to start cluster state stream, reconnecting...")
 			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
@@ -701,6 +887,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.metricsStream.CloseSend()
 		c.metricsStream = nil
 	}
+	if c.clusterStateStream != nil {
+		_ = c.clusterStateStream.CloseSend()
+		c.clusterStateStream = nil
+	}
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
@@ -733,6 +923,11 @@ func (c *Client) reconnect(ctx context.Context) {
 
 	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
 		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
+		return
+	}
+
+	if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
+		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream")
 		return
 	}
 
