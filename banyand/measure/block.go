@@ -1190,8 +1190,7 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 
 		items, err := topNPostAggregator.Flush()
 		if err != nil {
-			log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
-			continue
+			log.Panic().Err(err).Msg("failed to flush aggregator")
 		}
 
 		for _, item := range items {
