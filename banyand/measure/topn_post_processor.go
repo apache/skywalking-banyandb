@@ -250,7 +250,7 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 					continue
 				}
 
-				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc, false)
+				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc)
 				if err != nil {
 					return nil, err
 				}

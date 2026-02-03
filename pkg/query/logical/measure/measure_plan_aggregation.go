@@ -43,7 +43,6 @@ type unresolvedAggregation struct {
 	aggregationField *logical.Field
 	aggrFunc         modelv1.AggregationFunction
 	isGroup          bool
-	distributedMean  bool
 }
 
 func newUnresolvedAggregation(
@@ -51,14 +50,12 @@ func newUnresolvedAggregation(
 	aggrField *logical.Field,
 	aggrFunc modelv1.AggregationFunction,
 	isGroup bool,
-	distributedMean bool,
 ) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
 		aggrFunc:         aggrFunc,
 		aggregationField: aggrField,
 		isGroup:          isGroup,
-		distributedMean:  distributedMean,
 	}
 }
 
@@ -99,7 +96,7 @@ type aggregationPlan[N aggregation.Number] struct {
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
 	measureSchema logical.Schema, fieldRef *logical.FieldRef,
 ) (*aggregationPlan[N], error) {
-	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc, gba.distributedMean)
+	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -184,11 +181,7 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 			ami.err = err
 			return nil
 		}
-		if aggregation.IsDistributedMean(ami.aggrFunc) {
-			ami.aggrFunc.In(v, 1)
-		} else {
-			ami.aggrFunc.In(v)
-		}
+		ami.aggrFunc.In(v)
 		if resultDp != nil {
 			continue
 		}

@@ -38,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -327,15 +326,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			}
 			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
 		}
-		// For other aggregation functions (MIN/MAX/SUM/COUNT), if there's no groupBy,
-		// we need to merge results from different shards
-		if len(t.groupByTagsRefs) == 0 && len(deduplicatedDps) > 1 && t.queryTemplate.Agg != nil {
-			mergedDps, mergeErr := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
-			if mergeErr != nil {
-				return nil, multierr.Append(err, mergeErr)
-			}
-			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
-		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
@@ -589,114 +579,6 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 	return result, nil
 }
 
-// mergeNonGroupByAggregation merges aggregation results from multiple shards when there's no groupBy.
-// Uses aggregation.Func to properly merge results according to the aggregation function type.
-func mergeNonGroupByAggregation(
-	dataPoints []*measurev1.InternalDataPoint,
-	agg *measurev1.QueryRequest_Aggregation,
-) ([]*measurev1.InternalDataPoint, error) {
-	if len(dataPoints) == 0 {
-		return nil, nil
-	}
-	if len(dataPoints) == 1 {
-		return dataPoints, nil
-	}
-	// Deduplicate by shard_id first (keep the one with highest version)
-	shardMap := make(map[uint32]*measurev1.InternalDataPoint)
-	for _, idp := range dataPoints {
-		existing, exists := shardMap[idp.ShardId]
-		if !exists || idp.GetDataPoint().Version > existing.GetDataPoint().Version {
-			shardMap[idp.ShardId] = idp
-		}
-	}
-	// Now merge results from different shards
-	deduplicatedDps := make([]*measurev1.InternalDataPoint, 0, len(shardMap))
-	for _, idp := range shardMap {
-		deduplicatedDps = append(deduplicatedDps, idp)
-	}
-	if len(deduplicatedDps) == 1 {
-		return deduplicatedDps, nil
-	}
-	// Determine field type from the first data point
-	fieldName := agg.FieldName
-	firstFieldVal := getFieldValue(deduplicatedDps[0].GetDataPoint(), fieldName)
-	if firstFieldVal == nil {
-		return deduplicatedDps[:1], nil
-	}
-	// Create aggregation function based on field type
-	var isInt bool
-	switch firstFieldVal.Value.(type) {
-	case *modelv1.FieldValue_Int:
-		isInt = true
-	case *modelv1.FieldValue_Float:
-		isInt = false
-	default:
-		return deduplicatedDps[:1], nil
-	}
-	// Merge using aggregation.Func
-	if isInt {
-		return mergeNonGroupByAggregationWithFunc[int64](deduplicatedDps, agg, fieldName)
-	}
-	return mergeNonGroupByAggregationWithFunc[float64](deduplicatedDps, agg, fieldName)
-}
-
-// mergeNonGroupByAggregationWithFunc merges aggregation results using aggregation.Func.
-func mergeNonGroupByAggregationWithFunc[N aggregation.Number](
-	dataPoints []*measurev1.InternalDataPoint,
-	agg *measurev1.QueryRequest_Aggregation,
-	fieldName string,
-) ([]*measurev1.InternalDataPoint, error) {
-	// Create aggregation function
-	aggrFunc, aggrErr := aggregation.NewFunc[N](agg.Function, false)
-	if aggrErr != nil {
-		return nil, fmt.Errorf("failed to create aggregation function: %w", aggrErr)
-	}
-	// Feed aggregated values from each shard into the aggregation function
-	for _, idp := range dataPoints {
-		dp := idp.GetDataPoint()
-		fieldVal := getFieldValue(dp, fieldName)
-		if fieldVal == nil {
-			continue
-		}
-		val, fromErr := aggregation.FromFieldValue[N](fieldVal)
-		if fromErr != nil {
-			return nil, fmt.Errorf("failed to convert field value: %w", fromErr)
-		}
-		aggrFunc.In(val)
-	}
-	resultVal := aggrFunc.Val()
-	resultFieldVal, toErr := aggregation.ToFieldValue(resultVal)
-	if toErr != nil {
-		return nil, fmt.Errorf("failed to convert result value: %w", toErr)
-	}
-	// Create a new result data point (don't modify the original)
-	firstDp := dataPoints[0].GetDataPoint()
-	resultDp := &measurev1.DataPoint{
-		TagFamilies: firstDp.TagFamilies,
-		Fields: []*measurev1.DataPoint_Field{
-			{
-				Name:  fieldName,
-				Value: resultFieldVal,
-			},
-		},
-	}
-	result := &measurev1.InternalDataPoint{
-		DataPoint: resultDp,
-		ShardId:   dataPoints[0].ShardId,
-	}
-	return []*measurev1.InternalDataPoint{result}, nil
-}
-
-// getFieldValue extracts the field value from a data point.
-func getFieldValue(dp *measurev1.DataPoint, fieldName string) *modelv1.FieldValue {
-	for _, field := range dp.Fields {
-		if field.Name == fieldName {
-			return field.Value
-		}
-	}
-	return nil
-}
-
 // hashWithShard combines shard_id and group_key into a single hash.
 func hashWithShard(shardID, groupKey uint64) uint64 {
 	h := uint64(offset64)
@@ -705,18 +587,17 @@ func hashWithShard(shardID, groupKey uint64) uint64 {
 	return h
 }
 
-type meanGroup struct {
-	dataPoint  *measurev1.DataPoint
-	shardID    uint32
-	sumInt     int64
-	countInt   int64
-	sumFloat   float64
-	countFloat float64
-}
-
 // mergeMeanAggregation merges mean aggregation results (sum and count) from multiple data nodes.
 func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName string, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
-	groupMap := make(map[uint64]*meanGroup)
+	type meanMergeState struct {
+		dataPoint  *measurev1.DataPoint
+		shardID    uint32
+		sumInt     int64
+		countInt   int64
+		sumFloat   float64
+		countFloat float64
+	}
+	groupMap := make(map[uint64]*meanMergeState)
 	for _, idp := range dataPoints {
 		dp := idp.GetDataPoint()
 		var groupKey uint64
@@ -758,7 +639,7 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 			continue
 		}
 		if _, exists := groupMap[groupKey]; !exists {
-			groupMap[groupKey] = &meanGroup{
+			groupMap[groupKey] = &meanMergeState{
 				dataPoint: &measurev1.DataPoint{
 					TagFamilies: dp.TagFamilies,
 				},

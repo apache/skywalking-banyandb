@@ -44,16 +44,13 @@ type Number interface {
 }
 
 // NewFunc returns a aggregation function based on function type.
-// If forDistributedMean is true and af is MEAN, it returns a distributedMeanFunc that aggregates sum and count.
-func NewFunc[N Number](af modelv1.AggregationFunction, forDistributedMean bool) (Func[N], error) {
+func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	var result Func[N]
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		if forDistributedMean {
-			result = &distributedMeanFunc[N]{zero: zero[N]()}
-		} else {
-			result = &meanFunc[N]{zero: zero[N]()}
-		}
+		result = &meanFunc[N]{zero: zero[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN:
+		result = &distributedMeanFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
 		result = &countFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:

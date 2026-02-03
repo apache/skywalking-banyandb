@@ -606,6 +606,7 @@ Trace is the top level message of a trace.
 | AGGREGATION_FUNCTION_MIN | 3 |  |
 | AGGREGATION_FUNCTION_COUNT | 4 |  |
 | AGGREGATION_FUNCTION_SUM | 5 |  |
+| AGGREGATION_FUNCTION_DISTRIBUTED_MEAN | 6 |  |
 
 
  

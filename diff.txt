@@ -1,0 +1,898 @@
+diff --git a/banyand/measure/topn_post_processor.go b/banyand/measure/topn_post_processor.go
+index fde0f5a4..985cd4fb 100644
+--- a/banyand/measure/topn_post_processor.go
++++ b/banyand/measure/topn_post_processor.go
+@@ -250,7 +250,7 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
+ 					continue
+ 				}
+ 
+-				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc)
++				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc, false)
+ 				if err != nil {
+ 					return nil, err
+ 				}
+diff --git a/banyand/query/processor.go b/banyand/query/processor.go
+index cbe7d783..0d9e50d3 100644
+--- a/banyand/query/processor.go
++++ b/banyand/query/processor.go
+@@ -202,8 +202,13 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
+ }
+ 
+ // executeMeasurePlan executes the measure query plan and returns the iterator.
+-func executeMeasurePlan(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext) (executor.MIterator, logical.Plan, error) {
+-	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc)
++func executeMeasurePlan(
++	ctx context.Context,
++	queryCriteria *measurev1.QueryRequest,
++	mctx *measureExecutionContext,
++	isDistributed bool,
++) (executor.MIterator, logical.Plan, error) {
++	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, isDistributed)
+ 	if planErr != nil {
+ 		return nil, nil, fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
+ 	}
+@@ -343,7 +348,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria
+ 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
+ 	}
+ 
+-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
++	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
+ 	if execErr != nil {
+ 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+ 		return
+@@ -462,7 +467,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
+ 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
+ 	}
+ 
+-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx)
++	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, true)
+ 	if execErr != nil {
+ 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+ 		return
+@@ -507,7 +512,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
+ 			mctx.ml.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
+ 		} else {
+ 			rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
+-			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx)
++			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx, true)
+ 			if rewriteExecErr != nil {
+ 				mctx.ml.Error().Err(rewriteExecErr).RawJSON("req", logger.Proto(rewriteQueryCriteria)).Msg("fail to execute the rewrite query plan")
+ 			} else {
+diff --git a/pkg/query/aggregation/aggregation.go b/pkg/query/aggregation/aggregation.go
+index a581e670..07284d69 100644
+--- a/pkg/query/aggregation/aggregation.go
++++ b/pkg/query/aggregation/aggregation.go
+@@ -33,7 +33,7 @@ var (
+ 
+ // Func supports aggregation operations.
+ type Func[N Number] interface {
+-	In(N)
++	In(...N)
+ 	Val() N
+ 	Reset()
+ }
+@@ -44,11 +44,16 @@ type Number interface {
+ }
+ 
+ // NewFunc returns a aggregation function based on function type.
+-func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
++// If forDistributedMean is true and af is MEAN, it returns a distributedMeanFunc that aggregates sum and count.
++func NewFunc[N Number](af modelv1.AggregationFunction, forDistributedMean bool) (Func[N], error) {
+ 	var result Func[N]
+ 	switch af {
+ 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+-		result = &meanFunc[N]{zero: zero[N]()}
++		if forDistributedMean {
++			result = &distributedMeanFunc[N]{zero: zero[N]()}
++		} else {
++			result = &meanFunc[N]{zero: zero[N]()}
++		}
+ 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+ 		result = &countFunc[N]{zero: zero[N]()}
+ 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
+@@ -114,3 +119,17 @@ func zero[N Number]() N {
+ 	var z N
+ 	return z
+ }
++
++// IsDistributedMean checks if the function is a distributed mean function.
++func IsDistributedMean[N Number](f Func[N]) bool {
++	_, ok := f.(*distributedMeanFunc[N])
++	return ok
++}
++
++// GetSumCount returns sum and count if the function is a distributed mean function.
++func GetSumCount[N Number](f Func[N]) (sum N, count N, ok bool) {
++	if dmf, ok := f.(*distributedMeanFunc[N]); ok {
++		return dmf.sum, dmf.count, true
++	}
++	return zero[N](), zero[N](), false
++}
+diff --git a/pkg/query/aggregation/function.go b/pkg/query/aggregation/function.go
+index faa019d9..a394e4c9 100644
+--- a/pkg/query/aggregation/function.go
++++ b/pkg/query/aggregation/function.go
+@@ -23,9 +23,11 @@ type meanFunc[N Number] struct {
+ 	zero  N
+ }
+ 
+-func (m *meanFunc[N]) In(val N) {
+-	m.sum += val
+-	m.count++
++func (m *meanFunc[N]) In(vals ...N) {
++	for _, val := range vals {
++		m.sum += val
++		m.count++
++	}
+ }
+ 
+ func (m meanFunc[N]) Val() N {
+@@ -49,8 +51,10 @@ type countFunc[N Number] struct {
+ 	zero  N
+ }
+ 
+-func (c *countFunc[N]) In(_ N) {
+-	c.count++
++func (c *countFunc[N]) In(vals ...N) {
++	for range vals {
++		c.count++
++	}
+ }
+ 
+ func (c countFunc[N]) Val() N {
+@@ -66,8 +70,10 @@ type sumFunc[N Number] struct {
+ 	zero N
+ }
+ 
+-func (s *sumFunc[N]) In(val N) {
+-	s.sum += val
++func (s *sumFunc[N]) In(vals ...N) {
++	for _, val := range vals {
++		s.sum += val
++	}
+ }
+ 
+ func (s sumFunc[N]) Val() N {
+@@ -83,9 +89,11 @@ type maxFunc[N Number] struct {
+ 	min N
+ }
+ 
+-func (m *maxFunc[N]) In(val N) {
+-	if val > m.val {
+-		m.val = val
++func (m *maxFunc[N]) In(vals ...N) {
++	for _, val := range vals {
++		if val > m.val {
++			m.val = val
++		}
+ 	}
+ }
+ 
+@@ -102,9 +110,11 @@ type minFunc[N Number] struct {
+ 	max N
+ }
+ 
+-func (m *minFunc[N]) In(val N) {
+-	if val < m.val {
+-		m.val = val
++func (m *minFunc[N]) In(vals ...N) {
++	for _, val := range vals {
++		if val < m.val {
++			m.val = val
++		}
+ 	}
+ }
+ 
+@@ -115,3 +125,28 @@ func (m minFunc[N]) Val() N {
+ func (m *minFunc[N]) Reset() {
+ 	m.val = m.max
+ }
++
++// distributedMeanFunc is used for distributed mean aggregation on data nodes.
++type distributedMeanFunc[N Number] struct {
++	sum   N
++	count N
++	zero  N
++}
++
++func (m *distributedMeanFunc[N]) In(vals ...N) {
++	if len(vals) != 2 {
++		panic("expected 2 values for distributed mean: (sum, count)")
++	}
++	m.sum += vals[0]
++	m.count += vals[1]
++}
++
++func (m *distributedMeanFunc[N]) Val() N {
++	// For distributed mean, this value is not used
++	return m.zero
++}
++
++func (m *distributedMeanFunc[N]) Reset() {
++	m.sum = m.zero
++	m.count = m.zero
++}
+diff --git a/pkg/query/logical/measure/measure_analyzer.go b/pkg/query/logical/measure/measure_analyzer.go
+index f92c5127..7053b838 100644
+--- a/pkg/query/logical/measure/measure_analyzer.go
++++ b/pkg/query/logical/measure/measure_analyzer.go
+@@ -55,7 +55,13 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
+ }
+ 
+ // Analyze converts logical expressions to executable operation tree represented by Plan.
+-func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.MeasureExecutionContext) (logical.Plan, error) {
++func Analyze(
++	criteria *measurev1.QueryRequest,
++	metadata []*commonv1.Metadata,
++	ss []logical.Schema,
++	ecc []executor.MeasureExecutionContext,
++	isDistributed bool,
++) (logical.Plan, error) {
+ 	if len(metadata) != len(ss) {
+ 		return nil, fmt.Errorf("number of schemas %d not equal to metadata count %d", len(ss), len(metadata))
+ 	}
+@@ -119,10 +125,17 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
+ 	}
+ 
+ 	if criteria.GetAgg() != nil {
++		// Check if this is a distributed mean aggregation that needs to return sum and count
++		// This happens when the query is pushed down from liaison node to data node
++		distributedMean := false
++		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
++			distributedMean = true
++		}
+ 		plan = newUnresolvedAggregation(plan,
+ 			logical.NewField(criteria.GetAgg().GetFieldName()),
+ 			criteria.GetAgg().GetFunction(),
+ 			criteria.GetGroupBy() != nil,
++			distributedMean,
+ 		)
+ 		pushedLimit = math.MaxInt
+ 	}
+@@ -157,13 +170,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
+ 		}
+ 	}
+ 
+-	// TODO: to support all aggregation functions
+-	needCompletePushDownAgg := criteria.GetAgg() != nil &&
+-		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
+-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN ||
+-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM ||
+-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT) &&
+-		criteria.GetTop() == nil
++	needCompletePushDownAgg := criteria.GetAgg() != nil && criteria.GetTop() == nil
+ 
+ 	// parse fields
+ 	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)
+@@ -182,6 +189,8 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
+ 
+ 	if criteria.GetAgg() != nil {
+ 		aggrFunc := criteria.GetAgg().GetFunction()
++		// When aggregation is pushed down to data nodes, COUNT values from different shards
++		// should be merged using SUM at the liaison node
+ 		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
+ 			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+ 		}
+@@ -189,6 +198,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
+ 			logical.NewField(criteria.GetAgg().GetFieldName()),
+ 			aggrFunc,
+ 			criteria.GetGroupBy() != nil,
++			false,
+ 		)
+ 		pushedLimit = math.MaxInt
+ 	}
+diff --git a/pkg/query/logical/measure/measure_plan_aggregation.go b/pkg/query/logical/measure/measure_plan_aggregation.go
+index ec2b06a6..a0e407cf 100644
+--- a/pkg/query/logical/measure/measure_plan_aggregation.go
++++ b/pkg/query/logical/measure/measure_plan_aggregation.go
+@@ -43,14 +43,22 @@ type unresolvedAggregation struct {
+ 	aggregationField *logical.Field
+ 	aggrFunc         modelv1.AggregationFunction
+ 	isGroup          bool
++	distributedMean  bool
+ }
+ 
+-func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction, isGroup bool) logical.UnresolvedPlan {
++func newUnresolvedAggregation(
++	input logical.UnresolvedPlan,
++	aggrField *logical.Field,
++	aggrFunc modelv1.AggregationFunction,
++	isGroup bool,
++	distributedMean bool,
++) logical.UnresolvedPlan {
+ 	return &unresolvedAggregation{
+ 		unresolvedInput:  input,
+ 		aggrFunc:         aggrFunc,
+ 		aggregationField: aggrField,
+ 		isGroup:          isGroup,
++		distributedMean:  distributedMean,
+ 	}
+ }
+ 
+@@ -91,7 +99,7 @@ type aggregationPlan[N aggregation.Number] struct {
+ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
+ 	measureSchema logical.Schema, fieldRef *logical.FieldRef,
+ ) (*aggregationPlan[N], error) {
+-	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc)
++	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc, gba.distributedMean)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -137,8 +145,7 @@ type aggGroupIterator[N aggregation.Number] struct {
+ 	prev                executor.MIterator
+ 	aggregationFieldRef *logical.FieldRef
+ 	aggrFunc            aggregation.Func[N]
+-
+-	err error
++	err                 error
+ }
+ 
+ func newAggGroupMIterator[N aggregation.Number](
+@@ -177,7 +184,11 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
+ 			ami.err = err
+ 			return nil
+ 		}
+-		ami.aggrFunc.In(v)
++		if aggregation.IsDistributedMean(ami.aggrFunc) {
++			ami.aggrFunc.In(v, 1)
++		} else {
++			ami.aggrFunc.In(v)
++		}
+ 		if resultDp != nil {
+ 			continue
+ 		}
+@@ -189,17 +200,43 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
+ 	if resultDp == nil {
+ 		return nil
+ 	}
+-	val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
+-	if err != nil {
+-		ami.err = err
+-		return nil
+-	}
+-	resultDp.Fields = []*measurev1.DataPoint_Field{
+-		{
+-			Name:  ami.aggregationFieldRef.Field.Name,
+-			Value: val,
+-		},
++	var fields []*measurev1.DataPoint_Field
++	sumVal, countVal, isDistributedMean := aggregation.GetSumCount(ami.aggrFunc)
++	if isDistributedMean {
++		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
++		if sumErr != nil {
++			ami.err = sumErr
++			return nil
++		}
++		countFieldVal, countErr := aggregation.ToFieldValue(countVal)
++		if countErr != nil {
++			ami.err = countErr
++			return nil
++		}
++		fields = []*measurev1.DataPoint_Field{
++			{
++				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
++				Value: sumFieldVal,
++			},
++			{
++				Name:  ami.aggregationFieldRef.Field.Name + "_count",
++				Value: countFieldVal,
++			},
++		}
++	} else {
++		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
++		if err != nil {
++			ami.err = err
++			return nil
++		}
++		fields = []*measurev1.DataPoint_Field{
++			{
++				Name:  ami.aggregationFieldRef.Field.Name,
++				Value: val,
++			},
++		}
+ 	}
++	resultDp.Fields = fields
+ 	return []*measurev1.InternalDataPoint{{DataPoint: resultDp, ShardId: shardID}}
+ }
+ 
+@@ -211,9 +248,8 @@ type aggAllIterator[N aggregation.Number] struct {
+ 	prev                executor.MIterator
+ 	aggregationFieldRef *logical.FieldRef
+ 	aggrFunc            aggregation.Func[N]
+-
+-	result *measurev1.DataPoint
+-	err    error
++	result              *measurev1.DataPoint
++	err                 error
+ }
+ 
+ func newAggAllIterator[N aggregation.Number](
+@@ -244,7 +280,11 @@ func (ami *aggAllIterator[N]) Next() bool {
+ 				ami.err = err
+ 				return false
+ 			}
+-			ami.aggrFunc.In(v)
++			if aggregation.IsDistributedMean(ami.aggrFunc) {
++				ami.aggrFunc.In(v, 1)
++			} else {
++				ami.aggrFunc.In(v)
++			}
+ 			if resultDp != nil {
+ 				continue
+ 			}
+@@ -256,17 +296,43 @@ func (ami *aggAllIterator[N]) Next() bool {
+ 	if resultDp == nil {
+ 		return false
+ 	}
+-	val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
+-	if err != nil {
+-		ami.err = err
+-		return false
+-	}
+-	resultDp.Fields = []*measurev1.DataPoint_Field{
+-		{
+-			Name:  ami.aggregationFieldRef.Field.Name,
+-			Value: val,
+-		},
++	var fields []*measurev1.DataPoint_Field
++	sumVal, countVal, isDistributedMean := aggregation.GetSumCount(ami.aggrFunc)
++	if isDistributedMean {
++		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
++		if sumErr != nil {
++			ami.err = sumErr
++			return false
++		}
++		countFieldVal, countErr := aggregation.ToFieldValue(countVal)
++		if countErr != nil {
++			ami.err = countErr
++			return false
++		}
++		fields = []*measurev1.DataPoint_Field{
++			{
++				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
++				Value: sumFieldVal,
++			},
++			{
++				Name:  ami.aggregationFieldRef.Field.Name + "_count",
++				Value: countFieldVal,
++			},
++		}
++	} else {
++		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
++		if err != nil {
++			ami.err = err
++			return false
++		}
++		fields = []*measurev1.DataPoint_Field{
++			{
++				Name:  ami.aggregationFieldRef.Field.Name,
++				Value: val,
++			},
++		}
+ 	}
++	resultDp.Fields = fields
+ 	ami.result = resultDp
+ 	return true
+ }
+diff --git a/pkg/query/logical/measure/measure_plan_distributed.go b/pkg/query/logical/measure/measure_plan_distributed.go
+index d81d3f68..3c746efa 100644
+--- a/pkg/query/logical/measure/measure_plan_distributed.go
++++ b/pkg/query/logical/measure/measure_plan_distributed.go
+@@ -38,6 +38,7 @@ import (
+ 	"github.com/apache/skywalking-banyandb/pkg/logger"
+ 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+ 	"github.com/apache/skywalking-banyandb/pkg/query"
++	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+ 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+ 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+ )
+@@ -311,10 +312,30 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
+ 		span.Tagf("data_point_count", "%d", dataPointCount)
+ 	}
+ 	if t.needCompletePushDownAgg {
++		// deduplicate: remove duplicate results from multiple replicas of the same shard
+ 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
+ 		if dedupErr != nil {
+ 			return nil, multierr.Append(err, dedupErr)
+ 		}
++		// merge: for MEAN, merge sum and count from different shards with same groupKey
++		if t.queryTemplate.Agg != nil &&
++			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
++			mergedDps, mergeErr := mergeMeanAggregation(deduplicatedDps,
++				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
++			if mergeErr != nil {
++				return nil, multierr.Append(err, mergeErr)
++			}
++			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
++		}
++		// For other aggregation functions (MIN/MAX/SUM/COUNT), if there's no groupBy,
++		// we need to merge results from different shards
++		if len(t.groupByTagsRefs) == 0 && len(deduplicatedDps) > 1 && t.queryTemplate.Agg != nil {
++			mergedDps, mergeErr := mergeNonGroupByAggregation(deduplicatedDps, t.queryTemplate.Agg)
++			if mergeErr != nil {
++				return nil, multierr.Append(err, mergeErr)
++			}
++			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
++		}
+ 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
+ 	}
+ 	smi := &sortedMIterator{
+@@ -568,6 +589,114 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
+ 	return result, nil
+ }
+ 
++// mergeNonGroupByAggregation merges aggregation results from multiple shards when there's no groupBy.
++// Uses aggregation.Func to properly merge results according to the aggregation function type.
++func mergeNonGroupByAggregation(
++	dataPoints []*measurev1.InternalDataPoint,
++	agg *measurev1.QueryRequest_Aggregation,
++) ([]*measurev1.InternalDataPoint, error) {
++	if len(dataPoints) == 0 {
++		return nil, nil
++	}
++	if len(dataPoints) == 1 {
++		return dataPoints, nil
++	}
++	// Deduplicate by shard_id first (keep the one with highest version)
++	shardMap := make(map[uint32]*measurev1.InternalDataPoint)
++	for _, idp := range dataPoints {
++		existing, exists := shardMap[idp.ShardId]
++		if !exists || idp.GetDataPoint().Version > existing.GetDataPoint().Version {
++			shardMap[idp.ShardId] = idp
++		}
++	}
++	// Now merge results from different shards
++	deduplicatedDps := make([]*measurev1.InternalDataPoint, 0, len(shardMap))
++	for _, idp := range shardMap {
++		deduplicatedDps = append(deduplicatedDps, idp)
++	}
++	if len(deduplicatedDps) == 1 {
++		return deduplicatedDps, nil
++	}
++	// Determine field type from the first data point
++	fieldName := agg.FieldName
++	firstFieldVal := getFieldValue(deduplicatedDps[0].GetDataPoint(), fieldName)
++	if firstFieldVal == nil {
++		return deduplicatedDps[:1], nil
++	}
++	// Create aggregation function based on field type
++	var isInt bool
++	switch firstFieldVal.Value.(type) {
++	case *modelv1.FieldValue_Int:
++		isInt = true
++	case *modelv1.FieldValue_Float:
++		isInt = false
++	default:
++		return deduplicatedDps[:1], nil
++	}
++	// Merge using aggregation.Func
++	if isInt {
++		return mergeNonGroupByAggregationWithFunc[int64](deduplicatedDps, agg, fieldName)
++	}
++	return mergeNonGroupByAggregationWithFunc[float64](deduplicatedDps, agg, fieldName)
++}
++
++// mergeNonGroupByAggregationWithFunc merges aggregation results using aggregation.Func.
++func mergeNonGroupByAggregationWithFunc[N aggregation.Number](
++	dataPoints []*measurev1.InternalDataPoint,
++	agg *measurev1.QueryRequest_Aggregation,
++	fieldName string,
++) ([]*measurev1.InternalDataPoint, error) {
++	// Create aggregation function
++	aggrFunc, aggrErr := aggregation.NewFunc[N](agg.Function, false)
++	if aggrErr != nil {
++		return nil, fmt.Errorf("failed to create aggregation function: %w", aggrErr)
++	}
++	// Feed aggregated values from each shard into the aggregation function
++	for _, idp := range dataPoints {
++		dp := idp.GetDataPoint()
++		fieldVal := getFieldValue(dp, fieldName)
++		if fieldVal == nil {
++			continue
++		}
++		val, fromErr := aggregation.FromFieldValue[N](fieldVal)
++		if fromErr != nil {
++			return nil, fmt.Errorf("failed to convert field value: %w", fromErr)
++		}
++		aggrFunc.In(val)
++	}
++	resultVal := aggrFunc.Val()
++	resultFieldVal, toErr := aggregation.ToFieldValue(resultVal)
++	if toErr != nil {
++		return nil, fmt.Errorf("failed to convert result value: %w", toErr)
++	}
++	// Create a new result data point (don't modify the original)
++	firstDp := dataPoints[0].GetDataPoint()
++	resultDp := &measurev1.DataPoint{
++		TagFamilies: firstDp.TagFamilies,
++		Fields: []*measurev1.DataPoint_Field{
++			{
++				Name:  fieldName,
++				Value: resultFieldVal,
++			},
++		},
++	}
++	result := &measurev1.InternalDataPoint{
++		DataPoint: resultDp,
++		ShardId:   dataPoints[0].ShardId,
++	}
++	return []*measurev1.InternalDataPoint{result}, nil
++}
++
++// getFieldValue extracts the field value from a data point.
++func getFieldValue(dp *measurev1.DataPoint, fieldName string) *modelv1.FieldValue {
++	for _, field := range dp.Fields {
++		if field.Name == fieldName {
++			return field.Value
++		}
++	}
++	return nil
++}
++
+ // hashWithShard combines shard_id and group_key into a single hash.
+ func hashWithShard(shardID, groupKey uint64) uint64 {
+ 	h := uint64(offset64)
+@@ -575,3 +704,107 @@ func hashWithShard(shardID, groupKey uint64) uint64 {
+ 	h = (h ^ groupKey) * prime64
+ 	return h
+ }
++
++type meanGroup struct {
++	dataPoint  *measurev1.DataPoint
++	shardID    uint32
++	sumInt     int64
++	countInt   int64
++	sumFloat   float64
++	countFloat float64
++}
++
++// mergeMeanAggregation merges mean aggregation results (sum and count) from multiple data nodes.
++func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName string, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
++	groupMap := make(map[uint64]*meanGroup)
++	for _, idp := range dataPoints {
++		dp := idp.GetDataPoint()
++		var groupKey uint64
++		if len(groupByTagsRefs) > 0 {
++			var keyErr error
++			groupKey, keyErr = formatGroupByKey(dp, groupByTagsRefs)
++			if keyErr != nil {
++				return nil, keyErr
++			}
++		}
++		var sumVal int64
++		var countVal int64
++		var sumFloat float64
++		var countFloat float64
++		var isFloat bool
++		var sumFound, countFound bool
++		for _, field := range dp.Fields {
++			if field.Name == fieldName+"_sum" {
++				if intVal := field.Value.GetInt(); intVal != nil {
++					sumVal = intVal.Value
++					isFloat = false
++					sumFound = true
++				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
++					sumFloat = floatVal.Value
++					isFloat = true
++					sumFound = true
++				}
++			} else if field.Name == fieldName+"_count" {
++				if intVal := field.Value.GetInt(); intVal != nil {
++					countVal = intVal.Value
++					countFound = true
++				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
++					countFloat = floatVal.Value
++					countFound = true
++				}
++			}
++		}
++		if !sumFound || !countFound {
++			continue
++		}
++		if _, exists := groupMap[groupKey]; !exists {
++			groupMap[groupKey] = &meanGroup{
++				dataPoint: &measurev1.DataPoint{
++					TagFamilies: dp.TagFamilies,
++				},
++				shardID: idp.ShardId,
++			}
++		}
++		mg := groupMap[groupKey]
++		if isFloat {
++			mg.sumFloat += sumFloat
++			mg.countFloat += countFloat
++		} else {
++			mg.sumInt += sumVal
++			mg.countInt += countVal
++		}
++	}
++	result := make([]*measurev1.InternalDataPoint, 0, len(groupMap))
++	for _, mg := range groupMap {
++		var meanVal *modelv1.FieldValue
++		switch {
++		case mg.countFloat > 0:
++			mean := mg.sumFloat / mg.countFloat
++			meanVal = &modelv1.FieldValue{
++				Value: &modelv1.FieldValue_Float{
++					Float: &modelv1.Float{Value: mean},
++				},
++			}
++		case mg.countInt > 0:
++			mean := mg.sumInt / mg.countInt
++			meanVal = &modelv1.FieldValue{
++				Value: &modelv1.FieldValue_Int{
++					Int: &modelv1.Int{Value: mean},
++				},
++			}
++		default:
++			continue
++		}
++		mg.dataPoint.Fields = []*measurev1.DataPoint_Field{
++			{
++				Name:  fieldName,
++				Value: meanVal,
++			},
++		}
++		result = append(result, &measurev1.InternalDataPoint{
++			DataPoint: mg.dataPoint,
++			ShardId:   mg.shardID,
++		})
++	}
++	return result, nil
++}
+diff --git a/pkg/query/logical/measure/topn_analyzer.go b/pkg/query/logical/measure/topn_analyzer.go
+index 34aced93..35f377ce 100644
+--- a/pkg/query/logical/measure/topn_analyzer.go
++++ b/pkg/query/logical/measure/topn_analyzer.go
+@@ -116,7 +116,8 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
+ 		plan = newUnresolvedAggregation(plan,
+ 			&logical.Field{Name: topNAggSchema.FieldName},
+ 			criteria.GetAgg(),
+-			true)
++			true,
++			false)
+ 	}
+ 
+ 	plan = top(plan, &measurev1.QueryRequest_Top{
+diff --git a/test/cases/measure/data/input/group_mean.ql b/test/cases/measure/data/input/group_mean.ql
+new file mode 100644
+index 00000000..5c5d4404
+--- /dev/null
++++ b/test/cases/measure/data/input/group_mean.ql
+@@ -0,0 +1,22 @@
++# Licensed to Apache Software Foundation (ASF) under one or more contributor
++# license agreements. See the NOTICE file distributed with
++# this work for additional information regarding copyright
++# ownership. Apache Software Foundation (ASF) licenses this file to you under
++# the Apache License, Version 2.0 (the "License"); you may
++# not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++
++
++SELECT id, total::field, value::field, MEAN(value) FROM MEASURE service_cpm_minute IN sw_metric
++TIME > '-15m'
++GROUP BY id, value
++
+diff --git a/test/cases/measure/data/input/group_mean.yaml b/test/cases/measure/data/input/group_mean.yaml
+new file mode 100644
+index 00000000..116f3081
+--- /dev/null
++++ b/test/cases/measure/data/input/group_mean.yaml
+@@ -0,0 +1,35 @@
++# Licensed to Apache Software Foundation (ASF) under one or more contributor
++# license agreements. See the NOTICE file distributed with
++# this work for additional information regarding copyright
++# ownership. Apache Software Foundation (ASF) licenses this file to you under
++# the Apache License, Version 2.0 (the "License"); you may
++# not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++
++name: "service_cpm_minute"
++groups: ["sw_metric"]
++tagProjection:
++  tagFamilies:
++  - name: "default"
++    tags: ["id"]
++fieldProjection:
++  names: ["total", "value"]
++groupBy:
++  tagProjection:
++    tagFamilies:
++    - name: "default"
++      tags: ["id"]
++  fieldName: "value"
++agg:
++  function: "AGGREGATION_FUNCTION_MEAN"
++  fieldName: "value"
++
+diff --git a/test/cases/measure/data/want/group_mean.yaml b/test/cases/measure/data/want/group_mean.yaml
+new file mode 100644
+index 00000000..88d13d11
+--- /dev/null
++++ b/test/cases/measure/data/want/group_mean.yaml
+@@ -0,0 +1,55 @@
++# Licensed to Apache Software Foundation (ASF) under one or more contributor
++# license agreements. See the NOTICE file distributed with
++# this work for additional information regarding copyright
++# ownership. Apache Software Foundation (ASF) licenses this file to you under
++# the Apache License, Version 2.0 (the "License"); you may
++# not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++
++dataPoints:
++- fields:
++  - name: value
++    value:
++      int:
++        value: "2"
++  tagFamilies:
++  - name: default
++    tags:
++    - key: id
++      value:
++        str:
++          value: svc1
++- fields:
++  - name: value
++    value:
++      int:
++        value: "4"
++  tagFamilies:
++  - name: default
++    tags:
++    - key: id
++      value:
++        str:
++          value: svc2
++- fields:
++  - name: value
++    value:
++      int:
++        value: "6"
++  tagFamilies:
++  - name: default
++    tags:
++    - key: id
++      value:
++        str:
++          value: svc3
++
+diff --git a/test/cases/measure/measure.go b/test/cases/measure/measure.go
+index 2679c8b3..fadf4ee0 100644
+--- a/test/cases/measure/measure.go
++++ b/test/cases/measure/measure.go
+@@ -52,6 +52,7 @@ var _ = g.DescribeTable("Scanning Measures", verify,
+ 	g.Entry("group and min", helpers.Args{Input: "group_min", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+ 	g.Entry("group and sum", helpers.Args{Input: "group_sum", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+ 	g.Entry("group and count", helpers.Args{Input: "group_count", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
++	g.Entry("group and mean", helpers.Args{Input: "group_mean", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+ 	g.Entry("group without field", helpers.Args{Input: "group_no_field", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+ 	g.Entry("top 2 by id", helpers.Args{Input: "top", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+ 	g.Entry("bottom 2 by id", helpers.Args{Input: "bottom", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),

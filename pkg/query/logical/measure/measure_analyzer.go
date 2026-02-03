@@ -125,17 +125,14 @@ func Analyze(
 	}
 
 	if criteria.GetAgg() != nil {
-		// Check if this is a distributed mean aggregation that needs to return sum and count
-		// This happens when the query is pushed down from liaison node to data node
-		distributedMean := false
-		if isDistributed && criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
-			distributedMean = true
+		aggrFunc := criteria.GetAgg().GetFunction()
+		if isDistributed && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
 		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
-			criteria.GetAgg().GetFunction(),
+			aggrFunc,
 			criteria.GetGroupBy() != nil,
-			distributedMean,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -198,7 +195,6 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			aggrFunc,
 			criteria.GetGroupBy() != nil,
-			false,
 		)
 		pushedLimit = math.MaxInt
 	}

@@ -134,16 +134,23 @@ type distributedMeanFunc[N Number] struct {
 }
 
 func (m *distributedMeanFunc[N]) In(vals ...N) {
-	if len(vals) != 2 {
-		panic("expected 2 values for distributed mean: (sum, count)")
+	switch len(vals) {
+	case 1:
+		m.sum += vals[0]
+		m.count++
+	case 2:
+		m.sum += vals[0]
+		m.count += vals[1]
+	default:
+		panic("expected 1 value (raw) or 2 values (sum, count) for distributed mean")
 	}
-	m.sum += vals[0]
-	m.count += vals[1]
 }
 
 func (m *distributedMeanFunc[N]) Val() N {
-	// For distributed mean, this value is not used
-	return m.zero
+	if m.count == m.zero {
+		return m.zero
+	}
+	return m.sum / m.count
 }
 
 func (m *distributedMeanFunc[N]) Reset() {
