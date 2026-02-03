@@ -68,7 +68,7 @@ func setupFailureFixture() *failureFixture {
 
 	reg := registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 	agg := metricsproxy.NewAggregator(reg, nil, testLogger)
-	svc := grpcproxy.NewFODCService(reg, agg, testLogger, heartbeatInterval)
+	svc := grpcproxy.NewFODCService(reg, agg, nil, testLogger, heartbeatInterval)
 	agg.SetGRPCService(svc)
 
 	grpcListener, listenErr := net.Listen("tcp", "localhost:0")
@@ -82,7 +82,7 @@ func setupFailureFixture() *failureFixture {
 	Expect(httpErr).NotTo(HaveOccurred())
 	httpAddr := httpListener.Addr().String()
 	_ = httpListener.Close()
-	httpSrv := api.NewServer(agg, reg, testLogger)
+	httpSrv := api.NewServer(agg, nil, reg, testLogger)
 	Expect(httpSrv.Start(httpAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 	Eventually(func() error {
@@ -328,7 +328,7 @@ var _ = Describe("Failure Scenarios", func() {
 		Expect(agent.client.Disconnect()).To(Succeed())
 
 		fixture.grpcServer.Stop()
-		fixture.service = grpcproxy.NewFODCService(fixture.registry, fixture.aggregator, fixture.logger, 2*time.Second)
+		fixture.service = grpcproxy.NewFODCService(fixture.registry, fixture.aggregator, nil, fixture.logger, 2*time.Second)
 		fixture.aggregator.SetGRPCService(fixture.service)
 		fixture.grpcServer = grpcproxy.NewServer(fixture.service, fixture.proxyGRPCAddr, 4194304, fixture.logger)
 		Expect(fixture.grpcServer.Start()).To(Succeed())

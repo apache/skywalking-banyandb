@@ -618,7 +618,7 @@ func TestGetLatestMetrics(t *testing.T) {
 		}
 	}()
 
-	metrics, err := aggregator.GetLatestMetrics(ctx)
+	metrics, err := aggregator.GetLatestMetrics(ctx, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(metrics))

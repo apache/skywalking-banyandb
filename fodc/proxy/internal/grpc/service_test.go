@@ -33,6 +33,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
@@ -219,7 +221,7 @@ func newTestService(t *testing.T) (*FODCService, *registry.AgentRegistry) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 	return service, testRegistry
 }
 
@@ -236,7 +238,7 @@ func TestNewFODCService(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	service := NewFODCService(testRegistry, aggregator, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
 
 	assert.NotNil(t, service)
 	assert.Equal(t, testRegistry, service.registry)
@@ -805,4 +807,274 @@ func (m *mockAddr) Network() string {
 
 func (m *mockAddr) String() string {
 	return m.addr
+}
+
+// mockStreamClusterStateServer implements fodcv1.FODCService_StreamClusterTopologyServer for testing.
+type mockStreamClusterStateServer struct {
+	ctx           context.Context
+	recvErr       error
+	sendErr       error
+	sentResponses []*fodcv1.StreamClusterTopologyResponse
+	recvRequests  []*fodcv1.StreamClusterTopologyRequest
+	mu            sync.Mutex
+}
+
+func newMockStreamClusterStateServer(ctx context.Context) *mockStreamClusterStateServer {
+	return &mockStreamClusterStateServer{
+		ctx:           ctx,
+		sentResponses: make([]*fodcv1.StreamClusterTopologyResponse, 0),
+		recvRequests:  make([]*fodcv1.StreamClusterTopologyRequest, 0),
+	}
+}
+
+func (m *mockStreamClusterStateServer) Send(resp *fodcv1.StreamClusterTopologyResponse) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.sentResponses = append(m.sentResponses, resp)
+	return nil
+}
+
+func (m *mockStreamClusterStateServer) Recv() (*fodcv1.StreamClusterTopologyRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recvErr != nil {
+		return nil, m.recvErr
+	}
+	if len(m.recvRequests) == 0 {
+		return nil, io.EOF
+	}
+	req := m.recvRequests[0]
+	m.recvRequests = m.recvRequests[1:]
+	return req, nil
+}
+
+func (m *mockStreamClusterStateServer) SetRecvError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvErr = err
+}
+
+func (m *mockStreamClusterStateServer) SetSendError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sendErr = err
+}
+
+func (m *mockStreamClusterStateServer) AddRequest(req *fodcv1.StreamClusterTopologyRequest) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvRequests = append(m.recvRequests, req)
+}
+
+func (m *mockStreamClusterStateServer) GetSentResponses() []*fodcv1.StreamClusterTopologyResponse {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*fodcv1.StreamClusterTopologyResponse, len(m.sentResponses))
+	copy(result, m.sentResponses)
+	return result
+}
+
+func (m *mockStreamClusterStateServer) Context() context.Context {
+	return m.ctx
+}
+
+func (m *mockStreamClusterStateServer) SendMsg(_ interface{}) error {
+	return nil
+}
+
+func (m *mockStreamClusterStateServer) RecvMsg(_ interface{}) error {
+	return nil
+}
+
+func (m *mockStreamClusterStateServer) SetHeader(_ metadata.MD) error {
+	return nil
+}
+
+func (m *mockStreamClusterStateServer) SendHeader(_ metadata.MD) error {
+	return nil
+}
+
+func (m *mockStreamClusterStateServer) SetTrailer(_ metadata.MD) {
+}
+
+func TestStreamClusterTopology_Success(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	md := metadata.New(map[string]string{
+		"agent_id": agentID,
+	})
+	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
+	mockStream := newMockStreamClusterStateServer(ctxWithMetadata)
+	clusterStateReq := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
+			Nodes: []*databasev1.Node{
+				{
+					Metadata: &commonv1.Metadata{
+						Name: "test-node",
+					},
+				},
+			},
+			Calls: []*fodcv1.Call{
+				{
+					Id:     "call-1",
+					Target: "target-node",
+					Source: "source-node",
+				},
+			},
+		},
+		Timestamp: timestamppb.Now(),
+	}
+	mockStream.AddRequest(clusterStateReq)
+	mockStream.SetRecvError(io.EOF)
+	streamErr := service.StreamClusterTopology(mockStream)
+	assert.NoError(t, streamErr)
+	service.connectionsMu.RLock()
+	conn, exists := service.connections[agentID]
+	service.connectionsMu.RUnlock()
+	assert.True(t, exists, "connection should remain (only RegisterAgent cleans up)")
+	assert.NotNil(t, conn)
+}
+
+func TestStreamClusterTopology_NoAgentID(t *testing.T) {
+	initTestLogger(t)
+	service, _ := newTestService(t)
+	ctx := context.Background()
+	mockStream := newMockStreamClusterStateServer(ctx)
+	clusterStateReq := &fodcv1.StreamClusterTopologyRequest{
+		Topology: &fodcv1.Topology{
+			Nodes: []*databasev1.Node{
+				{
+					Metadata: &commonv1.Metadata{
+						Name: "test-node",
+					},
+				},
+			},
+			Calls: []*fodcv1.Call{
+				{
+					Id:     "call-1",
+					Target: "target-node",
+					Source: "source-node",
+				},
+			},
+		},
+		Timestamp: timestamppb.Now(),
+	}
+	mockStream.AddRequest(clusterStateReq)
+	mockStream.SetRecvError(io.EOF)
+	streamErr := service.StreamClusterTopology(mockStream)
+	assert.Error(t, streamErr)
+	assert.Contains(t, streamErr.Error(), "agent ID not found")
+}
+
+func TestStreamClusterTopology_RecvError(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	md := metadata.New(map[string]string{
+		"agent_id": agentID,
+	})
+	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
+	mockStream := newMockStreamClusterStateServer(ctxWithMetadata)
+	testErr := errors.New("recv error")
+	mockStream.SetRecvError(testErr)
+	streamErr := service.StreamClusterTopology(mockStream)
+	assert.Error(t, streamErr)
+}
+
+func TestRequestClusterData_Success(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	mockStream := newMockStreamClusterStateServer(ctx)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:            agentID,
+		clusterStateStream: mockStream,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestClusterData(agentID)
+	assert.NoError(t, requestErr)
+	responses := mockStream.GetSentResponses()
+	require.Len(t, responses, 1)
+	assert.True(t, responses[0].RequestTopology)
+}
+
+func TestRequestClusterData_NoConnection(t *testing.T) {
+	initTestLogger(t)
+	service, _ := newTestService(t)
+	requestErr := service.RequestClusterData("non-existent-agent")
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "connection not found")
+}
+
+func TestRequestClusterData_NoStream(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:            agentID,
+		clusterStateStream: nil,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestClusterData(agentID)
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "cluster state stream not established")
+}
+
+func TestRequestClusterData_SendError(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	mockStream := newMockStreamClusterStateServer(ctx)
+	testErr := errors.New("send error")
+	mockStream.SetSendError(testErr)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:            agentID,
+		clusterStateStream: mockStream,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestClusterData(agentID)
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "send error")
 }
