@@ -33,18 +33,9 @@ var (
 
 // Func supports aggregation operations.
 type Func[N Number] interface {
-	In(N)
+	In(...N)
 	Val() N
 	Reset()
-	// Sum returns the sum of values for distributed mean aggregation.
-	Sum() N
-	// Count returns the count of values for distributed mean aggregation.
-	Count() N
-}
-
-// DistributedMean is an interface that identifies distributed mean aggregation functions.
-type DistributedMean interface {
-	IsDistributedMean() bool
 }
 
 // Number denotes the supported number types.
@@ -53,11 +44,16 @@ type Number interface {
 }
 
 // NewFunc returns a aggregation function based on function type.
-func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
+// If forDistributedMean is true and af is MEAN, it returns a distributedMeanFunc that aggregates sum and count.
+func NewFunc[N Number](af modelv1.AggregationFunction, forDistributedMean bool) (Func[N], error) {
 	var result Func[N]
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		result = &meanFunc[N]{zero: zero[N]()}
+		if forDistributedMean {
+			result = &distributedMeanFunc[N]{zero: zero[N]()}
+		} else {
+			result = &meanFunc[N]{zero: zero[N]()}
+		}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
 		result = &countFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
@@ -71,19 +67,6 @@ func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	}
 	result.Reset()
 	return result, nil
-}
-
-// NewDistributedMeanFunc returns a distributed mean aggregation function that returns sum and count instead of mean.
-func NewDistributedMeanFunc[N Number]() Func[N] {
-	return &distributedMeanFunc[N]{zero: zero[N]()}
-}
-
-// IsDistributedMean checks if the aggregation function is a distributed mean function.
-func IsDistributedMean[N Number](f Func[N]) bool {
-	if dm, ok := f.(DistributedMean); ok {
-		return dm.IsDistributedMean()
-	}
-	return false
 }
 
 // FromFieldValue transforms modelv1.FieldValue to Number.
@@ -135,4 +118,18 @@ func maxOf[N Number]() (r N) {
 func zero[N Number]() N {
 	var z N
 	return z
+}
+
+// IsDistributedMean checks if the function is a distributed mean function.
+func IsDistributedMean[N Number](f Func[N]) bool {
+	_, ok := f.(*distributedMeanFunc[N])
+	return ok
+}
+
+// GetSumCount returns sum and count if the function is a distributed mean function.
+func GetSumCount[N Number](f Func[N]) (sum N, count N, ok bool) {
+	if dmf, ok := f.(*distributedMeanFunc[N]); ok {
+		return dmf.sum, dmf.count, true
+	}
+	return zero[N](), zero[N](), false
 }

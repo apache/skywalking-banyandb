@@ -647,7 +647,7 @@ func mergeNonGroupByAggregationWithFunc[N aggregation.Number](
 	fieldName string,
 ) ([]*measurev1.InternalDataPoint, error) {
 	// Create aggregation function
-	aggrFunc, aggrErr := aggregation.NewFunc[N](agg.Function)
+	aggrFunc, aggrErr := aggregation.NewFunc[N](agg.Function, false)
 	if aggrErr != nil {
 		return nil, fmt.Errorf("failed to create aggregation function: %w", aggrErr)
 	}

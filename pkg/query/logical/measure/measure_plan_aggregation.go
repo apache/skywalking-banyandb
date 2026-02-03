@@ -99,15 +99,9 @@ type aggregationPlan[N aggregation.Number] struct {
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
 	measureSchema logical.Schema, fieldRef *logical.FieldRef,
 ) (*aggregationPlan[N], error) {
-	var aggrFunc aggregation.Func[N]
-	var err error
-	if gba.distributedMean {
-		aggrFunc = aggregation.NewDistributedMeanFunc[N]()
-	} else {
-		aggrFunc, err = aggregation.NewFunc[N](gba.aggrFunc)
-		if err != nil {
-			return nil, err
-		}
+	aggrFunc, err := aggregation.NewFunc[N](gba.aggrFunc, gba.distributedMean)
+	if err != nil {
+		return nil, err
 	}
 	return &aggregationPlan[N]{
 		Parent: &logical.Parent{
@@ -190,7 +184,11 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 			ami.err = err
 			return nil
 		}
-		ami.aggrFunc.In(v)
+		if aggregation.IsDistributedMean(ami.aggrFunc) {
+			ami.aggrFunc.In(v, 1)
+		} else {
+			ami.aggrFunc.In(v)
+		}
 		if resultDp != nil {
 			continue
 		}
@@ -203,9 +201,8 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 		return nil
 	}
 	var fields []*measurev1.DataPoint_Field
-	if aggregation.IsDistributedMean(ami.aggrFunc) {
-		sumVal := ami.aggrFunc.Sum()
-		countVal := ami.aggrFunc.Count()
+	sumVal, countVal, isDistributedMean := aggregation.GetSumCount(ami.aggrFunc)
+	if isDistributedMean {
 		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
 		if sumErr != nil {
 			ami.err = sumErr
@@ -283,7 +280,11 @@ func (ami *aggAllIterator[N]) Next() bool {
 				ami.err = err
 				return false
 			}
-			ami.aggrFunc.In(v)
+			if aggregation.IsDistributedMean(ami.aggrFunc) {
+				ami.aggrFunc.In(v, 1)
+			} else {
+				ami.aggrFunc.In(v)
+			}
 			if resultDp != nil {
 				continue
 			}
@@ -296,9 +297,8 @@ func (ami *aggAllIterator[N]) Next() bool {
 		return false
 	}
 	var fields []*measurev1.DataPoint_Field
-	if aggregation.IsDistributedMean(ami.aggrFunc) {
-		sumVal := ami.aggrFunc.Sum()
-		countVal := ami.aggrFunc.Count()
+	sumVal, countVal, isDistributedMean := aggregation.GetSumCount(ami.aggrFunc)
+	if isDistributedMean {
 		sumFieldVal, sumErr := aggregation.ToFieldValue(sumVal)
 		if sumErr != nil {
 			ami.err = sumErr
