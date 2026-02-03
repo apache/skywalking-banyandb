@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
@@ -137,7 +138,18 @@ func (c *Collector) GetCurrentNodes() map[string]*databasev1.Node {
 	defer c.mu.RUnlock()
 	result := make(map[string]*databasev1.Node, len(c.currentNodes))
 	for addr, node := range c.currentNodes {
-		result[addr] = node
+		if node == nil {
+			continue
+		}
+		clonedNode := proto.Clone(node)
+		if clonedNode == nil {
+			continue
+		}
+		clone, ok := clonedNode.(*databasev1.Node)
+		if !ok {
+			continue
+		}
+		result[addr] = clone
 	}
 	return result
 }
@@ -146,7 +158,39 @@ func (c *Collector) GetCurrentNodes() map[string]*databasev1.Node {
 func (c *Collector) GetClusterTopology() TopologyMap {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.clusterTopology
+	result := TopologyMap{
+		Nodes: make([]*databasev1.Node, 0, len(c.clusterTopology.Nodes)),
+		Calls: make([]*fodcv1.Call, 0, len(c.clusterTopology.Calls)),
+	}
+	for _, node := range c.clusterTopology.Nodes {
+		if node == nil {
+			continue
+		}
+		clonedNode := proto.Clone(node)
+		if clonedNode == nil {
+			continue
+		}
+		clone, ok := clonedNode.(*databasev1.Node)
+		if !ok {
+			continue
+		}
+		result.Nodes = append(result.Nodes, clone)
+	}
+	for _, call := range c.clusterTopology.Calls {
+		if call == nil {
+			continue
+		}
+		clonedCall := proto.Clone(call)
+		if clonedCall == nil {
+			continue
+		}
+		clone, ok := clonedCall.(*fodcv1.Call)
+		if !ok {
+			continue
+		}
+		result.Calls = append(result.Calls, clone)
+	}
+	return result
 }
 
 // SetClusterTopology sets the cluster topology data, primarily for tests.
@@ -223,7 +267,15 @@ func (c *Collector) updateClusterStates(states map[string]*databasev1.GetCluster
 	c.mu.Lock()
 	currentNodesCopy := make(map[string]*databasev1.Node, len(c.currentNodes))
 	for addr, node := range c.currentNodes {
-		currentNodesCopy[addr] = node
+		clonedNode := proto.Clone(node)
+		if clonedNode == nil {
+			continue
+		}
+		clone, ok := clonedNode.(*databasev1.Node)
+		if !ok {
+			continue
+		}
+		currentNodesCopy[addr] = clone
 	}
 	c.mu.Unlock()
 	c.processClusterStates(currentNodesCopy, states)
@@ -267,13 +319,15 @@ func (c *Collector) processClusterStates(currentNodes map[string]*databasev1.Nod
 			if routeTable != nil {
 				for _, registeredNode := range routeTable.Registered {
 					if registeredNode != nil && registeredNode.Metadata != nil && registeredNode.Metadata.Name != "" {
-						if registeredNode.Labels == nil {
-							registeredNode.Labels = make(map[string]string)
+						clonedNode := proto.Clone(registeredNode)
+						if clonedNode == nil {
+							continue
 						}
-						if c.podName != "" {
-							registeredNode.Labels["pod_name"] = c.podName
+						clone, ok := clonedNode.(*databasev1.Node)
+						if !ok {
+							continue
 						}
-						nodeMap[registeredNode.Metadata.Name] = registeredNode
+						nodeMap[clone.Metadata.Name] = clone
 					}
 				}
 			}

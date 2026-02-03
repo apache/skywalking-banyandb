@@ -38,6 +38,15 @@ func initTestLogger(t *testing.T) *logger.Logger {
 	return logger.GetLogger("test", "cluster")
 }
 
+func findNodeByName(nodes []*databasev1.Node, name string) *databasev1.Node {
+	for _, node := range nodes {
+		if node != nil && node.Metadata != nil && node.Metadata.Name == name {
+			return node
+		}
+	}
+	return nil
+}
+
 func TestNewCollector(t *testing.T) {
 	log := initTestLogger(t)
 	collector := NewCollector(log, []string{"localhost:17914"}, 10*time.Second, "test-pod")
@@ -223,14 +232,14 @@ func TestCollector_ProcessClusterData(t *testing.T) {
 	assert.NotNil(t, topology)
 	assert.Equal(t, 3, len(topology.Nodes))
 	assert.Equal(t, 2, len(topology.Calls))
-	assert.Contains(t, topology.Nodes, currentNode)
-	assert.Contains(t, topology.Nodes, registeredNode1)
-	assert.Contains(t, topology.Nodes, registeredNode2)
-	// Verify pod_name label is added to all nodes
-	for _, node := range topology.Nodes {
-		assert.NotNil(t, node.Labels)
-		assert.Equal(t, podName, node.Labels["pod_name"])
-	}
+	assert.NotNil(t, findNodeByName(topology.Nodes, currentNode.Metadata.Name))
+	assert.NotNil(t, findNodeByName(topology.Nodes, registeredNode1.Metadata.Name))
+	assert.NotNil(t, findNodeByName(topology.Nodes, registeredNode2.Metadata.Name))
+	// Verify pod_name label is added only to the current node
+	currentNodeResult := findNodeByName(topology.Nodes, currentNode.Metadata.Name)
+	require.NotNil(t, currentNodeResult)
+	assert.NotNil(t, currentNodeResult.Labels)
+	assert.Equal(t, podName, currentNodeResult.Labels["pod_name"])
 	topologyCallMap := make(map[string]*fodcv1.Call)
 	for _, call := range topology.Calls {
 		topologyCallMap[call.Id] = call
@@ -659,11 +668,11 @@ func TestProcessClusterStates_NoSelfCalls(t *testing.T) {
 	assert.Equal(t, "node-1", topology.Calls[0].Source)
 	assert.Equal(t, "node-2", topology.Calls[0].Target)
 
-	// Verify pod_name label is added to all nodes
-	for _, node := range topology.Nodes {
-		assert.NotNil(t, node.Labels)
-		assert.Equal(t, podName, node.Labels["pod_name"])
-	}
+	// Verify pod_name label is added only to the current node
+	currentNodeResult := findNodeByName(topology.Nodes, currentNode.Metadata.Name)
+	require.NotNil(t, currentNodeResult)
+	assert.NotNil(t, currentNodeResult.Labels)
+	assert.Equal(t, podName, currentNodeResult.Labels["pod_name"])
 }
 
 func TestProcessClusterStates_PodNameLabel(t *testing.T) {
@@ -707,15 +716,13 @@ func TestProcessClusterStates_PodNameLabel(t *testing.T) {
 	topology := collector.GetClusterTopology()
 	assert.Equal(t, 2, len(topology.Nodes))
 
-	// Verify pod_name label is added to all nodes
-	for _, node := range topology.Nodes {
-		assert.NotNil(t, node.Labels)
-		assert.Equal(t, podName, node.Labels["pod_name"])
-		if node.Metadata.Name == "node-1" {
-			// Verify existing labels are preserved
-			assert.Equal(t, "label", node.Labels["existing"])
-		}
-	}
+	// Verify pod_name label is added only to the current node
+	currentNodeResult := findNodeByName(topology.Nodes, currentNode.Metadata.Name)
+	require.NotNil(t, currentNodeResult)
+	assert.NotNil(t, currentNodeResult.Labels)
+	assert.Equal(t, podName, currentNodeResult.Labels["pod_name"])
+	// Verify existing labels are preserved
+	assert.Equal(t, "label", currentNodeResult.Labels["existing"])
 }
 
 func TestProcessClusterStates_EmptyPodName(t *testing.T) {
