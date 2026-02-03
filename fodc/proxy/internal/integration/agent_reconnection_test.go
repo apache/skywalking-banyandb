@@ -62,7 +62,7 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		heartbeatInterval = 2 * time.Second
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 
 		grpcListener, listenErr := net.Listen("tcp", "localhost:0")
@@ -78,7 +78,7 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
