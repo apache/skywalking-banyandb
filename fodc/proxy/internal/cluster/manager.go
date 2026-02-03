@@ -62,6 +62,7 @@ type Manager struct {
 	collecting   map[string]chan *TopologyMap
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
+	collectingOp sync.Mutex
 }
 
 // NewManager creates a new cluster state manager.
@@ -108,6 +109,8 @@ func (m *Manager) RemoveTopology(agentID string) {
 
 // CollectClusterTopology requests and collects cluster topology from all agents with context.
 func (m *Manager) CollectClusterTopology(ctx context.Context) *TopologyMap {
+	m.collectingOp.Lock()
+	defer m.collectingOp.Unlock()
 	if m.registry == nil {
 		return &TopologyMap{
 			Nodes: make([]*NodeWithStringRoles, 0),
