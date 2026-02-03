@@ -38,6 +38,11 @@ var (
 	errUnsupportedAggregationField = errors.New("unsupported aggregation operation on this field")
 )
 
+// distributedMeanFieldNames returns the field names for sum and count in distributed mean aggregation.
+func distributedMeanFieldNames(fieldName string) (sumName, countName string) {
+	return fieldName + "_sum", fieldName + "_count"
+}
+
 type unresolvedAggregation struct {
 	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field
@@ -206,15 +211,10 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 			ami.err = countErr
 			return nil
 		}
+		sumName, countName := distributedMeanFieldNames(ami.aggregationFieldRef.Field.Name)
 		fields = []*measurev1.DataPoint_Field{
-			{
-				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
-				Value: sumFieldVal,
-			},
-			{
-				Name:  ami.aggregationFieldRef.Field.Name + "_count",
-				Value: countFieldVal,
-			},
+			{Name: sumName, Value: sumFieldVal},
+			{Name: countName, Value: countFieldVal},
 		}
 	} else {
 		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())
@@ -302,15 +302,10 @@ func (ami *aggAllIterator[N]) Next() bool {
 			ami.err = countErr
 			return false
 		}
+		sumName, countName := distributedMeanFieldNames(ami.aggregationFieldRef.Field.Name)
 		fields = []*measurev1.DataPoint_Field{
-			{
-				Name:  ami.aggregationFieldRef.Field.Name + "_sum",
-				Value: sumFieldVal,
-			},
-			{
-				Name:  ami.aggregationFieldRef.Field.Name + "_count",
-				Value: countFieldVal,
-			},
+			{Name: sumName, Value: sumFieldVal},
+			{Name: countName, Value: countFieldVal},
 		}
 	} else {
 		val, err := aggregation.ToFieldValue(ami.aggrFunc.Val())

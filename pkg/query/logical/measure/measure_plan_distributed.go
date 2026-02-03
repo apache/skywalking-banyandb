@@ -614,8 +614,9 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 		var countFloat float64
 		var isFloat bool
 		var sumFound, countFound bool
+		sumFieldName, countFieldName := distributedMeanFieldNames(fieldName)
 		for _, field := range dp.Fields {
-			if field.Name == fieldName+"_sum" {
+			if field.Name == sumFieldName {
 				if intVal := field.Value.GetInt(); intVal != nil {
 					sumVal = intVal.Value
 					isFloat = false
@@ -625,7 +626,7 @@ func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName s
 					isFloat = true
 					sumFound = true
 				}
-			} else if field.Name == fieldName+"_count" {
+			} else if field.Name == countFieldName {
 				if intVal := field.Value.GetInt(); intVal != nil {
 					countVal = intVal.Value
 					countFound = true
