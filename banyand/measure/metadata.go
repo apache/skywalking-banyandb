@@ -19,9 +19,9 @@ package measure
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -901,31 +901,29 @@ func getKey(metadata *commonv1.Metadata) string {
 // TopNParameters defines the structure for the "parameters" tag value (JSON).
 type TopNParameters struct {
 	// Limit defines the number of top items to be kept.
-	Limit int64 `json:"limit"`
+	Limit int64
 }
 
 // String implements the fmt.Stringer interface.
 func (p *TopNParameters) String() string {
 	if p == nil {
-		return "{}"
+		return ""
 	}
-	b, err := json.Marshal(p)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
+	return strconv.FormatInt(p.Limit, 10)
 }
 
 // ParseTopNParameters decodes the JSON metadata.
-func ParseTopNParameters(jsonStr string) (*TopNParameters, error) {
-	if jsonStr == "" {
+func ParseTopNParameters(val string) (*TopNParameters, error) {
+	if val == "" {
 		return &TopNParameters{}, nil
 	}
 
-	p := &TopNParameters{}
-	err := json.Unmarshal([]byte(jsonStr), p)
+	limit, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	return p, nil
+
+	return &TopNParameters{
+		Limit: limit,
+	}, nil
 }

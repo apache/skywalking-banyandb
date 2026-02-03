@@ -743,8 +743,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 
 		items, err := topNPostAggregator.Flush()
 		if err != nil {
-			log.Error().Err(err).Msg("failed to flush aggregator, skip current batch")
-			continue
+			log.Error().Err(err).Msg("failed to flush aggregator")
 		}
 
 		topNValue.Reset()
@@ -756,8 +755,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 
 		buf, err := topNValue.marshal(make([]byte, 0, 128))
 		if err != nil {
-			log.Error().Err(err).Msg("failed to marshal topN value, skip current batch")
-			continue
+			log.Error().Err(err).Msg("failed to flush aggregator")
 		}
 
 		r.Fields[i].Values[len(r.Fields[i].Values)-1] = &modelv1.FieldValue{
@@ -1137,32 +1135,55 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 	decoder := GenerateTopNValuesDecoder()
 	defer ReleaseTopNValuesDecoder(decoder)
 
+	topNPostAggregator.Reset()
+
 	uTimestamp := uint64(right.timestamps[rightIdx])
 	marshalBuf := make([]byte, 0, 128)
 	leftVer, rightVer := left.versions[leftIdx], right.versions[rightIdx]
 
+	if len(bi.field.columns) == 0 {
+		for _, c := range right.field.columns {
+			bi.field.columns = append(bi.field.columns, column{
+				name:      c.name,
+				valueType: c.valueType,
+				values:    make([][]byte, 0),
+			})
+		}
+	}
+
 	for idx := range right.field.columns {
 		topNValue.Reset()
+
+		var valueName string
+		var entityTagNames []string
+		hasValidData := false
+
 		if err := topNValue.Unmarshal(left.field.columns[idx].values[leftIdx], decoder); err != nil {
-			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
-			// avoid index out-of-bounds issues
-			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
-			continue
+			log.Warn().Err(err).Msg("failed to unmarshal left topN value, ignoring left side")
+		} else {
+			valueName = topNValue.valueName
+			entityTagNames = topNValue.entityTagNames
+			putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, leftVer)
+			hasValidData = true
 		}
-
-		valueName := topNValue.valueName
-		entityTagNames := topNValue.entityTagNames
-
-		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, leftVer)
 
 		topNValue.Reset()
 		if err := topNValue.Unmarshal(right.field.columns[idx].values[rightIdx], decoder); err != nil {
-			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+			log.Warn().Err(err).Msg("failed to unmarshal right topN value, ignoring right side")
+		} else {
+			if !hasValidData {
+				valueName = topNValue.valueName
+				entityTagNames = topNValue.entityTagNames
+			}
+			putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, rightVer)
+			hasValidData = true
+		}
+
+		if !hasValidData {
+			log.Error().Msg("both sides of topN value are malformed, append empty value")
 			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
 			continue
 		}
-
-		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, rightVer)
 
 		topNValue.Reset()
 		topNValue.setMetadata(valueName, entityTagNames)
@@ -1180,14 +1201,11 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 		marshalBuf = marshalBuf[:0]
 		buf, err := topNValue.marshal(marshalBuf)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to marshal merged topN value")
-			continue
+			log.Panic().Err(err).Msg("failed to marshal merged topN value")
 		}
 
 		bi.field.columns[idx].values = append(bi.field.columns[idx].values, buf)
 	}
-
-	bi.timestamps = append(bi.timestamps, right.timestamps[rightIdx])
 
 	if rightVer >= leftVer {
 		bi.appendTagFamilies(right, rightIdx+1)
@@ -1196,6 +1214,7 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 		bi.appendTagFamilies(left, leftIdx+1)
 		bi.versions = append(bi.versions, leftVer)
 	}
+	bi.timestamps = append(bi.timestamps, right.timestamps[rightIdx])
 }
 
 func (bi *blockPointer) appendTagFamilies(b *blockPointer, offset int) {

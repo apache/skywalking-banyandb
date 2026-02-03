@@ -368,7 +368,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 		params := &TopNParameters{
 			Limit: int64(t.topNSchema.CountersNumber),
 		}
-		paramsJSON := params.String()
+		paramsStr := params.String()
 
 		entityValues := []*modelv1.TagValue{
 			{
@@ -395,7 +395,7 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 			{
 				Value: &modelv1.TagValue_Str{
 					Str: &modelv1.Str{
-						Value: paramsJSON,
+						Value: paramsStr,
 					},
 				},
 			},
