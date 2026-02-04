@@ -16,7 +16,12 @@ Release Notes.
 - Support writing data with specifications.
 - Persist series metadata in liaison queue for measure, stream and trace models.
 - Update the dump tool to support analyzing the parts with smeta files.
+- Add replication integration test for measure.
 - Activate the property repair mechanism by default.
+- Add snapshot time retention policy to ensure the snapshot only can be deleted after the configured minimum age(time).
+- **Breaking Change**: Change the data storage path structure for property model:
+  - From: `<data-dir>/property/data/shard-<id>/...`
+  - To: `<data-dir>/property/data/<group>/shard-<id>/...`
 - Add eBPF-based KTM I/O monitor for FODC agent.
 
 ### Bug Fixes
@@ -28,6 +33,8 @@ Release Notes.
 - Fix unsupported empty string tag bug.
 - Fix duplicate elements in stream query results by implementing element ID-based deduplication across scan, merge, and result building stages.
 - Fix data written to the wrong shard and related stream queries.
+- Fix the lifecycle panic when the trace has no sidx.
+- Fix panic in sidx merge and flush operations when part counts don't match expectations.
 
 ### Document
 

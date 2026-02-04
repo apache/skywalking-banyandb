@@ -40,6 +40,16 @@ var MeasureQueryKindVersion = common.KindVersion{
 // TopicMeasureQuery is the measure query topic.
 var TopicMeasureQuery = bus.BiTopic(MeasureQueryKindVersion.String())
 
+// InternalMeasureQueryKindVersion is the version tag of internal measure query kind.
+var InternalMeasureQueryKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "internal-measure-query",
+}
+
+// TopicInternalMeasureQuery is the internal measure query topic.
+// Used for distributed query with shard information.
+var TopicInternalMeasureQuery = bus.BiTopic(InternalMeasureQueryKindVersion.String())
+
 // TopNQueryKindVersion is the version tag of top-n query kind.
 var TopNQueryKindVersion = common.KindVersion{
 	Version: "v1",
@@ -93,3 +103,9 @@ var MeasureSeriesSyncKindVersion = common.KindVersion{
 
 // TopicMeasureSeriesSync is the measure series sync topic.
 var TopicMeasureSeriesSync = bus.BiTopic(MeasureSeriesSyncKindVersion.String())
+
+// TopicMeasureCollectDataInfo is the topic for collecting data info from data nodes.
+var TopicMeasureCollectDataInfo = bus.BiTopic("measure-collect-data-info")
+
+// TopicMeasureCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
+var TopicMeasureCollectLiaisonInfo = bus.BiTopic("measure-collect-liaison-info")

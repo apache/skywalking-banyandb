@@ -21,6 +21,7 @@ package data
 import (
 	"google.golang.org/protobuf/proto"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -31,29 +32,36 @@ import (
 var (
 	// TopicMap is the map of topic name to topic.
 	TopicMap = map[string]bus.Topic{
-		TopicStreamWrite.String():              TopicStreamWrite,
-		TopicStreamQuery.String():              TopicStreamQuery,
-		TopicMeasureWrite.String():             TopicMeasureWrite,
-		TopicMeasureQuery.String():             TopicMeasureQuery,
-		TopicTopNQuery.String():                TopicTopNQuery,
-		TopicPropertyDelete.String():           TopicPropertyDelete,
-		TopicPropertyQuery.String():            TopicPropertyQuery,
-		TopicPropertyUpdate.String():           TopicPropertyUpdate,
-		TopicStreamPartSync.String():           TopicStreamPartSync,
-		TopicMeasurePartSync.String():          TopicMeasurePartSync,
-		TopicMeasureSeriesIndexInsert.String(): TopicMeasureSeriesIndexInsert,
-		TopicMeasureSeriesIndexUpdate.String(): TopicMeasureSeriesIndexUpdate,
-		TopicMeasureSeriesSync.String():        TopicMeasureSeriesSync,
-		TopicPropertyRepair.String():           TopicPropertyRepair,
-		TopicStreamSeriesIndexWrite.String():   TopicStreamSeriesIndexWrite,
-		TopicStreamLocalIndexWrite.String():    TopicStreamLocalIndexWrite,
-		TopicStreamSeriesSync.String():         TopicStreamSeriesSync,
-		TopicStreamElementIndexSync.String():   TopicStreamElementIndexSync,
-		TopicTraceWrite.String():               TopicTraceWrite,
-		TopicTraceQuery.String():               TopicTraceQuery,
-		TopicTracePartSync.String():            TopicTracePartSync,
-		TopicTraceSeriesSync.String():          TopicTraceSeriesSync,
-		TopicTraceSidxSeriesWrite.String():     TopicTraceSidxSeriesWrite,
+		TopicStreamWrite.String():               TopicStreamWrite,
+		TopicStreamQuery.String():               TopicStreamQuery,
+		TopicMeasureWrite.String():              TopicMeasureWrite,
+		TopicMeasureQuery.String():              TopicMeasureQuery,
+		TopicInternalMeasureQuery.String():      TopicInternalMeasureQuery,
+		TopicTopNQuery.String():                 TopicTopNQuery,
+		TopicPropertyDelete.String():            TopicPropertyDelete,
+		TopicPropertyQuery.String():             TopicPropertyQuery,
+		TopicPropertyUpdate.String():            TopicPropertyUpdate,
+		TopicStreamPartSync.String():            TopicStreamPartSync,
+		TopicMeasurePartSync.String():           TopicMeasurePartSync,
+		TopicMeasureSeriesIndexInsert.String():  TopicMeasureSeriesIndexInsert,
+		TopicMeasureSeriesIndexUpdate.String():  TopicMeasureSeriesIndexUpdate,
+		TopicMeasureSeriesSync.String():         TopicMeasureSeriesSync,
+		TopicPropertyRepair.String():            TopicPropertyRepair,
+		TopicStreamSeriesIndexWrite.String():    TopicStreamSeriesIndexWrite,
+		TopicStreamLocalIndexWrite.String():     TopicStreamLocalIndexWrite,
+		TopicStreamSeriesSync.String():          TopicStreamSeriesSync,
+		TopicStreamElementIndexSync.String():    TopicStreamElementIndexSync,
+		TopicTraceWrite.String():                TopicTraceWrite,
+		TopicTraceQuery.String():                TopicTraceQuery,
+		TopicTracePartSync.String():             TopicTracePartSync,
+		TopicTraceSeriesSync.String():           TopicTraceSeriesSync,
+		TopicTraceSidxSeriesWrite.String():      TopicTraceSidxSeriesWrite,
+		TopicMeasureCollectDataInfo.String():    TopicMeasureCollectDataInfo,
+		TopicMeasureCollectLiaisonInfo.String(): TopicMeasureCollectLiaisonInfo,
+		TopicStreamCollectDataInfo.String():     TopicStreamCollectDataInfo,
+		TopicStreamCollectLiaisonInfo.String():  TopicStreamCollectLiaisonInfo,
+		TopicTraceCollectDataInfo.String():      TopicTraceCollectDataInfo,
+		TopicTraceCollectLiaisonInfo.String():   TopicTraceCollectLiaisonInfo,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -70,6 +78,9 @@ var (
 		},
 		TopicMeasureQuery: func() proto.Message {
 			return &measurev1.QueryRequest{}
+		},
+		TopicInternalMeasureQuery: func() proto.Message {
+			return &measurev1.InternalQueryRequest{}
 		},
 		TopicTopNQuery: func() proto.Message {
 			return &measurev1.TopNRequest{}
@@ -128,6 +139,24 @@ var (
 		TopicTraceSidxSeriesWrite: func() proto.Message {
 			return nil
 		},
+		TopicMeasureCollectDataInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicMeasureCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicStreamCollectDataInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicStreamCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicTraceCollectDataInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicTraceCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -138,6 +167,9 @@ var (
 		},
 		TopicMeasureQuery: func() proto.Message {
 			return &measurev1.QueryResponse{}
+		},
+		TopicInternalMeasureQuery: func() proto.Message {
+			return &measurev1.InternalQueryResponse{}
 		},
 		TopicTopNQuery: func() proto.Message {
 			return &measurev1.TopNResponse{}
@@ -156,6 +188,24 @@ var (
 		},
 		TopicTraceQuery: func() proto.Message {
 			return &tracev1.InternalQueryResponse{}
+		},
+		TopicMeasureCollectDataInfo: func() proto.Message {
+			return &databasev1.DataInfo{}
+		},
+		TopicStreamCollectDataInfo: func() proto.Message {
+			return &databasev1.DataInfo{}
+		},
+		TopicTraceCollectDataInfo: func() proto.Message {
+			return &databasev1.DataInfo{}
+		},
+		TopicMeasureCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.LiaisonInfo{}
+		},
+		TopicStreamCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.LiaisonInfo{}
+		},
+		TopicTraceCollectLiaisonInfo: func() proto.Message {
+			return &databasev1.LiaisonInfo{}
 		},
 	}
 

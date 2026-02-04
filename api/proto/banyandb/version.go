@@ -19,7 +19,7 @@
 package apiversion
 
 // Version is the version of the API.
-const Version = "0.9"
+const Version = "0.10"
 
 // Revision is the revision of the API. Building with -ldflags -X.
 var revision string

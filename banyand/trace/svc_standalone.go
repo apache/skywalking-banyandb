@@ -74,6 +74,7 @@ type standalone struct {
 	option             option
 	retentionConfig    storage.RetentionConfig
 	maxFileSnapshotNum int
+	minFileSnapshotAge time.Duration
 }
 
 func (s *standalone) FlagSet() *run.FlagSet {
@@ -90,7 +91,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "trace-retention-force-cleanup-enabled", false,
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
-	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 2, "the maximum number of file snapshots")
+	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 10, "the maximum number of file snapshots")
+	fs.DurationVar(&s.minFileSnapshotAge, "trace-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
 	// Additional flags can be added here
@@ -148,7 +150,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
 		obsservice.UpdatePath(s.dataPath)
 	}
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_TRACE, &s.schemaRepo)
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, s)
+	}
+	subErr := s.pipeline.Subscribe(data.TopicTraceCollectDataInfo, &collectDataInfoListener{s: s})
+	if subErr != nil {
+		return fmt.Errorf("failed to subscribe to TopicTraceCollectDataInfo: %w", subErr)
+	}
 
 	// Initialize snapshot directory
 	s.snapshotDir = filepath.Join(path, "snapshots")
@@ -446,7 +456,7 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 	}
 	d.snapshotMux.Lock()
 	defer d.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.lfs)
+	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
 	for _, g := range gg {
@@ -479,7 +489,7 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 
 func (d *standaloneSnapshotListener) snapshotName() string {
 	d.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), d.snapshotSeq)
 }
 
 type standaloneDeleteTraceSegmentsListener struct {
@@ -501,6 +511,37 @@ func (s *standaloneDeleteTraceSegmentsListener) Rev(_ context.Context, message b
 	s.s.l.Info().Msg("test")
 	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
+}
+
+func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
+}
+
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{}
+	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	return info, nil
+}
+
+type collectDataInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
+	}
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), dataInfo)
 }
 
 // NewService returns a new service.

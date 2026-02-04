@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,8 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
+	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
 }
 
 var _ Service = (*standalone)(nil)
@@ -79,6 +82,7 @@ type standalone struct {
 	retentionConfig    storage.RetentionConfig
 	cc                 storage.CacheConfig
 	maxFileSnapshotNum int
+	minFileSnapshotAge time.Duration
 }
 
 func (s *standalone) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -182,6 +186,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
 	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "measure-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.cc.MaxCacheSize = run.Bytes(100 * 1024 * 1024)
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
 	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
@@ -256,6 +261,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_MEASURE, s.schemaRepo)
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_MEASURE, s)
+	}
 
 	s.cm = newCacheMetrics(s.omr)
 	obsservice.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
@@ -343,4 +352,24 @@ func NewStandalone(metadata metadata.Repo, pipeline queue.Server, metricPipeline
 		omr:            omr,
 		pm:             pm,
 	}, nil
+}
+
+func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
+}
+
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{}
+	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	pendingSyncPartCount, pendingSyncDataSizeBytes, syncErr := s.schemaRepo.collectPendingSyncInfo(group)
+	if syncErr != nil {
+		return nil, fmt.Errorf("failed to collect pending sync info: %w", syncErr)
+	}
+	info.PendingSyncPartCount = pendingSyncPartCount
+	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	return info, nil
 }

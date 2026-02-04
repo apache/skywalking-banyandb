@@ -512,6 +512,21 @@ func (s *store) TakeFileSnapshot(dst string) error {
 	return reader.Backup(dst, nil)
 }
 
+// Stats returns the index statistics including document count and disk size.
+func (s *store) Stats() (dataCount int64, dataSizeBytes int64) {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return 0, 0
+	}
+	defer reader.Close()
+	count, countErr := reader.Count()
+	if countErr != nil {
+		return 0, 0
+	}
+	status := s.writer.Status()
+	return int64(count), int64(status.CurOnDiskBytes)
+}
+
 type blugeMatchIterator struct {
 	delegated     search.DocumentMatchIterator
 	err           error

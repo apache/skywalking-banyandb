@@ -55,6 +55,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 	tire1Client := pub.New(metaSvc, databasev1.Role_ROLE_LIAISON)
 	tire2Client := pub.New(metaSvc, databasev1.Role_ROLE_DATA)
+	metaSvc.SetDataBroadcaster(tire2Client)
+	metaSvc.SetLiaisonBroadcaster(tire1Client)
+
 	localPipeline := queue.Local()
 
 	measureLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicMeasureWrite.String(), metaSvc)

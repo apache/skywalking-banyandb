@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,8 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
+	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
 }
 
 var _ Service = (*standalone)(nil)
@@ -78,6 +81,7 @@ type standalone struct {
 	option                option
 	retentionConfig       storage.RetentionConfig
 	maxFileSnapshotNum    int
+	minFileSnapshotAge    time.Duration
 }
 
 func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -181,7 +185,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.BoolVar(&s.retentionConfig.ForceCleanupEnabled, "stream-retention-force-cleanup-enabled", false,
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
-	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 2, "the maximum number of file snapshots allowed")
+	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "stream-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	return flagS
 }
 
@@ -236,9 +241,18 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if !strings.HasPrefix(filepath.VolumeName(s.dataPath), filepath.VolumeName(path)) {
 		obsservice.UpdatePath(s.dataPath)
 	}
-	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
+		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+	}
 	if s.pipeline == nil {
 		return nil
+	}
+
+	collectDataInfoListener := &collectDataInfoListener{s: s}
+	if subscribeErr := s.pipeline.Subscribe(data.TopicStreamCollectDataInfo, collectDataInfoListener); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to collect data info topic: %w", subscribeErr)
 	}
 
 	s.localPipeline = queue.Local()
@@ -344,4 +358,35 @@ func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Messag
 	}
 	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
+}
+
+func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
+}
+
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+	info := &databasev1.LiaisonInfo{}
+	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
+	if writeErr != nil {
+		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
+	}
+	info.PendingWriteDataCount = pendingWriteCount
+	return info, nil
+}
+
+type collectDataInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
+	}
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), dataInfo)
 }

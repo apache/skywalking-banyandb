@@ -102,6 +102,7 @@ type IndexDB interface {
 	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (SeriesData, [][]byte, error)
 	SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error)
 	EnableExternalSegments() (index.ExternalSegmentStreamer, error)
+	Stats() (dataCount int64, dataSizeBytes int64)
 }
 
 // TSDB allows listing and getting shard details.
@@ -128,6 +129,7 @@ type Segment[T TSTable, O any] interface {
 	GetTimeRange() timestamp.TimeRange
 	CreateTSTableIfNotExist(shardID common.ShardID) (T, error)
 	Tables() ([]T, []Cache)
+	TablesWithShardIDs() ([]T, []common.ShardID, []Cache)
 	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
 	IndexDB() IndexDB
 }

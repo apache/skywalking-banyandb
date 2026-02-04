@@ -93,3 +93,9 @@ var StreamElementIndexSyncKindVersion = common.KindVersion{
 
 // TopicStreamElementIndexSync is the element index sync topic.
 var TopicStreamElementIndexSync = bus.BiTopic(StreamElementIndexSyncKindVersion.String())
+
+// TopicStreamCollectDataInfo is the topic for collecting data info from data nodes.
+var TopicStreamCollectDataInfo = bus.BiTopic("stream-collect-data-info")
+
+// TopicStreamCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
+var TopicStreamCollectLiaisonInfo = bus.BiTopic("stream-collect-liaison-info")

@@ -232,32 +232,48 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	}
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.lfs)
+	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
-	shardsRef := s.s.db.sLst.Load()
-	if shardsRef == nil {
-		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-	}
-	shards := *shardsRef
-	for _, shard := range shards {
-		select {
-		case <-ctx.Done():
-			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
-		default:
+	var snapshotResult *databasev1.Snapshot
+	s.s.db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
+		sLst := gs.shards.Load()
+		if sLst == nil {
+			return true
 		}
-		snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, filepath.Base(shard.location))
-		lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-		err := shard.store.TakeFileSnapshot(snpDir)
-		if err != nil {
-			s.s.l.Error().Err(err).Str("shard", filepath.Base(shard.location)).Msg("fail to take shard snapshot")
-			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
-				Name:    sn,
-				Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-				Error:   err.Error(),
-			})
+		for _, shardRef := range *sLst {
+			select {
+			case <-ctx.Done():
+				// Context canceled: record an error snapshot and stop iteration.
+				if err := ctx.Err(); err != nil {
+					snapshotResult = &databasev1.Snapshot{
+						Name:    sn,
+						Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+						Error:   err.Error(),
+					}
+				}
+				return false
+			default:
+			}
+			snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
+			lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
+			if snapshotErr != nil {
+				s.s.l.Error().Err(snapshotErr).Str("group", shardRef.group).
+					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
+				snapshotResult = &databasev1.Snapshot{
+					Name:    sn,
+					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+					Error:   snapshotErr.Error(),
+				}
+				return false
+			}
 		}
+		return true
+	})
+	if snapshotResult != nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snapshotResult)
 	}
-
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
 		Name:    sn,
 		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
@@ -266,7 +282,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 
 func (s *snapshotListener) snapshotName() string {
 	s.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), s.snapshotSeq)
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), s.snapshotSeq)
 }
 
 type repairListener struct {

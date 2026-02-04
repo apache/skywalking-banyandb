@@ -75,6 +75,7 @@ type dataSVC struct {
 	retentionConfig    storage.RetentionConfig
 	cc                 storage.CacheConfig
 	maxFileSnapshotNum int
+	minFileSnapshotAge time.Duration
 }
 
 func (s *dataSVC) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -178,6 +179,7 @@ func (s *dataSVC) FlagSet() *run.FlagSet {
 		"enable forced retention cleanup when disk usage exceeds high watermark")
 
 	flagS.IntVar(&s.maxFileSnapshotNum, "measure-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "measure-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.cc.MaxCacheSize = run.Bytes(100 * 1024 * 1024)
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
 	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
@@ -250,13 +252,18 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 		s.c = storage.NewServiceCacheWithConfig(s.cc)
 	}
 	node := val.(common.Node)
-	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels)
+	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 
 	s.cm = newCacheMetrics(s.omr)
 	obsservice.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)
 
 	if s.pipeline == nil {
 		return nil
+	}
+
+	collectDataInfoListener := &collectDataInfoListener{s: s}
+	if subscribeErr := s.pipeline.Subscribe(data.TopicMeasureCollectDataInfo, collectDataInfoListener); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to collect data info topic: %w", subscribeErr)
 	}
 
 	if err := s.createDataNativeObservabilityGroup(ctx); err != nil {
@@ -403,11 +410,13 @@ func NewReadonlyDataSVC(metadata metadata.Repo, omr observability.MetricsRegistr
 	}, nil
 }
 
-func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string) *schemaRepo {
+func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string, nodeID string) *schemaRepo {
 	sr := &schemaRepo{
 		path:     path,
 		l:        svc.l,
 		metadata: svc.metadata,
+		nodeID:   nodeID,
+		role:     databasev1.Role_ROLE_DATA,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -481,7 +490,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 	}
 	d.snapshotMux.Lock()
 	defer d.snapshotMux.Unlock()
-	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.lfs)
+	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
 	for _, g := range gg {
@@ -509,7 +518,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 
 func (d *dataSnapshotListener) snapshotName() string {
 	d.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format("20060102150405"), d.snapshotSeq)
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), d.snapshotSeq)
 }
 
 type dataDeleteStreamSegmentsListener struct {
@@ -530,4 +539,29 @@ func (d *dataDeleteStreamSegmentsListener) Rev(_ context.Context, message bus.Me
 	}
 	deleted := db.DeleteExpiredSegments(req.SegmentSuffixes)
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
+}
+
+func (s *dataSVC) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
+}
+
+func (s *dataSVC) CollectLiaisonInfo(_ context.Context, _ string) (*databasev1.LiaisonInfo, error) {
+	return nil, errors.New("collect liaison info is not supported on data node")
+}
+
+type collectDataInfoListener struct {
+	*bus.UnImplementedHealthyListener
+	s *dataSVC
+}
+
+func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
+	}
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	if collectErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
+	}
+	return bus.NewMessage(message.ID(), dataInfo)
 }

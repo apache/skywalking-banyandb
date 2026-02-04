@@ -42,6 +42,7 @@ type queryService struct {
 	log         *logger.Logger
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
+	imqp        *measureInternalQueryProcessor
 	nqp         *topNQueryProcessor
 	tqp         *traceQueryProcessor
 	nodeID      string
@@ -58,6 +59,11 @@ func NewService(_ context.Context, streamService stream.Service, measureService 
 	}
 	// measure query processor
 	svc.mqp = &measureQueryProcessor{
+		measureService: measureService,
+		queryService:   svc,
+	}
+	// internal measure query processor for distributed query
+	svc.imqp = &measureInternalQueryProcessor{
 		measureService: measureService,
 		queryService:   svc,
 	}
@@ -94,6 +100,7 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
+		q.pipeline.Subscribe(data.TopicInternalMeasureQuery, q.imqp),
 		q.pipeline.Subscribe(data.TopicTopNQuery, q.nqp),
 		q.pipeline.Subscribe(data.TopicTraceQuery, q.tqp),
 	)

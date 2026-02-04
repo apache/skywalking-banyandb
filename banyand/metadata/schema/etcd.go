@@ -128,6 +128,8 @@ func CheckInterval(d time.Duration) WatcherOption {
 	}
 }
 
+var _ Registry = (*etcdSchemaRegistry)(nil)
+
 type etcdSchemaRegistry struct {
 	client        *clientv3.Client
 	closer        *run.Closer
@@ -256,11 +258,12 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (Registry, error) {
 	if err != nil {
 		return nil, err
 	}
+	schemaLogger := logger.GetLogger("schema-registry")
 	reg := &etcdSchemaRegistry{
 		namespace:     registryConfig.namespace,
 		client:        client,
 		closer:        run.NewCloser(1),
-		l:             logger.GetLogger("schema-registry"),
+		l:             schemaLogger,
 		checkInterval: registryConfig.checkInterval,
 		watchers:      make(map[Kind]*watcher),
 	}
