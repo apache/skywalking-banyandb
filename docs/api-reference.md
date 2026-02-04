@@ -305,13 +305,17 @@
     - [TraceRegistryService](#banyandb-database-v1-TraceRegistryService)
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
+    - [Call](#banyandb-fodc-v1-Call)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
+    - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
+    - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
+    - [Topology](#banyandb-fodc-v1-Topology)
   
     - [FODCService](#banyandb-fodc-v1-FODCService)
   
@@ -4727,6 +4731,23 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-Call"></a>
+
+### Call
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| target | [string](#string) |  |  |
+| source | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -4814,6 +4835,37 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamClusterTopologyRequest"></a>
+
+### StreamClusterTopologyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| topology | [Topology](#banyandb-fodc-v1-Topology) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamClusterTopologyResponse"></a>
+
+### StreamClusterTopologyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_topology | [bool](#bool) |  | Request topology from agent |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamMetricsRequest"></a>
 
 ### StreamMetricsRequest
@@ -4845,6 +4897,22 @@ Phase represents the current phase of the deletion task.
 
 
 
+
+<a name="banyandb-fodc-v1-Topology"></a>
+
+### Topology
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| nodes | [banyandb.database.v1.Node](#banyandb-database-v1-Node) | repeated |  |
+| calls | [Call](#banyandb-fodc-v1-Call) | repeated |  |
+
+
+
+
+
  
 
  
@@ -4861,6 +4929,7 @@ Phase represents the current phase of the deletion task.
 | ----------- | ------------ | ------------- | ------------|
 | RegisterAgent | [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest) stream | [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse) stream | Bi-directional stream for agent registration and heartbeat |
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
+| StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 
  
 
