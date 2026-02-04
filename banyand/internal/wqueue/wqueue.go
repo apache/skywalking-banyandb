@@ -220,3 +220,14 @@ func (q *Queue[S, O]) GetTimeRange(ts time.Time) timestamp.TimeRange {
 func (q *Queue[S, O]) GetNodes(shardID common.ShardID) []string {
 	return q.opts.GetNodes(shardID)
 }
+
+// SubQueues returns sub-queues from all shards in the queue.
+func (q *Queue[S, O]) SubQueues() []S {
+	q.RLock()
+	defer q.RUnlock()
+	result := make([]S, 0, len(q.sLst))
+	for _, shard := range q.sLst {
+		result = append(result, shard.sq)
+	}
+	return result
+}
