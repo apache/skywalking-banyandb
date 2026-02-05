@@ -20,6 +20,8 @@ package property
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +36,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -110,47 +113,107 @@ type nodeConnection struct {
 	mgrClient    schemav1.SchemaManagementServiceClient
 	updateClient schemav1.SchemaUpdateServiceClient
 	conn         *grpc.ClientConn
+	target       string
 }
 
 // SchemaRegistry implements schema.Registry interface using property-based storage.
 type SchemaRegistry struct {
-	dialOptsPrv  common.GRPCDialOptionsProvider
-	handlers     map[schema.Kind][]schema.EventHandler
-	nodeConns    map[string]*nodeConnection
-	cache        *schemaCache
-	closer       *run.Closer
-	syncCloser   *run.Closer
-	l            *logger.Logger
-	metrics      *clientMetrics
-	mu           sync.RWMutex
-	connMu       sync.RWMutex
-	grpcTimeout  time.Duration
-	syncInterval time.Duration
+	dialOptsPrv       common.GRPCDialOptionsProvider
+	localUpdateClient schemav1.SchemaUpdateServiceClient
+	localMgrClient    schemav1.SchemaManagementServiceClient
+	l                 *logger.Logger
+	closer            *run.Closer
+	syncCloser        *run.Closer
+	cache             *schemaCache
+	metrics           *clientMetrics
+	nodeConns         map[string]*nodeConnection
+	handlers          map[schema.Kind][]schema.EventHandler
+	grpcTimeout       time.Duration
+	syncInterval      time.Duration
+	mu                sync.RWMutex
+	connMu            sync.RWMutex
+}
+
+// NodeInfo holds information about a node and its schema clients.
+type NodeInfo struct {
+	Node               *databasev1.Node
+	SchemaMgrClient    schemav1.SchemaManagementServiceClient
+	SchemaUpdateClient schemav1.SchemaUpdateServiceClient
+}
+
+func (i *NodeInfo) canBeUse() bool {
+	return i.Node != nil && i.SchemaMgrClient != nil && i.SchemaUpdateClient != nil
+}
+
+// ClientConfig holds configuration for construct SchemaRegistry client.
+type ClientConfig struct {
+	OMR             observability.MetricsRegistry
+	NodeSchema      schema.Node
+	DialOptProvider common.GRPCDialOptionsProvider
+	Node            *NodeInfo
+	metrics         *clientMetrics
+	GRPCTimeout     time.Duration
+	SyncInterval    time.Duration
 }
 
 // NewSchemaRegistryClient creates a new property schema registry client.
-// It accepts a NodeDiscovery service to dynamically discover and connect to metadata nodes.
-func NewSchemaRegistryClient(dialOptsProvider common.GRPCDialOptionsProvider, grpcTimeout, syncInterval time.Duration) *SchemaRegistry {
+// When node is non-nil and has ROLE_META, the registry connects to itself synchronously
+// during construction, ensuring metadata is available before subsequent services start.
+func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 	r := &SchemaRegistry{
-		dialOptsPrv:  dialOptsProvider,
+		dialOptsPrv:  cfg.DialOptProvider,
 		nodeConns:    make(map[string]*nodeConnection),
 		handlers:     make(map[schema.Kind][]schema.EventHandler),
 		cache:        newSchemaCache(),
 		closer:       run.NewCloser(1),
 		l:            logger.GetLogger("property-schema-registry"),
-		grpcTimeout:  grpcTimeout,
-		syncInterval: syncInterval,
+		grpcTimeout:  cfg.GRPCTimeout,
+		syncInterval: cfg.SyncInterval,
 	}
-	return r
-}
-
-// SetMetrics initializes the client metrics using the provided metrics registry.
-func (r *SchemaRegistry) SetMetrics(omr observability.MetricsRegistry) {
-	if omr == nil {
-		return
+	if cfg.OMR != nil {
+		if cfg.metrics == nil {
+			clientScope := metadataScope.SubScope("schema_property_client")
+			cfg.metrics = newClientMetrics(cfg.OMR.With(clientScope))
+		}
+		r.metrics = cfg.metrics
 	}
-	clientScope := metadataScope.SubScope("client")
-	r.metrics = newClientMetrics(omr.With(clientScope))
+	// init current node
+	if cfg.Node != nil && cfg.Node.canBeUse() {
+		hasMetadataRole := false
+		for _, role := range cfg.Node.Node.Roles {
+			if role == databasev1.Role_ROLE_META {
+				hasMetadataRole = true
+				break
+			}
+		}
+		if !hasMetadataRole {
+			r.l.Info().Msg("metadata role not found in node, so skip bootstrapping from local meta node")
+			return r, nil
+		}
+		if connErr := r.addSelfNode(cfg.Node); connErr != nil {
+			return nil, fmt.Errorf("failed to bootstrap from local meta node: %w", connErr)
+		}
+	} else {
+		r.l.Info().Msg("local node info not provided or incomplete, " +
+			"so skip bootstrapping from local meta node, and lookup other meta nodes from node registry")
+		if cfg.NodeSchema == nil {
+			return r, nil
+		}
+		listNode, listErr := cfg.NodeSchema.ListNode(context.Background(), databasev1.Role_ROLE_META)
+		if listErr != nil {
+			return nil, fmt.Errorf("failed to list metadata nodes: %w", listErr)
+		}
+		if len(listNode) == 0 {
+			return nil, fmt.Errorf("no metadata nodes found in node registry")
+		}
+		for _, n := range listNode {
+			if e := r.addNodeConnection(n); e != nil {
+				r.l.Warn().Err(e).Str("node", n.GetMetadata().GetName()).
+					Str("address", n.GetGrpcAddress()).Msg("failed to add to metadata node")
+			}
+		}
+	}
+	return r, nil
 }
 
 // OnInit implements schema.EventHandler.
@@ -177,7 +240,10 @@ func (r *SchemaRegistry) OnAddOrUpdate(m schema.Metadata) {
 	if !containsMetadata {
 		return
 	}
-	r.addNodeConnection(node)
+	if err := r.addNodeConnection(node); err != nil {
+		r.l.Warn().Err(err).Str("node", node.GetMetadata().GetName()).
+			Str("address", node.GetGrpcAddress()).Msg("failed to add to metadata node")
+	}
 }
 
 // OnDelete implements schema.EventHandler for getting which metadata node has been deleted.
@@ -192,15 +258,35 @@ func (r *SchemaRegistry) OnDelete(m schema.Metadata) {
 	r.removeNodeConnection(node.GetGrpcAddress())
 }
 
-func (r *SchemaRegistry) addNodeConnection(node *databasev1.Node) {
-	address := node.GetGrpcAddress()
+func (r *SchemaRegistry) addSelfNode(node *NodeInfo) error {
+	address := node.Node.GetGrpcAddress()
 	if address == "" {
-		return
+		return errors.New("node grpc address is empty")
 	}
 	r.connMu.Lock()
 	defer r.connMu.Unlock()
 	if _, exists := r.nodeConns[address]; exists {
-		return
+		return nil
+	}
+	nodeConn := &nodeConnection{
+		mgrClient:    node.SchemaMgrClient,
+		updateClient: node.SchemaUpdateClient,
+		target:       address,
+	}
+	r.nodeConns[address] = nodeConn
+	r.l.Info().Str("address", address).Msg("connected to local metadata node")
+	return nil
+}
+
+func (r *SchemaRegistry) addNodeConnection(node *databasev1.Node) error {
+	address := node.GetGrpcAddress()
+	if address == "" {
+		return errors.New("node grpc address is empty")
+	}
+	r.connMu.Lock()
+	defer r.connMu.Unlock()
+	if _, exists := r.nodeConns[address]; exists {
+		return nil
 	}
 	var dialOpts []grpc.DialOption
 	if r.dialOptsPrv != nil {
@@ -208,13 +294,13 @@ func (r *SchemaRegistry) addNodeConnection(node *databasev1.Node) {
 		dialOpts, optsErr = r.dialOptsPrv.GetDialOptions(address)
 		if optsErr != nil {
 			r.l.Warn().Err(optsErr).Str("address", address).Msg("failed to get dial options")
-			return
+			return fmt.Errorf("failed to get dial options for %s: %w", address, optsErr)
 		}
 	}
 	conn, connErr := grpchelper.Conn(address, r.grpcTimeout, dialOpts...)
 	if connErr != nil {
 		r.l.Warn().Err(connErr).Str("address", address).Msg("failed to connect to metadata node")
-		return
+		return fmt.Errorf("failed to connect to metadata node %s: %w", address, connErr)
 	}
 	schemaMgrClient := schemav1.NewSchemaManagementServiceClient(conn)
 	schemaUpdateClient := schemav1.NewSchemaUpdateServiceClient(conn)
@@ -222,10 +308,11 @@ func (r *SchemaRegistry) addNodeConnection(node *databasev1.Node) {
 		mgrClient:    schemaMgrClient,
 		updateClient: schemaUpdateClient,
 		conn:         conn,
+		target:       conn.Target(),
 	}
 	r.nodeConns[address] = nodeConn
 	r.l.Info().Str("address", address).Str("node", node.GetMetadata().GetName()).Msg("connected to metadata node")
-	go r.initializeFromNode(nodeConn)
+	return nil
 }
 
 func (r *SchemaRegistry) removeNodeConnection(address string) {
@@ -303,6 +390,21 @@ func (r *SchemaRegistry) Compact(context.Context, int64) error {
 // StartWatcher starts the global sync mechanism.
 func (r *SchemaRegistry) StartWatcher() {
 	r.syncCloser = run.NewCloser(1)
+	// init all metadata from connections
+	connections := make([]*nodeConnection, 0)
+	r.connMu.RLock()
+	for _, nc := range r.nodeConns {
+		connections = append(connections, nc)
+	}
+	r.connMu.RUnlock()
+	go func() {
+		for _, nc := range connections {
+			if err := r.initializeFromNode(nc); err != nil {
+				r.l.Error().Err(err).Str("node", nc.target).Msg("failed to initialize metadata from node")
+			}
+		}
+	}()
+
 	go r.globalSync()
 }
 
@@ -320,6 +422,9 @@ func (r *SchemaRegistry) ListStream(ctx context.Context, opt schema.ListOpt) ([]
 
 // CreateStream creates a new stream.
 func (r *SchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
+	if validateErr := validate.Stream(stream); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
@@ -328,6 +433,9 @@ func (r *SchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.St
 
 // UpdateStream updates an existing stream.
 func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
+	if validateErr := validate.Stream(stream); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
@@ -353,6 +461,9 @@ func (r *SchemaRegistry) ListMeasure(ctx context.Context, opt schema.ListOpt) ([
 
 // CreateMeasure creates a new measure.
 func (r *SchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error) {
+	if validateErr := validate.Measure(measure); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
@@ -361,6 +472,9 @@ func (r *SchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.
 
 // UpdateMeasure updates an existing measure.
 func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error) {
+	if validateErr := validate.Measure(measure); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
@@ -401,6 +515,9 @@ func (r *SchemaRegistry) ListTrace(ctx context.Context, opt schema.ListOpt) ([]*
 
 // CreateTrace creates a new trace.
 func (r *SchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
+	if validateErr := validate.Trace(trace); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
@@ -409,6 +526,9 @@ func (r *SchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.Trac
 
 // UpdateTrace updates an existing trace.
 func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
+	if validateErr := validate.Trace(trace); validateErr != nil {
+		return 0, validateErr
+	}
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
@@ -434,6 +554,9 @@ func (r *SchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, erro
 
 // CreateGroup creates a new group.
 func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) error {
+	if validateErr := validate.Group(group); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
@@ -442,6 +565,9 @@ func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group)
 
 // UpdateGroup updates an existing group.
 func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
+	if validateErr := validate.Group(group); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
@@ -467,6 +593,14 @@ func (r *SchemaRegistry) ListIndexRule(ctx context.Context, opt schema.ListOpt) 
 
 // CreateIndexRule creates a new index rule.
 func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.GetMetadata().GetId() == 0 {
+		buf := []byte(indexRule.Metadata.Group)
+		buf = append(buf, indexRule.Metadata.Name...)
+		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
+	}
+	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
@@ -475,6 +609,16 @@ func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databas
 
 // UpdateIndexRule updates an existing index rule.
 func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+	if indexRule.GetMetadata().GetId() == 0 {
+		existingIndexRule, getErr := r.GetIndexRule(ctx, indexRule.Metadata)
+		if getErr != nil {
+			return getErr
+		}
+		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
+	}
+	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
@@ -500,6 +644,9 @@ func (r *SchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt schema.Li
 
 // CreateIndexRuleBinding creates a new index rule binding.
 func (r *SchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	if validateErr := validate.IndexRuleBinding(indexRuleBinding); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
@@ -508,6 +655,9 @@ func (r *SchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBi
 
 // UpdateIndexRuleBinding updates an existing index rule binding.
 func (r *SchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+	if validateErr := validate.IndexRuleBinding(indexRuleBinding); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
@@ -533,6 +683,9 @@ func (r *SchemaRegistry) ListTopNAggregation(ctx context.Context, opt schema.Lis
 
 // CreateTopNAggregation creates a new top-N aggregation.
 func (r *SchemaRegistry) CreateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) error {
+	if validateErr := validate.TopNAggregation(topN); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
@@ -541,6 +694,9 @@ func (r *SchemaRegistry) CreateTopNAggregation(ctx context.Context, topN *databa
 
 // UpdateTopNAggregation updates an existing top-N aggregation.
 func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) error {
+	if validateErr := validate.TopNAggregation(topN); validateErr != nil {
+		return validateErr
+	}
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
@@ -675,12 +831,12 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry, kin
 	if err != nil {
 		return err
 	}
-	originalSchema, err := r.getSchema(ctx, kind, metadata.Group, metadata.Name)
-	if err != nil {
-		return err
+	exists, existErr := r.existSchema(ctx, kind, metadata.Group, metadata.Name)
+	if existErr != nil {
+		return existErr
 	}
-	if originalSchema != nil {
-		return fmt.Errorf("schema %s/%s already exist", metadata.Group, metadata.Name)
+	if exists {
+		return schema.ErrGRPCAlreadyExists
 	}
 	prop, convErr := SchemaToProperty(kind, spec)
 	if convErr != nil {
@@ -722,6 +878,46 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind, group,
 	return info.best.property, nil
 }
 
+type existSchemaNodeResult struct {
+	err       error
+	hasSchema bool
+}
+
+func (r *SchemaRegistry) existSchema(ctx context.Context, kind schema.Kind, group, name string) (bool, error) {
+	propID := BuildPropertyID(kind, &commonv1.Metadata{Group: group, Name: name})
+	query := buildSchemaQuery(kind, group, []string{propID})
+	nodeConns := r.getNodeConnectionsWithAddr()
+	if len(nodeConns) == 0 {
+		return false, errNoMetadataServers
+	}
+	resultCh := make(chan existSchemaNodeResult, len(nodeConns))
+	for _, nc := range nodeConns {
+		go func(client schemav1.SchemaManagementServiceClient) {
+			resp, callErr := client.ExistSchema(ctx, &schemav1.ExistSchemaRequest{Query: query})
+			if callErr != nil {
+				resultCh <- existSchemaNodeResult{err: callErr}
+				return
+			}
+			resultCh <- existSchemaNodeResult{hasSchema: resp.GetHasSchema()}
+		}(nc.mgrClient)
+	}
+	var lastErr error
+	for range len(nodeConns) {
+		res := <-resultCh
+		if res.err != nil {
+			lastErr = res.err
+			continue
+		}
+		if res.hasSchema {
+			return true, nil
+		}
+	}
+	if lastErr != nil {
+		return false, lastErr
+	}
+	return false, nil
+}
+
 type schemaWithDeleteTime struct {
 	property   *propertyv1.Property
 	deleteTime int64
@@ -761,20 +957,29 @@ func (r *SchemaRegistry) getNodeConnectionsWithAddr() map[string]*nodeConnection
 func (r *SchemaRegistry) querySchemasFromClient(ctx context.Context, client schemav1.SchemaManagementServiceClient,
 	query *propertyv1.QueryRequest,
 ) ([]*schemaWithDeleteTime, error) {
-	resp, listErr := client.ListSchemas(ctx, &schemav1.ListSchemasRequest{Query: query})
-	if listErr != nil {
-		return nil, listErr
+	stream, streamErr := client.ListSchemas(ctx, &schemav1.ListSchemasRequest{Query: query})
+	if streamErr != nil {
+		return nil, streamErr
 	}
-	results := make([]*schemaWithDeleteTime, 0, len(resp.Properties))
-	for idx, prop := range resp.Properties {
-		var deleteTime int64
-		if idx < len(resp.DeleteTimes) {
-			deleteTime = resp.DeleteTimes[idx]
+	var results []*schemaWithDeleteTime
+	for {
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
 		}
-		results = append(results, &schemaWithDeleteTime{
-			property:   prop,
-			deleteTime: deleteTime,
-		})
+		if recvErr != nil {
+			return nil, recvErr
+		}
+		for idx, prop := range resp.Properties {
+			var deleteTime int64
+			if idx < len(resp.DeleteTimes) {
+				deleteTime = resp.DeleteTimes[idx]
+			}
+			results = append(results, &schemaWithDeleteTime{
+				property:   prop,
+				deleteTime: deleteTime,
+			})
+		}
 	}
 	return results, nil
 }
@@ -1055,14 +1260,14 @@ func (r *SchemaRegistry) deleteFromAllServers(ctx context.Context, kind schema.K
 	return found, firstErr
 }
 
-func (r *SchemaRegistry) initializeFromNode(nodeConn *nodeConnection) {
+func (r *SchemaRegistry) initializeFromNode(nodeConn *nodeConnection) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	r.l.Info().Str("address", nodeConn.conn.Target()).Msg("initializing resources from metadata node")
+	r.l.Info().Str("address", nodeConn.target).Msg("initializing resources from metadata node")
 	groups, listErr := r.listGroupFromClient(ctx, nodeConn.mgrClient)
 	if listErr != nil {
 		r.l.Warn().Err(listErr).Msg("failed to list groups during initialization")
-		return
+		return listErr
 	}
 	var maxRevision int64
 	for _, group := range groups {
@@ -1088,8 +1293,9 @@ func (r *SchemaRegistry) initializeFromNode(nodeConn *nodeConnection) {
 			initResourceFromClient[*databasev1.IndexRuleBinding](ctx, r, nodeConn.mgrClient, schema.KindIndexRuleBinding, groupName, &maxRevision)
 		}
 	}
-	r.l.Info().Str("address", nodeConn.conn.Target()).
+	r.l.Info().Str("address", nodeConn.target).
 		Int64("latestUpdateAt", maxRevision).Msg("completed resource initialization")
+	return nil
 }
 
 func (r *SchemaRegistry) processInitialResource(kind schema.Kind, spec proto.Message, currentMax int64) int64 {
@@ -1098,6 +1304,10 @@ func (r *SchemaRegistry) processInitialResource(kind schema.Kind, spec proto.Mes
 		r.l.Warn().Err(convErr).Stringer("kind", kind).Msg("failed to convert to property")
 		return currentMax
 	}
+	return r.processInitialResourceFromProperty(kind, prop, spec, currentMax)
+}
+
+func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, prop *propertyv1.Property, spec proto.Message, currentMax int64) int64 {
 	revision := prop.UpdatedAt.AsTime().UnixNano()
 	entry := &cacheEntry{
 		latestUpdateAt: revision,
@@ -1230,7 +1440,7 @@ func (r *SchemaRegistry) performSync() {
 			if r.metrics != nil {
 				r.metrics.totalSyncUpdates.Inc(float64(len(updatedNames)))
 			}
-			r.l.Info().Str("connection", c.conn.Target()).
+			r.l.Info().Str("connection", c.target).
 				Strs("schema_names", updatedNames).
 				Int64("sinceRevision", sinceRevision).
 				Msg("detected schema updates")
@@ -1312,7 +1522,7 @@ func (r *SchemaRegistry) syncAllResourcesOfKind(ctx context.Context, client sche
 			r.l.Warn().Stringer("kind", kind).Msg("spec does not implement proto.Message")
 			continue
 		}
-		maxRevision = r.processInitialResource(kind, spec, maxRevision)
+		maxRevision = r.processInitialResourceFromProperty(kind, s.property, spec, maxRevision)
 	}
 	for cachedPropID, cachedEntry := range cachedEntries {
 		if p, exists := currentPropIDs[cachedPropID]; !exists || p.deleteTime > 0 {
@@ -1360,14 +1570,22 @@ func buildUpdatedAtCriteria(sinceRevision int64) *modelv1.Criteria {
 func (r *SchemaRegistry) listSchemasFromClient(ctx context.Context, client schemav1.SchemaManagementServiceClient,
 	kind schema.Kind, group string,
 ) ([]*propertyv1.Property, error) {
-	req := &schemav1.ListSchemasRequest{
-		Query: buildSchemaQuery(kind, group, nil),
+	stream, streamErr := client.ListSchemas(ctx, &schemav1.ListSchemasRequest{Query: buildSchemaQuery(kind, group, nil)})
+	if streamErr != nil {
+		return nil, streamErr
 	}
-	resp, listErr := client.ListSchemas(ctx, req)
-	if listErr != nil {
-		return nil, listErr
+	var props []*propertyv1.Property
+	for {
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return nil, recvErr
+		}
+		props = append(props, resp.Properties...)
 	}
-	return resp.Properties, nil
+	return props, nil
 }
 
 func (r *SchemaRegistry) listGroupFromClient(ctx context.Context, client schemav1.SchemaManagementServiceClient) ([]*commonv1.Group, error) {
@@ -1385,4 +1603,10 @@ func (r *SchemaRegistry) listGroupFromClient(ctx context.Context, client schemav
 		groups = append(groups, md.Spec.(*commonv1.Group))
 	}
 	return groups, nil
+}
+
+// SetLocalSchemaClients sets the local schema management and update clients.
+func (r *SchemaRegistry) SetLocalSchemaClients(mgrClient schemav1.SchemaManagementServiceClient, updateClient schemav1.SchemaUpdateServiceClient) {
+	r.localMgrClient = mgrClient
+	r.localUpdateClient = updateClient
 }

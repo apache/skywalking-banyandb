@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	discoverycommon "github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/dns"
@@ -80,6 +81,12 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
+// for the property based registry connect to the metadata node
+const (
+	propertyRegistryInitRetryCount = 30
+	propertyRegistryInitRetrySleep = time.Second * 3
+)
+
 // NewClient returns a new metadata client.
 func NewClient(toRegisterNode, forceRegisterNode bool) (metadata.Service, error) {
 	return &clientService{
@@ -91,6 +98,9 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (metadata.Service, error)
 
 type clientService struct {
 	schemaRegistry             schema.Registry
+	omr                        observability.MetricsRegistry
+	schemaUpdateClient         schemav1.SchemaUpdateServiceClient
+	schemaManagementClient     schemav1.SchemaManagementServiceClient
 	infoCollectorRegistry      *schema.InfoCollectorRegistry
 	dnsDiscovery               *dns.Service
 	fileDiscovery              *file.Service
@@ -121,6 +131,9 @@ type clientService struct {
 	fileRetryInitialInterval   time.Duration
 	fileRetryMaxInterval       time.Duration
 	fileRetryMultiplier        float64
+	dnsRetryInitialInterval    time.Duration
+	dnsRetryMaxInterval        time.Duration
+	dnsRetryMultiplier         float64
 	nodeInfoMux                sync.Mutex
 	forceRegisterNode          bool
 	toRegisterNode             bool
@@ -170,11 +183,17 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Maximum retry interval for failed node metadata fetches in file discovery mode")
 	fs.Float64Var(&s.fileRetryMultiplier, "node-discovery-file-retry-multiplier", 2.0,
 		"Backoff multiplier for retry intervals in file discovery mode")
+	fs.DurationVar(&s.dnsRetryInitialInterval, "node-discovery-dns-retry-initial-interval", 1*time.Second,
+		"Initial retry interval for failed node metadata fetches in DNS discovery mode")
+	fs.DurationVar(&s.dnsRetryMaxInterval, "node-discovery-dns-retry-max-interval", 2*time.Minute,
+		"Maximum retry interval for failed node metadata fetches in DNS discovery mode")
+	fs.Float64Var(&s.dnsRetryMultiplier, "node-discovery-dns-retry-multiplier", 2.0,
+		"Backoff multiplier for retry intervals in DNS discovery mode")
 
 	// schema management configuration
 	fs.StringVar(&s.metadataRegistryMode, "schema-registry-mode", "etcd",
 		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
-	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 20*time.Second,
+	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 30*time.Second,
 		"Interval to sync property-based schema in client side with other nodes")
 	return fs
 }
@@ -241,13 +260,17 @@ func (s *clientService) PreRun(ctx context.Context) error {
 
 		var createErr error
 		s.dnsDiscovery, createErr = dns.NewService(dns.Config{
-			SRVAddresses: s.dnsSRVAddresses,
-			InitInterval: s.dnsFetchInitInterval,
-			InitDuration: s.dnsFetchInitDuration,
-			PollInterval: s.dnsFetchInterval,
-			GRPCTimeout:  s.grpcTimeout,
-			TLSEnabled:   s.dnsTLSEnabled,
-			CACertPaths:  s.dnsCACertPaths,
+			OMR:                  s.omr,
+			SRVAddresses:         s.dnsSRVAddresses,
+			InitInterval:         s.dnsFetchInitInterval,
+			InitDuration:         s.dnsFetchInitDuration,
+			PollInterval:         s.dnsFetchInterval,
+			GRPCTimeout:          s.grpcTimeout,
+			TLSEnabled:           s.dnsTLSEnabled,
+			CACertPaths:          s.dnsCACertPaths,
+			RetryInitialInterval: s.dnsRetryInitialInterval,
+			RetryMaxInterval:     s.dnsRetryMaxInterval,
+			RetryMultiplier:      s.dnsRetryMultiplier,
 		})
 		if createErr != nil {
 			return fmt.Errorf("failed to create DNS discovery service: %w", createErr)
@@ -259,6 +282,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 
 		var createErr error
 		s.fileDiscovery, createErr = file.NewService(file.Config{
+			OMR:                  s.omr,
 			FilePath:             s.filePath,
 			GRPCTimeout:          s.grpcTimeout,
 			FetchInterval:        s.fileFetchInterval,
@@ -312,9 +336,57 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		} else if s.fileDiscovery != nil {
 			dialProvider = s.fileDiscovery
 		}
-		registry := metadataproperty.NewSchemaRegistryClient(dialProvider, s.grpcTimeout, s.propertySchemaSyncInterval)
-		s.RegisterHandler("property-schema-registry", schema.KindNode, registry)
-		s.schemaRegistry = registry
+
+		var currentNode *metadataproperty.NodeInfo
+		n := buildNodeFromContext(ctx)
+		if n != nil {
+			currentNode = &metadataproperty.NodeInfo{
+				Node:               n,
+				SchemaMgrClient:    s.schemaManagementClient,
+				SchemaUpdateClient: s.schemaUpdateClient,
+			}
+		}
+
+		registryCfg := &metadataproperty.ClientConfig{
+			GRPCTimeout:     s.grpcTimeout,
+			SyncInterval:    s.propertySchemaSyncInterval,
+			OMR:             s.omr,
+			Node:            currentNode,
+			NodeSchema:      s.NodeRegistry(),
+			DialOptProvider: dialProvider,
+		}
+		var initAttempt int
+		for {
+			registry, initErr := metadataproperty.NewSchemaRegistryClient(registryCfg) //nolint:contextcheck
+			if errors.Is(initErr, context.DeadlineExceeded) || errors.Is(initErr, context.Canceled) {
+				select {
+				case <-stopCh:
+					return errors.New("pre-run interrupted")
+				case <-time.After(s.registryTimeout):
+					return errors.New("pre-run timeout")
+				case <-s.closer.CloseNotify():
+					return errors.New("pre-run interrupted")
+				default:
+					l.Warn().Msg("the property schema registry init timeout, retrying...")
+					time.Sleep(time.Second)
+					continue
+				}
+			}
+			if initErr != nil {
+				initAttempt++
+				if initAttempt >= propertyRegistryInitRetryCount {
+					return fmt.Errorf("failed to initialize property schema registry after %d attempts: %w",
+						initAttempt, initErr)
+				}
+				l.Warn().Err(initErr).Msgf("failed to initialize property schema registry, attempt %d/%d, retrying in %s...",
+					initAttempt, propertyRegistryInitRetryCount, propertyRegistryInitRetrySleep)
+				time.Sleep(propertyRegistryInitRetrySleep)
+				continue
+			}
+			s.RegisterHandler("property-schema-registry", schema.KindNode, registry)
+			s.schemaRegistry = registry
+			break
+		}
 	}
 
 	s.infoCollectorRegistry = schema.NewInfoCollectorRegistry(l, s.schemaRegistry)
@@ -490,20 +562,12 @@ func (s *clientService) PropertyRegistry() schema.Property {
 }
 
 func (s *clientService) SetMetricsRegistry(omr observability.MetricsRegistry) {
-	// initialize DNS discovery with metrics if it exists
-	if s.dnsDiscovery != nil {
-		factory := observability.RootScope.SubScope("metadata").SubScope("dns_discovery")
-		s.dnsDiscovery.SetMetrics(omr.With(factory))
-	}
-	// initialize file discovery with metrics if it exists
-	if s.fileDiscovery != nil {
-		factory := observability.RootScope.SubScope("metadata").SubScope("file_discovery")
-		s.fileDiscovery.SetMetrics(omr.With(factory))
-	}
-	// initialize property schema registry with metrics if it exists
-	if propRegistry, ok := s.schemaRegistry.(*metadataproperty.SchemaRegistry); ok {
-		propRegistry.SetMetrics(omr)
-	}
+	s.omr = omr
+}
+
+func (s *clientService) SetLocalPropertySchemaClient(mgrClient schemav1.SchemaManagementServiceClient, updateClient schemav1.SchemaUpdateServiceClient) {
+	s.schemaManagementClient = mgrClient
+	s.schemaUpdateClient = updateClient
 }
 
 func (s *clientService) Name() string {
@@ -625,4 +689,23 @@ func contains(s []string, e string) bool {
 		}
 	}
 	return false
+}
+
+func buildNodeFromContext(ctx context.Context) *databasev1.Node {
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	rolesVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || rolesVal == nil {
+		return nil
+	}
+	node := nodeVal.(common.Node)
+	nodeRoles := rolesVal.([]databasev1.Role)
+	return &databasev1.Node{
+		Metadata:                        &commonv1.Metadata{Name: node.NodeID},
+		GrpcAddress:                     node.GrpcAddress,
+		HttpAddress:                     node.HTTPAddress,
+		Roles:                           nodeRoles,
+		Labels:                          node.Labels,
+		CreatedAt:                       timestamppb.Now(),
+		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
+	}
 }

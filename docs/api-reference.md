@@ -364,6 +364,8 @@
     - [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse)
     - [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest)
     - [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse)
+    - [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest)
+    - [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse)
     - [GetSchemaRequest](#banyandb-schema-v1-GetSchemaRequest)
     - [GetSchemaResponse](#banyandb-schema-v1-GetSchemaResponse)
     - [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest)
@@ -5500,6 +5502,36 @@ WriteResponse is the response contract for write
 
 
 
+<a name="banyandb-schema-v1-ExistSchemaRequest"></a>
+
+### ExistSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-ExistSchemaResponse"></a>
+
+### ExistSchemaResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_schema | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-schema-v1-GetSchemaRequest"></a>
 
 ### GetSchemaRequest
@@ -5652,9 +5684,10 @@ WriteResponse is the response contract for write
 | ----------- | ------------ | ------------- | ------------|
 | InsertSchema | [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest) | [InsertSchemaResponse](#banyandb-schema-v1-InsertSchemaResponse) |  |
 | UpdateSchema | [UpdateSchemaRequest](#banyandb-schema-v1-UpdateSchemaRequest) | [UpdateSchemaResponse](#banyandb-schema-v1-UpdateSchemaResponse) |  |
-| ListSchemas | [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest) | [ListSchemasResponse](#banyandb-schema-v1-ListSchemasResponse) |  |
+| ListSchemas | [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest) | [ListSchemasResponse](#banyandb-schema-v1-ListSchemasResponse) stream |  |
 | DeleteSchema | [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest) | [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse) |  |
 | RepairSchema | [RepairSchemaRequest](#banyandb-schema-v1-RepairSchemaRequest) | [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse) |  |
+| ExistSchema | [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest) | [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse) |  |
 
 
 <a name="banyandb-schema-v1-SchemaUpdateService"></a>

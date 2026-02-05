@@ -18,6 +18,8 @@
 package property
 
 import (
+	"context"
+	"hash/crc32"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,6 +28,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
@@ -33,7 +37,8 @@ import (
 var syncInterval = 5 * time.Second
 
 func TestSchemaRegistry_HandleDeletion(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -64,7 +69,8 @@ func TestSchemaRegistry_HandleDeletion(t *testing.T) {
 }
 
 func TestSchemaRegistry_HandleDeletion_NotInCache(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -84,7 +90,8 @@ func TestSchemaRegistry_HandleDeletion_NotInCache(t *testing.T) {
 }
 
 func TestSchemaRegistry_HandleDeletion_OlderRevision(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -242,7 +249,8 @@ func TestGetNameFromTags(t *testing.T) {
 }
 
 func TestNewSchemaRegistry(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	require.NotNil(t, registry)
 	assert.NotNil(t, registry.nodeConns)
 	assert.NotNil(t, registry.handlers)
@@ -291,7 +299,8 @@ func (m *mockEventHandler) OnDelete(md schema.Metadata) {
 }
 
 func TestSchemaRegistry_RegisterHandler(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -306,7 +315,8 @@ func TestSchemaRegistry_RegisterHandler(t *testing.T) {
 }
 
 func TestSchemaRegistry_RegisterHandler_MultipleKinds(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -323,7 +333,8 @@ func TestSchemaRegistry_RegisterHandler_MultipleKinds(t *testing.T) {
 }
 
 func TestSchemaRegistry_OnInit(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	ok, revisions := registry.OnInit([]schema.Kind{schema.KindStream, schema.KindMeasure})
@@ -332,7 +343,8 @@ func TestSchemaRegistry_OnInit(t *testing.T) {
 }
 
 func TestSchemaRegistry_AddHandler(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler1 := newMockEventHandler()
@@ -348,7 +360,8 @@ func TestSchemaRegistry_AddHandler(t *testing.T) {
 }
 
 func TestSchemaRegistry_NotifyHandlers(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 	defer registry.Close()
 
 	handler := newMockEventHandler()
@@ -376,8 +389,133 @@ func TestSchemaRegistry_NotifyHandlers(t *testing.T) {
 }
 
 func TestSchemaRegistry_Close(t *testing.T) {
-	registry := NewSchemaRegistryClient(nil, 5*time.Second, syncInterval)
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
 
 	closeErr := registry.Close()
 	assert.NoError(t, closeErr)
+}
+
+func TestSchemaRegistry_CreateIndexRule_GeneratesCRC32ID(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	indexRule := &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{
+			Group: "test-group",
+			Name:  "test-rule",
+		},
+		Tags: []string{"tag1"},
+		Type: databasev1.IndexRule_TYPE_INVERTED,
+	}
+	// CreateIndexRule will fail because no servers are available,
+	// but the ID should be generated before validation runs.
+	_ = registry.CreateIndexRule(context.Background(), indexRule)
+
+	expectedID := crc32.ChecksumIEEE([]byte("test-grouptest-rule"))
+	assert.Equal(t, expectedID, indexRule.Metadata.Id)
+}
+
+func TestSchemaRegistry_CreateIndexRule_PreservesExistingID(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	existingID := uint32(12345)
+	indexRule := &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{
+			Group: "test-group",
+			Name:  "test-rule",
+			Id:    existingID,
+		},
+		Tags: []string{"tag1"},
+		Type: databasev1.IndexRule_TYPE_INVERTED,
+	}
+	// Will fail due to no servers, but ID should remain unchanged
+	_ = registry.CreateIndexRule(context.Background(), indexRule)
+
+	assert.Equal(t, existingID, indexRule.Metadata.Id)
+}
+
+func TestSchemaRegistry_CreateStream_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	_, createErr := registry.CreateStream(context.Background(), &databasev1.Stream{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "stream metadata is nil")
+}
+
+func TestSchemaRegistry_UpdateStream_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	_, updateErr := registry.UpdateStream(context.Background(), &databasev1.Stream{
+		Metadata: &commonv1.Metadata{Name: "test"},
+	})
+	assert.Error(t, updateErr)
+	assert.Contains(t, updateErr.Error(), "stream group is empty")
+}
+
+func TestSchemaRegistry_CreateMeasure_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	_, createErr := registry.CreateMeasure(context.Background(), &databasev1.Measure{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "measure metadata is nil")
+}
+
+func TestSchemaRegistry_CreateTrace_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	_, createErr := registry.CreateTrace(context.Background(), &databasev1.Trace{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "trace metadata is nil")
+}
+
+func TestSchemaRegistry_CreateGroup_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	createErr := registry.CreateGroup(context.Background(), &commonv1.Group{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "metadata is required")
+}
+
+func TestSchemaRegistry_CreateIndexRule_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	createErr := registry.CreateIndexRule(context.Background(), &databasev1.IndexRule{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "indexRule metadata is nil")
+}
+
+func TestSchemaRegistry_CreateIndexRuleBinding_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	createErr := registry.CreateIndexRuleBinding(context.Background(), &databasev1.IndexRuleBinding{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "indexRuleBinding metadata is nil")
+}
+
+func TestSchemaRegistry_CreateTopNAggregation_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	createErr := registry.CreateTopNAggregation(context.Background(), &databasev1.TopNAggregation{})
+	assert.Error(t, createErr)
+	assert.Contains(t, createErr.Error(), "topNAggregation metadata is nil")
 }

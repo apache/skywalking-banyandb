@@ -64,6 +64,7 @@ type service struct {
 	close                    chan struct{}
 	db                       *database
 	l                        *logger.Logger
+	groupConfigs             map[string]GroupStoreConfig
 	nodeID                   string
 	root                     string
 	snapshotDir              string
@@ -146,7 +147,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
 		s.repairEnabled, s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, s.repairTriggerCron, s.gossipMessenger, s.metadata,
-		func(ctx context.Context) (string, error) {
+		s.groupConfigs, func(ctx context.Context) (string, error) {
 			res := snapshotLis.Rev(ctx,
 				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
 			snpMsg := res.Data().(*databasev1.Snapshot)
@@ -214,14 +215,17 @@ func (s *service) GetGossIPMessenger() gossip.Messenger {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client,
+	omr observability.MetricsRegistry, pm protector.Memory, groupConfigs map[string]GroupStoreConfig,
+) (Service, error) {
 	return &service{
-		metadata: metadata,
-		pipeline: pipeline,
-		omr:      omr,
-		db:       &database{},
-		pm:       pm,
-		close:    make(chan struct{}),
+		metadata:     metadata,
+		pipeline:     pipeline,
+		omr:          omr,
+		db:           &database{},
+		pm:           pm,
+		groupConfigs: groupConfigs,
+		close:        make(chan struct{}),
 
 		gossipMessenger: gossip.NewMessenger(omr, metadata, pipelineClient),
 	}, nil

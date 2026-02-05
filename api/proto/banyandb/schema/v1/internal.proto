@@ -74,12 +74,21 @@ message RepairSchemaRequest {
 
 message RepairSchemaResponse {}
 
+message ExistSchemaRequest {
+  property.v1.QueryRequest query = 1;
+}
+
+message ExistSchemaResponse {
+  bool has_schema = 1;
+}
+
 service SchemaManagementService {
   rpc InsertSchema(InsertSchemaRequest) returns (InsertSchemaResponse);
   rpc UpdateSchema(UpdateSchemaRequest) returns (UpdateSchemaResponse);
-  rpc ListSchemas(ListSchemasRequest) returns (ListSchemasResponse);
+  rpc ListSchemas(ListSchemasRequest) returns (stream ListSchemasResponse);
   rpc DeleteSchema(DeleteSchemaRequest) returns (DeleteSchemaResponse);
   rpc RepairSchema(RepairSchemaRequest) returns (RepairSchemaResponse);
+  rpc ExistSchema(ExistSchemaRequest) returns (ExistSchemaResponse);
 }
 
 message AggregateSchemaUpdatesRequest {

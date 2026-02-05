@@ -102,6 +102,25 @@ func (s *service) DirectGet(ctx context.Context, group, name, id string) (*prope
 	return nil, nil
 }
 
+// DirectExist implements DirectService.DirectExist.
+func (s *service) DirectExist(ctx context.Context, group, name, id string) (bool, error) {
+	req := &propertyv1.QueryRequest{
+		Groups: []string{group},
+		Name:   name,
+		Ids:    []string{id},
+	}
+	results, queryErr := s.db.query(ctx, req)
+	if queryErr != nil {
+		return false, queryErr
+	}
+	for _, r := range results {
+		if r.deleteTime == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DirectRepair implements DirectService.DirectRepair.
 func (s *service) DirectRepair(ctx context.Context, shardID uint64, id []byte, prop *propertyv1.Property, deleteTime int64) error {
 	return s.db.repair(ctx, id, shardID, prop, deleteTime)

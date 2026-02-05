@@ -57,7 +57,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 	// Create a database with a shard
 	snapshotDir := tmpPath // Use same directory for snapshot
 	db, err := openDB(context.Background(), tmpPath, 3*time.Second, time.Hour, 32, observability.BypassRegistry, fileSystem,
-		true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
+		true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -200,7 +200,7 @@ var _ Service = (*testService)(nil)
 // It returns the Service, a close function, and any error encountered.
 func NewTestService(dataDir, snapshotDir string, omr observability.MetricsRegistry, fileSystem fs.FileSystem) (Service, func() error, error) {
 	db, dbErr := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32, omr, fileSystem,
-		false, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
+		false, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil, nil)
 	if dbErr != nil {
 		return nil, nil, dbErr
 	}
@@ -331,6 +331,25 @@ func (s *testService) DirectGet(ctx context.Context, group, name, id string) (*p
 	return nil, nil
 }
 
+// DirectExist implements DirectService.DirectExist.
+func (s *testService) DirectExist(ctx context.Context, group, name, id string) (bool, error) {
+	req := &propertyv1.QueryRequest{
+		Groups: []string{group},
+		Name:   name,
+		Ids:    []string{id},
+	}
+	results, queryErr := s.db.query(ctx, req)
+	if queryErr != nil {
+		return false, queryErr
+	}
+	for _, r := range results {
+		if r.deleteTime == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DirectRepair implements DirectService.DirectRepair.
 func (s *testService) DirectRepair(ctx context.Context, shardID uint64, id []byte, prop *propertyv1.Property, deleteTime int64) error {
 	return s.db.repair(ctx, id, shardID, prop, deleteTime)
@@ -404,7 +423,7 @@ func NewTestServiceWithGossipRepair(dataDir, snapshotDir string, omr observabili
 	var dbErr error
 	db, dbErr = openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32, omr, fileSystem,
 		true, snapshotDir, "@every 10m", 200*time.Millisecond, "* 2 * * *",
-		messenger, nil, buildSnapshotFunc)
+		messenger, nil, nil, buildSnapshotFunc)
 	if dbErr != nil {
 		return nil, nil, dbErr
 	}

@@ -48,6 +48,8 @@ type DirectService interface {
 	DirectQuery(ctx context.Context, req *propertyv1.QueryRequest) ([]*WithDeleteTime, error)
 	// DirectGet directly gets a single property (filters out deleted).
 	DirectGet(ctx context.Context, group, name, id string) (*propertyv1.Property, error)
+	// DirectExist checks if a non-deleted property exists without unmarshalling the full data.
+	DirectExist(ctx context.Context, group, name, id string) (bool, error)
 	// DirectRepair repairs a property on this node with specified deleteTime.
 	DirectRepair(ctx context.Context, shardID uint64, id []byte, prop *propertyv1.Property, deleteTime int64) error
 }
@@ -62,6 +64,12 @@ type Service interface {
 
 	GetGossIPGrpcPort() *uint32
 	GetGossIPMessenger() gossip.Messenger
+}
+
+// GroupStoreConfig holds per-group storage configuration for the inverted index.
+type GroupStoreConfig struct {
+	BatchWaitSec       int64
+	WaitForPersistence bool
 }
 
 // GetPropertyID returns the property ID based on the property metadata and revision.

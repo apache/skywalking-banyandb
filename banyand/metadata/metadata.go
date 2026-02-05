@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -71,6 +72,7 @@ type Service interface {
 	run.Config
 	SchemaRegistry() schema.Registry
 	SetMetricsRegistry(omr observability.MetricsRegistry)
+	SetLocalPropertySchemaClient(mgrClient schemav1.SchemaManagementServiceClient, updateClient schemav1.SchemaUpdateServiceClient)
 	SetDataBroadcaster(broadcaster bus.Broadcaster)
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)

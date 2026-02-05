@@ -55,7 +55,11 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	pm := protector.NewMemory(metricSvc)
 	pipeline := sub.NewServer(metricSvc)
 	propertyStreamPipeline := queue.Local()
-	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
+	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm,
+		map[string]property.GroupStoreConfig{
+			// for the schema related property, use a shorter memory batch and disable wait persistent to reduce write latency.
+			schemaProperty.SchemaGroup: {BatchWaitSec: 5, WaitForPersistence: false},
+		})
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}
@@ -64,6 +68,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	})
 	propertySchemaService := schemaProperty.NewServer(propertySvc, metricSvc, metaSvc, pm)
 	pipeline.AddGrpcHandlerCallback(propertySchemaService.RegisterGRPCServices)
+	metaSvc.SetLocalPropertySchemaClient(propertySchemaService.GenerateClients())
 
 	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, propertyStreamPipeline)
 	if err != nil {
@@ -86,14 +91,14 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
-		metaSvc,
 		metricsPipeline,
 		metricSvc,
 		pm,
+		propertySvc,
+		metaSvc,
 		propertySchemaService,
 		pipeline,
 		propertyStreamPipeline,
-		propertySvc,
 		measureSvc,
 		streamSvc,
 		traceSvc,

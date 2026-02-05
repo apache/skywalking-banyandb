@@ -62,6 +62,7 @@ type Service struct {
 
 // Config holds configuration for DNS discovery service.
 type Config struct {
+	OMR                  observability.MetricsRegistry
 	CACertPaths          []string
 	SRVAddresses         []string
 	InitInterval         time.Duration
@@ -156,6 +157,12 @@ func NewService(cfg Config) (*Service, error) {
 			svc.GetLogger().Info().Str("certPath", certPath).Int("srvIndex", srvIdx).
 				Str("srvAddress", srvAddr).Msg("Initialized DNS CA certificate reloader")
 		}
+	}
+
+	if cfg.OMR != nil {
+		factory := observability.RootScope.SubScope("metadata").SubScope("dns_discovery")
+		svc.metrics = newMetrics(cfg.OMR.With(factory))
+		svc.DiscoveryServiceBase.SetMetrics(svc.metrics)
 	}
 
 	return svc, nil
@@ -264,7 +271,10 @@ func (s *Service) getTLSDialOptions(srvAddr, address string) ([]grpc.DialOption,
 
 // Start begins the DNS discovery background process.
 func (s *Service) Start(ctx context.Context) error {
-	s.GetLogger().Debug().Msg("Starting DNS-based node discovery service")
+	s.GetLogger().Info().Msg("Starting DNS-based node discovery service")
+
+	// replay cached nodes to handlers (if any)
+	s.NodeCacheBase.StartForNotification()
 
 	// start all Reloaders
 	if len(s.pathToReloader) > 0 {
@@ -470,30 +480,47 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 	}
 	s.addressMutex.Unlock()
 
-	// process new nodes
+	// collect addresses that need fetching
+	var toFetch []string
 	for _, addrs := range srvToAddresses {
 		for _, addr := range addrs {
 			_, exists := s.GetCachedNode(addr)
-
-			if !exists {
-				if s.RetryManager.IsInRetry(addr) {
-					continue
-				}
-
-				// fetch node metadata from gRPC
-				node, fetchErr := s.fetchNodeMetadata(ctx, addr)
-				if fetchErr != nil {
-					s.GetLogger().Warn().
-						Err(fetchErr).
-						Str("address", addr).
-						Msg("Failed to fetch node metadata")
-					addErrors = append(addErrors, fetchErr)
-					s.RetryManager.AddToRetry(addr, fetchErr)
-					continue
-				}
-
-				s.AddNodeAndNotify(addr, node, "New node discovered and added to cache")
+			if !exists && !s.RetryManager.IsInRetry(addr) {
+				toFetch = append(toFetch, addr)
 			}
+		}
+	}
+
+	// fetch node metadata in parallel
+	if len(toFetch) > 0 {
+		type fetchResult struct {
+			node *databasev1.Node
+			err  error
+			addr string
+		}
+		results := make([]fetchResult, len(toFetch))
+		var wg sync.WaitGroup
+		for fetchIdx, fetchAddr := range toFetch {
+			wg.Add(1)
+			go func(idx int, address string) {
+				defer wg.Done()
+				node, fetchErr := s.fetchNodeMetadata(ctx, address)
+				results[idx] = fetchResult{node: node, err: fetchErr, addr: address}
+			}(fetchIdx, fetchAddr)
+		}
+		wg.Wait()
+
+		for _, res := range results {
+			if res.err != nil {
+				s.GetLogger().Warn().
+					Err(res.err).
+					Str("address", res.addr).
+					Msg("Failed to fetch node metadata")
+				addErrors = append(addErrors, res.err)
+				s.RetryManager.AddToRetry(res.addr, res.err)
+				continue
+			}
+			s.AddNodeAndNotify(res.addr, res.node, "New node discovered and added to cache")
 		}
 	}
 
@@ -569,12 +596,6 @@ func (s *Service) fetchNodeMetadata(ctx context.Context, address string) (*datab
 	return node, nil
 }
 
-// SetMetrics set the OMR metrics.
-func (s *Service) SetMetrics(factory observability.Factory) {
-	s.metrics = newMetrics(factory)
-	s.DiscoveryServiceBase.SetMetrics(s.metrics)
-}
-
 // Close stops the DNS discovery service.
 func (s *Service) Close() error {
 	s.closer.Done() // for discoveryLoop
@@ -592,17 +613,28 @@ func (s *Service) Close() error {
 
 // ListNode list all existing nodes from cache.
 func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	// if the service hasn't begun/finished, then try to query and update DNS first
-	s.lastQueryMutex.RLock()
-	notQueried := s.lastQueryTime.IsZero()
-	s.lastQueryMutex.RUnlock()
-	if notQueried {
-		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
-			return nil, err
-		}
+	// Always check cache first.
+	nodes, listErr := s.NodeCacheBase.ListNode(ctx, role)
+	if listErr != nil {
+		return nil, listErr
 	}
-	// delegate to base for filtering
-	return s.NodeCacheBase.ListNode(ctx, role)
+	if len(nodes) > 0 {
+		return nodes, nil
+	}
+	// Cache miss for the requested role: re-query DNS regardless of lastQueryTime.
+	queryErr := s.queryDNSAndUpdateNodes(ctx)
+	// Re-check cache after query, since new nodes may have been discovered.
+	nodes, listErr = s.NodeCacheBase.ListNode(ctx, role)
+	if listErr != nil {
+		return nil, listErr
+	}
+	if len(nodes) > 0 {
+		return nodes, nil
+	}
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	return nodes, nil
 }
 
 // RegisterNode update the configurations of a node, it should not be invoked.

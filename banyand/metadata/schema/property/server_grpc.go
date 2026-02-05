@@ -19,7 +19,11 @@ package property
 
 import (
 	"context"
+	"io"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -116,10 +120,12 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 	return &schemav1.UpdateSchemaResponse{}, nil
 }
 
-// ListSchemas lists schemas based on the query request.
-func (s *schemaManagementServer) ListSchemas(ctx context.Context, req *schemav1.ListSchemasRequest) (*schemav1.ListSchemasResponse, error) {
+const listSchemasBatchSize = 100
+
+// ListSchemas lists schemas based on the query request via server streaming.
+func (s *schemaManagementServer) ListSchemas(req *schemav1.ListSchemasRequest, stream grpc.ServerStreamingServer[schemav1.ListSchemasResponse]) error {
 	if req.Query == nil {
-		return nil, errInvalidRequest("query is required")
+		return errInvalidRequest("query is required")
 	}
 	kind := req.Query.GetName()
 	group := extractGroupFromCriteria(req.Query.GetCriteria())
@@ -129,19 +135,30 @@ func (s *schemaManagementServer) ListSchemas(ctx context.Context, req *schemav1.
 		s.metrics.totalFinished.Inc(1, "list", kind, group)
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "list", kind, group)
 	}()
-	results, listErr := s.server.list(ctx, req.Query)
+	results, listErr := s.server.list(stream.Context(), req.Query)
 	if listErr != nil {
 		s.metrics.totalErr.Inc(1, "list", kind, group)
 		s.l.Error().Err(listErr).Msg("failed to list schemas")
-		return nil, listErr
+		return listErr
 	}
-	props := make([]*propertyv1.Property, 0, len(results))
-	deleteTimes := make([]int64, 0, len(results))
-	for _, r := range results {
-		props = append(props, r.Property)
-		deleteTimes = append(deleteTimes, r.DeleteTime)
+	for batchStart := 0; batchStart < len(results); batchStart += listSchemasBatchSize {
+		batchEnd := batchStart + listSchemasBatchSize
+		if batchEnd > len(results) {
+			batchEnd = len(results)
+		}
+		batch := results[batchStart:batchEnd]
+		props := make([]*propertyv1.Property, 0, len(batch))
+		deleteTimes := make([]int64, 0, len(batch))
+		for _, r := range batch {
+			props = append(props, r.Property)
+			deleteTimes = append(deleteTimes, r.DeleteTime)
+		}
+		if sendErr := stream.Send(&schemav1.ListSchemasResponse{Properties: props, DeleteTimes: deleteTimes}); sendErr != nil {
+			s.metrics.totalErr.Inc(1, "list", kind, group)
+			return sendErr
+		}
 	}
-	return &schemav1.ListSchemasResponse{Properties: props, DeleteTimes: deleteTimes}, nil
+	return nil
 }
 
 // GetSchema retrieves a single schema.
@@ -192,6 +209,37 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		return nil, deleteErr
 	}
 	return &schemav1.DeleteSchemaResponse{Found: found}, nil
+}
+
+// ExistSchema checks if a schema exists without returning its full data.
+func (s *schemaManagementServer) ExistSchema(ctx context.Context, req *schemav1.ExistSchemaRequest) (*schemav1.ExistSchemaResponse, error) {
+	if req.Query == nil {
+		return nil, errInvalidRequest("query is required")
+	}
+	if len(req.Query.Groups) == 0 {
+		return nil, errInvalidRequest("groups is required")
+	}
+	if req.Query.Name == "" {
+		return nil, errInvalidRequest("name is required")
+	}
+	if len(req.Query.Ids) == 0 {
+		return nil, errInvalidRequest("ids is required")
+	}
+	kind := req.Query.GetName()
+	group := extractGroupFromCriteria(req.Query.GetCriteria())
+	s.metrics.totalStarted.Inc(1, "exist", kind, group)
+	start := time.Now()
+	defer func() {
+		s.metrics.totalFinished.Inc(1, "exist", kind, group)
+		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "exist", kind, group)
+	}()
+	hasSchema, existErr := s.server.exist(ctx, req.Query.Groups[0], req.Query.Name, req.Query.Ids[0])
+	if existErr != nil {
+		s.metrics.totalErr.Inc(1, "exist", kind, group)
+		s.l.Error().Err(existErr).Msg("failed to check schema existence")
+		return nil, existErr
+	}
+	return &schemav1.ExistSchemaResponse{HasSchema: hasSchema}, nil
 }
 
 // RepairSchema repairs a schema property on this node with specified deleteTime.
@@ -250,6 +298,102 @@ func (s *schemaUpdateServer) AggregateSchemaUpdates(ctx context.Context, req *sc
 		}
 	}
 	return &schemav1.AggregateSchemaUpdatesResponse{Names: names}, nil
+}
+
+type schemaManagementClient struct {
+	schemav1.SchemaManagementServiceClient
+	*schemaManagementServer
+}
+
+func (s *schemaManagementClient) InsertSchema(ctx context.Context, in *schemav1.InsertSchemaRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.InsertSchemaResponse, error) {
+	return s.schemaManagementServer.InsertSchema(ctx, in)
+}
+
+func (s *schemaManagementClient) UpdateSchema(ctx context.Context, in *schemav1.UpdateSchemaRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.UpdateSchemaResponse, error) {
+	return s.schemaManagementServer.UpdateSchema(ctx, in)
+}
+
+func (s *schemaManagementClient) ListSchemas(ctx context.Context, in *schemav1.ListSchemasRequest,
+	_ ...grpc.CallOption,
+) (grpc.ServerStreamingClient[schemav1.ListSchemasResponse], error) {
+	if in.Query == nil {
+		return nil, errInvalidRequest("query is required")
+	}
+	results, listErr := s.server.list(ctx, in.Query)
+	if listErr != nil {
+		return nil, listErr
+	}
+	var batches []*schemav1.ListSchemasResponse
+	for batchStart := 0; batchStart < len(results); batchStart += listSchemasBatchSize {
+		batchEnd := batchStart + listSchemasBatchSize
+		if batchEnd > len(results) {
+			batchEnd = len(results)
+		}
+		batch := results[batchStart:batchEnd]
+		props := make([]*propertyv1.Property, 0, len(batch))
+		deleteTimes := make([]int64, 0, len(batch))
+		for _, r := range batch {
+			props = append(props, r.Property)
+			deleteTimes = append(deleteTimes, r.DeleteTime)
+		}
+		batches = append(batches, &schemav1.ListSchemasResponse{Properties: props, DeleteTimes: deleteTimes})
+	}
+	return &localListSchemasStream{ctx: ctx, batches: batches}, nil
+}
+
+func (s *schemaManagementClient) DeleteSchema(ctx context.Context, in *schemav1.DeleteSchemaRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.DeleteSchemaResponse, error) {
+	return s.schemaManagementServer.DeleteSchema(ctx, in)
+}
+
+func (s *schemaManagementClient) RepairSchema(ctx context.Context, in *schemav1.RepairSchemaRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.RepairSchemaResponse, error) {
+	return s.schemaManagementServer.RepairSchema(ctx, in)
+}
+
+func (s *schemaManagementClient) ExistSchema(ctx context.Context, in *schemav1.ExistSchemaRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.ExistSchemaResponse, error) {
+	return s.schemaManagementServer.ExistSchema(ctx, in)
+}
+
+type localListSchemasStream struct {
+	ctx     context.Context
+	batches []*schemav1.ListSchemasResponse
+	pos     int
+}
+
+func (l *localListSchemasStream) Recv() (*schemav1.ListSchemasResponse, error) {
+	if l.pos >= len(l.batches) {
+		return nil, io.EOF
+	}
+	resp := l.batches[l.pos]
+	l.pos++
+	return resp, nil
+}
+
+func (l *localListSchemasStream) Header() (metadata.MD, error) { return nil, nil }
+func (l *localListSchemasStream) Trailer() metadata.MD         { return nil }
+func (l *localListSchemasStream) CloseSend() error             { return nil }
+func (l *localListSchemasStream) Context() context.Context     { return l.ctx }
+func (l *localListSchemasStream) SendMsg(interface{}) error    { return nil }
+func (l *localListSchemasStream) RecvMsg(interface{}) error    { return nil }
+
+type schemaUpdateClient struct {
+	schemav1.SchemaUpdateServiceClient
+	*schemaUpdateServer
+}
+
+func (s *schemaUpdateClient) AggregateSchemaUpdates(ctx context.Context, in *schemav1.AggregateSchemaUpdatesRequest,
+	_ ...grpc.CallOption,
+) (*schemav1.AggregateSchemaUpdatesResponse, error) {
+	return s.schemaUpdateServer.AggregateSchemaUpdates(ctx, in)
 }
 
 func errInvalidRequest(msg string) error {

@@ -53,7 +53,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
+	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm, nil)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
 	}

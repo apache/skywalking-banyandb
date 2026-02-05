@@ -54,19 +54,35 @@ type Server struct {
 	l                 *logger.Logger
 	repairScheduler   *repairScheduler
 	closer            *run.Closer
+	schemaService     *schemaManagementServer
+	updateService     *schemaUpdateServer
 	repairTriggerCron string
 	enabled           bool
 }
 
 // NewServer creates a new metadata property server.
 func NewServer(propertyService property.Service, omr observability.MetricsRegistry, metadataSvc metadata.HandlerRegister, pm protector.Memory) *Server {
-	return &Server{
+	s := &Server{
 		propertyService: propertyService,
 		metadataSvc:     metadataSvc,
 		omr:             omr,
 		pm:              pm,
 		closer:          run.NewCloser(0),
 	}
+
+	grpcFactory := s.omr.With(metadataScope.SubScope("grpc"))
+	sm := newServerMetrics(grpcFactory)
+	s.schemaService = &schemaManagementServer{
+		server:  s,
+		l:       s.l,
+		metrics: sm,
+	}
+	s.updateService = &schemaUpdateServer{
+		server:  s,
+		l:       s.l,
+		metrics: sm,
+	}
+	return s
 }
 
 // Name returns the server name.
@@ -151,18 +167,15 @@ func (s *Server) RegisterGRPCServices(grpcServer *grpc.Server) {
 	if !s.enabled {
 		return
 	}
-	grpcFactory := s.omr.With(metadataScope.SubScope("grpc"))
-	sm := newServerMetrics(grpcFactory)
-	schemav1.RegisterSchemaManagementServiceServer(grpcServer, &schemaManagementServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
-	})
-	schemav1.RegisterSchemaUpdateServiceServer(grpcServer, &schemaUpdateServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
-	})
+
+	schemav1.RegisterSchemaManagementServiceServer(grpcServer, s.schemaService)
+	schemav1.RegisterSchemaUpdateServiceServer(grpcServer, s.updateService)
+}
+
+// GenerateClients generates schema management clients.
+func (s *Server) GenerateClients() (schemav1.SchemaManagementServiceClient, schemav1.SchemaUpdateServiceClient) {
+	return &schemaManagementClient{schemaManagementServer: s.schemaService},
+		&schemaUpdateClient{schemaUpdateServer: s.updateService}
 }
 
 func (s *Server) insert(ctx context.Context, prop *propertyv1.Property) error {
@@ -213,6 +226,13 @@ func (s *Server) get(ctx context.Context, group, name, id string) (*propertyv1.P
 		return nil, errors.New("server is closed or not enabled")
 	}
 	return s.propertyService.DirectGet(ctx, group, name, id)
+}
+
+func (s *Server) exist(ctx context.Context, group, name, id string) (bool, error) {
+	if s.closer.Closed() || !s.enabled {
+		return false, errors.New("server is closed or not enabled")
+	}
+	return s.propertyService.DirectExist(ctx, group, name, id)
 }
 
 func (s *Server) list(ctx context.Context, req *propertyv1.QueryRequest) ([]*property.WithDeleteTime, error) {

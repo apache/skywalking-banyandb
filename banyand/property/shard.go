@@ -70,13 +70,14 @@ var (
 )
 
 type shard struct {
-	store             index.SeriesStore
-	l                 *logger.Logger
-	repairState       *repair
-	location          string
-	group             string
-	id                common.ShardID
-	expireToDeleteSec int64
+	store              index.SeriesStore
+	l                  *logger.Logger
+	repairState        *repair
+	location           string
+	group              string
+	expireToDeleteSec  int64
+	id                 common.ShardID
+	waitForPersistence bool
 }
 
 func (s *shard) close() error {
@@ -98,18 +99,26 @@ func (db *database) newShard(
 	location := path.Join(db.location, group, fmt.Sprintf(shardTemplate, int(id)))
 	sName := "shard" + strconv.Itoa(int(id))
 	si := &shard{
-		id:                id,
-		group:             group,
-		l:                 logger.Fetch(ctx, sName),
-		location:          location,
-		expireToDeleteSec: deleteExpireSec,
+		id:                 id,
+		group:              group,
+		l:                  logger.Fetch(ctx, sName),
+		location:           location,
+		expireToDeleteSec:  deleteExpireSec,
+		waitForPersistence: true,
+	}
+	var batchWaitSec int64
+	if db.groupConfigs != nil {
+		if cfg, ok := db.groupConfigs[group]; ok {
+			batchWaitSec = cfg.BatchWaitSec
+			si.waitForPersistence = cfg.WaitForPersistence
+		}
 	}
 	metricsFactory := db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
 	opts := inverted.StoreOpts{
 		Path:                 location,
 		Logger:               si.l,
 		Metrics:              inverted.NewMetrics(metricsFactory),
-		BatchWaitSec:         0,
+		BatchWaitSec:         batchWaitSec,
 		PrepareMergeCallback: si.prepareForMerge,
 	}
 	var err error
@@ -232,23 +241,31 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 	if len(docs) == 0 {
 		return nil
 	}
-	var updateErr, persistentError error
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	updateErr = s.store.UpdateSeriesBatch(index.Batch{
-		Documents: docs,
-		PersistentCallback: func(err error) {
-			persistentError = err
-			wg.Done()
-		},
-	})
-	if updateErr != nil {
-		return updateErr
-	}
-	wg.Wait()
-	if persistentError != nil {
-		return fmt.Errorf("persistent failure: %w", persistentError)
+	if s.waitForPersistence {
+		var updateErr, persistentError error
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		updateErr = s.store.UpdateSeriesBatch(index.Batch{
+			Documents: docs,
+			PersistentCallback: func(err error) {
+				persistentError = err
+				wg.Done()
+			},
+		})
+		if updateErr != nil {
+			return updateErr
+		}
+		wg.Wait()
+		if persistentError != nil {
+			return fmt.Errorf("persistent failure: %w", persistentError)
+		}
+	} else {
+		updateErr := s.store.UpdateSeriesBatch(index.Batch{
+			Documents: docs,
+		})
+		if updateErr != nil {
+			return updateErr
+		}
 	}
 	if s.repairState.scheduler != nil {
 		s.repairState.scheduler.documentUpdatesNotify()
