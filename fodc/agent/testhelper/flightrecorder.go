@@ -143,6 +143,7 @@ func NewProxyClient(
 		heartbeatInterval,
 		reconnectInterval,
 		frTyped,
+		nil,
 		logger,
 	)
 }
@@ -178,6 +179,11 @@ func (w *ProxyClientWrapper) StartRegistrationStream(ctx context.Context) error 
 // StartMetricsStream establishes bi-directional metrics stream with Proxy.
 func (w *ProxyClientWrapper) StartMetricsStream(ctx context.Context) error {
 	return w.client.StartMetricsStream(ctx)
+}
+
+// StartClusterStateStream establishes bi-directional cluster state stream with Proxy.
+func (w *ProxyClientWrapper) StartClusterStateStream(ctx context.Context) error {
+	return w.client.StartClusterStateStream(ctx)
 }
 
 // Start starts the proxy client with automatic connection and stream setup.

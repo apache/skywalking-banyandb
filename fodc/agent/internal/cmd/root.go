@@ -32,6 +32,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
@@ -45,29 +46,30 @@ import (
 )
 
 const (
-	defaultPollInterval                 = 10 * time.Second
+	defaultMetricsPollInterval          = 10 * time.Second
 	defaultPollMetricsPorts             = "2121"
 	defaultMaxMetricsMemoryUsagePercent = 10
 	defaultPrometheusListenAddr         = ":9090"
 	defaultProxyAddr                    = "localhost:17900"
 	defaultHeartbeatInterval            = 10 * time.Second
 	defaultReconnectInterval            = 5 * time.Second
+	defaultClusterStatePollInterval     = 30 * time.Second
 )
 
 var (
-	pollInterval                 time.Duration
+	metricsPollInterval          time.Duration
 	pollMetricsPorts             []string
 	maxMetricsMemoryUsagePercent int
 	prometheusListenAddr         string
 	ktmEnabled                   bool
 	ktmInterval                  time.Duration
 	proxyAddr                    string
-	nodeRole                     string
-	nodeLabels                   string
 	podName                      string
 	containerNames               []string
 	heartbeatInterval            time.Duration
 	reconnectInterval            time.Duration
+	clusterStatePorts            []string
+	clusterStatePollInterval     time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -84,7 +86,7 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.Flags().DurationVar(&pollInterval, "poll-metrics-interval", defaultPollInterval,
+	rootCmd.Flags().DurationVar(&metricsPollInterval, "poll-metrics-interval", defaultMetricsPollInterval,
 		"Interval at which the Watchdog polls metrics from the BanyanDB container")
 	rootCmd.Flags().StringSliceVar(&pollMetricsPorts, "poll-metrics-ports", []string{defaultPollMetricsPorts},
 		"Ports of the BanyanDB metrics endpoints to poll from (can be specified multiple times or comma-separated)")
@@ -95,51 +97,44 @@ func init() {
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
 	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
 		"FODC Proxy gRPC address")
-	rootCmd.Flags().StringVar(&nodeRole, "node-role", "",
-		"Role of this BanyanDB node. Valid values: liaison, datanode-hot, datanode-warm, datanode-cold, etc. Must match the node's actual role in the cluster.")
+	rootCmd.Flags().StringVar(&podName, "pod-name", "",
+		"Name of the Kubernetes pod. Used as part of AgentIdentity for agent identification.")
 	rootCmd.Flags().StringSliceVar(&containerNames, "container-names", []string{},
 		"Names of the containers corresponding to each poll-metrics-port. Must have one-to-one correspondence with poll-metrics-ports.")
-	rootCmd.Flags().StringVar(&podName, "pod-name", "",
-		"Name of the pod to use for the BanyanDB node's pod name. Used as part of AgentIdentity for agent identification.")
-	rootCmd.Flags().StringVar(&nodeLabels, "node-labels", "",
-		"Labels/metadata for this node. Format: key1=value1,key2=value2. Examples: zone=us-west-1,env=production. Used for filtering and grouping nodes in the Proxy.")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Interval for sending heartbeats to Proxy. Note: The Proxy may override this value in RegisterAgentResponse.")
 	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", defaultReconnectInterval,
 		"Interval for reconnection attempts when connection to Proxy is lost")
 	rootCmd.Flags().BoolVar(&ktmEnabled, "ktm-enabled", false, "Enable Kernel Trace Module (eBPF)")
 	rootCmd.Flags().DurationVar(&ktmInterval, "ktm-interval", 10*time.Second, "Interval for KTM metrics collection")
+	rootCmd.Flags().StringSliceVar(&clusterStatePorts, "cluster-state-ports", []string{},
+		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
+	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
+		"Interval at which to poll cluster state from the BanyanDB nodes")
 }
 
-func calculateCapacitySize(log *logger.Logger, maxMemoryUsagePercent int) int64 {
-	memoryLimit, memLimitErr := cgroups.MemoryLimit()
-	if memLimitErr != nil {
-		// On non-Linux systems (e.g., macOS), cgroups are not available
-		// This is expected and not an error condition
-		if runtime.GOOS != "linux" || strings.Contains(memLimitErr.Error(), "mountinfo") {
-			log.Debug().Err(memLimitErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
+func calculateCapacity(log *logger.Logger) int64 {
+	memoryLimit, memErr := cgroups.MemoryLimit()
+	if memErr != nil {
+		if runtime.GOOS != "linux" || strings.Contains(memErr.Error(), "mountinfo") {
+			log.Debug().Err(memErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default capacity")
 		} else {
-			log.Warn().Err(memLimitErr).Msg("Failed to get cgroup memory limit, using default capacity")
+			log.Warn().Err(memErr).Msg("Failed to get cgroup memory limit, using default capacity")
 		}
-		memoryLimit = 1024 * 1024 * 1024 // Default to 1GB if cgroup limit cannot be determined
+		memoryLimit = 1024 * 1024 * 1024
 	}
-
 	var capacitySize int64
 	if memoryLimit > 0 {
-		capacitySize = (memoryLimit * int64(maxMemoryUsagePercent)) / 100
+		capacitySize = (memoryLimit * int64(maxMetricsMemoryUsagePercent)) / 100
 	} else {
-		// If memory limit is unlimited (-1) or invalid, use a reasonable default
-		// Default to 100MB for metrics storage
 		capacitySize = 100 * 1024 * 1024
 		log.Info().Msg("Memory limit is unlimited or invalid, using default capacity of 100MB")
 	}
-
 	log.Info().
 		Int64("memory-limit-bytes", memoryLimit).
-		Int("memory-usage-percent", maxMemoryUsagePercent).
+		Int("memory-usage-percent", maxMetricsMemoryUsagePercent).
 		Int64("capacity-size-bytes", capacitySize).
 		Msg("Flight Recorder capacity configured")
-
 	return capacitySize
 }
 
@@ -148,10 +143,8 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 		return nil
 	}
 
-	// Check if running on Linux
 	if runtime.GOOS != "linux" {
 		log.Info().Str("os", runtime.GOOS).Msg("KTM is only supported on Linux, skipping initialization")
-		// Write ktm_status=0 (Disabled) to Flight Recorder
 		if updateErr := fr.Update([]fodcmetrics.RawMetric{
 			{
 				Name:  "ktm_status",
@@ -167,7 +160,6 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 	startStop, startErr := startKTM(ctx, *log.Logger, fr)
 	if startErr != nil {
 		log.Warn().Err(startErr).Msg("KTM startup failed, continuing without kernel tracing")
-		// Write ktm_status=0 (Disabled) to Flight Recorder
 		if updateErr := fr.Update([]fodcmetrics.RawMetric{
 			{
 				Name:  "ktm_status",
@@ -182,133 +174,67 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 	return startStop
 }
 
-func setupProxyClient(
-	ctx context.Context,
-	log *logger.Logger,
-	fr *flightrecorder.FlightRecorder,
-	metricsServer *server.Server,
-) (*proxy.Client, context.CancelFunc, error) {
-	if proxyAddr == "" || podName == "" || nodeRole == "" {
-		log.Info().Msg("Proxy client not started (missing required flags: --proxy-addr, --pod-name, --node-role)")
-		return nil, nil, nil
-	}
-
-	labelsMap, parseErr := parseLabels(nodeLabels)
-	if parseErr != nil {
-		if stopErr := metricsServer.Stop(ctx); stopErr != nil {
-			log.Warn().Err(stopErr).Msg("Failed to stop metrics server")
-		}
-		return nil, nil, fmt.Errorf("failed to parse node labels: %w", parseErr)
-	}
-
-	proxyClient := proxy.NewClient(
-		proxyAddr,
-		nodeRole,
-		podName,
-		containerNames,
-		labelsMap,
-		heartbeatInterval,
-		reconnectInterval,
-		fr,
-		log,
-	)
-
-	proxyCtx, proxyCancel := context.WithCancel(ctx)
-
-	go func() {
-		if startErr := proxyClient.Start(proxyCtx); startErr != nil {
-			log.Error().Err(startErr).Msg("Proxy client error")
-		}
-	}()
-
-	log.Info().
-		Str("proxy_addr", proxyAddr).
-		Str("pod_name", podName).
-		Str("node_role", nodeRole).
-		Msg("Proxy client started")
-
-	return proxyClient, proxyCancel, nil
-}
-
 // runFODC is the main function for the FODC agent.
 func runFODC(_ *cobra.Command, _ []string) error {
-	if initErr := logger.Init(logger.Logging{
-		Env:   "prod",
-		Level: "info",
-	}); initErr != nil {
+	if initErr := logger.Init(logger.Logging{Env: "prod", Level: "info"}); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
-
 	log := logger.GetLogger("fodc")
 
-	if pollInterval <= 0 {
-		return fmt.Errorf("poll-metrics-interval must be greater than 0")
-	}
-	if len(pollMetricsPorts) == 0 {
-		return fmt.Errorf("poll-metrics-ports cannot be empty")
-	}
-	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
-		return fmt.Errorf("container-names count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+	if validateErr := validateFlags(); validateErr != nil {
+		return validateErr
 	}
 	metricsEndpoints := generateMetricsEndpoints(pollMetricsPorts)
+	log.Info().Strs("endpoints", metricsEndpoints).Dur("interval", metricsPollInterval).Msg("Starting FODC agent")
 
-	log.Info().
-		Strs("poll-metrics-ports", pollMetricsPorts).
-		Strs("metrics-endpoints", metricsEndpoints).
-		Dur("interval", pollInterval).
-		Str("prometheus-listen-addr", prometheusListenAddr).
-		Msg("Starting FODC agent")
-	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
-		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
-	}
-
-	capacitySize := calculateCapacitySize(log, maxMetricsMemoryUsagePercent)
-
+	capacitySize := calculateCapacity(log)
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
 
-	// Create Prometheus registry
-	promReg := prometheus.NewRegistry()
-	datasourceCollector := exporter.NewDatasourceCollector(fr)
-
-	// Create and start Prometheus metrics server
-	metricsServer, serverCreateErr := server.NewServer(server.Config{
+	metricsServer, serverErr := server.NewServer(server.Config{
 		ListenAddr:        prometheusListenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
 		ShutdownTimeout:   5 * time.Second,
 	})
-	if serverCreateErr != nil {
-		return fmt.Errorf("failed to create metrics server: %w", serverCreateErr)
+	if serverErr != nil {
+		return fmt.Errorf("failed to create metrics server: %w", serverErr)
 	}
-
-	serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
-	if serverStartErr != nil {
-		return fmt.Errorf("failed to start metrics server: %w", serverStartErr)
+	serverErrCh, startErr := metricsServer.Start(prometheus.NewRegistry(), exporter.NewDatasourceCollector(fr))
+	if startErr != nil {
+		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
-
-	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, pollInterval, nodeRole, podName, containerNames)
 
 	ctx := context.Background()
+	clusterCollector, clusterErr := cluster.StartCollector(ctx, log, clusterStatePorts, clusterStatePollInterval, podName)
+	if clusterErr != nil {
+		_ = metricsServer.Stop(ctx)
+		return clusterErr
+	}
+
+	var nodeRole string
+	var nodeLabels map[string]string
+	if clusterCollector != nil {
+		nodeRole, nodeLabels = clusterCollector.GetNodeInfo()
+		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
+	}
+
+	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
 
 	stopKTM := initializeKTM(ctx, log, fr)
 
 	if preRunErr := wd.PreRun(ctx); preRunErr != nil {
+		if stopKTM != nil {
+			stopKTM()
+		}
+		cluster.StopCollector(clusterCollector)
 		_ = metricsServer.Stop(ctx)
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
-
 	stopCh := wd.Serve()
 
-	proxyClient, proxyCancel, proxyErr := setupProxyClient(ctx, log, fr, metricsServer)
-	if proxyErr != nil {
-		return proxyErr
-	}
-	if proxyCancel != nil {
-		defer proxyCancel()
-	}
+	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
 	select {
 	case <-sigCh:
 		log.Info().Msg("Received shutdown signal")
@@ -318,7 +244,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		log.Error().Err(err).Msg("Metrics server error")
 	}
 
-	// Graceful shutdown
 	wd.GracefulStop()
 
 	if stopKTM != nil {
@@ -329,12 +254,12 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		if disconnectErr := proxyClient.Disconnect(); disconnectErr != nil {
 			log.Warn().Err(disconnectErr).Msg("Error disconnecting proxy client")
 		}
+	} else {
+		cluster.StopCollector(clusterCollector)
 	}
-
 	if shutdownErr := metricsServer.Stop(ctx); shutdownErr != nil {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
 	}
-
 	return nil
 }
 
@@ -371,10 +296,9 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				return
 			case <-ticker.C:
 				rawMetrics := ktmSvc.GetMetrics()
-				// Add ktm_status metric: 0=Disabled, 1=Degraded, 2=Full.
-				ktmStatus := 2.0 // Full mode (cgroup+comm)
+				ktmStatus := 2.0
 				if ktmSvc.IsDegraded() {
-					ktmStatus = 1.0 // Degraded mode (comm-only)
+					ktmStatus = 1.0
 				}
 				if len(rawMetrics) == 0 {
 					ktmStatus = 0.0
@@ -397,46 +321,44 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 	}, nil
 }
 
-// parseLabels parses a comma-separated labels string into a map.
-// Format: key1=value1,key2=value2.
-func parseLabels(labelsStr string) (map[string]string, error) {
-	labels := make(map[string]string)
-	if labelsStr == "" {
-		return labels, nil
+func validateFlags() error {
+	if metricsPollInterval <= 0 {
+		return fmt.Errorf("poll-metrics-interval must be greater than 0")
 	}
-
-	pairs := strings.Split(labelsStr, ",")
-	for idx, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid label format at position %d: %q (expected key=value)", idx, pair)
-		}
-
-		key := strings.TrimSpace(kv[0])
-		value := strings.TrimSpace(kv[1])
-		if key == "" {
-			return nil, fmt.Errorf("empty label key at position %d: %q", idx, pair)
-		}
-		if value == "" {
-			return nil, fmt.Errorf("empty label value at position %d: %q", idx, pair)
-		}
-		labels[key] = value
+	if len(pollMetricsPorts) == 0 {
+		return fmt.Errorf("poll-metrics-ports cannot be empty")
 	}
-
-	return labels, nil
+	if len(containerNames) > 0 && len(containerNames) != len(pollMetricsPorts) {
+		return fmt.Errorf("container-names count (%d) must match poll-metrics-ports count (%d)", len(containerNames), len(pollMetricsPorts))
+	}
+	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
+		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
+	}
+	return nil
 }
 
-// generateMetricsEndpoints generates metrics endpoint URLs from port numbers.
+func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder,
+	nodeRole string, nodeLabels map[string]string, collector *cluster.Collector,
+) *proxy.Client {
+	if proxyAddr == "" || podName == "" || nodeRole == "" {
+		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
+		return nil
+	}
+	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
+		heartbeatInterval, reconnectInterval, fr, collector, log)
+	go func() {
+		if startErr := client.Start(ctx); startErr != nil {
+			log.Error().Err(startErr).Msg("Proxy client error")
+		}
+	}()
+	log.Info().Str("proxy_addr", proxyAddr).Str("pod_name", podName).Str("node_role", nodeRole).Msg("Proxy client started")
+	return client
+}
+
 func generateMetricsEndpoints(ports []string) []string {
 	endpoints := make([]string, 0, len(ports))
 	for _, port := range ports {
-		endpoint := fmt.Sprintf("http://localhost:%s/metrics", port)
-		endpoints = append(endpoints, endpoint)
+		endpoints = append(endpoints, fmt.Sprintf("http://localhost:%s/metrics", port))
 	}
 	return endpoints
 }

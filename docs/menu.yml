@@ -155,6 +155,8 @@ catalog:
             path: "/operation/fodc/overview"
           - name: "KTM Metrics"
             path: "/operation/fodc/ktm_metrics"
+          - name: "Proxy APIs and CLI Flags"
+            path: "/operation/fodc/apis"
       - name: "Property Background Repair"
         path: "/concept/property-repair"
       - name: "Benchmark"

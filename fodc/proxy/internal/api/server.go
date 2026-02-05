@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -35,20 +36,27 @@ import (
 
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
-	metricsAggregator *metrics.Aggregator
-	registry          *registry.AgentRegistry
-	server            *http.Server
-	logger            *logger.Logger
-	startTime         time.Time
+	metricsAggregator     *metrics.Aggregator
+	clusterStateCollector *cluster.Manager
+	registry              *registry.AgentRegistry
+	server                *http.Server
+	logger                *logger.Logger
+	startTime             time.Time
 }
 
 // NewServer creates a new Server instance.
-func NewServer(metricsAggregator *metrics.Aggregator, registry *registry.AgentRegistry, logger *logger.Logger) *Server {
+func NewServer(
+	metricsAggregator *metrics.Aggregator,
+	clusterStateCollector *cluster.Manager,
+	registry *registry.AgentRegistry,
+	logger *logger.Logger,
+) *Server {
 	return &Server{
-		metricsAggregator: metricsAggregator,
-		registry:          registry,
-		logger:            logger,
-		startTime:         time.Now(),
+		metricsAggregator:     metricsAggregator,
+		clusterStateCollector: clusterStateCollector,
+		registry:              registry,
+		logger:                logger,
+		startTime:             time.Now(),
 	}
 }
 
@@ -59,6 +67,7 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/metrics-windows", s.handleMetricsWindows)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -103,7 +112,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	aggregatedMetrics, collectErr := s.metricsAggregator.GetLatestMetrics(ctx)
+	aggregatedMetrics, collectErr := s.metricsAggregator.GetLatestMetrics(ctx, filter)
 	if collectErr != nil {
 		s.logger.Error().Err(collectErr).Msg("Failed to collect metrics")
 		http.Error(w, "Failed to collect metrics", http.StatusInternalServerError)
@@ -174,7 +183,7 @@ func (s *Server) handleMetricsWindows(w http.ResponseWriter, r *http.Request) {
 	if startTimeStr != "" && endTimeStr != "" {
 		aggregatedMetrics, collectErr = s.metricsAggregator.GetMetricsWindow(ctx, startTime, endTime, filter)
 	} else {
-		aggregatedMetrics, collectErr = s.metricsAggregator.GetLatestMetrics(ctx)
+		aggregatedMetrics, collectErr = s.metricsAggregator.GetLatestMetrics(ctx, filter)
 	}
 
 	if collectErr != nil {
@@ -459,4 +468,22 @@ type timeSeriesMetric struct {
 	agentID     string
 	podName     string
 	data        []map[string]interface{}
+}
+
+// handleClusterTopology handles GET /cluster/topology endpoint.
+func (s *Server) handleClusterTopology(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.clusterStateCollector == nil {
+		http.Error(w, "Cluster topology collector not available", http.StatusServiceUnavailable)
+		return
+	}
+	clusterTopology := s.clusterStateCollector.CollectClusterTopology(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(clusterTopology); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode cluster topology response")
+	}
 }

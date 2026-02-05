@@ -30,6 +30,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -50,15 +54,42 @@ func (m *mockRequestSender) RequestMetrics(_ string, _, _ *time.Time) error {
 	return m.requestErr
 }
 
-func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry) {
+// mockClusterDataRequester is a mock implementation of cluster.RequestSender for testing.
+type mockClusterDataRequester struct {
+	requestErr error
+	topologies map[string]*fodcv1.Topology
+	clusterMgr *cluster.Manager
+}
+
+func (m *mockClusterDataRequester) RequestClusterData(agentID string) error {
+	if m.requestErr != nil {
+		return m.requestErr
+	}
+	if topology, exists := m.topologies[agentID]; exists && m.clusterMgr != nil {
+		m.clusterMgr.UpdateClusterTopology(agentID, topology)
+	}
+	return nil
+}
+
+func (m *mockClusterDataRequester) setTopology(agentID string, topology *fodcv1.Topology) {
+	if m.topologies == nil {
+		m.topologies = make(map[string]*fodcv1.Topology)
+	}
+	m.topologies[agentID] = topology
+}
+
+func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Manager, *mockClusterDataRequester) {
 	t.Helper()
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, testRegistry, testLogger)
-	return server, testRegistry
+	mockRequester := &mockClusterDataRequester{}
+	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
+	mockRequester.clusterMgr = clusterMgr
+	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
+	return server, testRegistry, clusterMgr, mockRequester
 }
 
 func createTestMetric(name string, value float64, labels map[string]string, timestamp time.Time) *metrics.AggregatedMetric {
@@ -75,6 +106,86 @@ func createTestMetric(name string, value float64, labels map[string]string, time
 	}
 }
 
+func TestHandleClusterTopology_Success(t *testing.T) {
+	server, testRegistry, _, mockRequester := newTestServer(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	topology := &fodcv1.Topology{
+		Nodes: []*databasev1.Node{
+			{
+				Metadata: &commonv1.Metadata{
+					Name: "node1",
+				},
+			},
+			{
+				Metadata: &commonv1.Metadata{
+					Name: "test-node",
+				},
+			},
+		},
+		Calls: []*fodcv1.Call{
+			{
+				Id:     "call-1",
+				Target: "test-node",
+				Source: "node1",
+			},
+		},
+	}
+	mockRequester.setTopology(agentID, topology)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusOK, resp.Code)
+	var result fodcv1.Topology
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	require.NoError(t, decodeErr)
+	assert.Equal(t, 2, len(result.Nodes))
+	assert.Equal(t, 1, len(result.Calls))
+	assert.Equal(t, "call-1", result.Calls[0].Id)
+}
+
+func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+	server := NewServer(aggregator, nil, testRegistry, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
+}
+
+func TestHandleClusterTopology_RequestClusterDataError(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+	mockRequester := &mockClusterDataRequester{requestErr: assert.AnError}
+	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
+	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	_, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterTopology(resp, req)
+	assert.Equal(t, http.StatusOK, resp.Code)
+}
+
 func TestNewServer(t *testing.T) {
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
@@ -82,7 +193,7 @@ func TestNewServer(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	server := NewServer(aggregator, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, testRegistry, testLogger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, aggregator, server.metricsAggregator)
@@ -91,7 +202,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServer_StartStop(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	err := server.Start("localhost:0", 5*time.Second, 5*time.Second)
 	require.NoError(t, err)
@@ -104,14 +215,14 @@ func TestServer_StartStop(t *testing.T) {
 }
 
 func TestServer_Stop_NotStarted(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	err := server.Stop()
 	assert.NoError(t, err)
 }
 
 func TestHandleMetrics_Success(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -123,7 +234,7 @@ func TestHandleMetrics_Success(t *testing.T) {
 }
 
 func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -134,7 +245,7 @@ func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMetrics_WithRoleFilter(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics?role=datanode-cold", nil)
 	w := httptest.NewRecorder()
@@ -145,7 +256,7 @@ func TestHandleMetrics_WithRoleFilter(t *testing.T) {
 }
 
 func TestHandleMetrics_WithAddressFilter(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics?address=192.168.1.1", nil)
 	w := httptest.NewRecorder()
@@ -156,7 +267,7 @@ func TestHandleMetrics_WithAddressFilter(t *testing.T) {
 }
 
 func TestHandleMetrics_CollectionError(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -170,7 +281,7 @@ func TestHandleMetrics_CollectionError(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_Success(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -197,7 +308,7 @@ func TestHandleMetricsWindows_Success(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_InvalidStartTime(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	u, urlErr := url.Parse("/metrics-windows")
 	require.NoError(t, urlErr)
@@ -215,7 +326,7 @@ func TestHandleMetricsWindows_InvalidStartTime(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_InvalidEndTime(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -237,7 +348,7 @@ func TestHandleMetricsWindows_InvalidEndTime(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/metrics-windows", nil)
 	w := httptest.NewRecorder()
@@ -248,7 +359,7 @@ func TestHandleMetricsWindows_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics-windows", nil)
 	w := httptest.NewRecorder()
@@ -262,7 +373,7 @@ func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
 }
 
 func TestHandleHealth_Success(t *testing.T) {
-	server, testRegistry := newTestServer(t)
+	server, testRegistry, _, _ := newTestServer(t)
 
 	ctx := context.Background()
 	identity1 := registry.AgentIdentity{PodName: "192.168.1.1", Role: "datanode-cold", ContainerNames: []string{"data"}}
@@ -290,7 +401,7 @@ func TestHandleHealth_Success(t *testing.T) {
 }
 
 func TestHandleHealth_MethodNotAllowed(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
 	w := httptest.NewRecorder()
@@ -301,7 +412,7 @@ func TestHandleHealth_MethodNotAllowed(t *testing.T) {
 }
 
 func TestFormatPrometheusText_Empty(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	result := server.formatPrometheusText([]*metrics.AggregatedMetric{})
 
@@ -309,7 +420,7 @@ func TestFormatPrometheusText_Empty(t *testing.T) {
 }
 
 func TestFormatPrometheusText_SingleMetric(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -325,7 +436,7 @@ func TestFormatPrometheusText_SingleMetric(t *testing.T) {
 }
 
 func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -342,7 +453,7 @@ func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
 }
 
 func TestFormatPrometheusText_WithLabels(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -357,7 +468,7 @@ func TestFormatPrometheusText_WithLabels(t *testing.T) {
 }
 
 func TestFormatPrometheusText_Histogram(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -383,7 +494,7 @@ func TestFormatPrometheusText_Histogram(t *testing.T) {
 }
 
 func TestFormatPrometheusText_HistogramAndGauge(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -424,7 +535,7 @@ func TestGetHistogramBaseName(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	result := server.formatMetricsWindowJSON([]*metrics.AggregatedMetric{})
 
@@ -432,7 +543,7 @@ func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -450,7 +561,7 @@ func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -470,7 +581,7 @@ func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
 }
 
 func TestGetMetricKey(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	metric := createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, time.Now())
 
@@ -505,7 +616,7 @@ func TestFormatFloat(t *testing.T) {
 }
 
 func TestServer_Integration(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", server.handleMetrics)
@@ -530,7 +641,7 @@ func TestServer_Integration(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_WithFilters(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -557,7 +668,7 @@ func TestHandleMetricsWindows_WithFilters(t *testing.T) {
 }
 
 func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
-	server, _ := newTestServer(t)
+	server, _, _, _ := newTestServer(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
