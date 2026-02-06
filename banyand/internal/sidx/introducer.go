@@ -100,7 +100,7 @@ func (s *sidx) IntroduceMemPart(partID uint64, memPart *memPart) {
 	if cur != nil {
 		defer cur.decRef()
 	} else {
-		cur = &snapshot{}
+		cur = &Snapshot{}
 	}
 
 	nextSnp := cur.copyAllTo()
@@ -174,7 +174,7 @@ func (s *sidx) TakeFileSnapshot(dst string) error {
 	return nil
 }
 
-func (s *sidx) replaceSnapshot(next *snapshot) {
+func (s *sidx) replaceSnapshot(next *Snapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.snapshot != nil {
