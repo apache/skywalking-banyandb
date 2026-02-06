@@ -93,7 +93,7 @@ func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart,
 	defer releaseElements(es)
 
 	for _, req := range reqs {
-		es.mustAppend(req.SeriesID, req.Key, req.Data, req.Tags)
+		es.mustAppend(req.SeriesID, req.Key, req.Timestamp, req.Data, req.Tags)
 	}
 
 	// Create memory part from elements

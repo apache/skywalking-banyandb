@@ -103,9 +103,10 @@ func TestTagCopy(t *testing.T) {
 func TestTagInWriteRequest(t *testing.T) {
 	// Test that Tag can be used in WriteRequest
 	req := WriteRequest{
-		SeriesID: 123,
-		Key:      456,
-		Data:     []byte("test-data"),
+		SeriesID:  123,
+		Key:       456,
+		Timestamp: 0, // Test data doesn't require timestamp
+		Data:      []byte("test-data"),
 		Tags: []Tag{
 			{Name: "service", Value: []byte("order-service"), ValueType: pbv1.ValueTypeStr},
 			{Name: "environment", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
