@@ -65,17 +65,24 @@ var (
 	_ run.Config    = (*pub)(nil)
 )
 
+const (
+	// SelfGrpcAddress is the gRPC address representing the local node, so no needs to do dial.
+	SelfGrpcAddress = "self"
+)
+
 type pub struct {
 	schema.UnimplementedOnInitHandler
 	metadata        metadata.Repo
 	handlers        map[bus.Topic]schema.EventHandler
 	log             *logger.Logger
 	registered      map[string]*databasev1.Node
-	active          map[string]*client
+	active          map[string]queue.PubClient
 	evictable       map[string]evictNode
 	closer          *run.Closer
 	writableProbe   map[string]map[string]struct{}
 	cbStates        map[string]*circuitState
+	clientFactory   ClientFactory
+	credProvider    DialOptionsProvider
 	caCertPath      string
 	caCertReloader  *pkgtls.Reloader
 	prefix          string
@@ -127,7 +134,7 @@ func (p *pub) GracefulStop() {
 	p.closer.Done()
 	p.closer.CloseThenWait()
 	for _, c := range p.active {
-		_ = c.conn.Close()
+		_ = c.Close()
 	}
 	p.active = nil
 }
@@ -258,6 +265,52 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	return futures, nil
 }
 
+// BroadcastWithExecutor uses a custom executor to process all active clients.
+// It includes circuit breaker checks and error recording.
+func (p *pub) BroadcastWithExecutor(executor queue.Executor) error {
+	p.mu.RLock()
+	clients := make(map[string]queue.PubClient, len(p.active))
+	for name, c := range p.active {
+		clients[name] = c
+	}
+	p.mu.RUnlock()
+	if len(clients) == 0 {
+		return errors.New("no active clients")
+	}
+
+	var errs error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for name, c := range clients {
+		if !p.isRequestAllowed(name) {
+			continue
+		}
+		wg.Add(1)
+		go func(nodeName string, client queue.PubClient) {
+			defer wg.Done()
+			if execErr := executor(nodeName, client); execErr != nil {
+				p.recordFailure(nodeName, execErr)
+				mu.Lock()
+				errs = multierr.Append(errs, execErr)
+				mu.Unlock()
+				if isFailoverError(execErr) {
+					if p.closer.AddRunning() {
+						go func() {
+							defer p.closer.Done()
+							p.failover(nodeName, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR,
+								execErr.Error()), bus.Topic{})
+						}()
+					}
+				}
+			} else {
+				p.recordSuccess(nodeName)
+			}
+		}(name, c)
+	}
+	wg.Wait()
+	return errs
+}
+
 type publishResult struct {
 	f bus.Future
 	e error
@@ -282,14 +335,18 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		}
 
 		p.mu.RLock()
-		client, ok := p.active[node]
+		activeClient, ok := p.active[node]
 		p.mu.RUnlock()
 		if !ok {
 			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 		}
+		dc, ok := activeClient.(*defaultClient)
+		if !ok {
+			return multierr.Append(err, fmt.Errorf("client for node %s does not support Send", node))
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		f.cancelFn = append(f.cancelFn, cancel)
-		stream, errCreateStream := client.client.Send(ctx)
+		stream, errCreateStream := dc.serviceClient.Send(ctx)
 		if errCreateStream != nil {
 			// Record failure for circuit breaker (only for transient/internal errors)
 			p.recordFailure(node, errCreateStream)
@@ -356,8 +413,17 @@ func (p *pub) GetRouteTable() *databasev1.RouteTable {
 // New returns a new queue client targeting the given node roles.
 // If no roles are passed, it defaults to databasev1.Role_ROLE_DATA.
 func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
+	return NewWithClientFactory(metadata, nil, roles...)
+}
+
+// NewWithClientFactory returns a new queue client with a custom client factory.
+// If factory is nil, DefaultClientFactory is used.
+func NewWithClientFactory(metadata metadata.Repo, factory ClientFactory, roles ...databasev1.Role) queue.Client {
 	if len(roles) == 0 {
 		roles = []databasev1.Role{databasev1.Role_ROLE_DATA}
+	}
+	if factory == nil {
+		factory = DefaultClientFactory
 	}
 	var strBuilder strings.Builder
 	for _, role := range roles {
@@ -372,7 +438,7 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 	}
 	p := &pub{
 		metadata:      metadata,
-		active:        make(map[string]*client),
+		active:        make(map[string]queue.PubClient),
 		evictable:     make(map[string]evictNode),
 		registered:    make(map[string]*databasev1.Node),
 		handlers:      make(map[bus.Topic]schema.EventHandler),
@@ -381,6 +447,7 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		prefix:        strBuilder.String(),
 		writableProbe: make(map[string]map[string]struct{}),
 		cbStates:      make(map[string]*circuitState),
+		clientFactory: factory,
 		retryPolicy:   retryPolicy,
 	}
 	return p
@@ -388,7 +455,13 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 
 // NewWithoutMetadata returns a new queue client without metadata, defaulting to data nodes.
 func NewWithoutMetadata() queue.Client {
-	p := New(nil, databasev1.Role_ROLE_DATA)
+	return NewWithoutMetadataAndFactory(nil, nil)
+}
+
+// NewWithoutMetadataAndFactory returns a new queue client without metadata and with a custom client factory.
+func NewWithoutMetadataAndFactory(factory ClientFactory, provider DialOptionsProvider) queue.Client {
+	p := NewWithClientFactory(nil, factory, databasev1.Role_ROLE_DATA)
+	p.(*pub).credProvider = provider
 	p.(*pub).log = logger.GetLogger("queue-client")
 	return p
 }
@@ -522,7 +595,10 @@ func isFailoverError(err error) bool {
 	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
 }
 
-func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
+func (p *pub) getClientTransportCredentials(address string) ([]grpc.DialOption, error) {
+	if p.credProvider != nil {
+		return p.credProvider.GetDialOptions(address)
+	}
 	if !p.tlsEnabled {
 		return grpchelper.SecureOptions(nil, false, false, "")
 	}
@@ -559,10 +635,10 @@ func (p *pub) reconnectAllClients() {
 			delete(p.evictable, name)
 		}
 		// Handle active nodes: close connection and remove from active
-		if client, ok := p.active[name]; ok {
-			_ = client.conn.Close()
+		if activeClient, ok := p.active[name]; ok {
+			_ = activeClient.Close()
 			delete(p.active, name)
-			p.deleteClient(client.md)
+			p.deleteClient(activeClient.Metadata())
 		}
 		md := schema.Metadata{
 			TypeMeta: schema.TypeMeta{
@@ -598,14 +674,18 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 	if !ok {
 		return nil, fmt.Errorf("no active client for node %s", node)
 	}
+	dc, ok := client.(*defaultClient)
+	if !ok {
+		return nil, fmt.Errorf("client for node %s does not support chunked sync", node)
+	}
 
 	if config.ChunkSize == 0 {
 		config.ChunkSize = defaultChunkSize
 	}
 
 	return &chunkedSyncClient{
-		client:    client.client,
-		conn:      client.conn,
+		client:    dc.serviceClient,
+		conn:      dc.Conn(),
 		node:      node,
 		log:       p.log,
 		chunkSize: config.ChunkSize,

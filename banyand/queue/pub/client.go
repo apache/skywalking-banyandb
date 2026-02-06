@@ -30,6 +30,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -112,10 +113,37 @@ var retryPolicy = `{
 	  }
 	]}`
 
-type client struct {
-	client clusterv1.ServiceClient
-	conn   *grpc.ClientConn
-	md     schema.Metadata
+// DialOptionsProvider provides address-specific gRPC dial options for transport credentials.
+type DialOptionsProvider interface {
+	GetDialOptions(address string) ([]grpc.DialOption, error)
+}
+
+// ClientFactory creates custom Client implementations.
+type ClientFactory func(conn *grpc.ClientConn, md schema.Metadata) (queue.PubClient, error)
+
+// defaultClient is the internal implementation used by pub package.
+type defaultClient struct {
+	serviceClient clusterv1.ServiceClient
+	conn          *grpc.ClientConn
+	md            schema.Metadata
+}
+
+// Conn returns the underlying gRPC connection.
+func (c *defaultClient) Conn() *grpc.ClientConn { return c.conn }
+
+// Metadata returns the node's metadata.
+func (c *defaultClient) Metadata() schema.Metadata { return c.md }
+
+// Close closes the connection.
+func (c *defaultClient) Close() error { return c.conn.Close() }
+
+// DefaultClientFactory creates the default cluster service client.
+func DefaultClientFactory(conn *grpc.ClientConn, md schema.Metadata) (queue.PubClient, error) {
+	return &defaultClient{
+		serviceClient: clusterv1.NewServiceClient(conn),
+		conn:          conn,
+		md:            md,
+	}, nil
 }
 
 func (p *pub) OnAddOrUpdate(md schema.Metadata) {
@@ -164,17 +192,20 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 	if _, ok := p.evictable[name]; ok {
 		return
 	}
-	credOpts, err := p.getClientTransportCredentials()
-	if err != nil {
-		p.log.Error().Err(err).Msg("failed to load client TLS credentials")
-		return
-	}
-	conn, err := grpc.NewClient(address, append(credOpts,
-		grpc.WithDefaultServiceConfig(p.retryPolicy),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
-	if err != nil {
-		p.log.Error().Err(err).Msg("failed to connect to grpc server")
-		return
+	var conn *grpc.ClientConn
+	if address != SelfGrpcAddress {
+		credOpts, err := p.getClientTransportCredentials(address)
+		if err != nil {
+			p.log.Error().Err(err).Msg("failed to load client TLS credentials")
+			return
+		}
+		conn, err = grpc.NewClient(address, append(credOpts,
+			grpc.WithDefaultServiceConfig(p.retryPolicy),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxReceiveMessageSize)))...)
+		if err != nil {
+			p.log.Error().Err(err).Msg("failed to connect to grpc server")
+			return
+		}
 	}
 
 	if !p.checkClientHealthAndReconnect(conn, md) {
@@ -182,8 +213,13 @@ func (p *pub) OnAddOrUpdate(md schema.Metadata) {
 		return
 	}
 
-	c := clusterv1.NewServiceClient(conn)
-	p.active[name] = &client{conn: conn, client: c, md: md}
+	c, factoryErr := p.clientFactory(conn, md)
+	if factoryErr != nil {
+		p.log.Error().Err(factoryErr).Msg("failed to create client")
+		_ = conn.Close()
+		return
+	}
+	p.active[name] = c
 	p.addClient(md)
 	// Initialize or reset circuit breaker state to closed
 	p.recordSuccess(name)
@@ -209,9 +245,9 @@ func (p *pub) registerNode(node *databasev1.Node) {
 		p.log.Info().Str("node", name).Str("status", p.dump()).Msg("node is removed from evict queue by the new gRPC address updated event")
 	}
 	if client, ok := p.active[name]; ok {
-		_ = client.conn.Close()
+		_ = client.Close()
 		delete(p.active, name)
-		p.deleteClient(client.md)
+		p.deleteClient(client.Metadata())
 		p.log.Info().Str("status", p.dump()).Str("node", name).Msg("node is removed from active queue by the new gRPC address updated event")
 	}
 }
@@ -281,11 +317,11 @@ func (p *pub) OnDelete(md schema.Metadata) {
 	}
 }
 
-func (p *pub) removeNodeIfUnhealthy(md schema.Metadata, node *databasev1.Node, client *client) bool {
-	if p.healthCheck(node.String(), client.conn) {
+func (p *pub) removeNodeIfUnhealthy(md schema.Metadata, node *databasev1.Node, c queue.PubClient) bool {
+	if p.healthCheck(node.String(), c.Conn()) {
 		return false
 	}
-	_ = client.conn.Close()
+	_ = c.Close()
 	name := node.Metadata.GetName()
 	delete(p.active, name)
 	p.deleteClient(md)
@@ -315,7 +351,7 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 			backoff := jitteredBackoff(initBackoff, maxBackoff, attempt, defaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				credOpts, errEvict := p.getClientTransportCredentials()
+				credOpts, errEvict := p.getClientTransportCredentials(node.GrpcAddress)
 				if errEvict != nil {
 					p.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
@@ -331,8 +367,13 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 							// The client has been removed from evict clients map, just return
 							return
 						}
-						c := clusterv1.NewServiceClient(connEvict)
-						p.active[name] = &client{conn: connEvict, client: c, md: md}
+						c, factoryErr := p.clientFactory(connEvict, md)
+						if factoryErr != nil {
+							p.log.Error().Err(factoryErr).Msg("failed to create client during reconnect")
+							_ = connEvict.Close()
+							return
+						}
+						p.active[name] = c
 						p.addClient(md)
 						delete(p.evictable, name)
 						// Reset circuit breaker state to closed
@@ -358,6 +399,9 @@ func (p *pub) checkClientHealthAndReconnect(conn *grpc.ClientConn, md schema.Met
 }
 
 func (p *pub) healthCheck(node string, conn *grpc.ClientConn) bool {
+	if conn == nil {
+		return true
+	}
 	var resp *grpc_health_v1.HealthCheckResponse
 	if err := grpchelper.Request(context.Background(), rpcTimeout, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
@@ -378,6 +422,9 @@ func (p *pub) healthCheck(node string, conn *grpc.ClientConn) bool {
 }
 
 func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Error {
+	if conn == nil {
+		return nil
+	}
 	client := clusterv1.NewServiceClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
@@ -409,10 +456,10 @@ func (p *pub) failover(node string, ce *common.Error, topic bus.Topic) {
 		return
 	}
 
-	if client, ok := p.active[node]; ok && !p.checkClientHealthAndReconnect(client.conn, client.md) {
-		_ = client.conn.Close()
+	if client, ok := p.active[node]; ok && !p.checkClientHealthAndReconnect(client.Conn(), client.Metadata()) {
+		_ = client.Close()
 		delete(p.active, node)
-		p.deleteClient(client.md)
+		p.deleteClient(client.Metadata())
 		p.log.Info().Str("status", p.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
 	}
 }
@@ -427,11 +474,11 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 		return false, nil
 	}
 	topicStr := topic.String()
-	err := p.checkServiceHealth(topicStr, node.conn)
+	err := p.checkServiceHealth(topicStr, node.Conn())
 	if err == nil {
 		return true, nil
 	}
-	h.OnDelete(node.md)
+	h.OnDelete(node.Metadata())
 	if !p.closer.AddRunning() {
 		return false, err
 	}
@@ -470,7 +517,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 				if !okCur {
 					return
 				}
-				errInternal := p.checkServiceHealth(t, nodeCur.conn)
+				errInternal := p.checkServiceHealth(t, nodeCur.Conn())
 				if errInternal == nil {
 					func() {
 						p.mu.Lock()
@@ -481,7 +528,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 						}
 						// Record success for circuit breaker
 						p.recordSuccess(nodeName)
-						h.OnAddOrUpdate(nodeCur.md)
+						h.OnAddOrUpdate(nodeCur.Metadata())
 					}()
 					return
 				}

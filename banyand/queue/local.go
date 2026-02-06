@@ -113,6 +113,11 @@ func (*local) HealthyNodes() []string {
 	return nil
 }
 
+// BroadcastWithExecutor is not supported for local queue as there are no distributed clients.
+func (*local) BroadcastWithExecutor(_ Executor) error {
+	return nil
+}
+
 // GetRouteTable returns an empty route table for local queue.
 // Local queue doesn't have distributed nodes, so all fields are empty.
 func (*local) GetRouteTable() *databasev1.RouteTable {

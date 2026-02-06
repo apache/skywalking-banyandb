@@ -22,20 +22,14 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/grpc"
-
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
-// GRPCDialOptionsProvider provides gRPC dial options for TLS configuration.
-type GRPCDialOptionsProvider interface {
-	GetDialOptions(address string) ([]grpc.DialOption, error)
-}
-
 // FetchNodeMetadata fetches node metadata via gRPC.
 // This is the common implementation used by both DNS and file discovery.
-func FetchNodeMetadata(ctx context.Context, address string, timeout time.Duration, dialOptsProvider GRPCDialOptionsProvider) (*databasev1.Node, error) {
+func FetchNodeMetadata(ctx context.Context, address string, timeout time.Duration, dialOptsProvider pub.DialOptionsProvider) (*databasev1.Node, error) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

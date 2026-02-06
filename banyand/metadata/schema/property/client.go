@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -37,16 +36,14 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
-
-var errNoMetadataServers = errors.New("no metadata servers available")
 
 type clientMetrics struct {
 	totalSyncStarted  meter.Counter
@@ -108,17 +105,9 @@ func newClientMetrics(factory observability.Factory) *clientMetrics {
 	}
 }
 
-// nodeConnection represents a connection to a metadata node.
-type nodeConnection struct {
-	mgrClient    schemav1.SchemaManagementServiceClient
-	updateClient schemav1.SchemaUpdateServiceClient
-	conn         *grpc.ClientConn
-	target       string
-}
-
 // SchemaRegistry implements schema.Registry interface using property-based storage.
 type SchemaRegistry struct {
-	dialOptsPrv       common.GRPCDialOptionsProvider
+	nodesClient       queue.Client
 	localUpdateClient schemav1.SchemaUpdateServiceClient
 	localMgrClient    schemav1.SchemaManagementServiceClient
 	l                 *logger.Logger
@@ -126,12 +115,10 @@ type SchemaRegistry struct {
 	syncCloser        *run.Closer
 	cache             *schemaCache
 	metrics           *clientMetrics
-	nodeConns         map[string]*nodeConnection
 	handlers          map[schema.Kind][]schema.EventHandler
 	grpcTimeout       time.Duration
 	syncInterval      time.Duration
 	mu                sync.RWMutex
-	connMu            sync.RWMutex
 }
 
 // NodeInfo holds information about a node and its schema clients.
@@ -147,13 +134,13 @@ func (i *NodeInfo) canBeUse() bool {
 
 // ClientConfig holds configuration for construct SchemaRegistry client.
 type ClientConfig struct {
-	OMR             observability.MetricsRegistry
-	NodeSchema      schema.Node
-	DialOptProvider common.GRPCDialOptionsProvider
-	Node            *NodeInfo
-	metrics         *clientMetrics
-	GRPCTimeout     time.Duration
-	SyncInterval    time.Duration
+	OMR          observability.MetricsRegistry
+	NodeSchema   schema.Node
+	Node         *NodeInfo
+	DialProvider pub.DialOptionsProvider
+	metrics      *clientMetrics
+	GRPCTimeout  time.Duration
+	SyncInterval time.Duration
 }
 
 // NewSchemaRegistryClient creates a new property schema registry client.
@@ -161,8 +148,6 @@ type ClientConfig struct {
 // during construction, ensuring metadata is available before subsequent services start.
 func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 	r := &SchemaRegistry{
-		dialOptsPrv:  cfg.DialOptProvider,
-		nodeConns:    make(map[string]*nodeConnection),
 		handlers:     make(map[schema.Kind][]schema.EventHandler),
 		cache:        newSchemaCache(),
 		closer:       run.NewCloser(1),
@@ -170,6 +155,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		grpcTimeout:  cfg.GRPCTimeout,
 		syncInterval: cfg.SyncInterval,
 	}
+	r.nodesClient = pub.NewWithoutMetadataAndFactory(schemaClientFactory(r), cfg.DialProvider)
 	if cfg.OMR != nil {
 		if cfg.metrics == nil {
 			clientScope := metadataScope.SubScope("schema_property_client")
@@ -177,7 +163,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		}
 		r.metrics = cfg.metrics
 	}
-	// init current node
+	// init current node with local clients
 	if cfg.Node != nil && cfg.Node.canBeUse() {
 		hasMetadataRole := false
 		for _, role := range cfg.Node.Node.Roles {
@@ -190,9 +176,18 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 			r.l.Info().Msg("metadata role not found in node, so skip bootstrapping from local meta node")
 			return r, nil
 		}
-		if connErr := r.addSelfNode(cfg.Node); connErr != nil {
-			return nil, fmt.Errorf("failed to bootstrap from local meta node: %w", connErr)
+		// Store local clients for self-node operations
+		r.localMgrClient = cfg.Node.SchemaMgrClient
+		r.localUpdateClient = cfg.Node.SchemaUpdateClient
+		cfg.Node.Node.GrpcAddress = pub.SelfGrpcAddress
+		md := schema.Metadata{
+			TypeMeta: schema.TypeMeta{
+				Kind: schema.KindNode,
+			},
+			Spec: cfg.Node.Node,
 		}
+		r.nodesClient.OnAddOrUpdate(md)
+		r.l.Info().Str("address", cfg.Node.Node.GetGrpcAddress()).Msg("registered local metadata node")
 	} else {
 		r.l.Info().Msg("local node info not provided or incomplete, " +
 			"so skip bootstrapping from local meta node, and lookup other meta nodes from node registry")
@@ -207,10 +202,13 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 			return nil, fmt.Errorf("no metadata nodes found in node registry")
 		}
 		for _, n := range listNode {
-			if e := r.addNodeConnection(n); e != nil {
-				r.l.Warn().Err(e).Str("node", n.GetMetadata().GetName()).
-					Str("address", n.GetGrpcAddress()).Msg("failed to add to metadata node")
+			md := schema.Metadata{
+				TypeMeta: schema.TypeMeta{
+					Kind: schema.KindNode,
+				},
+				Spec: n,
 			}
+			r.nodesClient.OnAddOrUpdate(md)
 		}
 	}
 	return r, nil
@@ -240,10 +238,10 @@ func (r *SchemaRegistry) OnAddOrUpdate(m schema.Metadata) {
 	if !containsMetadata {
 		return
 	}
-	if err := r.addNodeConnection(node); err != nil {
-		r.l.Warn().Err(err).Str("node", node.GetMetadata().GetName()).
-			Str("address", node.GetGrpcAddress()).Msg("failed to add to metadata node")
-	}
+	// Delegate to pub client for connection management
+	r.nodesClient.OnAddOrUpdate(m)
+	r.l.Info().Str("node", node.GetMetadata().GetName()).
+		Str("address", node.GetGrpcAddress()).Msg("metadata node added via pub")
 }
 
 // OnDelete implements schema.EventHandler for getting which metadata node has been deleted.
@@ -251,87 +249,10 @@ func (r *SchemaRegistry) OnDelete(m schema.Metadata) {
 	if m.Kind != schema.KindNode {
 		return
 	}
-	node, ok := m.Spec.(*databasev1.Node)
-	if !ok {
-		return
+	// Delegate to pub client for connection management
+	if handler, ok := r.nodesClient.(schema.EventHandler); ok {
+		handler.OnDelete(m)
 	}
-	r.removeNodeConnection(node.GetGrpcAddress())
-}
-
-func (r *SchemaRegistry) addSelfNode(node *NodeInfo) error {
-	address := node.Node.GetGrpcAddress()
-	if address == "" {
-		return errors.New("node grpc address is empty")
-	}
-	r.connMu.Lock()
-	defer r.connMu.Unlock()
-	if _, exists := r.nodeConns[address]; exists {
-		return nil
-	}
-	nodeConn := &nodeConnection{
-		mgrClient:    node.SchemaMgrClient,
-		updateClient: node.SchemaUpdateClient,
-		target:       address,
-	}
-	r.nodeConns[address] = nodeConn
-	r.l.Info().Str("address", address).Msg("connected to local metadata node")
-	return nil
-}
-
-func (r *SchemaRegistry) addNodeConnection(node *databasev1.Node) error {
-	address := node.GetGrpcAddress()
-	if address == "" {
-		return errors.New("node grpc address is empty")
-	}
-	r.connMu.Lock()
-	defer r.connMu.Unlock()
-	if _, exists := r.nodeConns[address]; exists {
-		return nil
-	}
-	var dialOpts []grpc.DialOption
-	if r.dialOptsPrv != nil {
-		var optsErr error
-		dialOpts, optsErr = r.dialOptsPrv.GetDialOptions(address)
-		if optsErr != nil {
-			r.l.Warn().Err(optsErr).Str("address", address).Msg("failed to get dial options")
-			return fmt.Errorf("failed to get dial options for %s: %w", address, optsErr)
-		}
-	}
-	conn, connErr := grpchelper.Conn(address, r.grpcTimeout, dialOpts...)
-	if connErr != nil {
-		r.l.Warn().Err(connErr).Str("address", address).Msg("failed to connect to metadata node")
-		return fmt.Errorf("failed to connect to metadata node %s: %w", address, connErr)
-	}
-	schemaMgrClient := schemav1.NewSchemaManagementServiceClient(conn)
-	schemaUpdateClient := schemav1.NewSchemaUpdateServiceClient(conn)
-	nodeConn := &nodeConnection{
-		mgrClient:    schemaMgrClient,
-		updateClient: schemaUpdateClient,
-		conn:         conn,
-		target:       conn.Target(),
-	}
-	r.nodeConns[address] = nodeConn
-	r.l.Info().Str("address", address).Str("node", node.GetMetadata().GetName()).Msg("connected to metadata node")
-	return nil
-}
-
-func (r *SchemaRegistry) removeNodeConnection(address string) {
-	if address == "" {
-		return
-	}
-	r.connMu.Lock()
-	defer r.connMu.Unlock()
-	nc, exists := r.nodeConns[address]
-	if !exists {
-		return
-	}
-	if nc.conn != nil {
-		if closeErr := nc.conn.Close(); closeErr != nil {
-			r.l.Warn().Err(closeErr).Str("address", address).Msg("failed to close connection")
-		}
-	}
-	delete(r.nodeConns, address)
-	r.l.Info().Str("address", address).Msg("disconnected from metadata node")
 }
 
 // Close closes the registry.
@@ -342,16 +263,8 @@ func (r *SchemaRegistry) Close() error {
 		r.syncCloser.Done()
 		r.syncCloser.CloseThenWait()
 	}
-	r.connMu.Lock()
-	defer r.connMu.Unlock()
-	for addr, nc := range r.nodeConns {
-		if nc.conn != nil {
-			if closeErr := nc.conn.Close(); closeErr != nil {
-				r.l.Warn().Err(closeErr).Str("address", addr).Msg("failed to close connection")
-			}
-		}
-	}
-	r.nodeConns = make(map[string]*nodeConnection)
+	// Close pub client which manages all connections
+	r.nodesClient.GracefulStop()
 	return nil
 }
 
@@ -391,18 +304,24 @@ func (r *SchemaRegistry) Compact(context.Context, int64) error {
 func (r *SchemaRegistry) StartWatcher() {
 	r.syncCloser = run.NewCloser(1)
 	// init all metadata from connections
-	connections := make([]*nodeConnection, 0)
-	r.connMu.RLock()
-	for _, nc := range r.nodeConns {
-		connections = append(connections, nc)
-	}
-	r.connMu.RUnlock()
 	go func() {
-		for _, nc := range connections {
-			if err := r.initializeFromNode(nc); err != nil {
-				r.l.Error().Err(err).Str("node", nc.target).Msg("failed to initialize metadata from node")
+		// Use BroadcastWithExecutor to initialize from first responding node
+		var initialized bool
+		_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+			if initialized {
+				return nil
 			}
-		}
+			sc, ok := c.(*schemaClient)
+			if !ok {
+				return errors.Errorf("client for node %s is not a schemaClient", nodeName)
+			}
+			if initErr := r.initializeFromSchemaClient(nodeName, sc); initErr != nil {
+				r.l.Error().Err(initErr).Str("node", nodeName).Msg("failed to initialize metadata from node")
+				return initErr
+			}
+			initialized = true
+			return nil
+		})
 	}()
 
 	go r.globalSync()
@@ -878,44 +797,32 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind, group,
 	return info.best.property, nil
 }
 
-type existSchemaNodeResult struct {
-	err       error
-	hasSchema bool
-}
-
 func (r *SchemaRegistry) existSchema(ctx context.Context, kind schema.Kind, group, name string) (bool, error) {
 	propID := BuildPropertyID(kind, &commonv1.Metadata{Group: group, Name: name})
 	query := buildSchemaQuery(kind, group, []string{propID})
-	nodeConns := r.getNodeConnectionsWithAddr()
-	if len(nodeConns) == 0 {
-		return false, errNoMetadataServers
-	}
-	resultCh := make(chan existSchemaNodeResult, len(nodeConns))
-	for _, nc := range nodeConns {
-		go func(client schemav1.SchemaManagementServiceClient) {
-			resp, callErr := client.ExistSchema(ctx, &schemav1.ExistSchemaRequest{Query: query})
-			if callErr != nil {
-				resultCh <- existSchemaNodeResult{err: callErr}
-				return
-			}
-			resultCh <- existSchemaNodeResult{hasSchema: resp.GetHasSchema()}
-		}(nc.mgrClient)
-	}
-	var lastErr error
-	for range len(nodeConns) {
-		res := <-resultCh
-		if res.err != nil {
-			lastErr = res.err
-			continue
+
+	var hasSchema bool
+	var mu sync.Mutex
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
 		}
-		if res.hasSchema {
-			return true, nil
+		resp, callErr := sc.MgrClient().ExistSchema(ctx, &schemav1.ExistSchemaRequest{Query: query})
+		if callErr != nil {
+			return callErr
 		}
+		if resp.GetHasSchema() {
+			mu.Lock()
+			hasSchema = true
+			mu.Unlock()
+		}
+		return nil
+	})
+	if hasSchema {
+		return true, nil
 	}
-	if lastErr != nil {
-		return false, lastErr
-	}
-	return false, nil
+	return false, broadcastErr
 }
 
 type schemaWithDeleteTime struct {
@@ -942,16 +849,6 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind, grou
 		}
 	}
 	return result, nil
-}
-
-func (r *SchemaRegistry) getNodeConnectionsWithAddr() map[string]*nodeConnection {
-	r.connMu.RLock()
-	defer r.connMu.RUnlock()
-	result := make(map[string]*nodeConnection, len(r.nodeConns))
-	for addr, nc := range r.nodeConns {
-		result[addr] = nc
-	}
-	return result
 }
 
 func (r *SchemaRegistry) querySchemasFromClient(ctx context.Context, client schemav1.SchemaManagementServiceClient,
@@ -1007,12 +904,6 @@ func buildSchemaQuery(kind schema.Kind, group string, ids []string) *propertyv1.
 	return query
 }
 
-type schemaQueryNodeResult struct {
-	err     error
-	addr    string
-	schemas []*schemaWithDeleteTime
-}
-
 func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context, query *propertyv1.QueryRequest) (map[string]*propInfo, error) {
 	if r.metrics != nil {
 		r.metrics.totalQueryStarted.Inc(1, "list")
@@ -1024,28 +915,25 @@ func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context, query *prope
 			r.metrics.totalQueryLatency.Inc(time.Since(start).Seconds(), "list")
 		}
 	}()
-	nodeConns := r.getNodeConnectionsWithAddr()
-	if len(nodeConns) == 0 {
-		if r.metrics != nil {
-			r.metrics.totalQueryErr.Inc(1, "list")
-		}
-		return nil, errNoMetadataServers
-	}
-	resultCh := make(chan schemaQueryNodeResult, len(nodeConns))
-	for addr, nc := range nodeConns {
-		go func(address string, client schemav1.SchemaManagementServiceClient) {
-			schemas, queryErr := r.querySchemasFromClient(ctx, client, query)
-			resultCh <- schemaQueryNodeResult{addr: address, schemas: schemas, err: queryErr}
-		}(addr, nc.mgrClient)
-	}
+
 	propMap := make(map[string]*propInfo)
-	for range len(nodeConns) {
-		res := <-resultCh
-		if res.err != nil {
-			r.l.Warn().Err(res.err).Str("node", res.addr).Msg("failed to query node")
-			continue
+	respondedNodes := make(map[string]bool)
+	var mu sync.Mutex
+
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
 		}
-		for _, s := range res.schemas {
+		schemas, queryErr := r.querySchemasFromClient(ctx, sc.MgrClient(), query)
+		if queryErr != nil {
+			r.l.Warn().Err(queryErr).Str("node", nodeName).Msg("failed to query node")
+			return queryErr
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		respondedNodes[nodeName] = true
+		for _, s := range schemas {
 			propID := s.property.Id
 			rev := s.property.UpdatedAt.AsTime().UnixNano()
 			info, exists := propMap[propID]
@@ -1056,20 +944,30 @@ func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context, query *prope
 				}
 				propMap[propID] = info
 			}
-			if existingRev, ok := info.nodeRev[res.addr]; !ok || rev > existingRev {
-				info.nodeRev[res.addr] = rev
-				info.nodeDelTime[res.addr] = s.deleteTime
+			if existingRev, prevExists := info.nodeRev[nodeName]; !prevExists || rev > existingRev {
+				info.nodeRev[nodeName] = rev
+				info.nodeDelTime[nodeName] = s.deleteTime
 			}
 			if info.best == nil || info.best.property.UpdatedAt.AsTime().UnixNano() < rev {
 				info.best = s
 			}
 		}
+		return nil
+	})
+
+	// Repair inconsistent nodes using broadcast
+	r.repairInconsistentNodesWithBroadcast(ctx, respondedNodes, propMap)
+
+	if broadcastErr != nil && len(propMap) == 0 {
+		if r.metrics != nil {
+			r.metrics.totalQueryErr.Inc(1, "list")
+		}
+		return nil, broadcastErr
 	}
-	r.repairInconsistentNodes(ctx, nodeConns, propMap)
 	return propMap, nil
 }
 
-func (r *SchemaRegistry) repairInconsistentNodes(ctx context.Context, nodeConns map[string]*nodeConnection, propMap map[string]*propInfo) {
+func (r *SchemaRegistry) repairInconsistentNodesWithBroadcast(ctx context.Context, respondedNodes map[string]bool, propMap map[string]*propInfo) {
 	if r.metrics != nil {
 		r.metrics.totalRepairStarted.Inc(1)
 	}
@@ -1084,10 +982,10 @@ func (r *SchemaRegistry) repairInconsistentNodes(ctx context.Context, nodeConns 
 		}
 		bestRev := info.best.property.UpdatedAt.AsTime().UnixNano()
 		var nodesToRepair []string
-		for addr := range nodeConns {
-			nodeRev, exists := info.nodeRev[addr]
+		for nodeName := range respondedNodes {
+			nodeRev, exists := info.nodeRev[nodeName]
 			if !exists || nodeRev < bestRev {
-				nodesToRepair = append(nodesToRepair, addr)
+				nodesToRepair = append(nodesToRepair, nodeName)
 			}
 		}
 		if len(nodesToRepair) == 0 {
@@ -1099,24 +997,33 @@ func (r *SchemaRegistry) repairInconsistentNodes(ctx context.Context, nodeConns 
 		r.l.Info().Str("propID", propID).Int64("bestRev", bestRev).
 			Int64("deleteTime", info.best.deleteTime).
 			Strs("nodesToRepair", nodesToRepair).Msg("repairing schema inconsistency")
-		var wg sync.WaitGroup
-		for _, addr := range nodesToRepair {
-			nc := nodeConns[addr]
-			wg.Add(1)
-			go func(nodeAddr string, client schemav1.SchemaManagementServiceClient) {
-				defer wg.Done()
-				_, repairErr := client.RepairSchema(ctx, &schemav1.RepairSchemaRequest{
-					Property:   info.best.property,
-					DeleteTime: info.best.deleteTime,
-				})
-				if repairErr != nil {
-					r.l.Warn().Err(repairErr).Str("propID", propID).Str("node", nodeAddr).Msg("repair failed")
-				} else {
-					r.l.Info().Str("propID", propID).Str("node", nodeAddr).Msg("repaired successfully")
-				}
-			}(addr, nc.mgrClient)
+
+		nodesToRepairSet := make(map[string]bool)
+		for _, n := range nodesToRepair {
+			nodesToRepairSet[n] = true
 		}
-		wg.Wait()
+		bestProp := info.best.property
+		bestDelTime := info.best.deleteTime
+
+		_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+			if !nodesToRepairSet[nodeName] {
+				return nil
+			}
+			sc, ok := c.(*schemaClient)
+			if !ok {
+				return errors.Errorf("client for node %s is not a schemaClient", nodeName)
+			}
+			_, repairErr := sc.MgrClient().RepairSchema(ctx, &schemav1.RepairSchemaRequest{
+				Property:   bestProp,
+				DeleteTime: bestDelTime,
+			})
+			if repairErr != nil {
+				r.l.Warn().Err(repairErr).Str("propID", propID).Str("node", nodeName).Msg("repair failed")
+				return repairErr
+			}
+			r.l.Info().Str("propID", propID).Str("node", nodeName).Msg("repaired successfully")
+			return nil
+		})
 	}
 }
 
@@ -1132,35 +1039,18 @@ func (r *SchemaRegistry) insertToAllServers(ctx context.Context, prop *propertyv
 			r.metrics.totalWriteLatency.Inc(time.Since(start).Seconds(), kind, group)
 		}
 	}()
-	clients := r.getClients()
-	if len(clients) == 0 {
-		if r.metrics != nil {
-			r.metrics.totalWriteErr.Inc(1, kind, group)
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
 		}
-		return errNoMetadataServers
-	}
-	var firstErr error
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for _, client := range clients {
-		wg.Add(1)
-		go func(c schemav1.SchemaManagementServiceClient) {
-			defer wg.Done()
-			_, callErr := c.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
-			if callErr != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = callErr
-				}
-				mu.Unlock()
-			}
-		}(client.mgrClient)
-	}
-	wg.Wait()
-	if firstErr != nil && r.metrics != nil {
+		_, callErr := sc.MgrClient().InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
+		return callErr
+	})
+	if broadcastErr != nil && r.metrics != nil {
 		r.metrics.totalWriteErr.Inc(1, kind, group)
 	}
-	return firstErr
+	return broadcastErr
 }
 
 func (r *SchemaRegistry) updateToAllServers(ctx context.Context, prop *propertyv1.Property) error {
@@ -1175,35 +1065,18 @@ func (r *SchemaRegistry) updateToAllServers(ctx context.Context, prop *propertyv
 			r.metrics.totalWriteLatency.Inc(time.Since(start).Seconds(), kind, group)
 		}
 	}()
-	clients := r.getClients()
-	if len(clients) == 0 {
-		if r.metrics != nil {
-			r.metrics.totalWriteErr.Inc(1, kind, group)
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
 		}
-		return errNoMetadataServers
-	}
-	var firstErr error
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for _, client := range clients {
-		wg.Add(1)
-		go func(c schemav1.SchemaManagementServiceClient) {
-			defer wg.Done()
-			_, callErr := c.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
-			if callErr != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = callErr
-				}
-				mu.Unlock()
-			}
-		}(client.mgrClient)
-	}
-	wg.Wait()
-	if firstErr != nil && r.metrics != nil {
+		_, callErr := sc.MgrClient().UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
+		return callErr
+	})
+	if broadcastErr != nil && r.metrics != nil {
 		r.metrics.totalWriteErr.Inc(1, kind, group)
 	}
-	return firstErr
+	return broadcastErr
 }
 
 func (r *SchemaRegistry) deleteFromAllServers(ctx context.Context, kind schema.Kind, group, name string) (bool, error) {
@@ -1218,53 +1091,44 @@ func (r *SchemaRegistry) deleteFromAllServers(ctx context.Context, kind schema.K
 			r.metrics.totalDeleteLatency.Inc(time.Since(start).Seconds(), kindStr, group)
 		}
 	}()
-	clients := r.getClients()
-	if len(clients) == 0 {
-		if r.metrics != nil {
-			r.metrics.totalDeleteErr.Inc(1, kindStr, group)
-		}
-		return false, errNoMetadataServers
-	}
 	propID := BuildPropertyID(kind, &commonv1.Metadata{Group: group, Name: name})
-	var firstErr error
 	var found bool
 	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for _, client := range clients {
-		wg.Add(1)
-		go func(c schemav1.SchemaManagementServiceClient) {
-			defer wg.Done()
-			resp, callErr := c.DeleteSchema(ctx, &schemav1.DeleteSchemaRequest{
-				Delete: &propertyv1.DeleteRequest{
-					Group: SchemaGroup,
-					Name:  kind.String(),
-					Id:    propID,
-				},
-				// update the latest update time for the notification
-				UpdateAt: timestamppb.Now(),
-			})
+
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
+		}
+		resp, callErr := sc.MgrClient().DeleteSchema(ctx, &schemav1.DeleteSchemaRequest{
+			Delete: &propertyv1.DeleteRequest{
+				Group: SchemaGroup,
+				Name:  kind.String(),
+				Id:    propID,
+			},
+			UpdateAt: timestamppb.Now(),
+		})
+		if callErr != nil {
+			return callErr
+		}
+		if resp.GetFound() {
 			mu.Lock()
-			if callErr != nil && firstErr == nil {
-				firstErr = callErr
-			}
-			if resp != nil && resp.Found {
-				found = true
-			}
+			found = true
 			mu.Unlock()
-		}(client.mgrClient)
-	}
-	wg.Wait()
-	if firstErr != nil && r.metrics != nil {
+		}
+		return nil
+	})
+	if broadcastErr != nil && r.metrics != nil {
 		r.metrics.totalDeleteErr.Inc(1, kindStr, group)
 	}
-	return found, firstErr
+	return found, broadcastErr
 }
 
-func (r *SchemaRegistry) initializeFromNode(nodeConn *nodeConnection) error {
+func (r *SchemaRegistry) initializeFromSchemaClient(nodeName string, sc *schemaClient) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	r.l.Info().Str("address", nodeConn.target).Msg("initializing resources from metadata node")
-	groups, listErr := r.listGroupFromClient(ctx, nodeConn.mgrClient)
+	r.l.Info().Str("node", nodeName).Msg("initializing resources from metadata node")
+	groups, listErr := r.listGroupFromClient(ctx, sc.MgrClient())
 	if listErr != nil {
 		r.l.Warn().Err(listErr).Msg("failed to list groups during initialization")
 		return listErr
@@ -1279,21 +1143,21 @@ func (r *SchemaRegistry) initializeFromNode(nodeConn *nodeConnection) error {
 		catalog := group.GetCatalog()
 		switch catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
-			initResourceFromClient[*databasev1.Stream](ctx, r, nodeConn.mgrClient, schema.KindStream, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.Stream](ctx, r, sc.MgrClient(), schema.KindStream, groupName, &maxRevision)
 		case commonv1.Catalog_CATALOG_MEASURE:
-			initResourceFromClient[*databasev1.Measure](ctx, r, nodeConn.mgrClient, schema.KindMeasure, groupName, &maxRevision)
-			initResourceFromClient[*databasev1.TopNAggregation](ctx, r, nodeConn.mgrClient, schema.KindTopNAggregation, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.Measure](ctx, r, sc.MgrClient(), schema.KindMeasure, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.TopNAggregation](ctx, r, sc.MgrClient(), schema.KindTopNAggregation, groupName, &maxRevision)
 		case commonv1.Catalog_CATALOG_TRACE:
-			initResourceFromClient[*databasev1.Trace](ctx, r, nodeConn.mgrClient, schema.KindTrace, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.Trace](ctx, r, sc.MgrClient(), schema.KindTrace, groupName, &maxRevision)
 		case commonv1.Catalog_CATALOG_PROPERTY:
-			initResourceFromClient[*databasev1.Property](ctx, r, nodeConn.mgrClient, schema.KindProperty, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.Property](ctx, r, sc.MgrClient(), schema.KindProperty, groupName, &maxRevision)
 		}
 		if catalog != commonv1.Catalog_CATALOG_PROPERTY {
-			initResourceFromClient[*databasev1.IndexRule](ctx, r, nodeConn.mgrClient, schema.KindIndexRule, groupName, &maxRevision)
-			initResourceFromClient[*databasev1.IndexRuleBinding](ctx, r, nodeConn.mgrClient, schema.KindIndexRuleBinding, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.IndexRule](ctx, r, sc.MgrClient(), schema.KindIndexRule, groupName, &maxRevision)
+			initResourceFromClient[*databasev1.IndexRuleBinding](ctx, r, sc.MgrClient(), schema.KindIndexRuleBinding, groupName, &maxRevision)
 		}
 	}
-	r.l.Info().Str("address", nodeConn.target).
+	r.l.Info().Str("node", nodeName).
 		Int64("latestUpdateAt", maxRevision).Msg("completed resource initialization")
 	return nil
 }
@@ -1428,19 +1292,20 @@ func (r *SchemaRegistry) performSync() {
 	r.l.Debug().Msg("performing global schema sync")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	clients := r.getClients()
-	if len(clients) == 0 {
-		return
-	}
-	for _, c := range clients {
+
+	_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		sc, ok := c.(*schemaClient)
+		if !ok {
+			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
+		}
 		sinceRevision := r.cache.GetMaxRevision()
-		updatedNames := r.queryUpdatedSchemas(ctx, c.updateClient, sinceRevision)
+		updatedNames := r.queryUpdatedSchemas(ctx, sc.UpdateClient(), sinceRevision)
 		syncedKinds := make(map[schema.Kind]bool)
 		if len(updatedNames) > 0 {
 			if r.metrics != nil {
 				r.metrics.totalSyncUpdates.Inc(float64(len(updatedNames)))
 			}
-			r.l.Info().Str("connection", c.target).
+			r.l.Info().Str("node", nodeName).
 				Strs("schema_names", updatedNames).
 				Int64("sinceRevision", sinceRevision).
 				Msg("detected schema updates")
@@ -1451,10 +1316,11 @@ func (r *SchemaRegistry) performSync() {
 					continue
 				}
 				syncedKinds[kind] = true
-				r.syncAllResourcesOfKind(ctx, c.mgrClient, kind)
+				r.syncAllResourcesOfKind(ctx, sc.MgrClient(), kind)
 			}
 		}
-	}
+		return nil
+	})
 }
 
 func (r *SchemaRegistry) queryUpdatedSchemas(ctx context.Context, c schemav1.SchemaUpdateServiceClient, reversion int64) []string {
@@ -1471,16 +1337,6 @@ func (r *SchemaRegistry) queryUpdatedSchemas(ctx context.Context, c schemav1.Sch
 		return nil
 	}
 	return resp.Names
-}
-
-func (r *SchemaRegistry) getClients() []*nodeConnection {
-	r.connMu.RLock()
-	defer r.connMu.RUnlock()
-	clients := make([]*nodeConnection, 0, len(r.nodeConns))
-	for _, nc := range r.nodeConns {
-		clients = append(clients, nc)
-	}
-	return clients
 }
 
 func (r *SchemaRegistry) syncAllResourcesOfKind(ctx context.Context, client schemav1.SchemaManagementServiceClient,

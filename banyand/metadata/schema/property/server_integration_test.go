@@ -30,7 +30,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -129,17 +128,6 @@ func (m *mockedHandler) GetAddOrUpdateCount() int32 {
 
 func (m *mockedHandler) GetDeleteCount() int32 {
 	return m.deleteCalledNum.Load()
-}
-
-// mockDialOptionsProvider implements common.GRPCDialOptionsProvider for testing.
-type mockDialOptionsProvider struct{}
-
-func newMockDialOptionsProvider() *mockDialOptionsProvider {
-	return &mockDialOptionsProvider{}
-}
-
-func (m *mockDialOptionsProvider) GetDialOptions(_ string) ([]grpc.DialOption, error) {
-	return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
 }
 
 // testEnv encapsulates the test environment for property server integration tests.
@@ -281,11 +269,9 @@ func (e *testEnv) cleanup() {
 }
 
 func createRegistry(address string) *property.SchemaRegistry {
-	dialOptsPrv := newMockDialOptionsProvider()
 	registry, registryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-		GRPCTimeout:     5 * time.Second,
-		SyncInterval:    100 * time.Millisecond,
-		DialOptProvider: dialOptsPrv,
+		GRPCTimeout:  5 * time.Second,
+		SyncInterval: 100 * time.Millisecond,
 	})
 	gomega.Expect(registryErr).NotTo(gomega.HaveOccurred())
 	registry.OnAddOrUpdate(schema.Metadata{
@@ -1164,9 +1150,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(updateErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1226,9 +1211,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(deleteErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1282,9 +1266,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(updateErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1338,9 +1321,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		}
 		time.Sleep(200 * time.Millisecond)
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1387,9 +1369,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(registry1.UpdateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1459,9 +1440,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(get2Err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(retrieved2).ShouldNot(gomega.BeNil())
 		newRegistry, newRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(newRegistryErr).NotTo(gomega.HaveOccurred())
 		defer func() {
@@ -1531,9 +1511,8 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		gomega.Expect(get3Err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(retrieved3.TagFamilies[0].Tags).Should(gomega.HaveLen(1))
 		multiNodeRegistry, multiNodeRegistryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiNodeRegistryErr).NotTo(gomega.HaveOccurred())
 		multiNodeRegistry.OnAddOrUpdate(schema.Metadata{
@@ -1781,9 +1760,8 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 
 	createMultiNodeRegistry := func(addresses ...string) *property.SchemaRegistry {
 		multiReg, multiRegErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(multiRegErr).NotTo(gomega.HaveOccurred())
 		for _, addr := range addresses {
@@ -2200,9 +2178,8 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		// Create an observer registry: register handlers BEFORE connecting to node
 		// so initial resource sync triggers handler notifications
 		observerReg, observerRegErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(observerRegErr).NotTo(gomega.HaveOccurred())
 		defer func() {
@@ -2660,9 +2637,8 @@ var _ = ginkgo.Describe("Property Schema Repair Scheduler", func() {
 
 		// Create a multi-node registry connected to env1 and env2
 		registry, registryErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-			GRPCTimeout:     5 * time.Second,
-			SyncInterval:    100 * time.Millisecond,
-			DialOptProvider: newMockDialOptionsProvider(),
+			GRPCTimeout:  5 * time.Second,
+			SyncInterval: 100 * time.Millisecond,
 		})
 		gomega.Expect(registryErr).NotTo(gomega.HaveOccurred())
 		registry.OnAddOrUpdate(schema.Metadata{

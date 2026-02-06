@@ -56,6 +56,22 @@ type Client interface {
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
 	HealthyNodes() []string
+	// BroadcastWithExecutor executes the executor on all active clients in parallel.
+	// It checks circuit breaker before attempting each call and records success/failure.
+	BroadcastWithExecutor(executor Executor) error
+}
+
+// Executor defines how to use a PubClient to process a request.
+type Executor func(nodeName string, c PubClient) error
+
+// PubClient represents a connection to a node and its associated gRPC client.
+type PubClient interface {
+	// Conn returns the underlying gRPC connection.
+	Conn() *grpclib.ClientConn
+	// Metadata returns the node's metadata.
+	Metadata() schema.Metadata
+	// Close closes the connection.
+	Close() error
 }
 
 // Server is the interface for receiving data from the queue.

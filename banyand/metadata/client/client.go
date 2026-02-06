@@ -29,6 +29,8 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -36,16 +38,17 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	discoverycommon "github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/dns"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	metadataproperty "github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 const (
@@ -81,7 +84,7 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
-// for the property based registry connect to the metadata node
+// for the property based registry connect to the metadata node.
 const (
 	propertyRegistryInitRetryCount = 30
 	propertyRegistryInitRetrySleep = time.Second * 3
@@ -104,6 +107,7 @@ type clientService struct {
 	infoCollectorRegistry      *schema.InfoCollectorRegistry
 	dnsDiscovery               *dns.Service
 	fileDiscovery              *file.Service
+	metadataDialProvider       *metadataNodeDialProvider
 	closer                     *run.Closer
 	nodeInfo                   *databasev1.Node
 	dataBroadcaster            bus.Broadcaster
@@ -118,6 +122,7 @@ type clientService struct {
 	nodeDiscoveryMode          string
 	filePath                   string
 	metadataRegistryMode       string
+	metadataNodeTLSCertFile    string
 	dnsSRVAddresses            []string
 	endpoints                  []string
 	registryTimeout            time.Duration
@@ -138,6 +143,7 @@ type clientService struct {
 	forceRegisterNode          bool
 	toRegisterNode             bool
 	dnsTLSEnabled              bool
+	metadataNodeTLSEnabled     bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -195,6 +201,10 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 30*time.Second,
 		"Interval to sync property-based schema in client side with other nodes")
+	fs.BoolVar(&s.metadataNodeTLSEnabled, "metadata-node-tls-enabled", false,
+		"Enable TLS for gRPC connections to metadata nodes (property registry and etcd node discovery mode only)")
+	fs.StringVar(&s.metadataNodeTLSCertFile, "metadata-node-tls-cert-file", "",
+		"Client certificate file for TLS connections to metadata nodes (property registry and etcd node discovery mode only)")
 	return fs
 }
 
@@ -205,8 +215,9 @@ func (s *clientService) Validate() error {
 			s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS, NodeDiscoveryModeFile)
 	}
 
-	// Validate etcd endpoints (always required for schema storage, regardless of node discovery mode)
-	if len(s.endpoints) == 0 {
+	// Validate etcd endpoints if node discovery or metadata registry mode is etcd
+	if (s.nodeDiscoveryMode == NodeDiscoveryModeEtcd || s.metadataRegistryMode == NodeDiscoveryModeEtcd) &&
+		len(s.endpoints) == 0 {
 		return errors.New("etcd endpoints cannot be empty")
 	}
 
@@ -233,6 +244,12 @@ func (s *clientService) Validate() error {
 		}
 		if _, err := os.Stat(s.filePath); err != nil {
 			return fmt.Errorf("file path validation failed: %w", err)
+		}
+	}
+
+	if s.metadataRegistryMode == RegistryModeProperty && s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && s.metadataNodeTLSEnabled {
+		if s.metadataNodeTLSCertFile == "" {
+			return errors.New("metadata node TLS is enabled, but no client certificate file was provided")
 		}
 	}
 
@@ -326,66 +343,8 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			return err
 		}
 	} else if s.metadataRegistryMode == RegistryModeProperty {
-		if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd {
-			return errors.New("property registry mode does not support etcd-based node discovery, please use DNS or file mode")
-		}
-
-		var dialProvider discoverycommon.GRPCDialOptionsProvider
-		if s.dnsDiscovery != nil {
-			dialProvider = s.dnsDiscovery
-		} else if s.fileDiscovery != nil {
-			dialProvider = s.fileDiscovery
-		}
-
-		var currentNode *metadataproperty.NodeInfo
-		n := buildNodeFromContext(ctx)
-		if n != nil {
-			currentNode = &metadataproperty.NodeInfo{
-				Node:               n,
-				SchemaMgrClient:    s.schemaManagementClient,
-				SchemaUpdateClient: s.schemaUpdateClient,
-			}
-		}
-
-		registryCfg := &metadataproperty.ClientConfig{
-			GRPCTimeout:     s.grpcTimeout,
-			SyncInterval:    s.propertySchemaSyncInterval,
-			OMR:             s.omr,
-			Node:            currentNode,
-			NodeSchema:      s.NodeRegistry(),
-			DialOptProvider: dialProvider,
-		}
-		var initAttempt int
-		for {
-			registry, initErr := metadataproperty.NewSchemaRegistryClient(registryCfg) //nolint:contextcheck
-			if errors.Is(initErr, context.DeadlineExceeded) || errors.Is(initErr, context.Canceled) {
-				select {
-				case <-stopCh:
-					return errors.New("pre-run interrupted")
-				case <-time.After(s.registryTimeout):
-					return errors.New("pre-run timeout")
-				case <-s.closer.CloseNotify():
-					return errors.New("pre-run interrupted")
-				default:
-					l.Warn().Msg("the property schema registry init timeout, retrying...")
-					time.Sleep(time.Second)
-					continue
-				}
-			}
-			if initErr != nil {
-				initAttempt++
-				if initAttempt >= propertyRegistryInitRetryCount {
-					return fmt.Errorf("failed to initialize property schema registry after %d attempts: %w",
-						initAttempt, initErr)
-				}
-				l.Warn().Err(initErr).Msgf("failed to initialize property schema registry, attempt %d/%d, retrying in %s...",
-					initAttempt, propertyRegistryInitRetryCount, propertyRegistryInitRetrySleep)
-				time.Sleep(propertyRegistryInitRetrySleep)
-				continue
-			}
-			s.RegisterHandler("property-schema-registry", schema.KindNode, registry)
-			s.schemaRegistry = registry
-			break
+		if err := s.initPropertySchemaRegistry(ctx, l, stopCh); err != nil {
+			return fmt.Errorf("failed to initialize property schema registry: %w", err)
 		}
 	}
 
@@ -501,6 +460,10 @@ func (s *clientService) GracefulStop() {
 		if err := s.schemaRegistry.Close(); err != nil {
 			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
 		}
+	}
+
+	if s.metadataDialProvider != nil {
+		s.metadataDialProvider.tlsReloader.Stop()
 	}
 }
 
@@ -680,6 +643,97 @@ func (s *clientService) SetDataBroadcaster(broadcaster bus.Broadcaster) {
 
 func (s *clientService) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
 	s.liaisonBroadcaster = broadcaster
+}
+
+func (s *clientService) initMetadataNodeTLS(l *logger.Logger) (*metadataNodeDialProvider, error) {
+	reloader, err := pkgtls.NewClientCertReloader(s.metadataNodeTLSCertFile, l)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TLS cert reloader: %w", err)
+	}
+	if err = reloader.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start TLS cert reloader: %w", err)
+	}
+	return &metadataNodeDialProvider{tlsReloader: reloader}, nil
+}
+
+func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logger.Logger, stopCh chan struct{}) error {
+	var dialProvider pub.DialOptionsProvider
+	switch {
+	case s.dnsDiscovery != nil:
+		dialProvider = s.dnsDiscovery
+	case s.fileDiscovery != nil:
+		dialProvider = s.fileDiscovery
+	case s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && s.metadataNodeTLSEnabled:
+		// for the etcd-based node discovery mode with TLS enabled to metadata nodes,
+		// we need to create a dial provider with TLS cert reloader.
+		var err error
+		s.metadataDialProvider, err = s.initMetadataNodeTLS(l)
+		if err != nil {
+			return err
+		}
+		dialProvider = s.metadataDialProvider
+	}
+
+	var currentNode *metadataproperty.NodeInfo
+	n := buildNodeFromContext(ctx)
+	if n != nil {
+		currentNode = &metadataproperty.NodeInfo{
+			Node:               n,
+			SchemaMgrClient:    s.schemaManagementClient,
+			SchemaUpdateClient: s.schemaUpdateClient,
+		}
+	}
+
+	registryCfg := &metadataproperty.ClientConfig{
+		GRPCTimeout:  s.grpcTimeout,
+		SyncInterval: s.propertySchemaSyncInterval,
+		OMR:          s.omr,
+		Node:         currentNode,
+		NodeSchema:   s.NodeRegistry(),
+		DialProvider: dialProvider,
+	}
+	var initAttempt int
+	for {
+		registry, initErr := metadataproperty.NewSchemaRegistryClient(registryCfg) //nolint:contextcheck
+		if errors.Is(initErr, context.DeadlineExceeded) || errors.Is(initErr, context.Canceled) {
+			select {
+			case <-stopCh:
+				return errors.New("pre-run interrupted")
+			case <-time.After(s.registryTimeout):
+				return errors.New("pre-run timeout")
+			case <-s.closer.CloseNotify():
+				return errors.New("pre-run interrupted")
+			default:
+				l.Warn().Msg("the property schema registry init timeout, retrying...")
+				time.Sleep(time.Second)
+				continue
+			}
+		}
+		if initErr != nil {
+			initAttempt++
+			if initAttempt >= propertyRegistryInitRetryCount {
+				return fmt.Errorf("failed to initialize property schema registry after %d attempts: %w",
+					initAttempt, initErr)
+			}
+			l.Warn().Err(initErr).Msgf("failed to initialize property schema registry, attempt %d/%d, retrying in %s...",
+				initAttempt, propertyRegistryInitRetryCount, propertyRegistryInitRetrySleep)
+			time.Sleep(propertyRegistryInitRetrySleep)
+			continue
+		}
+		s.RegisterHandler("property-schema-registry", schema.KindNode, registry)
+		s.schemaRegistry = registry
+		break
+	}
+	return nil
+}
+
+type metadataNodeDialProvider struct {
+	tlsReloader *pkgtls.Reloader
+}
+
+func (m *metadataNodeDialProvider) GetDialOptions(_ string) ([]grpc.DialOption, error) {
+	creds := credentials.NewTLS(m.tlsReloader.GetTLSConfig())
+	return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
 }
 
 func contains(s []string, e string) bool {

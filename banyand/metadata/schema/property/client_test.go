@@ -252,7 +252,7 @@ func TestNewSchemaRegistry(t *testing.T) {
 	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
 	require.NoError(t, registryErr)
 	require.NotNil(t, registry)
-	assert.NotNil(t, registry.nodeConns)
+	assert.NotNil(t, registry.nodesClient)
 	assert.NotNil(t, registry.handlers)
 	assert.NotNil(t, registry.cache)
 	assert.NotNil(t, registry.closer)
