@@ -126,7 +126,8 @@ func Analyze(
 
 	if criteria.GetAgg() != nil {
 		aggrFunc := criteria.GetAgg().GetFunction()
-		if isDistributed && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+		// Use DISTRIBUTED_MEAN only when no Top: Top needs "value" field to sort, DISTRIBUTED_MEAN outputs value_sum/value_count.
+		if isDistributed && criteria.GetTop() == nil && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
 			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
 		}
 		plan = newUnresolvedAggregation(plan,

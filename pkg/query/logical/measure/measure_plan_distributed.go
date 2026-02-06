@@ -161,9 +161,11 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.Top = ud.originalQuery.Top
 		temp.GroupBy = ud.originalQuery.GroupBy
 	}
-	// Prepare groupBy tags refs if needed for deduplication
+	// Prepare groupBy tags refs if needed for deduplication or MEAN merge (topn with MEAN).
 	var groupByTagsRefs [][]*logical.TagRef
-	if ud.needCompletePushDownAgg && ud.originalQuery.GetGroupBy() != nil {
+	if ud.originalQuery.GetGroupBy() != nil &&
+		(ud.needCompletePushDownAgg || (ud.originalQuery.GetAgg() != nil &&
+			ud.originalQuery.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN)) {
 		groupByTags := logical.ToTags(ud.originalQuery.GetGroupBy().GetTagProjection())
 		var err error
 		groupByTagsRefs, err = s.CreateTagRef(groupByTags...)
@@ -282,6 +284,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	var pushedDownAggDps []*measurev1.InternalDataPoint
 	var responseCount int
 	var dataPointCount int
+	// Only merge MEAN when data nodes return aggregated (value_sum, value_count).
+	// RewriteAggTopNResult: data nodes return rewrite result (raw "value"), not aggregated - skip merge.
+	needMeanMerge := t.queryTemplate.Agg != nil &&
+		t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
+		!t.queryTemplate.RewriteAggTopNResult
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -292,15 +299,18 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				if span != nil {
 					span.AddSubTrace(d.Trace)
 				}
-				if t.needCompletePushDownAgg {
+				if t.needCompletePushDownAgg || needMeanMerge {
 					pushedDownAggDps = append(pushedDownAggDps, d.DataPoints...)
 					dataPointCount += len(d.DataPoints)
-					continue
+					if !needMeanMerge {
+						continue
+					}
+				} else {
+					dataPointCount += len(d.DataPoints)
+					see = append(see,
+						newSortableElements(d.DataPoints,
+							t.sortByTime, t.sortTagSpec))
 				}
-				dataPointCount += len(d.DataPoints)
-				see = append(see,
-					newSortableElements(d.DataPoints,
-						t.sortByTime, t.sortTagSpec))
 			case *common.Error:
 				err = multierr.Append(err, fmt.Errorf("data node error: %s", d.Error()))
 			}
@@ -316,17 +326,37 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
 		}
-		// merge: for MEAN, merge sum and count from different shards with same groupKey
-		if t.queryTemplate.Agg != nil &&
-			t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
-			mergedDps, mergeErr := mergeMeanAggregation(deduplicatedDps,
-				t.queryTemplate.Agg.FieldName, t.groupByTagsRefs)
+		// merge: for MEAN, group by groupKey then merge sum and count from different shards
+		if needMeanMerge {
+			grouped, groupErr := GroupInternalDataPointsByKey(deduplicatedDps, t.groupByTagsRefs)
+			if groupErr != nil {
+				return nil, multierr.Append(err, groupErr)
+			}
+			mergedDps, mergeErr := MergeMeanFromGroupedDataPoints(grouped, t.queryTemplate.Agg.FieldName)
 			if mergeErr != nil {
 				return nil, multierr.Append(err, mergeErr)
 			}
 			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
 		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
+	}
+	if needMeanMerge {
+		// MEAN with topn: merge sum/count before sorting, then sort and return
+		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
+		if dedupErr != nil {
+			return nil, multierr.Append(err, dedupErr)
+		}
+		grouped, groupErr := GroupInternalDataPointsByKey(deduplicatedDps, t.groupByTagsRefs)
+		if groupErr != nil {
+			return nil, multierr.Append(err, groupErr)
+		}
+		mergedDps, mergeErr := MergeMeanFromGroupedDataPoints(grouped, t.queryTemplate.Agg.FieldName)
+		if mergeErr != nil {
+			return nil, multierr.Append(err, mergeErr)
+		}
+		for _, idp := range mergedDps {
+			see = append(see, newSortableElements([]*measurev1.InternalDataPoint{idp}, t.sortByTime, t.sortTagSpec))
+		}
 	}
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),
@@ -585,108 +615,4 @@ func hashWithShard(shardID, groupKey uint64) uint64 {
 	h = (h ^ shardID) * prime64
 	h = (h ^ groupKey) * prime64
 	return h
-}
-
-// mergeMeanAggregation merges mean aggregation results (sum and count) from multiple data nodes.
-func mergeMeanAggregation(dataPoints []*measurev1.InternalDataPoint, fieldName string, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
-	type meanMergeState struct {
-		dataPoint  *measurev1.DataPoint
-		shardID    uint32
-		sumInt     int64
-		countInt   int64
-		sumFloat   float64
-		countFloat float64
-	}
-	groupMap := make(map[uint64]*meanMergeState)
-	for _, idp := range dataPoints {
-		dp := idp.GetDataPoint()
-		var groupKey uint64
-		if len(groupByTagsRefs) > 0 {
-			var keyErr error
-			groupKey, keyErr = formatGroupByKey(dp, groupByTagsRefs)
-			if keyErr != nil {
-				return nil, keyErr
-			}
-		}
-		var sumVal int64
-		var countVal int64
-		var sumFloat float64
-		var countFloat float64
-		var isFloat bool
-		var sumFound, countFound bool
-		sumFieldName, countFieldName := distributedMeanFieldNames(fieldName)
-		for _, field := range dp.Fields {
-			if field.Name == sumFieldName {
-				if intVal := field.Value.GetInt(); intVal != nil {
-					sumVal = intVal.Value
-					isFloat = false
-					sumFound = true
-				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
-					sumFloat = floatVal.Value
-					isFloat = true
-					sumFound = true
-				}
-			} else if field.Name == countFieldName {
-				if intVal := field.Value.GetInt(); intVal != nil {
-					countVal = intVal.Value
-					countFound = true
-				} else if floatVal := field.Value.GetFloat(); floatVal != nil {
-					countFloat = floatVal.Value
-					countFound = true
-				}
-			}
-		}
-		if !sumFound || !countFound {
-			continue
-		}
-		if _, exists := groupMap[groupKey]; !exists {
-			groupMap[groupKey] = &meanMergeState{
-				dataPoint: &measurev1.DataPoint{
-					TagFamilies: dp.TagFamilies,
-				},
-				shardID: idp.ShardId,
-			}
-		}
-		mg := groupMap[groupKey]
-		if isFloat {
-			mg.sumFloat += sumFloat
-			mg.countFloat += countFloat
-		} else {
-			mg.sumInt += sumVal
-			mg.countInt += countVal
-		}
-	}
-	result := make([]*measurev1.InternalDataPoint, 0, len(groupMap))
-	for _, mg := range groupMap {
-		var meanVal *modelv1.FieldValue
-		switch {
-		case mg.countFloat > 0:
-			mean := mg.sumFloat / mg.countFloat
-			meanVal = &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Float{
-					Float: &modelv1.Float{Value: mean},
-				},
-			}
-		case mg.countInt > 0:
-			mean := mg.sumInt / mg.countInt
-			meanVal = &modelv1.FieldValue{
-				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{Value: mean},
-				},
-			}
-		default:
-			continue
-		}
-		mg.dataPoint.Fields = []*measurev1.DataPoint_Field{
-			{
-				Name:  fieldName,
-				Value: meanVal,
-			},
-		}
-		result = append(result, &measurev1.InternalDataPoint{
-			DataPoint: mg.dataPoint,
-			ShardId:   mg.shardID,
-		})
-	}
-	return result, nil
 }

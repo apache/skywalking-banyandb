@@ -157,3 +157,8 @@ func (m *distributedMeanFunc[N]) Reset() {
 	m.sum = m.zero
 	m.count = m.zero
 }
+
+// GetSumCount returns sum and count for distributed mean merge (used by measure plan).
+func (m *distributedMeanFunc[N]) GetSumCount() (N, N) {
+	return m.sum, m.count
+}

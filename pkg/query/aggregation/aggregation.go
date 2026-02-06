@@ -116,17 +116,3 @@ func zero[N Number]() N {
 	var z N
 	return z
 }
-
-// IsDistributedMean checks if the function is a distributed mean function.
-func IsDistributedMean[N Number](f Func[N]) bool {
-	_, ok := f.(*distributedMeanFunc[N])
-	return ok
-}
-
-// GetSumCount returns sum and count if the function is a distributed mean function.
-func GetSumCount[N Number](f Func[N]) (sum N, count N, ok bool) {
-	if dmf, ok := f.(*distributedMeanFunc[N]); ok {
-		return dmf.sum, dmf.count, true
-	}
-	return zero[N](), zero[N](), false
-}
