@@ -45,6 +45,9 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 			partsToMerge = append(partsToMerge, pw)
 		}
 	}
+	if len(partsToMerge) == 0 {
+		return nil, nil
+	}
 	if d := s.l.Debug(); d.Enabled() {
 		if len(partsToMerge) != len(partIDtoMerge) {
 			d.Int("parts_to_merge_count", len(partsToMerge)).
