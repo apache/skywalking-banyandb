@@ -168,6 +168,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		mergerIntroduction, mergeErr := sidxInstance.Merge(closeCh, partIDMap, newPartID)
 		if mergeErr != nil {
 			tst.l.Warn().Err(mergeErr).Msg("sidx merge mem parts failed")
+			tst.removeSidxPartOnFailure(sidxName, newPartID)
 			tst.removeTracePartOnFailure(newPart)
 			for doneSidxName, intro := range mergerIntroductionMap {
 				intro.ReleaseNewPart()
