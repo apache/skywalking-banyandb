@@ -64,6 +64,8 @@ const (
 )
 
 const (
+	// FlagRegistryModeName is the falg name for registry mode.
+	FlagRegistryModeName = "schema-registry-mode"
 	// RegistryModeEtcd represents etcd-based metadata storage mode.
 	RegistryModeEtcd = "etcd"
 	// RegistryModeProperty represents native property-based metadata storage mode.
@@ -191,7 +193,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Backoff multiplier for retry intervals in DNS discovery mode")
 
 	// schema management configuration
-	fs.StringVar(&s.metadataRegistryMode, "schema-registry-mode", "property",
+	fs.StringVar(&s.metadataRegistryMode, FlagRegistryModeName, RegistryModeProperty,
 		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 30*time.Second,
 		"Interval to sync property-based schema in client side with other nodes")

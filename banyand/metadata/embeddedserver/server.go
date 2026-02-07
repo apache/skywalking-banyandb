@@ -89,8 +89,13 @@ func (s *server) Validate() error {
 	if s.autoCompactionRetention == "" {
 		return errors.New("autoCompactionRetention is empty")
 	}
-	if err := s.Service.FlagSet().Set(metadatclient.FlagEtcdEndpointsName,
+	flags := s.Service.FlagSet()
+	if err := flags.Set(metadatclient.FlagEtcdEndpointsName,
 		strings.Join(s.listenClientURL, ",")); err != nil {
+		return err
+	}
+	if err := flags.Set(metadatclient.FlagRegistryModeName,
+		metadatclient.RegistryModeEtcd); err != nil {
 		return err
 	}
 	return s.Service.Validate()
