@@ -236,6 +236,19 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		sidxFlusherIntroduced, err := sidxInstance.Flush(partIDMap)
 		if err != nil {
 			tst.l.Warn().Err(err).Str("sidx", name).Msg("sidx flush failed")
+			for _, sidxIntro := range ind.sidxFlusherIntroduced {
+				sidxIntro.ReleaseFlushedParts()
+				sidxIntro.Release()
+			}
+			for partID := range partIDMap {
+				for sidxName := range ind.sidxFlusherIntroduced {
+					tst.removeSidxPartOnFailure(sidxName, partID)
+				}
+				tst.removeSidxPartOnFailure(name, partID)
+			}
+			for _, pw := range ind.flushed {
+				tst.removeTracePartOnFailure(pw)
+			}
 			return
 		}
 		ind.sidxFlusherIntroduced[name] = sidxFlusherIntroduced

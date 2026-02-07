@@ -19,6 +19,7 @@ package trace
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	snapshotpkg "github.com/apache/skywalking-banyandb/banyand/internal/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -223,61 +224,141 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 }
 
 func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
-	cur := tst.currentSnapshot()
-	if cur != nil {
-		defer cur.decRef()
-	} else {
-		cur = new(snapshot)
-	}
+	// Create generic transaction
+	txn := snapshotpkg.NewTransaction()
+	defer txn.Release()
 
+	// Prepare trace snapshot transition
 	next := nextIntroduction.memPart
 	tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
-	nextSnp := cur.copyAllTo(epoch)
-	nextSnp.parts = append(nextSnp.parts, next)
-	nextSnp.creator = snapshotCreatorMemPart
-	tst.replaceSnapshot(&nextSnp)
+	partID := next.p.partMetadata.ID
+
+	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
+		if cur == nil {
+			cur = new(snapshot)
+		}
+		nextSnp := cur.copyAllTo(epoch)
+		nextSnp.parts = append(nextSnp.parts, next)
+		nextSnp.creator = snapshotCreatorMemPart
+		return &nextSnp
+	})
+	defer traceTransition.Release()
+	snapshotpkg.AddTransition(txn, traceTransition)
+
+	// Prepare sidx snapshot transitions
+	var sidxTransitions []*snapshotpkg.Transition[*sidx.Snapshot]
 	for name, memPart := range nextIntroduction.sidxReqsMap {
-		tst.mustGetOrCreateSidx(name).IntroduceMemPart(next.p.partMetadata.ID, memPart)
+		sidxInstance := tst.mustGetOrCreateSidx(name)
+		prepareFunc := sidxInstance.PrepareMemPart(partID, memPart)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
 	}
+	defer func() {
+		for _, t := range sidxTransitions {
+			t.Release()
+		}
+	}()
+
+	// Commit all atomically under single transaction lock
+	txn.Commit()
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
 }
 
 func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoch uint64) {
-	cur := tst.currentSnapshot()
-	if cur == nil {
-		tst.l.Panic().Msg("current snapshot is nil")
-	}
-	defer cur.decRef()
-	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
-	nextSnp.creator = snapshotCreatorFlusher
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
+	// Create generic transaction
+	txn := snapshotpkg.NewTransaction()
+	defer txn.Release()
+
+	// Prepare trace snapshot transition
+	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
+		if cur == nil {
+			tst.l.Panic().Msg("current snapshot is nil")
+		}
+		nextSnp := cur.merge(epoch, nextIntroduction.flushed)
+		nextSnp.creator = snapshotCreatorFlusher
+		return &nextSnp
+	})
+	defer traceTransition.Release()
+	snapshotpkg.AddTransition(txn, traceTransition)
+
+	// Prepare sidx snapshot transitions
+	var sidxTransitions []*snapshotpkg.Transition[*sidx.Snapshot]
 	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
-		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
+		sidxInstance := tst.mustGetSidx(name)
+		prepareFunc := sidxInstance.PrepareFlushed(sidxFlusherIntroduced)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
 	}
+	defer func() {
+		for _, t := range sidxTransitions {
+			t.Release()
+		}
+	}()
+
+	// Commit all atomically under single transaction lock
+	txn.Commit()
+
+	// Persist snapshot after commit
+	cur := tst.currentSnapshot()
+	if cur != nil {
+		defer cur.decRef()
+		tst.persistSnapshot(cur)
+	}
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
 }
 
 // introduceFlushedForSync introduces the flushed trace parts for syncing.
-// The SIDX parts are flushed before the trace parts so the syncer can always find
-// the corresponding index on disk once a flushed trace part becomes visible.
+// The snapshots are updated atomically so the syncer can always find
+// the corresponding index once a flushed trace part becomes visible.
 func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroduction, epoch uint64) {
+	// Create generic transaction
+	txn := snapshotpkg.NewTransaction()
+	defer txn.Release()
+
+	// Prepare sidx snapshot transitions first for visibility ordering
+	var sidxTransitions []*snapshotpkg.Transition[*sidx.Snapshot]
 	for name, sidxFlusherIntroduced := range nextIntroduction.sidxFlusherIntroduced {
-		tst.mustGetSidx(name).IntroduceFlushed(sidxFlusherIntroduced)
+		sidxInstance := tst.mustGetSidx(name)
+		prepareFunc := sidxInstance.PrepareFlushed(sidxFlusherIntroduced)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
 	}
+	defer func() {
+		for _, t := range sidxTransitions {
+			t.Release()
+		}
+	}()
+
+	// Prepare trace snapshot transition
+	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
+		if cur == nil {
+			tst.l.Panic().Msg("current snapshot is nil")
+		}
+		nextSnp := cur.merge(epoch, nextIntroduction.flushed)
+		nextSnp.creator = snapshotCreatorFlusher
+		return &nextSnp
+	})
+	defer traceTransition.Release()
+	snapshotpkg.AddTransition(txn, traceTransition)
+
+	// Commit all atomically under single transaction lock
+	txn.Commit()
+
+	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
-	if cur == nil {
-		tst.l.Panic().Msg("current snapshot is nil")
+	if cur != nil {
+		defer cur.decRef()
+		tst.persistSnapshot(cur)
 	}
-	defer cur.decRef()
-	nextSnp := cur.merge(epoch, nextIntroduction.flushed)
-	nextSnp.creator = snapshotCreatorFlusher
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
 
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
@@ -285,23 +366,48 @@ func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroductio
 }
 
 func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint64) {
-	cur := tst.currentSnapshot()
-	if cur == nil {
-		tst.l.Panic().Msg("current snapshot is nil")
-		return
-	}
-	defer cur.decRef()
-	nextSnp := cur.remove(epoch, nextIntroduction.merged)
-	nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
-	nextSnp.creator = nextIntroduction.creator
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
-	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
-		deferFuncs := tst.mustGetSidx(name).IntroduceMerged(sidxMergerIntroduced)
-		if deferFuncs != nil {
-			defer deferFuncs()
+	// Create generic transaction
+	txn := snapshotpkg.NewTransaction()
+	defer txn.Release()
+
+	// Prepare trace snapshot transition
+	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
+		if cur == nil {
+			tst.l.Panic().Msg("current snapshot is nil")
 		}
+		nextSnp := cur.remove(epoch, nextIntroduction.merged)
+		nextSnp.parts = append(nextSnp.parts, nextIntroduction.newPart)
+		nextSnp.creator = nextIntroduction.creator
+		return &nextSnp
+	})
+	defer traceTransition.Release()
+	snapshotpkg.AddTransition(txn, traceTransition)
+
+	// Prepare sidx snapshot transitions
+	var sidxTransitions []*snapshotpkg.Transition[*sidx.Snapshot]
+	for name, sidxMergerIntroduced := range nextIntroduction.sidxMergerIntroduced {
+		sidxInstance := tst.mustGetSidx(name)
+		prepareFunc := sidxInstance.PrepareMerged(sidxMergerIntroduced)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
 	}
+	defer func() {
+		for _, t := range sidxTransitions {
+			t.Release()
+		}
+	}()
+
+	// Commit all atomically under single transaction lock
+	txn.Commit()
+
+	// Persist snapshot after commit
+	cur := tst.currentSnapshot()
+	if cur != nil {
+		defer cur.decRef()
+		tst.persistSnapshot(cur)
+	}
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
@@ -309,33 +415,73 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 
 func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint64) {
 	synced := nextIntroduction.synced
+
+	// Create generic transaction
+	txn := snapshotpkg.NewTransaction()
+	defer txn.Release()
+
+	// Prepare sidx snapshot transitions
+	var sidxTransitions []*snapshotpkg.Transition[*sidx.Snapshot]
 	allSidx := tst.getAllSidx()
-	for _, sidx := range allSidx {
-		deferFuncs := sidx.IntroduceSynced(synced)
-		if deferFuncs != nil {
-			defer deferFuncs()
+	for _, sidxInstance := range allSidx {
+		prepareFunc := sidxInstance.PrepareSynced(synced)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
+	}
+	defer func() {
+		for _, t := range sidxTransitions {
+			t.Release()
 		}
-	}
+	}()
+
+	// Prepare trace snapshot transition
+	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
+		if cur == nil {
+			tst.l.Panic().Msg("current snapshot is nil")
+		}
+		nextSnp := cur.remove(epoch, synced)
+		nextSnp.creator = snapshotCreatorSyncer
+		return &nextSnp
+	})
+	defer traceTransition.Release()
+	snapshotpkg.AddTransition(txn, traceTransition)
+
+	// Commit all atomically under single transaction lock
+	txn.Commit()
+
+	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
-	if cur == nil {
-		tst.l.Panic().Msg("current snapshot is nil")
-		return
+	if cur != nil {
+		defer cur.decRef()
+		tst.persistSnapshot(cur)
 	}
-	defer cur.decRef()
-	nextSnp := cur.remove(epoch, synced)
-	nextSnp.creator = snapshotCreatorSyncer
-	tst.replaceSnapshot(&nextSnp)
-	tst.persistSnapshot(&nextSnp)
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}
 }
 
-func (tst *tsTable) replaceSnapshot(next *snapshot) {
+// CurrentSnapshot returns the current snapshot with incremented reference count.
+// Implements snapshot.Manager[*snapshot] interface.
+func (tst *tsTable) CurrentSnapshot() *snapshot {
+	tst.RLock()
+	defer tst.RUnlock()
+	if tst.snapshot == nil {
+		return nil
+	}
+	tst.snapshot.IncRef()
+	return tst.snapshot
+}
+
+// ReplaceSnapshot atomically replaces the current snapshot with next.
+// Implements snapshot.Manager[*snapshot] interface.
+// The old snapshot's DecRef is called automatically per the Manager contract.
+func (tst *tsTable) ReplaceSnapshot(next *snapshot) {
 	tst.Lock()
 	defer tst.Unlock()
 	if tst.snapshot != nil {
-		tst.snapshot.decRef()
+		tst.snapshot.DecRef()
 	}
 	tst.snapshot = next
 }

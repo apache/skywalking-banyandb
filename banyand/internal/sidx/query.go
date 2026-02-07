@@ -149,7 +149,7 @@ func finalizeStreamingSpan(span *query.Span, errPtr *error) {
 func (s *sidx) prepareStreamingResources(
 	ctx context.Context,
 	req QueryRequest,
-	snap *snapshot,
+	snap *Snapshot,
 	span *query.Span,
 ) (*streamingQueryResources, bool) {
 	var prepareSpan *query.Span
@@ -485,7 +485,7 @@ func extractOrdering(req QueryRequest) bool {
 }
 
 // selectPartsForQuery selects relevant parts from snapshot based on key range.
-func selectPartsForQuery(snap *snapshot, minKey, maxKey int64) []*part {
+func selectPartsForQuery(snap *Snapshot, minKey, maxKey int64) []*part {
 	var selectedParts []*part
 
 	for _, pw := range snap.parts {

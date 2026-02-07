@@ -20,6 +20,7 @@ package trace
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -164,10 +165,20 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
 	for sidxName, sidxInstance := range tst.getAllSidx() {
 		start = time.Now()
-		mergerIntroduction, err := sidxInstance.Merge(closeCh, partIDMap, newPartID)
-		if err != nil {
-			tst.l.Warn().Err(err).Msg("sidx merge mem parts failed")
-			return nil, err
+		mergerIntroduction, mergeErr := sidxInstance.Merge(closeCh, partIDMap, newPartID)
+		if mergeErr != nil {
+			tst.l.Warn().Err(mergeErr).Msg("sidx merge mem parts failed")
+			tst.removeSidxPartOnFailure(sidxName, newPartID)
+			tst.removeTracePartOnFailure(newPart)
+			for doneSidxName, intro := range mergerIntroductionMap {
+				intro.ReleaseNewPart()
+				tst.removeSidxPartOnFailure(doneSidxName, newPartID)
+				intro.Release()
+			}
+			return nil, mergeErr
+		}
+		if mergerIntroduction == nil {
+			continue
 		}
 		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
@@ -269,6 +280,29 @@ func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 }
 
 var errNoPartToMerge = fmt.Errorf("no part to merge")
+
+// removeTracePartOnFailure closes the part and removes its directory from disk.
+// Used when a merge fails after the trace part was created so the directory is not left as trash.
+func (tst *tsTable) removeTracePartOnFailure(pw *partWrapper) {
+	if pw == nil {
+		return
+	}
+	pathToRemove := pw.p.path
+	pw.decRef()
+	tst.fileSystem.MustRMAll(pathToRemove)
+}
+
+// sidxPartPath returns the on-disk path for a sidx part (same layout as sidx package).
+func sidxPartPath(traceRoot, sidxName string, partID uint64) string {
+	return filepath.Join(traceRoot, sidxDirName, sidxName, fmt.Sprintf("%016x", partID))
+}
+
+// removeSidxPartOnFailure removes a sidx part directory from disk.
+// Used when a merge fails after one or more sidx parts were created.
+func (tst *tsTable) removeSidxPartOnFailure(sidxName string, partID uint64) {
+	pathToRemove := sidxPartPath(tst.root, sidxName, partID)
+	tst.fileSystem.MustRMAll(pathToRemove)
+}
 
 func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
 	if len(parts) == 0 {
