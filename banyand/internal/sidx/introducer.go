@@ -34,6 +34,17 @@ func (i *FlusherIntroduction) Release() {
 	releaseFlusherIntroduction(i)
 }
 
+// ReleaseFlushedParts releases all flushed part wrappers (closes file handles).
+// Call this when a flush is abandoned so the caller can remove part directories from disk before calling Release().
+func (i *FlusherIntroduction) ReleaseFlushedParts() {
+	for _, pw := range i.flushed {
+		pw.release()
+	}
+	for k := range i.flushed {
+		delete(i.flushed, k)
+	}
+}
+
 func (i *FlusherIntroduction) reset() {
 	for k := range i.flushed {
 		delete(i.flushed, k)
@@ -67,6 +78,15 @@ type MergerIntroduction struct {
 // Release releases the MergerIntroduction back to the pool.
 func (i *MergerIntroduction) Release() {
 	releaseMergerIntroduction(i)
+}
+
+// ReleaseNewPart releases the newPart from this introduction (closes file handles).
+// Call this when the merge is abandoned so the part can be removed from disk by the caller.
+func (i *MergerIntroduction) ReleaseNewPart() {
+	if i.newPart != nil {
+		i.newPart.release()
+		i.newPart = nil
+	}
 }
 
 func (i *MergerIntroduction) reset() {
