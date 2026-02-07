@@ -34,6 +34,17 @@ func (i *FlusherIntroduction) Release() {
 	releaseFlusherIntroduction(i)
 }
 
+// ReleaseFlushedParts releases all flushed part wrappers (closes file handles).
+// Call this when a flush is abandoned so the caller can remove part directories from disk before calling Release().
+func (i *FlusherIntroduction) ReleaseFlushedParts() {
+	for _, pw := range i.flushed {
+		pw.release()
+	}
+	for k := range i.flushed {
+		delete(i.flushed, k)
+	}
+}
+
 func (i *FlusherIntroduction) reset() {
 	for k := range i.flushed {
 		delete(i.flushed, k)
@@ -69,6 +80,15 @@ func (i *MergerIntroduction) Release() {
 	releaseMergerIntroduction(i)
 }
 
+// ReleaseNewPart releases the newPart from this introduction (closes file handles).
+// Call this when the merge is abandoned so the part can be removed from disk by the caller.
+func (i *MergerIntroduction) ReleaseNewPart() {
+	if i.newPart != nil {
+		i.newPart.release()
+		i.newPart = nil
+	}
+}
+
 func (i *MergerIntroduction) reset() {
 	for k := range i.merged {
 		delete(i.merged, k)
@@ -100,7 +120,7 @@ func (s *sidx) IntroduceMemPart(partID uint64, memPart *memPart) {
 	if cur != nil {
 		defer cur.decRef()
 	} else {
-		cur = &snapshot{}
+		cur = &Snapshot{}
 	}
 
 	nextSnp := cur.copyAllTo()
@@ -174,7 +194,7 @@ func (s *sidx) TakeFileSnapshot(dst string) error {
 	return nil
 }
 
-func (s *sidx) replaceSnapshot(next *snapshot) {
+func (s *sidx) replaceSnapshot(next *Snapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.snapshot != nil {

@@ -19,6 +19,8 @@ package trace
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -26,11 +28,14 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -1328,4 +1333,126 @@ func Test_mergeParts(t *testing.T) {
 			})
 		})
 	}
+}
+
+// sidxMergeErrFake is a SIDX that returns an error from Merge to test cleanup on failure.
+type sidxMergeErrFake struct {
+	fakeSIDX
+}
+
+func (f *sidxMergeErrFake) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (*sidx.MergerIntroduction, error) {
+	return nil, errors.New("sidx merge failed")
+}
+
+// Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError verifies that when sidx.Merge
+// returns an error, the newly created trace part and any sidx parts are removed from disk.
+func Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	// Create two file parts with IDs 10 and 11 so the merged part gets newPartID 1 (curPartID starts at 0).
+	var parts []*partWrapper
+	for i, ts := range []*traces{tsTS1, tsTS2} {
+		partID := uint64(10 + i)
+		mp := generateMemPart()
+		mp.mustInitFromTraces(ts)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+		p := mustOpenFilePart(partID, tmpPath, fileSystem)
+		p.partMetadata.ID = partID
+		parts = append(parts, newPartWrapper(nil, p))
+		releaseMemPart(mp)
+	}
+	defer func() {
+		for _, pw := range parts {
+			pw.decRef()
+		}
+	}()
+
+	closer := run.NewCloser(1)
+	defer closer.Done()
+	l := logger.GetLogger("trace-merger-test")
+	tst := &tsTable{
+		pm:         protector.Nop{},
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		loopCloser: closer,
+		l:          l,
+		curPartID:  0,
+		sidxMap: map[string]sidx.SIDX{
+			"idx1": &sidxMergeErrFake{fakeSIDX{}},
+		},
+	}
+
+	merged := make(map[uint64]struct{})
+	for _, pw := range parts {
+		merged[pw.ID()] = struct{}{}
+	}
+	merges := make(chan *mergerIntroduction, 1)
+	closeCh := make(chan struct{})
+
+	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sidx merge failed")
+
+	// New part ID is 1 (curPartID was 0, then AddUint64(..., 1)).
+	newPartID := uint64(1)
+	tracePartPath := partPath(tmpPath, newPartID)
+	require.False(t, fileSystem.IsExist(tracePartPath), "trace part directory should be removed on sidx merge failure")
+
+	sidxPartPath := filepath.Join(tmpPath, sidxDirName, "idx1", fmt.Sprintf("%016x", newPartID))
+	require.False(t, fileSystem.IsExist(sidxPartPath), "sidx part directory should not exist (no sidx part created before first Merge)")
+}
+
+// sidxFlushErrFake is a SIDX that returns an error from Flush to test cleanup on failure.
+type sidxFlushErrFake struct {
+	fakeSIDX
+}
+
+func (f *sidxFlushErrFake) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
+	return nil, errors.New("sidx flush failed")
+}
+
+// Test_flush_cleansUpOnSidxFlushError verifies that when any sidx.Flush returns an error,
+// the newly flushed trace parts and any sidx parts are removed from disk.
+func Test_flush_cleansUpOnSidxFlushError(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	partID := uint64(100)
+	mp := generateMemPart()
+	mp.mustInitFromTraces(tsTS1)
+	mp.partMetadata.ID = partID
+	pw := newPartWrapper(mp, openMemPart(mp))
+	pw.p.partMetadata.ID = partID
+	pw.incRef()
+	snp := &snapshot{
+		parts: []*partWrapper{pw},
+		epoch: 1,
+		ref:   1,
+	}
+	defer snp.decRef()
+
+	closer := run.NewCloser(1)
+	defer closer.Done()
+	l := logger.GetLogger("trace-flusher-test")
+	tst := &tsTable{
+		pm:         protector.Nop{},
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		loopCloser: closer,
+		l:          l,
+		sidxMap: map[string]sidx.SIDX{
+			"idx1": &sidxFlushErrFake{fakeSIDX{}},
+		},
+	}
+
+	flushCh := make(chan *flusherIntroduction, 1)
+	tst.flush(snp, flushCh)
+
+	tracePartPath := partPath(tmpPath, partID)
+	require.False(t, fileSystem.IsExist(tracePartPath), "trace part directory should be removed on sidx flush failure")
+	sidxPartPath := filepath.Join(tmpPath, sidxDirName, "idx1", fmt.Sprintf("%016x", partID))
+	require.False(t, fileSystem.IsExist(sidxPartPath), "sidx part directory should be removed on sidx flush failure")
 }

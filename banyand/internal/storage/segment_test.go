@@ -618,11 +618,11 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 	assert.NotNil(t, segments[5].index, "Segment 5 should remain open")
 
 	// Now delete expired segments
-	// Get the time range for segments 0, 1, and 2 (the expired ones)
+	// Use the same segment dates (UTC) used when creating segments 0, 1, 2 to avoid timezone mismatch with time.Now()
 	deletedCount := sc.deleteExpiredSegments([]string{
-		time.Now().AddDate(0, 0, -6).Format(dayFormat),
-		time.Now().AddDate(0, 0, -5).Format(dayFormat),
-		time.Now().AddDate(0, 0, -4).Format(dayFormat),
+		segmentDates[0].Format(dayFormat),
+		segmentDates[1].Format(dayFormat),
+		segmentDates[2].Format(dayFormat),
 	})
 	assert.Equal(t, int64(3), deletedCount, "Should have deleted 3 expired segments")
 

@@ -88,11 +88,15 @@ func (s *snapshot) getParts(dst []*part, minTimestamp int64, maxTimestamp int64,
 	return dst, count
 }
 
-func (s *snapshot) incRef() {
+// IncRef increments the snapshot reference count.
+// Implements the snapshot.Snapshot interface.
+func (s *snapshot) IncRef() {
 	atomic.AddInt32(&s.ref, 1)
 }
 
-func (s *snapshot) decRef() {
+// DecRef decrements the snapshot reference count.
+// Implements the snapshot.Snapshot interface.
+func (s *snapshot) DecRef() {
 	n := atomic.AddInt32(&s.ref, -1)
 	if n > 0 {
 		return
@@ -101,6 +105,16 @@ func (s *snapshot) decRef() {
 		s.parts[i].decRef()
 	}
 	s.parts = s.parts[:0]
+}
+
+// incRef is an internal helper for backward compatibility.
+func (s *snapshot) incRef() {
+	s.IncRef()
+}
+
+// decRef is an internal helper for backward compatibility.
+func (s *snapshot) decRef() {
+	s.DecRef()
 }
 
 func (s *snapshot) copyAllTo(nextEpoch uint64) snapshot {

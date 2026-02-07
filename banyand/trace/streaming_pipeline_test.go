@@ -86,6 +86,24 @@ func (f *fakeSIDX) ScanQuery(context.Context, sidx.ScanQueryRequest) ([]*sidx.Qu
 	return nil, nil
 }
 
+func (f *fakeSIDX) PrepareMemPart(uint64, *sidx.MemPart) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDX) PrepareFlushed(*sidx.FlusherIntroduction) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDX) PrepareMerged(*sidx.MergerIntroduction) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDX) PrepareSynced(map[uint64]struct{}) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+func (f *fakeSIDX) CurrentSnapshot() *sidx.Snapshot { return nil }
+func (f *fakeSIDX) ReplaceSnapshot(*sidx.Snapshot)  {}
+
 type fakeSIDXWithErr struct {
 	*fakeSIDX
 	err error
@@ -662,6 +680,23 @@ func (f *fakeSIDXInfinite) PartPaths(map[uint64]struct{}) map[uint64]string {
 }
 func (f *fakeSIDXInfinite) IntroduceSynced(map[uint64]struct{}) func() { return func() {} }
 func (f *fakeSIDXInfinite) TakeFileSnapshot(_ string) error            { return nil }
+func (f *fakeSIDXInfinite) PrepareMemPart(uint64, *sidx.MemPart) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDXInfinite) PrepareFlushed(*sidx.FlusherIntroduction) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDXInfinite) PrepareMerged(*sidx.MergerIntroduction) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDXInfinite) PrepareSynced(map[uint64]struct{}) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+func (f *fakeSIDXInfinite) CurrentSnapshot() *sidx.Snapshot { return nil }
+func (f *fakeSIDXInfinite) ReplaceSnapshot(*sidx.Snapshot)  {}
 
 // TestStreamSIDXTraceBatches_InfiniteChannelContinuesUntilCanceled verifies that
 // the streaming pipeline continues streaming from an infinite channel until context is canceled.
