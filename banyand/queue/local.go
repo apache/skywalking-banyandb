@@ -114,7 +114,7 @@ func (*local) HealthyNodes() []string {
 }
 
 // BroadcastWithExecutor is not supported for local queue as there are no distributed clients.
-func (*local) BroadcastWithExecutor(_ Executor) error {
+func (*local) BroadcastWithExecutor(_ int, _ Executor) error {
 	return nil
 }
 

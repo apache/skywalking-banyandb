@@ -56,9 +56,10 @@ type Client interface {
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
 	HealthyNodes() []string
-	// BroadcastWithExecutor executes the executor on all active clients in parallel.
+	// BroadcastWithExecutor executes the executor on active clients.
+	// maxParallel <= 0 means all nodes process concurrently, otherwise up to maxParallel nodes run concurrently.
 	// It checks circuit breaker before attempting each call and records success/failure.
-	BroadcastWithExecutor(executor Executor) error
+	BroadcastWithExecutor(maxParallel int, executor Executor) error
 }
 
 // Executor defines how to use a PubClient to process a request.

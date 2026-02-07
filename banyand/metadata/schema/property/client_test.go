@@ -257,9 +257,22 @@ func TestNewSchemaRegistry(t *testing.T) {
 	assert.NotNil(t, registry.cache)
 	assert.NotNil(t, registry.closer)
 	assert.Equal(t, syncInterval, registry.syncInterval)
+	assert.Equal(t, defaultFullReconcileEvery, registry.fullReconcileEvery)
 
 	closeErr := registry.Close()
 	assert.NoError(t, closeErr)
+}
+
+func TestNewSchemaRegistry_FullReconcileEveryOverride(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{
+		GRPCTimeout:        5 * time.Second,
+		SyncInterval:       syncInterval,
+		FullReconcileEvery: 5,
+	})
+	require.NoError(t, registryErr)
+	require.NotNil(t, registry)
+	assert.Equal(t, uint64(5), registry.fullReconcileEvery)
+	require.NoError(t, registry.Close())
 }
 
 type mockEventHandler struct {
@@ -396,6 +409,23 @@ func TestSchemaRegistry_Close(t *testing.T) {
 	assert.NoError(t, closeErr)
 }
 
+func TestSchemaRegistry_ShouldFullReconcile(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{
+		GRPCTimeout:        5 * time.Second,
+		SyncInterval:       syncInterval,
+		FullReconcileEvery: 3,
+	})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	assert.False(t, registry.shouldFullReconcile(1))
+	assert.False(t, registry.shouldFullReconcile(2))
+	assert.True(t, registry.shouldFullReconcile(3))
+	assert.False(t, registry.shouldFullReconcile(4))
+	assert.False(t, registry.shouldFullReconcile(5))
+	assert.True(t, registry.shouldFullReconcile(6))
+}
+
 func TestSchemaRegistry_CreateIndexRule_GeneratesCRC32ID(t *testing.T) {
 	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
 	require.NoError(t, registryErr)
@@ -498,6 +528,16 @@ func TestSchemaRegistry_CreateIndexRule_ValidationError(t *testing.T) {
 	createErr := registry.CreateIndexRule(context.Background(), &databasev1.IndexRule{})
 	assert.Error(t, createErr)
 	assert.Contains(t, createErr.Error(), "indexRule metadata is nil")
+}
+
+func TestSchemaRegistry_UpdateIndexRule_ValidationError(t *testing.T) {
+	registry, registryErr := NewSchemaRegistryClient(&ClientConfig{GRPCTimeout: 5 * time.Second, SyncInterval: syncInterval})
+	require.NoError(t, registryErr)
+	defer registry.Close()
+
+	updateErr := registry.UpdateIndexRule(context.Background(), &databasev1.IndexRule{})
+	assert.Error(t, updateErr)
+	assert.Contains(t, updateErr.Error(), "indexRule metadata is nil")
 }
 
 func TestSchemaRegistry_CreateIndexRuleBinding_ValidationError(t *testing.T) {

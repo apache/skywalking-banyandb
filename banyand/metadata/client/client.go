@@ -191,7 +191,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Backoff multiplier for retry intervals in DNS discovery mode")
 
 	// schema management configuration
-	fs.StringVar(&s.metadataRegistryMode, "schema-registry-mode", "etcd",
+	fs.StringVar(&s.metadataRegistryMode, "schema-registry-mode", "property",
 		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 30*time.Second,
 		"Interval to sync property-based schema in client side with other nodes")

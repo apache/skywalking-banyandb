@@ -24,6 +24,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -52,6 +53,9 @@ type clientMetrics struct {
 	totalSyncErr      meter.Counter
 	totalSyncLatency  meter.Counter
 	totalSyncUpdates  meter.Counter
+	totalSyncFull     meter.Counter
+	totalSyncIncr     meter.Counter
+	totalSyncFullKind meter.Counter
 
 	totalQueryStarted  meter.Counter
 	totalQueryFinished meter.Counter
@@ -82,6 +86,9 @@ func newClientMetrics(factory observability.Factory) *clientMetrics {
 		totalSyncErr:      factory.NewCounter("property_sync_err"),
 		totalSyncLatency:  factory.NewCounter("property_sync_latency"),
 		totalSyncUpdates:  factory.NewCounter("property_sync_updates"),
+		totalSyncFull:     factory.NewCounter("property_sync_full_rounds"),
+		totalSyncIncr:     factory.NewCounter("property_sync_incremental_rounds"),
+		totalSyncFullKind: factory.NewCounter("property_sync_full_reconciled_kinds"),
 
 		totalQueryStarted:  factory.NewCounter("property_query_started", "method"),
 		totalQueryFinished: factory.NewCounter("property_query_finished", "method"),
@@ -108,18 +115,20 @@ func newClientMetrics(factory observability.Factory) *clientMetrics {
 
 // SchemaRegistry implements schema.Registry interface using property-based storage.
 type SchemaRegistry struct {
-	nodesClient       queue.Client
-	localUpdateClient schemav1.SchemaUpdateServiceClient
-	localMgrClient    schemav1.SchemaManagementServiceClient
-	l                 *logger.Logger
-	closer            *run.Closer
-	syncCloser        *run.Closer
-	cache             *schemaCache
-	metrics           *clientMetrics
-	handlers          map[schema.Kind][]schema.EventHandler
-	grpcTimeout       time.Duration
-	syncInterval      time.Duration
-	mu                sync.RWMutex
+	nodesClient        queue.Client
+	localUpdateClient  schemav1.SchemaUpdateServiceClient
+	localMgrClient     schemav1.SchemaManagementServiceClient
+	l                  *logger.Logger
+	closer             *run.Closer
+	syncCloser         *run.Closer
+	cache              *schemaCache
+	metrics            *clientMetrics
+	handlers           map[schema.Kind][]schema.EventHandler
+	grpcTimeout        time.Duration
+	syncInterval       time.Duration
+	fullReconcileEvery uint64
+	syncRound          uint64
+	mu                 sync.RWMutex
 }
 
 // NodeInfo holds information about a node and its schema clients.
@@ -135,26 +144,34 @@ func (i *NodeInfo) canBeUse() bool {
 
 // ClientConfig holds configuration for construct SchemaRegistry client.
 type ClientConfig struct {
-	OMR          observability.MetricsRegistry
-	NodeSchema   schema.Node
-	Node         *NodeInfo
-	DialProvider grpchelper.DialOptionsProvider
-	metrics      *clientMetrics
-	GRPCTimeout  time.Duration
-	SyncInterval time.Duration
+	OMR                observability.MetricsRegistry
+	NodeSchema         schema.Node
+	Node               *NodeInfo
+	DialProvider       grpchelper.DialOptionsProvider
+	metrics            *clientMetrics
+	GRPCTimeout        time.Duration
+	SyncInterval       time.Duration
+	FullReconcileEvery uint64
 }
+
+const defaultFullReconcileEvery = 3
 
 // NewSchemaRegistryClient creates a new property schema registry client.
 // When node is non-nil and has ROLE_META, the registry connects to itself synchronously
 // during construction, ensuring metadata is available before subsequent services start.
 func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
+	fullReconcileEvery := cfg.FullReconcileEvery
+	if fullReconcileEvery == 0 {
+		fullReconcileEvery = defaultFullReconcileEvery
+	}
 	r := &SchemaRegistry{
-		handlers:     make(map[schema.Kind][]schema.EventHandler),
-		cache:        newSchemaCache(),
-		closer:       run.NewCloser(1),
-		l:            logger.GetLogger("property-schema-registry"),
-		grpcTimeout:  cfg.GRPCTimeout,
-		syncInterval: cfg.SyncInterval,
+		handlers:           make(map[schema.Kind][]schema.EventHandler),
+		cache:              newSchemaCache(),
+		closer:             run.NewCloser(1),
+		l:                  logger.GetLogger("property-schema-registry"),
+		grpcTimeout:        cfg.GRPCTimeout,
+		syncInterval:       cfg.SyncInterval,
+		fullReconcileEvery: fullReconcileEvery,
 	}
 	r.nodesClient = pub.NewWithoutMetadataAndFactory(schemaClientFactory(r), cfg.DialProvider)
 	if cfg.OMR != nil {
@@ -308,7 +325,7 @@ func (r *SchemaRegistry) StartWatcher() {
 	go func() {
 		// Use BroadcastWithExecutor to initialize from first responding node
 		var initialized bool
-		_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		_ = r.nodesClient.BroadcastWithExecutor(1, func(nodeName string, c queue.PubClient) error {
 			if initialized {
 				return nil
 			}
@@ -513,10 +530,11 @@ func (r *SchemaRegistry) ListIndexRule(ctx context.Context, opt schema.ListOpt) 
 
 // CreateIndexRule creates a new index rule.
 func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
-	if indexRule.GetMetadata().GetId() == 0 {
-		buf := []byte(indexRule.Metadata.Group)
-		buf = append(buf, indexRule.Metadata.Name...)
-		indexRule.Metadata.Id = crc32.ChecksumIEEE(buf)
+	indexRuleMetadata := indexRule.GetMetadata()
+	if indexRuleMetadata != nil && indexRuleMetadata.GetId() == 0 {
+		buf := []byte(indexRuleMetadata.Group)
+		buf = append(buf, indexRuleMetadata.Name...)
+		indexRuleMetadata.Id = crc32.ChecksumIEEE(buf)
 	}
 	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
 		return validateErr
@@ -529,12 +547,13 @@ func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databas
 
 // UpdateIndexRule updates an existing index rule.
 func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
-	if indexRule.GetMetadata().GetId() == 0 {
-		existingIndexRule, getErr := r.GetIndexRule(ctx, indexRule.Metadata)
+	indexRuleMetadata := indexRule.GetMetadata()
+	if indexRuleMetadata != nil && indexRuleMetadata.GetId() == 0 {
+		existingIndexRule, getErr := r.GetIndexRule(ctx, indexRuleMetadata)
 		if getErr != nil {
 			return getErr
 		}
-		indexRule.Metadata.Id = existingIndexRule.Metadata.Id
+		indexRuleMetadata.Id = existingIndexRule.Metadata.Id
 	}
 	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
 		return validateErr
@@ -782,7 +801,7 @@ func (r *SchemaRegistry) existSchema(ctx context.Context, kind schema.Kind, grou
 
 	var hasSchema bool
 	var mu sync.Mutex
-	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
@@ -899,7 +918,7 @@ func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context, query *prope
 	respondedNodes := make(map[string]bool)
 	var mu sync.Mutex
 
-	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
@@ -984,7 +1003,7 @@ func (r *SchemaRegistry) repairInconsistentNodesWithBroadcast(ctx context.Contex
 		bestProp := info.best.property
 		bestDelTime := info.best.deleteTime
 
-		_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+		_ = r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 			if !nodesToRepairSet[nodeName] {
 				return nil
 			}
@@ -1018,7 +1037,7 @@ func (r *SchemaRegistry) insertToAllServers(ctx context.Context, prop *propertyv
 			r.metrics.totalWriteLatency.Inc(time.Since(start).Seconds(), kind, group)
 		}
 	}()
-	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
@@ -1044,7 +1063,7 @@ func (r *SchemaRegistry) updateToAllServers(ctx context.Context, prop *propertyv
 			r.metrics.totalWriteLatency.Inc(time.Since(start).Seconds(), kind, group)
 		}
 	}()
-	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
@@ -1074,7 +1093,7 @@ func (r *SchemaRegistry) deleteFromAllServers(ctx context.Context, kind schema.K
 	var found bool
 	var mu sync.Mutex
 
-	broadcastErr := r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	broadcastErr := r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
@@ -1268,18 +1287,28 @@ func (r *SchemaRegistry) performSync() {
 			r.metrics.totalSyncLatency.Inc(time.Since(start).Seconds())
 		}
 	}()
-	r.l.Debug().Msg("performing global schema sync")
+	currentRound := atomic.AddUint64(&r.syncRound, 1)
+	fullReconcile := r.shouldFullReconcile(currentRound)
+	r.l.Debug().Uint64("round", currentRound).Bool("full_reconcile", fullReconcile).Msg("performing global schema sync")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if fullReconcile && r.metrics != nil {
+		r.metrics.totalSyncFull.Inc(1)
+	}
+	if r.metrics != nil {
+		r.metrics.totalSyncIncr.Inc(1)
+	}
 
-	_ = r.nodesClient.BroadcastWithExecutor(func(nodeName string, c queue.PubClient) error {
+	_ = r.nodesClient.BroadcastWithExecutor(-1, func(nodeName string, c queue.PubClient) error {
 		sc, ok := c.(*schemaClient)
 		if !ok {
 			return errors.Errorf("client for node %s is not a schemaClient", nodeName)
 		}
-		sinceRevision := r.cache.GetMaxRevision()
+		var sinceRevision int64
+		if !fullReconcile {
+			sinceRevision = r.cache.GetMaxRevision()
+		}
 		updatedNames := r.queryUpdatedSchemas(ctx, sc.UpdateClient(), sinceRevision)
-		syncedKinds := make(map[schema.Kind]bool)
 		if len(updatedNames) > 0 {
 			if r.metrics != nil {
 				r.metrics.totalSyncUpdates.Inc(float64(len(updatedNames)))
@@ -1294,12 +1323,15 @@ func (r *SchemaRegistry) performSync() {
 					r.l.Warn().Str("kind_name", name).Err(kindErr).Msg("failed to parse kind from name")
 					continue
 				}
-				syncedKinds[kind] = true
 				r.syncAllResourcesOfKind(ctx, sc.MgrClient(), kind)
 			}
 		}
 		return nil
 	})
+}
+
+func (r *SchemaRegistry) shouldFullReconcile(round uint64) bool {
+	return r.fullReconcileEvery > 0 && round%r.fullReconcileEvery == 0
 }
 
 func (r *SchemaRegistry) queryUpdatedSchemas(ctx context.Context, c schemav1.SchemaUpdateServiceClient, reversion int64) []string {

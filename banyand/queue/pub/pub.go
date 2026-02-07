@@ -265,9 +265,9 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	return futures, nil
 }
 
-// BroadcastWithExecutor uses a custom executor to process all active clients.
-// It includes circuit breaker checks and error recording.
-func (p *pub) BroadcastWithExecutor(executor queue.Executor) error {
+// BroadcastWithExecutor uses a custom executor to process active clients.
+// maxParallel <= 0 means all clients process concurrently.
+func (p *pub) BroadcastWithExecutor(maxParallel int, executor queue.Executor) error {
 	p.mu.RLock()
 	clients := make(map[string]queue.PubClient, len(p.active))
 	for name, c := range p.active {
@@ -281,13 +281,25 @@ func (p *pub) BroadcastWithExecutor(executor queue.Executor) error {
 	var errs error
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var semaphore chan struct{}
+	if maxParallel > 0 {
+		semaphore = make(chan struct{}, maxParallel)
+	}
 	for name, c := range clients {
 		if !p.isRequestAllowed(name) {
 			continue
 		}
+		if semaphore != nil {
+			semaphore <- struct{}{}
+		}
 		wg.Add(1)
 		go func(nodeName string, client queue.PubClient) {
 			defer wg.Done()
+			if semaphore != nil {
+				defer func() {
+					<-semaphore
+				}()
+			}
 			if execErr := executor(nodeName, client); execErr != nil {
 				p.recordFailure(nodeName, execErr)
 				mu.Lock()
