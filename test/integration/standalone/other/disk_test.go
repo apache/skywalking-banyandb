@@ -92,7 +92,7 @@ var _ = g.Describe("Disk", func() {
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 		<-server.ReadyNotify()
 		g.By("Loading schema")
-		schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+		schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace(metadatclient.DefaultNamespace),
 			etcd.ConfigureServerEndpoints([]string{ep}),
 		)

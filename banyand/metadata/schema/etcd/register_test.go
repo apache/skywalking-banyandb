@@ -43,6 +43,7 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	var goods []gleak.Goroutine
 	var server embeddedetcd.Server
 	var r schema.Registry
+	var nd schema.NodeDiscovery
 	const node string = "test"
 	md := schema.Metadata{
 		TypeMeta: schema.TypeMeta{
@@ -73,11 +74,12 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		r, err = etcd.NewEtcdSchemaRegistry(
+		r, nd, err = etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace("test"),
 			etcd.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(nd).ShouldNot(gomega.BeNil())
 	})
 	ginkgo.AfterEach(func() {
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
@@ -88,14 +90,14 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 	ginkgo.It("should revoke the leaser", func() {
 		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		_, err := r.GetNode(context.Background(), node)
+		_, err := nd.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
-		r, err = etcd.NewEtcdSchemaRegistry(
+		r, nd, err = etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace("test"),
 			etcd.ConfigureServerEndpoints(endpoints))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		_, err = r.GetNode(context.Background(), node)
+		_, err = nd.GetNode(context.Background(), node)
 		gomega.Expect(err).Should(gomega.MatchError(schema.ErrGRPCResourceNotFound))
 	})
 
@@ -106,7 +108,7 @@ var _ = ginkgo.Describe("etcd_register", func() {
 
 	ginkgo.It("should reconnect", func() {
 		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		_, err := r.GetNode(context.Background(), node)
+		_, err := nd.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(server.Close()).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(1 * time.Second)
@@ -123,8 +125,8 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		<-server.ReadyNotify()
 
 		gomega.Eventually(func() error {
-			_, err := r.GetNode(context.Background(), node)
-			return err
+			_, getErr := nd.GetNode(context.Background(), node)
+			return getErr
 		}, flags.EventuallyTimeout).ShouldNot(gomega.HaveOccurred())
 	})
 })

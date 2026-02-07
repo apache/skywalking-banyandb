@@ -86,11 +86,12 @@ func (m *mockedHandler) Data() map[string]any {
 
 var _ = ginkgo.Describe("Watcher", func() {
 	var (
-		mockedObj *mockedHandler
-		server    embeddedetcd.Server
-		registry  schema.Registry
-		defFn     func()
-		endpoints []string
+		mockedObj     *mockedHandler
+		server        embeddedetcd.Server
+		registry      schema.Registry
+		nodeDiscovery schema.NodeDiscovery
+		defFn         func()
+		endpoints     []string
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -118,11 +119,12 @@ var _ = ginkgo.Describe("Watcher", func() {
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		<-server.ReadyNotify()
-		registry, err = etcd.NewEtcdSchemaRegistry(
+		registry, nodeDiscovery, err = etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace("test"),
 			etcd.ConfigureServerEndpoints(endpoints),
 		)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(nodeDiscovery).ShouldNot(gomega.BeNil())
 	})
 	ginkgo.AfterEach(func() {
 		registry.Close()
@@ -485,7 +487,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 	})
 
 	ginkgo.It("should not load node with revision -1", func() {
-		err := registry.RegisterNode(context.Background(), &databasev1.Node{
+		err := nodeDiscovery.RegisterNode(context.Background(), &databasev1.Node{
 			Metadata: &commonv1.Metadata{
 				Name: "testnode",
 			},
@@ -494,7 +496,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 			},
 		}, false)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		nn, err := registry.ListNode(context.Background(), databasev1.Role_ROLE_DATA)
+		nn, err := nodeDiscovery.ListNode(context.Background(), databasev1.Role_ROLE_DATA)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(len(nn)).To(gomega.Equal(1))
 		gomega.Expect(nn[0].Metadata.Name).To(gomega.Equal("testnode"))
@@ -502,7 +504,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		err = registry.Close()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// Recreate registry for this test
-		registry, err = etcd.NewEtcdSchemaRegistry(
+		registry, nodeDiscovery, err = etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace("test"),
 			etcd.ConfigureServerEndpoints(endpoints),
 		)
@@ -518,7 +520,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 
 	ginkgo.It("should load and delete node with revision 0", func() {
 		// Register node again for this test
-		err := registry.RegisterNode(context.Background(), &databasev1.Node{
+		err := nodeDiscovery.RegisterNode(context.Background(), &databasev1.Node{
 			Metadata: &commonv1.Metadata{
 				Name: "testnode",
 			},
@@ -530,7 +532,7 @@ var _ = ginkgo.Describe("Watcher", func() {
 		err = registry.Close()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// Recreate registry for this test
-		registry, err = etcd.NewEtcdSchemaRegistry(
+		registry, nodeDiscovery, err = etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace("test"),
 			etcd.ConfigureServerEndpoints(endpoints),
 		)

@@ -176,7 +176,7 @@ func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLo
 	}
 
 	if schemaLoaders != nil {
-		schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+		schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 			etcd.Namespace(metadatclient.DefaultNamespace),
 			etcd.ConfigureServerEndpoints([]string{endpoint}),
 		)

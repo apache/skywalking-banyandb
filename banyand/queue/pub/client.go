@@ -113,11 +113,6 @@ var retryPolicy = `{
 	  }
 	]}`
 
-// DialOptionsProvider provides address-specific gRPC dial options for transport credentials.
-type DialOptionsProvider interface {
-	GetDialOptions(address string) ([]grpc.DialOption, error)
-}
-
 // ClientFactory creates custom Client implementations.
 type ClientFactory func(conn *grpc.ClientConn, md schema.Metadata) (queue.PubClient, error)
 

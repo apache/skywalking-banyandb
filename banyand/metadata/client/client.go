@@ -29,8 +29,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -44,11 +42,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
 	metadataproperty "github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 const (
@@ -101,13 +97,11 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (metadata.Service, error)
 
 type clientService struct {
 	schemaRegistry             schema.Registry
+	nodeDiscovery              schema.NodeDiscovery
 	omr                        observability.MetricsRegistry
 	schemaUpdateClient         schemav1.SchemaUpdateServiceClient
 	schemaManagementClient     schemav1.SchemaManagementServiceClient
 	infoCollectorRegistry      *schema.InfoCollectorRegistry
-	dnsDiscovery               *dns.Service
-	fileDiscovery              *file.Service
-	metadataDialProvider       *metadataNodeDialProvider
 	closer                     *run.Closer
 	nodeInfo                   *databasev1.Node
 	dataBroadcaster            bus.Broadcaster
@@ -276,7 +270,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		l.Info().Strs("srv-addresses", s.dnsSRVAddresses).Msg("Initializing DNS-based node discovery")
 
 		var createErr error
-		s.dnsDiscovery, createErr = dns.NewService(dns.Config{
+		s.nodeDiscovery, createErr = dns.NewService(dns.Config{
 			OMR:                  s.omr,
 			SRVAddresses:         s.dnsSRVAddresses,
 			InitInterval:         s.dnsFetchInitInterval,
@@ -298,7 +292,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		l.Info().Str("file-path", s.filePath).Msg("Initializing file-based node discovery")
 
 		var createErr error
-		s.fileDiscovery, createErr = file.NewService(file.Config{
+		s.nodeDiscovery, createErr = file.NewService(file.Config{
 			OMR:                  s.omr,
 			FilePath:             s.filePath,
 			GRPCTimeout:          s.grpcTimeout,
@@ -312,35 +306,26 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		}
 	}
 
+	var etcdRegistry schema.Registry
+	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd {
+		var etcdNodeDiscovery schema.NodeDiscovery
+		var initErr error
+		etcdRegistry, etcdNodeDiscovery, initErr = s.initEtcdSchemaRegistry(l, stopCh)
+		if initErr != nil {
+			return initErr
+		}
+		s.nodeDiscovery = etcdNodeDiscovery
+	}
+
 	if s.metadataRegistryMode == RegistryModeEtcd {
-		for {
-			var err error
-			s.schemaRegistry, err = etcd.NewEtcdSchemaRegistry(
-				etcd.Namespace(s.namespace),
-				etcd.ConfigureServerEndpoints(s.endpoints),
-				etcd.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
-				etcd.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
-				etcd.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
-				etcd.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
-			)
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				select {
-				case <-stopCh:
-					return errors.New("pre-run interrupted")
-				case <-time.After(s.registryTimeout):
-					return errors.New("pre-run timeout")
-				case <-s.closer.CloseNotify():
-					return errors.New("pre-run interrupted")
-				default:
-					l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("the schema registry init timeout, retrying...")
-					time.Sleep(time.Second)
-					continue
-				}
+		if etcdRegistry != nil {
+			s.schemaRegistry = etcdRegistry
+		} else {
+			var initErr error
+			s.schemaRegistry, _, initErr = s.initEtcdSchemaRegistry(l, stopCh)
+			if initErr != nil {
+				return initErr
 			}
-			if err == nil {
-				break
-			}
-			return err
 		}
 	} else if s.metadataRegistryMode == RegistryModeProperty {
 		if err := s.initPropertySchemaRegistry(ctx, l, stopCh); err != nil {
@@ -357,6 +342,39 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	}
 
 	return s.registerNodeIfNeed(ctx, l, stopCh)
+}
+
+func (s *clientService) initEtcdSchemaRegistry(l *logger.Logger, stopCh chan struct{}) (schema.Registry, schema.NodeDiscovery, error) {
+	for {
+		registry, nodeDiscovery, err := etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace(s.namespace),
+			etcd.ConfigureServerEndpoints(s.endpoints),
+			etcd.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
+			etcd.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
+			etcd.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
+			etcd.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
+			etcd.ConfigureNodeTLSEnabled(s.metadataNodeTLSEnabled),
+			etcd.ConfigureNodeTLSCertFile(s.metadataNodeTLSCertFile),
+		)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			select {
+			case <-stopCh:
+				return nil, nil, errors.New("pre-run interrupted")
+			case <-time.After(s.registryTimeout):
+				return nil, nil, errors.New("pre-run timeout")
+			case <-s.closer.CloseNotify():
+				return nil, nil, errors.New("pre-run interrupted")
+			default:
+				l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("the etcd init timeout, retrying...")
+				time.Sleep(time.Second)
+				continue
+			}
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		return registry, nodeDiscovery, nil
+	}
 }
 
 func (s *clientService) registerNodeIfNeed(ctx context.Context, l *logger.Logger, stopCh chan struct{}) error {
@@ -389,7 +407,7 @@ func (s *clientService) registerNodeIfNeed(ctx context.Context, l *logger.Logger
 	}
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
-		err := s.schemaRegistry.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)
+		err := s.nodeDiscovery.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)
 		cancel()
 		if errors.Is(err, schema.ErrGRPCAlreadyExists) ||
 			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -423,17 +441,9 @@ func (s *clientService) Serve() run.StopNotify {
 		s.schemaRegistry.StartWatcher()
 	}
 
-	// Start DNS discovery
-	if s.dnsDiscovery != nil {
-		if err := s.dnsDiscovery.Start(s.closer.Ctx()); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to start DNS discovery")
-		}
-	}
-
-	// Start file discovery
-	if s.fileDiscovery != nil {
-		if err := s.fileDiscovery.Start(s.closer.Ctx()); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to start file discovery")
+	if s.nodeDiscovery != nil {
+		if startErr := s.nodeDiscovery.Start(s.closer.Ctx()); startErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(startErr).Msg("failed to start node discovery")
 		}
 	}
 
@@ -444,36 +454,22 @@ func (s *clientService) GracefulStop() {
 	s.closer.Done()
 	s.closer.CloseThenWait()
 
-	if s.dnsDiscovery != nil {
-		if err := s.dnsDiscovery.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close DNS discovery")
-		}
-	}
-
-	if s.fileDiscovery != nil {
-		if err := s.fileDiscovery.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close file discovery")
+	if s.nodeDiscovery != nil {
+		if closeErr := s.nodeDiscovery.Close(); closeErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(closeErr).Msg("failed to close node discovery")
 		}
 	}
 
 	if s.schemaRegistry != nil {
-		if err := s.schemaRegistry.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
+		if closeErr := s.schemaRegistry.Close(); closeErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(closeErr).Msg("failed to close schema registry")
 		}
-	}
-
-	if s.metadataDialProvider != nil {
-		s.metadataDialProvider.tlsReloader.Stop()
 	}
 }
 
 func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
-	if kind == schema.KindNode && s.fileDiscovery != nil {
-		s.fileDiscovery.RegisterHandler(name, handler)
-		return
-	}
-	if kind == schema.KindNode && s.dnsDiscovery != nil {
-		s.dnsDiscovery.RegisterHandler(name, handler)
+	if kind == schema.KindNode {
+		s.nodeDiscovery.RegisterHandler(name, kind, handler)
 		return
 	}
 	s.schemaRegistry.RegisterHandler(name, kind, handler)
@@ -508,16 +504,7 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) NodeRegistry() schema.Node {
-	// If file discovery is enabled, use it instead of etcd
-	if s.fileDiscovery != nil {
-		return s.fileDiscovery
-	}
-	// If DNS discovery is enabled, use it instead of etcd
-	if s.dnsDiscovery != nil {
-		return s.dnsDiscovery
-	}
-	// Otherwise use etcd schema registry
-	return s.schemaRegistry
+	return s.nodeDiscovery
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
@@ -645,35 +632,7 @@ func (s *clientService) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
 	s.liaisonBroadcaster = broadcaster
 }
 
-func (s *clientService) initMetadataNodeTLS(l *logger.Logger) (*metadataNodeDialProvider, error) {
-	reloader, err := pkgtls.NewClientCertReloader(s.metadataNodeTLSCertFile, l)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create TLS cert reloader: %w", err)
-	}
-	if err = reloader.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start TLS cert reloader: %w", err)
-	}
-	return &metadataNodeDialProvider{tlsReloader: reloader}, nil
-}
-
 func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logger.Logger, stopCh chan struct{}) error {
-	var dialProvider pub.DialOptionsProvider
-	switch {
-	case s.dnsDiscovery != nil:
-		dialProvider = s.dnsDiscovery
-	case s.fileDiscovery != nil:
-		dialProvider = s.fileDiscovery
-	case s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && s.metadataNodeTLSEnabled:
-		// for the etcd-based node discovery mode with TLS enabled to metadata nodes,
-		// we need to create a dial provider with TLS cert reloader.
-		var err error
-		s.metadataDialProvider, err = s.initMetadataNodeTLS(l)
-		if err != nil {
-			return err
-		}
-		dialProvider = s.metadataDialProvider
-	}
-
 	var currentNode *metadataproperty.NodeInfo
 	n := buildNodeFromContext(ctx)
 	if n != nil {
@@ -690,7 +649,7 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		OMR:          s.omr,
 		Node:         currentNode,
 		NodeSchema:   s.NodeRegistry(),
-		DialProvider: dialProvider,
+		DialProvider: s.nodeDiscovery,
 	}
 	var initAttempt int
 	for {
@@ -720,20 +679,11 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 			time.Sleep(propertyRegistryInitRetrySleep)
 			continue
 		}
-		s.RegisterHandler("property-schema-registry", schema.KindNode, registry)
+		s.nodeDiscovery.RegisterHandler("property-schema-registry", schema.KindNode, registry)
 		s.schemaRegistry = registry
 		break
 	}
 	return nil
-}
-
-type metadataNodeDialProvider struct {
-	tlsReloader *pkgtls.Reloader
-}
-
-func (m *metadataNodeDialProvider) GetDialOptions(_ string) ([]grpc.DialOption, error) {
-	creds := credentials.NewTLS(m.tlsReloader.GetTLSConfig())
-	return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
 }
 
 func contains(s []string, e string) bool {

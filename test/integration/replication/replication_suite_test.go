@@ -92,7 +92,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	<-server.ReadyNotify()
 
 	By("Loading schema")
-	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+	schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 		etcd.Namespace(metadatclient.DefaultNamespace),
 		etcd.ConfigureServerEndpoints([]string{ep}),
 	)

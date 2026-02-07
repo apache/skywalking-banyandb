@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -137,7 +138,7 @@ type ClientConfig struct {
 	OMR          observability.MetricsRegistry
 	NodeSchema   schema.Node
 	Node         *NodeInfo
-	DialProvider pub.DialOptionsProvider
+	DialProvider grpchelper.DialOptionsProvider
 	metrics      *clientMetrics
 	GRPCTimeout  time.Duration
 	SyncInterval time.Duration
@@ -625,28 +626,6 @@ func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databa
 // DeleteTopNAggregation deletes a top-N aggregation.
 func (r *SchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
 	return r.deleteFromAllServers(ctx, schema.KindTopNAggregation, metadata.GetGroup(), metadata.GetName())
-}
-
-// Node methods.
-
-// ListNode lists nodes by role.
-func (r *SchemaRegistry) ListNode(context.Context, databasev1.Role) ([]*databasev1.Node, error) {
-	panic("property based schema registry does not support list node")
-}
-
-// RegisterNode registers a node.
-func (r *SchemaRegistry) RegisterNode(context.Context, *databasev1.Node, bool) error {
-	panic("property based schema registry does not support register node")
-}
-
-// GetNode retrieves a node by name.
-func (r *SchemaRegistry) GetNode(context.Context, string) (*databasev1.Node, error) {
-	panic("property based schema registry does not support get node")
-}
-
-// UpdateNode updates a node.
-func (r *SchemaRegistry) UpdateNode(context.Context, *databasev1.Node) error {
-	panic("property based schema registry does not support update node")
 }
 
 // Property methods.

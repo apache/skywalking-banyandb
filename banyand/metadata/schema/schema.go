@@ -27,6 +27,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
 // ErrUnsupportedEntityType indicates the entity type is not supported.
@@ -78,12 +79,20 @@ type Registry interface {
 	Trace
 	Group
 	TopNAggregation
-	Node
 	Property
 	RegisterHandler(string, Kind, EventHandler)
 	Register(context.Context, Metadata, bool) error
 	Compact(context.Context, int64) error
 	StartWatcher()
+}
+
+// NodeDiscovery provides node discovery and management capabilities.
+type NodeDiscovery interface {
+	io.Closer
+	Node
+	grpchelper.DialOptionsProvider
+	RegisterHandler(string, Kind, EventHandler)
+	Start(ctx context.Context) error
 }
 
 // TypeMeta defines the identity and type of an Event.

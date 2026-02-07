@@ -78,7 +78,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	)
 	Expect(err).ShouldNot(HaveOccurred())
 	<-server.ReadyNotify()
-	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+	schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 		etcd.Namespace(metadatclient.DefaultNamespace),
 		etcd.ConfigureServerEndpoints([]string{ep}),
 	)

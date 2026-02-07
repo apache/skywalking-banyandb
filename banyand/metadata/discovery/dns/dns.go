@@ -32,11 +32,14 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
+
+var _ schema.NodeDiscovery = (*Service)(nil)
 
 // Service implements DNS-based node discovery.
 type Service struct {

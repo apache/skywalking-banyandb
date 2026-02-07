@@ -112,7 +112,7 @@ func (b *NodeCacheBase) GetNode(_ context.Context, nodeName string) (*databasev1
 }
 
 // RegisterHandler registers an event handler for node changes.
-func (b *NodeCacheBase) RegisterHandler(name string, handler schema.EventHandler) {
+func (b *NodeCacheBase) RegisterHandler(name string, _ schema.Kind, handler schema.EventHandler) {
 	b.handlersMutex.Lock()
 	defer b.handlersMutex.Unlock()
 

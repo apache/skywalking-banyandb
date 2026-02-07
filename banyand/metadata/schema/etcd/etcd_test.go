@@ -117,7 +117,7 @@ func initServerAndRegister(t *testing.T) (schema.Registry, func()) {
 	req.NoError(err)
 	req.NotNil(server)
 	<-server.ReadyNotify()
-	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(etcd.ConfigureServerEndpoints(endpoints))
+	schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(etcd.ConfigureServerEndpoints(endpoints))
 	req.NoError(err)
 	req.NotNil(server)
 	return schemaRegistry, func() {

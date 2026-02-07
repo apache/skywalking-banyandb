@@ -37,6 +37,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// DialOptionsProvider provides address-specific gRPC dial options for transport credentials.
+type DialOptionsProvider interface {
+	GetDialOptions(address string) ([]grpc.DialOption, error)
+}
+
 // SecureOptions returns gRPC dial options with secure connection settings.
 func SecureOptions(dest []grpc.DialOption, enabled, insecure bool, cert string) ([]grpc.DialOption, error) {
 	if !enabled {

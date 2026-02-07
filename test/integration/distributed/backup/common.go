@@ -95,7 +95,7 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	<-server.ReadyNotify()
 	ginkgo.By("Loading schema")
-	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+	schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 		etcd.Namespace(metadatclient.DefaultNamespace),
 		etcd.ConfigureServerEndpoints([]string{ep}),
 	)

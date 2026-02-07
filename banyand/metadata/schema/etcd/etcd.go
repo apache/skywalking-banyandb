@@ -35,7 +35,10 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -43,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
 const (
@@ -121,6 +125,20 @@ func ConfigureWatchCheckInterval(d time.Duration) RegistryOption {
 	}
 }
 
+// ConfigureNodeTLSEnabled enables TLS for node-to-node gRPC connections.
+func ConfigureNodeTLSEnabled(enabled bool) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.nodeTLSEnabled = enabled
+	}
+}
+
+// ConfigureNodeTLSCertFile sets the CA cert file for node gRPC TLS connections.
+func ConfigureNodeTLSCertFile(file string) RegistryOption {
+	return func(config *etcdSchemaRegistryConfig) {
+		config.nodeTLSCertFile = file
+	}
+}
+
 // CheckInterval sets the interval to check the watcher.
 func CheckInterval(d time.Duration) WatcherOption {
 	return func(wc *WatcherConfig) {
@@ -130,16 +148,22 @@ func CheckInterval(d time.Duration) WatcherOption {
 	}
 }
 
-var _ schema.Registry = (*etcdSchemaRegistry)(nil)
+var (
+	_ schema.Registry      = (*etcdSchemaRegistry)(nil)
+	_ schema.NodeDiscovery = (*etcdSchemaRegistry)(nil)
+)
 
 type etcdSchemaRegistry struct {
-	client        *clientv3.Client
-	closer        *run.Closer
-	l             *logger.Logger
-	watchers      map[schema.Kind]*watcher
-	namespace     string
-	checkInterval time.Duration
-	mux           sync.RWMutex
+	client          *clientv3.Client
+	closer          *run.Closer
+	l               *logger.Logger
+	nodeTLSReloader *pkgtls.Reloader
+	watchers        map[schema.Kind]*watcher
+	namespace       string
+	checkInterval   time.Duration
+	mux             sync.RWMutex
+	startOnce       sync.Once
+	closeOnce       sync.Once
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -149,8 +173,10 @@ type etcdSchemaRegistryConfig struct {
 	tlsCAFile       string
 	tlsCertFile     string
 	tlsKeyFile      string
+	nodeTLSCertFile string
 	serverEndpoints []string
 	checkInterval   time.Duration
+	nodeTLSEnabled  bool
 }
 
 func (e *etcdSchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
@@ -217,24 +243,57 @@ func (e *etcdSchemaRegistry) StartWatcher() {
 }
 
 func (e *etcdSchemaRegistry) Close() error {
-	e.closer.Done()
-	e.closer.CloseThenWait()
-	e.mux.RLock()
-	defer e.mux.RUnlock()
-	for i := range e.watchers {
-		e.watchers[i].Close()
-	}
-	return e.client.Close()
+	var closeErr error
+	e.closeOnce.Do(func() {
+		if e.nodeTLSReloader != nil {
+			e.nodeTLSReloader.Stop()
+		}
+		e.closer.Done()
+		e.closer.CloseThenWait()
+		e.mux.RLock()
+		defer e.mux.RUnlock()
+		for i := range e.watchers {
+			e.watchers[i].Close()
+		}
+		closeErr = e.client.Close()
+	})
+	return closeErr
 }
 
-// NewEtcdSchemaRegistry returns a Registry powered by Etcd.
-func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, error) {
+// GetDialOptions returns gRPC dial options with transport credentials for the given address.
+func (e *etcdSchemaRegistry) GetDialOptions(_ string) ([]grpc.DialOption, error) {
+	if e.nodeTLSReloader == nil {
+		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
+	}
+	tlsConfig, err := e.nodeTLSReloader.GetClientTLSConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TLS config from reloader: %w", err)
+	}
+	creds := credentials.NewTLS(tlsConfig)
+	return []grpc.DialOption{grpc.WithTransportCredentials(creds)}, nil
+}
+
+// Start starts the node TLS reloader if configured.
+func (e *etcdSchemaRegistry) Start(context.Context) error {
+	var err error
+	e.startOnce.Do(func() {
+		if e.nodeTLSReloader != nil {
+			if startErr := e.nodeTLSReloader.Start(); startErr != nil {
+				err = fmt.Errorf("failed to start node TLS reloader: %w", startErr)
+			}
+		}
+	})
+	return err
+}
+
+// NewEtcdSchemaRegistry returns a Registry and NodeDiscovery powered by Etcd.
+func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, schema.NodeDiscovery, error) {
 	registryConfig := &etcdSchemaRegistryConfig{}
 	for _, opt := range options {
 		opt(registryConfig)
 	}
 	if registryConfig.serverEndpoints == nil {
-		return nil, errors.New("server address is not set")
+		return nil, nil, errors.New("server address is not set")
 	}
 	log := logger.GetLogger("etcd-client").DefaultLevel(zerolog.ErrorLevel)
 	zapCfg := log.ToZapConfig()
@@ -242,7 +301,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, error) {
 	var l *zap.Logger
 	var err error
 	if l, err = zapCfg.Build(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	config := clientv3.Config{
@@ -258,7 +317,7 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, error) {
 	}
 	client, err := clientv3.New(config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	schemaLogger := logger.GetLogger("schema-registry")
 	reg := &etcdSchemaRegistry{
@@ -269,7 +328,14 @@ func NewEtcdSchemaRegistry(options ...RegistryOption) (schema.Registry, error) {
 		checkInterval: registryConfig.checkInterval,
 		watchers:      make(map[schema.Kind]*watcher),
 	}
-	return reg, nil
+	if registryConfig.nodeTLSEnabled && registryConfig.nodeTLSCertFile != "" {
+		reloader, reloaderErr := pkgtls.NewClientCertReloader(registryConfig.nodeTLSCertFile, schemaLogger)
+		if reloaderErr != nil {
+			return nil, nil, fmt.Errorf("failed to create node TLS reloader: %w", reloaderErr)
+		}
+		reg.nodeTLSReloader = reloader
+	}
+	return reg, reg, nil
 }
 
 func (e *etcdSchemaRegistry) prependNamespace(key string) string {

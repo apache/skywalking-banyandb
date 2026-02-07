@@ -82,7 +82,7 @@ type pub struct {
 	writableProbe   map[string]map[string]struct{}
 	cbStates        map[string]*circuitState
 	clientFactory   ClientFactory
-	credProvider    DialOptionsProvider
+	credProvider    grpchelper.DialOptionsProvider
 	caCertPath      string
 	caCertReloader  *pkgtls.Reloader
 	prefix          string
@@ -459,7 +459,7 @@ func NewWithoutMetadata() queue.Client {
 }
 
 // NewWithoutMetadataAndFactory returns a new queue client without metadata and with a custom client factory.
-func NewWithoutMetadataAndFactory(factory ClientFactory, provider DialOptionsProvider) queue.Client {
+func NewWithoutMetadataAndFactory(factory ClientFactory, provider grpchelper.DialOptionsProvider) queue.Client {
 	p := NewWithClientFactory(nil, factory, databasev1.Role_ROLE_DATA)
 	p.(*pub).credProvider = provider
 	p.(*pub).log = logger.GetLogger("queue-client")

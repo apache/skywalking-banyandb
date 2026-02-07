@@ -23,13 +23,12 @@ import (
 	"time"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
 // FetchNodeMetadata fetches node metadata via gRPC.
 // This is the common implementation used by both DNS and file discovery.
-func FetchNodeMetadata(ctx context.Context, address string, timeout time.Duration, dialOptsProvider pub.DialOptionsProvider) (*databasev1.Node, error) {
+func FetchNodeMetadata(ctx context.Context, address string, timeout time.Duration, dialOptsProvider grpchelper.DialOptionsProvider) (*databasev1.Node, error) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

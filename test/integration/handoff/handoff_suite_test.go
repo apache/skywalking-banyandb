@@ -265,7 +265,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	<-etcdServer.ReadyNotify()
 	etcdEndpoint = clientEP
 
-	registry, err := etcd.NewEtcdSchemaRegistry(
+	registry, _, err := etcd.NewEtcdSchemaRegistry(
 		etcd.Namespace(metadatclient.DefaultNamespace),
 		etcd.ConfigureServerEndpoints([]string{clientEP}),
 	)

@@ -87,7 +87,7 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 		},
 	}, cleanupFuncs...)
 
-	schemaRegistry, err := etcd.NewEtcdSchemaRegistry(
+	schemaRegistry, _, err := etcd.NewEtcdSchemaRegistry(
 		etcd.Namespace(metadatclient.DefaultNamespace),
 		etcd.ConfigureServerEndpoints([]string{clientEP}),
 	)
