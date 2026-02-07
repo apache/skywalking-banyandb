@@ -249,7 +249,7 @@ func (s *sidx) currentSnapshot() *Snapshot {
 }
 
 // CurrentSnapshot returns the current snapshot with incremented reference count.
-// Implements snapshot.Manager[*snapshot] interface.
+// Implements snapshot.Manager[*Snapshot] interface.
 func (s *sidx) CurrentSnapshot() *Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
