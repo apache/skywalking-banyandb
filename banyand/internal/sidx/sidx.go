@@ -45,7 +45,7 @@ const (
 // sidx implements the SIDX interface with introduction channels for async operations.
 type sidx struct {
 	fileSystem   fs.FileSystem
-	snapshot     *snapshot
+	snapshot     *Snapshot
 	l            *logger.Logger
 	pm           protector.Memory
 	root         string
@@ -233,7 +233,7 @@ func (s *sidx) Close() error {
 }
 
 // currentSnapshot returns the current snapshot with incremented reference count.
-func (s *sidx) currentSnapshot() *snapshot {
+func (s *sidx) currentSnapshot() *Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -246,6 +246,79 @@ func (s *sidx) currentSnapshot() *snapshot {
 	}
 
 	return nil
+}
+
+// CurrentSnapshot returns the current snapshot with incremented reference count.
+// Implements snapshot.Manager[*Snapshot] interface.
+func (s *sidx) CurrentSnapshot() *Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.snapshot == nil {
+		return nil
+	}
+
+	s.snapshot.IncRef()
+	return s.snapshot
+}
+
+// ReplaceSnapshot atomically replaces the current snapshot with next.
+// Implements snapshot.Manager[*Snapshot] interface.
+// The old snapshot's DecRef is called automatically per the Manager contract.
+func (s *sidx) ReplaceSnapshot(next *Snapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snapshot != nil {
+		s.snapshot.DecRef()
+	}
+	s.snapshot = next
+}
+
+// PrepareMemPart prepares a transition for introducing a memory part.
+func (s *sidx) PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			cur = &Snapshot{}
+		}
+		next := cur.copyAllTo()
+		part := openMemPart(mp)
+		pw := newPartWrapper(mp, part)
+		pw.p.partMetadata.ID = partID
+		next.parts = append(next.parts, pw)
+		return next
+	}
+}
+
+// PrepareFlushed prepares a transition for introducing flushed parts.
+func (s *sidx) PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			s.l.Panic().Msg("current snapshot is nil in PrepareFlushed")
+		}
+		return cur.merge(intro.flushed)
+	}
+}
+
+// PrepareMerged prepares a transition for introducing merged parts.
+func (s *sidx) PrepareMerged(intro *MergerIntroduction) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			s.l.Panic().Msg("current snapshot is nil in PrepareMerged")
+		}
+		next := cur.remove(intro.merged)
+		next.parts = append(next.parts, intro.newPart)
+		return next
+	}
+}
+
+// PrepareSynced prepares a transition for removing synced parts.
+func (s *sidx) PrepareSynced(partIDsToSync map[uint64]struct{}) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			s.l.Panic().Msg("current snapshot is nil in PrepareSynced")
+		}
+		return cur.remove(partIDsToSync)
+	}
 }
 
 // blockCursor represents a cursor for iterating through a loaded block, similar to query_by_ts.go.
