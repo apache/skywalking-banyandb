@@ -36,6 +36,7 @@ type PostProcessor interface {
 	Put(entityValues pbv1.EntityValues, val int64, timestampMillis uint64, version int64)
 	Flush() ([]*topNAggregatorItem, error)
 	Val([]string) ([]*measurev1.TopNList, error)
+	Reset()
 }
 
 // CreateTopNPostProcessor creates a Top-N post processor with or without aggregation.
@@ -240,7 +241,6 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 				result = append(result, item)
 			}
 		}
-		clear(taggr.timelines)
 	} else {
 		for _, timeline := range taggr.timelines {
 			for _, item := range timeline.items {
@@ -272,6 +272,7 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 			result = append(result, item)
 		}
 	}
+	taggr.Reset()
 
 	return result, nil
 }
@@ -341,4 +342,14 @@ func (taggr *topNPostProcessor) valWithoutAggregation(tagNames []string) []*meas
 	})
 
 	return topNLists
+}
+
+func (taggr *topNPostProcessor) Reset() {
+	clear(taggr.timelines)
+
+	if taggr.aggrFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		clear(taggr.cache)
+
+		taggr.items = taggr.items[:0]
+	}
 }
