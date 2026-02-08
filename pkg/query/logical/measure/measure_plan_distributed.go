@@ -153,6 +153,11 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if ud.needCompletePushDownAgg {
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
+		if temp.Agg != nil && temp.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+			clonedAgg := proto.Clone(temp.Agg).(*measurev1.QueryRequest_Aggregation)
+			clonedAgg.Function = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
+			temp.Agg = clonedAgg
+		}
 	}
 	// push down groupBy, agg and top to data node and rewrite agg result to raw data
 	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
@@ -161,11 +166,9 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.Top = ud.originalQuery.Top
 		temp.GroupBy = ud.originalQuery.GroupBy
 	}
-	// Prepare groupBy tags refs if needed for deduplication or MEAN merge (topn with MEAN).
+	// Prepare groupBy tags refs for deduplication when pushing down aggregation.
 	var groupByTagsRefs [][]*logical.TagRef
-	if ud.originalQuery.GetGroupBy() != nil &&
-		(ud.needCompletePushDownAgg || (ud.originalQuery.GetAgg() != nil &&
-			ud.originalQuery.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN)) {
+	if ud.needCompletePushDownAgg && ud.originalQuery.GetGroupBy() != nil {
 		groupByTags := logical.ToTags(ud.originalQuery.GetGroupBy().GetTagProjection())
 		var err error
 		groupByTagsRefs, err = s.CreateTagRef(groupByTags...)
@@ -284,11 +287,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	var pushedDownAggDps []*measurev1.InternalDataPoint
 	var responseCount int
 	var dataPointCount int
-	// Only merge MEAN when data nodes return aggregated (value_sum, value_count).
-	// RewriteAggTopNResult: data nodes return rewrite result (raw "value"), not aggregated - skip merge.
-	needMeanMerge := t.queryTemplate.Agg != nil &&
-		t.queryTemplate.Agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN &&
-		!t.queryTemplate.RewriteAggTopNResult
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			err = multierr.Append(err, getErr)
@@ -299,12 +297,9 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				if span != nil {
 					span.AddSubTrace(d.Trace)
 				}
-				if t.needCompletePushDownAgg || needMeanMerge {
+				if t.needCompletePushDownAgg {
 					pushedDownAggDps = append(pushedDownAggDps, d.DataPoints...)
 					dataPointCount += len(d.DataPoints)
-					if !needMeanMerge {
-						continue
-					}
 				} else {
 					dataPointCount += len(d.DataPoints)
 					see = append(see,
@@ -321,42 +316,11 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if t.needCompletePushDownAgg {
-		// deduplicate: remove duplicate results from multiple replicas of the same shard
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
-		}
-		// merge: for MEAN, group by groupKey then merge sum and count from different shards
-		if needMeanMerge {
-			grouped, groupErr := GroupInternalDataPointsByKey(deduplicatedDps, t.groupByTagsRefs)
-			if groupErr != nil {
-				return nil, multierr.Append(err, groupErr)
-			}
-			mergedDps, mergeErr := MergeMeanFromGroupedDataPoints(grouped, t.queryTemplate.Agg.FieldName)
-			if mergeErr != nil {
-				return nil, multierr.Append(err, mergeErr)
-			}
-			return &pushedDownAggregatedIterator{dataPoints: mergedDps}, err
 		}
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
-	}
-	if needMeanMerge {
-		// MEAN with topn: merge sum/count before sorting, then sort and return
-		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
-		if dedupErr != nil {
-			return nil, multierr.Append(err, dedupErr)
-		}
-		grouped, groupErr := GroupInternalDataPointsByKey(deduplicatedDps, t.groupByTagsRefs)
-		if groupErr != nil {
-			return nil, multierr.Append(err, groupErr)
-		}
-		mergedDps, mergeErr := MergeMeanFromGroupedDataPoints(grouped, t.queryTemplate.Agg.FieldName)
-		if mergeErr != nil {
-			return nil, multierr.Append(err, mergeErr)
-		}
-		for _, idp := range mergedDps {
-			see = append(see, newSortableElements([]*measurev1.InternalDataPoint{idp}, t.sortByTime, t.sortTagSpec))
-		}
 	}
 	smi := &sortedMIterator{
 		Iterator: sort.NewItemIter(see, t.desc),

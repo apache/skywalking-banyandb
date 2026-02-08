@@ -150,7 +150,11 @@ func (m *distributedMeanFunc[N]) Val() N {
 	if m.count == m.zero {
 		return m.zero
 	}
-	return m.sum / m.count
+	v := m.sum / m.count
+	if v < 1 {
+		return 1
+	}
+	return v
 }
 
 func (m *distributedMeanFunc[N]) Reset() {

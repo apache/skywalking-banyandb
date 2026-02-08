@@ -187,10 +187,13 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 
 	if criteria.GetAgg() != nil {
 		aggrFunc := criteria.GetAgg().GetFunction()
-		// When aggregation is pushed down to data nodes, COUNT values from different shards
-		// should be merged using SUM at the liaison node
-		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
-			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+		if needCompletePushDownAgg {
+			switch aggrFunc {
+			case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+				aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+			case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+				aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
+			}
 		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
