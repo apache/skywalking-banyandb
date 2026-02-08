@@ -188,10 +188,9 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	if criteria.GetAgg() != nil {
 		aggrFunc := criteria.GetAgg().GetFunction()
 		if needCompletePushDownAgg {
-			switch aggrFunc {
-			case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+			if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
 				aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
-			case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+			} else if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
 				aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
 			}
 		}
