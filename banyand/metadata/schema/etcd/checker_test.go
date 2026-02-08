@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema_test
+package etcd_test
 
 import (
 	"time"

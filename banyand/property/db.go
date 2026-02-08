@@ -66,6 +66,7 @@ type database struct {
 	lock                fs.File
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
+	groupConfigs        map[string]GroupStoreConfig
 	groups              sync.Map
 	location            string
 	repairBaseDir       string
@@ -91,6 +92,7 @@ func openDB(
 	repairTriggerCron string,
 	gossipMessenger gossip.Messenger,
 	metadata metadata.Repo,
+	groupConfigs map[string]GroupStoreConfig,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*database, error) {
 	loc := filepath.Clean(location)
@@ -107,6 +109,7 @@ func openDB(
 		repairBaseDir:       repairBaseDir,
 		lfs:                 lfs,
 		metadata:            metadata,
+		groupConfigs:        groupConfigs,
 	}
 	var err error
 	// init repair scheduler

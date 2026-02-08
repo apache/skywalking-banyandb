@@ -359,6 +359,27 @@
   
     - [RepairService](#banyandb-property-v1-RepairService)
   
+- [banyandb/schema/v1/internal.proto](#banyandb_schema_v1_internal-proto)
+    - [AggregateSchemaUpdatesRequest](#banyandb-schema-v1-AggregateSchemaUpdatesRequest)
+    - [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse)
+    - [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest)
+    - [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse)
+    - [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest)
+    - [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse)
+    - [GetSchemaRequest](#banyandb-schema-v1-GetSchemaRequest)
+    - [GetSchemaResponse](#banyandb-schema-v1-GetSchemaResponse)
+    - [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest)
+    - [InsertSchemaResponse](#banyandb-schema-v1-InsertSchemaResponse)
+    - [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest)
+    - [ListSchemasResponse](#banyandb-schema-v1-ListSchemasResponse)
+    - [RepairSchemaRequest](#banyandb-schema-v1-RepairSchemaRequest)
+    - [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse)
+    - [UpdateSchemaRequest](#banyandb-schema-v1-UpdateSchemaRequest)
+    - [UpdateSchemaResponse](#banyandb-schema-v1-UpdateSchemaResponse)
+  
+    - [SchemaManagementService](#banyandb-schema-v1-SchemaManagementService)
+    - [SchemaUpdateService](#banyandb-schema-v1-SchemaUpdateService)
+  
 - [banyandb/stream/v1/write.proto](#banyandb_stream_v1_write-proto)
     - [ElementValue](#banyandb-stream-v1-ElementValue)
     - [InternalWriteRequest](#banyandb-stream-v1-InternalWriteRequest)
@@ -5408,6 +5429,275 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Repair | [RepairRequest](#banyandb-property-v1-RepairRequest) stream | [RepairResponse](#banyandb-property-v1-RepairResponse) stream |  |
+
+ 
+
+
+
+<a name="banyandb_schema_v1_internal-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/schema/v1/internal.proto
+
+
+
+<a name="banyandb-schema-v1-AggregateSchemaUpdatesRequest"></a>
+
+### AggregateSchemaUpdatesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AggregateSchemaUpdatesResponse"></a>
+
+### AggregateSchemaUpdatesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| names | [string](#string) | repeated | which names/schemas has updates |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-DeleteSchemaRequest"></a>
+
+### DeleteSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| delete | [banyandb.property.v1.DeleteRequest](#banyandb-property-v1-DeleteRequest) |  |  |
+| update_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Update the update time for notification |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-DeleteSchemaResponse"></a>
+
+### DeleteSchemaResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| found | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-ExistSchemaRequest"></a>
+
+### ExistSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-ExistSchemaResponse"></a>
+
+### ExistSchemaResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_schema | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-GetSchemaRequest"></a>
+
+### GetSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-GetSchemaResponse"></a>
+
+### GetSchemaResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| properties | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-InsertSchemaRequest"></a>
+
+### InsertSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-InsertSchemaResponse"></a>
+
+### InsertSchemaResponse
+
+
+
+
+
+
+
+<a name="banyandb-schema-v1-ListSchemasRequest"></a>
+
+### ListSchemasRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-ListSchemasResponse"></a>
+
+### ListSchemasResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| properties | [banyandb.property.v1.Property](#banyandb-property-v1-Property) | repeated |  |
+| delete_times | [int64](#int64) | repeated | delete_times maps to properties in the same order. 0 means not deleted, &gt;0 means deletion timestamp. |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-RepairSchemaRequest"></a>
+
+### RepairSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-RepairSchemaResponse"></a>
+
+### RepairSchemaResponse
+
+
+
+
+
+
+
+<a name="banyandb-schema-v1-UpdateSchemaRequest"></a>
+
+### UpdateSchemaRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-UpdateSchemaResponse"></a>
+
+### UpdateSchemaResponse
+
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-schema-v1-SchemaManagementService"></a>
+
+### SchemaManagementService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| InsertSchema | [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest) | [InsertSchemaResponse](#banyandb-schema-v1-InsertSchemaResponse) |  |
+| UpdateSchema | [UpdateSchemaRequest](#banyandb-schema-v1-UpdateSchemaRequest) | [UpdateSchemaResponse](#banyandb-schema-v1-UpdateSchemaResponse) |  |
+| ListSchemas | [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest) | [ListSchemasResponse](#banyandb-schema-v1-ListSchemasResponse) stream |  |
+| DeleteSchema | [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest) | [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse) |  |
+| RepairSchema | [RepairSchemaRequest](#banyandb-schema-v1-RepairSchemaRequest) | [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse) |  |
+| ExistSchema | [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest) | [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse) |  |
+
+
+<a name="banyandb-schema-v1-SchemaUpdateService"></a>
+
+### SchemaUpdateService
+
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AggregateSchemaUpdates | [AggregateSchemaUpdatesRequest](#banyandb-schema-v1-AggregateSchemaUpdatesRequest) | [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse) |  |
 
  
 

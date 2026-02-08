@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var streamKeyPrefix = "/streams/"
@@ -39,11 +40,11 @@ func (e *etcdSchemaRegistry) GetStream(ctx context.Context, metadata *commonv1.M
 	return &entity, nil
 }
 
-func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error) {
+func (e *etcdSchemaRegistry) ListStream(ctx context.Context, opt schema.ListOpt) ([]*databasev1.Stream, error) {
 	if opt.Group == "" {
-		return nil, BadRequest("group", "group should not be empty")
+		return nil, schema.BadRequest("group", "group should not be empty")
 	}
-	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, streamKeyPrefix), KindStream)
+	messages, err := e.listWithPrefix(ctx, listPrefixesForEntity(opt.Group, streamKeyPrefix), schema.KindStream)
 	if err != nil {
 		return nil, err
 	}
@@ -74,14 +75,14 @@ func (e *etcdSchemaRegistry) UpdateStream(ctx context.Context, stream *databasev
 		return 0, err
 	}
 	if prev == nil {
-		return 0, errors.WithMessagef(ErrGRPCResourceNotFound, "stream %s not found", stream.GetMetadata().GetName())
+		return 0, errors.WithMessagef(schema.ErrGRPCResourceNotFound, "stream %s not found", stream.GetMetadata().GetName())
 	}
 	if err := validateStreamUpdate(prev, stream); err != nil {
-		return 0, errors.WithMessagef(ErrInputInvalid, "validation failed: %s", err)
+		return 0, errors.WithMessagef(schema.ErrInputInvalid, "validation failed: %s", err)
 	}
-	return e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:        KindStream,
+	return e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:        schema.KindStream,
 			Group:       stream.GetMetadata().GetGroup(),
 			Name:        stream.GetMetadata().GetName(),
 			ModRevision: stream.GetMetadata().GetModRevision(),
@@ -147,9 +148,9 @@ func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev
 	if err := validate.GroupForNonProperty(g); err != nil {
 		return 0, err
 	}
-	return e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindStream,
+	return e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindStream,
 			Group: stream.GetMetadata().GetGroup(),
 			Name:  stream.GetMetadata().GetName(),
 		},
@@ -158,9 +159,9 @@ func (e *etcdSchemaRegistry) CreateStream(ctx context.Context, stream *databasev
 }
 
 func (e *etcdSchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
-	return e.delete(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind:  KindStream,
+	return e.delete(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind:  schema.KindStream,
 			Group: metadata.GetGroup(),
 			Name:  metadata.GetName(),
 		},

@@ -24,7 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -35,7 +35,7 @@ import (
 // NewCommand creates a new lifecycle command.
 func NewCommand() *cobra.Command {
 	logging := logger.Logging{}
-	metaSvc, err := metadata.NewClient(false, false)
+	metaSvc, err := metadatclient.NewClient(false, false)
 	if err != nil {
 		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
 	}

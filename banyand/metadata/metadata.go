@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -38,11 +39,18 @@ type IndexFilter interface {
 	Subjects(ctx context.Context, indexRule *databasev1.IndexRule, catalog commonv1.Catalog) ([]schema.Spec, error)
 }
 
+// HandlerRegister provides methods to register schema event handlers.
+type HandlerRegister interface {
+	// RegisterHandler registers a schema event handler.
+	RegisterHandler(string, schema.Kind, schema.EventHandler)
+}
+
 // Repo is the facade to interact with the metadata repository.
 //
 //go:generate mockgen -destination=repo_mock.go -package=metadata github.com/apache/skywalking-banyandb/banyand/metadata Repo
 type Repo interface {
 	IndexFilter
+	HandlerRegister
 	StreamRegistry() schema.Stream
 	IndexRuleRegistry() schema.IndexRule
 	IndexRuleBindingRegistry() schema.IndexRuleBinding
@@ -50,7 +58,6 @@ type Repo interface {
 	TraceRegistry() schema.Trace
 	GroupRegistry() schema.Group
 	TopNAggregationRegistry() schema.TopNAggregation
-	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
 	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, error)
@@ -65,6 +72,7 @@ type Service interface {
 	run.Config
 	SchemaRegistry() schema.Registry
 	SetMetricsRegistry(omr observability.MetricsRegistry)
+	SetLocalPropertySchemaClient(mgrClient schemav1.SchemaManagementServiceClient, updateClient schemav1.SchemaUpdateServiceClient)
 	SetDataBroadcaster(broadcaster bus.Broadcaster)
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)

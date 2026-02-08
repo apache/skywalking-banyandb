@@ -32,10 +32,13 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
+var _ schema.NodeDiscovery = (*Service)(nil)
 
 // Service implements file-based node discovery.
 type Service struct {
@@ -54,6 +57,7 @@ type Service struct {
 
 // Config holds configuration for file discovery service.
 type Config struct {
+	OMR                  observability.MetricsRegistry
 	FilePath             string
 	GRPCTimeout          time.Duration
 	FetchInterval        time.Duration
@@ -131,6 +135,12 @@ func NewService(cfg Config) (*Service, error) {
 		}
 	})
 
+	if cfg.OMR != nil {
+		factory := observability.RootScope.SubScope("metadata").SubScope("file_discovery")
+		svc.SetMetrics(cfg.OMR.With(factory))
+		svc.DiscoveryServiceBase.SetMetrics(svc.metrics)
+	}
+
 	return svc, nil
 }
 
@@ -150,6 +160,7 @@ func (s *Service) GetDialOptions(address string) ([]grpc.DialOption, error) {
 // Start begins the file discovery background process.
 func (s *Service) Start(ctx context.Context) error {
 	s.GetLogger().Debug().Str("file_path", s.filePath).Msg("Starting file-based node discovery service")
+	s.NodeCacheBase.StartForNotification()
 
 	// initial load
 	if err := s.loadAndParseFile(ctx); err != nil {

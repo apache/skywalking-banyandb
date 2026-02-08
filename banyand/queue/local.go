@@ -23,6 +23,8 @@ import (
 	"errors"
 	"time"
 
+	grpclib "google.golang.org/grpc"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
@@ -101,10 +103,18 @@ func (*local) GetPort() *uint32 {
 func (*local) SetRouteProviders(_ map[string]route.TableProvider) {
 }
 
+func (l *local) AddGrpcHandlerCallback(func(*grpclib.Server)) {
+}
+
 func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 
 func (*local) HealthyNodes() []string {
+	return nil
+}
+
+// BroadcastWithExecutor is not supported for local queue as there are no distributed clients.
+func (*local) BroadcastWithExecutor(_ int, _ Executor) error {
 	return nil
 }
 

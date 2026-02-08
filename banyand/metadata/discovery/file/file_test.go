@@ -218,7 +218,7 @@ nodes:
 			deleted = append(deleted, metadata.Name)
 		},
 	}
-	svc.RegisterHandler("test", handler)
+	svc.RegisterHandler("test", schema.KindNode, handler)
 
 	require.NoError(t, svc.Start(ctx))
 

@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	grpclib "google.golang.org/grpc"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
@@ -54,6 +56,23 @@ type Client interface {
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
 	HealthyNodes() []string
+	// BroadcastWithExecutor executes the executor on active clients.
+	// maxParallel <= 0 means all nodes process concurrently, otherwise up to maxParallel nodes run concurrently.
+	// It checks circuit breaker before attempting each call and records success/failure.
+	BroadcastWithExecutor(maxParallel int, executor Executor) error
+}
+
+// Executor defines how to use a PubClient to process a request.
+type Executor func(nodeName string, c PubClient) error
+
+// PubClient represents a connection to a node and its associated gRPC client.
+type PubClient interface {
+	// Conn returns the underlying gRPC connection.
+	Conn() *grpclib.ClientConn
+	// Metadata returns the node's metadata.
+	Metadata() schema.Metadata
+	// Close closes the connection.
+	Close() error
 }
 
 // Server is the interface for receiving data from the queue.
@@ -63,6 +82,7 @@ type Server interface {
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
 	SetRouteProviders(providers map[string]route.TableProvider)
+	AddGrpcHandlerCallback(func(*grpclib.Server))
 }
 
 // BatchPublisher is the interface for publishing data in batch.

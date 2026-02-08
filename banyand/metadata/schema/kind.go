@@ -48,31 +48,6 @@ const (
 	KindSize = 9
 )
 
-func (k Kind) key() string {
-	switch k {
-	case KindGroup:
-		return groupsKeyPrefix
-	case KindStream:
-		return streamKeyPrefix
-	case KindMeasure:
-		return measureKeyPrefix
-	case KindTrace:
-		return traceKeyPrefix
-	case KindIndexRuleBinding:
-		return indexRuleBindingKeyPrefix
-	case KindIndexRule:
-		return indexRuleKeyPrefix
-	case KindTopNAggregation:
-		return topNAggregationKeyPrefix
-	case KindNode:
-		return nodeKeyPrefix
-	case KindProperty:
-		return propertyKeyPrefix
-	default:
-		return "unknown"
-	}
-}
-
 // Unmarshal encode bytes to proto.Message.
 func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 	if len(kv.Value) == 0 {
@@ -99,7 +74,7 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 	case KindProperty:
 		m = &databasev1.Property{}
 	default:
-		return Metadata{}, errUnsupportedEntityType
+		return Metadata{}, ErrUnsupportedEntityType
 	}
 	err := proto.Unmarshal(kv.Value, m)
 	if err != nil {
@@ -107,7 +82,7 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 	}
 	if messageWithMetadata, ok := m.(HasMetadata); ok {
 		if messageWithMetadata.GetMetadata() == nil {
-			return Metadata{}, errors.Errorf("message %s does not have metadata", k.key())
+			return Metadata{}, errors.Errorf("message %s does not have metadata", k)
 		}
 		// Assign readonly fields
 		messageWithMetadata.GetMetadata().CreateRevision = kv.CreateRevision
@@ -147,15 +122,4 @@ func (k Kind) String() string {
 	default:
 		return "unknown"
 	}
-}
-
-func allKeys() []string {
-	var keys []string
-	for i := 0; i < KindSize; i++ {
-		ki := Kind(1 << i)
-		if KindMask&ki > 0 {
-			keys = append(keys, ki.key())
-		}
-	}
-	return keys
 }

@@ -187,10 +187,10 @@ var _ = Describe("Property Schema Operation", func() {
 		createGroup := func() string {
 			rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: ui-template
+ name: ui-template
 catalog: CATALOG_PROPERTY
 resource_opts:
-  shard_num: 2
+ shard_num: 2
 `))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
@@ -206,13 +206,13 @@ resource_opts:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -226,13 +226,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -260,13 +260,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -278,15 +278,15 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "update", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
-  - name: version
-    type: TAG_TYPE_STRING
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
+ - name: version
+   type: TAG_TYPE_STRING
 `))
 		out = capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -311,13 +311,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -344,13 +344,13 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: service
-  group: ui-template
+ name: service
+ group: ui-template
 tags:
-  - name: content
-    type: TAG_TYPE_STRING
-  - name: state
-    type: TAG_TYPE_INT
+ - name: content
+   type: TAG_TYPE_STRING
+ - name: state
+   type: TAG_TYPE_INT
 `))
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
@@ -361,8 +361,8 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 		rootCmd.SetIn(strings.NewReader(`
 metadata:
-  name: endpoint
-  group: ui-template
+ name: endpoint
+ group: ui-template
 tags:
 - name: content
   type: TAG_TYPE_STRING
@@ -681,10 +681,10 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 name: _property_gossip_trace_stream
 groups: ["_property_gossip"]
 projection:
-  tagFamilies:
-    - name: searchable
-      tags:
-        - trace_id`))
+ tagFamilies:
+   - name: searchable
+     tags:
+       - trace_id`))
 			return capturer.CaptureStdout(func() {
 				err := rootCmd.Execute()
 				Expect(err).NotTo(HaveOccurred())
@@ -847,7 +847,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
-				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s")
+				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
+				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())

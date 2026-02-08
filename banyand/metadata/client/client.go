@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package metadata
+// Package client implements the metadata client service.
+package client
 
 import (
 	"context"
@@ -33,9 +34,13 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/dns"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/etcd"
+	metadataproperty "github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -58,6 +63,15 @@ const (
 	NodeDiscoveryModeFile = "file"
 )
 
+const (
+	// FlagRegistryModeName is the falg name for registry mode.
+	FlagRegistryModeName = "schema-registry-mode"
+	// RegistryModeEtcd represents etcd-based metadata storage mode.
+	RegistryModeEtcd = "etcd"
+	// RegistryModeProperty represents native property-based metadata storage mode.
+	RegistryModeProperty = "property"
+)
+
 const flagEtcdUsername = "etcd-username"
 
 const flagEtcdPassword = "etcd-password"
@@ -68,8 +82,14 @@ const flagEtcdTLSCertFile = "etcd-tls-cert-file"
 
 const flagEtcdTLSKeyFile = "etcd-tls-key-file"
 
+// for the property based registry connect to the metadata node.
+const (
+	propertyRegistryInitRetryCount = 30
+	propertyRegistryInitRetrySleep = time.Second * 3
+)
+
 // NewClient returns a new metadata client.
-func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
+func NewClient(toRegisterNode, forceRegisterNode bool) (metadata.Service, error) {
 	return &clientService{
 		closer:            run.NewCloser(1),
 		forceRegisterNode: forceRegisterNode,
@@ -78,39 +98,48 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 }
 
 type clientService struct {
-	schemaRegistry           schema.Registry
-	infoCollectorRegistry    *schema.InfoCollectorRegistry
-	dnsDiscovery             *dns.Service
-	fileDiscovery            *file.Service
-	closer                   *run.Closer
-	nodeInfo                 *databasev1.Node
-	dataBroadcaster          bus.Broadcaster
-	liaisonBroadcaster       bus.Broadcaster
-	etcdTLSCertFile          string
-	dnsCACertPaths           []string
-	etcdPassword             string
-	etcdTLSCAFile            string
-	etcdUsername             string
-	etcdTLSKeyFile           string
-	namespace                string
-	nodeDiscoveryMode        string
-	filePath                 string
-	dnsSRVAddresses          []string
-	endpoints                []string
-	registryTimeout          time.Duration
-	dnsFetchInitInterval     time.Duration
-	dnsFetchInitDuration     time.Duration
-	dnsFetchInterval         time.Duration
-	grpcTimeout              time.Duration
-	etcdFullSyncInterval     time.Duration
-	fileFetchInterval        time.Duration
-	fileRetryInitialInterval time.Duration
-	fileRetryMaxInterval     time.Duration
-	fileRetryMultiplier      float64
-	nodeInfoMux              sync.Mutex
-	forceRegisterNode        bool
-	toRegisterNode           bool
-	dnsTLSEnabled            bool
+	schemaRegistry             schema.Registry
+	nodeDiscovery              schema.NodeDiscovery
+	omr                        observability.MetricsRegistry
+	schemaUpdateClient         schemav1.SchemaUpdateServiceClient
+	schemaManagementClient     schemav1.SchemaManagementServiceClient
+	infoCollectorRegistry      *schema.InfoCollectorRegistry
+	closer                     *run.Closer
+	nodeInfo                   *databasev1.Node
+	dataBroadcaster            bus.Broadcaster
+	liaisonBroadcaster         bus.Broadcaster
+	etcdTLSCertFile            string
+	dnsCACertPaths             []string
+	etcdPassword               string
+	etcdTLSCAFile              string
+	etcdUsername               string
+	etcdTLSKeyFile             string
+	namespace                  string
+	nodeDiscoveryMode          string
+	filePath                   string
+	metadataRegistryMode       string
+	metadataNodeTLSCertFile    string
+	dnsSRVAddresses            []string
+	endpoints                  []string
+	registryTimeout            time.Duration
+	dnsFetchInitInterval       time.Duration
+	dnsFetchInitDuration       time.Duration
+	dnsFetchInterval           time.Duration
+	grpcTimeout                time.Duration
+	propertySchemaSyncInterval time.Duration
+	etcdFullSyncInterval       time.Duration
+	fileFetchInterval          time.Duration
+	fileRetryInitialInterval   time.Duration
+	fileRetryMaxInterval       time.Duration
+	fileRetryMultiplier        float64
+	dnsRetryInitialInterval    time.Duration
+	dnsRetryMaxInterval        time.Duration
+	dnsRetryMultiplier         float64
+	nodeInfoMux                sync.Mutex
+	forceRegisterNode          bool
+	toRegisterNode             bool
+	dnsTLSEnabled              bool
+	metadataNodeTLSEnabled     bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -156,7 +185,22 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Maximum retry interval for failed node metadata fetches in file discovery mode")
 	fs.Float64Var(&s.fileRetryMultiplier, "node-discovery-file-retry-multiplier", 2.0,
 		"Backoff multiplier for retry intervals in file discovery mode")
+	fs.DurationVar(&s.dnsRetryInitialInterval, "node-discovery-dns-retry-initial-interval", 1*time.Second,
+		"Initial retry interval for failed node metadata fetches in DNS discovery mode")
+	fs.DurationVar(&s.dnsRetryMaxInterval, "node-discovery-dns-retry-max-interval", 2*time.Minute,
+		"Maximum retry interval for failed node metadata fetches in DNS discovery mode")
+	fs.Float64Var(&s.dnsRetryMultiplier, "node-discovery-dns-retry-multiplier", 2.0,
+		"Backoff multiplier for retry intervals in DNS discovery mode")
 
+	// schema management configuration
+	fs.StringVar(&s.metadataRegistryMode, FlagRegistryModeName, RegistryModeProperty,
+		"Schema storage mode: 'etcd' for etcd-based registry, 'property' for native property-based registry")
+	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", 30*time.Second,
+		"Interval to sync property-based schema in client side with other nodes")
+	fs.BoolVar(&s.metadataNodeTLSEnabled, "metadata-node-tls-enabled", false,
+		"Enable TLS for gRPC connections to metadata nodes (property registry and etcd node discovery mode only)")
+	fs.StringVar(&s.metadataNodeTLSCertFile, "metadata-node-tls-cert-file", "",
+		"Client certificate file for TLS connections to metadata nodes (property registry and etcd node discovery mode only)")
 	return fs
 }
 
@@ -167,8 +211,9 @@ func (s *clientService) Validate() error {
 			s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS, NodeDiscoveryModeFile)
 	}
 
-	// Validate etcd endpoints (always required for schema storage, regardless of node discovery mode)
-	if len(s.endpoints) == 0 {
+	// Validate etcd endpoints if node discovery or metadata registry mode is etcd
+	if (s.nodeDiscoveryMode == NodeDiscoveryModeEtcd || s.metadataRegistryMode == NodeDiscoveryModeEtcd) &&
+		len(s.endpoints) == 0 {
 		return errors.New("etcd endpoints cannot be empty")
 	}
 
@@ -198,6 +243,12 @@ func (s *clientService) Validate() error {
 		}
 	}
 
+	if s.metadataRegistryMode == RegistryModeProperty && s.nodeDiscoveryMode == NodeDiscoveryModeEtcd && s.metadataNodeTLSEnabled {
+		if s.metadataNodeTLSCertFile == "" {
+			return errors.New("metadata node TLS is enabled, but no client certificate file was provided")
+		}
+	}
+
 	return nil
 }
 
@@ -217,56 +268,22 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		}
 	}()
 
-	for {
-		var err error
-		s.schemaRegistry, err = schema.NewEtcdSchemaRegistry(
-			schema.Namespace(s.namespace),
-			schema.ConfigureServerEndpoints(s.endpoints),
-			schema.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
-			schema.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
-			schema.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
-			schema.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
-		)
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			select {
-			case <-stopCh:
-				return errors.New("pre-run interrupted")
-			case <-time.After(s.registryTimeout):
-				return errors.New("pre-run timeout")
-			case <-s.closer.CloseNotify():
-				return errors.New("pre-run interrupted")
-			default:
-				l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("the schema registry init timeout, retrying...")
-				time.Sleep(time.Second)
-				continue
-			}
-		}
-		if err == nil {
-			break
-		}
-		return err
-	}
-
-	s.infoCollectorRegistry = schema.NewInfoCollectorRegistry(l, s.schemaRegistry)
-	if s.dataBroadcaster != nil {
-		s.infoCollectorRegistry.SetDataBroadcaster(s.dataBroadcaster)
-	}
-	if s.liaisonBroadcaster != nil {
-		s.infoCollectorRegistry.SetLiaisonBroadcaster(s.liaisonBroadcaster)
-	}
-
 	if s.nodeDiscoveryMode == NodeDiscoveryModeDNS {
 		l.Info().Strs("srv-addresses", s.dnsSRVAddresses).Msg("Initializing DNS-based node discovery")
 
 		var createErr error
-		s.dnsDiscovery, createErr = dns.NewService(dns.Config{
-			SRVAddresses: s.dnsSRVAddresses,
-			InitInterval: s.dnsFetchInitInterval,
-			InitDuration: s.dnsFetchInitDuration,
-			PollInterval: s.dnsFetchInterval,
-			GRPCTimeout:  s.grpcTimeout,
-			TLSEnabled:   s.dnsTLSEnabled,
-			CACertPaths:  s.dnsCACertPaths,
+		s.nodeDiscovery, createErr = dns.NewService(dns.Config{
+			OMR:                  s.omr,
+			SRVAddresses:         s.dnsSRVAddresses,
+			InitInterval:         s.dnsFetchInitInterval,
+			InitDuration:         s.dnsFetchInitDuration,
+			PollInterval:         s.dnsFetchInterval,
+			GRPCTimeout:          s.grpcTimeout,
+			TLSEnabled:           s.dnsTLSEnabled,
+			CACertPaths:          s.dnsCACertPaths,
+			RetryInitialInterval: s.dnsRetryInitialInterval,
+			RetryMaxInterval:     s.dnsRetryMaxInterval,
+			RetryMultiplier:      s.dnsRetryMultiplier,
 		})
 		if createErr != nil {
 			return fmt.Errorf("failed to create DNS discovery service: %w", createErr)
@@ -277,7 +294,8 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		l.Info().Str("file-path", s.filePath).Msg("Initializing file-based node discovery")
 
 		var createErr error
-		s.fileDiscovery, createErr = file.NewService(file.Config{
+		s.nodeDiscovery, createErr = file.NewService(file.Config{
+			OMR:                  s.omr,
 			FilePath:             s.filePath,
 			GRPCTimeout:          s.grpcTimeout,
 			FetchInterval:        s.fileFetchInterval,
@@ -290,6 +308,78 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		}
 	}
 
+	var etcdRegistry schema.Registry
+	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd {
+		var etcdNodeDiscovery schema.NodeDiscovery
+		var initErr error
+		etcdRegistry, etcdNodeDiscovery, initErr = s.initEtcdSchemaRegistry(l, stopCh)
+		if initErr != nil {
+			return initErr
+		}
+		s.nodeDiscovery = etcdNodeDiscovery
+	}
+
+	if s.metadataRegistryMode == RegistryModeEtcd {
+		if etcdRegistry != nil {
+			s.schemaRegistry = etcdRegistry
+		} else {
+			var initErr error
+			s.schemaRegistry, _, initErr = s.initEtcdSchemaRegistry(l, stopCh)
+			if initErr != nil {
+				return initErr
+			}
+		}
+	} else if s.metadataRegistryMode == RegistryModeProperty {
+		if err := s.initPropertySchemaRegistry(ctx, l, stopCh); err != nil {
+			return fmt.Errorf("failed to initialize property schema registry: %w", err)
+		}
+	}
+
+	s.infoCollectorRegistry = schema.NewInfoCollectorRegistry(l, s.schemaRegistry)
+	if s.dataBroadcaster != nil {
+		s.infoCollectorRegistry.SetDataBroadcaster(s.dataBroadcaster)
+	}
+	if s.liaisonBroadcaster != nil {
+		s.infoCollectorRegistry.SetLiaisonBroadcaster(s.liaisonBroadcaster)
+	}
+
+	return s.registerNodeIfNeed(ctx, l, stopCh)
+}
+
+func (s *clientService) initEtcdSchemaRegistry(l *logger.Logger, stopCh chan struct{}) (schema.Registry, schema.NodeDiscovery, error) {
+	for {
+		registry, nodeDiscovery, err := etcd.NewEtcdSchemaRegistry(
+			etcd.Namespace(s.namespace),
+			etcd.ConfigureServerEndpoints(s.endpoints),
+			etcd.ConfigureEtcdUser(s.etcdUsername, s.etcdPassword),
+			etcd.ConfigureEtcdTLSCAFile(s.etcdTLSCAFile),
+			etcd.ConfigureEtcdTLSCertAndKey(s.etcdTLSCertFile, s.etcdTLSKeyFile),
+			etcd.ConfigureWatchCheckInterval(s.etcdFullSyncInterval),
+			etcd.ConfigureNodeTLSEnabled(s.metadataNodeTLSEnabled),
+			etcd.ConfigureNodeTLSCertFile(s.metadataNodeTLSCertFile),
+		)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			select {
+			case <-stopCh:
+				return nil, nil, errors.New("pre-run interrupted")
+			case <-time.After(s.registryTimeout):
+				return nil, nil, errors.New("pre-run timeout")
+			case <-s.closer.CloseNotify():
+				return nil, nil, errors.New("pre-run interrupted")
+			default:
+				l.Warn().Strs("etcd-endpoints", s.endpoints).Msg("the etcd init timeout, retrying...")
+				time.Sleep(time.Second)
+				continue
+			}
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		return registry, nodeDiscovery, nil
+	}
+}
+
+func (s *clientService) registerNodeIfNeed(ctx context.Context, l *logger.Logger, stopCh chan struct{}) error {
 	// skip node registration if DNS/file mode is enabled or node registration is disabled
 	if !s.toRegisterNode || s.nodeDiscoveryMode == NodeDiscoveryModeDNS ||
 		s.nodeDiscoveryMode == NodeDiscoveryModeFile {
@@ -319,7 +409,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 	}
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
-		err := s.schemaRegistry.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)
+		err := s.nodeDiscovery.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)
 		cancel()
 		if errors.Is(err, schema.ErrGRPCAlreadyExists) ||
 			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -353,17 +443,9 @@ func (s *clientService) Serve() run.StopNotify {
 		s.schemaRegistry.StartWatcher()
 	}
 
-	// Start DNS discovery
-	if s.dnsDiscovery != nil {
-		if err := s.dnsDiscovery.Start(s.closer.Ctx()); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to start DNS discovery")
-		}
-	}
-
-	// Start file discovery
-	if s.fileDiscovery != nil {
-		if err := s.fileDiscovery.Start(s.closer.Ctx()); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to start file discovery")
+	if s.nodeDiscovery != nil {
+		if startErr := s.nodeDiscovery.Start(s.closer.Ctx()); startErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(startErr).Msg("failed to start node discovery")
 		}
 	}
 
@@ -374,32 +456,22 @@ func (s *clientService) GracefulStop() {
 	s.closer.Done()
 	s.closer.CloseThenWait()
 
-	if s.dnsDiscovery != nil {
-		if err := s.dnsDiscovery.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close DNS discovery")
-		}
-	}
-
-	if s.fileDiscovery != nil {
-		if err := s.fileDiscovery.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close file discovery")
+	if s.nodeDiscovery != nil {
+		if closeErr := s.nodeDiscovery.Close(); closeErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(closeErr).Msg("failed to close node discovery")
 		}
 	}
 
 	if s.schemaRegistry != nil {
-		if err := s.schemaRegistry.Close(); err != nil {
-			logger.GetLogger(s.Name()).Error().Err(err).Msg("failed to close schema registry")
+		if closeErr := s.schemaRegistry.Close(); closeErr != nil {
+			logger.GetLogger(s.Name()).Error().Err(closeErr).Msg("failed to close schema registry")
 		}
 	}
 }
 
 func (s *clientService) RegisterHandler(name string, kind schema.Kind, handler schema.EventHandler) {
-	if kind == schema.KindNode && s.fileDiscovery != nil {
-		s.fileDiscovery.RegisterHandler(name, handler)
-		return
-	}
-	if kind == schema.KindNode && s.dnsDiscovery != nil {
-		s.dnsDiscovery.RegisterHandler(name, handler)
+	if kind == schema.KindNode {
+		s.nodeDiscovery.RegisterHandler(name, kind, handler)
 		return
 	}
 	s.schemaRegistry.RegisterHandler(name, kind, handler)
@@ -434,16 +506,7 @@ func (s *clientService) TopNAggregationRegistry() schema.TopNAggregation {
 }
 
 func (s *clientService) NodeRegistry() schema.Node {
-	// If file discovery is enabled, use it instead of etcd
-	if s.fileDiscovery != nil {
-		return s.fileDiscovery
-	}
-	// If DNS discovery is enabled, use it instead of etcd
-	if s.dnsDiscovery != nil {
-		return s.dnsDiscovery
-	}
-	// Otherwise use etcd schema registry
-	return s.schemaRegistry
+	return s.nodeDiscovery
 }
 
 func (s *clientService) PropertyRegistry() schema.Property {
@@ -451,24 +514,16 @@ func (s *clientService) PropertyRegistry() schema.Property {
 }
 
 func (s *clientService) SetMetricsRegistry(omr observability.MetricsRegistry) {
-	// initialize DNS discovery with metrics if it exists
-	if s.dnsDiscovery != nil {
-		factory := observability.RootScope.SubScope("metadata").SubScope("dns_discovery")
-		s.dnsDiscovery.SetMetrics(omr.With(factory))
-	}
-	// initialize file discovery with metrics if it exists
-	if s.fileDiscovery != nil {
-		factory := observability.RootScope.SubScope("metadata").SubScope("file_discovery")
-		s.fileDiscovery.SetMetrics(omr.With(factory))
-	}
+	s.omr = omr
+}
+
+func (s *clientService) SetLocalPropertySchemaClient(mgrClient schemav1.SchemaManagementServiceClient, updateClient schemav1.SchemaUpdateServiceClient) {
+	s.schemaManagementClient = mgrClient
+	s.schemaUpdateClient = updateClient
 }
 
 func (s *clientService) Name() string {
 	return "metadata"
-}
-
-func (s *clientService) Role() databasev1.Role {
-	return databasev1.Role_ROLE_META
 }
 
 func (s *clientService) IndexRules(ctx context.Context, subject *commonv1.Metadata) ([]*databasev1.IndexRule, error) {
@@ -579,6 +634,60 @@ func (s *clientService) SetLiaisonBroadcaster(broadcaster bus.Broadcaster) {
 	s.liaisonBroadcaster = broadcaster
 }
 
+func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logger.Logger, stopCh chan struct{}) error {
+	var currentNode *metadataproperty.NodeInfo
+	n := buildNodeFromContext(ctx)
+	if n != nil {
+		currentNode = &metadataproperty.NodeInfo{
+			Node:               n,
+			SchemaMgrClient:    s.schemaManagementClient,
+			SchemaUpdateClient: s.schemaUpdateClient,
+		}
+	}
+
+	registryCfg := &metadataproperty.ClientConfig{
+		GRPCTimeout:  s.grpcTimeout,
+		SyncInterval: s.propertySchemaSyncInterval,
+		OMR:          s.omr,
+		Node:         currentNode,
+		NodeSchema:   s.NodeRegistry(),
+		DialProvider: s.nodeDiscovery,
+	}
+	var initAttempt int
+	for {
+		registry, initErr := metadataproperty.NewSchemaRegistryClient(registryCfg) //nolint:contextcheck
+		if errors.Is(initErr, context.DeadlineExceeded) || errors.Is(initErr, context.Canceled) {
+			select {
+			case <-stopCh:
+				return errors.New("pre-run interrupted")
+			case <-time.After(s.registryTimeout):
+				return errors.New("pre-run timeout")
+			case <-s.closer.CloseNotify():
+				return errors.New("pre-run interrupted")
+			default:
+				l.Warn().Msg("the property schema registry init timeout, retrying...")
+				time.Sleep(time.Second)
+				continue
+			}
+		}
+		if initErr != nil {
+			initAttempt++
+			if initAttempt >= propertyRegistryInitRetryCount {
+				return fmt.Errorf("failed to initialize property schema registry after %d attempts: %w",
+					initAttempt, initErr)
+			}
+			l.Warn().Err(initErr).Msgf("failed to initialize property schema registry, attempt %d/%d, retrying in %s...",
+				initAttempt, propertyRegistryInitRetryCount, propertyRegistryInitRetrySleep)
+			time.Sleep(propertyRegistryInitRetrySleep)
+			continue
+		}
+		s.nodeDiscovery.RegisterHandler("property-schema-registry", schema.KindNode, registry)
+		s.schemaRegistry = registry
+		break
+	}
+	return nil
+}
+
 func contains(s []string, e string) bool {
 	for _, a := range s {
 		if a == e {
@@ -586,4 +695,23 @@ func contains(s []string, e string) bool {
 		}
 	}
 	return false
+}
+
+func buildNodeFromContext(ctx context.Context) *databasev1.Node {
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	rolesVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || rolesVal == nil {
+		return nil
+	}
+	node := nodeVal.(common.Node)
+	nodeRoles := rolesVal.([]databasev1.Role)
+	return &databasev1.Node{
+		Metadata:                        &commonv1.Metadata{Name: node.NodeID},
+		GrpcAddress:                     node.GrpcAddress,
+		HttpAddress:                     node.HTTPAddress,
+		Roles:                           nodeRoles,
+		Labels:                          node.Labels,
+		CreatedAt:                       timestamppb.Now(),
+		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
+	}
 }

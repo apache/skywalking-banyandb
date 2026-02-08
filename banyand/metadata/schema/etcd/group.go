@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package schema
+package etcd
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 var groupsKeyPrefix = "/groups/"
@@ -42,7 +43,7 @@ func (e *etcdSchemaRegistry) GetGroup(ctx context.Context, group string) (*commo
 }
 
 func (e *etcdSchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, error) {
-	messages, err := e.listWithPrefix(ctx, groupsKeyPrefix, KindGroup)
+	messages, err := e.listWithPrefix(ctx, groupsKeyPrefix, schema.KindGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +82,9 @@ func (e *etcdSchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Gr
 	if group.UpdatedAt != nil {
 		group.UpdatedAt = timestamppb.Now()
 	}
-	_, err := e.create(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind: KindGroup,
+	_, err := e.create(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindGroup,
 			Name: group.GetMetadata().GetName(),
 		},
 		Spec: group,
@@ -110,9 +111,9 @@ func (e *etcdSchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Gr
 			return errors.New("segment interval unit cannot be changed")
 		}
 	}
-	_, err = e.update(ctx, Metadata{
-		TypeMeta: TypeMeta{
-			Kind: KindGroup,
+	_, err = e.update(ctx, schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Kind: schema.KindGroup,
 			Name: group.GetMetadata().GetName(),
 		},
 		Spec: group,

@@ -119,15 +119,19 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			continue
 		}
-		var client *client
+		var dc *defaultClient
 		// nolint: contextcheck
 		if func() bool {
 			bp.pub.mu.RLock()
 			defer bp.pub.mu.RUnlock()
-			var ok bool
-			client, ok = bp.pub.active[node]
+			client, ok := bp.pub.active[node]
 			if !ok {
 				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
+				return true
+			}
+			dc, ok = client.(*defaultClient)
+			if !ok {
+				err = multierr.Append(err, fmt.Errorf("client for node %s does not support batch publish", node))
 				return true
 			}
 			succeed, ce := bp.pub.checkWritable(node, topic)
@@ -147,7 +151,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		streamCtx, cancel := context.WithTimeout(ctx, bp.timeout)
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
-		stream, errCreateStream := client.client.Send(streamCtx)
+		stream, errCreateStream := dc.serviceClient.Send(streamCtx)
 		if errCreateStream != nil {
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue

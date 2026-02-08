@@ -37,8 +37,6 @@ var (
 	statusGRPCInvalidArgument  = status.New(codes.InvalidArgument, "banyandb: input is invalid")
 	statusGRPCResourceNotFound = status.New(codes.NotFound, "banyandb: resource not found")
 	statusGRPCAlreadyExists    = status.New(codes.AlreadyExists, "banyandb: resource already exists")
-	statusDataLoss             = status.New(codes.DataLoss, "banyandb: resource corrupts.")
-	errGRPCDataLoss            = statusDataLoss.Err()
 )
 
 // BadRequest creates a gRPC error with error details with type BadRequest,

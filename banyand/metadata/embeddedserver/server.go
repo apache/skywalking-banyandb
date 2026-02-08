@@ -29,6 +29,7 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	metadatclient "github.com/apache/skywalking-banyandb/banyand/metadata/client"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -88,8 +89,13 @@ func (s *server) Validate() error {
 	if s.autoCompactionRetention == "" {
 		return errors.New("autoCompactionRetention is empty")
 	}
-	if err := s.Service.FlagSet().Set(metadata.FlagEtcdEndpointsName,
+	flags := s.Service.FlagSet()
+	if err := flags.Set(metadatclient.FlagEtcdEndpointsName,
 		strings.Join(s.listenClientURL, ",")); err != nil {
+		return err
+	}
+	if err := flags.Set(metadatclient.FlagRegistryModeName,
+		metadatclient.RegistryModeEtcd); err != nil {
 		return err
 	}
 	return s.Service.Validate()
@@ -131,7 +137,7 @@ func (s *server) GracefulStop() {
 func NewService(_ context.Context) (metadata.Service, error) {
 	s := &server{}
 	var err error
-	s.Service, err = metadata.NewClient(true, true)
+	s.Service, err = metadatclient.NewClient(true, true)
 	if err != nil {
 		return nil, err
 	}

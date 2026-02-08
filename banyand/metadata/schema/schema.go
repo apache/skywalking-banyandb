@@ -27,9 +27,11 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 )
 
-var errUnsupportedEntityType = errors.New("unsupported entity type")
+// ErrUnsupportedEntityType indicates the entity type is not supported.
+var ErrUnsupportedEntityType = errors.New("unsupported entity type")
 
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
@@ -48,6 +50,12 @@ type LiaisonInfoCollector interface {
 	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
 }
 
+// HasMetadata allows getting Metadata.
+type HasMetadata interface {
+	GetMetadata() *commonv1.Metadata
+	proto.Message
+}
+
 // UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.
 type UnimplementedOnInitHandler struct{}
 
@@ -61,9 +69,6 @@ type ListOpt struct {
 	Group string
 }
 
-// WatcherOption is a placeholder for watcher configuration.
-type WatcherOption func(*watcherConfig)
-
 // Registry allowing depositing resources.
 type Registry interface {
 	io.Closer
@@ -74,13 +79,20 @@ type Registry interface {
 	Trace
 	Group
 	TopNAggregation
-	Node
 	Property
 	RegisterHandler(string, Kind, EventHandler)
-	NewWatcher(string, Kind, int64, ...WatcherOption) *watcher
 	Register(context.Context, Metadata, bool) error
 	Compact(context.Context, int64) error
 	StartWatcher()
+}
+
+// NodeDiscovery provides node discovery and management capabilities.
+type NodeDiscovery interface {
+	io.Closer
+	Node
+	grpchelper.DialOptionsProvider
+	RegisterHandler(string, Kind, EventHandler)
+	Start(ctx context.Context) error
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -100,54 +112,8 @@ type Metadata struct {
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
 
-func (m Metadata) key() (string, error) {
-	switch m.Kind {
-	case KindGroup:
-		return formatGroupKey(m.Name), nil
-	case KindMeasure:
-		return formatMeasureKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindStream:
-		return formatStreamKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindTrace:
-		return formatTraceKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindIndexRule:
-		return formatIndexRuleKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindIndexRuleBinding:
-		return formatIndexRuleBindingKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-
-	case KindTopNAggregation:
-		return formatTopNAggregationKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindNode:
-		return formatNodeKey(m.Name), nil
-	case KindProperty:
-		return formatPropertyKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	default:
-		return "", errUnsupportedEntityType
-	}
-}
-
-func (m Metadata) equal(other Metadata) bool {
+// Equal checks whether two Metadata are equal.
+func (m Metadata) Equal(other Metadata) bool {
 	if other.Spec == nil {
 		return false
 	}

@@ -23,6 +23,7 @@ Release Notes.
   - From: `<data-dir>/property/data/shard-<id>/...`
   - To: `<data-dir>/property/data/<group>/shard-<id>/...`
 - Add a generic snapshot coordination package for atomic snapshot transitions across trace and sidx.
+- Support using native property system to storage schema.
 
 ### Bug Fixes
 
