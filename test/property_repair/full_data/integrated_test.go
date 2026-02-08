@@ -47,7 +47,7 @@ var (
 
 func TestPropertyRepairIntegrated(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Property Repair Integrated Test Suite", ginkgo.Label("integration", "property_repair", "full_data"))
+	ginkgo.RunSpecs(t, "Property Repair Integrated Test Suite", ginkgo.Label("property_repair", "full_data"))
 }
 
 var _ = ginkgo.BeforeSuite(func() {
