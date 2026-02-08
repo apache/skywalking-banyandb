@@ -153,6 +153,25 @@ func (g *groupBy) hash(ec context.Context) (mit executor.MIterator, err error) {
 	return newGroupIterator(groupMap, groupLst), nil
 }
 
+// GroupInternalDataPointsByKey groups data points by group key.
+// Used by distributed plan for merging mean aggregation results from multiple shards.
+func GroupInternalDataPointsByKey(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) (map[uint64][]*measurev1.InternalDataPoint, error) {
+	if len(groupByTagsRefs) == 0 {
+		groupMap := make(map[uint64][]*measurev1.InternalDataPoint)
+		groupMap[0] = dataPoints
+		return groupMap, nil
+	}
+	groupMap := make(map[uint64][]*measurev1.InternalDataPoint)
+	for _, idp := range dataPoints {
+		groupKey, keyErr := formatGroupByKey(idp.GetDataPoint(), groupByTagsRefs)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		groupMap[groupKey] = append(groupMap[groupKey], idp)
+	}
+	return groupMap, nil
+}
+
 func formatGroupByKey(point *measurev1.DataPoint, groupByTagsRefs [][]*logical.TagRef) (uint64, error) {
 	hash := xxhash.New()
 	for _, tagFamilyRef := range groupByTagsRefs {

@@ -33,7 +33,7 @@ var (
 
 // Func supports aggregation operations.
 type Func[N Number] interface {
-	In(N)
+	In(...N)
 	Val() N
 	Reset()
 }
@@ -49,6 +49,8 @@ func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
 		result = &meanFunc[N]{zero: zero[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN:
+		result = &distributedMeanFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
 		result = &countFunc[N]{zero: zero[N]()}
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:

@@ -122,6 +122,28 @@ func (m *schema) registerField(fieldIdx int, spec *databasev1.FieldSpec) {
 	}
 }
 
+// extendWithFieldRefs returns a new schema with the given field refs added to fieldMap.
+// Used for synthetic output fields (e.g. value_sum, value_count for distributed mean).
+func (m *schema) extendWithFieldRefs(refs []*logical.FieldRef) *schema {
+	newFieldMap := make(map[string]*logical.FieldSpec)
+	for name, spec := range m.fieldMap {
+		newFieldMap[name] = spec
+	}
+	for idx, fr := range refs {
+		if _, exists := newFieldMap[fr.Field.Name]; !exists && fr.Spec != nil {
+			newFieldMap[fr.Field.Name] = &logical.FieldSpec{
+				FieldIdx: len(m.fieldMap) + idx,
+				Spec:     fr.Spec.Spec,
+			}
+		}
+	}
+	return &schema{
+		measure:  m.measure,
+		common:   m.common,
+		fieldMap: newFieldMap,
+	}
+}
+
 func (m *schema) Children() []logical.Schema {
 	return m.children
 }
