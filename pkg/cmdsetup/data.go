@@ -97,6 +97,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		propertySvc,
 		metaSvc,
 		propertySchemaService,
+		propertySvc.NewMetadataRegister(),
 		pipeline,
 		propertyStreamPipeline,
 		measureSvc,

@@ -125,7 +125,8 @@ var _ = Describe("Client Test", func() {
 			"--node-host", nodeHost,
 			"--etcd-endpoints", etcdEndpoint,
 			"--etcd-username", username,
-			"--etcd-password", password)
+			"--etcd-password", password,
+			"--schema-registry-mode", "etcd")
 		defer closeFn()
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
@@ -168,7 +169,8 @@ var _ = Describe("Client Test", func() {
 			"--node-host-provider", "flag",
 			"--node-host", nodeHost,
 			"--etcd-endpoints", etcdEndpoint,
-			"--etcd-tls-ca-file", caFilePath)
+			"--etcd-tls-ca-file", caFilePath,
+			"--schema-registry-mode", "etcd")
 		defer closeFn()
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
@@ -217,7 +219,8 @@ var _ = Describe("Client Test", func() {
 			"--etcd-endpoints", etcdEndpoint,
 			"--etcd-tls-ca-file", caFilePath,
 			"--etcd-tls-cert-file", clientCertFilePath,
-			"--etcd-tls-key-file", clientKeyFilePath)
+			"--etcd-tls-key-file", clientKeyFilePath,
+			"--schema-registry-mode", "etcd")
 		defer closeFn()
 
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())

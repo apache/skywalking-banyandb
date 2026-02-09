@@ -212,6 +212,10 @@ func (s *testService) GetGossIPMessenger() gossip.Messenger {
 	return nil
 }
 
+func (s *testService) NewMetadataRegister() run.Unit {
+	return nil
+}
+
 // PreRun implements run.PreRunner.
 func (s *testService) PreRun(_ context.Context) error {
 	return nil

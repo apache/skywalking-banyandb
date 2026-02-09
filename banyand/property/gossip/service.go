@@ -35,7 +35,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -199,10 +198,6 @@ func (s *service) Validate() error {
 }
 
 func (s *service) Serve(stopCh chan struct{}) {
-	// Initialize metadata-dependent components in Serve phase to avoid circular dependency:
-	// propertySvc.PreRun -> gossip.PreRun -> schemaRegistry (needs metaSvc.PreRun)
-	// metaSvc.PreRun -> propertySvc.DirectQuery (needs propertySvc.PreRun)
-	s.initMetadataRegister()
 	var opts []grpclib.ServerOption
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
@@ -293,50 +288,5 @@ func (s *service) GracefulStop() {
 	case <-stopped:
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
-	}
-}
-
-func (s *service) initMetadataRegister() {
-	if s.metadata == nil {
-		return
-	}
-
-	s.sel.OnInit([]schema.Kind{schema.KindGroup})
-	notifyMetadataAddOrUpdate(s, schema.KindNode, func() ([]*databasev1.Node, error) {
-		return s.metadata.NodeRegistry().ListNode(context.Background(), databasev1.Role_ROLE_UNSPECIFIED)
-	}, func(d *databasev1.Node) *commonv1.Metadata {
-		return d.Metadata
-	})
-	s.metadata.RegisterHandler("property-repair-nodes", schema.KindNode, s)
-	notifyMetadataAddOrUpdate(s, schema.KindNode, func() ([]*commonv1.Group, error) {
-		return s.metadata.GroupRegistry().ListGroup(context.Background())
-	}, func(d *commonv1.Group) *commonv1.Metadata {
-		return d.Metadata
-	})
-	s.metadata.RegisterHandler("property-repair-groups", schema.KindGroup, s)
-	if err := s.initTracing(context.Background()); err != nil {
-		s.log.Error().Err(err).Msg("failed to initialize internal tracing")
-	}
-}
-
-func notifyMetadataAddOrUpdate[T any](s *service, k schema.Kind, query func() ([]T, error), metadataGetter func(T) *commonv1.Metadata) {
-	data, err := query()
-	if err != nil {
-		s.log.Warn().Err(err).Str("kind", k.String()).Msg("failed to query metadata")
-		return
-	}
-	for _, d := range data {
-		m := metadataGetter(d)
-		md := schema.Metadata{
-			TypeMeta: schema.TypeMeta{
-				Kind:        k,
-				Name:        m.Name,
-				Group:       m.Group,
-				ModRevision: m.ModRevision,
-			},
-			Spec: d,
-		}
-
-		s.OnAddOrUpdate(md)
 	}
 }

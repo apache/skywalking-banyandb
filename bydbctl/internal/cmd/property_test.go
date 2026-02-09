@@ -858,8 +858,9 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		}
 
 		By("Triggering repair operations")
-		err := messenger.Propagation(nodeIDs, propertyGroup, 0)
-		Expect(err).NotTo(HaveOccurred())
+		time.Sleep(5 * time.Second)
+		propagateErr := messenger.Propagation(nodeIDs, propertyGroup, 0)
+		Expect(propagateErr).NotTo(HaveOccurred())
 
 		By("Verifying repair tree regeneration after repair operations")
 		waitForRepairTreeRegeneration(nodeDirs, propertyGroup, beforeSecondWrite)

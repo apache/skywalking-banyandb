@@ -368,7 +368,6 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 		"--metadata-root-path=" + metaPath,
 		"--etcd-listen-client-url=" + listenClientURL,
 		"--etcd-listen-peer-url=" + listenPeerURL,
-		"--schema-registry-mode=etcd",
 	}
 
 	// Parse flags

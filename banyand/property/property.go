@@ -64,6 +64,7 @@ type Service interface {
 
 	GetGossIPGrpcPort() *uint32
 	GetGossIPMessenger() gossip.Messenger
+	NewMetadataRegister() run.Unit
 }
 
 // GroupStoreConfig holds per-group storage configuration for the inverted index.

@@ -96,6 +96,7 @@ func (h *dataNodeHandle) start(etcdEndpoint string) {
 		"--measure-flush-timeout=0s",
 		"--stream-flush-timeout=0s",
 		"--trace-flush-timeout=0s",
+		"--schema-registry-mode", "etcd",
 	}
 	h.closeFn = setup.CMD(args...)
 
@@ -173,6 +174,7 @@ func (l *liaisonHandle) start(etcdEndpoint string, dataNodes []string) {
 		"--handoff-max-size-percent=100",
 		"--logging-modules", "trace,sidx",
 		"--logging-levels", "debug,debug",
+		"--schema-registry-mode", "etcd",
 	}
 
 	l.closeFn = setup.CMD(args...)

@@ -214,6 +214,11 @@ func (s *service) GetGossIPMessenger() gossip.Messenger {
 	return s.gossipMessenger
 }
 
+// NewMetadataRegister creates a unit that registers metadata handlers during PreRun phase.
+func (s *service) NewMetadataRegister() run.Unit {
+	return gossip.NewMetadataRegister(s, s.metadata)
+}
+
 // NewService returns a new service.
 func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client,
 	omr observability.MetricsRegistry, pm protector.Memory, groupConfigs map[string]GroupStoreConfig,

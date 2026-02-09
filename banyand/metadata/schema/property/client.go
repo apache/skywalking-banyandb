@@ -154,7 +154,7 @@ type ClientConfig struct {
 	FullReconcileEvery uint64
 }
 
-const defaultFullReconcileEvery = 3
+const defaultFullReconcileEvery = uint64(3)
 
 // NewSchemaRegistryClient creates a new property schema registry client.
 // When node is non-nil and has ROLE_META, the registry connects to itself synchronously
@@ -173,7 +173,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		syncInterval:       cfg.SyncInterval,
 		fullReconcileEvery: fullReconcileEvery,
 	}
-	r.nodesClient = pub.NewWithoutMetadataAndFactory(schemaClientFactory(r), cfg.DialProvider)
+	r.nodesClient = pub.NewWithoutMetadataAndFactory(schemaClientFactory(r), cfg.DialProvider, databasev1.Role_ROLE_META)
 	if cfg.OMR != nil {
 		if cfg.metrics == nil {
 			clientScope := metadataScope.SubScope("schema_property_client")

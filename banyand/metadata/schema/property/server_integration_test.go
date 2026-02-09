@@ -320,6 +320,14 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 				Catalog:  commonv1.Catalog_CATALOG_STREAM,
 				ResourceOpts: &commonv1.ResourceOpts{
 					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
 				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -345,6 +353,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 				group := &commonv1.Group{
 					Metadata: &commonv1.Metadata{Name: fmt.Sprintf("list-group-%d", i)},
 					Catalog:  commonv1.Catalog_CATALOG_STREAM,
+					ResourceOpts: &commonv1.ResourceOpts{
+						ShardNum: 2,
+						SegmentInterval: &commonv1.IntervalRule{
+							Unit: commonv1.IntervalRule_UNIT_DAY,
+							Num:  1,
+						},
+						Ttl: &commonv1.IntervalRule{
+							Unit: commonv1.IntervalRule_UNIT_DAY,
+							Num:  7,
+						},
+					},
 				}
 				gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 			}
@@ -360,6 +379,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "stream-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_STREAM,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -415,6 +445,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "measure-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -427,14 +468,20 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 				TagFamilies: []*databasev1.TagFamilySpec{
 					{Name: "default", Tags: []*databasev1.TagSpec{{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 				},
-				Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+				Fields: []*databasev1.FieldSpec{{
+					Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+					CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				}},
 			}
 			_, createErr := registry.CreateMeasure(ctx, measure)
 			gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
 			retrieved, getErr := registry.GetMeasure(ctx, &commonv1.Metadata{Name: "crud-measure", Group: "measure-test-group"})
 			gomega.Expect(getErr).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(retrieved.Metadata.Name).Should(gomega.Equal("crud-measure"))
-			measure.Fields = append(measure.Fields, &databasev1.FieldSpec{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT})
+			measure.Fields = append(measure.Fields, &databasev1.FieldSpec{
+				Name:      "latency",
+				FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+			})
 			_, updateErr := registry.UpdateMeasure(ctx, measure)
 			gomega.Expect(updateErr).ShouldNot(gomega.HaveOccurred())
 			updated, getUpdatedErr := registry.GetMeasure(ctx, &commonv1.Metadata{Name: "crud-measure", Group: "measure-test-group"})
@@ -454,7 +501,10 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 					TagFamilies: []*databasev1.TagFamilySpec{
 						{Name: "default", Tags: []*databasev1.TagSpec{{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 					},
-					Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+					Fields: []*databasev1.FieldSpec{{
+						Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+						CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+					}},
 				}
 				_, createErr := registry.CreateMeasure(ctx, measure)
 				gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
@@ -471,6 +521,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "trace-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_TRACE,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -532,6 +593,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "index-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_STREAM,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -581,6 +653,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "binding-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_STREAM,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -617,6 +700,17 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "topn-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 2,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  7,
+					},
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -675,6 +769,9 @@ var _ = ginkgo.Describe("Property Server CRUD Operations", func() {
 			group := &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: "property-test-group"},
 				Catalog:  commonv1.Catalog_CATALOG_PROPERTY,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum: 1,
+				},
 			}
 			gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		})
@@ -752,6 +849,17 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "notify-create-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -776,6 +884,17 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "multi-handler-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -802,11 +921,33 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 		streamGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "multi-kind-stream-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
 		measureGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "multi-kind-measure-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, measureGroup)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -824,7 +965,10 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 			TagFamilies: []*databasev1.TagFamilySpec{
 				{Name: "default", Tags: []*databasev1.TagSpec{{Name: "tag1", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 			},
-			Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+			Fields: []*databasev1.FieldSpec{{
+				Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+				CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+			}},
 		}
 		_, measureErr := registry.CreateMeasure(ctx, measure)
 		gomega.Expect(measureErr).ShouldNot(gomega.HaveOccurred())
@@ -843,6 +987,17 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "notify-update-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -878,6 +1033,17 @@ var _ = ginkgo.Describe("Property Handler Notifications", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "notify-delete-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -945,6 +1111,17 @@ var _ = ginkgo.Describe("Property Sync Deletion Detection", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "deletion-detect-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -972,6 +1149,17 @@ var _ = ginkgo.Describe("Property Sync Deletion Detection", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "group-deletion-detect"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		handler := newMockedHandler()
@@ -996,6 +1184,17 @@ var _ = ginkgo.Describe("Property Sync Deletion Detection", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "cross-registry-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -1064,6 +1263,17 @@ var _ = ginkgo.Describe("Property Error Handling", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "empty-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		streams, listErr := registry.ListStream(ctx, schema.ListOpt{Group: "empty-group"})
@@ -1082,6 +1292,17 @@ var _ = ginkgo.Describe("Property Error Handling", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "empty-name-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		_, getErr := registry.GetStream(ctx, &commonv1.Metadata{Name: "", Group: "empty-name-group"})
@@ -1132,6 +1353,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "repair-test-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -1189,6 +1421,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "repair-delete-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry2.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -1245,6 +1488,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "repair-newer-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry2.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -1254,14 +1508,20 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 			TagFamilies: []*databasev1.TagFamilySpec{
 				{Name: "default", Tags: []*databasev1.TagSpec{{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 			},
-			Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+			Fields: []*databasev1.FieldSpec{{
+				Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+				CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+			}},
 		}
 		_, create1Err := registry1.CreateMeasure(ctx, measure)
 		gomega.Expect(create1Err).ShouldNot(gomega.HaveOccurred())
 		_, create2Err := registry2.CreateMeasure(ctx, measure)
 		gomega.Expect(create2Err).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
-		measure.Fields = append(measure.Fields, &databasev1.FieldSpec{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT})
+		measure.Fields = append(measure.Fields, &databasev1.FieldSpec{
+			Name:      "latency",
+			FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+		})
 		_, updateErr := registry1.UpdateMeasure(ctx, measure)
 		gomega.Expect(updateErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(200 * time.Millisecond)
@@ -1299,6 +1559,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "repair-concurrent-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry2.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -1361,6 +1632,14 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
 			ResourceOpts: &commonv1.ResourceOpts{
 				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
 			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -1412,6 +1691,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "existing-data-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream1 := &databasev1.Stream{
@@ -1459,6 +1749,7 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 				Roles:       []databasev1.Role{databasev1.Role_ROLE_META},
 			},
 		})
+		newRegistry.StartWatcher()
 		time.Sleep(200 * time.Millisecond)
 		gomega.Eventually(func() bool {
 			return handler.HasKey("existing-stream-1") && handler.HasKey("existing-stream-2")
@@ -1483,6 +1774,17 @@ var _ = ginkgo.Describe("Property Schema Repair Mechanism When Query", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "three-node-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry2.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
@@ -1609,6 +1911,17 @@ var _ = ginkgo.Describe("Property Concurrent Operations", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "concurrent-create-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		var wg sync.WaitGroup
@@ -1647,6 +1960,17 @@ var _ = ginkgo.Describe("Property Concurrent Operations", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "concurrent-update-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		numStreams := 5
@@ -1697,6 +2021,17 @@ var _ = ginkgo.Describe("Property Concurrent Operations", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "concurrent-rw-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{
@@ -1824,6 +2159,14 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
 			ResourceOpts: &commonv1.ResourceOpts{
 				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
 			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
@@ -1833,6 +2176,14 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
 			ResourceOpts: &commonv1.ResourceOpts{
 				ShardNum: 4,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
 			},
 		}
 		gomega.Expect(registry2.CreateGroup(ctx, measureGroup)).ShouldNot(gomega.HaveOccurred())
@@ -1840,6 +2191,9 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		propertyGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "mixed-property-group"},
 			Catalog:  commonv1.Catalog_CATALOG_PROPERTY,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 1,
+			},
 		}
 		gomega.Expect(registry3.CreateGroup(ctx, propertyGroup)).ShouldNot(gomega.HaveOccurred())
 
@@ -1882,9 +2236,9 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 				},
 			},
 			Fields: []*databasev1.FieldSpec{
-				{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
-				{Name: "count", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
-				{Name: "error_rate", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT},
+				{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_INT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
+				{Name: "count", FieldType: databasev1.FieldType_FIELD_TYPE_INT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
+				{Name: "error_rate", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 			},
 		}
 		_, measureCreateErr := registry2.CreateMeasure(ctx, measure)
@@ -2033,10 +2387,32 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		streamGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "update-mixed-stream-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		measureGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "update-mixed-measure-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry1.CreateGroup(ctx, measureGroup)).ShouldNot(gomega.HaveOccurred())
@@ -2071,7 +2447,7 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 				}},
 			},
 			Fields: []*databasev1.FieldSpec{
-				{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+				{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 			},
 		}
 		_, measureErr1 := registry1.CreateMeasure(ctx, measure)
@@ -2093,7 +2469,7 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 
 		// Update measure on node2 (add fields)
 		measure.Fields = append(measure.Fields,
-			&databasev1.FieldSpec{Name: "latency_p99", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT},
+			&databasev1.FieldSpec{Name: "latency_p99", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 		)
 		_, updateMeasureErr := registry2.UpdateMeasure(ctx, measure)
 		gomega.Expect(updateMeasureErr).ShouldNot(gomega.HaveOccurred())
@@ -2142,10 +2518,32 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		streamGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "delete-mixed-stream-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		measureGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "delete-mixed-measure-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry1.CreateGroup(ctx, measureGroup)).ShouldNot(gomega.HaveOccurred())
@@ -2169,7 +2567,10 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 				TagFamilies: []*databasev1.TagFamilySpec{
 					{Name: "default", Tags: []*databasev1.TagSpec{{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 				},
-				Fields: []*databasev1.FieldSpec{{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+				Fields: []*databasev1.FieldSpec{{
+					Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+					CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				}},
 			}
 			_, mErr := registry1.CreateMeasure(ctx, m)
 			gomega.Expect(mErr).ShouldNot(gomega.HaveOccurred())
@@ -2245,10 +2646,32 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		streamGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "conc-mixed-stream-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		measureGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "conc-mixed-measure-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		for _, reg := range []*property.SchemaRegistry{registry1, registry2, registry3} {
 			gomega.Expect(reg.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
@@ -2293,7 +2716,7 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 							}},
 						},
 						Fields: []*databasev1.FieldSpec{
-							{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+							{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 						},
 					}
 					_, mErr := r.CreateMeasure(ctx, m)
@@ -2358,10 +2781,32 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 		streamGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "rw-notify-stream-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		measureGroup := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "rw-notify-measure-group"},
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(registry1.CreateGroup(ctx, measureGroup)).ShouldNot(gomega.HaveOccurred())
@@ -2412,7 +2857,10 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 					TagFamilies: []*databasev1.TagFamilySpec{
 						{Name: "default", Tags: []*databasev1.TagSpec{{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING}}},
 					},
-					Fields: []*databasev1.FieldSpec{{Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+					Fields: []*databasev1.FieldSpec{{
+						Name: "val", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+						CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+					}},
 				}
 				_, mErr := registry1.CreateMeasure(ctx, m)
 				gomega.Expect(mErr).ShouldNot(gomega.HaveOccurred())
@@ -2468,6 +2916,14 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
 			ResourceOpts: &commonv1.ResourceOpts{
 				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
 			},
 		}
 		measureGroup := &commonv1.Group{
@@ -2475,6 +2931,14 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
 			ResourceOpts: &commonv1.ResourceOpts{
 				ShardNum: 3,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
 			},
 		}
 		gomega.Expect(registry1.CreateGroup(ctx, streamGroup)).ShouldNot(gomega.HaveOccurred())
@@ -2503,8 +2967,8 @@ var _ = ginkgo.Describe("Mixed Schema Cluster Operations", func() {
 				}},
 			},
 			Fields: []*databasev1.FieldSpec{
-				{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
-				{Name: "throughput", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT},
+				{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_INT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
+				{Name: "throughput", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 			},
 		}
 		_, measureErr := registry1.CreateMeasure(ctx, measure)
@@ -2666,6 +3130,17 @@ var _ = ginkgo.Describe("Property Schema Repair Scheduler", func() {
 		group := &commonv1.Group{
 			Metadata: &commonv1.Metadata{Name: "repair-scheduler-group"},
 			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum: 2,
+				SegmentInterval: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  1,
+				},
+				Ttl: &commonv1.IntervalRule{
+					Unit: commonv1.IntervalRule_UNIT_DAY,
+					Num:  7,
+				},
+			},
 		}
 		gomega.Expect(registry.CreateGroup(ctx, group)).ShouldNot(gomega.HaveOccurred())
 		stream := &databasev1.Stream{

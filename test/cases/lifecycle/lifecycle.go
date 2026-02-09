@@ -58,6 +58,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
 			"--report-dir", rf,
+			"--schema-registry-mode", "etcd",
 		})
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -124,6 +125,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 			"--report-dir", rf,
 			"--schedule", "@every 5s",
 			"--max-execution-times", "2",
+			"--schema-registry-mode", "etcd",
 		})
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

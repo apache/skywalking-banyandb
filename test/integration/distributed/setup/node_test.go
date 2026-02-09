@@ -54,7 +54,8 @@ var _ = Describe("Node registration", func() {
 			"--liaison-server-grpc-port="+fmt.Sprintf("%d", ports[2]),
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
-			"--node-host", nodeHost)
+			"--node-host", nodeHost,
+			"--schema-registry-mode", "etcd")
 		Eventually(helpers.HTTPHealthCheck(httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
 		Eventually(func() (map[string]*databasev1.Node, error) {
 			return helpers.ListKeys(etcdEndpoint, fmt.Sprintf("/%s/nodes/%s:%d", namespace, nodeHost, ports[2]))
@@ -76,7 +77,8 @@ var _ = Describe("Node registration", func() {
 			fmt.Sprintf("--grpc-port=%d", ports[0]),
 			"--etcd-endpoints", etcdEndpoint,
 			"--node-host-provider", "flag",
-			"--node-host", nodeHost)
+			"--node-host", nodeHost,
+			"--schema-registry-mode", "etcd")
 		Eventually(
 			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())

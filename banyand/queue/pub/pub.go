@@ -444,6 +444,8 @@ func NewWithClientFactory(metadata metadata.Repo, factory ClientFactory, roles .
 			strBuilder.WriteString("data")
 		case databasev1.Role_ROLE_LIAISON:
 			strBuilder.WriteString("liaison")
+		case databasev1.Role_ROLE_META:
+			strBuilder.WriteString("metadata")
 		default:
 			logger.Panicf("unknown role %s", role)
 		}
@@ -471,8 +473,8 @@ func NewWithoutMetadata() queue.Client {
 }
 
 // NewWithoutMetadataAndFactory returns a new queue client without metadata and with a custom client factory.
-func NewWithoutMetadataAndFactory(factory ClientFactory, provider grpchelper.DialOptionsProvider) queue.Client {
-	p := NewWithClientFactory(nil, factory, databasev1.Role_ROLE_DATA)
+func NewWithoutMetadataAndFactory(factory ClientFactory, provider grpchelper.DialOptionsProvider, roles ...databasev1.Role) queue.Client {
+	p := NewWithClientFactory(nil, factory, roles...)
 	p.(*pub).credProvider = provider
 	p.(*pub).log = logger.GetLogger("queue-client")
 	return p
