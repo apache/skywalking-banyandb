@@ -22,6 +22,7 @@ Release Notes.
 - **Breaking Change**: Change the data storage path structure for property model:
   - From: `<data-dir>/property/data/shard-<id>/...`
   - To: `<data-dir>/property/data/<group>/shard-<id>/...`
+- Add a generic snapshot coordination package for atomic snapshot transitions across trace and sidx.
 - Add eBPF-based KTM I/O monitor for FODC agent.
 
 ### Bug Fixes
