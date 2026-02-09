@@ -27,6 +27,8 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
+    environment:
+      BYDB_SCHEMA_REGISTRY_MODE: etcd
     networks:
       - e2e
 
@@ -34,6 +36,8 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
+    environment:
+      BYDB_SCHEMA_REGISTRY_MODE: etcd
     networks:
       - e2e
 
