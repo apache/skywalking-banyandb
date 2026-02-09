@@ -24,6 +24,19 @@ WAIT_TIMEOUT=${WAIT_TIMEOUT:-300s}
 MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-60}
 SLEEP_SECONDS=${SLEEP_SECONDS:-2}
 
+echo "Preflight: Host kernel and tracing info"
+echo "Kernel: $(uname -r)"
+if [ -r /sys/kernel/btf/vmlinux ]; then
+  echo "BTF: /sys/kernel/btf/vmlinux is readable"
+else
+  echo "BTF: /sys/kernel/btf/vmlinux is NOT readable"
+fi
+if [ -d /sys/kernel/tracing ]; then
+  echo "Tracefs: /sys/kernel/tracing exists"
+else
+  echo "Tracefs: /sys/kernel/tracing is missing"
+fi
+
 kubectl wait --for=condition=Ready "pod/${POD_NAME}" --timeout="${WAIT_TIMEOUT}"
 
 deadline=$((SECONDS + MAX_WAIT_SECONDS))
@@ -64,4 +77,9 @@ fi
 echo "FODC logs (tail):"
 kubectl logs "${POD_NAME}" -c "${CONTAINER_NAME}" --tail=200
 
-exit 1
+exit_code=1
+if [ -n "${ktm_status_disabled}" ]; then
+  exit_code=2
+fi
+
+exit "${exit_code}"
