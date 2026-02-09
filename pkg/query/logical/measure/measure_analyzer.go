@@ -126,8 +126,8 @@ func Analyze(
 
 	if criteria.GetAgg() != nil {
 		aggrFunc := criteria.GetAgg().GetFunction()
-		// Use DISTRIBUTED_MEAN only when no Top: Top needs "value" field to sort, DISTRIBUTED_MEAN outputs value_sum/value_count.
-		if isDistributed && criteria.GetTop() == nil && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+		// Use DISTRIBUTED_MEAN for distributed MEAN; liaison merges and outputs to agg fieldName for Top to sort.
+		if isDistributed && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
 			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_DISTRIBUTED_MEAN
 		}
 		plan = newUnresolvedAggregation(plan,
@@ -168,7 +168,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
-	needCompletePushDownAgg := criteria.GetAgg() != nil && criteria.GetTop() == nil
+	needCompletePushDownAgg := criteria.GetAgg() != nil
 
 	// parse fields
 	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)

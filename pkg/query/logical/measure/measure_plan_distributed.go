@@ -159,8 +159,10 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			temp.Agg = clonedAgg
 		}
 	}
-	// push down groupBy, agg and top to data node and rewrite agg result to raw data
-	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
+	// Push down groupBy, agg and top to data node and rewrite agg result to raw data.
+	// Skip for MEAN: use DISTRIBUTED_MEAN path, data nodes return all aggregated results, Top at liaison.
+	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil &&
+		ud.originalQuery.Agg.GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
 		temp.RewriteAggTopNResult = true
 		temp.Agg = ud.originalQuery.Agg
 		temp.Top = ud.originalQuery.Top
