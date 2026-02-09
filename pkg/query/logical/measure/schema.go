@@ -137,7 +137,7 @@ func (m *schema) extendWithFieldRefs(refs []*logical.FieldRef) *schema {
 			}
 		}
 	}
-	
+
 	return &schema{
 		measure:  m.measure,
 		common:   m.common,
