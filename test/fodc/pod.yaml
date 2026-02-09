@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: banyand-fodc-ktm
+  labels:
+    app: banyand-fodc-ktm
+spec:
+  containers:
+    - name: banyand
+      image: apache/skywalking-banyandb:latest
+      imagePullPolicy: IfNotPresent
+      args:
+        - standalone
+      ports:
+        - name: banyand-metrics
+          containerPort: 2121
+    - name: fodc-agent
+      image: apache/skywalking-banyandb-fodc-agent:latest
+      imagePullPolicy: IfNotPresent
+      args:
+        - --ktm-enabled
+        - --ktm-interval=2s
+        - --poll-metrics-interval=2s
+        - --poll-metrics-ports=2121
+        - --prometheus-listen-addr=:9090
+      ports:
+        - name: fodc-metrics
+          containerPort: 9090
+      securityContext:
+        privileged: true
