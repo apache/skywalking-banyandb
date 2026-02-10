@@ -54,13 +54,6 @@ type Reduce[N Number] interface {
 	Reset()
 }
 
-// Func supports aggregation operations (legacy; use Map for new code).
-type Func[N Number] interface {
-	In(N)
-	Val() N
-	Reset()
-}
-
 // Number denotes the supported number types.
 type Number interface {
 	~int64 | ~float64
@@ -106,15 +99,6 @@ func NewReduce[N Number](af modelv1.AggregationFunction) (Reduce[N], error) {
 	}
 	result.Reset()
 	return result, nil
-}
-
-// NewFunc returns an aggregation function based on function type (legacy; prefer NewMap).
-func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
-	m, err := NewMap[N](af)
-	if err != nil {
-		return nil, err
-	}
-	return m, nil
 }
 
 // FromFieldValue transforms modelv1.FieldValue to Number.
