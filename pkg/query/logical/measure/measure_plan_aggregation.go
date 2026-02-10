@@ -91,11 +91,11 @@ type aggregationPlan[N aggregation.Number] struct {
 	aggregationFieldRef *logical.FieldRef
 	mapFunc             aggregation.Map[N]
 	reduceFunc          aggregation.Reduce[N]
+	groupByTagsRefs     [][]*logical.TagRef
 	aggrType            modelv1.AggregationFunction
 	isGroup             bool
 	emitPartial         bool
 	useReduceMode       bool
-	groupByTagsRefs     [][]*logical.TagRef
 }
 
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
@@ -166,9 +166,9 @@ type aggGroupIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	mapFunc             aggregation.Map[N]
+	err                 error
 	aggrType            modelv1.AggregationFunction
 	emitPartial         bool
-	err                 error
 }
 
 func newAggGroupMIterator[N aggregation.Number](
@@ -259,10 +259,10 @@ type aggAllIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	mapFunc             aggregation.Map[N]
-	aggrType            modelv1.AggregationFunction
-	emitPartial         bool
 	result              *measurev1.DataPoint
 	err                 error
+	aggrType            modelv1.AggregationFunction
+	emitPartial         bool
 }
 
 func newAggAllIterator[N aggregation.Number](
@@ -354,12 +354,12 @@ type reduceGroupIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
 	reduceFunc          aggregation.Reduce[N]
-	aggrType            modelv1.AggregationFunction
+	err                 error
+	groupMap            map[uint64][]*measurev1.InternalDataPoint
 	groupByTagsRefs     [][]*logical.TagRef
 	groupKeys           []uint64
-	groupMap            map[uint64][]*measurev1.InternalDataPoint
+	aggrType            modelv1.AggregationFunction
 	index               int
-	err                 error
 }
 
 func newReduceGroupIterator[N aggregation.Number](
@@ -378,6 +378,7 @@ func newReduceGroupIterator[N aggregation.Number](
 		groupMap:            make(map[uint64][]*measurev1.InternalDataPoint),
 	}
 }
+
 func (rgi *reduceGroupIterator[N]) loadGroups() bool {
 	if rgi.groupKeys != nil {
 		return true
@@ -403,6 +404,7 @@ func (rgi *reduceGroupIterator[N]) loadGroups() bool {
 	}
 	return true
 }
+
 func (rgi *reduceGroupIterator[N]) Next() bool {
 	if rgi.err != nil {
 		return false
@@ -412,6 +414,7 @@ func (rgi *reduceGroupIterator[N]) Next() bool {
 	}
 	return rgi.index < len(rgi.groupKeys)
 }
+
 func (rgi *reduceGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if rgi.err != nil || rgi.groupKeys == nil || rgi.index >= len(rgi.groupKeys) {
 		return nil
@@ -453,6 +456,7 @@ func (rgi *reduceGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 	}
 	return []*measurev1.InternalDataPoint{{DataPoint: resultDp, ShardId: 0}}
 }
+
 func (rgi *reduceGroupIterator[N]) Close() error {
 	return rgi.prev.Close()
 }
