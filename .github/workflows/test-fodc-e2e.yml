@@ -60,7 +60,9 @@ jobs:
 
       - name: Build docker images
         run: |
+          make -C banyand release
           make -C banyand docker
+          make -C fodc/agent release
           make -C fodc/agent docker
 
       - name: Load images into Kind
@@ -87,4 +89,3 @@ jobs:
           else
             exit "$status"
           fi
-

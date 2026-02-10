@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/SkyAPM/ktm-ebpf/iomonitor/ebpf/generated"
 	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 

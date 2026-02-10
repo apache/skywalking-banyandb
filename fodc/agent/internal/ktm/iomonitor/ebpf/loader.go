@@ -25,12 +25,11 @@ import (
 	"fmt"
 	"os"
 
+	generated "github.com/SkyAPM/ktm-ebpf/iomonitor/ebpf/generated"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/rs/zerolog"
-
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 )
 
 // Attachment mode constants for tracking how programs are attached.

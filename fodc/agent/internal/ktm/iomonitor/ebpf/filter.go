@@ -25,10 +25,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	generated "github.com/SkyAPM/ktm-ebpf/iomonitor/ebpf/generated"
 	"github.com/cilium/ebpf"
 	"golang.org/x/sys/unix"
-
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm/iomonitor/ebpf/generated"
 )
 
 // configureFilters sets up the cgroup filtering strategy.

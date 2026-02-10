@@ -36,8 +36,6 @@ include ../../scripts/build/help.mk
 
 prepare-build: generate
 
-.PHONY: generate-ebpf
-generate-ebpf:
-	$(MAKE) -C internal/ktm generate
-
-generate: generate-ebpf
+.PHONY: generate
+generate:
+	@echo "Skipping KTM eBPF generation (using github.com/SkyAPM/ktm-ebpf prebuilt artifacts)"
