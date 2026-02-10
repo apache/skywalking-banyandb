@@ -1,0 +1,90 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: FODC E2E (Kind)
+
+on:
+  pull_request:
+    paths:
+      - 'fodc/**'
+      - 'test/fodc/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'fodc/**'
+      - 'test/fodc/**'
+  workflow_dispatch:
+
+jobs:
+  fodc-kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-docker: 'true'
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Setup Kind
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: banyand-ktm
+          config: test/fodc/kind.yaml
+          wait: 180s
+
+      - name: Build docker images
+        run: |
+          make -C banyand docker
+          make -C fodc/agent docker
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image apache/skywalking-banyandb:latest --name banyand-ktm
+          kind load docker-image apache/skywalking-banyandb-fodc-agent:latest --name banyand-ktm
+
+      - name: Deploy FODC pod
+        run: kubectl apply -f test/fodc/pod.yaml
+
+      - name: Verify KTM metrics (fallback to SYS_ADMIN)
+        run: |
+          set -euo pipefail
+
+          set +e
+          ./test/fodc/check.sh
+          status=$?
+          set -e
+
+          if [ "$status" -eq 2 ]; then
+            kubectl delete -f test/fodc/pod.yaml
+            kubectl apply -f test/fodc/pod-sysadmin.yaml
+            ./test/fodc/check.sh
+          else
+            exit "$status"
+          fi
+
