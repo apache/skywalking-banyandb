@@ -31,7 +31,30 @@ var (
 	errUnSupportedFieldType = errors.New("unsupported field type")
 )
 
-// Func supports aggregation operations.
+// Partial represents the intermediate result of a Map phase.
+// For most functions only Value is meaningful; for MEAN both Value (sum) and Count are used.
+type Partial[N Number] struct {
+	Value N
+	Count N
+}
+
+// Map accumulates raw values and produces aggregation results.
+// It serves as the local accumulator for raw data points.
+type Map[N Number] interface {
+	In(N)
+	Val() N
+	Partial() Partial[N]
+	Reset()
+}
+
+// Reduce combines intermediate results from Map phases into a final value.
+type Reduce[N Number] interface {
+	Combine(Partial[N])
+	Val() N
+	Reset()
+}
+
+// Func supports aggregation operations (legacy; use Map for new code).
 type Func[N Number] interface {
 	In(N)
 	Val() N
@@ -43,9 +66,9 @@ type Number interface {
 	~int64 | ~float64
 }
 
-// NewFunc returns a aggregation function based on function type.
-func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
-	var result Func[N]
+// NewMap returns a Map aggregation function for the given type.
+func NewMap[N Number](af modelv1.AggregationFunction) (Map[N], error) {
+	var result Map[N]
 	switch af {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
 		result = &meanFunc[N]{zero: zero[N]()}
@@ -62,6 +85,36 @@ func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
 	}
 	result.Reset()
 	return result, nil
+}
+
+// NewReduce returns a Reduce aggregation function for the given type.
+func NewReduce[N Number](af modelv1.AggregationFunction) (Reduce[N], error) {
+	var result Reduce[N]
+	switch af {
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+		result = &meanReduceFunc[N]{zero: zero[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
+		result = &countReduceFunc[N]{zero: zero[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
+		result = &maxReduceFunc[N]{min: minOf[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
+		result = &minReduceFunc[N]{max: maxOf[N]()}
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
+		result = &sumReduceFunc[N]{zero: zero[N]()}
+	default:
+		return nil, errors.WithMessagef(errUnknownFunc, "unknown function:%s", modelv1.AggregationFunction_name[int32(af)])
+	}
+	result.Reset()
+	return result, nil
+}
+
+// NewFunc returns an aggregation function based on function type (legacy; prefer NewMap).
+func NewFunc[N Number](af modelv1.AggregationFunction) (Func[N], error) {
+	m, err := NewMap[N](af)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // FromFieldValue transforms modelv1.FieldValue to Number.
@@ -84,6 +137,49 @@ func ToFieldValue[N Number](value N) (*modelv1.FieldValue, error) {
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: float64(value)}}}, nil
 	}
 	return nil, errUnSupportedFieldType
+}
+
+// PartialToFieldValues converts a Partial to field values for wire transport.
+// For MEAN it returns two values (Value/sum first, Count second); for others one value.
+func PartialToFieldValues[N Number](af modelv1.AggregationFunction, p Partial[N]) ([]*modelv1.FieldValue, error) {
+	if af == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN {
+		vFv, err := ToFieldValue(p.Value)
+		if err != nil {
+			return nil, err
+		}
+		cFv, err := ToFieldValue(p.Count)
+		if err != nil {
+			return nil, err
+		}
+		return []*modelv1.FieldValue{vFv, cFv}, nil
+	}
+	vFv, err := ToFieldValue(p.Value)
+	if err != nil {
+		return nil, err
+	}
+	return []*modelv1.FieldValue{vFv}, nil
+}
+
+// FieldValuesToPartial converts field values from wire transport to a Partial.
+// For MEAN expects two values (sum, count); for others one value (Count will be zero).
+func FieldValuesToPartial[N Number](af modelv1.AggregationFunction, fvs []*modelv1.FieldValue) (Partial[N], error) {
+	var p Partial[N]
+	if len(fvs) == 0 {
+		return p, nil
+	}
+	v, err := FromFieldValue[N](fvs[0])
+	if err != nil {
+		return p, err
+	}
+	p.Value = v
+	if af == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN && len(fvs) >= 2 {
+		c, err := FromFieldValue[N](fvs[1])
+		if err != nil {
+			return p, err
+		}
+		p.Count = c
+	}
+	return p, nil
 }
 
 func minOf[N Number]() (r N) {

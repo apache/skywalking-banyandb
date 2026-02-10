@@ -153,6 +153,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if ud.needCompletePushDownAgg {
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
+		temp.AggReturnPartial = true
 	}
 	// push down groupBy, agg and top to data node and rewrite agg result to raw data
 	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {

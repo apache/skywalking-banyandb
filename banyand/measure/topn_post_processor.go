@@ -70,9 +70,9 @@ func (taggr *topNPostProcessor) Len() int {
 // while for ASC, a max heap has to be built.
 func (taggr *topNPostProcessor) Less(i, j int) bool {
 	if taggr.sort == modelv1.Sort_SORT_DESC {
-		return taggr.items[i].int64Func.Val() < taggr.items[j].int64Func.Val()
+		return taggr.items[i].mapFunc.Val() < taggr.items[j].mapFunc.Val()
 	}
-	return taggr.items[i].int64Func.Val() > taggr.items[j].int64Func.Val()
+	return taggr.items[i].mapFunc.Val() > taggr.items[j].mapFunc.Val()
 }
 
 func (taggr *topNPostProcessor) Swap(i, j int) {
@@ -100,8 +100,8 @@ func (taggr *topNPostProcessor) Pop() any {
 
 func (taggr *topNPostProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
 	if lowest := taggr.items[0]; lowest != nil {
-		shouldReplace := (taggr.sort == modelv1.Sort_SORT_DESC && lowest.int64Func.Val() < item.int64Func.Val()) ||
-			(taggr.sort != modelv1.Sort_SORT_DESC && lowest.int64Func.Val() > item.int64Func.Val())
+		shouldReplace := (taggr.sort == modelv1.Sort_SORT_DESC && lowest.mapFunc.Val() < item.mapFunc.Val()) ||
+			(taggr.sort != modelv1.Sort_SORT_DESC && lowest.mapFunc.Val() > item.mapFunc.Val())
 
 		if shouldReplace {
 			delete(taggr.cache, lowest.key)
@@ -116,12 +116,12 @@ func (taggr *topNPostProcessor) tryEnqueue(key string, item *topNAggregatorItem)
 var _ flow.Element = (*topNAggregatorItem)(nil)
 
 type topNAggregatorItem struct {
-	int64Func aggregation.Func[int64]
-	key       string
-	values    pbv1.EntityValues
-	val       int64
-	version   int64
-	index     int
+	mapFunc aggregation.Map[int64]
+	key     string
+	values  pbv1.EntityValues
+	val     int64
+	version int64
+	index   int
 }
 
 func (n *topNAggregatorItem) GetTags(tagNames []string) []*modelv1.Tag {
@@ -245,18 +245,18 @@ func (taggr *topNPostProcessor) Flush() ([]*topNAggregatorItem, error) {
 		for _, timeline := range taggr.timelines {
 			for _, item := range timeline.items {
 				if exist, found := taggr.cache[item.key]; found {
-					exist.int64Func.In(item.val)
+					exist.mapFunc.In(item.val)
 					heap.Fix(taggr, exist.index)
 					continue
 				}
 
-				aggrFunc, err := aggregation.NewFunc[int64](taggr.aggrFunc)
+				mapFunc, err := aggregation.NewMap[int64](taggr.aggrFunc)
 				if err != nil {
 					return nil, err
 				}
 
-				item.int64Func = aggrFunc
-				item.int64Func.In(item.val)
+				item.mapFunc = mapFunc
+				item.mapFunc.In(item.val)
 
 				if taggr.Len() < int(taggr.topN) {
 					taggr.cache[item.key] = item
@@ -300,7 +300,7 @@ func (taggr *topNPostProcessor) valWithAggregation(tagNames []string) ([]*measur
 			Entity: item.GetTags(tagNames),
 			Value: &modelv1.FieldValue{
 				Value: &modelv1.FieldValue_Int{
-					Int: &modelv1.Int{Value: item.int64Func.Val()},
+					Int: &modelv1.Int{Value: item.mapFunc.Val()},
 				},
 			},
 		}

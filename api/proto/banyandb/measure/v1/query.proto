@@ -138,6 +138,8 @@ message QueryRequest {
   bool trace = 13;
   // stages is used to specify the stage of the data points in the lifecycle
   repeated string stages = 14;
-  // rewriteAggTopNResult will rewrite agg result to raw data
+  // rewrite_agg_top_n_result will rewrite agg result to raw data
   bool rewrite_agg_top_n_result = 15;
+  // agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison)
+  bool agg_return_partial = 16;
 }

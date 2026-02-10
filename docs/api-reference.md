@@ -986,7 +986,8 @@ QueryRequest is the request contract for query.
 | order_by | [banyandb.model.v1.QueryOrder](#banyandb-model-v1-QueryOrder) |  | order_by is given to specify the sort for a tag. |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
-| rewrite_agg_top_n_result | [bool](#bool) |  | rewriteAggTopNResult will rewrite agg result to raw data |
+| rewrite_agg_top_n_result | [bool](#bool) |  | rewrite_agg_top_n_result will rewrite agg result to raw data |
+| agg_return_partial | [bool](#bool) |  | agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison) |
 
 
 
