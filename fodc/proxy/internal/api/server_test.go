@@ -78,7 +78,7 @@ func (m *mockClusterDataRequester) setTopology(agentID string, topology *fodcv1.
 	m.topologies[agentID] = topology
 }
 
-func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Manager, *mockClusterDataRequester) {
+func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *mockClusterDataRequester) {
 	t.Helper()
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
@@ -89,7 +89,15 @@ func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *cluster.Man
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
 	mockRequester.clusterMgr = clusterMgr
 	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
-	return server, testRegistry, clusterMgr, mockRequester
+	return server, testRegistry, mockRequester
+}
+
+func newTestServerOnly(t *testing.T) *Server {
+	t.Helper()
+	server, testRegistry, mockRequester := newTestServer(t)
+	_ = testRegistry
+	_ = mockRequester
+	return server
 }
 
 func createTestMetric(name string, value float64, labels map[string]string, timestamp time.Time) *metrics.AggregatedMetric {
@@ -107,7 +115,7 @@ func createTestMetric(name string, value float64, labels map[string]string, time
 }
 
 func TestHandleClusterTopology_Success(t *testing.T) {
-	server, testRegistry, _, mockRequester := newTestServer(t)
+	server, testRegistry, mockRequester := newTestServer(t)
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
 		PodName:        "test-pod",
@@ -202,7 +210,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServer_StartStop(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	err := server.Start("localhost:0", 5*time.Second, 5*time.Second)
 	require.NoError(t, err)
@@ -215,14 +223,14 @@ func TestServer_StartStop(t *testing.T) {
 }
 
 func TestServer_Stop_NotStarted(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	err := server.Stop()
 	assert.NoError(t, err)
 }
 
 func TestHandleMetrics_Success(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -234,7 +242,7 @@ func TestHandleMetrics_Success(t *testing.T) {
 }
 
 func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -245,7 +253,7 @@ func TestHandleMetrics_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMetrics_WithRoleFilter(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics?role=datanode-cold", nil)
 	w := httptest.NewRecorder()
@@ -256,7 +264,7 @@ func TestHandleMetrics_WithRoleFilter(t *testing.T) {
 }
 
 func TestHandleMetrics_WithAddressFilter(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics?address=192.168.1.1", nil)
 	w := httptest.NewRecorder()
@@ -267,7 +275,7 @@ func TestHandleMetrics_WithAddressFilter(t *testing.T) {
 }
 
 func TestHandleMetrics_CollectionError(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -281,7 +289,7 @@ func TestHandleMetrics_CollectionError(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_Success(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -308,7 +316,7 @@ func TestHandleMetricsWindows_Success(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_InvalidStartTime(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	u, urlErr := url.Parse("/metrics-windows")
 	require.NoError(t, urlErr)
@@ -326,7 +334,7 @@ func TestHandleMetricsWindows_InvalidStartTime(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_InvalidEndTime(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -348,7 +356,7 @@ func TestHandleMetricsWindows_InvalidEndTime(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_MethodNotAllowed(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/metrics-windows", nil)
 	w := httptest.NewRecorder()
@@ -359,7 +367,7 @@ func TestHandleMetricsWindows_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics-windows", nil)
 	w := httptest.NewRecorder()
@@ -373,7 +381,7 @@ func TestHandleMetricsWindows_WithoutTimeWindow(t *testing.T) {
 }
 
 func TestHandleHealth_Success(t *testing.T) {
-	server, testRegistry, _, _ := newTestServer(t)
+	server, testRegistry, _ := newTestServer(t)
 
 	ctx := context.Background()
 	identity1 := registry.AgentIdentity{PodName: "192.168.1.1", Role: "datanode-cold", ContainerNames: []string{"data"}}
@@ -401,7 +409,7 @@ func TestHandleHealth_Success(t *testing.T) {
 }
 
 func TestHandleHealth_MethodNotAllowed(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
 	w := httptest.NewRecorder()
@@ -412,7 +420,7 @@ func TestHandleHealth_MethodNotAllowed(t *testing.T) {
 }
 
 func TestFormatPrometheusText_Empty(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	result := server.formatPrometheusText([]*metrics.AggregatedMetric{})
 
@@ -420,7 +428,7 @@ func TestFormatPrometheusText_Empty(t *testing.T) {
 }
 
 func TestFormatPrometheusText_SingleMetric(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -436,7 +444,7 @@ func TestFormatPrometheusText_SingleMetric(t *testing.T) {
 }
 
 func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -453,7 +461,7 @@ func TestFormatPrometheusText_MultipleMetrics(t *testing.T) {
 }
 
 func TestFormatPrometheusText_WithLabels(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -468,7 +476,7 @@ func TestFormatPrometheusText_WithLabels(t *testing.T) {
 }
 
 func TestFormatPrometheusText_Histogram(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -494,7 +502,7 @@ func TestFormatPrometheusText_Histogram(t *testing.T) {
 }
 
 func TestFormatPrometheusText_HistogramAndGauge(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -535,7 +543,7 @@ func TestGetHistogramBaseName(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	result := server.formatMetricsWindowJSON([]*metrics.AggregatedMetric{})
 
@@ -543,7 +551,7 @@ func TestFormatMetricsWindowJSON_Empty(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -561,7 +569,7 @@ func TestFormatMetricsWindowJSON_SingleMetric(t *testing.T) {
 }
 
 func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
@@ -581,7 +589,7 @@ func TestFormatMetricsWindowJSON_MultipleMetrics(t *testing.T) {
 }
 
 func TestGetMetricKey(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	metric := createTestMetric("cpu_usage", 75.5, map[string]string{"cpu": "0", "env": "test", "pod_name": "192.168.1.1"}, time.Now())
 
@@ -616,7 +624,7 @@ func TestFormatFloat(t *testing.T) {
 }
 
 func TestServer_Integration(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", server.handleMetrics)
@@ -641,7 +649,7 @@ func TestServer_Integration(t *testing.T) {
 }
 
 func TestHandleMetricsWindows_WithFilters(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
@@ -668,7 +676,7 @@ func TestHandleMetricsWindows_WithFilters(t *testing.T) {
 }
 
 func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
-	server, _, _, _ := newTestServer(t)
+	server := newTestServerOnly(t)
 
 	now := time.Now()
 	metricsList := []*metrics.AggregatedMetric{
