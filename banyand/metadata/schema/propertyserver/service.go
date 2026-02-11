@@ -117,7 +117,7 @@ func (s *server) Name() string {
 }
 
 func (s *server) FlagSet() *run.FlagSet {
-	flagS := run.NewFlagSet("schema-property-server")
+	flagS := run.NewFlagSet("schema-server")
 	s.maxRecvMsgSize = defaultRecvSize
 	flagS.StringVar(&s.root, "schema-property-server-root-path", "/tmp", "root storage path")
 	flagS.StringVar(&s.host, "schema-property-server-grpc-host", "", "the host of schema property server")
