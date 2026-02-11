@@ -58,8 +58,10 @@ jobs:
           config: test/fodc/kind.yaml
           wait: 180s
 
-      - name: Pull BanyanDB image
-        run: docker pull apache/skywalking-banyandb:latest
+      - name: Build BanyanDB image
+        run: |
+          make -C banyand release
+          make -C banyand docker
 
       - name: Build FODC agent image
         run: |

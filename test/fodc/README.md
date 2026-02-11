@@ -16,7 +16,9 @@ kind create cluster --name banyand-ktm --config kind.yaml
 2. Build images.
 
 ```bash
+make -C banyand release
 make -C banyand docker
+make -C fodc/agent release
 make -C fodc/agent docker
 ```
 
