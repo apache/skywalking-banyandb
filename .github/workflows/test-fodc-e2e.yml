@@ -62,7 +62,7 @@ jobs:
         run: make generate
 
       - name: Create UI dist placeholder
-        run: mkdir -p ui/dist && touch ui/dist/.gitkeep
+        run: mkdir -p ui/dist && echo "placeholder" > ui/dist/index.html
 
       - name: Build BanyanDB image
         run: |
