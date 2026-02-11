@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -83,8 +84,9 @@ func collectListResponses(stream schemav1.SchemaManagementService_ListSchemasCli
 func testProperty(name, id string) *propertyv1.Property {
 	return &propertyv1.Property{
 		Metadata: &commonv1.Metadata{
-			Group: "test-group",
-			Name:  name,
+			Group:       "test-group",
+			Name:        name,
+			ModRevision: 1,
 		},
 		Id: id,
 		Tags: []*modelv1.Tag{
@@ -138,7 +140,7 @@ func TestInsertSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		_, deleteErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, deleteErr)
 		_, rpcErr := mgmt.InsertSchema(context.Background(), &schemav1.InsertSchemaRequest{
@@ -267,7 +269,7 @@ func TestListSchemas(t *testing.T) {
 		insertProperty(t, mgmt, "dt-svc", "id1")
 		insertProperty(t, mgmt, "dt-svc", "id2")
 		_, deleteErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "dt-svc", Id: "id1"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "dt-svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, deleteErr)
 		stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
@@ -302,7 +304,7 @@ func TestDeleteSchema(t *testing.T) {
 	t.Run("no results", func(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "nonexistent"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "nonexistent"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.False(t, resp.Found)
@@ -311,7 +313,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)
@@ -320,7 +322,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)
@@ -329,7 +331,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"},
+			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)

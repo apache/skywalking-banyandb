@@ -129,7 +129,7 @@ func (h *deleteListener) Rev(ctx context.Context, message bus.Message) (resp bus
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
 		return
 	}
-	err := h.s.db.Delete(ctx, d.Ids)
+	err := h.s.db.Delete(ctx, d.Ids, time.Now())
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return

@@ -66,6 +66,9 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 	if req.Property.Metadata == nil {
 		return nil, errInvalidRequest("metadata should not be nil")
 	}
+	if req.Property.Metadata.ModRevision == 0 {
+		return nil, errInvalidRequest("mod_revision should be set for update")
+	}
 	s.metrics.totalStarted.Inc(1, "insert")
 	start := time.Now()
 	defer func() {
@@ -106,6 +109,9 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 	}
 	if req.Property.Metadata == nil {
 		return nil, errInvalidRequest("metadata should not be nil")
+	}
+	if req.Property.Metadata.ModRevision == 0 {
+		return nil, errInvalidRequest("mod_revision should be set for update")
 	}
 	s.metrics.totalStarted.Inc(1, "update")
 	start := time.Now()
@@ -172,7 +178,7 @@ func (s *schemaManagementServer) ListSchemas(req *schemav1.ListSchemasRequest,
 
 // DeleteSchema deletes a schema property.
 func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1.DeleteSchemaRequest) (*schemav1.DeleteSchemaResponse, error) {
-	if req.Delete == nil {
+	if req.Delete == nil || req.UpdateAt == nil {
 		return nil, errInvalidRequest("delete request is required")
 	}
 	s.metrics.totalStarted.Inc(1, "delete")
@@ -207,7 +213,7 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 	if len(ids) == 0 {
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil
 	}
-	if deleteErr := s.server.db.Delete(ctx, ids); deleteErr != nil {
+	if deleteErr := s.server.db.Delete(ctx, ids, req.UpdateAt.AsTime()); deleteErr != nil {
 		s.metrics.totalErr.Inc(1, "delete")
 		s.l.Error().Err(deleteErr).Msg("failed to delete schema")
 		return nil, deleteErr
@@ -222,6 +228,9 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 	}
 	if req.Property.Metadata == nil {
 		return nil, errInvalidRequest("metadata should not be nil")
+	}
+	if req.Property.Metadata.ModRevision == 0 {
+		return nil, errInvalidRequest("mod_revision should be set for update")
 	}
 	s.metrics.totalStarted.Inc(1, "repair")
 	start := time.Now()

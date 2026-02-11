@@ -184,11 +184,14 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 }
 
 func (s *shard) delete(ctx context.Context, docID [][]byte) error {
-	return s.deleteFromTime(ctx, docID, time.Now().UnixNano())
+	return s.deleteFromTime(ctx, docID, time.Now())
 }
 
-func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, deleteTime int64) error {
-	removeDocList, err := s.buildDeleteFromTimeDocuments(ctx, docID, deleteTime)
+func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, delTime time.Time) error {
+	if delTime.IsZero() {
+		delTime = time.Now()
+	}
+	removeDocList, err := s.buildDeleteFromTimeDocuments(ctx, docID, delTime.UnixNano())
 	if err != nil {
 		return err
 	}

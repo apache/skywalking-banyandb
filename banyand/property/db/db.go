@@ -69,7 +69,7 @@ type Database interface {
 	// Update updates or inserts a property into the database.
 	Update(ctx context.Context, shardID common.ShardID, id []byte, property *propertyv1.Property) error
 	// Delete deletes properties with the given IDs from the database.
-	Delete(ctx context.Context, id [][]byte) error
+	Delete(ctx context.Context, id [][]byte, delTime time.Time) error
 	// Query queries properties based on the given request.
 	Query(ctx context.Context, request *propertyv1.QueryRequest) ([]QueriedProperty, error)
 	// Repair repairs a property in the database.
@@ -217,7 +217,7 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 	return nil
 }
 
-func (db *database) Delete(ctx context.Context, docIDs [][]byte) error {
+func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Time) error {
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -226,7 +226,7 @@ func (db *database) Delete(ctx context.Context, docIDs [][]byte) error {
 			return true
 		}
 		for _, s := range *sLst {
-			multierr.AppendInto(&err, s.delete(ctx, docIDs))
+			multierr.AppendInto(&err, s.deleteFromTime(ctx, docIDs, delTime))
 		}
 		return true
 	})
