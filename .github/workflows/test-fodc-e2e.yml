@@ -58,6 +58,9 @@ jobs:
           config: test/fodc/kind.yaml
           wait: 180s
 
+      - name: Generate protobuf and mock code
+        run: make generate
+
       - name: Build BanyanDB image
         run: |
           make -C banyand release
