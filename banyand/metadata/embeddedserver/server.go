@@ -38,7 +38,7 @@ import (
 )
 
 var (
-	schemaTypeEtcd     = "embededetcd"
+	schemaTypeEtcd     = "embedetcd"
 	schemaTypeProperty = "property"
 )
 
