@@ -61,6 +61,9 @@ jobs:
       - name: Generate protobuf and mock code
         run: make generate
 
+      - name: Create UI dist placeholder
+        run: mkdir -p ui/dist && touch ui/dist/.gitkeep
+
       - name: Build BanyanDB image
         run: |
           make -C banyand release
