@@ -56,7 +56,6 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
       exit 0
     fi
     ktm_status_disabled="${ktm_status}"
-    break
   fi
 
   sleep "${SLEEP_SECONDS}"

@@ -24,10 +24,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	generated "github.com/SkyAPM/ktm-ebpf/iomonitor/ebpf/generated"
 	"github.com/cilium/ebpf"
-	"golang.org/x/sys/unix"
 )
 
 // configureFilters sets up the cgroup filtering strategy.
@@ -99,7 +99,7 @@ func getCgroupIDFromPath(path string) (uint64, error) {
 		return 0, fmt.Errorf("stat cgroup path %s: %w", path, err)
 	}
 
-	stat, ok := info.Sys().(*unix.Stat_t)
+	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return 0, fmt.Errorf("failed to get stat_t for %s", path)
 	}

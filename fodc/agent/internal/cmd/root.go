@@ -300,9 +300,6 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				if ktmSvc.IsDegraded() {
 					ktmStatus = 1.0
 				}
-				if len(rawMetrics) == 0 {
-					ktmStatus = 0.0
-				}
 				rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
 					Name:  "ktm_status",
 					Value: ktmStatus,
