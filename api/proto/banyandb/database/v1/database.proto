@@ -41,6 +41,7 @@ message Node {
   // labels is a set of key-value pairs to describe the node.
   map<string, string> labels = 6;
   string property_repair_gossip_grpc_address = 7;
+  string property_schema_grpc_address = 8;
 }
 
 message Shard {

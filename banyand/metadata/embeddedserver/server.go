@@ -30,20 +30,30 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/propertyserver"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+var (
+	schemaTypeEtcd     = "embededetcd"
+	schemaTypeProperty = "property"
+)
+
 type server struct {
 	metadata.Service
 	metaServer              embeddedetcd.Server
+	propServer              propertyserver.Server
 	scheduler               *timestamp.Scheduler
 	ecli                    *clientv3.Client
+	closer                  *run.Closer
 	rootDir                 string
 	defragCron              string
 	autoCompactionMode      string
 	autoCompactionRetention string
+	schemaStorageType       string
 	listenClientURL         []string
 	listenPeerURL           []string
 	quotaBackendBytes       run.Bytes
@@ -66,10 +76,20 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
+	fs.StringVar(&s.schemaStorageType, "schema-storage-type", schemaTypeEtcd, "schema storage type: embedetcd or property")
+	if s.propServer != nil {
+		fs.AddFlagSet(s.propServer.FlagSet().FlagSet)
+	}
 	return fs
 }
 
 func (s *server) Validate() error {
+	if s.schemaStorageType == schemaTypeProperty {
+		if s.propServer != nil {
+			return s.propServer.Validate()
+		}
+		return nil
+	}
 	if s.rootDir == "" {
 		return errors.New("rootDir is empty")
 	}
@@ -96,6 +116,12 @@ func (s *server) Validate() error {
 }
 
 func (s *server) PreRun(ctx context.Context) error {
+	if s.schemaStorageType == schemaTypeProperty {
+		if s.propServer != nil {
+			return s.propServer.PreRun(ctx)
+		}
+		return nil
+	}
 	var err error
 	s.metaServer, err = embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 		embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
@@ -108,12 +134,25 @@ func (s *server) PreRun(ctx context.Context) error {
 }
 
 func (s *server) Serve() run.StopNotify {
+	if s.schemaStorageType == schemaTypeProperty {
+		if s.propServer != nil {
+			return s.propServer.Serve()
+		}
+		return s.closer.CloseNotify()
+	}
 	_ = s.Service.Serve()
 	s.registerDefrag()
 	return s.metaServer.StoppingNotify()
 }
 
 func (s *server) GracefulStop() {
+	if s.schemaStorageType == schemaTypeProperty {
+		if s.propServer != nil {
+			s.propServer.GracefulStop()
+		}
+		s.closer.CloseThenWait()
+		return
+	}
 	if s.scheduler != nil {
 		s.scheduler.Close()
 	}
@@ -129,7 +168,10 @@ func (s *server) GracefulStop() {
 
 // NewService returns a new metadata repository Service.
 func NewService(_ context.Context) (metadata.Service, error) {
-	s := &server{}
+	s := &server{
+		closer:     run.NewCloser(0),
+		propServer: propertyserver.NewServer(observability.BypassRegistry),
+	}
 	var err error
 	s.Service, err = metadata.NewClient(true, true)
 	if err != nil {

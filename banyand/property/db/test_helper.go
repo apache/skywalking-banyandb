@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+package db
 
 import (
 	"context"
@@ -44,16 +44,27 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 
 	// Create a database with a shard
 	snapshotDir := tmpPath // Use same directory for snapshot
-	db, err := openDB(context.Background(), tmpPath, 3*time.Second, time.Hour, 32, observability.BypassRegistry, fileSystem,
-		true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
+	dbInstance, err := OpenDB(context.Background(), Config{
+		Location:               tmpPath,
+		FlushInterval:          3 * time.Second,
+		ExpireToDeleteDuration: time.Hour,
+		Repair: RepairConfig{
+			Enabled:            true,
+			Location:           snapshotDir,
+			BuildTreeCron:      "@every 10m",
+			QuickBuildTreeTime: time.Second * 10,
+			TreeSlotCount:      32,
+		},
+	}, observability.BypassRegistry, fileSystem)
 	if err != nil {
 		panic(err)
 	}
+	db := dbInstance.(*database)
 
 	// Load shard 0
 	shard, err := db.loadShard(context.Background(), "test-group", 0)
 	if err != nil {
-		db.close()
+		db.Close()
 		panic(err)
 	}
 
@@ -146,7 +157,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 	// Insert properties
 	for _, p := range properties {
 		if err := shard.update(GetPropertyID(p), p); err != nil {
-			db.close()
+			db.Close()
 			panic(err)
 		}
 	}
@@ -159,7 +170,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 
 	// Close the database to release the lock on the directory
 	// This allows the dump tool to open the same directory
-	if err := db.close(); err != nil {
+	if err := db.Close(); err != nil {
 		panic(err)
 	}
 
@@ -168,7 +179,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 
 	cleanup := func() {
 		// Cleanup is handled by the caller's test.Space cleanup
-		// Database is already closed, so nothing to do here
+		// database is already closed, so nothing to do here
 	}
 
 	return shardPath, cleanup

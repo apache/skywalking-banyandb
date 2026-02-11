@@ -20,8 +20,6 @@ package property
 import (
 	"context"
 	"fmt"
-	"path"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -94,7 +92,7 @@ func (h *updateListener) Rev(ctx context.Context, message bus.Message) (resp bus
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
 		return
 	}
-	err := h.s.db.update(ctx, common.ShardID(d.ShardId), d.Id, d.Property)
+	err := h.s.db.Update(ctx, common.ShardID(d.ShardId), d.Id, d.Property)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to update property: %v", err))
 		return
@@ -131,7 +129,7 @@ func (h *deleteListener) Rev(ctx context.Context, message bus.Message) (resp bus
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("id is empty"))
 		return
 	}
-	err := h.s.db.delete(ctx, d.Ids)
+	err := h.s.db.Delete(ctx, d.Ids)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return
@@ -181,7 +179,7 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 			span.Stop()
 		}()
 	}
-	properties, err := h.s.db.query(ctx, d)
+	properties, err := h.s.db.Query(ctx, d)
 	if err != nil {
 		if tracer != nil {
 			span.Error(err)
@@ -195,9 +193,9 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 	}
 	qResp := &propertyv1.InternalQueryResponse{}
 	for _, p := range properties {
-		qResp.Sources = append(qResp.Sources, p.source)
-		qResp.Deletes = append(qResp.Deletes, p.deleteTime)
-		qResp.SortedValues = append(qResp.SortedValues, p.sortedValue)
+		qResp.Sources = append(qResp.Sources, p.Source())
+		qResp.Deletes = append(qResp.Deletes, p.DeleteTime())
+		qResp.SortedValues = append(qResp.SortedValues, p.SortedValue())
 	}
 	if tracer != nil {
 		qResp.Trace = tracer.ToProto()
@@ -234,50 +232,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	defer s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
-	var snapshotResult *databasev1.Snapshot
-	s.s.db.groups.Range(func(_, value any) bool {
-		gs := value.(*groupShards)
-		sLst := gs.shards.Load()
-		if sLst == nil {
-			return true
-		}
-		for _, shardRef := range *sLst {
-			select {
-			case <-ctx.Done():
-				// Context canceled: record an error snapshot and stop iteration.
-				if err := ctx.Err(); err != nil {
-					snapshotResult = &databasev1.Snapshot{
-						Name:    sn,
-						Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-						Error:   err.Error(),
-					}
-				}
-				return false
-			default:
-			}
-			snpDir := path.Join(s.s.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
-			lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
-			if snapshotErr != nil {
-				s.s.l.Error().Err(snapshotErr).Str("group", shardRef.group).
-					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
-				snapshotResult = &databasev1.Snapshot{
-					Name:    sn,
-					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-					Error:   snapshotErr.Error(),
-				}
-				return false
-			}
-		}
-		return true
-	})
-	if snapshotResult != nil {
-		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snapshotResult)
-	}
-	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.Snapshot{
-		Name:    sn,
-		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-	})
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), s.s.db.TakeSnapShot(ctx, sn))
 }
 
 func (s *snapshotListener) snapshotName() string {
@@ -314,7 +269,7 @@ func (r *repairListener) Rev(ctx context.Context, message bus.Message) (resp bus
 		return
 	}
 	protoReq = d
-	if err := r.s.db.repair(ctx, d.Id, d.ShardId, d.Property, d.DeleteTime); err != nil {
+	if err := r.s.db.Repair(ctx, d.Id, d.ShardId, d.Property, d.DeleteTime); err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to delete property: %v", err))
 		return
 	}
