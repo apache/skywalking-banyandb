@@ -77,7 +77,7 @@ kind delete cluster --name banyand-ktm
 ## Troubleshooting
 - If `ktm_status` is `0`, the KTM module did not start. Check that the FODC container has `CAP_BPF`, `CAP_PERFMON` (or `CAP_SYS_ADMIN` on older kernels),
   and `CAP_SYS_RESOURCE`, and that the host kernel exposes `/sys/kernel/btf/vmlinux`.
-- If KTM fails to attach tracepoints, ensure tracefs is visible in the container (for example, `/sys/kernel/tracing`).
+- If KTM fails to attach tracepoints, ensure tracefs is mounted into the container. The pod manifests mount `/sys/kernel/tracing`, `/sys/kernel/debug`, and `/sys/fs/cgroup` from the host.
 - Inspect logs for startup errors.
 
 ```bash

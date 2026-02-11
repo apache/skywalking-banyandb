@@ -41,6 +41,16 @@ spec:
       ports:
         - name: fodc-metrics
           containerPort: 9090
+      volumeMounts:
+        - name: tracefs
+          mountPath: /sys/kernel/tracing
+          readOnly: true
+        - name: debugfs
+          mountPath: /sys/kernel/debug
+          readOnly: true
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
       securityContext:
         allowPrivilegeEscalation: true
         seccompProfile:
@@ -50,3 +60,16 @@ spec:
             - BPF
             - PERFMON
             - SYS_RESOURCE
+  volumes:
+    - name: tracefs
+      hostPath:
+        path: /sys/kernel/tracing
+        type: DirectoryOrCreate
+    - name: debugfs
+      hostPath:
+        path: /sys/kernel/debug
+        type: DirectoryOrCreate
+    - name: cgroup
+      hostPath:
+        path: /sys/fs/cgroup
+        type: Directory
