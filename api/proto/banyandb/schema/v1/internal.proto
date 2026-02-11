@@ -49,14 +49,6 @@ message ListSchemasResponse {
   repeated int64 delete_times = 2;
 }
 
-message GetSchemaRequest {
-  property.v1.QueryRequest query = 1;
-}
-
-message GetSchemaResponse {
-  property.v1.Property properties = 1;
-}
-
 message DeleteSchemaRequest {
   property.v1.DeleteRequest delete = 1;
   // Update the update time for notification

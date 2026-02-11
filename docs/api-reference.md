@@ -366,8 +366,6 @@
     - [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse)
     - [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest)
     - [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse)
-    - [GetSchemaRequest](#banyandb-schema-v1-GetSchemaRequest)
-    - [GetSchemaResponse](#banyandb-schema-v1-GetSchemaResponse)
     - [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest)
     - [InsertSchemaResponse](#banyandb-schema-v1-InsertSchemaResponse)
     - [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest)
@@ -2320,6 +2318,7 @@ Service is the service for the API
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
 | property_repair_gossip_grpc_address | [string](#string) |  |  |
+| property_schema_grpc_address | [string](#string) |  |  |
 
 
 
@@ -5526,36 +5525,6 @@ WriteResponse is the response contract for write
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | has_schema | [bool](#bool) |  |  |
-
-
-
-
-
-
-<a name="banyandb-schema-v1-GetSchemaRequest"></a>
-
-### GetSchemaRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-schema-v1-GetSchemaResponse"></a>
-
-### GetSchemaResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| properties | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
 
 
 

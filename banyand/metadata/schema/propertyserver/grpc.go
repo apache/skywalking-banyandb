@@ -77,7 +77,6 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 		Groups: []string{schemaGroup},
 		Name:   req.Property.Metadata.Name,
 		Ids:    []string{req.Property.Id},
-		Limit:  1,
 	}
 	existing, queryErr := s.server.db.Query(ctx, existQuery)
 	if queryErr != nil {
@@ -88,7 +87,7 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 	for _, result := range existing {
 		if result.DeleteTime() == 0 {
 			s.metrics.totalErr.Inc(1, "insert")
-			return nil, fmt.Errorf("schema already exists: name=%s, id=%s", req.Property.Metadata.Name, req.Property.Id)
+			return nil, fmt.Errorf("schema already exists")
 		}
 	}
 	id := db.GetPropertyID(req.Property)

@@ -132,7 +132,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.repairBuildTreeCron, "schema-property-server-repair-build-tree-cron", "@every 1h",
 		"cron for repair tree building")
 	flagS.DurationVar(&s.repairQuickBuildTreeTime, "schema-property-server-repair-quick-build-tree-time",
-		s.repairQuickBuildTreeTime, "schema-quick build tree duration")
+		time.Minute*10, "schema-quick build tree duration")
 	flagS.IntVar(&s.maxFileSnapshotNum, "schema-property-server-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
 	flagS.DurationVar(&s.minFileSnapshotAge, "schema-property-server-min-file-snapshot-age", time.Hour, "the minimum age for file snapshots to be eligible for deletion")
 	return flagS

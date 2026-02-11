@@ -56,9 +56,6 @@ func newRepairScheduler(ctx context.Context, l *logger.Logger, cronExp string, m
 			return true
 		})
 	if err != nil {
-		return nil, fmt.Errorf("failed to add repair trigger cron task: %w", err)
-	}
-	if err != nil {
 		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
 	}
 	return r, nil
