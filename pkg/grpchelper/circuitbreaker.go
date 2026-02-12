@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pub
+package grpchelper
 
 import (
 	"time"
@@ -45,13 +45,13 @@ type circuitState struct {
 	halfOpenProbeInFlight bool
 }
 
-// isRequestAllowed checks if a request to the given node is allowed based on circuit breaker state.
+// IsRequestAllowed checks if a request to the given node is allowed based on circuit breaker state.
 // It also handles state transitions from Open to Half-Open when cooldown expires.
-func (p *pub) isRequestAllowed(node string) bool {
-	p.cbMu.Lock()
-	defer p.cbMu.Unlock()
+func (m *ConnManager[C]) IsRequestAllowed(node string) bool {
+	m.cbMu.Lock()
+	defer m.cbMu.Unlock()
 
-	cb, exists := p.cbStates[node]
+	cb, exists := m.cbStates[node]
 	if !exists {
 		return true // No circuit breaker state, allow request
 	}
@@ -65,7 +65,7 @@ func (p *pub) isRequestAllowed(node string) bool {
 			// Transition to Half-Open to allow a single probe request
 			cb.state = StateHalfOpen
 			cb.halfOpenProbeInFlight = true // Set token for the probe
-			p.log.Info().Str("node", node).Msg("circuit breaker transitioned to half-open")
+			m.log.Info().Str("node", node).Msg("circuit breaker transitioned to half-open")
 			return true
 		}
 		return false // Still in cooldown period
@@ -83,23 +83,21 @@ func (p *pub) isRequestAllowed(node string) bool {
 	}
 }
 
-// recordSuccess resets the circuit breaker state to Closed on successful operation.
+// RecordSuccess resets the circuit breaker state to Closed on successful operation.
 // This handles Half-Open -> Closed transitions.
-func (p *pub) recordSuccess(node string) {
-	p.cbMu.Lock()
-	defer p.cbMu.Unlock()
-
-	cb, exists := p.cbStates[node]
+func (m *ConnManager[C]) RecordSuccess(node string) {
+	m.cbMu.Lock()
+	defer m.cbMu.Unlock()
+	cb, exists := m.cbStates[node]
 	if !exists {
 		// Initialize circuit breaker state
-		p.cbStates[node] = &circuitState{
+		m.cbStates[node] = &circuitState{
 			state:               StateClosed,
 			consecutiveFailures: 0,
 		}
 		return
 	}
 
-	// Reset to closed state
 	cb.state = StateClosed
 	cb.consecutiveFailures = 0
 	cb.lastFailureTime = time.Time{}
@@ -107,17 +105,17 @@ func (p *pub) recordSuccess(node string) {
 	cb.halfOpenProbeInFlight = false // Clear probe token
 }
 
-// recordFailure updates the circuit breaker state on failed operation.
+// RecordFailure updates the circuit breaker state on failed operation.
 // Only records failures for transient/internal errors that should count toward opening the circuit.
-func (p *pub) recordFailure(node string, err error) {
+func (m *ConnManager[C]) RecordFailure(node string, err error) {
 	// Only record failure if the error is transient or internal
-	if !isTransientError(err) && !isInternalError(err) {
+	if !IsTransientError(err) && !IsInternalError(err) {
 		return
 	}
-	p.cbMu.Lock()
-	defer p.cbMu.Unlock()
+	m.cbMu.Lock()
+	defer m.cbMu.Unlock()
 
-	cb, exists := p.cbStates[node]
+	cb, exists := m.cbStates[node]
 	if !exists {
 		// Initialize circuit breaker state
 		cb = &circuitState{
@@ -125,7 +123,7 @@ func (p *pub) recordFailure(node string, err error) {
 			consecutiveFailures: 1,
 			lastFailureTime:     time.Now(),
 		}
-		p.cbStates[node] = cb
+		m.cbStates[node] = cb
 	} else {
 		cb.consecutiveFailures++
 		cb.lastFailureTime = time.Now()
@@ -136,12 +134,12 @@ func (p *pub) recordFailure(node string, err error) {
 	if cb.consecutiveFailures >= threshold && cb.state == StateClosed {
 		cb.state = StateOpen
 		cb.openTime = time.Now()
-		p.log.Warn().Str("node", node).Int("failures", cb.consecutiveFailures).Msg("circuit breaker opened")
+		m.log.Warn().Str("node", node).Int("failures", cb.consecutiveFailures).Msg("circuit breaker opened")
 	} else if cb.state == StateHalfOpen {
 		// Failed during half-open, go back to open
 		cb.state = StateOpen
 		cb.openTime = time.Now()
 		cb.halfOpenProbeInFlight = false // Clear probe token
-		p.log.Warn().Str("node", node).Msg("circuit breaker reopened after half-open failure")
+		m.log.Warn().Str("node", node).Msg("circuit breaker reopened after half-open failure")
 	}
 }
