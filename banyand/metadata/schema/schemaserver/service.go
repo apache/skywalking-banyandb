@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"path"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
@@ -214,9 +213,9 @@ func (s *server) PreRun(_ context.Context) error {
 				sn := s.snapshotName()
 				snapshot := s.db.TakeSnapShot(ctx, sn)
 				if snapshot.Error != "" {
-					return "", fmt.Errorf("failed to find snapshot %s: %s", sn, snapshot.Error)
+					return "", fmt.Errorf("failed to take snapshot %s: %s", sn, snapshot.Error)
 				}
-				return path.Join(snapshotDir, sn, storage.DataDir), nil
+				return filepath.Join(snapshotDir, sn, storage.DataDir), nil
 			},
 		},
 	}
@@ -299,19 +298,21 @@ func (s *server) GracefulStop() {
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()
 	}
-	stopped := make(chan struct{})
-	go func() {
-		s.ser.GracefulStop()
-		close(stopped)
-	}()
-	t := time.NewTimer(10 * time.Second)
-	select {
-	case <-t.C:
-		s.ser.Stop()
-		s.l.Info().Msg("force stopped")
-	case <-stopped:
-		t.Stop()
-		s.l.Info().Msg("stopped gracefully")
+	if s.ser != nil {
+		stopped := make(chan struct{})
+		go func() {
+			s.ser.GracefulStop()
+			close(stopped)
+		}()
+		t := time.NewTimer(10 * time.Second)
+		select {
+		case <-t.C:
+			s.ser.Stop()
+			s.l.Info().Msg("force stopped")
+		case <-stopped:
+			t.Stop()
+			s.l.Info().Msg("stopped gracefully")
+		}
 	}
 	if s.db != nil {
 		if closeErr := s.db.Close(); closeErr != nil {

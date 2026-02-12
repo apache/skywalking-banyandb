@@ -19,10 +19,11 @@ package schemaserver
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
@@ -67,7 +68,7 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 		return nil, errInvalidRequest("metadata should not be nil")
 	}
 	if req.Property.Metadata.ModRevision == 0 {
-		return nil, errInvalidRequest("mod_revision should be set for update")
+		return nil, errInvalidRequest("mod_revision should be set")
 	}
 	s.metrics.totalStarted.Inc(1, "insert")
 	start := time.Now()
@@ -90,7 +91,7 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 	for _, result := range existing {
 		if result.DeleteTime() == 0 {
 			s.metrics.totalErr.Inc(1, "insert")
-			return nil, fmt.Errorf("schema already exists")
+			return nil, status.Error(codes.AlreadyExists, "schema already exists")
 		}
 	}
 	id := db.GetPropertyID(req.Property)
@@ -111,7 +112,7 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 		return nil, errInvalidRequest("metadata should not be nil")
 	}
 	if req.Property.Metadata.ModRevision == 0 {
-		return nil, errInvalidRequest("mod_revision should be set for update")
+		return nil, errInvalidRequest("mod_revision should be set")
 	}
 	s.metrics.totalStarted.Inc(1, "update")
 	start := time.Now()
@@ -230,7 +231,7 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 		return nil, errInvalidRequest("metadata should not be nil")
 	}
 	if req.Property.Metadata.ModRevision == 0 {
-		return nil, errInvalidRequest("mod_revision should be set for update")
+		return nil, errInvalidRequest("mod_revision should be set")
 	}
 	s.metrics.totalStarted.Inc(1, "repair")
 	start := time.Now()
@@ -267,7 +268,14 @@ func (s *schemaManagementServer) ExistSchema(ctx context.Context, req *schemav1.
 		s.l.Error().Err(queryErr).Msg("failed to check schema existence")
 		return nil, queryErr
 	}
-	return &schemav1.ExistSchemaResponse{HasSchema: len(results) > 0}, nil
+	hasSchema := false
+	for _, r := range results {
+		if r.DeleteTime() == 0 {
+			hasSchema = true
+			break
+		}
+	}
+	return &schemav1.ExistSchemaResponse{HasSchema: hasSchema}, nil
 }
 
 type schemaUpdateServer struct {
@@ -325,4 +333,9 @@ type invalidRequestError struct {
 
 func (e *invalidRequestError) Error() string {
 	return "invalid request: " + e.msg
+}
+
+// GRPCStatus returns the gRPC status for this error.
+func (e *invalidRequestError) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
 }

@@ -29,7 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -51,7 +53,19 @@ func startTestServer(t *testing.T) (schemav1.SchemaManagementServiceClient, sche
 	require.NoError(t, srv.PreRun(context.Background()))
 	srv.Serve()
 	t.Cleanup(func() { srv.GracefulStop() })
-	time.Sleep(100 * time.Millisecond)
+	// Wait deterministically for the server to start accepting connections.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", srv.addr, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			require.FailNowf(t, "server did not start listening in time", "last error: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	conn, dialErr := grpc.NewClient(srv.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, dialErr)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -108,6 +122,7 @@ func TestInsertSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		_, rpcErr := mgmt.InsertSchema(context.Background(), &schemav1.InsertSchemaRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "property is required")
 	})
 	t.Run("nil metadata", func(t *testing.T) {
@@ -116,6 +131,7 @@ func TestInsertSchema(t *testing.T) {
 			Property: &propertyv1.Property{},
 		})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "Metadata")
 	})
 	t.Run("successful insert", func(t *testing.T) {
@@ -134,6 +150,7 @@ func TestInsertSchema(t *testing.T) {
 			Property: testProperty("svc", "id1"),
 		})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.AlreadyExists, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "schema already exists")
 	})
 	t.Run("insert after delete", func(t *testing.T) {
@@ -171,6 +188,7 @@ func TestUpdateSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		_, rpcErr := mgmt.UpdateSchema(context.Background(), &schemav1.UpdateSchemaRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "property is required")
 	})
 	t.Run("nil metadata", func(t *testing.T) {
@@ -179,6 +197,7 @@ func TestUpdateSchema(t *testing.T) {
 			Property: &propertyv1.Property{},
 		})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "Metadata")
 	})
 	t.Run("successful update", func(t *testing.T) {
@@ -225,6 +244,7 @@ func TestListSchemas(t *testing.T) {
 		require.NoError(t, streamErr)
 		_, recvErr := collectListResponses(stream)
 		require.Error(t, recvErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(recvErr))
 		assert.Contains(t, recvErr.Error(), "query is required")
 	})
 	t.Run("empty results", func(t *testing.T) {
@@ -299,6 +319,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		_, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "delete request is required")
 	})
 	t.Run("no results", func(t *testing.T) {
@@ -343,6 +364,7 @@ func TestRepairSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		_, rpcErr := mgmt.RepairSchema(context.Background(), &schemav1.RepairSchemaRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "property is required")
 	})
 	t.Run("nil metadata", func(t *testing.T) {
@@ -351,6 +373,7 @@ func TestRepairSchema(t *testing.T) {
 			Property: &propertyv1.Property{},
 		})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "Metadata")
 	})
 	t.Run("successful repair", func(t *testing.T) {
@@ -372,6 +395,7 @@ func TestExistSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		_, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "query is required")
 	})
 	t.Run("no results", func(t *testing.T) {
@@ -398,6 +422,7 @@ func TestAggregateSchemaUpdates(t *testing.T) {
 		_, upd := startTestServer(t)
 		_, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{})
 		require.Error(t, rpcErr)
+		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
 		assert.Contains(t, rpcErr.Error(), "query is required")
 	})
 	t.Run("empty results", func(t *testing.T) {
