@@ -31,11 +31,30 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+// SnapshotTransactionSupport defines snapshot and transaction-related operations
+// for coordinated snapshot updates. It is embedded by SIDX so that callers
+// (e.g. trace) can participate in atomic snapshot transactions.
+type SnapshotTransactionSupport interface {
+	// PrepareMemPart prepares a transition for introducing a memory part.
+	PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *Snapshot
+	// PrepareFlushed prepares a transition for introducing flushed parts.
+	PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot
+	// PrepareMerged prepares a transition for introducing merged parts.
+	PrepareMerged(intro *MergerIntroduction) func(cur *Snapshot) *Snapshot
+	// PrepareSynced prepares a transition for removing synced parts.
+	PrepareSynced(partIDsToSync map[uint64]struct{}) func(cur *Snapshot) *Snapshot
+	// CurrentSnapshot returns the current snapshot with incremented reference count.
+	CurrentSnapshot() *Snapshot
+	// ReplaceSnapshot atomically replaces the current snapshot with next.
+	ReplaceSnapshot(next *Snapshot)
+}
+
 // SIDX defines the main secondary index interface with user-controlled ordering.
 // The core principle is that int64 keys are provided by users and treated as
 // opaque ordering values by sidx - the system only performs numerical comparisons
 // without interpreting the semantic meaning of keys.
 type SIDX interface {
+	SnapshotTransactionSupport
 	// IntroduceMemPart introduces a memPart to the SIDX instance.
 	IntroduceMemPart(partID uint64, mp *MemPart)
 	// IntroduceFlushed introduces a flushed map to the SIDX instance.

@@ -25,6 +25,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -390,6 +391,20 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		left, right = right, left
 	}
 
+	var topNProcessor PostProcessor
+	var isTopN bool
+
+	if isTopNBlock(left) {
+		sort, limit, err := parseTopNMeta(left)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to parse TopN metadata, falling back to normal merge")
+			isTopN = false
+		} else {
+			isTopN = true
+			topNProcessor = CreateTopNPostProcessor(limit, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+		}
+	}
+
 	for {
 		i := left.idx
 		ts2 := right.timestamps[right.idx]
@@ -397,12 +412,18 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 			i++
 		}
 		if i > left.idx && left.timestamps[i-1] == ts2 {
-			if left.versions[i-1] >= right.versions[right.idx] {
-				target.append(left, i)
+			if isTopN {
+				target.append(left, i-1)
+				target.mergeAndAppendTopN(left, i-1, right, right.idx, topNProcessor)
 			} else {
-				target.append(left, i-1) // skip left
-				target.append(right, right.idx+1)
+				if left.versions[i-1] >= right.versions[right.idx] {
+					target.append(left, i)
+				} else {
+					target.append(left, i-1) // skip left
+					target.append(right, right.idx+1)
+				}
 			}
+
 			left.idx = i
 			right.idx++ // skip right
 			if appendIfEmpty(right, left) {
@@ -417,4 +438,32 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		}
 		left, right = right, left
 	}
+}
+
+func isTopNBlock(b *blockPointer) bool {
+	families := b.tagFamilies
+	if len(families) == 0 {
+		return false
+	}
+
+	if families[0].name == TopNTagFamily {
+		return true
+	}
+
+	return false
+}
+
+func parseTopNMeta(b *blockPointer) (modelv1.Sort, int32, error) {
+	tf := b.tagFamilies[0]
+
+	sortVal := mustDecodeTagValue(tf.columns[1].valueType, tf.columns[1].values[b.idx])
+
+	paramsVal := mustDecodeTagValue(tf.columns[3].valueType, tf.columns[3].values[b.idx])
+	paramStr := paramsVal.GetStr().Value
+	params, err := ParseTopNParameters(paramStr)
+	if err != nil {
+		return modelv1.Sort_SORT_UNSPECIFIED, 0, fmt.Errorf("failed to parse topN parameters : %w", err)
+	}
+
+	return modelv1.Sort(sortVal.GetInt().Value), int32(params.Limit), nil
 }
