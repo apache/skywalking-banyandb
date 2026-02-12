@@ -33,7 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -240,7 +240,7 @@ func generateMeasure(db storage.TSDB[*tsTable, option], cache storage.Cache) *me
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	pipeline := queue.Local()
-	metaSvc, err := embeddedserver.NewService(ctx)
+	metaSvc, err := service.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

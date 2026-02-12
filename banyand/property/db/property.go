@@ -15,20 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package property provides the property service interface.
-package property
+package db
 
 import (
-	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
-	"github.com/apache/skywalking-banyandb/pkg/run"
+	"strconv"
+	"strings"
+
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 )
 
-// Service is the interface for property service.
-type Service interface {
-	run.PreRunner
-	run.Config
-	run.Service
-	route.TableProvider
+// GetPropertyID returns the property ID based on the property metadata and revision.
+func GetPropertyID(prop *propertyv1.Property) []byte {
+	return convert.StringToBytes(GetEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
+}
 
-	GetGossIPGrpcPort() *uint32
+// GetEntity returns the entity string for the property.
+func GetEntity(prop *propertyv1.Property) string {
+	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
 }

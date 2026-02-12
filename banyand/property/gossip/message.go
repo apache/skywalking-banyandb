@@ -43,8 +43,8 @@ type Messenger interface {
 	run.PreRunner
 	run.Config
 
-	// Serve starts the service from parent stop channel.
-	Serve(stopCh chan struct{})
+	// Serve starts the service from parent closer.
+	Serve(closer *run.Closer)
 	// GracefulStop shuts down and cleans up the service.
 	GracefulStop()
 }

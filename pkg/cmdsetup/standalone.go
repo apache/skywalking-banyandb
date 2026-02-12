@@ -28,7 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
@@ -46,7 +46,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	dataPipeline := queue.Local()
-	metaSvc, err := embeddedserver.NewService(ctx)
+	metaSvc, err := service.NewService(ctx)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -111,7 +111,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the standalone server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort(), nil)
+			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort(), nil, nil)
 			if err != nil {
 				return err
 			}
