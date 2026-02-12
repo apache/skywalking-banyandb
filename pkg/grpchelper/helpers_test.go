@@ -43,7 +43,7 @@ func (h *mockHandler) AddressOf(node *databasev1.Node) string {
 	return node.GetGrpcAddress()
 }
 
-func (h *mockHandler) GetDialOptions(_ string) ([]grpc.DialOption, error) {
+func (h *mockHandler) GetDialOptions() ([]grpc.DialOption, error) {
 	return nil, nil
 }
 

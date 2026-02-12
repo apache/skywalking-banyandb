@@ -89,7 +89,7 @@ func (p *pub) AddressOf(node *databasev1.Node) string {
 }
 
 // GetDialOptions implements grpchelper.ConnectionHandler.
-func (p *pub) GetDialOptions(_ string) ([]grpc.DialOption, error) {
+func (p *pub) GetDialOptions() ([]grpc.DialOption, error) {
 	return p.getClientTransportCredentials()
 }
 

@@ -49,7 +49,7 @@ type ConnectionHandler[C Client] interface {
 	// AddressOf extracts the gRPC address from a node.
 	AddressOf(node *databasev1.Node) string
 	// GetDialOptions returns gRPC dial options for the given address.
-	GetDialOptions(address string) ([]grpc.DialOption, error)
+	GetDialOptions() ([]grpc.DialOption, error)
 	// NewClient creates a client from a gRPC connection and node.
 	NewClient(conn *grpc.ClientConn, node *databasev1.Node) (C, error)
 	// OnActive is called when a node transitions to active.
@@ -137,7 +137,7 @@ func (m *ConnManager[C]) OnAddOrUpdate(node *databasev1.Node) {
 	if _, ok := m.evictable[name]; ok {
 		return
 	}
-	credOpts, dialErr := m.handler.GetDialOptions(address)
+	credOpts, dialErr := m.handler.GetDialOptions()
 	if dialErr != nil {
 		m.log.Error().Err(dialErr).Msg("failed to load client TLS credentials")
 		return
@@ -438,7 +438,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 			select {
 			case <-time.After(backoff):
 				address := m.handler.AddressOf(en.n)
-				credOpts, errEvict := m.handler.GetDialOptions(address)
+				credOpts, errEvict := m.handler.GetDialOptions()
 				if errEvict != nil {
 					m.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
 					return
