@@ -39,7 +39,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	propertypkg "github.com/apache/skywalking-banyandb/banyand/property"
+	propertydb "github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -221,7 +221,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		return nil, err
 	}
 	prevPropertyWithMetadata, olderProperties := ps.findPrevAndOlderProperties(nodeProperties)
-	entity := propertypkg.GetEntity(property)
+	entity := propertydb.GetEntity(property)
 	shardID, err := partition.ShardID(convert.StringToBytes(entity), group.ResourceOpts.ShardNum)
 	if err != nil {
 		return nil, err
@@ -242,7 +242,7 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		}
 		var ids [][]byte
 		for _, p := range olderProperties {
-			ids = append(ids, propertypkg.GetPropertyID(p.Property))
+			ids = append(ids, propertydb.GetPropertyID(p.Property))
 		}
 		_ = ps.remove(ids)
 	}()
@@ -320,7 +320,7 @@ func (ps *propertyServer) replaceProperty(ctx context.Context, now time.Time, sh
 	cur.UpdatedAt = timestamppb.New(now)
 	req := &propertyv1.InternalUpdateRequest{
 		ShardId:  shardID,
-		Id:       propertypkg.GetPropertyID(cur),
+		Id:       propertydb.GetPropertyID(cur),
 		Property: cur,
 	}
 	var successCount int
@@ -405,7 +405,7 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 			if p.deletedTime > 0 {
 				continue
 			}
-			ids = append(ids, propertypkg.GetPropertyID(p.Property))
+			ids = append(ids, propertydb.GetPropertyID(p.Property))
 		}
 	}
 	if err := ps.remove(ids); err != nil {
@@ -520,7 +520,7 @@ func (ps *propertyServer) sortedQueryWithDedup(
 	// Process items from k-way merge
 	for mergeIter.Next() {
 		p := mergeIter.Val()
-		entity := propertypkg.GetEntity(p.Property)
+		entity := propertydb.GetEntity(p.Property)
 
 		// Check if we've seen this entity before
 		if existingCount, seen := seenIDs[entity]; seen {
@@ -627,7 +627,7 @@ func (ps *propertyServer) findPropertyInBuffer(
 	for i := searchPos; i < len(buffer); i++ {
 		if bytes.Equal(buffer[i].sortedValue, target.sortedValue) {
 			// Check if it's the exact same property by comparing entity
-			if propertypkg.GetEntity(buffer[i].Property) == propertypkg.GetEntity(target.Property) {
+			if propertydb.GetEntity(buffer[i].Property) == propertydb.GetEntity(target.Property) {
 				return i
 			}
 		} else {
@@ -639,7 +639,7 @@ func (ps *propertyServer) findPropertyInBuffer(
 	// Also check backwards from searchPos (in case binary search landed after our target)
 	for i := searchPos - 1; i >= 0; i-- {
 		if bytes.Equal(buffer[i].sortedValue, target.sortedValue) {
-			if propertypkg.GetEntity(buffer[i].Property) == propertypkg.GetEntity(target.Property) {
+			if propertydb.GetEntity(buffer[i].Property) == propertydb.GetEntity(target.Property) {
 				return i
 			}
 		} else {
@@ -659,7 +659,7 @@ func (ps *propertyServer) simpleDedupWithoutSort(
 
 	for n, props := range nodeProperties {
 		for _, p := range props {
-			entity := propertypkg.GetEntity(p.Property)
+			entity := propertydb.GetEntity(p.Property)
 
 			if existing, seen := seenIDs[entity]; seen {
 				switch {
@@ -967,7 +967,7 @@ func (rq *repairQueue) processTask(ctx context.Context, t *repairTask) (err erro
 	// building the repair data
 	repairReq := &propertyv1.InternalRepairRequest{
 		ShardId:    uint64(t.shardID),
-		Id:         propertypkg.GetPropertyID(t.property.Property),
+		Id:         propertydb.GetPropertyID(t.property.Property),
 		Property:   t.property.Property,
 		DeleteTime: t.property.deletedTime,
 	}
