@@ -74,7 +74,7 @@ type segment[T TSTable, O any] struct {
 	suffix        string
 	location      string
 	lastAccessed  atomic.Int64
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
@@ -192,6 +192,12 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 
 	s.l.Info().Stringer("seg", s).Msg("segment initialized")
 	return nil
+}
+
+func (s *segment[T, O]) collectMetrics() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
 }
 
 func (s *segment[T, O]) DecRef() {
