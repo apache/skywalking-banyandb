@@ -89,7 +89,7 @@ func (c countFunc[N]) Val() N {
 }
 
 func (c countFunc[N]) Partial() Partial[N] {
-	return Partial[N]{Value: c.count, Count: c.zero}
+	return Partial[N]{Value: c.count}
 }
 
 func (c *countFunc[N]) Reset() {
@@ -127,7 +127,7 @@ func (s sumFunc[N]) Val() N {
 }
 
 func (s sumFunc[N]) Partial() Partial[N] {
-	return Partial[N]{Value: s.sum, Count: s.zero}
+	return Partial[N]{Value: s.sum}
 }
 
 func (s *sumFunc[N]) Reset() {
@@ -167,7 +167,7 @@ func (m maxFunc[N]) Val() N {
 }
 
 func (m maxFunc[N]) Partial() Partial[N] {
-	return Partial[N]{Value: m.val, Count: m.min}
+	return Partial[N]{Value: m.val}
 }
 
 func (m *maxFunc[N]) Reset() {
@@ -209,7 +209,7 @@ func (m minFunc[N]) Val() N {
 }
 
 func (m minFunc[N]) Partial() Partial[N] {
-	return Partial[N]{Value: m.val, Count: m.max}
+	return Partial[N]{Value: m.val}
 }
 
 func (m *minFunc[N]) Reset() {
