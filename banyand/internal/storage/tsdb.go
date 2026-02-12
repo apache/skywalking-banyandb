@@ -365,7 +365,7 @@ func (d *database[T, O]) collect() {
 		for _, t := range tables {
 			t.Collect(d.segmentController.metrics)
 		}
-		s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
+		s.collectMetrics()
 		s.DecRef()
 		refCount += atomic.LoadInt32(&s.refCount)
 	}

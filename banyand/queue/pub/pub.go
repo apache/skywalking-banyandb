@@ -20,18 +20,17 @@ package pub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -63,6 +62,8 @@ var (
 	_ run.PreRunner = (*pub)(nil)
 	_ run.Service   = (*pub)(nil)
 	_ run.Config    = (*pub)(nil)
+
+	_ grpchelper.ConnectionHandler[*client] = (*pub)(nil)
 )
 
 type pub struct {
@@ -70,21 +71,59 @@ type pub struct {
 	metadata        metadata.Repo
 	handlers        map[bus.Topic]schema.EventHandler
 	log             *logger.Logger
-	registered      map[string]*databasev1.Node
-	active          map[string]*client
-	evictable       map[string]evictNode
+	connMgr         *grpchelper.ConnManager[*client]
 	closer          *run.Closer
 	writableProbe   map[string]map[string]struct{}
-	cbStates        map[string]*circuitState
 	caCertPath      string
 	caCertReloader  *pkgtls.Reloader
 	prefix          string
 	retryPolicy     string
 	allowedRoles    []databasev1.Role
-	mu              sync.RWMutex
-	cbMu            sync.RWMutex
 	writableProbeMu sync.Mutex
 	tlsEnabled      bool
+}
+
+// AddressOf implements grpchelper.ConnectionHandler.
+func (p *pub) AddressOf(node *databasev1.Node) string {
+	return node.GrpcAddress
+}
+
+// GetDialOptions implements grpchelper.ConnectionHandler.
+func (p *pub) GetDialOptions() ([]grpc.DialOption, error) {
+	return p.getClientTransportCredentials()
+}
+
+// NewClient implements grpchelper.ConnectionHandler.
+func (p *pub) NewClient(conn *grpc.ClientConn, node *databasev1.Node) (*client, error) {
+	md := schema.Metadata{
+		TypeMeta: schema.TypeMeta{
+			Name: node.Metadata.GetName(),
+			Kind: schema.KindNode,
+		},
+		Spec: node,
+	}
+	return &client{
+		client: clusterv1.NewServiceClient(conn),
+		conn:   conn,
+		md:     md,
+	}, nil
+}
+
+// OnActive implements grpchelper.ConnectionHandler.
+func (p *pub) OnActive(_ string, c *client) {
+	for _, h := range p.handlers {
+		h.OnAddOrUpdate(c.md)
+	}
+}
+
+// OnInactive implements grpchelper.ConnectionHandler.
+func (p *pub) OnInactive(name string, c *client) {
+	for _, h := range p.handlers {
+		h.OnDelete(c.md)
+	}
+	p.writableProbeMu.Lock()
+	delete(p.writableProbe, name)
+	p.writableProbeMu.Unlock()
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
@@ -113,23 +152,12 @@ func (p *pub) Register(topic bus.Topic, handler schema.EventHandler) {
 }
 
 func (p *pub) GracefulStop() {
-	// Stop CA certificate reloader if enabled
 	if p.caCertReloader != nil {
 		p.caCertReloader.Stop()
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for i := range p.evictable {
-		close(p.evictable[i].c)
-	}
-	p.evictable = nil
 	p.closer.Done()
 	p.closer.CloseThenWait()
-	for _, c := range p.active {
-		_ = c.conn.Close()
-	}
-	p.active = nil
+	p.connMgr.GracefulStop()
 }
 
 // Serve implements run.Service.
@@ -153,7 +181,7 @@ func (p *pub) Serve() run.StopNotify {
 					select {
 					case <-certUpdateCh:
 						p.log.Info().Msg("CA certificate updated, reconnecting clients")
-						p.reconnectAllClients()
+						p.connMgr.ReconnectAll()
 					case <-stopCh:
 						return
 					}
@@ -171,14 +199,7 @@ var bypassMatches = []MatchFunc{bypassMatch}
 func bypassMatch(_ map[string]string) bool { return true }
 
 func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
-	var nodes []*databasev1.Node
-	p.mu.RLock()
-	for k := range p.active {
-		if n := p.registered[k]; n != nil {
-			nodes = append(nodes, n)
-		}
-	}
-	p.mu.RUnlock()
+	nodes := p.connMgr.ActiveRegisteredNodes()
 	if len(nodes) == 0 {
 		return nil, errors.New("no active nodes")
 	}
@@ -219,7 +240,6 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	if len(names) == 0 {
 		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
 	}
-
 	futureCh := make(chan publishResult, len(names))
 	var wg sync.WaitGroup
 	for n := range names {
@@ -238,8 +258,8 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	var errs error
 	for f := range futureCh {
 		if f.e != nil {
-			errs = multierr.Append(errs, errors.Wrapf(f.e, "failed to publish message to %s", f.n))
-			if isFailoverError(f.e) {
+			errs = multierr.Append(errs, pkgerrors.Wrapf(f.e, "failed to publish message to %s", f.n))
+			if grpchelper.IsFailoverError(f.e) {
 				if p.closer.AddRunning() {
 					go func() {
 						defer p.closer.Done()
@@ -275,37 +295,25 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 			return multierr.Append(err, fmt.Errorf("failed to marshal message[%d]: %w", m.ID(), errSend))
 		}
 		node := m.Node()
-
-		// Check circuit breaker before attempting send
-		if !p.isRequestAllowed(node) {
-			return multierr.Append(err, fmt.Errorf("circuit breaker open for node %s", node))
+		execErr := p.connMgr.Execute(node, func(c *client) error {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			f.cancelFn = append(f.cancelFn, cancel)
+			stream, errCreateStream := c.client.Send(ctx)
+			if errCreateStream != nil {
+				// Record failure for circuit breaker (only for transient/internal errors)
+				return fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream)
+			}
+			if sendErr := stream.Send(r); sendErr != nil {
+				return fmt.Errorf("failed to send message to node %s: %w", node, sendErr)
+			}
+			f.clients = append(f.clients, stream)
+			f.topics = append(f.topics, topic)
+			f.nodes = append(f.nodes, node)
+			return nil
+		})
+		if execErr != nil {
+			err = multierr.Append(err, execErr)
 		}
-
-		p.mu.RLock()
-		client, ok := p.active[node]
-		p.mu.RUnlock()
-		if !ok {
-			return multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		f.cancelFn = append(f.cancelFn, cancel)
-		stream, errCreateStream := client.client.Send(ctx)
-		if errCreateStream != nil {
-			// Record failure for circuit breaker (only for transient/internal errors)
-			p.recordFailure(node, errCreateStream)
-			return multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
-		}
-		errSend = stream.Send(r)
-		if errSend != nil {
-			// Record failure for circuit breaker (only for transient/internal errors)
-			p.recordFailure(node, errSend)
-			return multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
-		}
-		// Record success for circuit breaker
-		p.recordSuccess(node)
-		f.clients = append(f.clients, stream)
-		f.topics = append(f.topics, topic)
-		f.nodes = append(f.nodes, node)
 		return err
 	}
 	for _, m := range messages {
@@ -322,35 +330,7 @@ func (p *pub) Publish(_ context.Context, topic bus.Topic, messages ...bus.Messag
 // GetRouteTable implements RouteTableProvider interface.
 // Returns a RouteTable with all registered nodes and their health states.
 func (p *pub) GetRouteTable() *databasev1.RouteTable {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	registered := make([]*databasev1.Node, 0, len(p.registered))
-	for _, node := range p.registered {
-		if node != nil {
-			registered = append(registered, node)
-		}
-	}
-
-	active := make([]string, 0, len(p.active))
-	for nodeID := range p.active {
-		if node := p.registered[nodeID]; node != nil && node.Metadata != nil {
-			active = append(active, node.Metadata.Name)
-		}
-	}
-
-	evictable := make([]string, 0, len(p.evictable))
-	for nodeID := range p.evictable {
-		if node := p.registered[nodeID]; node != nil && node.Metadata != nil {
-			evictable = append(evictable, node.Metadata.Name)
-		}
-	}
-
-	return &databasev1.RouteTable{
-		Registered: registered,
-		Active:     active,
-		Evictable:  evictable,
-	}
+	return p.connMgr.GetRouteTable()
 }
 
 // New returns a new queue client targeting the given node roles.
@@ -372,15 +352,11 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 	}
 	p := &pub{
 		metadata:      metadata,
-		active:        make(map[string]*client),
-		evictable:     make(map[string]evictNode),
-		registered:    make(map[string]*databasev1.Node),
 		handlers:      make(map[bus.Topic]schema.EventHandler),
 		closer:        run.NewCloser(1),
 		allowedRoles:  roles,
 		prefix:        strBuilder.String(),
 		writableProbe: make(map[string]map[string]struct{}),
-		cbStates:      make(map[string]*circuitState),
 		retryPolicy:   retryPolicy,
 	}
 	return p
@@ -389,7 +365,14 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 // NewWithoutMetadata returns a new queue client without metadata, defaulting to data nodes.
 func NewWithoutMetadata() queue.Client {
 	p := New(nil, databasev1.Role_ROLE_DATA)
-	p.(*pub).log = logger.GetLogger("queue-client")
+	pp := p.(*pub)
+	pp.log = logger.GetLogger("queue-client")
+	pp.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
+		Handler:        pp,
+		Logger:         pp.log,
+		RetryPolicy:    pp.retryPolicy,
+		MaxRecvMsgSize: maxReceiveMessageSize,
+	})
 	return p
 }
 
@@ -404,12 +387,20 @@ func (p *pub) PreRun(context.Context) error {
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
 
+	// Initialize connection manager with the pub as the handler
+	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
+		Handler:        p,
+		Logger:         p.log,
+		RetryPolicy:    p.retryPolicy,
+		MaxRecvMsgSize: maxReceiveMessageSize,
+	})
+
 	// Initialize CA certificate reloader if TLS is enabled and CA cert path is provided
 	if p.tlsEnabled && p.caCertPath != "" {
 		var err error
 		p.caCertReloader, err = pkgtls.NewClientCertReloader(p.caCertPath, p.log)
 		if err != nil {
-			return errors.Wrapf(err, "failed to initialize CA certificate reloader for %s", p.prefix)
+			return pkgerrors.Wrapf(err, "failed to initialize CA certificate reloader for %s", p.prefix)
 		}
 		p.log.Info().Str("caCertPath", p.caCertPath).Msg("Initialized CA certificate reloader")
 	}
@@ -514,14 +505,6 @@ func (l *future) GetAll() ([]bus.Message, error) {
 	}
 }
 
-func isFailoverError(err error) bool {
-	s, ok := status.FromError(err)
-	if !ok {
-		return false
-	}
-	return s.Code() == codes.Unavailable || s.Code() == codes.DeadlineExceeded
-}
-
 func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 	if !p.tlsEnabled {
 		return grpchelper.SecureOptions(nil, false, false, "")
@@ -547,39 +530,6 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 	return opts, nil
 }
 
-// reconnectAllClients reconnects all active clients when CA certificate is updated.
-func (p *pub) reconnectAllClients() {
-	// Collect nodes and close connections
-	p.mu.Lock()
-	nodesToReconnect := make([]schema.Metadata, 0, len(p.registered))
-	for name, node := range p.registered {
-		// Handle evictable nodes: close channel and remove from evictable
-		if en, ok := p.evictable[name]; ok {
-			close(en.c)
-			delete(p.evictable, name)
-		}
-		// Handle active nodes: close connection and remove from active
-		if client, ok := p.active[name]; ok {
-			_ = client.conn.Close()
-			delete(p.active, name)
-			p.deleteClient(client.md)
-		}
-		md := schema.Metadata{
-			TypeMeta: schema.TypeMeta{
-				Kind: schema.KindNode,
-			},
-			Spec: node,
-		}
-		nodesToReconnect = append(nodesToReconnect, md)
-	}
-	p.mu.Unlock()
-
-	// Reconnect with new credentials
-	for _, md := range nodesToReconnect {
-		p.OnAddOrUpdate(md)
-	}
-}
-
 // NewChunkedSyncClient implements queue.Client.
 func (p *pub) NewChunkedSyncClient(node string, chunkSize uint32) (queue.ChunkedSyncClient, error) {
 	return p.NewChunkedSyncClientWithConfig(node, &ChunkedSyncClientConfig{
@@ -592,9 +542,7 @@ func (p *pub) NewChunkedSyncClient(node string, chunkSize uint32) (queue.Chunked
 
 // NewChunkedSyncClientWithConfig creates a chunked sync client with advanced configuration.
 func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncClientConfig) (queue.ChunkedSyncClient, error) {
-	p.mu.RLock()
-	client, ok := p.active[node]
-	p.mu.RUnlock()
+	c, ok := p.connMgr.GetClient(node)
 	if !ok {
 		return nil, fmt.Errorf("no active client for node %s", node)
 	}
@@ -602,10 +550,9 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 	if config.ChunkSize == 0 {
 		config.ChunkSize = defaultChunkSize
 	}
-
 	return &chunkedSyncClient{
-		client:    client.client,
-		conn:      client.conn,
+		client:    c.client,
+		conn:      c.conn,
 		node:      node,
 		log:       p.log,
 		chunkSize: config.ChunkSize,
@@ -615,12 +562,5 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 
 // HealthyNodes returns a list of node names that are currently healthy and connected.
 func (p *pub) HealthyNodes() []string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	nodes := make([]string, 0, len(p.active))
-	for name := range p.active {
-		nodes = append(nodes, name)
-	}
-	return nodes
+	return p.connMgr.ActiveNames()
 }
