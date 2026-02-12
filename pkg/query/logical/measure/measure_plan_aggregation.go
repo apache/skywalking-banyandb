@@ -32,11 +32,96 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
+const aggCountFieldName = "__agg_count"
+
 var (
 	_ logical.UnresolvedPlan = (*unresolvedAggregation)(nil)
 
 	errUnsupportedAggregationField = errors.New("unsupported aggregation operation on this field")
 )
+
+// aggAccumulator abstracts the aggregation logic for both map and reduce modes.
+// It is injected into the existing iterators to avoid creating separate iterator types.
+type aggAccumulator[N aggregation.Number] interface {
+	Feed(dp *measurev1.DataPoint, fieldIdx int) error
+	Result(fieldName string) ([]*measurev1.DataPoint_Field, error)
+	Reset()
+}
+
+// mapAccumulator implements aggAccumulator for the map phase (data node side).
+type mapAccumulator[N aggregation.Number] struct {
+	mapFunc     aggregation.Map[N]
+	aggrType    modelv1.AggregationFunction
+	emitPartial bool
+}
+
+func (a *mapAccumulator[N]) Feed(dp *measurev1.DataPoint, fieldIdx int) error {
+	v, parseErr := aggregation.FromFieldValue[N](dp.GetFields()[fieldIdx].GetValue())
+	if parseErr != nil {
+		return parseErr
+	}
+	a.mapFunc.In(v)
+	return nil
+}
+
+func (a *mapAccumulator[N]) Result(fieldName string) ([]*measurev1.DataPoint_Field, error) {
+	if a.emitPartial {
+		part := a.mapFunc.Partial()
+		fvs, partErr := aggregation.PartialToFieldValues(a.aggrType, part)
+		if partErr != nil {
+			return nil, partErr
+		}
+		fields := make([]*measurev1.DataPoint_Field, len(fvs))
+		for idx, fv := range fvs {
+			name := fieldName
+			if idx > 0 {
+				name = aggCountFieldName
+			}
+			fields[idx] = &measurev1.DataPoint_Field{Name: name, Value: fv}
+		}
+		return fields, nil
+	}
+	val, valErr := aggregation.ToFieldValue(a.mapFunc.Val())
+	if valErr != nil {
+		return nil, valErr
+	}
+	return []*measurev1.DataPoint_Field{{Name: fieldName, Value: val}}, nil
+}
+
+func (a *mapAccumulator[N]) Reset() {
+	a.mapFunc.Reset()
+}
+
+// reduceAccumulator implements aggAccumulator for the reduce phase (liaison side).
+type reduceAccumulator[N aggregation.Number] struct {
+	reduceFunc aggregation.Reduce[N]
+	aggrType   modelv1.AggregationFunction
+}
+
+func (a *reduceAccumulator[N]) Feed(dp *measurev1.DataPoint, _ int) error {
+	fvs := make([]*modelv1.FieldValue, len(dp.GetFields()))
+	for idx, f := range dp.GetFields() {
+		fvs[idx] = f.GetValue()
+	}
+	part, partErr := aggregation.FieldValuesToPartial[N](a.aggrType, fvs)
+	if partErr != nil {
+		return partErr
+	}
+	a.reduceFunc.Combine(part)
+	return nil
+}
+
+func (a *reduceAccumulator[N]) Result(fieldName string) ([]*measurev1.DataPoint_Field, error) {
+	val, valErr := aggregation.ToFieldValue(a.reduceFunc.Val())
+	if valErr != nil {
+		return nil, valErr
+	}
+	return []*measurev1.DataPoint_Field{{Name: fieldName, Value: val}}, nil
+}
+
+func (a *reduceAccumulator[N]) Reset() {
+	a.reduceFunc.Reset()
+}
 
 type unresolvedAggregation struct {
 	unresolvedInput  logical.UnresolvedPlan
@@ -44,11 +129,11 @@ type unresolvedAggregation struct {
 	aggrFunc         modelv1.AggregationFunction
 	isGroup          bool
 	emitPartial      bool
-	useReduceMode    bool
+	reduceMode       bool
 }
 
 func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.Field, aggrFunc modelv1.AggregationFunction,
-	isGroup bool, emitPartial bool, useReduceMode bool,
+	isGroup bool, emitPartial bool, reduceMode bool,
 ) logical.UnresolvedPlan {
 	return &unresolvedAggregation{
 		unresolvedInput:  input,
@@ -56,7 +141,7 @@ func newUnresolvedAggregation(input logical.UnresolvedPlan, aggrField *logical.F
 		aggregationField: aggrField,
 		isGroup:          isGroup,
 		emitPartial:      emitPartial,
-		useReduceMode:    useReduceMode,
+		reduceMode:       reduceMode,
 	}
 }
 
@@ -89,32 +174,27 @@ type aggregationPlan[N aggregation.Number] struct {
 	*logical.Parent
 	schema              logical.Schema
 	aggregationFieldRef *logical.FieldRef
-	mapFunc             aggregation.Map[N]
-	reduceFunc          aggregation.Reduce[N]
-	groupByTagsRefs     [][]*logical.TagRef
+	accumulator         aggAccumulator[N]
 	aggrType            modelv1.AggregationFunction
 	isGroup             bool
-	emitPartial         bool
-	useReduceMode       bool
 }
 
 func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPlan logical.Plan,
 	measureSchema logical.Schema, fieldRef *logical.FieldRef,
 ) (*aggregationPlan[N], error) {
-	mapFunc, err := aggregation.NewMap[N](gba.aggrFunc)
-	if err != nil {
-		return nil, err
-	}
-	var reduceFunc aggregation.Reduce[N]
-	var groupByTagsRefs [][]*logical.TagRef
-	if gba.useReduceMode {
-		reduceFunc, err = aggregation.NewReduce[N](gba.aggrFunc)
-		if err != nil {
-			return nil, err
+	var acc aggAccumulator[N]
+	if gba.reduceMode {
+		reduceFunc, reduceErr := aggregation.NewReduce[N](gba.aggrFunc)
+		if reduceErr != nil {
+			return nil, reduceErr
 		}
-		if gp, ok := prevPlan.(*groupBy); ok {
-			groupByTagsRefs = gp.groupByTagsRefs
+		acc = &reduceAccumulator[N]{reduceFunc: reduceFunc, aggrType: gba.aggrFunc}
+	} else {
+		mapFunc, mapErr := aggregation.NewMap[N](gba.aggrFunc)
+		if mapErr != nil {
+			return nil, mapErr
 		}
+		acc = &mapAccumulator[N]{mapFunc: mapFunc, aggrType: gba.aggrFunc, emitPartial: gba.emitPartial}
 	}
 	return &aggregationPlan[N]{
 		Parent: &logical.Parent{
@@ -122,14 +202,10 @@ func newAggregationPlan[N aggregation.Number](gba *unresolvedAggregation, prevPl
 			Input:           prevPlan,
 		},
 		schema:              measureSchema,
-		mapFunc:             mapFunc,
-		reduceFunc:          reduceFunc,
+		accumulator:         acc,
 		aggregationFieldRef: fieldRef,
 		aggrType:            gba.aggrFunc,
 		isGroup:             gba.isGroup,
-		emitPartial:         gba.emitPartial,
-		useReduceMode:       gba.useReduceMode,
-		groupByTagsRefs:     groupByTagsRefs,
 	}, nil
 }
 
@@ -153,37 +229,28 @@ func (g *aggregationPlan[N]) Execute(ec context.Context) (executor.MIterator, er
 	if err != nil {
 		return nil, err
 	}
-	if g.useReduceMode {
-		return newReduceGroupIterator(iter, g.aggregationFieldRef, g.reduceFunc, g.aggrType, g.groupByTagsRefs), nil
-	}
 	if g.isGroup {
-		return newAggGroupMIterator(iter, g.aggregationFieldRef, g.mapFunc, g.aggrType, g.emitPartial), nil
+		return newAggGroupMIterator[N](iter, g.aggregationFieldRef, g.accumulator), nil
 	}
-	return newAggAllIterator(iter, g.aggregationFieldRef, g.mapFunc, g.aggrType, g.emitPartial), nil
+	return newAggAllIterator[N](iter, g.aggregationFieldRef, g.accumulator), nil
 }
 
 type aggGroupIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
-	mapFunc             aggregation.Map[N]
+	accumulator         aggAccumulator[N]
 	err                 error
-	aggrType            modelv1.AggregationFunction
-	emitPartial         bool
 }
 
 func newAggGroupMIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
-	mapFunc aggregation.Map[N],
-	aggrType modelv1.AggregationFunction,
-	emitPartial bool,
+	accumulator aggAccumulator[N],
 ) executor.MIterator {
 	return &aggGroupIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
-		mapFunc:             mapFunc,
-		aggrType:            aggrType,
-		emitPartial:         emitPartial,
+		accumulator:         accumulator,
 	}
 }
 
@@ -198,20 +265,16 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if ami.err != nil {
 		return nil
 	}
-	ami.mapFunc.Reset()
+	ami.accumulator.Reset()
 	group := ami.prev.Current()
 	var resultDp *measurev1.DataPoint
 	var shardID uint32
 	for _, idp := range group {
 		dp := idp.GetDataPoint()
-		value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
-			GetValue()
-		v, err := aggregation.FromFieldValue[N](value)
-		if err != nil {
-			ami.err = err
+		if feedErr := ami.accumulator.Feed(dp, ami.aggregationFieldRef.Spec.FieldIdx); feedErr != nil {
+			ami.err = feedErr
 			return nil
 		}
-		ami.mapFunc.In(v)
 		if resultDp != nil {
 			continue
 		}
@@ -223,31 +286,12 @@ func (ami *aggGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if resultDp == nil {
 		return nil
 	}
-	if ami.emitPartial {
-		part := ami.mapFunc.Partial()
-		fvs, err := aggregation.PartialToFieldValues(ami.aggrType, part)
-		if err != nil {
-			ami.err = err
-			return nil
-		}
-		resultDp.Fields = make([]*measurev1.DataPoint_Field, len(fvs))
-		for i, fv := range fvs {
-			name := ami.aggregationFieldRef.Field.Name
-			if i > 0 {
-				name = "__agg_count"
-			}
-			resultDp.Fields[i] = &measurev1.DataPoint_Field{Name: name, Value: fv}
-		}
-	} else {
-		val, err := aggregation.ToFieldValue(ami.mapFunc.Val())
-		if err != nil {
-			ami.err = err
-			return nil
-		}
-		resultDp.Fields = []*measurev1.DataPoint_Field{
-			{Name: ami.aggregationFieldRef.Field.Name, Value: val},
-		}
+	fields, resultErr := ami.accumulator.Result(ami.aggregationFieldRef.Field.Name)
+	if resultErr != nil {
+		ami.err = resultErr
+		return nil
 	}
+	resultDp.Fields = fields
 	return []*measurev1.InternalDataPoint{{DataPoint: resultDp, ShardId: shardID}}
 }
 
@@ -258,26 +302,20 @@ func (ami *aggGroupIterator[N]) Close() error {
 type aggAllIterator[N aggregation.Number] struct {
 	prev                executor.MIterator
 	aggregationFieldRef *logical.FieldRef
-	mapFunc             aggregation.Map[N]
+	accumulator         aggAccumulator[N]
 	result              *measurev1.DataPoint
 	err                 error
-	aggrType            modelv1.AggregationFunction
-	emitPartial         bool
 }
 
 func newAggAllIterator[N aggregation.Number](
 	prev executor.MIterator,
 	aggregationFieldRef *logical.FieldRef,
-	mapFunc aggregation.Map[N],
-	aggrType modelv1.AggregationFunction,
-	emitPartial bool,
+	accumulator aggAccumulator[N],
 ) executor.MIterator {
 	return &aggAllIterator[N]{
 		prev:                prev,
 		aggregationFieldRef: aggregationFieldRef,
-		mapFunc:             mapFunc,
-		aggrType:            aggrType,
-		emitPartial:         emitPartial,
+		accumulator:         accumulator,
 	}
 }
 
@@ -290,14 +328,10 @@ func (ami *aggAllIterator[N]) Next() bool {
 		group := ami.prev.Current()
 		for _, idp := range group {
 			dp := idp.GetDataPoint()
-			value := dp.GetFields()[ami.aggregationFieldRef.Spec.FieldIdx].
-				GetValue()
-			v, err := aggregation.FromFieldValue[N](value)
-			if err != nil {
-				ami.err = err
+			if feedErr := ami.accumulator.Feed(dp, ami.aggregationFieldRef.Spec.FieldIdx); feedErr != nil {
+				ami.err = feedErr
 				return false
 			}
-			ami.mapFunc.In(v)
 			if resultDp != nil {
 				continue
 			}
@@ -309,31 +343,12 @@ func (ami *aggAllIterator[N]) Next() bool {
 	if resultDp == nil {
 		return false
 	}
-	if ami.emitPartial {
-		part := ami.mapFunc.Partial()
-		fvs, err := aggregation.PartialToFieldValues(ami.aggrType, part)
-		if err != nil {
-			ami.err = err
-			return false
-		}
-		resultDp.Fields = make([]*measurev1.DataPoint_Field, len(fvs))
-		for i, fv := range fvs {
-			name := ami.aggregationFieldRef.Field.Name
-			if i > 0 {
-				name = "__agg_count"
-			}
-			resultDp.Fields[i] = &measurev1.DataPoint_Field{Name: name, Value: fv}
-		}
-	} else {
-		val, err := aggregation.ToFieldValue(ami.mapFunc.Val())
-		if err != nil {
-			ami.err = err
-			return false
-		}
-		resultDp.Fields = []*measurev1.DataPoint_Field{
-			{Name: ami.aggregationFieldRef.Field.Name, Value: val},
-		}
+	fields, resultErr := ami.accumulator.Result(ami.aggregationFieldRef.Field.Name)
+	if resultErr != nil {
+		ami.err = resultErr
+		return false
 	}
+	resultDp.Fields = fields
 	ami.result = resultDp
 	return true
 }
@@ -342,121 +357,9 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.InternalDataPoint {
 	if ami.result == nil {
 		return nil
 	}
-	// For aggregation across all data, shard ID is not applicable
 	return []*measurev1.InternalDataPoint{{DataPoint: ami.result, ShardId: 0}}
 }
 
 func (ami *aggAllIterator[N]) Close() error {
 	return ami.prev.Close()
-}
-
-type reduceGroupIterator[N aggregation.Number] struct {
-	prev                executor.MIterator
-	aggregationFieldRef *logical.FieldRef
-	reduceFunc          aggregation.Reduce[N]
-	err                 error
-	groupMap            map[uint64][]*measurev1.InternalDataPoint
-	groupByTagsRefs     [][]*logical.TagRef
-	groupKeys           []uint64
-	aggrType            modelv1.AggregationFunction
-	index               int
-}
-
-func newReduceGroupIterator[N aggregation.Number](
-	prev executor.MIterator,
-	aggregationFieldRef *logical.FieldRef,
-	reduceFunc aggregation.Reduce[N],
-	aggrType modelv1.AggregationFunction,
-	groupByTagsRefs [][]*logical.TagRef,
-) executor.MIterator {
-	return &reduceGroupIterator[N]{
-		prev:                prev,
-		aggregationFieldRef: aggregationFieldRef,
-		reduceFunc:          reduceFunc,
-		aggrType:            aggrType,
-		groupByTagsRefs:     groupByTagsRefs,
-		groupMap:            make(map[uint64][]*measurev1.InternalDataPoint),
-	}
-}
-
-func (rgi *reduceGroupIterator[N]) loadGroups() bool {
-	if rgi.groupKeys != nil {
-		return true
-	}
-	for rgi.prev.Next() {
-		group := rgi.prev.Current()
-		for _, idp := range group {
-			key, keyErr := formatGroupByKey(idp.GetDataPoint(), rgi.groupByTagsRefs)
-			if keyErr != nil {
-				rgi.err = keyErr
-				return false
-			}
-			rgi.groupMap[key] = append(rgi.groupMap[key], idp)
-		}
-	}
-	if closeErr := rgi.prev.Close(); closeErr != nil {
-		rgi.err = closeErr
-		return false
-	}
-	rgi.groupKeys = make([]uint64, 0, len(rgi.groupMap))
-	for k := range rgi.groupMap {
-		rgi.groupKeys = append(rgi.groupKeys, k)
-	}
-	return true
-}
-
-func (rgi *reduceGroupIterator[N]) Next() bool {
-	if rgi.err != nil {
-		return false
-	}
-	if !rgi.loadGroups() {
-		return false
-	}
-	return rgi.index < len(rgi.groupKeys)
-}
-
-func (rgi *reduceGroupIterator[N]) Current() []*measurev1.InternalDataPoint {
-	if rgi.err != nil || rgi.groupKeys == nil || rgi.index >= len(rgi.groupKeys) {
-		return nil
-	}
-	key := rgi.groupKeys[rgi.index]
-	rgi.index++
-	idps := rgi.groupMap[key]
-	if len(idps) == 0 {
-		return nil
-	}
-	rgi.reduceFunc.Reset()
-	var resultDp *measurev1.DataPoint
-	for _, idp := range idps {
-		dp := idp.GetDataPoint()
-		fvs := make([]*modelv1.FieldValue, len(dp.GetFields()))
-		for i, f := range dp.GetFields() {
-			fvs[i] = f.GetValue()
-		}
-		part, partErr := aggregation.FieldValuesToPartial[N](rgi.aggrType, fvs)
-		if partErr != nil {
-			rgi.err = partErr
-			return nil
-		}
-		rgi.reduceFunc.Combine(part)
-		if resultDp == nil {
-			resultDp = &measurev1.DataPoint{TagFamilies: dp.TagFamilies}
-		}
-	}
-	if resultDp == nil {
-		return nil
-	}
-	val, err := aggregation.ToFieldValue(rgi.reduceFunc.Val())
-	if err != nil {
-		rgi.err = err
-		return nil
-	}
-	resultDp.Fields = []*measurev1.DataPoint_Field{
-		{Name: rgi.aggregationFieldRef.Field.Name, Value: val},
-	}
-	return []*measurev1.InternalDataPoint{{DataPoint: resultDp, ShardId: 0}}
-}
-
-func (rgi *reduceGroupIterator[N]) Close() error {
-	return rgi.prev.Close()
 }

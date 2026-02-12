@@ -153,7 +153,6 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if ud.pushDownAgg {
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
-		temp.AggReturnPartial = true
 	}
 	// push down groupBy, agg and top to data node and rewrite agg result to raw data
 	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
@@ -273,7 +272,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			}
 		}()
 	}
-	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest}
+	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest, AggReturnPartial: t.pushDownAgg}
 	ff, broadcastErr := dctx.Broadcast(defaultQueryTimeout, data.TopicInternalMeasureQuery,
 		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 	if broadcastErr != nil {
@@ -547,7 +546,16 @@ func (s *pushedDownAggregatedIterator) Close() error {
 // of the same shard, while preserving results from different shards.
 func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
-		return dataPoints, nil
+		// No group-by: deduplicate by shard_id only
+		seen := make(map[uint32]struct{})
+		result := make([]*measurev1.InternalDataPoint, 0, len(dataPoints))
+		for _, idp := range dataPoints {
+			if _, exists := seen[idp.GetShardId()]; !exists {
+				seen[idp.GetShardId()] = struct{}{}
+				result = append(result, idp)
+			}
+		}
+		return result, nil
 	}
 	// key = hash(shard_id, group_key)
 	// Same shard with same group key will be deduplicated
@@ -559,7 +567,6 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 		if keyErr != nil {
 			return nil, keyErr
 		}
-		// Include shard_id in key calculation
 		key := hashWithShard(uint64(idp.ShardId), groupKey)
 		if _, exists := groupMap[key]; !exists {
 			groupMap[key] = struct{}{}

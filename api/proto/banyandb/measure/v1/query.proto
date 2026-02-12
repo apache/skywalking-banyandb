@@ -69,6 +69,8 @@ message InternalDataPoint {
 message InternalQueryRequest {
   // The actual query request
   QueryRequest request = 1;
+  // agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison)
+  bool agg_return_partial = 2;
 }
 
 // InternalQueryResponse is the internal response for distributed query.
@@ -140,6 +142,4 @@ message QueryRequest {
   repeated string stages = 14;
   // rewrite_agg_top_n_result will rewrite agg result to raw data
   bool rewrite_agg_top_n_result = 15;
-  // agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison)
-  bool agg_return_partial = 16;
 }

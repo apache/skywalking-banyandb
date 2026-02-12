@@ -54,7 +54,9 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.MeasureExecutionContext) (logical.Plan, error) {
+func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
+	ecc []executor.MeasureExecutionContext, emitPartial bool,
+) (logical.Plan, error) {
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to metadata count %d", len(ss), len(metadata))
 	}
@@ -122,7 +124,7 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
-			criteria.GetAggReturnPartial(),
+			emitPartial,
 			false,
 		)
 		pushedLimit = math.MaxInt
@@ -179,7 +181,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
 			false,       // emitPartial: liaison does not emit partial
-			pushDownAgg, // useReduceMode: only reduce partials when push-down is active (no TopN)
+			pushDownAgg, // reduceMode: only reduce partials when push-down is active (no TopN)
 		)
 		pushedLimit = math.MaxInt
 	}
