@@ -155,6 +155,8 @@ func (p *pub) GracefulStop() {
 	if p.caCertReloader != nil {
 		p.caCertReloader.Stop()
 	}
+	p.closer.Done()
+	p.closer.CloseThenWait()
 	p.connMgr.GracefulStop()
 }
 
