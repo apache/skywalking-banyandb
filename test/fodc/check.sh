@@ -24,10 +24,12 @@ WAIT_TIMEOUT=${WAIT_TIMEOUT:-300s}
 MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-60}
 SLEEP_SECONDS=${SLEEP_SECONDS:-2}
 PRINT_KTM_ON_SUCCESS=${PRINT_KTM_ON_SUCCESS:-true}
+PRINT_KTM_SAMPLES_ON_SUCCESS=${PRINT_KTM_SAMPLES_ON_SUCCESS:-false}
 REQUIRED_KTM_METRIC_COUNT=${REQUIRED_KTM_METRIC_COUNT:-6}
 REQUIRED_KTM_METRICS=${REQUIRED_KTM_METRICS:-"ktm_status ktm_degraded \
 ktm_fadvise_calls_total ktm_cache_lookups_total \
 ktm_sys_read_latency_seconds_count ktm_sys_pread_latency_seconds_count"}
+FAILURE_LOG_TAIL_LINES=${FAILURE_LOG_TAIL_LINES:-200}
 
 echo "Preflight: Host kernel and tracing info"
 echo "Kernel: $(uname -r)"
@@ -74,23 +76,27 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
       if [ "${ktm_metric_count}" -ge "${REQUIRED_KTM_METRIC_COUNT}" ] && [ -z "${last_missing_metrics}" ]; then
         echo "KTM smoke check passed. ktm_status=${ktm_status}, ktm_metric_count=${ktm_metric_count}"
         if [ "${PRINT_KTM_ON_SUCCESS}" = "true" ]; then
+          echo "::group::KTM success details"
           echo "Detected unique ktm_* metric names:"
           printf '%s\n' "${ktm_metric_names}"
-          echo "KTM metric samples (first unique entries):"
-          printf '%s\n' "${metrics}" | awk '
-            /^ktm_[a-zA-Z0-9_]+([[:space:]]|\{)/ {
-              metric_name = $1
-              sub(/\{.*/, "", metric_name)
-              if (!(metric_name in shown)) {
-                print $0
-                shown[metric_name] = 1
-                printed++
+          if [ "${PRINT_KTM_SAMPLES_ON_SUCCESS}" = "true" ]; then
+            echo "KTM metric samples (first unique entries):"
+            printf '%s\n' "${metrics}" | awk '
+              /^ktm_[a-zA-Z0-9_]+([[:space:]]|\{)/ {
+                metric_name = $1
+                sub(/\{.*/, "", metric_name)
+                if (!(metric_name in shown)) {
+                  print $0
+                  shown[metric_name] = 1
+                  printed++
+                }
+                if (printed >= 12) {
+                  exit
+                }
               }
-              if (printed >= 12) {
-                exit
-              }
-            }
-          '
+            '
+          fi
+          echo "::endgroup::"
         fi
         exit 0
       fi
@@ -114,12 +120,17 @@ if [ -n "${last_missing_metrics}" ]; then
 fi
 
 if [ -n "${last_metrics}" ]; then
-  echo "Last metrics sample (ktm_ lines only):"
+  echo "::group::KTM metrics (ktm_ lines only)"
   printf '%s\n' "${last_metrics}" | awk '/^ktm_/ {print}'
+  echo "::endgroup::"
+  echo "::group::KTM metrics (full scrape)"
+  printf '%s\n' "${last_metrics}"
+  echo "::endgroup::"
 fi
 
-echo "FODC logs (tail):"
-kubectl logs "${POD_NAME}" -c "${CONTAINER_NAME}" --tail=200
+echo "::group::FODC logs (tail)"
+kubectl logs "${POD_NAME}" -c "${CONTAINER_NAME}" --tail="${FAILURE_LOG_TAIL_LINES}"
+echo "::endgroup::"
 
 exit_code=1
 if [ -n "${ktm_status_not_full}" ]; then
