@@ -25,7 +25,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/query"
@@ -72,7 +72,7 @@ func setUp() (*services, func()) {
 	pipeline := queue.Local()
 
 	// Init Metadata Service
-	metadataService, err := embeddedserver.NewService(context.TODO())
+	metadataService, err := service.NewService(context.TODO())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

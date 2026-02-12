@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package propertyserver implements a standalone gRPC server for schema property management.
-package propertyserver
+// Package schemaserver implements a standalone gRPC server for schema property management.
+package schemaserver
 
 import (
 	"context"
@@ -62,7 +62,7 @@ var (
 	_ run.Service   = (*server)(nil)
 )
 
-// Server is the interface for the standalone property server.
+// Server is the interface for the standalone schema server.
 type Server interface {
 	run.PreRunner
 	run.Config
@@ -99,7 +99,7 @@ type server struct {
 	tls                      bool
 }
 
-// NewServer returns a new standalone property server.
+// NewServer returns a new standalone schema server.
 func NewServer(omr observability.MetricsRegistry) Server {
 	return &server{
 		omr:    omr,
@@ -113,28 +113,28 @@ func (s *server) GetPort() *uint32 {
 }
 
 func (s *server) Name() string {
-	return "property-server"
+	return "schema-server"
 }
 
 func (s *server) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("schema-server")
 	s.maxRecvMsgSize = defaultRecvSize
-	flagS.StringVar(&s.root, "schema-property-server-root-path", "/tmp", "root storage path")
-	flagS.StringVar(&s.host, "schema-property-server-grpc-host", "", "the host of schema property server")
-	flagS.Uint32Var(&s.port, "schema-property-server-grpc-port", 17916, "the port of schema property server")
-	flagS.DurationVar(&s.flushTimeout, "schema-property-server-flush-timeout", 5*time.Second, "memory flush interval")
-	flagS.DurationVar(&s.expireTimeout, "schema-property-server-expire-delete-timeout", time.Hour*24*7, "soft-delete expiration")
-	flagS.BoolVar(&s.tls, "schema-property-server-tls", false, "connection uses TLS if true")
-	flagS.StringVar(&s.certFile, "schema-property-server-cert-file", "", "the TLS cert file")
-	flagS.StringVar(&s.keyFile, "schema-property-server-key-file", "", "the TLS key file")
-	flagS.VarP(&s.maxRecvMsgSize, "schema-property-server-max-recv-msg-size", "", "max gRPC receive message size")
-	flagS.IntVar(&s.repairTreeSlotCount, "schema-property-server-repair-tree-slot-count", 32, "repair tree slot count")
-	flagS.StringVar(&s.repairBuildTreeCron, "schema-property-server-repair-build-tree-cron", "@every 1h",
+	flagS.StringVar(&s.root, "schema-server-root-path", "/tmp", "root storage path")
+	flagS.StringVar(&s.host, "schema-server-grpc-host", "", "the host of schema server")
+	flagS.Uint32Var(&s.port, "schema-server-grpc-port", 17916, "the port of schema server")
+	flagS.DurationVar(&s.flushTimeout, "schema-server-flush-timeout", 5*time.Second, "memory flush interval")
+	flagS.DurationVar(&s.expireTimeout, "schema-server-expire-delete-timeout", time.Hour*24*7, "soft-delete expiration")
+	flagS.BoolVar(&s.tls, "schema-server-tls", false, "connection uses TLS if true")
+	flagS.StringVar(&s.certFile, "schema-server-cert-file", "", "the TLS cert file")
+	flagS.StringVar(&s.keyFile, "schema-server-key-file", "", "the TLS key file")
+	flagS.VarP(&s.maxRecvMsgSize, "schema-server-max-recv-msg-size", "", "max gRPC receive message size")
+	flagS.IntVar(&s.repairTreeSlotCount, "schema-server-repair-tree-slot-count", 32, "repair tree slot count")
+	flagS.StringVar(&s.repairBuildTreeCron, "schema-server-repair-build-tree-cron", "@every 1h",
 		"cron for repair tree building")
-	flagS.DurationVar(&s.repairQuickBuildTreeTime, "schema-property-server-repair-quick-build-tree-time",
+	flagS.DurationVar(&s.repairQuickBuildTreeTime, "schema-server-repair-quick-build-tree-time",
 		time.Minute*10, "schema-quick build tree duration")
-	flagS.IntVar(&s.maxFileSnapshotNum, "schema-property-server-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
-	flagS.DurationVar(&s.minFileSnapshotAge, "schema-property-server-min-file-snapshot-age", time.Hour, "the minimum age for file snapshots to be eligible for deletion")
+	flagS.IntVar(&s.maxFileSnapshotNum, "schema-server-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
+	flagS.DurationVar(&s.minFileSnapshotAge, "schema-server-min-file-snapshot-age", time.Hour, "the minimum age for file snapshots to be eligible for deletion")
 	return flagS
 }
 
@@ -162,10 +162,10 @@ func (s *server) Validate() error {
 }
 
 func (s *server) PreRun(_ context.Context) error {
-	s.l = logger.GetLogger("schema-property-server")
+	s.l = logger.GetLogger("schema-server")
 	s.lfs = fs.NewLocalFileSystem()
 
-	grpcFactory := s.omr.With(propertyServerScope.SubScope("grpc"))
+	grpcFactory := s.omr.With(schemaServerScope.SubScope("grpc"))
 	sm := newServerMetrics(grpcFactory)
 	s.schemaService = &schemaManagementServer{
 		server:  s,
@@ -182,7 +182,7 @@ func (s *server) PreRun(_ context.Context) error {
 		var tlsErr error
 		s.tlsReloader, tlsErr = pkgtls.NewReloader(s.certFile, s.keyFile, s.l)
 		if tlsErr != nil {
-			return errors.Wrap(tlsErr, "failed to initialize TLS reloader for property server")
+			return errors.Wrap(tlsErr, "failed to initialize TLS reloader for server")
 		}
 	}
 
@@ -227,7 +227,7 @@ func (s *server) PreRun(_ context.Context) error {
 	if openErr != nil {
 		return errors.Wrap(openErr, "failed to open property database")
 	}
-	s.l.Info().Str("root", s.root).Msg("property database initialized")
+	s.l.Info().Str("root", s.root).Msg("schema property database initialized")
 	return nil
 }
 
@@ -241,11 +241,11 @@ func (s *server) Serve() run.StopNotify {
 	if s.tls {
 		if s.tlsReloader != nil {
 			if startErr := s.tlsReloader.Start(); startErr != nil {
-				s.l.Error().Err(startErr).Msg("Failed to start TLS reloader for property server")
+				s.l.Error().Err(startErr).Msg("Failed to start TLS reloader for schema server")
 				return s.closer.CloseNotify()
 			}
 			s.l.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).
-				Msg("Started TLS file monitoring for property server")
+				Msg("Started TLS file monitoring for schema server")
 			tlsConfig := s.tlsReloader.GetTLSConfig()
 			creds := credentials.NewTLS(tlsConfig)
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}

@@ -33,7 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -181,7 +181,7 @@ func setupForRegistry() func() {
 	// Init `Queue` module
 	pipeline := queue.Local()
 	// Init `Metadata` module
-	metaSvc, err := embeddedserver.NewService(context.TODO())
+	metaSvc, err := service.NewService(context.TODO())
 	Expect(err).NotTo(HaveOccurred())
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "standalone", nil)
 

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package propertyserver
+package schemaserver
 
 import (
 	"context"
@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-var propertyServerScope = observability.RootScope.SubScope("schema_property")
+var schemaServerScope = observability.RootScope.SubScope("schema_server")
 
 type serverMetrics struct {
 	totalStarted  meter.Counter
