@@ -17,16 +17,7 @@
 name: FODC E2E (Kind)
 
 on:
-  pull_request:
-    paths:
-      - 'fodc/**'
-      - 'test/fodc/**'
-  push:
-    branches:
-      - main
-    paths:
-      - 'fodc/**'
-      - 'test/fodc/**'
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -43,7 +34,7 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          download-artifacts: 'false'
+          download-artifacts: 'true'
           setup-docker: 'true'
 
       - name: Setup kubectl
@@ -57,12 +48,6 @@ jobs:
           cluster_name: banyand-ktm
           config: test/fodc/kind.yaml
           wait: 180s
-
-      - name: Generate protobuf and mock code
-        run: make generate
-
-      - name: Create UI dist placeholder
-        run: mkdir -p ui/dist && echo "placeholder" > ui/dist/index.html
 
       - name: Build BanyanDB image
         run: |
