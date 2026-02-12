@@ -31,7 +31,15 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+)
+
+const (
+	defaultMaxRetries        = 3
+	defaultPerRequestTimeout = 2 * time.Second
+	defaultBackoffBase       = 500 * time.Millisecond
+	defaultBackoffMax        = 30 * time.Second
 )
 
 type writeStream struct {
@@ -72,7 +80,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		node := m.Node()
 
 		// Check circuit breaker before attempting send
-		if !bp.pub.isRequestAllowed(node) {
+		if !bp.pub.connMgr.IsRequestAllowed(node) {
 			err = multierr.Append(err, fmt.Errorf("circuit breaker open for node %s", node))
 			continue
 		}
@@ -95,11 +103,11 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				if errSend != nil {
 					err = multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
 					// Record failure for circuit breaker (only for transient/internal errors)
-					bp.pub.recordFailure(node, errSend)
+					bp.pub.connMgr.RecordFailure(node, errSend)
 					return false
 				}
 				// Record success for circuit breaker
-				bp.pub.recordSuccess(node)
+				bp.pub.connMgr.RecordSuccess(node)
 				return true
 			}
 			return false
@@ -119,14 +127,12 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			continue
 		}
-		var client *client
+		var nodeClient *client
 		// nolint: contextcheck
 		if func() bool {
-			bp.pub.mu.RLock()
-			defer bp.pub.mu.RUnlock()
-			var ok bool
-			client, ok = bp.pub.active[node]
-			if !ok {
+			var clientOK bool
+			nodeClient, clientOK = bp.pub.connMgr.GetClient(node)
+			if !clientOK {
 				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 				return true
 			}
@@ -147,7 +153,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		streamCtx, cancel := context.WithTimeout(ctx, bp.timeout)
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
-		stream, errCreateStream := client.client.Send(streamCtx)
+		stream, errCreateStream := nodeClient.client.Send(streamCtx)
 		if errCreateStream != nil {
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
@@ -171,9 +177,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			}
 			resp, errRecv := s.Recv()
 			if errRecv != nil {
-				if isFailoverError(errRecv) {
+				if grpchelper.IsFailoverError(errRecv) {
 					// Record circuit breaker failure before creating failover event
-					bp.pub.recordFailure(curNode, errRecv)
+					bp.pub.connMgr.RecordFailure(curNode, errRecv)
 					bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
 				}
 				return
@@ -187,7 +193,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			if isFailoverStatus(resp.Status) {
 				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
 				// Record circuit breaker failure before creating failover event
-				bp.pub.recordFailure(curNode, ce)
+				bp.pub.connMgr.RecordFailure(curNode, ce)
 				bc <- batchEvent{n: curNode, e: ce}
 			}
 		}(stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName)
@@ -211,7 +217,7 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
 				// Record circuit breaker failure before failover
-				bp.pub.recordFailure(n, e.e)
+				bp.pub.connMgr.RecordFailure(n, e.e)
 				if bp.topic == nil {
 					bp.pub.failover(n, e.e, data.TopicCommon)
 					continue
@@ -311,7 +317,7 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		lastErr = sendErr
 
 		// Check if error is retryable
-		if !isTransientError(sendErr) {
+		if !grpchelper.IsTransientError(sendErr) {
 			// Non-transient error, don't retry
 			return sendErr
 		}
@@ -322,7 +328,7 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		}
 
 		// Calculate backoff with jitter
-		backoff := jitteredBackoff(defaultBackoffBase, defaultBackoffMax, attempt, defaultJitterFactor)
+		backoff := grpchelper.JitteredBackoff(defaultBackoffBase, defaultBackoffMax, attempt, grpchelper.DefaultJitterFactor)
 
 		// Sleep with backoff, but respect context cancellation
 		select {
