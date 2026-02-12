@@ -27,6 +27,8 @@ spec:
       args:
         - standalone
       ports:
+        - name: banyand-http
+          containerPort: 17913
         - name: banyand-metrics
           containerPort: 2121
     - name: fodc-agent

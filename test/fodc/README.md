@@ -41,11 +41,19 @@ If your CI runner uses an older kernel and KTM fails to load eBPF programs, use 
 kubectl apply -f pod-sysadmin.yaml
 ```
 
-5. Verify KTM metrics from the FODC agent.
+5. Start the write-load generator (background) to produce I/O on BanyanDB so KTM metrics become non-zero.
+
+```bash
+./write-load.sh &
+```
+
+6. Verify KTM metrics from the FODC agent.
 
 ```bash
 ./check.sh
 ```
+
+The check script waits until `ktm_status == 2`, all required metric names are present, **and** at least one histogram sum (`ktm_sys_read_latency_seconds_sum` or `ktm_sys_pread_latency_seconds_sum`) is > 0, proving that eBPF tracepoints are actually measuring I/O latency.
 
 If you want a CI fallback from minimal permissions to the sysadmin manifest, you can use the following pattern:
 
@@ -53,18 +61,25 @@ If you want a CI fallback from minimal permissions to the sysadmin manifest, you
 set -euo pipefail
 
 kubectl apply -f pod.yaml
+./write-load.sh &
+LOAD_PID=$!
 set +e
 ./check.sh
 status=$?
 set -e
 
 if [ "$status" -eq 2 ]; then
+  kill "$LOAD_PID" 2>/dev/null || true
   kubectl delete -f pod.yaml
   kubectl apply -f pod-sysadmin.yaml
+  ./write-load.sh &
+  LOAD_PID=$!
   ./check.sh
 else
+  kill "$LOAD_PID" 2>/dev/null || true
   exit "$status"
 fi
+kill "$LOAD_PID" 2>/dev/null || true
 ```
 
 ## Cleanup

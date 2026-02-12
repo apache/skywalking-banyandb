@@ -21,15 +21,17 @@ POD_NAME=${POD_NAME:-banyand-fodc-ktm}
 CONTAINER_NAME=${CONTAINER_NAME:-fodc-agent}
 METRICS_URL=${METRICS_URL:-http://127.0.0.1:9090/metrics}
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-300s}
-MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-60}
+MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-120}
 SLEEP_SECONDS=${SLEEP_SECONDS:-2}
 PRINT_KTM_ON_SUCCESS=${PRINT_KTM_ON_SUCCESS:-true}
 PRINT_KTM_SAMPLES_ON_SUCCESS=${PRINT_KTM_SAMPLES_ON_SUCCESS:-false}
-REQUIRED_KTM_METRIC_COUNT=${REQUIRED_KTM_METRIC_COUNT:-6}
+REQUIRED_KTM_METRIC_COUNT=${REQUIRED_KTM_METRIC_COUNT:-8}
 REQUIRED_KTM_METRICS=${REQUIRED_KTM_METRICS:-"ktm_status ktm_degraded \
 ktm_fadvise_calls_total ktm_cache_lookups_total \
-ktm_sys_read_latency_seconds_count ktm_sys_pread_latency_seconds_count"}
+ktm_sys_read_latency_seconds_count ktm_sys_pread_latency_seconds_count \
+ktm_sys_read_latency_seconds_sum ktm_sys_pread_latency_seconds_sum"}
 FAILURE_LOG_TAIL_LINES=${FAILURE_LOG_TAIL_LINES:-200}
+NONZERO_KTM_METRICS=${NONZERO_KTM_METRICS:-"ktm_sys_read_latency_seconds_sum ktm_sys_pread_latency_seconds_sum"}
 
 echo "Preflight: Host kernel and tracing info"
 echo "Kernel: $(uname -r)"
@@ -74,6 +76,19 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
   if [ -n "${ktm_status}" ]; then
     if awk -v v="${ktm_status}" 'BEGIN {exit (v == 2.0) ? 0 : 1}'; then
       if [ "${ktm_metric_count}" -ge "${REQUIRED_KTM_METRIC_COUNT}" ] && [ -z "${last_missing_metrics}" ]; then
+        # Verify at least one I/O metric has a value > 0
+        has_nonzero=false
+        for nz_metric in ${NONZERO_KTM_METRICS}; do
+          nz_val="$(printf '%s\n' "${metrics}" | awk -v m="${nz_metric}" '$0 ~ "^"m"[[:space:]]" {print $2; exit}')"
+          if [ -n "${nz_val}" ] && awk -v v="${nz_val}" 'BEGIN {exit (v > 0) ? 0 : 1}'; then
+            has_nonzero=true
+            break
+          fi
+        done
+        if ! ${has_nonzero}; then
+          sleep "${SLEEP_SECONDS}"
+          continue
+        fi
         echo "KTM smoke check passed. ktm_status=${ktm_status}, ktm_metric_count=${ktm_metric_count}"
         if [ "${PRINT_KTM_ON_SUCCESS}" = "true" ]; then
           echo "::group::KTM success details"
