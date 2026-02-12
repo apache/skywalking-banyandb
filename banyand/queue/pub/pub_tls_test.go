@@ -162,9 +162,7 @@ var _ = ginkgo.Describe("Broadcast over one-way TLS", func() {
 		p.OnAddOrUpdate(node)
 
 		gomega.Eventually(func() int {
-			p.mu.RLock()
-			defer p.mu.RUnlock()
-			return len(p.active)
+			return p.connMgr.ActiveCount()
 		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
 
 		futures, err := p.Broadcast(
