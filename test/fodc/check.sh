@@ -23,6 +23,7 @@ METRICS_URL=${METRICS_URL:-http://127.0.0.1:9090/metrics}
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-300s}
 MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-60}
 SLEEP_SECONDS=${SLEEP_SECONDS:-2}
+PRINT_KTM_ON_SUCCESS=${PRINT_KTM_ON_SUCCESS:-true}
 REQUIRED_KTM_METRIC_COUNT=${REQUIRED_KTM_METRIC_COUNT:-6}
 REQUIRED_KTM_METRICS=${REQUIRED_KTM_METRICS:-"ktm_status ktm_degraded \
 ktm_fadvise_calls_total ktm_cache_lookups_total \
@@ -72,6 +73,25 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
     if awk -v v="${ktm_status}" 'BEGIN {exit (v == 2.0) ? 0 : 1}'; then
       if [ "${ktm_metric_count}" -ge "${REQUIRED_KTM_METRIC_COUNT}" ] && [ -z "${last_missing_metrics}" ]; then
         echo "KTM smoke check passed. ktm_status=${ktm_status}, ktm_metric_count=${ktm_metric_count}"
+        if [ "${PRINT_KTM_ON_SUCCESS}" = "true" ]; then
+          echo "Detected unique ktm_* metric names:"
+          printf '%s\n' "${ktm_metric_names}"
+          echo "KTM metric samples (first unique entries):"
+          printf '%s\n' "${metrics}" | awk '
+            /^ktm_[a-zA-Z0-9_]+([[:space:]]|\{)/ {
+              metric_name = $1
+              sub(/\{.*/, "", metric_name)
+              if (!(metric_name in shown)) {
+                print $0
+                shown[metric_name] = 1
+                printed++
+              }
+              if (printed >= 12) {
+                exit
+              }
+            }
+          '
+        fi
         exit 0
       fi
     else
