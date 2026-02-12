@@ -205,7 +205,7 @@ func (s *service) Validate() error {
 	return nil
 }
 
-func (s *service) Serve(stopCh chan struct{}) {
+func (s *service) Serve(closer *run.Closer) {
 	var opts []grpclib.ServerOption
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
@@ -238,7 +238,7 @@ func (s *service) Serve(stopCh chan struct{}) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
-			close(stopCh)
+			closer.CloseThenWait()
 			return
 		}
 		s.log.Info().Str("addr", s.addr).Msg("Listening to")

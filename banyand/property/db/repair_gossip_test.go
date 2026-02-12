@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+package db
 
 import (
 	"context"
@@ -397,34 +397,46 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 		NodeID: addr,
 	})
 	var db *database
-	db, err = openDB(ctx,
-		dbLocation, time.Minute*10, time.Minute*10, int(node.treeSlotCount), observability.NewBypassRegistry(),
-		fs.NewLocalFileSystem(), true, repairLocation, "@every 10m", time.Minute*10, "* 2 * * *",
-		messenger, mockRepo, func(context.Context) (string, error) {
-			snapshotDir, defFunc, newSpaceErr := test.NewSpace()
-			if newSpaceErr != nil {
-				return "", newSpaceErr
-			}
-			result.appendStop(defFunc)
-			var snpError error
-			db.groups.Range(func(_, value any) bool {
-				gs := value.(*groupShards)
-				sLst := gs.shards.Load()
-				if sLst == nil {
-					return true
+	dbInstance, err := OpenDB(ctx, Config{
+		Location:               dbLocation,
+		FlushInterval:          time.Minute * 10,
+		ExpireToDeleteDuration: time.Minute * 10,
+		Repair: RepairConfig{
+			Enabled:            true,
+			Location:           repairLocation,
+			BuildTreeCron:      "@every 10m",
+			QuickBuildTreeTime: time.Minute * 10,
+			TreeSlotCount:      int(node.treeSlotCount),
+		},
+		Snapshot: SnapshotConfig{
+			Func: func(context.Context) (string, error) {
+				snapshotDir, defFunc, newSpaceErr := test.NewSpace()
+				if newSpaceErr != nil {
+					return "", newSpaceErr
 				}
-				for _, s := range *sLst {
-					snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
-					lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-					if e := s.store.TakeFileSnapshot(snpDir); e != nil {
-						snpError = multierr.Append(snpError, e)
+				result.appendStop(defFunc)
+				var snpError error
+				db.groups.Range(func(_, value any) bool {
+					gs := value.(*groupShards)
+					sLst := gs.shards.Load()
+					if sLst == nil {
+						return true
 					}
-				}
-				return true
-			})
-			return snapshotDir, snpError
-		})
+					for _, s := range *sLst {
+						snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
+						lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+						if e := s.store.TakeFileSnapshot(snpDir); e != nil {
+							snpError = multierr.Append(snpError, e)
+						}
+					}
+					return true
+				})
+				return snapshotDir, snpError
+			},
+		},
+	}, observability.NewBypassRegistry(), fs.NewLocalFileSystem())
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	db = dbInstance.(*database)
 	result.database = db
 
 	// wrap the server and client in gossip messenger to for getting the sync status
@@ -434,7 +446,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	messenger.Subscribe(gossipClient)
 	db.repairScheduler.registerClientToGossip(messenger)
 
-	messenger.Serve(make(chan struct{}))
+	messenger.Serve(run.NewCloser(0))
 	result.messenger = messenger
 
 	// check gossip server is up

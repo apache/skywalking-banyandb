@@ -103,7 +103,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the data server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort())
+			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort(), nil)
 			if err != nil {
 				return err
 			}

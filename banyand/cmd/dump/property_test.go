@@ -26,7 +26,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/property"
+	"github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
@@ -134,5 +134,5 @@ func TestDumpPropertyShardFormat(t *testing.T) {
 // It uses the property package's CreateTestShardForDump function.
 func createTestPropertyShardForDump(tmpPath string) (string, func()) {
 	fileSystem := fs.NewLocalFileSystem()
-	return property.CreateTestShardForDump(tmpPath, fileSystem)
+	return db.CreateTestShardForDump(tmpPath, fileSystem)
 }

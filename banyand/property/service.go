@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -61,10 +62,11 @@ type service struct {
 	omr                      observability.MetricsRegistry
 	lfs                      fs.FileSystem
 	pm                       protector.Memory
-	close                    chan struct{}
-	db                       *database
+	closer                   *run.Closer
+	db                       db.Database
 	l                        *logger.Logger
 	nodeID                   string
+	repairScheduler          *repairScheduler
 	root                     string
 	snapshotDir              string
 	repairDir                string
@@ -144,31 +146,54 @@ func (s *service) PreRun(ctx context.Context) error {
 
 	var err error
 	snapshotLis := &snapshotListener{s: s}
-	s.db, err = openDB(ctx, filepath.Join(path, storage.DataDir), s.flushTimeout, s.expireTimeout, s.repairTreeSlotCount, s.omr, s.lfs,
-		s.repairEnabled, s.repairDir, s.repairBuildTreeCron, s.repairQuickBuildTreeTime, s.repairTriggerCron, s.gossipMessenger, s.metadata,
-		func(ctx context.Context) (string, error) {
-			res := snapshotLis.Rev(ctx,
-				bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
-			snpMsg := res.Data().(*databasev1.Snapshot)
-			if snpMsg.Error != "" {
-				return "", errors.New(snpMsg.Error)
-			}
-			return filepath.Join(snapshotLis.s.snapshotDir, snpMsg.Name, storage.DataDir), nil
-		})
+	s.db, err = db.OpenDB(ctx, db.Config{
+		Location:               filepath.Join(path, storage.DataDir),
+		FlushInterval:          s.flushTimeout,
+		ExpireToDeleteDuration: s.expireTimeout,
+		Repair: db.RepairConfig{
+			Enabled:            s.repairEnabled,
+			Location:           s.repairDir,
+			BuildTreeCron:      s.repairBuildTreeCron,
+			QuickBuildTreeTime: s.repairQuickBuildTreeTime,
+			TreeSlotCount:      s.repairTreeSlotCount,
+		},
+		Index: db.IndexConfig{
+			BatchWaitSec:       0,
+			WaitForPersistence: true,
+		},
+		Snapshot: db.SnapshotConfig{
+			Location: s.snapshotDir,
+			Func: func(ctx context.Context) (string, error) {
+				res := snapshotLis.Rev(ctx,
+					bus.NewMessage(bus.MessageID(time.Now().UnixNano()), []*databasev1.SnapshotRequest_Group{}))
+				snpMsg := res.Data().(*databasev1.Snapshot)
+				if snpMsg.Error != "" {
+					return "", errors.New(snpMsg.Error)
+				}
+				return filepath.Join(snapshotLis.s.snapshotDir, snpMsg.Name, storage.DataDir), nil
+			},
+		},
+	}, s.omr, s.lfs)
 	if err != nil {
 		return err
 	}
 
 	// if the gossip address is empty or repair scheduler is not start, it means that the gossip is not enabled.
-	if node.PropertyGossipGrpcAddress == "" || s.db.repairScheduler == nil {
+	if node.PropertyGossipGrpcAddress == "" || !s.repairEnabled {
 		s.gossipMessenger = nil
 	}
 	if s.gossipMessenger != nil {
 		if err = s.gossipMessenger.PreRun(ctx); err != nil {
 			return err
 		}
-		s.gossipMessenger.RegisterServices(s.db.repairScheduler.registerServerToGossip())
-		s.db.repairScheduler.registerClientToGossip(s.gossipMessenger)
+		s.db.RegisterGossip(s.gossipMessenger)
+
+		// nolint:contextcheck
+		scheduler, err := newRepairScheduler(s.closer.Ctx(), s.l, s.repairTriggerCron, s.metadata, s.gossipMessenger)
+		if err != nil {
+			return err
+		}
+		s.repairScheduler = scheduler
 	}
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, l: s.l, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
@@ -181,17 +206,20 @@ func (s *service) PreRun(ctx context.Context) error {
 
 func (s *service) Serve() run.StopNotify {
 	if s.gossipMessenger != nil {
-		s.gossipMessenger.Serve(s.close)
+		s.gossipMessenger.Serve(s.closer)
 	}
-	return s.close
+	return s.closer.CloseNotify()
 }
 
 func (s *service) GracefulStop() {
+	if s.repairScheduler != nil {
+		s.repairScheduler.close()
+	}
 	if s.gossipMessenger != nil {
 		s.gossipMessenger.GracefulStop()
 	}
-	close(s.close)
-	err := s.db.close()
+	s.closer.CloseThenWait()
+	err := s.db.Close()
 	if err != nil {
 		s.l.Err(err).Msg("Fail to close the property module")
 	}
@@ -210,14 +238,15 @@ func (s *service) GetRouteTable() *databasev1.RouteTable {
 }
 
 // NewService returns a new service.
-func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client, omr observability.MetricsRegistry, pm protector.Memory) (Service, error) {
+func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient queue.Client,
+	omr observability.MetricsRegistry, pm protector.Memory,
+) (Service, error) {
 	return &service{
 		metadata: metadata,
 		pipeline: pipeline,
 		omr:      omr,
-		db:       &database{},
 		pm:       pm,
-		close:    make(chan struct{}),
+		closer:   run.NewCloser(0),
 
 		gossipMessenger: gossip.NewMessenger(omr, metadata, pipelineClient),
 	}, nil
