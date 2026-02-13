@@ -20,6 +20,7 @@ metadata:
   labels:
     app: banyand-fodc-ktm
 spec:
+  shareProcessNamespace: true
   containers:
     - name: banyand
       image: apache/skywalking-banyandb:latest

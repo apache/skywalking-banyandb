@@ -21,6 +21,7 @@ package ebpf
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,4 +42,31 @@ func findCgroup2Mount() (string, error) {
 		}
 	}
 	return "", errors.New("cgroup2 mount not found")
+}
+
+// findContainerCgroupInTree walks the host cgroup tree rooted at cgroupRoot
+// looking for a cgroup directory that contains a process whose comm matches
+// commName. The walk stops at the first match.
+//
+// This is used as a fallback when /proc/self/cgroup returns "/" due to
+// cgroup namespace isolation, making pod-scoped discovery impossible.
+func findContainerCgroupInTree(cgroupRoot, commName string) (string, error) {
+	var result string
+	walkErr := filepath.WalkDir(cgroupRoot, func(path string, d os.DirEntry, walkDirErr error) error {
+		if walkDirErr != nil || !d.IsDir() {
+			return nil
+		}
+		if cgroupContainsComm(path, commName) {
+			result = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return "", fmt.Errorf("failed to walk cgroup tree: %w", walkErr)
+	}
+	if result == "" {
+		return "", fmt.Errorf("%w: comm=%q not found in cgroup tree %s", ErrProcessNotFound, commName, cgroupRoot)
+	}
+	return result, nil
 }

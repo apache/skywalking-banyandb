@@ -88,6 +88,12 @@ func resolveTargetCgroupPath(cfgPath string) (string, error) {
 		return "", fmt.Errorf("failed to read self cgroup: %w", selfErr)
 	}
 
+	// Inside a cgroup-namespaced container /proc/self/cgroup returns "/".
+	// Fall back to walking the host cgroup tree to find the banyand container.
+	if selfCgRel == "/" {
+		return findContainerCgroupInTree(cgMount, targetComm)
+	}
+
 	podCgRel := extractPodLevelCgroup(selfCgRel)
 	if podCgRel == "" {
 		return "", fmt.Errorf("failed to extract pod-level cgroup from %q", selfCgRel)
