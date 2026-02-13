@@ -42,6 +42,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -214,18 +215,30 @@ func (m *mockHandler) OnDelete(_ schema.Metadata) {
 	m.deleteCount++
 }
 
+func initConnMgr(pp *pub) {
+	pp.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
+		Handler:        pp,
+		Logger:         pp.log,
+		RetryPolicy:    pp.retryPolicy,
+		MaxRecvMsgSize: maxReceiveMessageSize,
+	})
+}
+
 func newPub(roles ...databasev1.Role) *pub {
 	p := New(nil, roles...)
-	p.(*pub).log = logger.GetLogger("queue-client")
+	pp := p.(*pub)
+	pp.log = logger.GetLogger("queue-client")
+	initConnMgr(pp)
 	p.Register(data.TopicStreamWrite, &mockHandler{})
 	p.Register(data.TopicMeasureWrite, &mockHandler{})
-	return p.(*pub)
+	return pp
 }
 
 // newPubWithNoRetry creates a pub with a retry policy that doesn't retry Unavailable errors.
 func newPubWithNoRetry(roles ...databasev1.Role) *pub {
 	p := New(nil, roles...)
-	p.(*pub).log = logger.GetLogger("queue-client")
+	pp := p.(*pub)
+	pp.log = logger.GetLogger("queue-client")
 	p.Register(data.TopicStreamWrite, &mockHandler{})
 	p.Register(data.TopicMeasureWrite, &mockHandler{})
 
@@ -244,10 +257,9 @@ func newPubWithNoRetry(roles ...databasev1.Role) *pub {
 		    }
 		  }
 		]}`
-
-	// Store the original retry policy and replace it
-	p.(*pub).retryPolicy = noRetryPolicy
-	return p.(*pub)
+	pp.retryPolicy = noRetryPolicy
+	initConnMgr(pp)
+	return pp
 }
 
 func getDataNode(name string, address string) schema.Metadata {
