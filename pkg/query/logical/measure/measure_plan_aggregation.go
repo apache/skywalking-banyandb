@@ -361,5 +361,5 @@ func (ami *aggAllIterator[N]) Current() []*measurev1.InternalDataPoint {
 }
 
 func (ami *aggAllIterator[N]) Close() error {
-	return ami.prev.Close()
+	return multierr.Combine(ami.err, ami.prev.Close())
 }

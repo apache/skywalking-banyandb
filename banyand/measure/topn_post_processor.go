@@ -99,6 +99,9 @@ func (taggr *topNPostProcessor) Pop() any {
 }
 
 func (taggr *topNPostProcessor) tryEnqueue(key string, item *topNAggregatorItem) {
+	if len(taggr.items) == 0 {
+		return
+	}
 	if lowest := taggr.items[0]; lowest != nil {
 		shouldReplace := (taggr.sort == modelv1.Sort_SORT_DESC && lowest.mapFunc.Val() < item.mapFunc.Val()) ||
 			(taggr.sort != modelv1.Sort_SORT_DESC && lowest.mapFunc.Val() > item.mapFunc.Val())
