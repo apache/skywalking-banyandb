@@ -83,7 +83,8 @@ jobs:
           status=$?
           set -e
 
-          if [ "$status" -eq 2 ]; then
+          if [ "$status" -ne 0 ]; then
+            echo "First attempt failed (exit $status), retrying with CAP_SYS_ADMIN..."
             # Kill the old write-load before redeploying
             kill "$(cat /tmp/write-load.pid)" 2>/dev/null || true
             kubectl delete -f test/fodc/pod.yaml
@@ -91,8 +92,6 @@ jobs:
             nohup ./test/fodc/write-load.sh > /tmp/write-load.log 2>&1 &
             echo $! > /tmp/write-load.pid
             ./test/fodc/check.sh
-          else
-            exit "$status"
           fi
 
       - name: Stop write load

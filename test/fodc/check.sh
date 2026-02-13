@@ -50,7 +50,7 @@ kubectl wait --for=condition=Ready "pod/${POD_NAME}" --timeout="${WAIT_TIMEOUT}"
 
 deadline=$((SECONDS + MAX_WAIT_SECONDS))
 last_metrics=""
-ktm_status_not_full=""
+ktm_status_inactive=""
 last_ktm_metric_count=0
 last_missing_metrics=""
 
@@ -116,7 +116,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
         exit 0
       fi
     else
-      ktm_status_not_full="${ktm_status}"
+      ktm_status_inactive="${ktm_status}"
     fi
   fi
 
@@ -124,8 +124,8 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
 done
 
 echo "KTM metrics check failed."
-if [ -n "${ktm_status_not_full}" ]; then
-  echo "Found ktm_status but it is not full mode (value ${ktm_status_not_full}, expected 2)."
+if [ -n "${ktm_status_inactive}" ]; then
+  echo "Found ktm_status but KTM is not in strict mode (value ${ktm_status_inactive}, expected == 2)."
 else
   echo "ktm_status metric not found."
 fi
@@ -147,9 +147,4 @@ echo "::group::FODC logs (tail)"
 kubectl logs "${POD_NAME}" -c "${CONTAINER_NAME}" --tail="${FAILURE_LOG_TAIL_LINES}"
 echo "::endgroup::"
 
-exit_code=1
-if [ -n "${ktm_status_not_full}" ]; then
-  exit_code=2
-fi
-
-exit "${exit_code}"
+exit 1

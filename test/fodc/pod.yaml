@@ -74,4 +74,4 @@ spec:
     - name: cgroup
       hostPath:
         path: /sys/fs/cgroup
-        type: Directory
+        type: DirectoryOrCreate

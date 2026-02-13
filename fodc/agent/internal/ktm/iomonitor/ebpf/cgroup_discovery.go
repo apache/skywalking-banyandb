@@ -20,31 +20,25 @@
 package ebpf
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// readCgroupV2Path returns the cgroup v2 relative path for a pid.
-func readCgroupV2Path(pid string) (string, error) {
-	data, err := os.ReadFile(filepath.Join("/proc", pid, "cgroup"))
-	if err != nil {
-		return "", fmt.Errorf("failed to read cgroup for pid %s: %w", pid, err)
+// findCgroup2Mount locates the cgroup v2 unified mount point.
+func findCgroup2Mount() (string, error) {
+	data, readErr := os.ReadFile("/proc/mounts")
+	if readErr != nil {
+		return "", readErr
 	}
-
-	lines := strings.Split(string(data), "\n")
-	for _, l := range lines {
-		if l == "" {
-			continue
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[2] == "cgroup2" {
+			if _, statErr := os.Stat(filepath.Join(fields[1], "cgroup.controllers")); statErr == nil {
+				return fields[1], nil
+			}
 		}
-		parts := strings.SplitN(l, "::", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		// cgroup v2 has empty controller field, so we expect format "0::/..."
-		return strings.TrimSpace(parts[1]), nil
 	}
-
-	return "", fmt.Errorf("no cgroup v2 entry for pid %s", pid)
+	return "", errors.New("cgroup2 mount not found")
 }
