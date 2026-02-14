@@ -19,12 +19,7 @@
 package property
 
 import (
-	"strconv"
-	"strings"
-
-	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -36,14 +31,4 @@ type Service interface {
 	route.TableProvider
 
 	GetGossIPGrpcPort() *uint32
-}
-
-// GetPropertyID returns the property ID based on the property metadata and revision.
-func GetPropertyID(prop *propertyv1.Property) []byte {
-	return convert.StringToBytes(GetEntity(prop) + "/" + strconv.FormatInt(prop.Metadata.ModRevision, 10))
-}
-
-// GetEntity returns the entity string for the property.
-func GetEntity(prop *propertyv1.Property) string {
-	return strings.Join([]string{prop.Metadata.Group, prop.Metadata.Name, prop.Id}, "/")
 }

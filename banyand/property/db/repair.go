@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+package db
 
 import (
 	"bufio"
@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
@@ -47,7 +46,6 @@ import (
 	grpclib "google.golang.org/grpc"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -938,7 +936,6 @@ func newRepairMetrics(fac observability.Factory) *repairMetrics {
 type repairScheduler struct {
 	latestBuildTreeSchedule   time.Time
 	buildTreeClock            clock.Clock
-	gossipMessenger           gossip.Messenger
 	l                         *logger.Logger
 	gossipRepairing           *int32
 	repairTreeScheduler       *timestamp.Scheduler
@@ -956,15 +953,8 @@ type repairScheduler struct {
 }
 
 // nolint: contextcheck
-func newRepairScheduler(
-	l *logger.Logger,
-	omr observability.MetricsRegistry,
-	buildTreeCronExp string,
-	quickBuildTreeTime time.Duration,
-	triggerCronExp string,
-	gossipMessenger gossip.Messenger,
-	treeSlotCount int,
-	db *database,
+func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, buildTreeCronExp string,
+	quickBuildTreeTime time.Duration, treeSlotCount int, db *database,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*repairScheduler, error) {
 	var quickRepairNotified int32
@@ -977,7 +967,6 @@ func newRepairScheduler(
 		closer:              run.NewCloser(1),
 		quickBuildTreeTime:  quickBuildTreeTime,
 		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
-		gossipMessenger:     gossipMessenger,
 		treeSlotCount:       treeSlotCount,
 		scheduleBasicFile:   filepath.Join(db.repairBaseDir, "scheduled.json"),
 		gossipRepairing:     new(int32),
@@ -990,20 +979,6 @@ func newRepairScheduler(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
-	}
-	err = c.Register("trigger", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
-		triggerCronExp, func(time.Time, *logger.Logger) bool {
-			l.Debug().Msgf("starting background repair gossip")
-			group, shardNum, nodes, gossipErr := s.doRepairGossip(s.closer.Ctx())
-			if gossipErr != nil {
-				s.l.Err(gossipErr).Msg("failed to repair gossip")
-				return true
-			}
-			s.l.Info().Str("group", group).Uint32("shardNum", shardNum).Strs("nodes", nodes).Msg("background repair gossip scheduled")
-			return true
-		})
-	if err != nil {
-		return nil, fmt.Errorf("failed to add repair trigger cron task: %w", err)
 	}
 	err = s.initializeInterval()
 	if err != nil {
@@ -1219,50 +1194,6 @@ func (r *repairScheduler) close() {
 	r.repairTreeScheduler.Close()
 	r.closer.Done()
 	r.closer.CloseThenWait()
-}
-
-func (r *repairScheduler) doRepairGossip(ctx context.Context) (string, uint32, []string, error) {
-	group, shardNum, err := r.randomSelectGroup(ctx)
-	if err != nil {
-		return "", 0, nil, fmt.Errorf("selecting random group failure: %w", err)
-	}
-
-	nodes, err := r.gossipMessenger.LocateNodes(group.Metadata.Name, shardNum, uint32(r.copiesCount(group)))
-	if err != nil {
-		return "", 0, nil, fmt.Errorf("locating nodes for group %s, shard %d failure: %w", group.Metadata.Name, shardNum, err)
-	}
-	return group.Metadata.Name, shardNum, nodes, r.gossipMessenger.Propagation(nodes, group.Metadata.Name, shardNum)
-}
-
-func (r *repairScheduler) randomSelectGroup(ctx context.Context) (*commonv1.Group, uint32, error) {
-	allGroups, err := r.db.metadata.GroupRegistry().ListGroup(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("listing groups failure: %w", err)
-	}
-
-	groups := make([]*commonv1.Group, 0)
-	for _, group := range allGroups {
-		if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-			continue
-		}
-		// if the group don't have copies, skip it
-		if r.copiesCount(group) < 2 {
-			continue
-		}
-		groups = append(groups, group)
-	}
-
-	if len(groups) == 0 {
-		return nil, 0, fmt.Errorf("no groups found with enough copies for repair")
-	}
-	// #nosec G404 -- not security-critical, just for random selection
-	group := groups[rand.Int64()%int64(len(groups))]
-	// #nosec G404 -- not security-critical, just for random selection
-	return group, rand.Uint32() % group.ResourceOpts.ShardNum, nil
-}
-
-func (r *repairScheduler) copiesCount(group *commonv1.Group) int {
-	return int(group.ResourceOpts.Replicas + 1)
 }
 
 func (r *repairScheduler) registerServerToGossip() func(server *grpclib.Server) {

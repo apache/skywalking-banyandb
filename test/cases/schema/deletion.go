@@ -276,7 +276,7 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 	return nil
 }
 
-// --- Helper functions. ---
+// Helper functions.
 
 func createMeasureSchema(ctx context.Context, client databasev1.MeasureRegistryServiceClient, groupName, measureName string) error {
 	_, err := client.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{

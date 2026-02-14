@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package pub
+package grpchelper
 
 import (
 	"crypto/rand"
@@ -30,18 +30,14 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-const (
-	defaultJitterFactor      = 0.2
-	defaultMaxRetries        = 3
-	defaultPerRequestTimeout = 2 * time.Second
-	defaultBackoffBase       = 500 * time.Millisecond
-	defaultBackoffMax        = 30 * time.Second
-)
+// DefaultJitterFactor is the default jitter factor for backoff calculations.
+const DefaultJitterFactor = 0.2
 
 var (
-	// Retry policy for health check.
-	initBackoff = time.Second
-	maxBackoff  = 20 * time.Second
+	// InitBackoff is the initial backoff duration for health check retries.
+	InitBackoff = time.Second
+	// MaxBackoff is the maximum backoff duration for health check retries.
+	MaxBackoff = 20 * time.Second
 
 	// Retryable gRPC status codes for streaming send retries.
 	retryableCodes = map[codes.Code]bool{
@@ -77,9 +73,9 @@ func secureRandFloat64() float64 {
 	return float64(n.Uint64()) / float64(1<<53)
 }
 
-// jitteredBackoff calculates backoff duration with jitter to avoid thundering herds.
+// JitteredBackoff calculates backoff duration with jitter to avoid thundering herds.
 // Uses bounded symmetric jitter: backoff * (1 + jitter * (rand() - 0.5) * 2).
-func jitteredBackoff(baseBackoff, maxBackoff time.Duration, attempt int, jitterFactor float64) time.Duration {
+func JitteredBackoff(baseBackoff, maxBackoff time.Duration, attempt int, jitterFactor float64) time.Duration {
 	if jitterFactor < 0 {
 		jitterFactor = 0
 	}
@@ -114,15 +110,29 @@ func jitteredBackoff(baseBackoff, maxBackoff time.Duration, attempt int, jitterF
 	return jitteredDuration
 }
 
-// isTransientError checks if the error is considered transient and retryable.
-func isTransientError(err error) bool {
+// statusCodeFromError extracts the gRPC status code from an error,
+// supporting both direct gRPC status errors and wrapped errors.
+func statusCodeFromError(err error) (codes.Code, bool) {
+	if s, ok := status.FromError(err); ok {
+		return s.Code(), true
+	}
+	type grpcStatusProvider interface{ GRPCStatus() *status.Status }
+	var se grpcStatusProvider
+	if errors.As(err, &se) {
+		return se.GRPCStatus().Code(), true
+	}
+	return codes.OK, false
+}
+
+// IsTransientError checks if the error is considered transient and retryable.
+func IsTransientError(err error) bool {
 	if err == nil {
 		return false
 	}
 
 	// Handle gRPC status errors
-	if s, ok := status.FromError(err); ok {
-		return retryableCodes[s.Code()]
+	if code, ok := statusCodeFromError(err); ok {
+		return retryableCodes[code]
 	}
 
 	// Handle common.Error types
@@ -140,15 +150,24 @@ func isTransientError(err error) bool {
 	return false
 }
 
-// isInternalError checks if the error is an internal server error.
-func isInternalError(err error) bool {
+// IsFailoverError checks if the error indicates the node should be failed over.
+func IsFailoverError(err error) bool {
+	code, ok := statusCodeFromError(err)
+	if !ok {
+		return false
+	}
+	return code == codes.Unavailable || code == codes.DeadlineExceeded
+}
+
+// IsInternalError checks if the error is an internal server error.
+func IsInternalError(err error) bool {
 	if err == nil {
 		return false
 	}
 
 	// Handle gRPC status errors
-	if s, ok := status.FromError(err); ok {
-		return s.Code() == codes.Internal
+	if code, ok := statusCodeFromError(err); ok {
+		return code == codes.Internal
 	}
 
 	// Handle common.Error types

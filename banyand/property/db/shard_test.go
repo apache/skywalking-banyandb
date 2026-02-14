@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+package db
 
 import (
 	"context"
@@ -31,7 +31,6 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -43,23 +42,23 @@ const (
 func TestMergeDeleted(t *testing.T) {
 	propertyCount := 6
 	tests := []struct {
-		verify             func(t *testing.T, queriedProperties []*queryProperty)
+		deleteTime         time.Time
+		verify             func(t *testing.T, queriedProperties []QueriedProperty)
 		name               string
 		expireDeletionTime time.Duration
-		deleteTime         int64
 	}{
 		{
 			name:               "delete expired properties from db",
 			expireDeletionTime: 1 * time.Second,
-			deleteTime:         time.Now().Add(-3 * time.Second).UnixNano(),
-			verify: func(t *testing.T, queriedProperties []*queryProperty) {
+			deleteTime:         time.Now().Add(-3 * time.Second),
+			verify: func(t *testing.T, queriedProperties []QueriedProperty) {
 				// the count of properties in shard should be less than the total properties count
 				if len(queriedProperties) >= propertyCount {
 					t.Fatal(fmt.Errorf("expect only %d results, got %d", propertyCount, len(queriedProperties)))
 				}
 				for _, p := range queriedProperties {
 					// and the property should be marked as deleteTime
-					if p.deleteTime <= 0 {
+					if p.DeleteTime() <= 0 {
 						t.Fatal(fmt.Errorf("expect all results to be deleted"))
 					}
 				}
@@ -68,14 +67,14 @@ func TestMergeDeleted(t *testing.T) {
 		{
 			name:               "deleted properties still exist in db",
 			expireDeletionTime: time.Hour,
-			deleteTime:         time.Now().UnixNano(),
-			verify: func(t *testing.T, queriedProperties []*queryProperty) {
+			deleteTime:         time.Now(),
+			verify: func(t *testing.T, queriedProperties []QueriedProperty) {
 				if len(queriedProperties) != propertyCount {
 					t.Fatal(fmt.Errorf("expect %d results, got %d", propertyCount, len(queriedProperties)))
 				}
 				for _, p := range queriedProperties {
 					// and the property should be marked as deleteTime
-					if p.deleteTime <= 0 {
+					if p.DeleteTime() <= 0 {
 						t.Fatal(fmt.Errorf("expect all results to be deleted"))
 					}
 				}
@@ -101,19 +100,24 @@ func TestMergeDeleted(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, snapshotDeferFunc)
-			db, err := openDB(context.Background(), dataDir, 3*time.Second, tt.expireDeletionTime, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
-				true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
+			db, err := OpenDB(context.Background(), Config{
+				Location:               dataDir,
+				FlushInterval:          3 * time.Second,
+				ExpireToDeleteDuration: tt.expireDeletionTime,
+				Repair: RepairConfig{
+					Enabled:            true,
+					Location:           snapshotDir,
+					BuildTreeCron:      "@every 10m",
+					QuickBuildTreeTime: time.Second * 10,
+					TreeSlotCount:      32,
+				},
+			}, observability.BypassRegistry, fs.NewLocalFileSystem())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defers = append(defers, func() {
-				_ = db.close()
+				_ = db.Close()
 			})
-
-			newShard, err := db.loadShard(context.Background(), testPropertyGroup, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
 
 			properties := make([]*propertyv1.Property, 0, propertyCount)
 			unix := time.Now().Unix()
@@ -124,12 +128,12 @@ func TestMergeDeleted(t *testing.T) {
 			}
 			// apply the property
 			for _, p := range properties {
-				if err = newShard.update(GetPropertyID(p), p); err != nil {
+				if err = db.Update(context.Background(), 0, GetPropertyID(p), p); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			resp, err := db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
+			resp, err := db.Query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,9 +141,13 @@ func TestMergeDeleted(t *testing.T) {
 				t.Fatal(fmt.Errorf("expect %d results before delete, got %d", propertyCount, len(resp)))
 			}
 
-			// delete current property
+			// delete current property - deleteFromTime requires concrete type access
+			sd, loadErr := db.(*database).loadShard(context.Background(), testPropertyGroup, 0)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
 			for _, p := range properties {
-				if err = newShard.deleteFromTime(context.Background(), [][]byte{GetPropertyID(p)}, tt.deleteTime); err != nil {
+				if err = sd.deleteFromTime(context.Background(), [][]byte{GetPropertyID(p)}, tt.deleteTime); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -148,7 +156,7 @@ func TestMergeDeleted(t *testing.T) {
 			time.Sleep(time.Second * 1)
 
 			// check if the property is deleteTime from shard including deleteTime, should be no document (delete by merge phase)
-			resp, err = db.query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
+			resp, err = db.Query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,18 +169,18 @@ func TestRepair(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
 		beforeApply func() []*propertyv1.Property
-		repair      func(ctx context.Context, s *shard) (bool, *queryProperty, error)
-		verify      func(t *testing.T, ctx context.Context, s *shard) error
+		repair      func(ctx context.Context, db Database) error
+		verify      func(t *testing.T, ctx context.Context, db Database) error
 		name        string
 	}{
 		{
 			name: "repair normal with no properties",
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				property := generateProperty(fmt.Sprintf("test-id%d", 0), now.UnixNano(), 0)
-				return s.repair(ctx, GetPropertyID(property), property, 0)
+				return db.Repair(ctx, GetPropertyID(property), 0, property, 0)
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "")
 				if len(resp) != 1 {
 					t.Fatal(fmt.Errorf("expect 1 property, got %d", len(resp)))
 				}
@@ -182,12 +190,12 @@ func TestRepair(t *testing.T) {
 		},
 		{
 			name: "repair deleted with no properties",
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				property := generateProperty(fmt.Sprintf("test-id%d", 0), now.UnixNano(), 0)
-				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
+				return db.Repair(ctx, GetPropertyID(property), 0, property, now.UnixNano())
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "")
 				if len(resp) != 1 {
 					t.Fatal(fmt.Errorf("expect 1 property, got %d", len(resp)))
 				}
@@ -203,18 +211,20 @@ func TestRepair(t *testing.T) {
 				}
 				return
 			},
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				property := generateProperty("test-id3", now.UnixNano(), 1000)
-				return s.repair(ctx, GetPropertyID(property), property, 0)
+				return db.Repair(ctx, GetPropertyID(property), 0, property, 0)
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "test-id3")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "test-id3")
 				if len(resp) != 2 {
 					t.Fatal(fmt.Errorf("expect 2 properties, got %d", len(resp)))
 				}
-				sort.Sort(queryPropertySlice(resp))
+				sort.Slice(resp, func(i, j int) bool {
+					return resp[i].Timestamp() < resp[j].Timestamp()
+				})
 				verifyDeleteTime(t, resp[1], false)
-				verifyTagIntValue(t, unmarshalProperty(t, resp[1].source), 1, 1000)
+				verifyTagIntValue(t, unmarshalProperty(t, resp[1].Source()), 1, 1000)
 				return nil
 			},
 		},
@@ -225,18 +235,20 @@ func TestRepair(t *testing.T) {
 					generateProperty("test-id", now.UnixNano()-100, 0),
 				}
 			},
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				property := generateProperty("test-id", now.UnixNano(), 1000)
-				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
+				return db.Repair(ctx, GetPropertyID(property), 0, property, now.UnixNano())
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "test-id")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "test-id")
 				if len(resp) != 2 {
 					t.Fatal(fmt.Errorf("expect 2 property, got %d", len(resp)))
 				}
-				sort.Sort(queryPropertySlice(resp))
+				sort.Slice(resp, func(i, j int) bool {
+					return resp[i].Timestamp() < resp[j].Timestamp()
+				})
 				verifyDeleteTime(t, resp[0], true)
-				verifyTagIntValue(t, unmarshalProperty(t, resp[1].source), 1, 1000)
+				verifyTagIntValue(t, unmarshalProperty(t, resp[1].Source()), 1, 1000)
 				return nil
 			},
 		},
@@ -248,17 +260,19 @@ func TestRepair(t *testing.T) {
 				}
 				return res
 			},
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				// Create a property with an older mod revision
 				property := generateProperty("test-id", now.UnixNano()-1000, 2000)
-				return s.repair(ctx, GetPropertyID(property), property, 0)
+				return db.Repair(ctx, GetPropertyID(property), 0, property, 0)
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "test-id")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "test-id")
 				if len(resp) != 3 {
 					t.Fatal(fmt.Errorf("expect 3 properties, got %d", len(resp)))
 				}
-				sort.Sort(queryPropertySlice(resp))
+				sort.Slice(resp, func(i, j int) bool {
+					return resp[i].Timestamp() < resp[j].Timestamp()
+				})
 				// all properties should be kept
 				for i := 0; i < 3; i++ {
 					verifyDeleteTime(t, resp[i], false)
@@ -273,17 +287,19 @@ func TestRepair(t *testing.T) {
 					generateProperty("test-id", now.UnixNano(), 0),
 				}
 			},
-			repair: func(ctx context.Context, s *shard) (bool, *queryProperty, error) {
+			repair: func(ctx context.Context, db Database) error {
 				// Create a property with the same data but marked as deleted
 				property := generateProperty("test-id", now.UnixNano(), 0)
-				return s.repair(ctx, GetPropertyID(property), property, now.UnixNano())
+				return db.Repair(ctx, GetPropertyID(property), 0, property, now.UnixNano())
 			},
-			verify: func(t *testing.T, ctx context.Context, s *shard) error {
-				resp := queryShard(ctx, t, s, "test-id")
+			verify: func(t *testing.T, ctx context.Context, db Database) error {
+				resp := queryDB(ctx, t, db, "test-id")
 				if len(resp) != 2 {
 					t.Fatal(fmt.Errorf("expect 2 properties, got %d", len(resp)))
 				}
-				sort.Sort(queryPropertySlice(resp))
+				sort.Slice(resp, func(i, j int) bool {
+					return resp[i].Timestamp() < resp[j].Timestamp()
+				})
 				verifyDeleteTime(t, resp[0], true)
 				verifyDeleteTime(t, resp[1], true)
 				return nil
@@ -310,34 +326,39 @@ func TestRepair(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, snapshotDeferFunc)
-			db, err := openDB(context.Background(), dataDir, 3*time.Second, 1*time.Hour, 32, observability.BypassRegistry, fs.NewLocalFileSystem(),
-				true, snapshotDir, "@every 10m", time.Second*10, "* 2 * * *", nil, nil, nil)
+			db, err := OpenDB(context.Background(), Config{
+				Location:               dataDir,
+				FlushInterval:          3 * time.Second,
+				ExpireToDeleteDuration: 1 * time.Hour,
+				Repair: RepairConfig{
+					Enabled:            true,
+					Location:           snapshotDir,
+					BuildTreeCron:      "@every 10m",
+					QuickBuildTreeTime: time.Second * 10,
+					TreeSlotCount:      32,
+				},
+			}, observability.BypassRegistry, fs.NewLocalFileSystem())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defers = append(defers, func() {
-				_ = db.close()
+				_ = db.Close()
 			})
-
-			newShard, err := db.loadShard(context.Background(), testPropertyGroup, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
 
 			if tt.beforeApply != nil {
 				properties := tt.beforeApply()
 				for _, prop := range properties {
-					if err = newShard.update(GetPropertyID(prop), prop); err != nil {
+					if err = db.Update(context.Background(), 0, GetPropertyID(prop), prop); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
 
-			if _, _, err = tt.repair(context.Background(), newShard); err != nil {
+			if err = tt.repair(context.Background(), db); err != nil {
 				t.Fatal(err)
 			}
 
-			if err = tt.verify(t, context.Background(), newShard); err != nil {
+			if err = tt.verify(t, context.Background(), db); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -363,18 +384,14 @@ func generateProperty(id string, modReversion int64, val int) *propertyv1.Proper
 	}
 }
 
-func queryShard(ctx context.Context, t *testing.T, s *shard, id string) []*queryProperty {
+func queryDB(ctx context.Context, t *testing.T, db Database, id string) []QueriedProperty {
 	req := &propertyv1.QueryRequest{
 		Groups: []string{testPropertyGroup},
 	}
 	if id != "" {
 		req.Ids = []string{id}
 	}
-	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := s.search(ctx, iq, nil, 100)
+	resp, err := db.Query(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,10 +417,10 @@ func verifyTagIntValue(t *testing.T, p *propertyv1.Property, count int, vals ...
 	}
 }
 
-func verifyDeleteTime(t *testing.T, p *queryProperty, deleted bool) {
-	if deleted && p.deleteTime <= 0 {
-		t.Fatal(fmt.Errorf("expect deleteTime > 0, got %d", p.deleteTime))
-	} else if !deleted && p.deleteTime > 0 {
-		t.Fatal(fmt.Errorf("expect deleteTime 0, got %d", p.deleteTime))
+func verifyDeleteTime(t *testing.T, p QueriedProperty, deleted bool) {
+	if deleted && p.DeleteTime() <= 0 {
+		t.Fatal(fmt.Errorf("expect deleteTime > 0, got %d", p.DeleteTime()))
+	} else if !deleted && p.DeleteTime() > 0 {
+		t.Fatal(fmt.Errorf("expect deleteTime 0, got %d", p.DeleteTime()))
 	}
 }

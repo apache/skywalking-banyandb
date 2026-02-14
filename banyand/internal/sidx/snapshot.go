@@ -25,10 +25,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// snapshot represents an immutable collection of parts at a specific epoch.
+// Snapshot represents an immutable collection of parts at a specific epoch.
 // It provides safe concurrent access to parts through reference counting and
 // enables queries to work with a consistent view of data.
-type snapshot struct {
+type Snapshot struct {
 	// parts contains all active parts sorted by epoch (oldest first)
 	parts []*partWrapper
 
@@ -38,8 +38,8 @@ type snapshot struct {
 
 // newSnapshot creates a new snapshot with the given parts and epoch.
 // The snapshot starts with a reference count of 1.
-func newSnapshot(parts []*partWrapper) *snapshot {
-	s := &snapshot{}
+func newSnapshot(parts []*partWrapper) *Snapshot {
+	s := &Snapshot{}
 	s.parts = append(s.parts[:0], parts...)
 	s.ref = 1
 
@@ -56,20 +56,23 @@ func newSnapshot(parts []*partWrapper) *snapshot {
 	return s
 }
 
+// IncRef increments the snapshot reference count.
+// Implements the snapshot.Snapshot interface.
+func (s *Snapshot) IncRef() {
+	atomic.AddInt32(&s.ref, 1)
+}
+
 // acquire increments the snapshot reference count.
 // Returns true if successful, false if snapshot has been released.
-func (s *snapshot) acquire() bool {
+// This is an internal method for backward compatibility.
+func (s *Snapshot) acquire() bool {
 	return atomic.AddInt32(&s.ref, 1) > 0
 }
 
-// decRef decrements the snapshot reference count (helper for snapshot interface).
-func (s *snapshot) decRef() {
-	s.release()
-}
-
-// release decrements the snapshot reference count.
+// DecRef decrements the snapshot reference count.
 // When the count reaches zero, all part references are released.
-func (s *snapshot) release() {
+// Implements the snapshot.Snapshot interface.
+func (s *Snapshot) DecRef() {
 	newRef := atomic.AddInt32(&s.ref, -1)
 	if newRef > 0 {
 		return
@@ -84,10 +87,21 @@ func (s *snapshot) release() {
 	s.reset()
 }
 
+// decRef is an internal helper that calls DecRef.
+func (s *Snapshot) decRef() {
+	s.DecRef()
+}
+
+// release is an internal helper that calls DecRef.
+// Kept for backward compatibility.
+func (s *Snapshot) release() {
+	s.DecRef()
+}
+
 // getParts returns parts that potentially contain data within the specified key range.
 // This method filters parts based on their key ranges to minimize I/O during queries.
 // Parts are returned in epoch order (oldest first) for consistent iteration.
-func (s *snapshot) getParts(minKey, maxKey int64) []*partWrapper {
+func (s *Snapshot) getParts(minKey, maxKey int64) []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
@@ -112,7 +126,7 @@ func (s *snapshot) getParts(minKey, maxKey int64) []*partWrapper {
 
 // getPartsAll returns all active parts in the snapshot.
 // This is used when querying without key range restrictions.
-func (s *snapshot) getPartsAll() []*partWrapper {
+func (s *Snapshot) getPartsAll() []*partWrapper {
 	var result []*partWrapper
 
 	for _, pw := range s.parts {
@@ -125,17 +139,17 @@ func (s *snapshot) getPartsAll() []*partWrapper {
 }
 
 // getPartCount returns the number of parts in the snapshot.
-func (s *snapshot) getPartCount() int {
+func (s *Snapshot) getPartCount() int {
 	return len(s.getPartsAll())
 }
 
 // refCount returns the current reference count (for testing/debugging).
-func (s *snapshot) refCount() int32 {
+func (s *Snapshot) refCount() int32 {
 	return atomic.LoadInt32(&s.ref)
 }
 
 // validate checks snapshot consistency and part availability.
-func (s *snapshot) validate() error {
+func (s *Snapshot) validate() error {
 	if atomic.LoadInt32(&s.ref) <= 0 {
 		return fmt.Errorf("snapshot has zero or negative reference count")
 	}
@@ -160,7 +174,7 @@ func (s *snapshot) validate() error {
 // addPart adds a new part to the snapshot during construction.
 // This should only be called before the snapshot is made available to other goroutines.
 // After construction, snapshots should be treated as immutable.
-func (s *snapshot) addPart(pw *partWrapper) {
+func (s *Snapshot) addPart(pw *partWrapper) {
 	if pw != nil && pw.acquire() {
 		s.parts = append(s.parts, pw)
 	}
@@ -168,7 +182,7 @@ func (s *snapshot) addPart(pw *partWrapper) {
 
 // removePart marks a part for removal from future snapshots.
 // The part remains accessible in this snapshot until the snapshot is released.
-func (s *snapshot) removePart(partID uint64) {
+func (s *Snapshot) removePart(partID uint64) {
 	for _, pw := range s.parts {
 		if pw.ID() == partID {
 			pw.markForRemoval()
@@ -178,7 +192,7 @@ func (s *snapshot) removePart(partID uint64) {
 }
 
 // reset clears the snapshot for reuse.
-func (s *snapshot) reset() {
+func (s *Snapshot) reset() {
 	// Release all part references
 	for _, pw := range s.parts {
 		if pw != nil {
@@ -191,7 +205,7 @@ func (s *snapshot) reset() {
 }
 
 // String returns a string representation of the snapshot.
-func (s *snapshot) String() string {
+func (s *Snapshot) String() string {
 	activeCount := s.getPartCount()
 	return fmt.Sprintf("snapshot{parts=%d/%d, ref=%d}",
 		activeCount, len(s.parts), s.refCount())
@@ -202,8 +216,8 @@ func parseEpoch(epochStr string) (uint64, error) {
 }
 
 // copyAllTo creates a new snapshot with all parts from current snapshot.
-func (s *snapshot) copyAllTo() *snapshot {
-	var result snapshot
+func (s *Snapshot) copyAllTo() *Snapshot {
+	var result Snapshot
 	result.parts = make([]*partWrapper, len(s.parts))
 	result.ref = 1
 
@@ -219,8 +233,8 @@ func (s *snapshot) copyAllTo() *snapshot {
 }
 
 // merge creates a new snapshot by merging flushed parts into the current snapshot.
-func (s *snapshot) merge(nextParts map[uint64]*partWrapper) *snapshot {
-	var result snapshot
+func (s *Snapshot) merge(nextParts map[uint64]*partWrapper) *Snapshot {
+	var result Snapshot
 	result.ref = 1
 	for i := 0; i < len(s.parts); i++ {
 		if n, ok := nextParts[s.parts[i].ID()]; ok {
@@ -235,8 +249,8 @@ func (s *snapshot) merge(nextParts map[uint64]*partWrapper) *snapshot {
 }
 
 // remove creates a new snapshot by removing specified parts.
-func (s *snapshot) remove(toRemove map[uint64]struct{}) *snapshot {
-	var result snapshot
+func (s *Snapshot) remove(toRemove map[uint64]struct{}) *Snapshot {
+	var result Snapshot
 	result.ref = 1
 
 	// Copy parts except those being removed

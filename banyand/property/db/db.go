@@ -15,10 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+// Package db introduce the property storage database.
+package db
 
 import (
 	"context"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,10 +32,11 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
@@ -52,6 +55,33 @@ var (
 	propertyScope = observability.RootScope.SubScope("property")
 )
 
+// QueriedProperty represents a property returned from a query.
+type QueriedProperty interface {
+	ID() []byte
+	Timestamp() int64
+	Source() []byte
+	DeleteTime() int64
+	SortedValue() []byte
+}
+
+// Database defines the interface for the property database.
+type Database interface {
+	// Update updates or inserts a property into the database.
+	Update(ctx context.Context, shardID common.ShardID, id []byte, property *propertyv1.Property) error
+	// Delete deletes properties with the given IDs from the database.
+	Delete(ctx context.Context, id [][]byte, delTime time.Time) error
+	// Query queries properties based on the given request.
+	Query(ctx context.Context, request *propertyv1.QueryRequest) ([]QueriedProperty, error)
+	// Repair repairs a property in the database.
+	Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error
+	// TakeSnapShot takes a snapshot of the database.
+	TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot
+	// RegisterGossip registers the repair scheduler's gossip services with the given messenger.
+	RegisterGossip(messenger gossip.Messenger)
+	// Close closes the database.
+	Close() error
+}
+
 type groupShards struct {
 	shards   atomic.Pointer[[]*shard]
 	group    string
@@ -59,8 +89,38 @@ type groupShards struct {
 	mu       sync.RWMutex
 }
 
+// RepairConfig holds configuration for the repair build tree scheduler.
+type RepairConfig struct {
+	Location           string
+	BuildTreeCron      string
+	QuickBuildTreeTime time.Duration
+	TreeSlotCount      int
+	Enabled            bool
+}
+
+// SnapshotConfig holds configuration for snapshots.
+type SnapshotConfig struct {
+	Func     func(context.Context) (string, error)
+	Location string
+}
+
+// IndexConfig holds storage configuration for the inverted index.
+type IndexConfig struct {
+	BatchWaitSec       int64
+	WaitForPersistence bool
+}
+
+// Config holds the configuration for the property database.
+type Config struct {
+	Snapshot               SnapshotConfig
+	Location               string
+	Repair                 RepairConfig
+	Index                  IndexConfig
+	FlushInterval          time.Duration
+	ExpireToDeleteDuration time.Duration
+}
+
 type database struct {
-	metadata            metadata.Repo
 	omr                 observability.MetricsRegistry
 	lfs                 fs.FileSystem
 	lock                fs.File
@@ -68,7 +128,9 @@ type database struct {
 	repairScheduler     *repairScheduler
 	groups              sync.Map
 	location            string
+	snapshotDir         string
 	repairBaseDir       string
+	indexConfig         IndexConfig
 	flushInterval       time.Duration
 	expireDelete        time.Duration
 	repairTreeSlotCount int
@@ -76,24 +138,9 @@ type database struct {
 	closed              atomic.Bool
 }
 
-func openDB(
-	ctx context.Context,
-	location string,
-	flushInterval time.Duration,
-	expireToDeleteDuration time.Duration,
-	repairSlotCount int,
-	omr observability.MetricsRegistry,
-	lfs fs.FileSystem,
-	repairEnabled bool,
-	repairBaseDir string,
-	repairBuildTreeCron string,
-	repairQuickBuildTreeTime time.Duration,
-	repairTriggerCron string,
-	gossipMessenger gossip.Messenger,
-	metadata metadata.Repo,
-	buildSnapshotFunc func(context.Context) (string, error),
-) (*database, error) {
-	loc := filepath.Clean(location)
+// OpenDB opens a property database with the given configuration.
+func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, lfs fs.FileSystem) (Database, error) {
+	loc := filepath.Clean(cfg.Location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 
@@ -101,18 +148,19 @@ func openDB(
 		location:            loc,
 		logger:              l,
 		omr:                 omr,
-		flushInterval:       flushInterval,
-		expireDelete:        expireToDeleteDuration,
-		repairTreeSlotCount: repairSlotCount,
-		repairBaseDir:       repairBaseDir,
+		flushInterval:       cfg.FlushInterval,
+		expireDelete:        cfg.ExpireToDeleteDuration,
+		repairTreeSlotCount: cfg.Repair.TreeSlotCount,
+		repairBaseDir:       cfg.Repair.Location,
+		snapshotDir:         cfg.Snapshot.Location,
 		lfs:                 lfs,
-		metadata:            metadata,
+		indexConfig:         cfg.Index,
 	}
 	var err error
 	// init repair scheduler
-	if repairEnabled {
-		scheduler, schedulerErr := newRepairScheduler(l, omr, repairBuildTreeCron, repairQuickBuildTreeTime, repairTriggerCron,
-			gossipMessenger, repairSlotCount, db, buildSnapshotFunc)
+	if cfg.Repair.Enabled {
+		scheduler, schedulerErr := newRepairScheduler(l, omr, cfg.Repair.BuildTreeCron, cfg.Repair.QuickBuildTreeTime,
+			cfg.Repair.TreeSlotCount, db, cfg.Snapshot.Func)
 		if schedulerErr != nil {
 			return nil, errors.Wrapf(schedulerErr, "failed to create repair scheduler for %s", loc)
 		}
@@ -157,7 +205,7 @@ func (db *database) load(ctx context.Context) error {
 	return nil
 }
 
-func (db *database) update(ctx context.Context, shardID common.ShardID, id []byte, property *propertyv1.Property) error {
+func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byte, property *propertyv1.Property) error {
 	sd, err := db.loadShard(ctx, property.Metadata.Group, shardID)
 	if err != nil {
 		return err
@@ -169,7 +217,7 @@ func (db *database) update(ctx context.Context, shardID common.ShardID, id []byt
 	return nil
 }
 
-func (db *database) delete(ctx context.Context, docIDs [][]byte) error {
+func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Time) error {
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -178,14 +226,14 @@ func (db *database) delete(ctx context.Context, docIDs [][]byte) error {
 			return true
 		}
 		for _, s := range *sLst {
-			multierr.AppendInto(&err, s.delete(ctx, docIDs))
+			multierr.AppendInto(&err, s.deleteFromTime(ctx, docIDs, delTime))
 		}
 		return true
 	})
 	return err
 }
 
-func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]*queryProperty, error) {
+func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
 	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
 	if err != nil {
 		return nil, err
@@ -200,13 +248,15 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	}
 
 	if req.OrderBy == nil {
-		var res []*queryProperty
+		var res []QueriedProperty
 		for _, s := range shards {
-			r, searchErr := s.search(ctx, iq, nil, int(req.Limit))
+			results, searchErr := s.search(ctx, iq, nil, int(req.Limit))
 			if searchErr != nil {
 				return nil, searchErr
 			}
-			res = append(res, r...)
+			for _, r := range results {
+				res = append(res, r)
+			}
 		}
 		return res, nil
 	}
@@ -234,7 +284,7 @@ func (db *database) query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	defer mergeIter.Close()
 
 	// Collect merged results up to limit
-	result := make([]*queryProperty, 0, req.Limit)
+	result := make([]QueriedProperty, 0, req.Limit)
 	for mergeIter.Next() {
 		result = append(result, mergeIter.Val())
 	}
@@ -324,7 +374,16 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 	return nil, false
 }
 
-func (db *database) close() error {
+// RegisterGossip registers the repair scheduler's gossip services with the given messenger.
+func (db *database) RegisterGossip(messenger gossip.Messenger) {
+	if db.repairScheduler == nil {
+		return
+	}
+	messenger.RegisterServices(db.repairScheduler.registerServerToGossip())
+	db.repairScheduler.registerClientToGossip(messenger)
+}
+
+func (db *database) Close() error {
 	if db.closed.Swap(true) {
 		return nil
 	}
@@ -364,13 +423,60 @@ func (db *database) collect() {
 	})
 }
 
-func (db *database) repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
+func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
 	s, err := db.loadShard(ctx, property.Metadata.Group, common.ShardID(shardID))
 	if err != nil {
 		return errors.WithMessagef(err, "failed to load shard %d", id)
 	}
 	_, _, err = s.repair(ctx, id, property, deleteTime)
 	return err
+}
+
+func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
+	var snapshotResult *databasev1.Snapshot
+	db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
+		sLst := gs.shards.Load()
+		if sLst == nil {
+			return true
+		}
+		for _, shardRef := range *sLst {
+			select {
+			case <-ctx.Done():
+				// Context canceled: record an error snapshot and stop iteration.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					snapshotResult = &databasev1.Snapshot{
+						Name:    sn,
+						Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+						Error:   ctxErr.Error(),
+					}
+				}
+				return false
+			default:
+			}
+			snpDir := path.Join(db.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
+			db.lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
+			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
+			if snapshotErr != nil {
+				db.logger.Error().Err(snapshotErr).Str("group", shardRef.group).
+					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
+				snapshotResult = &databasev1.Snapshot{
+					Name:    sn,
+					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+					Error:   snapshotErr.Error(),
+				}
+				return false
+			}
+		}
+		return true
+	})
+	if snapshotResult != nil {
+		return snapshotResult
+	}
+	return &databasev1.Snapshot{
+		Name:    sn,
+		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
+	}
 }
 
 type walkFn func(suffix string) error
@@ -395,6 +501,26 @@ type queryProperty struct {
 	sortedValue []byte
 	timestamp   int64
 	deleteTime  int64
+}
+
+func (q *queryProperty) ID() []byte {
+	return q.id
+}
+
+func (q *queryProperty) Source() []byte {
+	return q.source
+}
+
+func (q *queryProperty) SortedValue() []byte {
+	return q.sortedValue
+}
+
+func (q *queryProperty) Timestamp() int64 {
+	return q.timestamp
+}
+
+func (q *queryProperty) DeleteTime() int64 {
+	return q.deleteTime
 }
 
 // SortedField implements sort.Comparable interface for k-way merge sorting.
