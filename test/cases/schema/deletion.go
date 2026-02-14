@@ -20,6 +20,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -275,7 +276,7 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 	return nil
 }
 
-// --- Helper functions ---
+// --- Helper functions. ---
 
 func createMeasureSchema(ctx context.Context, client databasev1.MeasureRegistryServiceClient, groupName, measureName string) error {
 	_, err := client.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{
@@ -363,7 +364,7 @@ func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); recvErr == io.EOF {
+		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
 			break
 		} else if recvErr != nil {
 			return recvErr
@@ -400,7 +401,7 @@ func writeStreamData(ctx context.Context, client streamv1.StreamServiceClient, g
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); recvErr == io.EOF {
+		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
 			break
 		} else if recvErr != nil {
 			return recvErr
@@ -436,7 +437,7 @@ func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, grou
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); recvErr == io.EOF {
+		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
 			break
 		} else if recvErr != nil {
 			return recvErr
@@ -450,24 +451,24 @@ func verifyMeasureDeletionEffects(ctx context.Context, clients *Clients, groupNa
 
 	_, getErr := clients.MeasureRegClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
 	if getErr == nil {
-		return fmt.Errorf("Get should return error for deleted measure")
+		return fmt.Errorf("get should return error for deleted measure")
 	}
 	st, ok := status.FromError(getErr)
 	if !ok || st.Code() != codes.NotFound {
-		return fmt.Errorf("Get should return NotFound, got: %v", st.Code())
+		return fmt.Errorf("get should return NotFound, got: %v", st.Code())
 	}
 
 	existResp, existErr := clients.MeasureRegClient.Exist(ctx, &databasev1.MeasureRegistryServiceExistRequest{Metadata: metadata})
 	if existErr != nil {
-		return fmt.Errorf("Exist call failed: %w", existErr)
+		return fmt.Errorf("exist call failed: %w", existErr)
 	}
 	if existResp.HasMeasure {
-		return fmt.Errorf("Exist should return false for deleted measure")
+		return fmt.Errorf("exist should return false for deleted measure")
 	}
 
 	listResp, listErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 	if listErr != nil {
-		return fmt.Errorf("List call failed: %w", listErr)
+		return fmt.Errorf("list call failed: %w", listErr)
 	}
 	for _, m := range listResp.Measure {
 		if m.Metadata.Name == measureName {
@@ -487,24 +488,24 @@ func verifyStreamDeletionEffects(ctx context.Context, clients *Clients, groupNam
 
 	_, getErr := clients.StreamRegClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
 	if getErr == nil {
-		return fmt.Errorf("Get should return error for deleted stream")
+		return fmt.Errorf("get should return error for deleted stream")
 	}
 	st, ok := status.FromError(getErr)
 	if !ok || st.Code() != codes.NotFound {
-		return fmt.Errorf("Get should return NotFound, got: %v", st.Code())
+		return fmt.Errorf("get should return NotFound, got: %v", st.Code())
 	}
 
 	existResp, existErr := clients.StreamRegClient.Exist(ctx, &databasev1.StreamRegistryServiceExistRequest{Metadata: metadata})
 	if existErr != nil {
-		return fmt.Errorf("Exist call failed: %w", existErr)
+		return fmt.Errorf("exist call failed: %w", existErr)
 	}
 	if existResp.HasStream {
-		return fmt.Errorf("Exist should return false for deleted stream")
+		return fmt.Errorf("exist should return false for deleted stream")
 	}
 
 	listResp, listErr := clients.StreamRegClient.List(ctx, &databasev1.StreamRegistryServiceListRequest{Group: groupName})
 	if listErr != nil {
-		return fmt.Errorf("List call failed: %w", listErr)
+		return fmt.Errorf("list call failed: %w", listErr)
 	}
 	for _, s := range listResp.Stream {
 		if s.Metadata.Name == streamName {
@@ -524,24 +525,24 @@ func verifyTraceDeletionEffects(ctx context.Context, clients *Clients, groupName
 
 	_, getErr := clients.TraceRegClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: metadata})
 	if getErr == nil {
-		return fmt.Errorf("Get should return error for deleted trace")
+		return fmt.Errorf("get should return error for deleted trace")
 	}
 	st, ok := status.FromError(getErr)
 	if !ok || st.Code() != codes.NotFound {
-		return fmt.Errorf("Get should return NotFound, got: %v", st.Code())
+		return fmt.Errorf("get should return NotFound, got: %v", st.Code())
 	}
 
 	existResp, existErr := clients.TraceRegClient.Exist(ctx, &databasev1.TraceRegistryServiceExistRequest{Metadata: metadata})
 	if existErr != nil {
-		return fmt.Errorf("Exist call failed: %w", existErr)
+		return fmt.Errorf("exist call failed: %w", existErr)
 	}
 	if existResp.HasTrace {
-		return fmt.Errorf("Exist should return false for deleted trace")
+		return fmt.Errorf("exist should return false for deleted trace")
 	}
 
 	listResp, listErr := clients.TraceRegClient.List(ctx, &databasev1.TraceRegistryServiceListRequest{Group: groupName})
 	if listErr != nil {
-		return fmt.Errorf("List call failed: %w", listErr)
+		return fmt.Errorf("list call failed: %w", listErr)
 	}
 	for _, t := range listResp.Trace {
 		if t.Metadata.Name == traceName {
@@ -556,7 +557,7 @@ func verifyTraceDeletionEffects(ctx context.Context, clients *Clients, groupName
 	return nil
 }
 
-func verifyMeasureQuery(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, expectedMinCount int) error {
+func verifyMeasureQuery(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, _ int) error {
 	now := time.Now()
 	resp, err := client.Query(ctx, &measurev1.QueryRequest{
 		Groups: []string{groupName},
