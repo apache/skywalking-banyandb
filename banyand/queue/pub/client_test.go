@@ -81,9 +81,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		closeFn := setup(addr1, codes.OK, 200*time.Millisecond)
 		defer closeFn()
 		gomega.Eventually(func() int {
-			p.mu.RLock()
-			defer p.mu.RUnlock()
-			return len(p.active)
+			return p.connMgr.ActiveCount()
 		}, flags.EventuallyTimeout).Should(gomega.Equal(1))
 		verifyClients(p, 1, 0, 1, 1)
 	})
@@ -171,10 +169,8 @@ func verifyClients(p *pub, active, evict, onAdd, onDelete int) {
 }
 
 func verifyClientsWithGomega(g gomega.Gomega, p *pub, topic bus.Topic, active, evict, onAdd, onDelete int) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	g.Expect(len(p.active)).Should(gomega.Equal(active))
-	g.Expect(len(p.evictable)).Should(gomega.Equal(evict))
+	g.Expect(p.connMgr.ActiveCount()).Should(gomega.Equal(active))
+	g.Expect(p.connMgr.EvictableCount()).Should(gomega.Equal(evict))
 	for t, eh := range p.handlers {
 		if topic != data.TopicCommon && t != topic {
 			continue

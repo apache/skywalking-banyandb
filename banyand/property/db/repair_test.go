@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property
+package db
 
 import (
 	"context"
@@ -178,21 +178,34 @@ func TestBuildTree(t *testing.T) {
 				t.Fatal(err)
 			}
 			defers = append(defers, snapshotDeferFunc)
-			db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-				observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
-				"@every 10m", time.Second*10, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
-					snapshotDir, defFunc, newSpaceErr := test.NewSpace()
-					if newSpaceErr != nil {
-						return "", newSpaceErr
-					}
-					defers = append(defers, defFunc)
-					return snapshotDir, copyDirRecursive(dataDir, snapshotDir)
-				})
+			dbInstance, err := OpenDB(context.Background(), Config{
+				Location:               dataDir,
+				FlushInterval:          3 * time.Second,
+				ExpireToDeleteDuration: time.Hour,
+				Repair: RepairConfig{
+					Enabled:            true,
+					Location:           snapshotDir,
+					BuildTreeCron:      "@every 10m",
+					QuickBuildTreeTime: time.Second * 10,
+					TreeSlotCount:      32,
+				},
+				Snapshot: SnapshotConfig{
+					Func: func(context.Context) (string, error) {
+						snapshotDir, defFunc, newSpaceErr := test.NewSpace()
+						if newSpaceErr != nil {
+							return "", newSpaceErr
+						}
+						defers = append(defers, defFunc)
+						return snapshotDir, copyDirRecursive(dataDir, snapshotDir)
+					},
+				},
+			}, observability.BypassRegistry, fs.NewLocalFileSystem())
 			if err != nil {
 				t.Fatal(err)
 			}
+			db := dbInstance.(*database)
 			defers = append(defers, func() {
-				_ = db.close()
+				_ = db.Close()
 			})
 
 			newShard, err := db.loadShard(context.Background(), defaultGroupName, 0)
@@ -268,21 +281,34 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 	defers = append(defers, snapshotDeferFunc)
-	db, err := openDB(context.Background(), dataDir, 3*time.Second, time.Hour, 32,
-		observability.BypassRegistry, fs.NewLocalFileSystem(), true, snapshotDir,
-		"@every 3s", time.Millisecond*50, "* 2 * * *", nil, nil, func(context.Context) (string, error) {
-			tmpDir, defFunc, newSpaceErr := test.NewSpace()
-			if newSpaceErr != nil {
-				return "", newSpaceErr
-			}
-			defers = append(defers, defFunc)
-			return tmpDir, copyDirRecursive(dataDir, tmpDir)
-		})
+	dbInstance, err := OpenDB(context.Background(), Config{
+		Location:               dataDir,
+		FlushInterval:          3 * time.Second,
+		ExpireToDeleteDuration: time.Hour,
+		Repair: RepairConfig{
+			Enabled:            true,
+			Location:           snapshotDir,
+			BuildTreeCron:      "@every 3s",
+			QuickBuildTreeTime: time.Millisecond * 50,
+			TreeSlotCount:      32,
+		},
+		Snapshot: SnapshotConfig{
+			Func: func(context.Context) (string, error) {
+				tmpDir, defFunc, newSpaceErr := test.NewSpace()
+				if newSpaceErr != nil {
+					return "", newSpaceErr
+				}
+				defers = append(defers, defFunc)
+				return tmpDir, copyDirRecursive(dataDir, tmpDir)
+			},
+		},
+	}, observability.BypassRegistry, fs.NewLocalFileSystem())
 	if err != nil {
 		t.Fatal(err)
 	}
+	db := dbInstance.(*database)
 	defers = append(defers, func() {
-		_ = db.close()
+		_ = db.Close()
 	})
 
 	newShard, err := db.loadShard(context.Background(), defaultGroupName, 0)

@@ -34,7 +34,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/test"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -360,7 +360,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 	listenClientURL, listenPeerURL, err := pkgtest.NewEtcdListenUrls()
 	require.NoError(t, err)
 
-	metaSvc, err := embeddedserver.NewService(ctx)
+	metaSvc, err := service.NewService(ctx)
 	require.NoError(t, err)
 
 	// Set up flags for metadata service

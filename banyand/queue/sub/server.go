@@ -167,6 +167,7 @@ func (s *server) PreRun(ctx context.Context) error {
 		CreatedAt:   timestamppb.Now(),
 
 		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
+		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
 	}
 
 	return nil

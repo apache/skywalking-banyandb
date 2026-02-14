@@ -112,17 +112,13 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			gomega.Expect(cee).Should(gomega.HaveLen(1))
 			gomega.Expect(cee).Should(gomega.HaveKey("node2"))
 			gomega.Eventually(func() int {
-				p.mu.RLock()
-				defer p.mu.RUnlock()
-				return len(p.active)
+				return p.connMgr.ActiveCount()
 			}, flags.EventuallyTimeout).Should(gomega.Equal(1))
-			func() {
-				p.mu.RLock()
-				defer p.mu.RUnlock()
-				gomega.Expect(p.evictable).Should(gomega.HaveLen(1))
-				gomega.Expect(p.evictable).Should(gomega.HaveKey("node2"))
-				gomega.Expect(p.active).Should(gomega.HaveKey("node1"))
-			}()
+			gomega.Expect(p.connMgr.EvictableCount()).Should(gomega.Equal(1))
+			_, node1Active := p.connMgr.GetClient("node1")
+			gomega.Expect(node1Active).Should(gomega.BeTrue())
+			_, node2Active := p.connMgr.GetClient("node2")
+			gomega.Expect(node2Active).Should(gomega.BeFalse())
 		})
 
 		ginkgo.It("should go to evict queue when node's disk is full", func() {
@@ -155,10 +151,8 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(cee).Should(gomega.BeNil())
 			gomega.Consistently(func(g gomega.Gomega) {
-				p.mu.RLock()
-				defer p.mu.RUnlock()
-				g.Expect(p.active).Should(gomega.HaveLen(2))
-				g.Expect(p.evictable).Should(gomega.HaveLen(0))
+				g.Expect(p.connMgr.ActiveCount()).Should(gomega.Equal(2))
+				g.Expect(p.connMgr.EvictableCount()).Should(gomega.Equal(0))
 			}).Should(gomega.Succeed())
 		})
 
@@ -192,9 +186,7 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			gomega.Expect(cee).Should(gomega.HaveLen(1))
 			gomega.Expect(cee).Should(gomega.HaveKey("node2"))
 			gomega.Consistently(func() int {
-				p.mu.RLock()
-				defer p.mu.RUnlock()
-				return len(p.active)
+				return p.connMgr.ActiveCount()
 			}, "1s").Should(gomega.Equal(2))
 		})
 	})
