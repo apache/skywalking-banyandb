@@ -25,6 +25,7 @@ MAX_WAIT_SECONDS=${MAX_WAIT_SECONDS:-120}
 SLEEP_SECONDS=${SLEEP_SECONDS:-2}
 PRINT_KTM_ON_SUCCESS=${PRINT_KTM_ON_SUCCESS:-true}
 PRINT_KTM_SAMPLES_ON_SUCCESS=${PRINT_KTM_SAMPLES_ON_SUCCESS:-false}
+MAX_KTM_SAMPLE_LINES=${MAX_KTM_SAMPLE_LINES:-40}
 REQUIRED_KTM_METRIC_COUNT=${REQUIRED_KTM_METRIC_COUNT:-8}
 REQUIRED_KTM_METRICS=${REQUIRED_KTM_METRICS:-"ktm_status ktm_degraded \
 ktm_fadvise_calls_total ktm_cache_lookups_total \
@@ -96,7 +97,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
           printf '%s\n' "${ktm_metric_names}"
           if [ "${PRINT_KTM_SAMPLES_ON_SUCCESS}" = "true" ]; then
             echo "KTM metric samples (first unique entries):"
-            printf '%s\n' "${metrics}" | awk '
+            printf '%s\n' "${metrics}" | awk -v max_lines="${MAX_KTM_SAMPLE_LINES}" '
               /^ktm_[a-zA-Z0-9_]+([[:space:]]|\{)/ {
                 metric_name = $1
                 sub(/\{.*/, "", metric_name)
@@ -105,7 +106,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
                   shown[metric_name] = 1
                   printed++
                 }
-                if (printed >= 12) {
+                if (printed >= max_lines) {
                   exit
                 }
               }

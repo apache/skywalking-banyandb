@@ -77,6 +77,8 @@ jobs:
       - name: Verify KTM metrics (fallback to SYS_ADMIN)
         run: |
           set -euo pipefail
+          export PRINT_KTM_SAMPLES_ON_SUCCESS=true
+          export MAX_KTM_SAMPLE_LINES=40
 
           set +e
           ./test/fodc/check.sh
