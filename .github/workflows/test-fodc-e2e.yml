@@ -18,7 +18,18 @@ name: FODC E2E (Kind)
 
 on:
   workflow_call:
+    inputs:
+      enable_sys_admin_fallback:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      enable_sys_admin_fallback:
+        description: Enable fallback to pod-sysadmin.yaml when strict check returns exit code 2.
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   fodc-kind:
@@ -75,6 +86,8 @@ jobs:
           echo "write-load PID: $(cat /tmp/write-load.pid)"
 
       - name: Verify KTM metrics (fallback to SYS_ADMIN)
+        env:
+          ENABLE_SYS_ADMIN_FALLBACK: ${{ inputs.enable_sys_admin_fallback && 'true' || 'false' }}
         run: |
           set -euo pipefail
           export PRINT_KTM_SAMPLES_ON_SUCCESS=true
@@ -85,15 +98,23 @@ jobs:
           status=$?
           set -e
 
-          if [ "$status" -ne 0 ]; then
-            echo "First attempt failed (exit $status), retrying with CAP_SYS_ADMIN..."
-            # Kill the old write-load before redeploying
-            kill "$(cat /tmp/write-load.pid)" 2>/dev/null || true
-            kubectl delete -f test/fodc/pod.yaml
-            kubectl apply -f test/fodc/pod-sysadmin.yaml
-            nohup ./test/fodc/write-load.sh > /tmp/write-load.log 2>&1 &
-            echo $! > /tmp/write-load.pid
-            ./test/fodc/check.sh
+          if [ "$status" -eq 2 ]; then
+            if [ "${ENABLE_SYS_ADMIN_FALLBACK}" = "true" ]; then
+              echo "Strict-mode mismatch (exit 2), retrying with CAP_SYS_ADMIN fallback..."
+              # Kill the old write-load before redeploying
+              kill "$(cat /tmp/write-load.pid)" 2>/dev/null || true
+              kubectl delete -f test/fodc/pod.yaml
+              kubectl apply -f test/fodc/pod-sysadmin.yaml
+              nohup ./test/fodc/write-load.sh > /tmp/write-load.log 2>&1 &
+              echo $! > /tmp/write-load.pid
+              ./test/fodc/check.sh
+            else
+              echo "Strict-mode mismatch (exit 2), CAP_SYS_ADMIN fallback is disabled."
+              exit "$status"
+            fi
+          elif [ "$status" -ne 0 ]; then
+            echo "First attempt failed (exit $status), not retrying with CAP_SYS_ADMIN."
+            exit "$status"
           fi
 
       - name: Stop write load
