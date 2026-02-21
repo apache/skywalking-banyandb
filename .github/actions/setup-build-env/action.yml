@@ -51,11 +51,6 @@ runs:
         go-version-file: 'go.mod'
         cache: true
 
-    - name: Set up Docker Compose v2
-      uses: docker/setup-compose-action@v1
-      with:
-        version: v2.40.3
-
     - name: Set up Docker Buildx
       if: inputs.setup-docker == 'true'
       uses: docker/setup-buildx-action@v1
