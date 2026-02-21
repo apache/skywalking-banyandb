@@ -92,38 +92,8 @@ jobs:
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
-      - name: Check Docker API compatibility
-        shell: bash
-        run: |
-          set -euo pipefail
-          
-          echo "== docker version =="
-          docker version
-          
-          echo "== compose version =="
-          docker compose version || true
-          docker-compose version || true
-          
-          client_api="$(docker version --format '{{.Client.APIVersion}}')"
-          server_min_api="$(docker version --format '{{.Server.MinAPIVersion}}')"
-          server_api="$(docker version --format '{{.Server.APIVersion}}')"
-          
-          echo "Client API: ${client_api}"
-          echo "Server API: ${server_api}"
-          echo "Server Min API: ${server_min_api}"
-          
-          version_ge() {
-            [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
-          }
-          
-          if ! version_ge "$client_api" "$server_min_api"; then
-            echo "ERROR: docker client API (${client_api}) is lower than server minimum (${server_min_api})."
-            exit 1
-          fi
-          
-          echo "Docker API is compatible."
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@7e4b5b68716fdb7b79b21fa8908f9db497e1b115
+        uses: apache/skywalking-infra-e2e@8b86fa70263d16f54326bb15f98ef3df2009e0ab
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
