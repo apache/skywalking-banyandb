@@ -32,3 +32,7 @@ MOCKGEN_VERSION := v0.6.0
 GINKGO_VERSION := v2.27.2
 
 GOVULNCHECK_VERSION := v1.1.4
+
+# Version for bpf2go tool used for eBPF code generation. Keep in sync with
+# pkg/fs/fadvismonitor/Dockerfile ARG BPF2GO_VERSION
+BPF2GO_VERSION := v0.13.0

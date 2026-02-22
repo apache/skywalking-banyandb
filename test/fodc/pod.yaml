@@ -1,0 +1,78 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: banyand-fodc-ktm
+  labels:
+    app: banyand-fodc-ktm
+spec:
+  shareProcessNamespace: true
+  containers:
+    - name: banyand
+      image: apache/skywalking-banyandb:latest
+      imagePullPolicy: IfNotPresent
+      args:
+        - standalone
+      ports:
+        - name: banyand-http
+          containerPort: 17913
+        - name: banyand-metrics
+          containerPort: 2121
+    - name: fodc-agent
+      image: apache/skywalking-banyandb-fodc-agent:latest
+      imagePullPolicy: IfNotPresent
+      args:
+        - --ktm-enabled
+        - --ktm-interval=2s
+        - --poll-metrics-interval=2s
+        - --poll-metrics-ports=2121
+        - --prometheus-listen-addr=:9090
+      ports:
+        - name: fodc-metrics
+          containerPort: 9090
+      volumeMounts:
+        - name: tracefs
+          mountPath: /sys/kernel/tracing
+          readOnly: true
+        - name: debugfs
+          mountPath: /sys/kernel/debug
+          readOnly: true
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+          readOnly: true
+      securityContext:
+        allowPrivilegeEscalation: true
+        seccompProfile:
+          type: Unconfined
+        capabilities:
+          add:
+            - BPF
+            - PERFMON
+            - SYS_RESOURCE
+  volumes:
+    - name: tracefs
+      hostPath:
+        path: /sys/kernel/tracing
+        type: DirectoryOrCreate
+    - name: debugfs
+      hostPath:
+        path: /sys/kernel/debug
+        type: DirectoryOrCreate
+    - name: cgroup
+      hostPath:
+        path: /sys/fs/cgroup
+        type: DirectoryOrCreate

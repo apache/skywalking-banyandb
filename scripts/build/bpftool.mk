@@ -16,25 +16,18 @@
 # under the License.
 #
 
-NAME := fodc
-BINARIES := $(NAME)-agent
+# Define the bpftool location - use 'which bpftool' if available on system
+BPFTL := $(shell which bpftool 2>/dev/null)
+IS_LINUX := $(shell uname -s | grep -i linux)
 
-IMG_NAME := skywalking-banyandb-fodc-agent
-
-# Override SOURCE_DIR to match the actual Go module path structure
-SOURCE_DIR := fodc/agent
-
-include ../../scripts/build/version.mk
-include ../../scripts/build/base.mk
-include ../../scripts/build/build.mk
-include ../../scripts/build/docker.mk
-include ../../scripts/build/test.mk
-include ../../scripts/build/lint.mk
-include ../../scripts/build/vendor.mk
-include ../../scripts/build/help.mk
-
-prepare-build: generate
-
-.PHONY: generate
-generate:
-	@echo "Skipping KTM eBPF generation (using github.com/SkyAPM/ktm-ebpf prebuilt artifacts)"
+$(BPFTL):
+ifeq ($(IS_LINUX),Linux)
+	@echo "Installing bpftool (Linux detected)..."
+	@sudo apt-get update && sudo apt-get install -y bpftool clang llvm libelf-dev
+	@echo "Verifying bpftool installation..."
+	@which bpftool || (echo "Failed to install bpftool" && exit 1)
+	$(eval BPFTL := $(shell which bpftool))
+else
+	@echo "Non-Linux OS detected, switching to Docker for eBPF generation..."
+	@echo "Please ensure Docker is installed and running"
+endif
