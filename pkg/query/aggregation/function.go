@@ -39,7 +39,38 @@ func (m meanFunc[N]) Val() N {
 	return v
 }
 
+func (m meanFunc[N]) Partial() Partial[N] {
+	return Partial[N]{Value: m.sum, Count: m.count}
+}
+
 func (m *meanFunc[N]) Reset() {
+	m.sum = m.zero
+	m.count = m.zero
+}
+
+type meanReduceFunc[N Number] struct {
+	sum   N
+	count N
+	zero  N
+}
+
+func (m *meanReduceFunc[N]) Combine(p Partial[N]) {
+	m.sum += p.Value
+	m.count += p.Count
+}
+
+func (m meanReduceFunc[N]) Val() N {
+	if m.count == m.zero {
+		return m.zero
+	}
+	v := m.sum / m.count
+	if v < 1 {
+		return 1
+	}
+	return v
+}
+
+func (m *meanReduceFunc[N]) Reset() {
 	m.sum = m.zero
 	m.count = m.zero
 }
@@ -57,8 +88,29 @@ func (c countFunc[N]) Val() N {
 	return c.count
 }
 
+func (c countFunc[N]) Partial() Partial[N] {
+	return Partial[N]{Value: c.count}
+}
+
 func (c *countFunc[N]) Reset() {
 	c.count = c.zero
+}
+
+type countReduceFunc[N Number] struct {
+	sum  N
+	zero N
+}
+
+func (c *countReduceFunc[N]) Combine(p Partial[N]) {
+	c.sum += p.Value
+}
+
+func (c countReduceFunc[N]) Val() N {
+	return c.sum
+}
+
+func (c *countReduceFunc[N]) Reset() {
+	c.sum = c.zero
 }
 
 type sumFunc[N Number] struct {
@@ -74,7 +126,28 @@ func (s sumFunc[N]) Val() N {
 	return s.sum
 }
 
+func (s sumFunc[N]) Partial() Partial[N] {
+	return Partial[N]{Value: s.sum}
+}
+
 func (s *sumFunc[N]) Reset() {
+	s.sum = s.zero
+}
+
+type sumReduceFunc[N Number] struct {
+	sum  N
+	zero N
+}
+
+func (s *sumReduceFunc[N]) Combine(p Partial[N]) {
+	s.sum += p.Value
+}
+
+func (s sumReduceFunc[N]) Val() N {
+	return s.sum
+}
+
+func (s *sumReduceFunc[N]) Reset() {
 	s.sum = s.zero
 }
 
@@ -93,7 +166,30 @@ func (m maxFunc[N]) Val() N {
 	return m.val
 }
 
+func (m maxFunc[N]) Partial() Partial[N] {
+	return Partial[N]{Value: m.val}
+}
+
 func (m *maxFunc[N]) Reset() {
+	m.val = m.min
+}
+
+type maxReduceFunc[N Number] struct {
+	val N
+	min N
+}
+
+func (m *maxReduceFunc[N]) Combine(p Partial[N]) {
+	if p.Value > m.val {
+		m.val = p.Value
+	}
+}
+
+func (m maxReduceFunc[N]) Val() N {
+	return m.val
+}
+
+func (m *maxReduceFunc[N]) Reset() {
 	m.val = m.min
 }
 
@@ -112,6 +208,29 @@ func (m minFunc[N]) Val() N {
 	return m.val
 }
 
+func (m minFunc[N]) Partial() Partial[N] {
+	return Partial[N]{Value: m.val}
+}
+
 func (m *minFunc[N]) Reset() {
+	m.val = m.max
+}
+
+type minReduceFunc[N Number] struct {
+	val N
+	max N
+}
+
+func (m *minReduceFunc[N]) Combine(p Partial[N]) {
+	if m.val == m.max || p.Value < m.val {
+		m.val = p.Value
+	}
+}
+
+func (m minReduceFunc[N]) Val() N {
+	return m.val
+}
+
+func (m *minReduceFunc[N]) Reset() {
 	m.val = m.max
 }

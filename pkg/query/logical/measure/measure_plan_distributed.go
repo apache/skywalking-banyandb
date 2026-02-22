@@ -103,15 +103,15 @@ func (as *pushDownAggSchema) Children() []logical.Schema {
 }
 
 type unresolvedDistributed struct {
-	originalQuery           *measurev1.QueryRequest
-	groupByEntity           bool
-	needCompletePushDownAgg bool
+	originalQuery *measurev1.QueryRequest
+	groupByEntity bool
+	pushDownAgg   bool
 }
 
-func newUnresolvedDistributed(query *measurev1.QueryRequest, needCompletePushDownAgg bool) logical.UnresolvedPlan {
+func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool) logical.UnresolvedPlan {
 	return &unresolvedDistributed{
-		originalQuery:           query,
-		needCompletePushDownAgg: needCompletePushDownAgg,
+		originalQuery: query,
+		pushDownAgg:   pushDownAgg,
 	}
 }
 
@@ -150,7 +150,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Limit:           limit + ud.originalQuery.Offset,
 		OrderBy:         ud.originalQuery.OrderBy,
 	}
-	if ud.needCompletePushDownAgg {
+	if ud.pushDownAgg {
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
 	}
@@ -163,7 +163,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	// Prepare groupBy tags refs if needed for deduplication
 	var groupByTagsRefs [][]*logical.TagRef
-	if ud.needCompletePushDownAgg && ud.originalQuery.GetGroupBy() != nil {
+	if ud.pushDownAgg && ud.originalQuery.GetGroupBy() != nil {
 		groupByTags := logical.ToTags(ud.originalQuery.GetGroupBy().GetTagProjection())
 		var err error
 		groupByTagsRefs, err = s.CreateTagRef(groupByTags...)
@@ -179,12 +179,12 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			return nil, fmt.Errorf("entity tag %s not found", e)
 		}
 		result := &distributedPlan{
-			queryTemplate:           temp,
-			s:                       s,
-			sortByTime:              false,
-			sortTagSpec:             *sortTagSpec,
-			needCompletePushDownAgg: ud.needCompletePushDownAgg,
-			groupByTagsRefs:         groupByTagsRefs,
+			queryTemplate:   temp,
+			s:               s,
+			sortByTime:      false,
+			sortTagSpec:     *sortTagSpec,
+			pushDownAgg:     ud.pushDownAgg,
+			groupByTagsRefs: groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -193,20 +193,20 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
-			queryTemplate:           temp,
-			s:                       s,
-			sortByTime:              true,
-			needCompletePushDownAgg: ud.needCompletePushDownAgg,
-			groupByTagsRefs:         groupByTagsRefs,
+			queryTemplate:   temp,
+			s:               s,
+			sortByTime:      true,
+			pushDownAgg:     ud.pushDownAgg,
+			groupByTagsRefs: groupByTagsRefs,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
 		result := &distributedPlan{
-			queryTemplate:           temp,
-			s:                       s,
-			sortByTime:              true,
-			needCompletePushDownAgg: ud.needCompletePushDownAgg,
-			groupByTagsRefs:         groupByTagsRefs,
+			queryTemplate:   temp,
+			s:               s,
+			sortByTime:      true,
+			pushDownAgg:     ud.pushDownAgg,
+			groupByTagsRefs: groupByTagsRefs,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -225,12 +225,12 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
 	result := &distributedPlan{
-		queryTemplate:           temp,
-		s:                       s,
-		sortByTime:              false,
-		sortTagSpec:             *sortTagSpec,
-		needCompletePushDownAgg: ud.needCompletePushDownAgg,
-		groupByTagsRefs:         groupByTagsRefs,
+		queryTemplate:   temp,
+		s:               s,
+		sortByTime:      false,
+		sortTagSpec:     *sortTagSpec,
+		pushDownAgg:     ud.pushDownAgg,
+		groupByTagsRefs: groupByTagsRefs,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -239,14 +239,14 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 }
 
 type distributedPlan struct {
-	s                       logical.Schema
-	queryTemplate           *measurev1.QueryRequest
-	sortTagSpec             logical.TagSpec
-	groupByTagsRefs         [][]*logical.TagRef
-	maxDataPointsSize       uint32
-	sortByTime              bool
-	desc                    bool
-	needCompletePushDownAgg bool
+	s                 logical.Schema
+	queryTemplate     *measurev1.QueryRequest
+	sortTagSpec       logical.TagSpec
+	groupByTagsRefs   [][]*logical.TagRef
+	maxDataPointsSize uint32
+	sortByTime        bool
+	desc              bool
+	pushDownAgg       bool
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -272,7 +272,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 			}
 		}()
 	}
-	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest}
+	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest, AggReturnPartial: t.pushDownAgg}
 	ff, broadcastErr := dctx.Broadcast(defaultQueryTimeout, data.TopicInternalMeasureQuery,
 		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 	if broadcastErr != nil {
@@ -292,7 +292,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				if span != nil {
 					span.AddSubTrace(d.Trace)
 				}
-				if t.needCompletePushDownAgg {
+				if t.pushDownAgg {
 					pushedDownAggDps = append(pushedDownAggDps, d.DataPoints...)
 					dataPointCount += len(d.DataPoints)
 					continue
@@ -310,7 +310,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("response_count", "%d", responseCount)
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
-	if t.needCompletePushDownAgg {
+	if t.pushDownAgg {
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
 		if dedupErr != nil {
 			return nil, multierr.Append(err, dedupErr)
@@ -333,7 +333,7 @@ func (t *distributedPlan) Children() []logical.Plan {
 }
 
 func (t *distributedPlan) Schema() logical.Schema {
-	if t.needCompletePushDownAgg {
+	if t.pushDownAgg {
 		return &pushDownAggSchema{
 			originalSchema:   t.s,
 			aggregationField: logical.NewField(t.queryTemplate.Agg.FieldName),
@@ -546,7 +546,16 @@ func (s *pushedDownAggregatedIterator) Close() error {
 // of the same shard, while preserving results from different shards.
 func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDataPoint, groupByTagsRefs [][]*logical.TagRef) ([]*measurev1.InternalDataPoint, error) {
 	if len(groupByTagsRefs) == 0 {
-		return dataPoints, nil
+		// No group-by: deduplicate by shard_id only
+		seen := make(map[uint32]struct{})
+		result := make([]*measurev1.InternalDataPoint, 0, len(dataPoints))
+		for _, idp := range dataPoints {
+			if _, exists := seen[idp.GetShardId()]; !exists {
+				seen[idp.GetShardId()] = struct{}{}
+				result = append(result, idp)
+			}
+		}
+		return result, nil
 	}
 	// key = hash(shard_id, group_key)
 	// Same shard with same group key will be deduplicated
@@ -558,7 +567,6 @@ func deduplicateAggregatedDataPointsWithShard(dataPoints []*measurev1.InternalDa
 		if keyErr != nil {
 			return nil, keyErr
 		}
-		// Include shard_id in key calculation
 		key := hashWithShard(uint64(idp.ShardId), groupKey)
 		if _, exists := groupMap[key]; !exists {
 			groupMap[key] = struct{}{}
