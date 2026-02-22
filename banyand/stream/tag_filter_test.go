@@ -760,12 +760,12 @@ func TestTagFamilyFiltersRangeBoundaryCases(t *testing.T) {
 
 	tests := []struct {
 		name          string
+		description   string
 		lower         int64
 		upper         int64
 		includesLower bool
 		includesUpper bool
 		expectedSkip  bool
-		description   string
 	}{
 		{
 			name:          "query above block max - inclusive",
