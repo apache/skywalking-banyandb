@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -491,10 +492,8 @@ func generateMetaAndFilterWithScenarios(scenarios []struct {
 		}
 
 		if scenario.hasMinMax && scenario.valueType == pbv1.ValueTypeInt64 {
-			tm.min = make([]byte, 8)
-			tm.max = make([]byte, 8)
-			binary.BigEndian.PutUint64(tm.min, 100)
-			binary.BigEndian.PutUint64(tm.max, 200)
+			tm.min = convert.Int64ToBytes(100)
+			tm.max = convert.Int64ToBytes(200)
 		}
 
 		if scenario.hasFilter {
@@ -600,6 +599,8 @@ func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
 	tff := tfs.tagFamilyFilters[0]
 	assert.NotNil(t, tff)
 
+	ops := index.NewIntRangeOpts(150, 180, true, true)
+
 	tests := []struct {
 		rangeOpts     *index.RangeOpts
 		name          string
@@ -662,12 +663,7 @@ func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
 			eqExpected:    true,
 			eqDescription: "Eq should return true (conservative) when filter is nil",
 			testRange:     true,
-			rangeOpts: &index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 150.0},
-				Upper:         &index.FloatTermValue{Value: 180.0},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
+			rangeOpts:     &ops,
 			rangeExpected: false, // should not skip (value is within range)
 			rangeErr:      false,
 		},
