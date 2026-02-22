@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -491,10 +492,8 @@ func generateMetaAndFilterWithScenarios(scenarios []struct {
 		}
 
 		if scenario.hasMinMax && scenario.valueType == pbv1.ValueTypeInt64 {
-			tm.min = make([]byte, 8)
-			tm.max = make([]byte, 8)
-			binary.BigEndian.PutUint64(tm.min, 100)
-			binary.BigEndian.PutUint64(tm.max, 200)
+			tm.min = convert.Int64ToBytes(100)
+			tm.max = convert.Int64ToBytes(200)
 		}
 
 		if scenario.hasFilter {
@@ -600,6 +599,8 @@ func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
 	tff := tfs.tagFamilyFilters[0]
 	assert.NotNil(t, tff)
 
+	ops := index.NewIntRangeOpts(150, 180, true, true)
+
 	tests := []struct {
 		rangeOpts     *index.RangeOpts
 		name          string
@@ -662,12 +663,7 @@ func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
 			eqExpected:    true,
 			eqDescription: "Eq should return true (conservative) when filter is nil",
 			testRange:     true,
-			rangeOpts: &index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 150.0},
-				Upper:         &index.FloatTermValue{Value: 180.0},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
+			rangeOpts:     &ops,
 			rangeExpected: false, // should not skip (value is within range)
 			rangeErr:      false,
 		},
@@ -719,6 +715,159 @@ func TestTagFamilyFiltersNPEAndUnmarshalBehavior(t *testing.T) {
 					assert.Equal(tt.rangeExpected, shouldSkip, "Range should return expected value")
 				}
 			}
+		})
+	}
+}
+
+func TestTagFamilyFiltersRangeBoundaryCases(t *testing.T) {
+	scenarios := []struct {
+		name       string
+		valueType  pbv1.ValueType
+		hasFilter  bool
+		hasMinMax  bool
+		encodeType encoding.EncodeType
+	}{
+		{
+			name:       "numeric-tag",
+			valueType:  pbv1.ValueTypeInt64,
+			hasFilter:  false,
+			hasMinMax:  true,
+			encodeType: encoding.EncodeTypePlain,
+		},
+	}
+
+	metaBuf, filterBuf, tagValueBuf := generateMetaAndFilterWithScenarios(scenarios)
+
+	tagFamilies := map[string]*dataBlock{
+		"default": {
+			offset: 0,
+			size:   uint64(len(metaBuf)),
+		},
+	}
+	metaReaders := map[string]fs.Reader{
+		"default": &mockReader{data: metaBuf},
+	}
+	filterReaders := map[string]fs.Reader{
+		"default": &mockReader{data: filterBuf},
+	}
+	tagValueReaders := map[string]fs.Reader{
+		"default": &mockReader{data: tagValueBuf},
+	}
+
+	tfs := generateTagFamilyFilters()
+	defer releaseTagFamilyFilters(tfs)
+	tfs.unmarshal(tagFamilies, metaReaders, filterReaders, tagValueReaders)
+
+	tests := []struct {
+		name          string
+		description   string
+		lower         int64
+		upper         int64
+		includesLower bool
+		includesUpper bool
+		expectedSkip  bool
+	}{
+		{
+			name:          "query above block max - inclusive",
+			lower:         300,
+			upper:         400,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  true,
+			description:   "query [300, 400] vs block [100, 200] should skip",
+		},
+		{
+			name:          "query above block max - adjacent",
+			lower:         200,
+			upper:         300,
+			includesLower: false,
+			includesUpper: true,
+			expectedSkip:  true,
+			description:   "query (200, 300] vs block [100, 200] should skip since lower is exclusive",
+		},
+		{
+			name:          "query below block min - inclusive",
+			lower:         10,
+			upper:         50,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  true,
+			description:   "query [10, 50] vs block [100, 200] should skip",
+		},
+		{
+			name:          "query below block min - adjacent",
+			lower:         50,
+			upper:         100,
+			includesLower: true,
+			includesUpper: false,
+			expectedSkip:  true,
+			description:   "query [50, 100) vs block [100, 200] should skip since upper is exclusive",
+		},
+		{
+			name:          "query overlaps block lower",
+			lower:         50,
+			upper:         150,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [50, 150] vs block [100, 200] should not skip",
+		},
+		{
+			name:          "query overlaps block upper",
+			lower:         150,
+			upper:         250,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [150, 250] vs block [100, 200] should not skip",
+		},
+		{
+			name:          "query contains block",
+			lower:         50,
+			upper:         250,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [50, 250] vs block [100, 200] should not skip",
+		},
+		{
+			name:          "query within block",
+			lower:         120,
+			upper:         180,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [120, 180] vs block [100, 200] should not skip",
+		},
+		{
+			name:          "inclusive lower equals block max",
+			lower:         200,
+			upper:         300,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [200, 300] vs block [100, 200] should not skip since lower is inclusive",
+		},
+		{
+			name:          "inclusive upper equals block min",
+			lower:         50,
+			upper:         100,
+			includesLower: true,
+			includesUpper: true,
+			expectedSkip:  false,
+			description:   "query [50, 100] vs block [100, 200] should not skip since upper is inclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := assert.New(t)
+
+			rangeOpts := index.NewIntRangeOpts(tt.lower, tt.upper, tt.includesLower, tt.includesUpper)
+			shouldSkip, err := tfs.Range("numeric-tag", rangeOpts)
+
+			tester.NoError(err)
+			tester.Equal(tt.expectedSkip, shouldSkip, tt.description)
 		})
 	}
 }
