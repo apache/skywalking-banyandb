@@ -23,6 +23,7 @@ Release Notes.
   - From: `<data-dir>/property/data/shard-<id>/...`
   - To: `<data-dir>/property/data/<group>/shard-<id>/...`
 - Add a generic snapshot coordination package for atomic snapshot transitions across trace and sidx.
+- Support map-reduce aggregation for measure queries: map phase (partial aggregation on data nodes) and reduce phase (final aggregation on liaison).
 
 ### Bug Fixes
 
