@@ -299,7 +299,7 @@ func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	if !loaded {
 		return nil
 	}
-	return g.(*group).close()
+	return g.(*group).drop()
 }
 
 func (sr *schemaRepo) getGroup(name string) (*group, bool) {
@@ -568,4 +568,15 @@ func (g *group) close() (err error) {
 		return nil
 	}
 	return multierr.Append(err, g.SupplyTSDB().Close())
+}
+
+func (g *group) drop() error {
+	if !g.isInit() || g.isPortable() {
+		return nil
+	}
+	db := g.db.Load()
+	if db == nil {
+		return nil
+	}
+	return db.(DB).Drop()
 }

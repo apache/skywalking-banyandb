@@ -125,6 +125,15 @@ func (q *Queue[S, O]) Close() error {
 	return nil
 }
 
+// Drop closes the queue and removes all data files from disk.
+func (q *Queue[S, O]) Drop() error {
+	if closeErr := q.Close(); closeErr != nil {
+		return closeErr
+	}
+	q.lfs.MustRMAll(q.location)
+	return nil
+}
+
 // Open creates and initializes a new queue with the given options.
 func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Queue[S, O], error) {
 	p := common.GetPosition(ctx)

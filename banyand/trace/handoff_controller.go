@@ -620,6 +620,52 @@ func (hc *handoffController) filterNodesForShard(nodes []string, group string, s
 	return filtered
 }
 
+func (hc *handoffController) deletePartsByGroup(group string) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	var totalRemoved int
+	for nodeAddr, nodeQueue := range hc.nodeQueues {
+		pending, listErr := nodeQueue.listPending()
+		if listErr != nil {
+			hc.l.Warn().Err(listErr).Str("node", nodeAddr).Msg("failed to list pending parts for group cleanup")
+			continue
+		}
+		for _, ptp := range pending {
+			meta, metaErr := nodeQueue.getMetadata(ptp.PartID, ptp.PartType)
+			if metaErr != nil {
+				hc.l.Warn().Err(metaErr).
+					Str("node", nodeAddr).
+					Uint64("partID", ptp.PartID).
+					Str("partType", ptp.PartType).
+					Msg("failed to read metadata during group cleanup")
+				continue
+			}
+			if meta.Group != group {
+				continue
+			}
+			if completeErr := nodeQueue.complete(ptp.PartID, ptp.PartType); completeErr != nil {
+				hc.l.Warn().Err(completeErr).
+					Str("node", nodeAddr).
+					Uint64("partID", ptp.PartID).
+					Str("partType", ptp.PartType).
+					Msg("failed to remove part during group cleanup")
+				continue
+			}
+			if meta.PartSizeBytes > 0 {
+				hc.updateTotalSize(-int64(meta.PartSizeBytes))
+			}
+			totalRemoved++
+		}
+	}
+	if totalRemoved > 0 {
+		hc.l.Info().
+			Str("group", group).
+			Int("removedParts", totalRemoved).
+			Msg("cleaned up handoff parts for deleted group")
+	}
+}
+
 // close closes the handoff controller.
 func (hc *handoffController) close() error {
 	// Stop the monitor

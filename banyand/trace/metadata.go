@@ -58,11 +58,12 @@ type SchemaService interface {
 
 type schemaRepo struct {
 	resourceSchema.Repository
-	l        *logger.Logger
-	metadata metadata.Repo
-	path     string
-	nodeID   string
-	role     databasev1.Role
+	onGroupDelete func(groupName string)
+	l             *logger.Logger
+	metadata      metadata.Repo
+	path          string
+	nodeID        string
+	role          databasev1.Role
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) schemaRepo {
@@ -95,6 +96,9 @@ func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.
 			newQueueSupplier(path, svc, traceDataNodeRegistry),
 			resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 		),
+	}
+	if svc.handoffCtrl != nil {
+		sr.onGroupDelete = svc.handoffCtrl.deletePartsByGroup
 	}
 	sr.start()
 	return sr
@@ -199,6 +203,9 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		g := metadata.Spec.(*commonv1.Group)
 		if g.Catalog != commonv1.Catalog_CATALOG_TRACE {
 			return
+		}
+		if sr.onGroupDelete != nil {
+			sr.onGroupDelete(g.Metadata.Name)
 		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventDelete,

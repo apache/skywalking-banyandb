@@ -374,7 +374,13 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 		requestCount++
 		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "trace", "write")
 
+		if acquireErr := s.groupRepo.acquireRequest(metadata.Group); acquireErr != nil {
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+			continue
+		}
+
 		if s.validateWriteRequest(writeEntity, metadata, specLocator, stream) != modelv1.Status_STATUS_SUCCEED {
+			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
 
@@ -382,6 +388,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
 			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
 
@@ -395,8 +402,10 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
 			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
+		s.groupRepo.releaseRequest(metadata.Group)
 
 		succeedSent = append(succeedSent, succeedSentMessage{
 			metadata:  metadata,
@@ -409,6 +418,16 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
 
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
+	for _, g := range req.Groups {
+		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+		}
+	}
+	defer func() {
+		for _, g := range req.Groups {
+			s.groupRepo.releaseRequest(g)
+		}
+	}()
 	for _, g := range req.Groups {
 		s.metrics.totalStarted.Inc(1, g, "trace", "query")
 	}

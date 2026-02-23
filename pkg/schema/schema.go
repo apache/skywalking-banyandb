@@ -97,6 +97,7 @@ type ResourceSupplier interface {
 type DB interface {
 	io.Closer
 	UpdateOptions(opts *commonv1.ResourceOpts)
+	Drop() error
 }
 
 // Repository is the collection of several hierarchies groups by a "Group".
