@@ -24,7 +24,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -55,7 +54,9 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
-func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema, ecc []executor.MeasureExecutionContext) (logical.Plan, error) {
+func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
+	ecc []executor.MeasureExecutionContext, emitPartial bool,
+) (logical.Plan, error) {
 	if len(metadata) != len(ss) {
 		return nil, fmt.Errorf("number of schemas %d not equal to metadata count %d", len(ss), len(metadata))
 	}
@@ -123,6 +124,8 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 			logical.NewField(criteria.GetAgg().GetFieldName()),
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
+			emitPartial,
+			false,
 		)
 		pushedLimit = math.MaxInt
 	}
@@ -157,16 +160,8 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
-	// TODO: to support all aggregation functions
-	needCompletePushDownAgg := criteria.GetAgg() != nil &&
-		(criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM ||
-			criteria.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT) &&
-		criteria.GetTop() == nil
-
-	// parse fields
-	plan := newUnresolvedDistributed(criteria, needCompletePushDownAgg)
+	pushDownAgg := criteria.GetAgg() != nil && criteria.GetTop() == nil
+	plan := newUnresolvedDistributed(criteria, pushDownAgg)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()
@@ -181,14 +176,12 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 
 	if criteria.GetAgg() != nil {
-		aggrFunc := criteria.GetAgg().GetFunction()
-		if needCompletePushDownAgg && aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
-			aggrFunc = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
-		}
 		plan = newUnresolvedAggregation(plan,
 			logical.NewField(criteria.GetAgg().GetFieldName()),
-			aggrFunc,
+			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
+			false,       // emitPartial: liaison does not emit partial
+			pushDownAgg, // reduceMode: only reduce partials when push-down is active (no TopN)
 		)
 		pushedLimit = math.MaxInt
 	}
