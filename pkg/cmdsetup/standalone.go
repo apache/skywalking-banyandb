@@ -90,8 +90,8 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	units = append(units, runners...)
 	units = append(units,
 		dataPipeline,
-		metaSvc,
 		metricSvc,
+		metaSvc,
 		pm,
 		propertySvc,
 		measureSvc,

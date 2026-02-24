@@ -180,6 +180,7 @@ func TestBuildTree(t *testing.T) {
 			defers = append(defers, snapshotDeferFunc)
 			dbInstance, err := OpenDB(context.Background(), Config{
 				Location:               dataDir,
+				MetricsScopeName:       "property_test",
 				FlushInterval:          3 * time.Second,
 				ExpireToDeleteDuration: time.Hour,
 				Repair: RepairConfig{
@@ -283,6 +284,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	defers = append(defers, snapshotDeferFunc)
 	dbInstance, err := OpenDB(context.Background(), Config{
 		Location:               dataDir,
+		MetricsScopeName:       "property_test",
 		FlushInterval:          3 * time.Second,
 		ExpireToDeleteDuration: time.Hour,
 		Repair: RepairConfig{

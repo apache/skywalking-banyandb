@@ -29,7 +29,11 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
-var errUnsupportedEntityType = errors.New("unsupported entity type")
+// SchemaGroup is the reserved group name for schema property storage.
+const SchemaGroup = "_schema"
+
+// ErrUnsupportedEntityType indicates an unsupported entity type.
+var ErrUnsupportedEntityType = errors.New("unsupported entity type")
 
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
@@ -74,13 +78,17 @@ type Registry interface {
 	Trace
 	Group
 	TopNAggregation
-	Node
 	Property
 	RegisterHandler(string, Kind, EventHandler)
-	NewWatcher(string, Kind, int64, ...WatcherOption) *watcher
-	Register(context.Context, Metadata, bool) error
-	Compact(context.Context, int64) error
-	StartWatcher()
+	Start(context.Context) error
+}
+
+// NodeDiscovery provides node discovery and management capabilities.
+type NodeDiscovery interface {
+	io.Closer
+	Node
+	RegisterHandler(string, Kind, EventHandler)
+	Start(context.Context) error
 }
 
 // TypeMeta defines the identity and type of an Event.
@@ -143,7 +151,7 @@ func (m Metadata) key() (string, error) {
 			Name:  m.Name,
 		}), nil
 	default:
-		return "", errUnsupportedEntityType
+		return "", ErrUnsupportedEntityType
 	}
 }
 

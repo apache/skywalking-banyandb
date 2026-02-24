@@ -38,6 +38,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 )
 
@@ -138,7 +139,7 @@ func TestInsertSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		existResp, existErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "svc", Ids: []string{"id1"}},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc", Ids: []string{"id1"}},
 		})
 		require.NoError(t, existErr)
 		assert.True(t, existResp.HasSchema)
@@ -157,7 +158,7 @@ func TestInsertSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		_, deleteErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, deleteErr)
 		_, rpcErr := mgmt.InsertSchema(context.Background(), &schemav1.InsertSchemaRequest{
@@ -179,7 +180,7 @@ func TestInsertSchema(t *testing.T) {
 		require.NoError(t, recvErr)
 		require.Len(t, responses, 1)
 		require.Len(t, responses[0].Properties, 1)
-		assert.Equal(t, "_schema", responses[0].Properties[0].Metadata.Group)
+		assert.Equal(t, schema.SchemaGroup, responses[0].Properties[0].Metadata.Group)
 	})
 }
 
@@ -233,7 +234,7 @@ func TestUpdateSchema(t *testing.T) {
 		require.NoError(t, recvErr)
 		require.Len(t, responses, 1)
 		require.Len(t, responses[0].Properties, 1)
-		assert.Equal(t, "_schema", responses[0].Properties[0].Metadata.Group)
+		assert.Equal(t, schema.SchemaGroup, responses[0].Properties[0].Metadata.Group)
 	})
 }
 
@@ -289,7 +290,7 @@ func TestListSchemas(t *testing.T) {
 		insertProperty(t, mgmt, "dt-svc", "id1")
 		insertProperty(t, mgmt, "dt-svc", "id2")
 		_, deleteErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "dt-svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "dt-svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, deleteErr)
 		stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
@@ -325,7 +326,7 @@ func TestDeleteSchema(t *testing.T) {
 	t.Run("no results", func(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "nonexistent"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "nonexistent"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.False(t, resp.Found)
@@ -334,7 +335,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)
@@ -343,7 +344,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)
@@ -352,7 +353,7 @@ func TestDeleteSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
-			Delete: &propertyv1.DeleteRequest{Group: "_schema", Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.Found)
@@ -383,7 +384,7 @@ func TestRepairSchema(t *testing.T) {
 		})
 		require.NoError(t, rpcErr)
 		existResp, existErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "svc", Ids: []string{"id1"}},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc", Ids: []string{"id1"}},
 		})
 		require.NoError(t, existErr)
 		assert.True(t, existResp.HasSchema)
@@ -401,7 +402,7 @@ func TestExistSchema(t *testing.T) {
 	t.Run("no results", func(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		resp, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "nonexistent"},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "nonexistent"},
 		})
 		require.NoError(t, rpcErr)
 		assert.False(t, resp.HasSchema)
@@ -410,7 +411,7 @@ func TestExistSchema(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
 		resp, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "svc"},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc"},
 		})
 		require.NoError(t, rpcErr)
 		assert.True(t, resp.HasSchema)
@@ -428,7 +429,7 @@ func TestAggregateSchemaUpdates(t *testing.T) {
 	t.Run("empty results", func(t *testing.T) {
 		_, upd := startTestServer(t)
 		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "nonexistent"},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "nonexistent"},
 		})
 		require.NoError(t, rpcErr)
 		assert.Empty(t, resp.Names)
@@ -437,7 +438,7 @@ func TestAggregateSchemaUpdates(t *testing.T) {
 		mgmt, upd := startTestServer(t)
 		insertProperty(t, mgmt, "svc-a", "id1")
 		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "svc-a"},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc-a"},
 		})
 		require.NoError(t, rpcErr)
 		assert.Equal(t, []string{"svc-a"}, resp.Names)
@@ -447,7 +448,7 @@ func TestAggregateSchemaUpdates(t *testing.T) {
 		insertProperty(t, mgmt, "svc-a", "id1")
 		insertProperty(t, mgmt, "svc-a", "id2")
 		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{"_schema"}, Name: "svc-a"},
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc-a"},
 		})
 		require.NoError(t, rpcErr)
 		assert.Equal(t, []string{"svc-a"}, resp.Names)

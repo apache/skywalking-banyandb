@@ -28,6 +28,7 @@ import (
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -76,9 +77,9 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 		s.metrics.totalFinished.Inc(1, "insert")
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "insert")
 	}()
-	req.Property.Metadata.Group = schemaGroup
+	req.Property.Metadata.Group = schema.SchemaGroup
 	existQuery := &propertyv1.QueryRequest{
-		Groups: []string{schemaGroup},
+		Groups: []string{schema.SchemaGroup},
 		Name:   req.Property.Metadata.Name,
 		Ids:    []string{req.Property.Id},
 	}
@@ -120,7 +121,7 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 		s.metrics.totalFinished.Inc(1, "update")
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "update")
 	}()
-	req.Property.Metadata.Group = schemaGroup
+	req.Property.Metadata.Group = schema.SchemaGroup
 	id := db.GetPropertyID(req.Property)
 	if updateErr := s.server.db.Update(ctx, defaultShardID, id, req.Property); updateErr != nil {
 		s.metrics.totalErr.Inc(1, "update")
@@ -145,7 +146,7 @@ func (s *schemaManagementServer) ListSchemas(req *schemav1.ListSchemasRequest,
 		s.metrics.totalFinished.Inc(1, "list")
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "list")
 	}()
-	req.Query.Groups = []string{schemaGroup}
+	req.Query.Groups = []string{schema.SchemaGroup}
 	results, queryErr := s.server.db.Query(stream.Context(), req.Query)
 	if queryErr != nil {
 		s.metrics.totalErr.Inc(1, "list")
@@ -189,7 +190,7 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "delete")
 	}()
 	query := &propertyv1.QueryRequest{
-		Groups: []string{schemaGroup},
+		Groups: []string{schema.SchemaGroup},
 		Name:   req.Delete.Name,
 	}
 	if req.Delete.Id != "" {
@@ -239,7 +240,7 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 		s.metrics.totalFinished.Inc(1, "repair")
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "repair")
 	}()
-	req.Property.Metadata.Group = schemaGroup
+	req.Property.Metadata.Group = schema.SchemaGroup
 	id := db.GetPropertyID(req.Property)
 	if repairErr := s.server.db.Repair(ctx, id, uint64(defaultShardID), req.Property, req.DeleteTime); repairErr != nil {
 		s.metrics.totalErr.Inc(1, "repair")
@@ -260,7 +261,7 @@ func (s *schemaManagementServer) ExistSchema(ctx context.Context, req *schemav1.
 		s.metrics.totalFinished.Inc(1, "exist")
 		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "exist")
 	}()
-	req.Query.Groups = []string{schemaGroup}
+	req.Query.Groups = []string{schema.SchemaGroup}
 	req.Query.Limit = 1
 	results, queryErr := s.server.db.Query(ctx, req.Query)
 	if queryErr != nil {
@@ -298,7 +299,7 @@ func (s *schemaUpdateServer) AggregateSchemaUpdates(ctx context.Context,
 	if req.Query == nil {
 		return nil, errInvalidRequest("query is required")
 	}
-	req.Query.Groups = []string{schemaGroup}
+	req.Query.Groups = []string{schema.SchemaGroup}
 	results, queryErr := s.server.db.Query(ctx, req.Query)
 	if queryErr != nil {
 		s.metrics.totalErr.Inc(1, "aggregate")

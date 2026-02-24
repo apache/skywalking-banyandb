@@ -21,12 +21,15 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
@@ -54,6 +57,7 @@ type server struct {
 	autoCompactionMode      string
 	autoCompactionRetention string
 	schemaStorageType       string
+	nodeDiscoveryMode       string
 	listenClientURL         []string
 	listenPeerURL           []string
 	quotaBackendBytes       run.Bytes
@@ -77,6 +81,8 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
 	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
 	fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeEtcd,
+		"Node discovery mode: 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
 	if s.propServer != nil {
 		fs.AddFlagSet(s.propServer.FlagSet().FlagSet)
 	}
@@ -85,57 +91,69 @@ func (s *server) FlagSet() *run.FlagSet {
 }
 
 func (s *server) Validate() error {
-	if err := s.Service.Validate(); err != nil {
-		return err
-	}
+	fs := s.Service.FlagSet()
 	if s.schemaStorageType == schemaTypeProperty {
-		if s.propServer != nil {
-			return s.propServer.Validate()
+		if setErr := fs.Set("schema-registry-mode", metadata.RegistryModeProperty); setErr != nil {
+			return setErr
 		}
-		return nil
 	}
-	if s.rootDir == "" {
-		return errors.New("rootDir is empty")
+	if setErr := fs.Set("node-discovery-mode", s.nodeDiscoveryMode); setErr != nil {
+		return setErr
 	}
-	if s.listenClientURL == nil {
-		return errors.New("listenClientURL is empty")
+	needEtcd := s.schemaStorageType == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if needEtcd {
+		if s.rootDir == "" {
+			return errors.New("rootDir is empty")
+		}
+		if s.listenClientURL == nil {
+			return errors.New("listenClientURL is empty")
+		}
+		if s.listenPeerURL == nil {
+			return errors.New("listenPeerURL is empty")
+		}
+		if s.autoCompactionMode == "" {
+			return errors.New("autoCompactionMode is empty")
+		}
+		if s.autoCompactionMode != "periodic" && s.autoCompactionMode != "revision" {
+			return errors.New("autoCompactionMode is invalid")
+		}
+		if s.autoCompactionRetention == "" {
+			return errors.New("autoCompactionRetention is empty")
+		}
+		if setErr := fs.Set(metadata.FlagEtcdEndpointsName,
+			strings.Join(s.listenClientURL, ",")); setErr != nil {
+			return setErr
+		}
 	}
-	if s.listenPeerURL == nil {
-		return errors.New("listenPeerURL is empty")
+	if validateErr := s.Service.Validate(); validateErr != nil {
+		return validateErr
 	}
-	if s.autoCompactionMode == "" {
-		return errors.New("autoCompactionMode is empty")
+	if s.schemaStorageType == schemaTypeProperty && s.propServer != nil {
+		return s.propServer.Validate()
 	}
-	if s.autoCompactionMode != "periodic" && s.autoCompactionMode != "revision" {
-		return errors.New("autoCompactionMode is invalid")
-	}
-	if s.autoCompactionRetention == "" {
-		return errors.New("autoCompactionRetention is empty")
-	}
-	if err := s.Service.FlagSet().Set(metadata.FlagEtcdEndpointsName,
-		strings.Join(s.listenClientURL, ",")); err != nil {
-		return err
-	}
-	return s.Service.Validate()
+	return nil
 }
 
 func (s *server) PreRun(ctx context.Context) error {
-	switch s.schemaStorageType {
-	case schemaTypeEtcd:
-		etcdServer, err := embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
+	needEtcd := s.schemaStorageType == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if needEtcd {
+		etcdServer, startErr := embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 			embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
 			embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
-		if err != nil {
-			return err
+		if startErr != nil {
+			return startErr
 		}
-		s.propServer = nil
 		s.etcdServer = etcdServer
 		<-s.etcdServer.ReadyNotify()
+	}
+	switch s.schemaStorageType {
+	case schemaTypeEtcd:
+		s.propServer = nil
 	case schemaTypeProperty:
-		if err := s.propServer.PreRun(ctx); err != nil {
-			return err
+		if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
+			return propPreRunErr
 		}
-		s.etcdServer = nil
+		ctx = s.enrichContextWithSchemaAddress(ctx)
 	default:
 		return errors.New("unknown schema storage type")
 	}
@@ -192,6 +210,30 @@ func NewService(_ context.Context) (metadata.Service, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *server) enrichContextWithSchemaAddress(ctx context.Context) context.Context {
+	port := s.propServer.GetPort()
+	if port == nil {
+		return ctx
+	}
+	val := ctx.Value(common.ContextNodeKey)
+	if val == nil {
+		return ctx
+	}
+	node := val.(common.Node)
+	if node.PropertySchemaGrpcAddress != "" {
+		return ctx
+	}
+	nodeHost := node.GrpcAddress
+	if idx := strings.LastIndex(nodeHost, ":"); idx >= 0 {
+		nodeHost = nodeHost[:idx]
+	}
+	if nodeHost == "" {
+		nodeHost = "localhost"
+	}
+	node.PropertySchemaGrpcAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*port), 10))
+	return context.WithValue(ctx, common.ContextNodeKey, node)
 }
 
 func performDefrag(listenURLs []string, ecli *clientv3.Client) error {
