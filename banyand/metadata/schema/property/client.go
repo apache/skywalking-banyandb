@@ -165,7 +165,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		}
 		if connMgr.ActiveCount() == 0 {
 			_ = reg.Close()
-			return nil, fmt.Errorf("no schema servers reachable after %s", timeout)
+			return nil, fmt.Errorf("no schema servers reachable after %s", initWaitTime)
 		}
 	}
 	return reg, nil

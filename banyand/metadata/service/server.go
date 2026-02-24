@@ -221,7 +221,10 @@ func (s *server) enrichContextWithSchemaAddress(ctx context.Context) context.Con
 	if val == nil {
 		return ctx
 	}
-	node := val.(common.Node)
+	node, ok := val.(common.Node)
+	if !ok {
+		return ctx
+	}
 	if node.PropertySchemaGrpcAddress != "" {
 		return ctx
 	}

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -127,7 +128,9 @@ func (p *provider) Histogram(name string, _ meter.Buckets, labelNames ...string)
 
 func (p *provider) registerOrDefer(name string, labels []string) {
 	if p.initialized.Load() {
-		_, measureErr := p.createMeasure(context.Background(), name, labels...)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, measureErr := p.createMeasure(ctx, name, labels...)
 		if measureErr != nil && !errors.Is(measureErr, schema.ErrGRPCAlreadyExists) {
 			log.Error().Err(measureErr).Msgf("Failed to create measure %s", name)
 		}

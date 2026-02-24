@@ -43,8 +43,9 @@ func (f *nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
 
 func (f *nativeProviderFactory) initAllSchemas(ctx context.Context) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, p := range f.providers {
+	providers := append([]meter.Provider(nil), f.providers...)
+	f.mu.Unlock()
+	for _, p := range providers {
 		native.InitSchema(ctx, p)
 	}
 }
