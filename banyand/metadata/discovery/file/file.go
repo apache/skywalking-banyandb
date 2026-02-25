@@ -226,6 +226,15 @@ func (s *Service) loadAndParseFile(ctx context.Context) error {
 	return nil
 }
 
+// ListNode list all existing nodes from cache.
+func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
+	if err := s.loadAndParseFile(ctx); err != nil {
+		return nil, err
+	}
+	// delegate to base for filtering
+	return s.NodeCacheBase.ListNode(ctx, role)
+}
+
 // FetchNodeWithRetry implements NodeFetcher interface for retry manager.
 func (s *Service) FetchNodeWithRetry(ctx context.Context, address string) (*databasev1.Node, error) {
 	// use common fetcher with address

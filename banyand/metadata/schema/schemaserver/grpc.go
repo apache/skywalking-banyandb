@@ -250,35 +250,6 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 	return &schemav1.RepairSchemaResponse{}, nil
 }
 
-// ExistSchema checks if a schema property exists.
-func (s *schemaManagementServer) ExistSchema(ctx context.Context, req *schemav1.ExistSchemaRequest) (*schemav1.ExistSchemaResponse, error) {
-	if req.Query == nil {
-		return nil, errInvalidRequest("query is required")
-	}
-	s.metrics.totalStarted.Inc(1, "exist")
-	start := time.Now()
-	defer func() {
-		s.metrics.totalFinished.Inc(1, "exist")
-		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "exist")
-	}()
-	req.Query.Groups = []string{schema.SchemaGroup}
-	req.Query.Limit = 1
-	results, queryErr := s.server.db.Query(ctx, req.Query)
-	if queryErr != nil {
-		s.metrics.totalErr.Inc(1, "exist")
-		s.l.Error().Err(queryErr).Msg("failed to check schema existence")
-		return nil, queryErr
-	}
-	hasSchema := false
-	for _, r := range results {
-		if r.DeleteTime() == 0 {
-			hasSchema = true
-			break
-		}
-	}
-	return &schemav1.ExistSchemaResponse{HasSchema: hasSchema}, nil
-}
-
 type schemaUpdateServer struct {
 	schemav1.UnimplementedSchemaUpdateServiceServer
 	server  *server

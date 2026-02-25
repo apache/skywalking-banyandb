@@ -570,6 +570,56 @@ func TestCreateDuplicate(t *testing.T) {
 	assert.Contains(t, dupErr.Error(), "already exists")
 }
 
+func TestBroadcastInsert_AllNodesAlreadyExist(t *testing.T) {
+	addr1 := startTestSchemaServer(t)
+	addr2 := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr1, addr2)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+	s := testStream()
+	_, createErr := reg.CreateStream(ctx, s)
+	require.NoError(t, createErr)
+	// Both nodes already have the schema. Creating again should return AlreadyExists.
+	s2 := testStream()
+	_, dupErr := reg.CreateStream(ctx, s2)
+	require.Error(t, dupErr)
+	assert.Contains(t, dupErr.Error(), "already exists")
+}
+
+func TestBroadcastInsert_PartialNodesAlreadyExist(t *testing.T) {
+	addr1 := startTestSchemaServer(t)
+	addr2 := startTestSchemaServer(t)
+	// Insert stream directly on server1 only (bypass broadcast).
+	mgmt1 := rawMgmtClient(t, addr1)
+	ctx := context.Background()
+	// First create the group on both servers via a registry connected to both.
+	reg := newTestRegistry(t, addr1, addr2)
+	createTestGroup(t, reg)
+	// Now insert the stream on server1 only.
+	s := testStream()
+	s.Metadata.ModRevision = time.Now().UnixNano()
+	s.UpdatedAt = timestamppb.Now()
+	sProp, convErr := streamToProperty(s)
+	require.NoError(t, convErr)
+	_, insertErr := mgmt1.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: sProp})
+	require.NoError(t, insertErr)
+	// Now create the same stream via the registry. Server1 returns AlreadyExists,
+	// but server2 should accept it. The overall result should be success.
+	s2 := testStream()
+	_, createErr := reg.CreateStream(ctx, s2)
+	require.NoError(t, createErr)
+	// Verify both servers now have the stream.
+	mgmt2 := rawMgmtClient(t, addr2)
+	listStream, listErr := mgmt2.ListSchemas(ctx, &schemav1.ListSchemasRequest{
+		Query: &propertyv1.QueryRequest{
+			Groups: []string{schema.SchemaGroup},
+			Name:   "stream",
+		},
+	})
+	require.NoError(t, listErr)
+	assertHasSchemas(t, listStream)
+}
+
 func TestListEmptyGroup(t *testing.T) {
 	addr := startTestSchemaServer(t)
 	reg := newTestRegistry(t, addr)
@@ -606,22 +656,22 @@ func TestMultiNodeBroadcastWrite(t *testing.T) {
 	require.NoError(t, createErr)
 	mgmt1 := rawMgmtClient(t, addr1)
 	mgmt2 := rawMgmtClient(t, addr2)
-	resp1, existErr := mgmt1.ExistSchema(ctx, &schemav1.ExistSchemaRequest{
+	stream1, streamErr := mgmt1.ListSchemas(ctx, &schemav1.ListSchemasRequest{
 		Query: &propertyv1.QueryRequest{
 			Groups: []string{schema.SchemaGroup},
 			Name:   "stream",
 		},
 	})
-	require.NoError(t, existErr)
-	assert.True(t, resp1.GetHasSchema())
-	resp2, existErr := mgmt2.ExistSchema(ctx, &schemav1.ExistSchemaRequest{
+	require.NoError(t, streamErr)
+	assertHasSchemas(t, stream1)
+	stream2, streamErr := mgmt2.ListSchemas(ctx, &schemav1.ListSchemasRequest{
 		Query: &propertyv1.QueryRequest{
 			Groups: []string{schema.SchemaGroup},
 			Name:   "stream",
 		},
 	})
-	require.NoError(t, existErr)
-	assert.True(t, resp2.GetHasSchema())
+	require.NoError(t, streamErr)
+	assertHasSchemas(t, stream2)
 	_, deleteErr := reg.DeleteStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
 	require.NoError(t, deleteErr)
 	_, getErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
@@ -701,6 +751,26 @@ func groupToProperty(group *commonv1.Group) (*propertyv1.Property, error) {
 
 func measureToProperty(measure *databasev1.Measure) (*propertyv1.Property, error) {
 	return property.SchemaToProperty(schema.KindMeasure, measure)
+}
+
+func assertHasSchemas(t *testing.T, stream schemav1.SchemaManagementService_ListSchemasClient) {
+	t.Helper()
+	var total int
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			break
+		}
+		for idx, dt := range resp.GetDeleteTimes() {
+			if dt == 0 && idx < len(resp.GetProperties()) {
+				total++
+			}
+		}
+		if len(resp.GetDeleteTimes()) == 0 {
+			total += len(resp.GetProperties())
+		}
+	}
+	assert.Greater(t, total, 0, "expected at least one non-deleted schema")
 }
 
 type testEventHandler struct {
@@ -852,14 +922,14 @@ func TestOnAddOrUpdate_NewNodeWithData(t *testing.T) {
 	// Verify repair: server1 should also have the data after broadcast+repair.
 	time.Sleep(500 * time.Millisecond)
 	mgmt1 := rawMgmtClient(t, addr1)
-	resp, existErr := mgmt1.ExistSchema(ctx, &schemav1.ExistSchemaRequest{
+	listStream, listErr := mgmt1.ListSchemas(ctx, &schemav1.ListSchemasRequest{
 		Query: &propertyv1.QueryRequest{
 			Groups: []string{schema.SchemaGroup},
 			Name:   "stream",
 		},
 	})
-	require.NoError(t, existErr)
-	assert.True(t, resp.GetHasSchema(), "server1 should have the stream data after repair")
+	require.NoError(t, listErr)
+	assertHasSchemas(t, listStream)
 }
 
 func TestOnAddOrUpdate_RepairOldDataToNewNode(t *testing.T) {
@@ -890,14 +960,14 @@ func TestOnAddOrUpdate_RepairOldDataToNewNode(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	// Server2 should now have the data after repair.
 	mgmt2 := rawMgmtClient(t, addr2)
-	resp, existErr := mgmt2.ExistSchema(ctx, &schemav1.ExistSchemaRequest{
+	listStream, listErr := mgmt2.ListSchemas(ctx, &schemav1.ListSchemasRequest{
 		Query: &propertyv1.QueryRequest{
 			Groups: []string{schema.SchemaGroup},
 			Name:   "stream",
 		},
 	})
-	require.NoError(t, existErr)
-	assert.True(t, resp.GetHasSchema(), "server2 should have stream data after repair")
+	require.NoError(t, listErr)
+	assertHasSchemas(t, listStream)
 	// Adding empty server2 should not cause duplicate handler notifications for already-cached data.
 	laterEvents := handler.getAddOrUpdateEvents()
 	// The new events from adding node-2 should not duplicate the original stream event
@@ -1208,30 +1278,6 @@ func (s *recordingSchemaServer) AggregateSchemaUpdates(_ context.Context, req *s
 		names = append(names, kindName)
 	}
 	return &schemav1.AggregateSchemaUpdatesResponse{Names: names}, nil
-}
-
-func (s *recordingSchemaServer) ExistSchema(_ context.Context, req *schemav1.ExistSchemaRequest) (*schemav1.ExistSchemaResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	query := req.GetQuery()
-	for _, stored := range s.schemas {
-		if stored.deleteTime > 0 {
-			continue
-		}
-		if query.GetName() != "" && stored.prop.GetMetadata().GetName() != query.GetName() {
-			continue
-		}
-		if len(query.GetIds()) > 0 {
-			for _, queryID := range query.GetIds() {
-				if stored.prop.GetId() == queryID {
-					return &schemav1.ExistSchemaResponse{HasSchema: true}, nil
-				}
-			}
-			continue
-		}
-		return &schemav1.ExistSchemaResponse{HasSchema: true}, nil
-	}
-	return &schemav1.ExistSchemaResponse{HasSchema: false}, nil
 }
 
 func (s *recordingSchemaServer) InsertSchema(_ context.Context, req *schemav1.InsertSchemaRequest) (*schemav1.InsertSchemaResponse, error) {

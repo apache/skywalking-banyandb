@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -221,6 +223,46 @@ func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) 
 	return broadcastErr
 }
 
+func (r *SchemaRegistry) broadcastInsert(ctx context.Context, prop *propertyv1.Property) error {
+	names := r.connMgr.ActiveNames()
+	if len(names) == 0 {
+		return errNoActiveServers
+	}
+	var mu sync.Mutex
+	var realErrors error
+	var alreadyExistsCount atomic.Int32
+	var wg sync.WaitGroup
+	for _, nodeName := range names {
+		currentNode := nodeName
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
+				_, rpcErr := c.management.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
+				return rpcErr
+			})
+			if execErr != nil {
+				st, ok := status.FromError(execErr)
+				if ok && st.Code() == codes.AlreadyExists {
+					alreadyExistsCount.Add(1)
+					return
+				}
+				mu.Lock()
+				realErrors = multierr.Append(realErrors, fmt.Errorf("node %s: %w", currentNode, execErr))
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if realErrors != nil {
+		return realErrors
+	}
+	if int(alreadyExistsCount.Load()) == len(names) {
+		return schema.ErrGRPCAlreadyExists
+	}
+	return nil
+}
+
 func (r *SchemaRegistry) forEachActiveNode(fn func(nodeName string, c *schemaClient) error, errMsg string) {
 	names := r.connMgr.ActiveNames()
 	for _, nodeName := range names {
@@ -237,6 +279,50 @@ func (r *SchemaRegistry) forEachActiveNode(fn func(nodeName string, c *schemaCli
 type schemaWithDeleteTime struct {
 	property   *propertyv1.Property
 	deleteTime int64
+}
+
+type syncCollector struct {
+	entries        map[schema.Kind]map[string]*schemaWithDeleteTime
+	queriedServers map[schema.Kind]map[string]bool
+	totalServers   int
+	mu             sync.Mutex
+}
+
+func newSyncCollector(totalServers int) *syncCollector {
+	return &syncCollector{
+		entries:        make(map[schema.Kind]map[string]*schemaWithDeleteTime),
+		queriedServers: make(map[schema.Kind]map[string]bool),
+		totalServers:   totalServers,
+	}
+}
+
+func (c *syncCollector) add(serverName string, kind schema.Kind, schemas []*schemaWithDeleteTime) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries[kind] == nil {
+		c.entries[kind] = make(map[string]*schemaWithDeleteTime)
+	}
+	if c.queriedServers[kind] == nil {
+		c.queriedServers[kind] = make(map[string]bool)
+	}
+	c.queriedServers[kind][serverName] = true
+	for _, s := range schemas {
+		propID := s.property.GetId()
+		existing, exists := c.entries[kind][propID]
+		if !exists {
+			c.entries[kind][propID] = s
+			continue
+		}
+		existingRev := ParseTags(existing.property.GetTags()).UpdatedAt
+		newRev := ParseTags(s.property.GetTags()).UpdatedAt
+		if newRev > existingRev {
+			c.entries[kind][propID] = s
+		}
+	}
+}
+
+func (c *syncCollector) isFullyQueriedForKind(kind schema.Kind) bool {
+	return len(c.queriedServers[kind]) == c.totalServers
 }
 
 type propInfo struct {
@@ -390,51 +476,6 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	return result, nil
 }
 
-func (r *SchemaRegistry) existSchema(ctx context.Context, kind schema.Kind,
-	group, name string,
-) (bool, error) {
-	query := buildSchemaQuery(kind, group, name)
-	names := r.connMgr.ActiveNames()
-	if len(names) == 0 {
-		return false, errNoActiveServers
-	}
-	cancelCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var hasSchema atomic.Bool
-	var mu sync.Mutex
-	var broadcastErr error
-	var wg sync.WaitGroup
-	for _, nodeName := range names {
-		currentNode := nodeName
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
-				resp, callErr := c.management.ExistSchema(cancelCtx, &schemav1.ExistSchemaRequest{Query: query})
-				if callErr != nil {
-					return callErr
-				}
-				if resp.GetHasSchema() {
-					hasSchema.Store(true)
-					// if there have one schema exists, no need to wait for other nodes, can return immediately
-					cancel()
-				}
-				return nil
-			})
-			if execErr != nil && !hasSchema.Load() {
-				mu.Lock()
-				broadcastErr = multierr.Append(broadcastErr, execErr)
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	if hasSchema.Load() {
-		return true, nil
-	}
-	return false, broadcastErr
-}
-
 func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, group, name string) (bool, error) {
 	req := buildDeleteRequest(kind, group, name)
 	var found atomic.Bool
@@ -529,21 +570,11 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	if validateErr := r.validateGroup(ctx, kind, metadata.GetGroup()); validateErr != nil {
 		return validateErr
 	}
-	exists, existErr := r.existSchema(ctx, kind, metadata.GetGroup(), metadata.GetName())
-	if existErr != nil {
-		return existErr
-	}
-	if exists {
-		return schema.ErrGRPCAlreadyExists
-	}
 	prop, convErr := SchemaToProperty(kind, spec)
 	if convErr != nil {
 		return convErr
 	}
-	return r.broadcastAll(func(_ string, c *schemaClient) error {
-		_, rpcErr := c.management.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
-		return rpcErr
-	})
+	return r.broadcastInsert(ctx, prop)
 }
 
 func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
@@ -1010,11 +1041,40 @@ func (r *SchemaRegistry) performSync(ctx context.Context) {
 	if len(names) == 0 {
 		return
 	}
+	collector := newSyncCollector(len(names))
 	if isFullReconcile {
-		r.performFullSync(ctx)
+		r.collectFullSync(ctx, collector)
+	} else {
+		r.collectIncrementalSync(ctx, collector)
+	}
+	r.reconcileFromCollector(collector)
+}
+
+func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCollector) {
+	kindsToSync := r.getKindsToSync()
+	if len(kindsToSync) == 0 {
 		return
 	}
-	err := r.broadcastAll(func(_ string, sc *schemaClient) error {
+	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
+		for _, kind := range kindsToSync {
+			query := buildSchemaQuery(kind, "", "")
+			schemas, queryErr := r.querySchemasFromClient(ctx, sc.management, query)
+			if queryErr != nil {
+				r.l.Warn().Err(queryErr).Stringer("kind", kind).Str("node", nodeName).
+					Msg("failed to query schemas for full sync")
+				continue
+			}
+			collector.add(nodeName, kind, schemas)
+		}
+		return nil
+	})
+	if broadcastErr != nil {
+		r.l.Error().Err(broadcastErr).Msg("failed to collect full sync from some nodes")
+	}
+}
+
+func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *syncCollector) {
+	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
 		updatedKindNames, queryErr := r.queryUpdatedSchemas(ctx, sc.update, r.cache.GetMaxRevision())
 		if queryErr != nil {
 			return queryErr
@@ -1025,28 +1085,48 @@ func (r *SchemaRegistry) performSync(ctx context.Context) {
 				r.l.Warn().Str("kindName", kindName).Msg("unknown kind from aggregate update")
 				continue
 			}
-			r.syncAllResourcesOfKind(ctx, sc.management, kind)
+			query := buildSchemaQuery(kind, "", "")
+			schemas, schemasErr := r.querySchemasFromClient(ctx, sc.management, query)
+			if schemasErr != nil {
+				r.l.Warn().Err(schemasErr).Stringer("kind", kind).Str("node", nodeName).
+					Msg("failed to query schemas for incremental sync")
+				continue
+			}
+			collector.add(nodeName, kind, schemas)
 		}
 		return nil
 	})
-	if err != nil {
-		r.l.Error().Err(err).Msg("failed to perform incremental sync from nodes")
+	if broadcastErr != nil {
+		r.l.Error().Err(broadcastErr).Msg("failed to collect incremental sync from some nodes")
 	}
 }
 
-func (r *SchemaRegistry) performFullSync(ctx context.Context) {
-	kindsToSync := r.getKindsToSync()
-	if len(kindsToSync) == 0 {
-		return
-	}
-	err := r.broadcastAll(func(_ string, sc *schemaClient) error {
-		for _, kind := range kindsToSync {
-			r.syncAllResourcesOfKind(ctx, sc.management, kind)
+func (r *SchemaRegistry) reconcileFromCollector(collector *syncCollector) {
+	for kind, propMap := range collector.entries {
+		cachedEntries := r.cache.GetEntriesByKind(kind)
+		seen := make(map[string]bool, len(propMap))
+		for propID, s := range propMap {
+			seen[propID] = true
+			if s.deleteTime > 0 {
+				if entry, exists := cachedEntries[propID]; exists {
+					r.handleDeletion(kind, propID, entry, s.deleteTime)
+				}
+				continue
+			}
+			md, convErr := ToSchema(kind, s.property)
+			if convErr != nil {
+				r.l.Warn().Err(convErr).Str("propID", propID).Msg("failed to convert property for reconcile")
+				continue
+			}
+			r.processInitialResourceFromProperty(kind, s.property, md.Spec.(proto.Message))
 		}
-		return nil
-	})
-	if err != nil {
-		r.l.Error().Err(err).Msg("failed to perform full sync from nodes")
+		if collector.isFullyQueriedForKind(kind) {
+			for propID, entry := range cachedEntries {
+				if !seen[propID] {
+					r.handleDeletion(kind, propID, entry, time.Now().UnixNano())
+				}
+			}
+		}
 	}
 }
 
@@ -1074,39 +1154,6 @@ func (r *SchemaRegistry) queryUpdatedSchemas(ctx context.Context, client schemav
 		return nil, rpcErr
 	}
 	return resp.GetNames(), nil
-}
-
-func (r *SchemaRegistry) syncAllResourcesOfKind(ctx context.Context, client schemav1.SchemaManagementServiceClient, kind schema.Kind) {
-	cachedEntries := r.cache.GetEntriesByKind(kind)
-	query := buildSchemaQuery(kind, "", "")
-	schemas, queryErr := r.querySchemasFromClient(ctx, client, query)
-	if queryErr != nil {
-		r.l.Warn().Err(queryErr).Stringer("kind", kind).Msg("failed to query schemas for sync")
-		return
-	}
-	seen := make(map[string]bool)
-	for _, s := range schemas {
-		propID := s.property.GetId()
-		if s.deleteTime > 0 {
-			if entry, exists := cachedEntries[propID]; exists {
-				r.handleDeletion(kind, propID, entry, s.deleteTime)
-			}
-			seen[propID] = true
-			continue
-		}
-		seen[propID] = true
-		md, convErr := ToSchema(kind, s.property)
-		if convErr != nil {
-			r.l.Warn().Err(convErr).Str("propID", propID).Msg("failed to convert property for sync")
-			continue
-		}
-		r.processInitialResourceFromProperty(kind, s.property, md.Spec.(proto.Message))
-	}
-	for propID, entry := range cachedEntries {
-		if !seen[propID] {
-			r.handleDeletion(kind, propID, entry, time.Now().UnixNano())
-		}
-	}
 }
 
 func (r *SchemaRegistry) shouldFullReconcile(round uint64) bool {

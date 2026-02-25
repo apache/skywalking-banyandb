@@ -138,11 +138,14 @@ func TestInsertSchema(t *testing.T) {
 	t.Run("successful insert", func(t *testing.T) {
 		mgmt, _ := startTestServer(t)
 		insertProperty(t, mgmt, "svc", "id1")
-		existResp, existErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
+		stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
 			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc", Ids: []string{"id1"}},
 		})
-		require.NoError(t, existErr)
-		assert.True(t, existResp.HasSchema)
+		require.NoError(t, streamErr)
+		responses, recvErr := collectListResponses(stream)
+		require.NoError(t, recvErr)
+		require.Len(t, responses, 1)
+		assert.Len(t, responses[0].Properties, 1)
 	})
 	t.Run("duplicate insert", func(t *testing.T) {
 		mgmt, _ := startTestServer(t)
@@ -383,38 +386,14 @@ func TestRepairSchema(t *testing.T) {
 			Property: testProperty("svc", "id1"),
 		})
 		require.NoError(t, rpcErr)
-		existResp, existErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
+		stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
 			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc", Ids: []string{"id1"}},
 		})
-		require.NoError(t, existErr)
-		assert.True(t, existResp.HasSchema)
-	})
-}
-
-func TestExistSchema(t *testing.T) {
-	t.Run("nil query", func(t *testing.T) {
-		mgmt, _ := startTestServer(t)
-		_, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{})
-		require.Error(t, rpcErr)
-		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
-		assert.Contains(t, rpcErr.Error(), "query is required")
-	})
-	t.Run("no results", func(t *testing.T) {
-		mgmt, _ := startTestServer(t)
-		resp, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "nonexistent"},
-		})
-		require.NoError(t, rpcErr)
-		assert.False(t, resp.HasSchema)
-	})
-	t.Run("has results", func(t *testing.T) {
-		mgmt, _ := startTestServer(t)
-		insertProperty(t, mgmt, "svc", "id1")
-		resp, rpcErr := mgmt.ExistSchema(context.Background(), &schemav1.ExistSchemaRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc"},
-		})
-		require.NoError(t, rpcErr)
-		assert.True(t, resp.HasSchema)
+		require.NoError(t, streamErr)
+		responses, recvErr := collectListResponses(stream)
+		require.NoError(t, recvErr)
+		require.Len(t, responses, 1)
+		assert.Len(t, responses[0].Properties, 1)
 	})
 }
 

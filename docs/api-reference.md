@@ -364,8 +364,6 @@
     - [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse)
     - [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest)
     - [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse)
-    - [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest)
-    - [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse)
     - [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest)
     - [InsertSchemaResponse](#banyandb-schema-v1-InsertSchemaResponse)
     - [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest)
@@ -5502,36 +5500,6 @@ WriteResponse is the response contract for write
 
 
 
-<a name="banyandb-schema-v1-ExistSchemaRequest"></a>
-
-### ExistSchemaRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-schema-v1-ExistSchemaResponse"></a>
-
-### ExistSchemaResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| has_schema | [bool](#bool) |  |  |
-
-
-
-
-
-
 <a name="banyandb-schema-v1-InsertSchemaRequest"></a>
 
 ### InsertSchemaRequest
@@ -5657,7 +5625,6 @@ WriteResponse is the response contract for write
 | ListSchemas | [ListSchemasRequest](#banyandb-schema-v1-ListSchemasRequest) | [ListSchemasResponse](#banyandb-schema-v1-ListSchemasResponse) stream |  |
 | DeleteSchema | [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest) | [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse) |  |
 | RepairSchema | [RepairSchemaRequest](#banyandb-schema-v1-RepairSchemaRequest) | [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse) |  |
-| ExistSchema | [ExistSchemaRequest](#banyandb-schema-v1-ExistSchemaRequest) | [ExistSchemaResponse](#banyandb-schema-v1-ExistSchemaResponse) |  |
 
 
 <a name="banyandb-schema-v1-SchemaUpdateService"></a>

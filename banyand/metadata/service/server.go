@@ -120,8 +120,12 @@ func (s *server) Validate() error {
 	if s.serviceFlags == nil {
 		return errors.New("service flags are not initialized")
 	}
-	s.serviceFlags.Set("schema-registry-mode", s.schemaRegistryMode)
-	s.serviceFlags.Set("node-discovery-mode", s.nodeDiscoveryMode)
+	if err := s.serviceFlags.Set("schema-registry-mode", s.schemaRegistryMode); err != nil {
+		return err
+	}
+	if err := s.serviceFlags.Set("node-discovery-mode", s.nodeDiscoveryMode); err != nil {
+		return err
+	}
 	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
 	if s.embedded && needEtcd {
 		if s.rootDir == "" {
