@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package service implements an embedded meta server.
+// Package service implements the metadata server wrapper supporting both
+// embedded etcd (standalone) and external etcd (data node) modes.
 package service
 
 import (
@@ -41,14 +42,22 @@ import (
 )
 
 var (
-	schemaTypeEtcd     = "embedetcd"
-	schemaTypeProperty = "property"
+	schemaTypeEtcd     = metadata.RegistryModeEtcd
+	schemaTypeProperty = metadata.RegistryModeProperty
 )
+
+// Service extends metadata.Service with schema server port access.
+type Service interface {
+	metadata.Service
+	GetSchemaServerPort() *uint32
+}
 
 type server struct {
 	metadata.Service
 	etcdServer              embeddedetcd.Server
 	propServer              schemaserver.Server
+	omr                     observability.MetricsRegistry
+	serviceFlags            *run.FlagSet
 	scheduler               *timestamp.Scheduler
 	ecli                    *clientv3.Client
 	closer                  *run.Closer
@@ -56,11 +65,12 @@ type server struct {
 	defragCron              string
 	autoCompactionMode      string
 	autoCompactionRetention string
-	schemaStorageType       string
+	schemaRegistryMode      string
 	nodeDiscoveryMode       string
 	listenClientURL         []string
 	listenPeerURL           []string
 	quotaBackendBytes       run.Bytes
+	embedded                bool
 }
 
 func (s *server) Name() string {
@@ -68,40 +78,50 @@ func (s *server) Name() string {
 }
 
 func (s *server) Role() databasev1.Role {
-	return databasev1.Role_ROLE_META
+	if s.schemaRegistryMode == schemaTypeProperty {
+		return databasev1.Role_ROLE_META
+	}
+	return databasev1.Role_ROLE_UNSPECIFIED
 }
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVar(&s.schemaStorageType, "schema-storage-type", schemaTypeEtcd, "schema storage type: embedetcd or property")
-	fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
-	fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode: 'periodic' or 'revision'")
-	fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h", "auto compaction retention: e.g. '1h', '30m', '24h' for periodic; '1000' for revision")
-	fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily", "defragmentation cron: e.g. '@daily', '@hourly', '0 0 * * 0', '0 */6 * * *'")
-	fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
-	fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
-	fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
+	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeEtcd,
+		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
 	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeEtcd,
 		"Node discovery mode: 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
-	if s.propServer != nil {
-		fs.AddFlagSet(s.propServer.FlagSet().FlagSet)
+	if s.embedded {
+		fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
+		fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode: 'periodic' or 'revision'")
+		fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h",
+			"auto compaction retention: e.g. '1h', '30m', '24h' for periodic; '1000' for revision")
+		fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily",
+			"defragmentation cron: e.g. '@daily', '@hourly', '0 0 * * 0', '0 */6 * * *'")
+		fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
+		fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
+		fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
 	}
-	fs.AddFlagSet(s.Service.FlagSet().FlagSet)
+	if s.propServer == nil {
+		omr := s.omr
+		if omr == nil {
+			omr = observability.BypassRegistry
+		}
+		s.propServer = schemaserver.NewServer(omr)
+	}
+	if s.serviceFlags == nil {
+		s.serviceFlags = s.Service.FlagSet()
+	}
+	fs.AddFlagSet(s.propServer.FlagSet().FlagSet)
+	fs.AddFlagSet(s.serviceFlags.FlagSet)
 	return fs
 }
 
 func (s *server) Validate() error {
-	fs := s.Service.FlagSet()
-	if s.schemaStorageType == schemaTypeProperty {
-		if setErr := fs.Set("schema-registry-mode", metadata.RegistryModeProperty); setErr != nil {
-			return setErr
-		}
+	if s.serviceFlags == nil {
+		return errors.New("service flags are not initialized")
 	}
-	if setErr := fs.Set("node-discovery-mode", s.nodeDiscoveryMode); setErr != nil {
-		return setErr
-	}
-	needEtcd := s.schemaStorageType == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if needEtcd {
+	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if s.embedded && needEtcd {
 		if s.rootDir == "" {
 			return errors.New("rootDir is empty")
 		}
@@ -120,7 +140,7 @@ func (s *server) Validate() error {
 		if s.autoCompactionRetention == "" {
 			return errors.New("autoCompactionRetention is empty")
 		}
-		if setErr := fs.Set(metadata.FlagEtcdEndpointsName,
+		if setErr := s.serviceFlags.Set(metadata.FlagEtcdEndpointsName,
 			strings.Join(s.listenClientURL, ",")); setErr != nil {
 			return setErr
 		}
@@ -128,15 +148,15 @@ func (s *server) Validate() error {
 	if validateErr := s.Service.Validate(); validateErr != nil {
 		return validateErr
 	}
-	if s.schemaStorageType == schemaTypeProperty && s.propServer != nil {
+	if s.schemaRegistryMode == schemaTypeProperty && s.propServer != nil {
 		return s.propServer.Validate()
 	}
 	return nil
 }
 
 func (s *server) PreRun(ctx context.Context) error {
-	needEtcd := s.schemaStorageType == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if needEtcd {
+	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if s.embedded && needEtcd {
 		etcdServer, startErr := embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 			embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
 			embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
@@ -146,14 +166,14 @@ func (s *server) PreRun(ctx context.Context) error {
 		s.etcdServer = etcdServer
 		<-s.etcdServer.ReadyNotify()
 	}
-	switch s.schemaStorageType {
+	switch s.schemaRegistryMode {
 	case schemaTypeEtcd:
 		s.propServer = nil
 	case schemaTypeProperty:
+		ctx = s.enrichContextWithSchemaAddress(ctx)
 		if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
 			return propPreRunErr
 		}
-		ctx = s.enrichContextWithSchemaAddress(ctx)
 	default:
 		return errors.New("unknown schema storage type")
 	}
@@ -199,17 +219,37 @@ func (s *server) GracefulStop() {
 }
 
 // NewService returns a new metadata repository Service.
-func NewService(_ context.Context) (metadata.Service, error) {
+// When embedded is true (standalone mode), an embedded etcd server is started.
+// When embedded is false (data node mode), the service connects to external etcd.
+func NewService(_ context.Context, embedded bool) (Service, error) {
 	s := &server{
-		closer:     run.NewCloser(0),
-		propServer: schemaserver.NewServer(observability.BypassRegistry),
+		closer:   run.NewCloser(0),
+		embedded: embedded,
 	}
-	var err error
-	s.Service, err = metadata.NewClient(true, true)
-	if err != nil {
-		return nil, err
+	var clientErr error
+	if embedded {
+		s.Service, clientErr = metadata.NewClient(true, true)
+	} else {
+		s.Service, clientErr = metadata.NewClient(true, false)
+	}
+	if clientErr != nil {
+		return nil, clientErr
 	}
 	return s, nil
+}
+
+// SetMetricsRegistry stores the metrics registry for lazy propServer creation.
+func (s *server) SetMetricsRegistry(omr observability.MetricsRegistry) {
+	s.omr = omr
+	s.Service.SetMetricsRegistry(omr)
+}
+
+// GetSchemaServerPort returns the schema server gRPC port.
+func (s *server) GetSchemaServerPort() *uint32 {
+	if s.propServer != nil && s.schemaRegistryMode == schemaTypeProperty {
+		return s.propServer.GetPort()
+	}
+	return nil
 }
 
 func (s *server) enrichContextWithSchemaAddress(ctx context.Context) context.Context {

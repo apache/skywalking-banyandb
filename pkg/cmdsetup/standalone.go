@@ -46,7 +46,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	dataPipeline := queue.Local()
-	metaSvc, err := service.NewService(ctx)
+	metaSvc, err := service.NewService(ctx, true)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

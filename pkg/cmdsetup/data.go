@@ -26,8 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/schemaserver"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
@@ -45,7 +44,7 @@ import (
 func newDataCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(true, false)
+	metaSvc, err := service.NewService(ctx, false)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
@@ -80,14 +79,12 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}
 	profSvc := observability.NewProfService()
-	schemaSrv := schemaserver.NewServer(metricSvc)
 
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
 		metricsPipeline,
 		metricSvc,
-		schemaSrv,
 		metaSvc,
 		pm,
 		pipeline,
@@ -106,7 +103,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the data server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort(), schemaSrv.GetPort())
+			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort(), metaSvc.GetSchemaServerPort())
 			if err != nil {
 				return err
 			}

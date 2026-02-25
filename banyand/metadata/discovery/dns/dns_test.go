@@ -1078,7 +1078,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(nodes[0].GetGrpcAddress()).To(Equal(serverAddr))
 
 			// Verify DNS was queried
-			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
+			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(2))
 		})
 
 		It("should fail when CA cert paths count doesn't match SRV addresses count", func() {
