@@ -485,7 +485,7 @@ func extractOrdering(req QueryRequest) bool {
 }
 
 // selectPartsForQuery selects relevant parts from snapshot based on key range and time range.
-func selectPartsForQuery(snap *snapshot, minKey, maxKey int64, minTimestamp, maxTimestamp *int64) []*part {
+func selectPartsForQuery(snap *Snapshot, minKey, maxKey int64, minTimestamp, maxTimestamp *int64) []*part {
 	var selectedParts []*part
 
 	for _, pw := range snap.parts {
