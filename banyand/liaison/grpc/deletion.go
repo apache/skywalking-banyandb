@@ -40,19 +40,33 @@ const (
 	taskDataTagName                  = "task_data"
 )
 
+type propertyApplier interface {
+	Apply(ctx context.Context, req *propertyv1.ApplyRequest) (*propertyv1.ApplyResponse, error)
+	Query(ctx context.Context, req *propertyv1.QueryRequest) (*propertyv1.QueryResponse, error)
+}
+
+// GroupDropSubscriber defines an interface for subscribing to group drop events.
+type GroupDropSubscriber interface {
+	SubscribeGroupDrop(catalog commonv1.Catalog, groupName string) <-chan struct{}
+}
+
 type groupDeletionTaskManager struct {
 	schemaRegistry metadata.Repo
-	propServer     *propertyServer
+	propServer     propertyApplier
 	log            *logger.Logger
 	groupRepo      *groupRepo
+	dropSubscriber GroupDropSubscriber
 	tasks          sync.Map
 }
 
-func newGroupDeletionTaskManager(schemaRegistry metadata.Repo, propServer *propertyServer, gr *groupRepo, l *logger.Logger) *groupDeletionTaskManager {
+func newGroupDeletionTaskManager(
+	schemaRegistry metadata.Repo, propServer *propertyServer, gr *groupRepo, dropSubscriber GroupDropSubscriber, l *logger.Logger,
+) *groupDeletionTaskManager {
 	return &groupDeletionTaskManager{
 		schemaRegistry: schemaRegistry,
 		propServer:     propServer,
 		groupRepo:      gr,
+		dropSubscriber: dropSubscriber,
 		log:            l,
 	}
 }
@@ -118,7 +132,7 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 		m.tasks.Delete(group)
 		return fmt.Errorf("failed to save initial deletion task for group %s: %w", group, saveErr)
 	}
-	go m.executeDeletion(ctx, group, task)
+	go m.executeDeletion(context.WithoutCancel(ctx), group, task)
 	return nil
 }
 
@@ -154,12 +168,23 @@ func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group st
 	}
 
 	task.Message = "deleting group and data files"
+	var dropCh <-chan struct{}
+	if m.dropSubscriber != nil {
+		if groupMeta, getErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group); getErr == nil {
+			dropCh = m.dropSubscriber.SubscribeGroupDrop(groupMeta.Catalog, group)
+		}
+	}
 	_, deleteGroupErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
 	if deleteGroupErr != nil {
 		m.failTask(ctx, group, task, fmt.Sprintf("failed to delete group: %v", deleteGroupErr))
+		if dropCh != nil {
+			go func() { <-dropCh }()
+		}
 		return
 	}
-	<-m.groupRepo.awaitDeleted(group)
+	if dropCh != nil {
+		<-dropCh
+	}
 	task.CurrentPhase = databasev1.GroupDeletionTask_PHASE_COMPLETED
 	task.Message = "group deleted successfully"
 	m.saveProgress(ctx, group, task)

@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -150,8 +149,8 @@ func (ps *propertyServer) validatePropertyTags(ctx context.Context, property *pr
 		found := false
 		for _, ts := range propSchema.Tags {
 			if ts.Name == tag.Key {
-				typ := databasev1.TagType(pbv1.MustTagValueToValueType(tag.Value))
-				if typ != databasev1.TagType_TAG_TYPE_UNSPECIFIED && ts.Type != typ {
+				typ := pbv1.MustTagValueToValueType(tag.Value)
+				if typ != pbv1.ValueTypeUnknown && pbv1.MustTagValueSpecToValueType(ts.Type) != typ {
 					return errors.Errorf("property %s tag %s type mismatch", property.Metadata.Name, tag.Key)
 				}
 				found = true

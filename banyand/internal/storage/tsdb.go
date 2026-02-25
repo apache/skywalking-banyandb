@@ -176,10 +176,15 @@ func (d *database[T, O]) Close() error {
 }
 
 // Drop closes the database and removes all data files from disk.
-func (d *database[T, O]) Drop() error {
+func (d *database[T, O]) Drop() (err error) {
 	if closeErr := d.Close(); closeErr != nil {
 		return closeErr
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("failed to remove database directory %s: %v", d.location, r)
+		}
+	}()
 	d.lfs.MustRMAll(d.location)
 	return nil
 }

@@ -626,20 +626,24 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 		rs.metrics.totalRegistryFinished.Inc(1, g, "group", "delete")
 		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "group", "delete")
 	}()
+	if g == internalDeletionTaskGroup {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+		return nil, status.Errorf(codes.PermissionDenied, "cannot delete internal system group %s", g)
+	}
 	if _, getErr := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, g); getErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
 		return nil, getErr
 	}
 	if !req.GetForce() {
 		hasResources, checkErr := rs.deletionTaskManager.hasNonEmptyResources(ctx, g)
+		if checkErr != nil {
+			rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+			return nil, checkErr
+		}
 		if hasResources {
 			rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"group %s is not empty, use force=true to delete non-empty groups", g)
-		}
-		if checkErr != nil {
-			rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
-			return nil, checkErr
 		}
 	}
 	if startErr := rs.deletionTaskManager.startDeletion(ctx, g); startErr != nil {

@@ -74,6 +74,10 @@ func (s *liaison) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
+func (s *liaison) SubscribeGroupDrop(groupName string) <-chan struct{} {
+	return s.schemaRepo.SubscribeGroupDrop(groupName)
+}
+
 func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }

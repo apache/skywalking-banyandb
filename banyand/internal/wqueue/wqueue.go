@@ -126,10 +126,15 @@ func (q *Queue[S, O]) Close() error {
 }
 
 // Drop closes the queue and removes all data files from disk.
-func (q *Queue[S, O]) Drop() error {
+func (q *Queue[S, O]) Drop() (err error) {
 	if closeErr := q.Close(); closeErr != nil {
 		return closeErr
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("failed to remove queue data at %s: %v", q.location, r)
+		}
+	}()
 	q.lfs.MustRMAll(q.location)
 	return nil
 }

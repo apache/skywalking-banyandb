@@ -318,22 +318,13 @@ func DataNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, strin
 	}
 }
 
-// LiaisonNode runs a liaison node.
-func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr string, closeFn func()) {
-	grpcAddr, _, closeFn = LiaisonNodeWithHTTP(etcdEndpoint, flags...)
-	return
-}
-
-// LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
-func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, func()) {
+func startLiaisonNode(etcdEndpoint, path string, flags ...string) (string, string, func()) {
 	ports, err := test.AllocateFreePorts(3)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	grpcAddr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
-	path, deferFn, err := test.NewSpace()
 	logger.Infof("liaison test directory: %s", path)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "liaison",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
@@ -372,6 +363,33 @@ func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, 
 			return nil
 		})
 		fmt.Println("done")
+		closeFn()
+	}
+}
+
+// LiaisonNode runs a liaison node.
+func LiaisonNode(etcdEndpoint string, flags ...string) (grpcAddr string, closeFn func()) {
+	grpcAddr, _, closeFn = LiaisonNodeWithHTTP(etcdEndpoint, flags...)
+	return
+}
+
+// LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
+func LiaisonNodeWithHTTP(etcdEndpoint string, flags ...string) (string, string, func()) {
+	dataDir, deferFn, dirErr := test.NewSpace()
+	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
+	grpcAddr, httpAddr, closeFn := startLiaisonNode(etcdEndpoint, dataDir, flags...)
+	return grpcAddr, httpAddr, func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// LiaisonNodeWithAddrAndDir runs a liaison node and returns the gRPC address, root data path, and closer.
+func LiaisonNodeWithAddrAndDir(etcdEndpoint string, flags ...string) (string, string, func()) {
+	dataDir, deferFn, dirErr := test.NewSpace()
+	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
+	grpcAddr, _, closeFn := startLiaisonNode(etcdEndpoint, dataDir, flags...)
+	return grpcAddr, dataDir, func() {
 		closeFn()
 		deferFn()
 	}

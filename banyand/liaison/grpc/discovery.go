@@ -142,9 +142,8 @@ func (i identity) String() string {
 var _ schema.EventHandler = (*groupRepo)(nil)
 
 type groupInflight struct {
-	done    chan struct{}
-	deleted chan struct{}
-	wg      sync.WaitGroup
+	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 type groupRepo struct {
@@ -187,25 +186,12 @@ func (s *groupRepo) startPendingDeletion(groupName string) <-chan struct{} {
 		s.inflight[groupName] = item
 	}
 	item.done = make(chan struct{})
-	item.deleted = make(chan struct{})
 	s.RWMutex.Unlock()
 	go func() {
 		item.wg.Wait()
 		close(item.done)
 	}()
 	return item.done
-}
-
-func (s *groupRepo) awaitDeleted(groupName string) <-chan struct{} {
-	s.RWMutex.RLock()
-	item, ok := s.inflight[groupName]
-	s.RWMutex.RUnlock()
-	if ok && item.deleted != nil {
-		return item.deleted
-	}
-	ch := make(chan struct{})
-	close(ch)
-	return ch
 }
 
 func (s *groupRepo) clearPendingDeletion(groupName string) {
@@ -244,9 +230,6 @@ func (s *groupRepo) OnDelete(schemaMetadata schema.Metadata) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	delete(s.resourceOpts, group.Metadata.GetName())
-	if item, ok := s.inflight[group.Metadata.GetName()]; ok && item.deleted != nil {
-		close(item.deleted)
-	}
 }
 
 func (s *groupRepo) shardNum(groupName string) (uint32, bool) {

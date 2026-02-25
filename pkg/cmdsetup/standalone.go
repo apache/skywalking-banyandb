@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -82,7 +83,12 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		StreamLiaisonNodeRegistry:  nr,
 		PropertyNodeRegistry:       nr,
 		TraceLiaisonNodeRegistry:   nr,
-	}, metricSvc, pm, nil)
+	}, metricSvc, pm, nil, &standaloneGroupDropSubscriber{
+		streamSvc:   streamSvc,
+		measureSvc:  measureSvc,
+		traceSvc:    traceSvc,
+		propertySvc: propertySvc,
+	})
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 
@@ -126,4 +132,28 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	}
 	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
 	return standaloneCmd
+}
+
+type standaloneGroupDropSubscriber struct {
+	streamSvc   stream.Service
+	measureSvc  measure.Service
+	traceSvc    trace.Service
+	propertySvc property.Service
+}
+
+func (w *standaloneGroupDropSubscriber) SubscribeGroupDrop(catalog commonv1.Catalog, groupName string) <-chan struct{} {
+	switch catalog {
+	case commonv1.Catalog_CATALOG_STREAM:
+		return w.streamSvc.SubscribeGroupDrop(groupName)
+	case commonv1.Catalog_CATALOG_MEASURE:
+		return w.measureSvc.SubscribeGroupDrop(groupName)
+	case commonv1.Catalog_CATALOG_TRACE:
+		return w.traceSvc.SubscribeGroupDrop(groupName)
+	case commonv1.Catalog_CATALOG_PROPERTY:
+		return w.propertySvc.SubscribeGroupDrop(groupName)
+	case commonv1.Catalog_CATALOG_UNSPECIFIED:
+	}
+	ch := make(chan struct{})
+	close(ch)
+	return ch
 }

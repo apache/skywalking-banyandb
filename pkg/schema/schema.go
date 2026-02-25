@@ -110,4 +110,5 @@ type Repository interface {
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	Close()
 	StopCh() <-chan struct{}
+	SubscribeGroupDrop(groupName string) <-chan struct{}
 }

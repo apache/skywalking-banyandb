@@ -300,6 +300,10 @@ func (l *liaison) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return l.schemaRepo.LoadGroup(name)
 }
 
+func (l *liaison) SubscribeGroupDrop(groupName string) <-chan struct{} {
+	return l.schemaRepo.SubscribeGroupDrop(groupName)
+}
+
 func (l *liaison) Trace(metadata *commonv1.Metadata) (Trace, error) {
 	sm, ok := l.schemaRepo.Trace(metadata)
 	if !ok {

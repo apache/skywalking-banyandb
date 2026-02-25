@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package integration_inspect_test provides integration tests for the inspect functionality in distributed mode.
-package integration_inspect_test
+// Package integration_inspection_test provides integration tests for the inspect functionality in distributed mode.
+package integration_inspection_test
 
 import (
 	"context"
