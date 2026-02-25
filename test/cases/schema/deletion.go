@@ -197,6 +197,7 @@ func VerifyMeasureDeletion(ctx context.Context, clients *Clients, groupName, mea
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
+	time.Sleep(2 * time.Second)
 	if err := verifyMeasureQuery(ctx, clients.MeasureWriteClient, groupName, secondMeasureName, 100); err != nil {
 		return fmt.Errorf("step 5 failed - verify query: %w", err)
 	}
@@ -233,6 +234,7 @@ func VerifyStreamDeletion(ctx context.Context, clients *Clients, groupName, stre
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
+	time.Sleep(2 * time.Second)
 	if err := verifyStreamQuery(ctx, clients.StreamWriteClient, groupName, secondStreamName, 100); err != nil {
 		return fmt.Errorf("step 5 failed - verify query: %w", err)
 	}
@@ -269,6 +271,7 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
+	time.Sleep(2 * time.Second)
 	if err := verifyTraceQuery(ctx, clients.TraceWriteClient, groupName, secondTraceName, 100); err != nil {
 		return fmt.Errorf("step 5 failed - verify query: %w", err)
 	}
@@ -364,10 +367,15 @@ func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
 			break
-		} else if recvErr != nil {
+		}
+		if recvErr != nil {
 			return recvErr
+		}
+		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
+			return fmt.Errorf("write failed with status: %s", resp.Status)
 		}
 	}
 	return nil
@@ -401,10 +409,15 @@ func writeStreamData(ctx context.Context, client streamv1.StreamServiceClient, g
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
 			break
-		} else if recvErr != nil {
+		}
+		if recvErr != nil {
 			return recvErr
+		}
+		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
+			return fmt.Errorf("write failed with status: %s", resp.Status)
 		}
 	}
 	return nil
@@ -437,10 +450,15 @@ func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, grou
 		return err
 	}
 	for {
-		if _, recvErr := writeClient.Recv(); errors.Is(recvErr, io.EOF) {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
 			break
-		} else if recvErr != nil {
+		}
+		if recvErr != nil {
 			return recvErr
+		}
+		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
+			return fmt.Errorf("write failed with status: %s", resp.Status)
 		}
 	}
 	return nil
