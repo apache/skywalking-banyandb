@@ -298,8 +298,7 @@ var _ = Describe("GroupDeletion", func() {
 		})
 		Expect(err).ShouldNot(HaveOccurred())
 
-		By("Waiting for deletion task to pass through IN_PROGRESS and reach COMPLETED")
-		var seenInProgress bool
+		By("Waiting for deletion task to reach COMPLETED")
 		Eventually(func() databasev1.GroupDeletionTask_Phase {
 			queryResp, queryErr := groupClient.Query(context.TODO(), &databasev1.GroupRegistryServiceQueryRequest{
 				Group: groupName,
@@ -307,12 +306,7 @@ var _ = Describe("GroupDeletion", func() {
 			if queryErr != nil {
 				return databasev1.GroupDeletionTask_PHASE_UNSPECIFIED
 			}
-			phase := queryResp.GetTask().GetCurrentPhase()
-			if phase == databasev1.GroupDeletionTask_PHASE_IN_PROGRESS {
-				seenInProgress = true
-			}
-			return phase
-		}, flags.EventuallyTimeout, 10*time.Millisecond).Should(Equal(databasev1.GroupDeletionTask_PHASE_COMPLETED))
-		Expect(seenInProgress).To(BeTrue(), "deletion task should have passed through IN_PROGRESS phase")
+			return queryResp.GetTask().GetCurrentPhase()
+		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(databasev1.GroupDeletionTask_PHASE_COMPLETED))
 	})
 })

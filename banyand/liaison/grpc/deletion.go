@@ -109,14 +109,14 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 }
 
 func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group string) error {
-	if _, loaded := m.tasks.LoadOrStore(group, true); loaded {
-		return fmt.Errorf("deletion task for group %s is already in progress", group)
-	}
 	task := &databasev1.GroupDeletionTask{
 		CurrentPhase:  databasev1.GroupDeletionTask_PHASE_PENDING,
 		TotalCounts:   make(map[string]int32),
 		DeletedCounts: make(map[string]int32),
 		CreatedAt:     timestamppb.Now(),
+	}
+	if _, loaded := m.tasks.LoadOrStore(group, task); loaded {
+		return fmt.Errorf("deletion task for group %s is already in progress", group)
 	}
 	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
@@ -137,7 +137,6 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 }
 
 func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group string, task *databasev1.GroupDeletionTask) {
-	defer m.tasks.Delete(group)
 	opt := schema.ListOpt{Group: group}
 
 	task.Message = "waiting for in-flight requests to complete"
@@ -170,9 +169,12 @@ func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group st
 	task.Message = "deleting group and data files"
 	var dropCh <-chan struct{}
 	if m.dropSubscriber != nil {
-		if groupMeta, getErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group); getErr == nil {
-			dropCh = m.dropSubscriber.SubscribeGroupDrop(groupMeta.Catalog, group)
+		groupMeta, getErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group)
+		if getErr != nil {
+			m.failTask(ctx, group, task, fmt.Sprintf("failed to get group for drop subscription: %v", getErr))
+			return
 		}
+		dropCh = m.dropSubscriber.SubscribeGroupDrop(groupMeta.Catalog, group)
 	}
 	_, deleteGroupErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
 	if deleteGroupErr != nil {
@@ -324,6 +326,7 @@ func (m *groupDeletionTaskManager) runStep(
 
 func (m *groupDeletionTaskManager) saveProgress(ctx context.Context, group string, task *databasev1.GroupDeletionTask) {
 	snapshot := proto.Clone(task).(*databasev1.GroupDeletionTask)
+	m.tasks.Store(group, snapshot)
 	if saveErr := m.saveDeletionTask(ctx, group, snapshot); saveErr != nil {
 		m.log.Error().Err(saveErr).Str("group", group).Msg("failed to save deletion progress")
 	}
@@ -366,6 +369,11 @@ func (m *groupDeletionTaskManager) saveDeletionTask(ctx context.Context, group s
 }
 
 func (m *groupDeletionTaskManager) getDeletionTask(ctx context.Context, group string) (*databasev1.GroupDeletionTask, error) {
+	if v, ok := m.tasks.Load(group); ok {
+		if task, isTask := v.(*databasev1.GroupDeletionTask); isTask {
+			return proto.Clone(task).(*databasev1.GroupDeletionTask), nil
+		}
+	}
 	resp, queryErr := m.propServer.Query(ctx, &propertyv1.QueryRequest{
 		Groups: []string{internalDeletionTaskGroup},
 		Name:   internalDeletionTaskPropertyName,

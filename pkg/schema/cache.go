@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -205,7 +204,8 @@ func (sr *schemaRepo) Watcher() {
 						switch evt.Kind {
 						case EventKindGroup:
 							err = sr.deleteGroup(evt.Metadata.GetMetadata())
-							if dropCh, loaded := sr.pendingGroupDrops.LoadAndDelete(evt.Metadata.GetMetadata().GetName()); loaded {
+							groupName := evt.Metadata.GetMetadata().GetName()
+							if dropCh, loaded := sr.pendingGroupDrops.LoadAndDelete(groupName); loaded {
 								close(dropCh.(chan struct{}))
 							}
 						case EventKindResource:
@@ -306,7 +306,6 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
 	g, loaded := sr.groupMap.LoadAndDelete(name)
-	log.Info().Str("group", name).Bool("loaded", loaded).Msg("deleting group")
 	if !loaded {
 		return nil
 	}
