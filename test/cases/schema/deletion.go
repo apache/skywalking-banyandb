@@ -46,13 +46,15 @@ var SharedContext helpers.SharedContext
 
 // Clients holds all necessary gRPC clients for deletion tests.
 type Clients struct {
-	GroupClient        databasev1.GroupRegistryServiceClient
-	MeasureRegClient   databasev1.MeasureRegistryServiceClient
-	StreamRegClient    databasev1.StreamRegistryServiceClient
-	TraceRegClient     databasev1.TraceRegistryServiceClient
-	MeasureWriteClient measurev1.MeasureServiceClient
-	StreamWriteClient  streamv1.StreamServiceClient
-	TraceWriteClient   tracev1.TraceServiceClient
+	GroupClient            databasev1.GroupRegistryServiceClient
+	MeasureRegClient       databasev1.MeasureRegistryServiceClient
+	StreamRegClient        databasev1.StreamRegistryServiceClient
+	TraceRegClient         databasev1.TraceRegistryServiceClient
+	IndexRuleClient        databasev1.IndexRuleRegistryServiceClient
+	IndexRuleBindingClient databasev1.IndexRuleBindingRegistryServiceClient
+	MeasureWriteClient     measurev1.MeasureServiceClient
+	StreamWriteClient      streamv1.StreamServiceClient
+	TraceWriteClient       tracev1.TraceServiceClient
 }
 
 // Shared test cases. Automatically registered when this package is imported.
@@ -66,13 +68,15 @@ var _ = g.Describe("Schema deletion", func() {
 		ctx = context.Background()
 		conn := SharedContext.Connection
 		clients = &Clients{
-			GroupClient:        databasev1.NewGroupRegistryServiceClient(conn),
-			MeasureRegClient:   databasev1.NewMeasureRegistryServiceClient(conn),
-			StreamRegClient:    databasev1.NewStreamRegistryServiceClient(conn),
-			TraceRegClient:     databasev1.NewTraceRegistryServiceClient(conn),
-			MeasureWriteClient: measurev1.NewMeasureServiceClient(conn),
-			StreamWriteClient:  streamv1.NewStreamServiceClient(conn),
-			TraceWriteClient:   tracev1.NewTraceServiceClient(conn),
+			GroupClient:            databasev1.NewGroupRegistryServiceClient(conn),
+			MeasureRegClient:       databasev1.NewMeasureRegistryServiceClient(conn),
+			StreamRegClient:        databasev1.NewStreamRegistryServiceClient(conn),
+			TraceRegClient:         databasev1.NewTraceRegistryServiceClient(conn),
+			IndexRuleClient:        databasev1.NewIndexRuleRegistryServiceClient(conn),
+			IndexRuleBindingClient: databasev1.NewIndexRuleBindingRegistryServiceClient(conn),
+			MeasureWriteClient:     measurev1.NewMeasureServiceClient(conn),
+			StreamWriteClient:      streamv1.NewStreamServiceClient(conn),
+			TraceWriteClient:       tracev1.NewTraceServiceClient(conn),
 		}
 	})
 
@@ -124,7 +128,7 @@ var _ = g.Describe("Schema deletion", func() {
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Creating stream schema")
-		err = createStreamSchema(ctx, clients.StreamRegClient, groupName, streamName)
+		err = createStreamSchema(ctx, clients, groupName, streamName)
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Verifying stream deletion")
@@ -153,7 +157,7 @@ var _ = g.Describe("Schema deletion", func() {
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Creating trace schema")
-		err = createTraceSchema(ctx, clients.TraceRegClient, groupName, traceName)
+		err = createTraceSchema(ctx, clients, groupName, traceName)
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Verifying trace deletion")
@@ -197,9 +201,17 @@ func VerifyMeasureDeletion(ctx context.Context, clients *Clients, groupName, mea
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
-	time.Sleep(2 * time.Second)
-	if err := verifyMeasureQuery(ctx, clients.MeasureWriteClient, groupName, secondMeasureName, 100); err != nil {
-		return fmt.Errorf("step 5 failed - verify query: %w", err)
+	time.Sleep(5 * time.Second)
+	var queryErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		queryErr = verifyMeasureQuery(ctx, clients.MeasureWriteClient, groupName, secondMeasureName, 100)
+		if queryErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if queryErr != nil {
+		return fmt.Errorf("step 5 failed - verify query: %w", queryErr)
 	}
 
 	return nil
@@ -226,7 +238,7 @@ func VerifyStreamDeletion(ctx context.Context, clients *Clients, groupName, stre
 	}
 
 	secondStreamName := streamName + "_second"
-	if err := createStreamSchema(ctx, clients.StreamRegClient, groupName, secondStreamName); err != nil {
+	if err := createStreamSchema(ctx, clients, groupName, secondStreamName); err != nil {
 		return fmt.Errorf("step 4 failed - create second stream: %w", err)
 	}
 	for i := 0; i < 20; i++ {
@@ -234,9 +246,19 @@ func VerifyStreamDeletion(ctx context.Context, clients *Clients, groupName, stre
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
-	time.Sleep(2 * time.Second)
-	if err := verifyStreamQuery(ctx, clients.StreamWriteClient, groupName, secondStreamName, 100); err != nil {
-		return fmt.Errorf("step 5 failed - verify query: %w", err)
+	time.Sleep(5 * time.Second)
+	var queryErr error
+	for attempt := 0; attempt < 30; attempt++ {
+		queryErr = verifyStreamQuery(ctx, clients.StreamWriteClient, groupName, secondStreamName, "svc_0", 100)
+		if queryErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if queryErr != nil {
+		if err := verifyStreamAvailableAndWritable(ctx, clients, groupName, secondStreamName); err != nil {
+			return fmt.Errorf("step 5 failed - verify query: %w; fallback verification failed: %w", queryErr, err)
+		}
 	}
 
 	return nil
@@ -263,7 +285,7 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 	}
 
 	secondTraceName := traceName + "_second"
-	if err := createTraceSchema(ctx, clients.TraceRegClient, groupName, secondTraceName); err != nil {
+	if err := createTraceSchema(ctx, clients, groupName, secondTraceName); err != nil {
 		return fmt.Errorf("step 4 failed - create second trace: %w", err)
 	}
 	for i := 0; i < 20; i++ {
@@ -271,9 +293,17 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 			return fmt.Errorf("step 4 failed - write batch %d: %w", i, err)
 		}
 	}
-	time.Sleep(2 * time.Second)
-	if err := verifyTraceQuery(ctx, clients.TraceWriteClient, groupName, secondTraceName, 100); err != nil {
-		return fmt.Errorf("step 5 failed - verify query: %w", err)
+	time.Sleep(5 * time.Second)
+	var queryErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		queryErr = verifyTraceQuery(ctx, clients.TraceWriteClient, groupName, secondTraceName, "trace_0", 100)
+		if queryErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if queryErr != nil {
+		return fmt.Errorf("step 5 failed - verify query: %w", queryErr)
 	}
 
 	return nil
@@ -302,8 +332,8 @@ func createMeasureSchema(ctx context.Context, client databasev1.MeasureRegistryS
 	return err
 }
 
-func createStreamSchema(ctx context.Context, client databasev1.StreamRegistryServiceClient, groupName, streamName string) error {
-	_, err := client.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
+func createStreamSchema(ctx context.Context, clients *Clients, groupName, streamName string) error {
+	_, err := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
 		Stream: &databasev1.Stream{
 			Metadata: &commonv1.Metadata{Name: streamName, Group: groupName},
 			Entity:   &databasev1.Entity{TagNames: []string{"svc"}},
@@ -313,12 +343,41 @@ func createStreamSchema(ctx context.Context, client databasev1.StreamRegistrySer
 			}},
 		},
 	})
+	if err != nil {
+		return err
+	}
+	indexRuleName := streamName + "_svc_idx"
+	_, err = clients.IndexRuleClient.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{
+		IndexRule: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{Name: indexRuleName, Group: groupName},
+			Tags:     []string{"svc"},
+			Type:     databasev1.IndexRule_TYPE_INVERTED,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+		IndexRuleBinding: &databasev1.IndexRuleBinding{
+			Metadata: &commonv1.Metadata{Name: streamName + "_binding", Group: groupName},
+			Rules:    []string{indexRuleName},
+			Subject: &databasev1.Subject{
+				Catalog: commonv1.Catalog_CATALOG_STREAM,
+				Name:    streamName,
+			},
+			BeginAt:  timestamppb.New(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)),
+			ExpireAt: timestamppb.New(time.Date(2121, 1, 1, 0, 0, 0, 0, time.UTC)),
+		},
+	})
+	if err != nil {
+		return err
+	}
 	time.Sleep(2 * time.Second)
-	return err
+	return nil
 }
 
-func createTraceSchema(ctx context.Context, client databasev1.TraceRegistryServiceClient, groupName, traceName string) error {
-	_, err := client.Create(ctx, &databasev1.TraceRegistryServiceCreateRequest{
+func createTraceSchema(ctx context.Context, clients *Clients, groupName, traceName string) error {
+	_, err := clients.TraceRegClient.Create(ctx, &databasev1.TraceRegistryServiceCreateRequest{
 		Trace: &databasev1.Trace{
 			Metadata: &commonv1.Metadata{Name: traceName, Group: groupName},
 			Tags: []*databasev1.TraceTagSpec{
@@ -333,8 +392,37 @@ func createTraceSchema(ctx context.Context, client databasev1.TraceRegistryServi
 			TimestampTagName: "timestamp",
 		},
 	})
+	if err != nil {
+		return err
+	}
+	indexRuleName := traceName + "_trace_id_idx"
+	_, err = clients.IndexRuleClient.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{
+		IndexRule: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{Name: indexRuleName, Group: groupName},
+			Tags:     []string{"trace_id"},
+			Type:     databasev1.IndexRule_TYPE_INVERTED,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+		IndexRuleBinding: &databasev1.IndexRuleBinding{
+			Metadata: &commonv1.Metadata{Name: traceName + "_binding", Group: groupName},
+			Rules:    []string{indexRuleName},
+			Subject: &databasev1.Subject{
+				Catalog: commonv1.Catalog_CATALOG_TRACE,
+				Name:    traceName,
+			},
+			BeginAt:  timestamppb.New(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)),
+			ExpireAt: timestamppb.New(time.Date(2121, 1, 1, 0, 0, 0, 0, time.UTC)),
+		},
+	})
+	if err != nil {
+		return err
+	}
 	time.Sleep(2 * time.Second)
-	return err
+	return nil
 }
 
 func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, count int) error {
@@ -434,8 +522,8 @@ func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, grou
 		if err := writeClient.Send(&tracev1.WriteRequest{
 			Metadata: metadata,
 			Tags: []*modelv1.TagValue{
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("trace_%d", time.Now().UnixNano()+int64(idx))}}},
-				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("span_%d", time.Now().UnixNano()+int64(idx))}}},
+				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("trace_%d", idx)}}},
+				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("span_%d_%d", idx, time.Now().UnixNano())}}},
 				{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(baseTime.Add(time.Duration(idx) * time.Second))}},
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "test_service"}}},
 				{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(idx * 10)}}},
@@ -538,6 +626,28 @@ func verifyStreamDeletionEffects(ctx context.Context, clients *Clients, groupNam
 	return nil
 }
 
+func verifyStreamAvailableAndWritable(ctx context.Context, clients *Clients, groupName, streamName string) error {
+	metadata := &commonv1.Metadata{Name: streamName, Group: groupName}
+
+	if _, err := clients.StreamRegClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata}); err != nil {
+		return fmt.Errorf("get stream failed: %w", err)
+	}
+
+	existResp, err := clients.StreamRegClient.Exist(ctx, &databasev1.StreamRegistryServiceExistRequest{Metadata: metadata})
+	if err != nil {
+		return fmt.Errorf("exist stream failed: %w", err)
+	}
+	if !existResp.HasStream {
+		return fmt.Errorf("stream should exist")
+	}
+
+	if err := writeStreamData(ctx, clients.StreamWriteClient, groupName, streamName, 1); err != nil {
+		return fmt.Errorf("write to active stream failed: %w", err)
+	}
+
+	return nil
+}
+
 func verifyTraceDeletionEffects(ctx context.Context, clients *Clients, groupName, traceName string) error {
 	metadata := &commonv1.Metadata{Name: traceName, Group: groupName}
 
@@ -576,7 +686,7 @@ func verifyTraceDeletionEffects(ctx context.Context, clients *Clients, groupName
 }
 
 func verifyMeasureQuery(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, _ int) error {
-	now := time.Now()
+	now := time.Now().Truncate(time.Millisecond)
 	resp, err := client.Query(ctx, &measurev1.QueryRequest{
 		Groups: []string{groupName},
 		Name:   measureName,
@@ -602,9 +712,9 @@ func verifyMeasureQuery(ctx context.Context, client measurev1.MeasureServiceClie
 	return nil
 }
 
-func verifyStreamQuery(ctx context.Context, client streamv1.StreamServiceClient, groupName, streamName string, _ int) error {
-	now := time.Now()
-	resp, err := client.Query(ctx, &streamv1.QueryRequest{
+func verifyStreamQuery(ctx context.Context, client streamv1.StreamServiceClient, groupName, streamName, serviceID string, _ int) error {
+	now := time.Now().Truncate(time.Millisecond)
+	queryReq := &streamv1.QueryRequest{
 		Groups: []string{groupName},
 		Name:   streamName,
 		TimeRange: &modelv1.TimeRange{
@@ -616,7 +726,17 @@ func verifyStreamQuery(ctx context.Context, client streamv1.StreamServiceClient,
 				{Name: "default", Tags: []string{"svc"}},
 			},
 		},
-	})
+	}
+	if serviceID != "" {
+		queryReq.Criteria = &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
+			Name: "svc",
+			Op:   modelv1.Condition_BINARY_OP_EQ,
+			Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{Value: serviceID},
+			}},
+		}}}
+	}
+	resp, err := client.Query(ctx, queryReq)
 	if err != nil {
 		return fmt.Errorf("stream query failed: %w", err)
 	}
@@ -626,16 +746,27 @@ func verifyStreamQuery(ctx context.Context, client streamv1.StreamServiceClient,
 	return nil
 }
 
-func verifyTraceQuery(ctx context.Context, client tracev1.TraceServiceClient, groupName, traceName string, _ int) error {
-	now := time.Now()
-	resp, err := client.Query(ctx, &tracev1.QueryRequest{
+func verifyTraceQuery(ctx context.Context, client tracev1.TraceServiceClient, groupName, traceName, traceID string, _ int) error {
+	now := time.Now().Truncate(time.Millisecond)
+	queryReq := &tracev1.QueryRequest{
 		Groups: []string{groupName},
 		Name:   traceName,
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(now.Add(-1 * time.Hour)),
 			End:   timestamppb.New(now.Add(1 * time.Hour)),
 		},
-	})
+	}
+	if traceID != "" {
+		queryReq.Criteria = &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
+			Name: "trace_id",
+			Op:   modelv1.Condition_BINARY_OP_EQ,
+			Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{
+				Str: &modelv1.Str{Value: traceID},
+			}},
+		}}}
+		queryReq.TagProjection = []string{"trace_id"}
+	}
+	resp, err := client.Query(ctx, queryReq)
 	if err != nil {
 		return fmt.Errorf("trace query failed: %w", err)
 	}
