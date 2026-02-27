@@ -348,7 +348,10 @@ func (wr WriteRequest) Validate() error {
 
 // Validate validates a QueryRequest for correctness.
 func (qr QueryRequest) Validate() error {
-	if len(qr.SeriesIDs) == 0 {
+	// When SeriesIDs is non-nil but empty, treat it as an invalid request.
+	// A nil slice means "no restriction" (all series), which is required for
+	// callers like the trace module that may not have entity information.
+	if qr.SeriesIDs != nil && len(qr.SeriesIDs) == 0 {
 		return fmt.Errorf("at least one SeriesID is required")
 	}
 	if qr.MaxBatchSize < 0 {

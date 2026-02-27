@@ -228,12 +228,12 @@ func (t *trace) prepareSIDXStreaming(
 		return nil, sidx.QueryRequest{}, false
 	}
 
-	seriesIDs := make([]common.SeriesID, 0, len(qo.seriesToEntity))
-	for seriesID := range qo.seriesToEntity {
-		seriesIDs = append(seriesIDs, seriesID)
-	}
-	if len(seriesIDs) == 0 {
-		seriesIDs = []common.SeriesID{1}
+	var seriesIDs []common.SeriesID
+	if len(qo.seriesToEntity) > 0 {
+		seriesIDs = make([]common.SeriesID, 0, len(qo.seriesToEntity))
+		for seriesID := range qo.seriesToEntity {
+			seriesIDs = append(seriesIDs, seriesID)
+		}
 	}
 
 	// Extract timestamps from TimeRange for time-based part selection optimization
