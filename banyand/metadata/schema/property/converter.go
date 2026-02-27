@@ -166,7 +166,7 @@ func ParseTags(tags []*modelv1.Tag) ParsedTags {
 	return pt
 }
 
-func buildSchemaQuery(kind schema.Kind, group, name string) *propertyv1.QueryRequest {
+func buildSchemaQuery(kind schema.Kind, group, name string, sinceRevision int64) *propertyv1.QueryRequest {
 	query := &propertyv1.QueryRequest{
 		Groups: []string{schema.SchemaGroup},
 		Name:   kind.String(),
@@ -175,8 +175,11 @@ func buildSchemaQuery(kind schema.Kind, group, name string) *propertyv1.QueryReq
 		// for the group case, the group value could be empty
 		metadata := &commonv1.Metadata{Group: group, Name: name}
 		query.Ids = []string{BuildPropertyID(kind, metadata)}
-	} else if group != "" {
-		query.Criteria = &modelv1.Criteria{
+		return query
+	}
+	var conditions []*modelv1.Criteria
+	if group != "" {
+		conditions = append(conditions, &modelv1.Criteria{
 			Exp: &modelv1.Criteria_Condition{
 				Condition: &modelv1.Condition{
 					Name: TagKeyGroup,
@@ -186,6 +189,31 @@ func buildSchemaQuery(kind schema.Kind, group, name string) *propertyv1.QueryReq
 					},
 				},
 			},
+		})
+	}
+	if sinceRevision > 0 {
+		conditions = append(conditions, &modelv1.Criteria{
+			Exp: &modelv1.Criteria_Condition{
+				Condition: &modelv1.Condition{
+					Name: TagKeyUpdatedAt,
+					Op:   modelv1.Condition_BINARY_OP_GT,
+					Value: &modelv1.TagValue{
+						Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sinceRevision}},
+					},
+				},
+			},
+		})
+	}
+	switch len(conditions) {
+	case 1:
+		query.Criteria = conditions[0]
+	case 2:
+		query.Criteria = &modelv1.Criteria{
+			Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
+				Op:    modelv1.LogicalExpression_LOGICAL_OP_AND,
+				Left:  conditions[0],
+				Right: conditions[1],
+			}},
 		}
 	}
 	return query

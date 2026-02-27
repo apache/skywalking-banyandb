@@ -81,7 +81,6 @@ type SchemaRegistry struct {
 	cache              *schemaCache
 	caCertReloader     *pkgtls.Reloader
 	handlers           map[schema.Kind][]schema.EventHandler
-	timeout            time.Duration
 	syncInterval       time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
@@ -109,10 +108,6 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		Logger:         l,
 		MaxRecvMsgSize: cfg.MaxRecvMsgSize,
 	})
-	timeout := cfg.GRPCTimeout
-	if timeout == 0 {
-		timeout = DefaultGRPCTimeout
-	}
 	syncInterval := cfg.SyncInterval
 	if syncInterval == 0 {
 		syncInterval = DefaultSyncInterval
@@ -132,7 +127,6 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		cache:              newSchemaCache(),
 		caCertReloader:     caCertReloader,
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
-		timeout:            timeout,
 		syncInterval:       syncInterval,
 		fullReconcileEvery: fullReconcileEvery,
 	}
@@ -284,15 +278,13 @@ type schemaWithDeleteTime struct {
 type syncCollector struct {
 	entries        map[schema.Kind]map[string]*schemaWithDeleteTime
 	queriedServers map[schema.Kind]map[string]bool
-	totalServers   int
 	mu             sync.Mutex
 }
 
-func newSyncCollector(totalServers int) *syncCollector {
+func newSyncCollector() *syncCollector {
 	return &syncCollector{
 		entries:        make(map[schema.Kind]map[string]*schemaWithDeleteTime),
 		queriedServers: make(map[schema.Kind]map[string]bool),
-		totalServers:   totalServers,
 	}
 }
 
@@ -315,14 +307,12 @@ func (c *syncCollector) add(serverName string, kind schema.Kind, schemas []*sche
 		}
 		existingRev := ParseTags(existing.property.GetTags()).UpdatedAt
 		newRev := ParseTags(s.property.GetTags()).UpdatedAt
-		if newRev > existingRev {
+		// Prefer higher revision. If same revision, prefer non-deleted over deleted.
+		if newRev > existingRev ||
+			newRev == existingRev && existing.deleteTime > 0 && s.deleteTime == 0 {
 			c.entries[kind][propID] = s
 		}
 	}
-}
-
-func (c *syncCollector) isFullyQueriedForKind(kind schema.Kind) bool {
-	return len(c.queriedServers[kind]) == c.totalServers
 }
 
 type propInfo struct {
@@ -445,7 +435,7 @@ func (r *SchemaRegistry) repairInconsistentNodes(ctx context.Context,
 func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 	group, name string,
 ) (*propertyv1.Property, error) {
-	query := buildSchemaQuery(kind, group, name)
+	query := buildSchemaQuery(kind, group, name, 0)
 	propMap, queryErr := r.queryAndRepairSchemas(ctx, query)
 	if queryErr != nil {
 		return nil, queryErr
@@ -461,7 +451,7 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	group string,
 ) ([]*propertyv1.Property, error) {
-	query := buildSchemaQuery(kind, group, "")
+	query := buildSchemaQuery(kind, group, "", 0)
 	propMap, queryErr := r.queryAndRepairSchemas(ctx, query)
 	if queryErr != nil {
 		return nil, queryErr
@@ -1041,7 +1031,7 @@ func (r *SchemaRegistry) performSync(ctx context.Context) {
 	if len(names) == 0 {
 		return
 	}
-	collector := newSyncCollector(len(names))
+	collector := newSyncCollector()
 	if isFullReconcile {
 		r.collectFullSync(ctx, collector)
 	} else {
@@ -1057,12 +1047,10 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 	}
 	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
 		for _, kind := range kindsToSync {
-			query := buildSchemaQuery(kind, "", "")
+			query := buildSchemaQuery(kind, "", "", 0)
 			schemas, queryErr := r.querySchemasFromClient(ctx, sc.management, query)
 			if queryErr != nil {
-				r.l.Warn().Err(queryErr).Stringer("kind", kind).Str("node", nodeName).
-					Msg("failed to query schemas for full sync")
-				continue
+				return fmt.Errorf("failed to query schemas for full sync for kind: %s", kind)
 			}
 			collector.add(nodeName, kind, schemas)
 		}
@@ -1074,8 +1062,9 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 }
 
 func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *syncCollector) {
+	sinceRevision := r.cache.GetMaxRevision()
 	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
-		updatedKindNames, queryErr := r.queryUpdatedSchemas(ctx, sc.update, r.cache.GetMaxRevision())
+		updatedKindNames, queryErr := r.queryUpdatedSchemas(ctx, sc.update, sinceRevision)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -1085,12 +1074,10 @@ func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *
 				r.l.Warn().Str("kindName", kindName).Msg("unknown kind from aggregate update")
 				continue
 			}
-			query := buildSchemaQuery(kind, "", "")
+			query := buildSchemaQuery(kind, "", "", sinceRevision)
 			schemas, schemasErr := r.querySchemasFromClient(ctx, sc.management, query)
 			if schemasErr != nil {
-				r.l.Warn().Err(schemasErr).Stringer("kind", kind).Str("node", nodeName).
-					Msg("failed to query schemas for incremental sync")
-				continue
+				return fmt.Errorf("failed to query updated schemas for kind %s: %w", kind, schemasErr)
 			}
 			collector.add(nodeName, kind, schemas)
 		}
@@ -1119,13 +1106,6 @@ func (r *SchemaRegistry) reconcileFromCollector(collector *syncCollector) {
 				continue
 			}
 			r.processInitialResourceFromProperty(kind, s.property, md.Spec.(proto.Message))
-		}
-		if collector.isFullyQueriedForKind(kind) {
-			for propID, entry := range cachedEntries {
-				if !seen[propID] {
-					r.handleDeletion(kind, propID, entry, time.Now().UnixNano())
-				}
-			}
 		}
 	}
 }
@@ -1215,7 +1195,7 @@ func (r *SchemaRegistry) initializeFromSchemaClient(ctx context.Context, sc *sch
 }
 
 func (r *SchemaRegistry) listGroupFromClient(ctx context.Context, client schemav1.SchemaManagementServiceClient) ([]*commonv1.Group, error) {
-	query := buildSchemaQuery(schema.KindGroup, "", "")
+	query := buildSchemaQuery(schema.KindGroup, "", "", 0)
 	results, queryErr := r.querySchemasFromClient(ctx, client, query)
 	if queryErr != nil {
 		return nil, queryErr
@@ -1242,7 +1222,7 @@ func (r *SchemaRegistry) listGroupFromClient(ctx context.Context, client schemav
 func (r *SchemaRegistry) initResourcesFromClient(ctx context.Context,
 	client schemav1.SchemaManagementServiceClient, kind schema.Kind, groupName string,
 ) {
-	query := buildSchemaQuery(kind, groupName, "")
+	query := buildSchemaQuery(kind, groupName, "", 0)
 	results, queryErr := r.querySchemasFromClient(ctx, client, query)
 	if queryErr != nil {
 		r.l.Warn().Err(queryErr).Stringer("kind", kind).Str("group", groupName).Msg("failed to list resources for init")
