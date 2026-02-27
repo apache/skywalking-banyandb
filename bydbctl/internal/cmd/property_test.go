@@ -458,7 +458,10 @@ var _ = Describe("Property Cluster Operation", func() {
 		)
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
-		config := setup.EtcdClusterConfig(ep)
+		// Give embedded etcd a moment after ReadyNotify to fully serve
+		// before starting data and liaison nodes to avoid transient
+		// "use of closed network connection" errors in CI.
+		time.Sleep(2 * time.Second)
 		By("Starting data node 0")
 		_, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir)
 		By("Starting data node 1")
@@ -629,7 +632,8 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		)
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
-		config := setup.EtcdClusterConfig(ep)
+		// Allow embedded etcd to stabilize networking before nodes connect.
+		time.Sleep(2 * time.Second)
 		By("Starting data node 0")
 		var node1Repair, node2Repair string
 		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir, "--property-repair-enabled=true")
@@ -758,6 +762,9 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		)
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
+		// Wait briefly to ensure embedded etcd is fully serving requests
+		// before starting the data and liaison nodes.
+		time.Sleep(2 * time.Second)
 
 		clusterConfig = setup.EtcdClusterConfig(ep)
 		// Start 5 data nodes

@@ -625,7 +625,12 @@ func TestSIDX_StreamingQuery_ErrorPropagation(t *testing.T) {
 			assert.NoError(t, sidx.Close())
 		}()
 
-		resultsCh, errCh := sidx.StreamingQuery(context.Background(), QueryRequest{})
+		// Explicitly provide an empty (but non-nil) SeriesIDs slice so that
+		// validation fails while keeping the "nil means all series" behavior
+		// available for callers like the trace module.
+		resultsCh, errCh := sidx.StreamingQuery(context.Background(), QueryRequest{
+			SeriesIDs: []common.SeriesID{},
+		})
 
 		select {
 		case err, ok := <-errCh:

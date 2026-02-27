@@ -485,19 +485,36 @@ func extractOrdering(req QueryRequest) bool {
 }
 
 // selectPartsForQuery selects relevant parts from snapshot based on key range and time range.
+// If time-based filtering would exclude all key-overlapping parts (due to missing or
+// inconsistent timestamp metadata), it falls back to key-only selection to preserve
+// correctness and avoid dropping valid data.
 func selectPartsForQuery(snap *Snapshot, minKey, maxKey int64, minTimestamp, maxTimestamp *int64) []*part {
 	var selectedParts []*part
+	keyOverlapCount := 0
 
 	for _, pw := range snap.parts {
 		// Check key range overlap
 		if !pw.overlapsKeyRange(minKey, maxKey) {
 			continue
 		}
+		keyOverlapCount++
 		// Check time range overlap (only filters if both query and part have timestamps)
 		if !pw.overlapsTimeRange(minTimestamp, maxTimestamp) {
 			continue
 		}
 		selectedParts = append(selectedParts, pw.p)
+	}
+
+	// Safety fallback: if time range filtering excluded all parts that overlapped by key,
+	// fall back to key-only filtering. This guarantees we never miss data solely because
+	// of timestamp metadata issues and preserves the previous behavior.
+	if len(selectedParts) == 0 && keyOverlapCount > 0 {
+		for _, pw := range snap.parts {
+			if !pw.overlapsKeyRange(minKey, maxKey) {
+				continue
+			}
+			selectedParts = append(selectedParts, pw.p)
+		}
 	}
 
 	return selectedParts
