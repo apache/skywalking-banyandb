@@ -23,6 +23,7 @@ Release Notes.
   - From: `<data-dir>/property/data/shard-<id>/...`
   - To: `<data-dir>/property/data/<group>/shard-<id>/...`
 - Add a generic snapshot coordination package for atomic snapshot transitions across trace and sidx.
+- Support map-reduce aggregation for measure queries: map phase (partial aggregation on data nodes) and reduce phase (final aggregation on liaison).
 - Add eBPF-based KTM I/O monitor for FODC agent.
 
 ### Bug Fixes
@@ -36,6 +37,7 @@ Release Notes.
 - Fix data written to the wrong shard and related stream queries.
 - Fix the lifecycle panic when the trace has no sidx.
 - Fix panic in sidx merge and flush operations when part counts don't match expectations.
+- Fix trace queries with range conditions on the same tag (e.g., duration) combined with ORDER BY by deduplicating tag names when merging logical expression branches.
 
 ### Document
 

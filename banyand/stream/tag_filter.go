@@ -21,7 +21,10 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/blugelabs/bluge/numeric"
+
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -233,10 +236,9 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("lower is not a float value: %v", rangeOpts.Lower)
 				}
-				value := make([]byte, 0)
-				value = encoding.Int64ToBytes(value, int64(lower.Value))
+				value := convert.Int64ToBytes(numeric.Float64ToInt64(lower.Value))
 				if bytes.Compare(tf.max, value) == -1 || !rangeOpts.IncludesLower && bytes.Equal(tf.max, value) {
-					return false, nil
+					return true, nil
 				}
 			}
 			if rangeOpts.Upper != nil {
@@ -244,15 +246,14 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("upper is not a float value: %v", rangeOpts.Upper)
 				}
-				value := make([]byte, 0)
-				value = encoding.Int64ToBytes(value, int64(upper.Value))
+				value := convert.Int64ToBytes(numeric.Float64ToInt64(upper.Value))
 				if bytes.Compare(tf.min, value) == 1 || !rangeOpts.IncludesUpper && bytes.Equal(tf.min, value) {
-					return false, nil
+					return true, nil
 				}
 			}
 		}
 	}
-	return true, nil
+	return false, nil
 }
 
 // Having checks if any of the provided tag values might exist in the bloom filter.
