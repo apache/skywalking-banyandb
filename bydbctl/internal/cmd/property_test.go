@@ -645,7 +645,9 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		node1ID = fmt.Sprintf("127.0.0.1:%s", node1Port)
 		node2ID = fmt.Sprintf("127.0.0.1:%s", node2Port)
 
-		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger = gossip.NewMessengerWithoutMetadata("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			observability.NewBypassRegistry(), 9999)
 		messenger.Validate()
 		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: "not-exist",
@@ -774,7 +776,9 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		defUITemplateWithSchema(rootCmd, addr, 1, nodeCount)
 
 		// Setup gossip messenger
-		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger = gossip.NewMessengerWithoutMetadata("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			observability.NewBypassRegistry(), 9999)
 		messenger.Validate()
 		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: "test-client",

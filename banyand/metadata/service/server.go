@@ -26,10 +26,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/robfig/cron/v3"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
@@ -42,7 +42,7 @@ import (
 )
 
 var (
-	schemaTypeEtcd     = "embedetcd"
+	schemaTypeEtcd     = "etcd"
 	schemaTypeProperty = "property"
 )
 
@@ -82,7 +82,8 @@ func (s *server) Name() string {
 }
 
 func (s *server) Role() databasev1.Role {
-	if s.schemaRegistryMode == schemaTypeProperty {
+	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if s.schemaRegistryMode == schemaTypeProperty || (s.embedded && needEtcd) {
 		return databasev1.Role_ROLE_META
 	}
 	return databasev1.Role_ROLE_UNSPECIFIED
@@ -133,9 +134,6 @@ func (s *server) FlagSet() *run.FlagSet {
 func (s *server) Validate() error {
 	if s.serviceFlags == nil {
 		return errors.New("service flags are not initialized")
-	}
-	if err := s.serviceFlags.Set("schema-registry-mode", s.schemaRegistryMode); err != nil {
-		return err
 	}
 	if err := s.serviceFlags.Set("node-discovery-mode", s.nodeDiscoveryMode); err != nil {
 		return err

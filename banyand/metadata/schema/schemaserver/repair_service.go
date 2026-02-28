@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -32,7 +34,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/robfig/cron/v3"
 )
 
 // RepairService is the independent schema repair service.
@@ -52,8 +53,8 @@ type repairService struct {
 	closer         *run.Closer
 	l              *logger.Logger
 	metaNodes      map[string]struct{}
-	mu             sync.RWMutex
 	repairCron     string
+	mu             sync.RWMutex
 }
 
 // NewGossipService creates a new schema repair service.
@@ -66,7 +67,7 @@ func NewGossipService(registerGossip func(gossip.Messenger), metadata metadata.R
 		closer:         run.NewCloser(1),
 		metaNodes:      make(map[string]struct{}),
 		messenger: gossip.NewMessenger(
-			"schema_property",
+			"schema-property",
 			func(n *databasev1.Node) string { return n.PropertySchemaGossipGrpcAddress },
 			omr, metadata, pipelineClient, 17933,
 		),
