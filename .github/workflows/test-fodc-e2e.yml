@@ -85,7 +85,7 @@ jobs:
           echo $! > /tmp/write-load.pid
           echo "write-load PID: $(cat /tmp/write-load.pid)"
 
-      - name: Verify KTM metrics (fallback to SYS_ADMIN)
+      - name: Verify KTM metrics
         env:
           ENABLE_SYS_ADMIN_FALLBACK: ${{ inputs.enable_sys_admin_fallback && 'true' || 'false' }}
         run: |
