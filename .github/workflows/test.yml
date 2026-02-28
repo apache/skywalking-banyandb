@@ -68,7 +68,9 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-test-tool-ginkgo-v2.27.2-${{ hashFiles('**version.mk') }}
+      - name: Install Ginkgo
+        run: GOBIN=${{ github.workspace }}/bin go install github.com/onsi/ginkgo/v2/ginkgo@v2.27.2
       - name: Test integration and banyand
         env:
           LOAD_TEST_MINUTES: ${{ inputs.load-test-minutes }}
