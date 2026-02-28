@@ -391,10 +391,11 @@ func (s *service) newConnectionFromNode(n *databasev1.Node) (*grpc.ClientConn, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client transport credentials: %w", err)
 	}
-	conn, err := grpc.NewClient(n.PropertyRepairGossipGrpcAddress, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
-	s.log.Debug().Str("address", n.PropertyRepairGossipGrpcAddress).Msg("starting to create gRPC client connection to node")
+	address := s.addressExtractor(n)
+	conn, err := grpc.NewClient(address, append(credOpts, grpc.WithDefaultServiceConfig(retryPolicy))...)
+	s.log.Debug().Str("address", address).Msg("starting to create gRPC client connection to node")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC client connection to node %s: %w", n.PropertyRepairGossipGrpcAddress, err)
+		return nil, fmt.Errorf("failed to create gRPC client connection to node %s: %w", address, err)
 	}
 	return conn, nil
 }

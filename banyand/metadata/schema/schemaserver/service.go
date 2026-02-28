@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
+	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -67,6 +68,7 @@ type Server interface {
 	run.Config
 	run.Service
 	GetPort() *uint32
+	RegisterGossip(messenger gossip.Messenger)
 }
 
 type server struct {
@@ -109,6 +111,11 @@ func NewServer(omr observability.MetricsRegistry) Server {
 // GetPort returns the gRPC server port.
 func (s *server) GetPort() *uint32 {
 	return &s.port
+}
+
+// RegisterGossip registers the DB's repair gRPC services with the gossip messenger.
+func (s *server) RegisterGossip(messenger gossip.Messenger) {
+	s.db.RegisterGossip(messenger)
 }
 
 func (s *server) Name() string {

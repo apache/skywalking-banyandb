@@ -2320,6 +2320,7 @@ Service is the service for the API
 | labels | [Node.LabelsEntry](#banyandb-database-v1-Node-LabelsEntry) | repeated | labels is a set of key-value pairs to describe the node. |
 | property_repair_gossip_grpc_address | [string](#string) |  |  |
 | property_schema_grpc_address | [string](#string) |  |  |
+| property_schema_gossip_grpc_address | [string](#string) |  |  |
 
 
 

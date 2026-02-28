@@ -317,6 +317,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 
 		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
+		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
 	}
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)

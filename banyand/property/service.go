@@ -248,6 +248,8 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient qu
 		pm:       pm,
 		closer:   run.NewCloser(0),
 
-		gossipMessenger: gossip.NewMessenger(omr, metadata, pipelineClient),
+		gossipMessenger: gossip.NewMessenger("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			omr, metadata, pipelineClient, 17932),
 	}, nil
 }
