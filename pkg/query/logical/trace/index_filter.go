@@ -400,9 +400,10 @@ func buildFilterFromLogicalExpression(le *modelv1.LogicalExpression, schema logi
 		return nil, nil, append(leftTagNames, rightTagNames...), append(leftTraceIDs, rightTraceIDs...), minVal, maxVal, err
 	}
 
-	// Merge tag names from both sides
+	// Merge tag names from both sides (deduplicate since same tag can appear in multiple conditions)
 	collectedTagNames = append(collectedTagNames, leftTagNames...)
 	collectedTagNames = append(collectedTagNames, rightTagNames...)
+	collectedTagNames = deduplicateStrings(collectedTagNames)
 
 	// Merge trace IDs from both sides
 	traceIDs = append(traceIDs, leftTraceIDs...)

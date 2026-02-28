@@ -532,12 +532,15 @@ func (r *rangeTag) String() string {
 }
 
 func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string, analyzer *analysis.Analyzer) (ComparableExpr, error) {
-	if tagSpec := registry.FindTagSpecByName(tagName); tagSpec != nil {
-		if tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagIdx); tagVal != nil {
+	tagSpec := registry.FindTagSpecByName(tagName)
+	if tagSpec != nil {
+		tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagIdx)
+		if tagVal != nil {
 			return parseExpr(tagVal, analyzer)
 		}
+		return nil, errors.WithMessagef(ErrTagNotDefined, "tag value is nil for tag %q, tagSpec: %+v", tagName, tagSpec)
 	}
-	return nil, ErrTagNotDefined
+	return nil, errors.WithMessagef(ErrTagNotDefined, "tag %q does not exist in the current schema", tagName)
 }
 
 type matchTag struct {
