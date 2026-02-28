@@ -75,6 +75,7 @@ func TestRepairServiceNodeTracking(t *testing.T) {
 			TypeMeta: schema.TypeMeta{Name: "node-1", Kind: schema.KindNode},
 			Spec: &databasev1.Node{
 				Metadata:                        &commonv1.Metadata{Name: "node-1"},
+				Roles:                           []databasev1.Role{databasev1.Role_ROLE_META},
 				PropertySchemaGossipGrpcAddress: "127.0.0.1:9999",
 			},
 		})
