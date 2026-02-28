@@ -61,6 +61,8 @@ github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3 h1:bZvLPihpC1q1AJkmR6er
 github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3/go.mod h1:DoQeb0Ee86LyruZSL77Ddscfk/THJ38x453CRCnGEPI=
 github.com/SkyAPM/ktm-ebpf v0.0.0-20260212092237-a5cfcdc4afb0 h1:vO+Wi+2s4g4JRE7Ny5/KQcDOkHz19NvhwtatGDS4qmU=
 github.com/SkyAPM/ktm-ebpf v0.0.0-20260212092237-a5cfcdc4afb0/go.mod h1:oUklUxzpQkBmJeQcA6ObchxOUcUYw0Gl80NLJzIqVrk=
+github.com/SkyAPM/ktm-ebpf v0.0.0-20260228024820-81a19d950bff h1:pjcdkEAe+NL2bA0J/mu/Vs+eG+w+KN/BX9yGkOC1f60=
+github.com/SkyAPM/ktm-ebpf v0.0.0-20260228024820-81a19d950bff/go.mod h1:oUklUxzpQkBmJeQcA6ObchxOUcUYw0Gl80NLJzIqVrk=
 github.com/VictoriaMetrics/fastcache v1.13.2 h1:2XTB49aLSuCex7e9P5rqrfQcMkzGjh5Vq3GMFa8YpCA=
 github.com/VictoriaMetrics/fastcache v1.13.2/go.mod h1:hHXhl4DA2fTL2HTZDJFXWgW0LNjo6B+4aj2Wmng3TjU=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
