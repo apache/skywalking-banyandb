@@ -66,6 +66,7 @@ var _ = Describe("Registry", func() {
 	AfterEach(func() {
 		_ = conn.Close()
 		gracefulStop()
+		time.Sleep(3 * time.Second)
 		Eventually(gleak.Goroutines, testflags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 

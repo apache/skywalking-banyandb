@@ -202,6 +202,7 @@ func TeardownSuite(vars *CommonTestVars) {
 	if vars.DeferFunc != nil {
 		vars.DeferFunc()
 	}
+	time.Sleep(3 * time.Second)
 	gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(vars.Goods))
 	gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 }

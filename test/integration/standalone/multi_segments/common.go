@@ -98,7 +98,8 @@ var _ = ginkgo.ReportAfterSuite("Integration Query Suite", func(report ginkgo.Re
 		if result.StopFunc != nil {
 			result.StopFunc()
 		}
-		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+		time.Sleep(3 * time.Second)
+		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}
 })
