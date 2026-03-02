@@ -163,7 +163,7 @@ func (q *protocolHandler) propagation0(_ context.Context, request *propertyv1.Pr
 	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
 	span.End()
 
-	if q.addToProcess(request, tracer, tracer.ActivateSpan()) {
+	if q.addToProcess(request, tracer, span) {
 		q.s.serverMetrics.totalAddProcessed.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("add the propagation request to the process")
 	} else {
