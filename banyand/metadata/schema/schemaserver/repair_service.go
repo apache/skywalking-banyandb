@@ -192,5 +192,5 @@ func (r *repairService) doRepairGossip() error {
 			"less than 2 meta nodes with schema repair gossip address")
 		return nil
 	}
-	return r.messenger.Propagation(nodes, schemaGroup, 0)
+	return r.messenger.Propagation(nodes, schema.SchemaGroup, 0)
 }

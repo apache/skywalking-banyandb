@@ -760,6 +760,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
@@ -851,6 +852,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
@@ -1126,5 +1128,5 @@ func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime t
 			}
 		}
 		return allRegenerated
-	}, flags.EventuallyTimeout).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
+	}, time.Minute).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
 }

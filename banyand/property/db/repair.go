@@ -1018,6 +1018,11 @@ func (r *repairScheduler) verifyShouldExecuteBuildTree(t time.Time, triggerByCro
 	if !triggerByCron {
 		// if not triggered by cron, we need to check if the time is after the (last scheduled time + half of the interval)
 		if r.buildTreeClock.Now().After(r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval / 2)) {
+			r.l.Debug().Msgf("the build tree is triggered by quick repair, "+
+				"but the last build tree schedule time is %s, which is before the current time %s minus half of the interval %s(%s), "+
+				"skipping this quick build tree",
+				r.latestBuildTreeSchedule.Format(time.RFC3339), r.buildTreeClock.Now().Format(time.RFC3339),
+				(r.buildTreeScheduleInterval / 2).String(), r.latestBuildTreeSchedule.Add(r.buildTreeScheduleInterval/2).String())
 			return false
 		}
 	} else {

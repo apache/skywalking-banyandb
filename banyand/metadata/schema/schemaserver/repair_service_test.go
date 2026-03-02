@@ -168,7 +168,7 @@ func TestRepairServiceDoRepairGossip(t *testing.T) {
 		call := mock.getPropagationCall()
 		require.NotNil(t, call, "should propagate with two nodes")
 		assert.Len(t, call.nodes, 2)
-		assert.Equal(t, schemaGroup, call.group)
+		assert.Equal(t, schema.SchemaGroup, call.group)
 		assert.Equal(t, uint32(0), call.shardID)
 	})
 
@@ -184,7 +184,7 @@ func TestRepairServiceDoRepairGossip(t *testing.T) {
 		call := mock.getPropagationCall()
 		require.NotNil(t, call, "should propagate with three nodes")
 		assert.Len(t, call.nodes, 3)
-		assert.Equal(t, schemaGroup, call.group)
+		assert.Equal(t, schema.SchemaGroup, call.group)
 		assert.Equal(t, uint32(0), call.shardID)
 	})
 }
@@ -266,7 +266,7 @@ func writeProperty(t *testing.T, d db.Database, name, id string, version int64) 
 	t.Helper()
 	prop := &propertyv1.Property{
 		Metadata: &commonv1.Metadata{
-			Group:       schemaGroup,
+			Group:       schema.SchemaGroup,
 			Name:        name,
 			ModRevision: version,
 		},
@@ -290,14 +290,14 @@ func ensureShard(t *testing.T, nodes []*testNode) {
 func propagateAndVerify(t *testing.T, propagator gossip.Messenger, nodeIDs []string, verifyFn func() bool) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		_ = propagator.Propagation(nodeIDs, schemaGroup, 0)
+		_ = propagator.Propagation(nodeIDs, schema.SchemaGroup, 0)
 		return verifyFn()
 	}, 30*time.Second, time.Second)
 }
 
 func queryHasAllIDs(d db.Database, expectedIDs []string) bool {
 	results, queryErr := d.Query(context.Background(), &propertyv1.QueryRequest{
-		Groups: []string{schemaGroup},
+		Groups: []string{schema.SchemaGroup},
 		Name:   "test",
 	})
 	if queryErr != nil {
@@ -338,7 +338,7 @@ func queryLatestVersion(d db.Database, group, name, id string) int64 {
 func verifyPropertyData(t *testing.T, d db.Database, id string, expectedVersion int64) {
 	t.Helper()
 	results, queryErr := d.Query(context.Background(), &propertyv1.QueryRequest{
-		Groups: []string{schemaGroup},
+		Groups: []string{schema.SchemaGroup},
 		Name:   "test",
 		Ids:    []string{id},
 	})
@@ -354,7 +354,7 @@ func verifyPropertyData(t *testing.T, d db.Database, id string, expectedVersion 
 			continue
 		}
 		found = true
-		assert.Equal(t, schemaGroup, prop.Metadata.Group, "group mismatch for %s", id)
+		assert.Equal(t, schema.SchemaGroup, prop.Metadata.Group, "group mismatch for %s", id)
 		assert.Equal(t, "test", prop.Metadata.Name, "name mismatch for %s", id)
 		assert.Equal(t, expectedVersion, prop.Metadata.ModRevision, "version mismatch for %s", id)
 		require.NotEmpty(t, prop.Tags, "tags should not be empty for %s", id)
@@ -362,7 +362,7 @@ func verifyPropertyData(t *testing.T, d db.Database, id string, expectedVersion 
 		assert.Equal(t, fmt.Sprintf("%d", expectedVersion), prop.Tags[0].Value.GetStr().Value,
 			"tag value mismatch for %s", id)
 	}
-	assert.True(t, found, "property %s/test/%s not found", schemaGroup, id)
+	assert.True(t, found, "property %s/test/%s not found", schema.SchemaGroup, id)
 }
 
 func TestRepairServiceDataSyncTwoNodes(t *testing.T) {
@@ -375,7 +375,7 @@ func TestRepairServiceDataSyncTwoNodes(t *testing.T) {
 	writeProperty(t, node0.srv.db, "test", "entity-0", 1)
 
 	nodeIDs := []string{node0.nodeID, node1.nodeID}
-	expectedIDs := []string{schemaGroup + "/test/entity-0/1"}
+	expectedIDs := []string{schema.SchemaGroup + "/test/entity-0/1"}
 	propagateAndVerify(t, node0.messenger, nodeIDs, func() bool {
 		return queryHasAllIDs(node1.srv.db, expectedIDs)
 	})
@@ -395,8 +395,8 @@ func TestRepairServiceDataSyncThreeNodes(t *testing.T) {
 
 	allNodeIDs := []string{node0.nodeID, node1.nodeID, node2.nodeID}
 	expectedIDs := []string{
-		schemaGroup + "/test/entity-0/1",
-		schemaGroup + "/test/entity-1/2",
+		schema.SchemaGroup + "/test/entity-0/1",
+		schema.SchemaGroup + "/test/entity-1/2",
 	}
 	propagateAndVerify(t, node0.messenger, allNodeIDs, func() bool {
 		return queryHasAllIDs(node0.srv.db, expectedIDs) &&
@@ -421,7 +421,7 @@ func TestRepairServiceDataSyncVersionConflict(t *testing.T) {
 
 	nodeIDs := []string{node0.nodeID, node1.nodeID}
 	propagateAndVerify(t, node0.messenger, nodeIDs, func() bool {
-		return queryLatestVersion(node0.srv.db, schemaGroup, "test", "entity-0") == 2
+		return queryLatestVersion(node0.srv.db, schema.SchemaGroup, "test", "entity-0") == 2
 	})
 	verifyPropertyData(t, node0.srv.db, "entity-0", 2)
 }
@@ -439,9 +439,9 @@ func TestRepairServiceDataSyncMissingToFull(t *testing.T) {
 
 	nodeIDs := []string{node0.nodeID, node1.nodeID}
 	expectedIDs := []string{
-		schemaGroup + "/test/entity-0/1",
-		schemaGroup + "/test/entity-1/2",
-		schemaGroup + "/test/entity-2/3",
+		schema.SchemaGroup + "/test/entity-0/1",
+		schema.SchemaGroup + "/test/entity-1/2",
+		schema.SchemaGroup + "/test/entity-2/3",
 	}
 	propagateAndVerify(t, node0.messenger, nodeIDs, func() bool {
 		return queryHasAllIDs(node1.srv.db, expectedIDs)
