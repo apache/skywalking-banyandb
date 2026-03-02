@@ -23,6 +23,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -30,12 +32,15 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
-	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
+	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 // volatileMetricNames contains names of metrics that are known to be volatile (gauges that change frequently).
@@ -101,6 +106,15 @@ func calculateTolerance(metricKeyStr string, bufferedValue float64) float64 {
 		return percentTolerance
 	}
 	return absTolerance
+}
+
+func skipOrFailKTM(reason string) {
+	if flags.RequireKTM {
+		Fail(reason)
+		return
+	}
+	GinkgoWriter.Printf("Skipping KTM integration test: %s\n", reason)
+	Skip(reason)
 }
 
 var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
@@ -185,7 +199,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Stop metrics server
 		if metricsServer != nil {
-			stopErr := metricsServer.Stop()
+			stopErr := metricsServer.Stop(context.Background())
 			Expect(stopErr).NotTo(HaveOccurred())
 		}
 	})
@@ -280,7 +294,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		// Step 4: Parse Prometheus format and verify exported metrics match buffered metrics
 		// Strip timestamps from metric lines before parsing (Prometheus format includes optional timestamps)
 		bodyWithoutTimestamps := stripTimestampsFromPrometheusFormat(body)
-		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(bodyWithoutTimestamps, "", "", "")
+		parsedMetrics, parseErr := fodcmetrics.ParseWithAgentLabels(bodyWithoutTimestamps, "", "", "")
 		Expect(parseErr).NotTo(HaveOccurred(), "Should be able to parse Prometheus format")
 
 		Expect(len(parsedMetrics)).To(BeNumerically(">", 0), "Should have parsed at least one metric")
@@ -301,7 +315,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		exportedMetricsMap := make(map[string]float64)
 		for _, parsedMetric := range parsedMetrics {
 			// Reconstruct metric key from parsed metric
-			metricKey := metrics.MetricKey{
+			metricKey := fodcmetrics.MetricKey{
 				Name:   parsedMetric.Name,
 				Labels: parsedMetric.Labels,
 			}
@@ -333,7 +347,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 
 		// Step 6: Verify metric labels are preserved correctly
 		for _, parsedMetric := range parsedMetrics {
-			metricKey := metrics.MetricKey{
+			metricKey := fodcmetrics.MetricKey{
 				Name:   parsedMetric.Name,
 				Labels: parsedMetric.Labels,
 			}
@@ -546,7 +560,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if result != "" {
 				// Strip timestamps before parsing (Prometheus format includes optional timestamps)
 				resultWithoutTimestamps := stripTimestampsFromPrometheusFormat(result)
-				_, parseErr := metrics.ParseWithAgentLabels(resultWithoutTimestamps, "", "", "")
+				_, parseErr := fodcmetrics.ParseWithAgentLabels(resultWithoutTimestamps, "", "", "")
 				Expect(parseErr).NotTo(HaveOccurred(),
 					fmt.Sprintf("Scrape result %d should be valid Prometheus format", i))
 			}
@@ -561,8 +575,8 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 			if firstResult != "" && lastResult != "" {
 				firstResultWithoutTimestamps := stripTimestampsFromPrometheusFormat(firstResult)
 				lastResultWithoutTimestamps := stripTimestampsFromPrometheusFormat(lastResult)
-				firstMetrics, firstErr := metrics.ParseWithAgentLabels(firstResultWithoutTimestamps, "", "", "")
-				lastMetrics, lastErr := metrics.ParseWithAgentLabels(lastResultWithoutTimestamps, "", "", "")
+				firstMetrics, firstErr := fodcmetrics.ParseWithAgentLabels(firstResultWithoutTimestamps, "", "", "")
+				lastMetrics, lastErr := fodcmetrics.ParseWithAgentLabels(lastResultWithoutTimestamps, "", "", "")
 
 				if firstErr == nil && lastErr == nil {
 					// Both should have metrics (may have different values)
@@ -571,6 +585,194 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 					Expect(len(lastMetrics)).To(BeNumerically(">", 0),
 						"Last scrape should have metrics")
 				}
+			}
+		}
+	})
+
+	It("should capture and export KTM metrics when enabled", func() {
+		if runtime.GOOS != "linux" {
+			skipOrFailKTM("KTM is only supported on Linux")
+			return
+		}
+
+		// Initialize KTM for this test
+		ctx := context.Background()
+		ktmInterval := 2 * time.Second
+
+		ktmCfg := ktm.Config{
+			Enabled:  true,
+			Interval: ktmInterval,
+			Modules:  []string{"iomonitor"},
+		}
+
+		ktmLog := zerolog.New(io.Discard)
+		ktmSvc, createErr := ktm.NewKTM(ktmCfg, ktmLog)
+		if createErr != nil {
+			skipOrFailKTM(fmt.Sprintf("KTM initialization failed (may lack permissions): %v", createErr))
+			return
+		}
+
+		startErr := ktmSvc.Start(ctx)
+		if startErr != nil {
+			skipOrFailKTM(fmt.Sprintf("KTM start failed (may lack CAP_BPF or root): %v", startErr))
+			return
+		}
+		defer ktmSvc.Stop()
+
+		// Start metrics bridge goroutine
+		stopBridgeCh := make(chan struct{})
+		defer close(stopBridgeCh)
+
+		go func() {
+			ticker := time.NewTicker(ktmInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopBridgeCh:
+					return
+				case <-ticker.C:
+					rawMetrics := ktmSvc.GetMetrics()
+					if rawMetrics == nil {
+						continue
+					}
+					ktmStatus := 2.0
+					if ktmSvc.IsDegraded() {
+						ktmStatus = 1.0
+					}
+					rawMetrics = append(rawMetrics, fodcmetrics.RawMetric{
+						Name:  "ktm_status",
+						Value: ktmStatus,
+						Desc:  "KTM status: 1=Degraded (comm-only), 2=Full (cgroup+comm)",
+					})
+					if len(rawMetrics) > 0 {
+						_ = fr.Update(rawMetrics)
+					}
+				}
+			}
+		}()
+
+		// Create a temporary file to generate I/O operations for KTM to capture
+		tmpFile, tmpErr := os.CreateTemp("", "ktm-test-*.dat")
+		Expect(tmpErr).NotTo(HaveOccurred())
+		tmpFilePath := tmpFile.Name()
+		defer os.Remove(tmpFilePath)
+
+		// Write some data to generate I/O
+		testData := make([]byte, 4096)
+		for i := range testData {
+			testData[i] = byte(i % 256)
+		}
+		_, writeErr := tmpFile.Write(testData)
+		Expect(writeErr).NotTo(HaveOccurred())
+		tmpFile.Close()
+
+		// Read the file multiple times to generate read I/O
+		for i := 0; i < 10; i++ {
+			readFile, readErr := os.Open(tmpFilePath)
+			Expect(readErr).NotTo(HaveOccurred())
+			readData := make([]byte, 4096)
+			_, _ = readFile.Read(readData)
+			readFile.Close()
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// Wait for KTM to collect metrics
+		Eventually(func() bool {
+			datasources := fr.GetDatasources()
+			if len(datasources) == 0 {
+				return false
+			}
+			ds := datasources[0]
+			metricsMap := ds.GetMetrics()
+
+			// Check if any KTM metrics are present
+			for metricKey := range metricsMap {
+				if strings.Contains(metricKey, "ktm_") {
+					return true
+				}
+			}
+			return false
+		}, 10*time.Second, 500*time.Millisecond).Should(BeTrue(), "KTM metrics should be buffered in FlightRecorder")
+
+		// Verify KTM metrics are in FlightRecorder
+		datasources := fr.GetDatasources()
+		Expect(datasources).NotTo(BeEmpty())
+		ds := datasources[0]
+		metricsMap := ds.GetMetrics()
+
+		// Check for ktm_status metric
+		ktmStatusFound := false
+		for metricKey := range metricsMap {
+			if strings.Contains(metricKey, "ktm_status") {
+				ktmStatusFound = true
+				metricBuffer := metricsMap[metricKey]
+				currentValue := metricBuffer.GetCurrentValue()
+				// ktm_status should be 1 (Degraded) or 2 (Full), not 0 (Disabled)
+				Expect(currentValue).To(BeNumerically(">=", 1.0), "KTM should be enabled (status >= 1)")
+				Expect(currentValue).To(BeNumerically("<=", 2.0), "KTM status should be valid (status <= 2)")
+				GinkgoWriter.Printf("KTM status: %.0f\n", currentValue)
+				break
+			}
+		}
+		Expect(ktmStatusFound).To(BeTrue(), "ktm_status metric should be present")
+
+		// Scrape Prometheus endpoint and verify KTM metrics are exported
+		fodcMetricsURL := fmt.Sprintf("http://%s/metrics", metricsServerAddr)
+		scrapeClient := &http.Client{Timeout: 5 * time.Second}
+
+		resp, scrapeErr := scrapeClient.Get(fodcMetricsURL)
+		Expect(scrapeErr).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		Expect(readErr).NotTo(HaveOccurred())
+
+		body := string(bodyBytes)
+		GinkgoWriter.Printf("Scraped metrics (KTM test):\n%s\n", body)
+
+		// Parse metrics
+		bodyWithoutTimestamps := stripTimestampsFromPrometheusFormat(body)
+		parsedMetrics, parseErr := fodcmetrics.ParseWithAgentLabels(bodyWithoutTimestamps, "", "", "")
+		Expect(parseErr).NotTo(HaveOccurred())
+
+		// Verify KTM metrics are present in exported format
+		ktmMetricsFound := make(map[string]bool)
+		expectedKTMMetrics := []string{
+			"ktm_status",
+			"ktm_degraded",
+		}
+
+		for _, parsedMetric := range parsedMetrics {
+			for _, expectedMetric := range expectedKTMMetrics {
+				if parsedMetric.Name == expectedMetric {
+					ktmMetricsFound[expectedMetric] = true
+					GinkgoWriter.Printf("Found KTM metric: %s = %.2f\n", parsedMetric.Name, parsedMetric.Value)
+				}
+			}
+			// Also check for any other ktm_ prefixed metrics
+			if strings.HasPrefix(parsedMetric.Name, "ktm_") {
+				GinkgoWriter.Printf("Additional KTM metric: %s = %.2f\n", parsedMetric.Name, parsedMetric.Value)
+			}
+		}
+
+		// Verify at least the core KTM metrics are present
+		Expect(ktmMetricsFound["ktm_status"]).To(BeTrue(), "ktm_status should be exported")
+		// ktm_degraded is optional - it may not be present in the first collection cycle
+		if ktmMetricsFound["ktm_degraded"] {
+			GinkgoWriter.Printf("ktm_degraded metric is present\n")
+		} else {
+			GinkgoWriter.Printf("ktm_degraded metric not yet collected (this is acceptable)\n")
+		}
+
+		// Verify ktm_status value in exported metrics matches FlightRecorder
+		for _, parsedMetric := range parsedMetrics {
+			if parsedMetric.Name == "ktm_status" {
+				Expect(parsedMetric.Value).To(BeNumerically(">=", 1.0), "Exported ktm_status should indicate KTM is enabled")
+				Expect(parsedMetric.Value).To(BeNumerically("<=", 2.0), "Exported ktm_status should be valid")
 			}
 		}
 	})

@@ -322,6 +322,7 @@ graph TD
 
 ## 8. Operational Prerequisites and Observability
 
-- BTF availability and bpffs mounted are expected for fentry/fexit and map pinning where used.
-- Kernel versions must support the chosen tracepoints/fentry paths; kprobe fallbacks apply otherwise.
+- Tracefs must be mounted (usually at `/sys/kernel/tracing`) and syscall tracepoints enabled; KTM attaches via tracepoints.
+- Kernel versions must expose the required tracepoints (syscalls, filemap, vmscan); there is no fentry/kprobe fallback in the current implementation.
+- BTF availability is expected for CO-RE program loading; missing BTF prevents KTM from starting.
 - On failure to load/attach, KTM logs an error and disables itself (see Failure Modes in the design document).
