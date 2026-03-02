@@ -28,13 +28,14 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -148,8 +149,8 @@ func (ps *propertyServer) validatePropertyTags(ctx context.Context, property *pr
 		found := false
 		for _, ts := range propSchema.Tags {
 			if ts.Name == tag.Key {
-				typ := databasev1.TagType(pbv1.MustTagValueToValueType(tag.Value))
-				if typ != databasev1.TagType_TAG_TYPE_UNSPECIFIED && ts.Type != typ {
+				typ := pbv1.MustTagValueToValueType(tag.Value)
+				if typ != pbv1.ValueTypeUnknown && pbv1.MustTagValueSpecToValueType(ts.Type) != typ {
 					return errors.Errorf("property %s tag %s type mismatch", property.Metadata.Name, tag.Key)
 				}
 				found = true
@@ -191,6 +192,10 @@ func (ps *propertyServer) Apply(ctx context.Context, req *propertyv1.ApplyReques
 		return nil, err
 	}
 	g := req.Property.Metadata.Group
+	if acquireErr := ps.groupRepo.acquireRequest(g); acquireErr != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+	}
+	defer ps.groupRepo.releaseRequest(g)
 	ps.metrics.totalStarted.Inc(1, g, "property", "apply")
 	start := time.Now()
 	defer func() {
@@ -370,6 +375,10 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 		return nil, schema.BadRequest("name", "name should not be nil")
 	}
 	g := req.Group
+	if acquireErr := ps.groupRepo.acquireRequest(g); acquireErr != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+	}
+	defer ps.groupRepo.releaseRequest(g)
 	ps.metrics.totalStarted.Inc(1, g, "property", "delete")
 	start := time.Now()
 	defer func() {
@@ -415,6 +424,16 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 }
 
 func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryRequest) (resp *propertyv1.QueryResponse, err error) {
+	for _, g := range req.Groups {
+		if acquireErr := ps.groupRepo.acquireRequest(g); acquireErr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+		}
+	}
+	defer func() {
+		for _, g := range req.Groups {
+			ps.groupRepo.releaseRequest(g)
+		}
+	}()
 	ps.metrics.totalStarted.Inc(1, "", "property", "query")
 	start := time.Now()
 	defer func() {

@@ -34,7 +34,10 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-var errNotExist = errors.New("the object doesn't exist")
+var (
+	errNotExist             = errors.New("the object doesn't exist")
+	errGroupPendingDeletion = errors.New("group is pending deletion")
+)
 
 type discoveryService struct {
 	metadataRepo    metadata.Repo
@@ -138,11 +141,63 @@ func (i identity) String() string {
 
 var _ schema.EventHandler = (*groupRepo)(nil)
 
+type groupInflight struct {
+	done chan struct{}
+	wg   sync.WaitGroup
+}
+
 type groupRepo struct {
 	schema.UnimplementedOnInitHandler
 	log          *logger.Logger
 	resourceOpts map[string]*commonv1.ResourceOpts
+	inflight     map[string]*groupInflight
 	sync.RWMutex
+}
+
+func (s *groupRepo) acquireRequest(groupName string) error {
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	item, ok := s.inflight[groupName]
+	if ok && item.done != nil {
+		return fmt.Errorf("%s: %w", groupName, errGroupPendingDeletion)
+	}
+	if !ok {
+		item = &groupInflight{}
+		s.inflight[groupName] = item
+	}
+	item.wg.Add(1)
+	return nil
+}
+
+func (s *groupRepo) releaseRequest(groupName string) {
+	s.RWMutex.RLock()
+	item, ok := s.inflight[groupName]
+	s.RWMutex.RUnlock()
+	if ok {
+		item.wg.Done()
+	}
+}
+
+func (s *groupRepo) startPendingDeletion(groupName string) <-chan struct{} {
+	s.RWMutex.Lock()
+	item, ok := s.inflight[groupName]
+	if !ok {
+		item = &groupInflight{}
+		s.inflight[groupName] = item
+	}
+	item.done = make(chan struct{})
+	s.RWMutex.Unlock()
+	go func() {
+		item.wg.Wait()
+		close(item.done)
+	}()
+	return item.done
+}
+
+func (s *groupRepo) clearPendingDeletion(groupName string) {
+	s.RWMutex.Lock()
+	defer s.RWMutex.Unlock()
+	delete(s.inflight, groupName)
 }
 
 func (s *groupRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {

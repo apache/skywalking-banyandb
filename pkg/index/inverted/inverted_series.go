@@ -44,6 +44,9 @@ func (s *store) InsertSeriesBatch(batch index.Batch) error {
 		return nil
 	}
 	if !s.closer.AddRunning() {
+		if batch.PersistentCallback != nil {
+			batch.PersistentCallback(errors.New("store is closed"))
+		}
 		return nil
 	}
 	defer s.closer.Done()
@@ -64,6 +67,9 @@ func (s *store) UpdateSeriesBatch(batch index.Batch) error {
 		return nil
 	}
 	if !s.closer.AddRunning() {
+		if batch.PersistentCallback != nil {
+			batch.PersistentCallback(errors.New("store is closed"))
+		}
 		return nil
 	}
 	defer s.closer.Done()
