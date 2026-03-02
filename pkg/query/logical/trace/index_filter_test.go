@@ -22,6 +22,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -278,4 +281,88 @@ func TestTraceHavingFilterIntegration(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.False(t, shouldSkip, "should not skip when services are found")
+}
+
+// TestBuildFilterDeduplicatesCollectedTagNames verifies that buildFilter deduplicates tag names
+// when criteria has multiple conditions on the same tag (e.g. duration > 100 AND duration < 200).
+func TestBuildFilterDeduplicatesCollectedTagNames(t *testing.T) {
+	trace := &databasev1.Trace{
+		Metadata: &commonv1.Metadata{Name: "test", Group: "default"},
+		Tags: []*databasev1.TraceTagSpec{
+			{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "timestamp", Type: databasev1.TagType_TAG_TYPE_TIMESTAMP},
+			{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+			{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+		},
+		TraceIdTagName:   "trace_id",
+		SpanIdTagName:    "span_id",
+		TimestampTagName: "timestamp",
+	}
+	schema, err := BuildSchema(trace, nil)
+	assert.NoError(t, err)
+	entityDict := make(map[string]int)
+	entity := []*modelv1.TagValue{}
+
+	// Case 1: duration > 100 AND duration < 200 (same tag in both conditions)
+	criteria := &modelv1.Criteria{
+		Exp: &modelv1.Criteria_Le{
+			Le: &modelv1.LogicalExpression{
+				Op: modelv1.LogicalExpression_LOGICAL_OP_AND,
+				Left: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "duration",
+							Op:    modelv1.Condition_BINARY_OP_GT,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 100}}},
+						},
+					},
+				},
+				Right: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "duration",
+							Op:    modelv1.Condition_BINARY_OP_LT,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 200}}},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _, collectedTagNames, _, _, _, err := buildTraceFilter( //nolint:dogsled
+		criteria, schema, entityDict, entity, "trace_id", "span_id", "")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"duration"}, collectedTagNames, "duration should appear only once")
+
+	// Case 2: service_id = "a" OR service_id = "b" (same tag in both conditions)
+	criteriaOR := &modelv1.Criteria{
+		Exp: &modelv1.Criteria_Le{
+			Le: &modelv1.LogicalExpression{
+				Op: modelv1.LogicalExpression_LOGICAL_OP_OR,
+				Left: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "service_id",
+							Op:    modelv1.Condition_BINARY_OP_EQ,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}},
+						},
+					},
+				},
+				Right: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "service_id",
+							Op:    modelv1.Condition_BINARY_OP_EQ,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "b"}}},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _, collectedTagNamesOR, _, _, _, err := buildTraceFilter( //nolint:dogsled
+		criteriaOR, schema, entityDict, entity, "trace_id", "span_id", "")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"service_id"}, collectedTagNamesOR, "service_id should appear only once")
 }

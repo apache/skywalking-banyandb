@@ -36,6 +36,7 @@ Release Notes.
 - Fix data written to the wrong shard and related stream queries.
 - Fix the lifecycle panic when the trace has no sidx.
 - Fix panic in sidx merge and flush operations when part counts don't match expectations.
+- Fix trace queries with range conditions on the same tag (e.g., duration) combined with ORDER BY by deduplicating tag names when merging logical expression branches.
 
 ### Document
 
