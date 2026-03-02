@@ -39,6 +39,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -50,7 +51,6 @@ import (
 )
 
 const (
-	schemaGroup     = "_schema"
 	defaultShardID  = common.ShardID(0)
 	defaultRecvSize = 10 << 20
 )
@@ -59,6 +59,7 @@ var (
 	_ run.PreRunner = (*server)(nil)
 	_ run.Config    = (*server)(nil)
 	_ run.Service   = (*server)(nil)
+	_ run.Role      = (*server)(nil)
 )
 
 // Server is the interface for the standalone schema server.
@@ -109,6 +110,10 @@ func NewServer(omr observability.MetricsRegistry) Server {
 // GetPort returns the gRPC server port.
 func (s *server) GetPort() *uint32 {
 	return &s.port
+}
+
+func (s *server) Role() databasev1.Role {
+	return databasev1.Role_ROLE_META
 }
 
 func (s *server) Name() string {
@@ -191,6 +196,7 @@ func (s *server) PreRun(_ context.Context) error {
 
 	cfg := db.Config{
 		Location:               dataDir,
+		MetricsScopeName:       "schema_property",
 		FlushInterval:          s.flushTimeout,
 		ExpireToDeleteDuration: s.expireTimeout,
 		Repair: db.RepairConfig{
@@ -227,21 +233,13 @@ func (s *server) PreRun(_ context.Context) error {
 		return errors.Wrap(openErr, "failed to open property database")
 	}
 	s.l.Info().Str("root", s.root).Msg("schema property database initialized")
-	return nil
-}
 
-func (s *server) snapshotName() string {
-	s.snapshotSeq++
-	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), s.snapshotSeq)
-}
-
-func (s *server) Serve() run.StopNotify {
+	// Start gRPC server during PreRun so it is ready before other services try to connect.
 	var opts []grpclib.ServerOption
 	if s.tls {
 		if s.tlsReloader != nil {
 			if startErr := s.tlsReloader.Start(); startErr != nil {
-				s.l.Error().Err(startErr).Msg("Failed to start TLS reloader for schema server")
-				return s.closer.CloseNotify()
+				return errors.Wrap(startErr, "failed to start TLS reloader for schema server")
 			}
 			s.l.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).
 				Msg("Started TLS file monitoring for schema server")
@@ -251,8 +249,7 @@ func (s *server) Serve() run.StopNotify {
 		} else {
 			creds, tlsErr := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 			if tlsErr != nil {
-				s.l.Error().Err(tlsErr).Msg("Failed to load TLS credentials")
-				return s.closer.CloseNotify()
+				return errors.Wrap(tlsErr, "failed to load TLS credentials")
 			}
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
@@ -277,20 +274,28 @@ func (s *server) Serve() run.StopNotify {
 	schemav1.RegisterSchemaUpdateServiceServer(s.ser, s.updateService)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
+	lis, lisErr := net.Listen("tcp", s.addr)
+	if lisErr != nil {
+		return errors.Wrap(lisErr, "failed to listen on schema server address")
+	}
+	s.l.Info().Str("addr", s.addr).Msg("Listening to")
 	s.closer.AddRunning()
 	go func() {
 		defer s.closer.Done()
-		lis, lisErr := net.Listen("tcp", s.addr)
-		if lisErr != nil {
-			s.l.Error().Err(lisErr).Msg("Failed to listen")
-			return
-		}
-		s.l.Info().Str("addr", s.addr).Msg("Listening to")
 		serveErr := s.ser.Serve(lis)
 		if serveErr != nil {
 			s.l.Error().Err(serveErr).Msg("server is interrupted")
 		}
 	}()
+	return nil
+}
+
+func (s *server) snapshotName() string {
+	s.snapshotSeq++
+	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), s.snapshotSeq)
+}
+
+func (s *server) Serve() run.StopNotify {
 	return s.closer.CloseNotify()
 }
 

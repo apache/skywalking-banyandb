@@ -360,7 +360,7 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 	listenClientURL, listenPeerURL, err := pkgtest.NewEtcdListenUrls()
 	require.NoError(t, err)
 
-	metaSvc, err := service.NewService(ctx)
+	metaSvc, err := service.NewService(ctx, true)
 	require.NoError(t, err)
 
 	// Set up flags for metadata service

@@ -240,7 +240,7 @@ func generateMeasure(db storage.TSDB[*tsTable, option], cache storage.Cache) *me
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
 	pipeline := queue.Local()
-	metaSvc, err := service.NewService(ctx)
+	metaSvc, err := service.NewService(ctx, true)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

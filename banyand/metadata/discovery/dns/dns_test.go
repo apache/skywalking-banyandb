@@ -719,7 +719,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Register handler
-			svc.RegisterHandler("test-handler", handler)
+			svc.RegisterHandler("test-handler", schema.KindNode, handler)
 
 			// Trigger node discovery
 			err = svc.QueryDNSAndUpdateNodes(ctx)
@@ -753,7 +753,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Register handler
-			svc.RegisterHandler("test-handler", handler)
+			svc.RegisterHandler("test-handler", schema.KindNode, handler)
 
 			// Add node
 			err = svc.QueryDNSAndUpdateNodes(ctx)
@@ -821,9 +821,9 @@ var _ = Describe("DNS Discovery Service", func() {
 			// Register multiple handlers
 			handler2 := newTestEventHandler()
 			handler3 := newTestEventHandler()
-			svc.RegisterHandler("handler1", handler)
-			svc.RegisterHandler("handler2", handler2)
-			svc.RegisterHandler("handler3", handler3)
+			svc.RegisterHandler("handler1", schema.KindNode, handler)
+			svc.RegisterHandler("handler2", schema.KindNode, handler2)
+			svc.RegisterHandler("handler3", schema.KindNode, handler3)
 
 			// Trigger node discovery
 			err = svc.QueryDNSAndUpdateNodes(ctx)
@@ -857,7 +857,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			svc, err = dns.NewServiceWithResolver(config, mockResolver)
 			Expect(err).NotTo(HaveOccurred())
 
-			svc.RegisterHandler("test-handler", handler)
+			svc.RegisterHandler("test-handler", schema.KindNode, handler)
 
 			err = svc.QueryDNSAndUpdateNodes(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1078,7 +1078,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(nodes[0].GetGrpcAddress()).To(Equal(serverAddr))
 
 			// Verify DNS was queried
-			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
+			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(2))
 		})
 
 		It("should fail when CA cert paths count doesn't match SRV addresses count", func() {
@@ -1399,7 +1399,7 @@ var _ = Describe("DNS Discovery Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Register handler
-			svc.RegisterHandler("test-handler", handler)
+			svc.RegisterHandler("test-handler", schema.KindNode, handler)
 
 			// Start automatic discovery
 			err = svc.Start(ctx)
