@@ -65,7 +65,9 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-test-tool-ginkgo-v2.27.2-${{ hashFiles('**version.mk') }}
+      - name: Install Ginkgo
+        run: GOBIN=${{ github.workspace }}/bin go install github.com/onsi/ginkgo/v2/ginkgo@v2.27.2
       - name: Test integration and banyand
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}

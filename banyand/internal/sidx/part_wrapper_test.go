@@ -574,3 +574,225 @@ func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 		assert.False(t, pw.overlapsKeyRange(25, 15))
 	})
 }
+
+func TestPartWrapper_OverlapsTimeRange(t *testing.T) {
+	tests := []struct {
+		partMin     *int64
+		partMax     *int64
+		queryMin    *int64
+		queryMax    *int64
+		name        string
+		description string
+		expected    bool
+	}{
+		{
+			name:        "complete_overlap",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(500000000),
+			queryMax:    intPtr(2500000000),
+			expected:    true,
+			description: "query completely overlaps part time range",
+		},
+		{
+			name:        "part_inside_query",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(500000000),
+			queryMax:    intPtr(2500000000),
+			expected:    true,
+			description: "part time range is inside query range",
+		},
+		{
+			name:        "query_inside_part",
+			partMin:     intPtr(500000000),
+			partMax:     intPtr(2500000000),
+			queryMin:    intPtr(1000000000),
+			queryMax:    intPtr(2000000000),
+			expected:    true,
+			description: "query range is inside part time range",
+		},
+		{
+			name:        "partial_overlap_left",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(1500000000),
+			queryMax:    intPtr(2500000000),
+			expected:    true,
+			description: "query overlaps left side of part range",
+		},
+		{
+			name:        "partial_overlap_right",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(500000000),
+			queryMax:    intPtr(1500000000),
+			expected:    true,
+			description: "query overlaps right side of part range",
+		},
+		{
+			name:        "adjacent_left_no_overlap",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(100000000),
+			queryMax:    intPtr(900000000),
+			expected:    false,
+			description: "query is before part range with no overlap",
+		},
+		{
+			name:        "adjacent_right_no_overlap",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(2100000000),
+			queryMax:    intPtr(3000000000),
+			expected:    false,
+			description: "query is after part range with no overlap",
+		},
+		{
+			name:        "touching_left_boundary",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(500000000),
+			queryMax:    intPtr(1000000000),
+			expected:    true,
+			description: "query touches left boundary of part range",
+		},
+		{
+			name:        "touching_right_boundary",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(2000000000),
+			queryMax:    intPtr(2500000000),
+			expected:    true,
+			description: "query touches right boundary of part range",
+		},
+		{
+			name:        "exact_match",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(1000000000),
+			queryMax:    intPtr(2000000000),
+			expected:    true,
+			description: "query exactly matches part range",
+		},
+		{
+			name:        "no_query_range",
+			partMin:     intPtr(1000000000),
+			partMax:     intPtr(2000000000),
+			queryMin:    nil,
+			queryMax:    nil,
+			expected:    true,
+			description: "no query time range should return true (no filtering)",
+		},
+		{
+			name:        "no_part_timestamps",
+			partMin:     nil,
+			partMax:     nil,
+			queryMin:    intPtr(1000000000),
+			queryMax:    intPtr(2000000000),
+			expected:    true,
+			description: "part without timestamps should return true (backward compatibility)",
+		},
+		{
+			name:        "only_min_timestamp_in_part",
+			partMin:     intPtr(1000000000),
+			partMax:     nil,
+			queryMin:    intPtr(1000000000),
+			queryMax:    intPtr(2000000000),
+			expected:    true,
+			description: "part with only min timestamp should return true (backward compatibility)",
+		},
+		{
+			name:        "only_max_timestamp_in_part",
+			partMin:     nil,
+			partMax:     intPtr(2000000000),
+			queryMin:    intPtr(1000000000),
+			queryMax:    intPtr(2000000000),
+			expected:    true,
+			description: "part with only max timestamp should return true (backward compatibility)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &part{
+				path: "/test/part/001",
+				partMetadata: &partMetadata{
+					ID:           1,
+					MinTimestamp: tt.partMin,
+					MaxTimestamp: tt.partMax,
+				},
+			}
+			pw := newPartWrapper(nil, p)
+
+			result := pw.overlapsTimeRange(tt.queryMin, tt.queryMax)
+			assert.Equal(t, tt.expected, result, tt.description)
+
+			pw.release()
+		})
+	}
+}
+
+func TestPartWrapper_OverlapsTimeRange_EdgeCases(t *testing.T) {
+	t.Run("nil_part", func(t *testing.T) {
+		pw := newPartWrapper(nil, nil)
+		assert.False(t, pw.overlapsTimeRange(intPtr(1000000000), intPtr(2000000000)))
+		pw.release()
+	})
+
+	t.Run("nil_metadata", func(t *testing.T) {
+		p := &part{
+			path:         "/test/part/001",
+			partMetadata: nil,
+		}
+		pw := newPartWrapper(nil, p)
+		// Should return true (safe default) when metadata is unavailable
+		assert.True(t, pw.overlapsTimeRange(intPtr(1000000000), intPtr(2000000000)))
+		pw.release()
+	})
+
+	t.Run("invalid_query_range", func(t *testing.T) {
+		p := &part{
+			path: "/test/part/001",
+			partMetadata: &partMetadata{
+				ID:           1,
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		}
+		pw := newPartWrapper(nil, p)
+		// Query range where min > max should return false
+		assert.False(t, pw.overlapsTimeRange(intPtr(2500000000), intPtr(1500000000)))
+		pw.release()
+	})
+
+	t.Run("only_query_min_nil", func(t *testing.T) {
+		p := &part{
+			path: "/test/part/001",
+			partMetadata: &partMetadata{
+				ID:           1,
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		}
+		pw := newPartWrapper(nil, p)
+		// Should return true when query range is incomplete
+		assert.True(t, pw.overlapsTimeRange(nil, intPtr(2000000000)))
+		pw.release()
+	})
+
+	t.Run("only_query_max_nil", func(t *testing.T) {
+		p := &part{
+			path: "/test/part/001",
+			partMetadata: &partMetadata{
+				ID:           1,
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		}
+		pw := newPartWrapper(nil, p)
+		// Should return true when query range is incomplete
+		assert.True(t, pw.overlapsTimeRange(intPtr(1000000000), nil))
+		pw.release()
+	})
+}

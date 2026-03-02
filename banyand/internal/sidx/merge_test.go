@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -252,7 +253,7 @@ func generateHugeElements(start, end int64, seriesIDBase common.SeriesID) *eleme
 			{Name: "service", Value: []byte("test-service"), ValueType: pbv1.ValueTypeStr},
 		}
 		data := make([]byte, 50)
-		es.mustAppend(seriesID, i, data, tags)
+		es.mustAppend(seriesID, i, i*1000000000, data, tags)
 	}
 	return es
 }
@@ -260,13 +261,13 @@ func generateHugeElements(start, end int64, seriesIDBase common.SeriesID) *eleme
 var (
 	es1 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 100, make([]byte, 1600), []Tag{
+		es.mustAppend(1, 100, 1000000000, make([]byte, 1600), []Tag{
 			{Name: "service", Value: []byte("service1"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(2, 200, make([]byte, 40), []Tag{
+		es.mustAppend(2, 200, 2000000000, make([]byte, 40), []Tag{
 			{Name: "env", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(3, 300, make([]byte, 25), []Tag{
+		es.mustAppend(3, 300, 3000000000, make([]byte, 25), []Tag{
 			{Name: "region", Value: []byte("us"), ValueType: pbv1.ValueTypeStr},
 		})
 		return es
@@ -274,13 +275,13 @@ var (
 
 	es2 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 150, make([]byte, 1600), []Tag{
+		es.mustAppend(1, 150, 1500000000, make([]byte, 1600), []Tag{
 			{Name: "service", Value: []byte("service1"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(2, 250, make([]byte, 40), []Tag{
+		es.mustAppend(2, 250, 2500000000, make([]byte, 40), []Tag{
 			{Name: "env", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(3, 350, make([]byte, 25), []Tag{
+		es.mustAppend(3, 350, 3500000000, make([]byte, 25), []Tag{
 			{Name: "region", Value: []byte("us"), ValueType: pbv1.ValueTypeStr},
 		})
 		return es
@@ -288,10 +289,10 @@ var (
 
 	esStrArr1 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 100, make([]byte, 100), []Tag{
+		es.mustAppend(1, 100, 1000000000, make([]byte, 100), []Tag{
 			{Name: "arrTag", ValueArr: [][]byte{[]byte("value1"), []byte("value2")}, ValueType: pbv1.ValueTypeStrArr},
 		})
-		es.mustAppend(2, 200, make([]byte, 100), []Tag{
+		es.mustAppend(2, 200, 2000000000, make([]byte, 100), []Tag{
 			{Name: "arrTag", ValueArr: [][]byte{[]byte("value3"), []byte("value4")}, ValueType: pbv1.ValueTypeStrArr},
 		})
 		return es
@@ -299,10 +300,10 @@ var (
 
 	esStrArr2 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 150, make([]byte, 100), []Tag{
+		es.mustAppend(1, 150, 1500000000, make([]byte, 100), []Tag{
 			{Name: "arrTag", ValueArr: [][]byte{[]byte("value5"), []byte("value6")}, ValueType: pbv1.ValueTypeStrArr},
 		})
-		es.mustAppend(2, 250, make([]byte, 100), []Tag{
+		es.mustAppend(2, 250, 2500000000, make([]byte, 100), []Tag{
 			{Name: "arrTag", ValueArr: [][]byte{[]byte("value7"), []byte("value8")}, ValueType: pbv1.ValueTypeStrArr},
 		})
 		return es
@@ -310,7 +311,7 @@ var (
 
 	esStrArrWithEmpty = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 300, make([]byte, 100), []Tag{
+		es.mustAppend(1, 300, 3000000000, make([]byte, 100), []Tag{
 			{Name: "arrTag", ValueArr: [][]byte{[]byte("a"), []byte(""), []byte("b")}, ValueType: pbv1.ValueTypeStrArr},
 		})
 		return es
@@ -497,7 +498,7 @@ func elementsToBlocks(esList []*elements) []block {
 					ValueType: t.valueType,
 				})
 			}
-			merged.mustAppend(es.seriesIDs[i], es.userKeys[i], es.data[i], tags)
+			merged.mustAppend(es.seriesIDs[i], es.userKeys[i], es.timestamps[i], es.data[i], tags)
 		}
 	}
 
@@ -568,4 +569,180 @@ func cloneBytes(src []byte) []byte {
 	dst := make([]byte, len(src))
 	copy(dst, src)
 	return dst
+}
+
+func TestRecomputeTimestampRanges(t *testing.T) {
+	tests := []struct {
+		expected *partMetadata
+		name     string
+		parts    []*partWrapper
+	}{
+		{
+			name: "single part with timestamps",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: intPtr(1000000000),
+						MaxTimestamp: intPtr(2000000000),
+					},
+				}),
+			},
+			expected: &partMetadata{
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		},
+		{
+			name: "multiple parts with timestamps",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: intPtr(1000000000),
+						MaxTimestamp: intPtr(2000000000),
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           2,
+						MinTimestamp: intPtr(500000000),
+						MaxTimestamp: intPtr(1500000000),
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           3,
+						MinTimestamp: intPtr(2500000000),
+						MaxTimestamp: intPtr(3000000000),
+					},
+				}),
+			},
+			expected: &partMetadata{
+				MinTimestamp: intPtr(500000000),
+				MaxTimestamp: intPtr(3000000000),
+			},
+		},
+		{
+			name: "parts with some missing timestamps",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: intPtr(1000000000),
+						MaxTimestamp: intPtr(2000000000),
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           2,
+						MinTimestamp: nil,
+						MaxTimestamp: nil,
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           3,
+						MinTimestamp: intPtr(500000000),
+						MaxTimestamp: intPtr(1500000000),
+					},
+				}),
+			},
+			expected: &partMetadata{
+				MinTimestamp: intPtr(500000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		},
+		{
+			name: "all parts without timestamps",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: nil,
+						MaxTimestamp: nil,
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           2,
+						MinTimestamp: nil,
+						MaxTimestamp: nil,
+					},
+				}),
+			},
+			expected: &partMetadata{
+				MinTimestamp: nil,
+				MaxTimestamp: nil,
+			},
+		},
+		{
+			name: "parts with nil part metadata",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: intPtr(1000000000),
+						MaxTimestamp: intPtr(2000000000),
+					},
+				}),
+				newPartWrapper(nil, &part{
+					partMetadata: nil,
+				}),
+			},
+			expected: &partMetadata{
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		},
+		{
+			name: "parts with nil part",
+			parts: []*partWrapper{
+				newPartWrapper(nil, &part{
+					partMetadata: &partMetadata{
+						ID:           1,
+						MinTimestamp: intPtr(1000000000),
+						MaxTimestamp: intPtr(2000000000),
+					},
+				}),
+				newPartWrapper(nil, nil),
+			},
+			expected: &partMetadata{
+				MinTimestamp: intPtr(1000000000),
+				MaxTimestamp: intPtr(2000000000),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &partMetadata{}
+			recomputeTimestampRanges(result, tt.parts)
+
+			if tt.expected.MinTimestamp == nil {
+				assert.Nil(t, result.MinTimestamp, "MinTimestamp should be nil")
+			} else {
+				require.NotNil(t, result.MinTimestamp, "MinTimestamp should not be nil")
+				assert.Equal(t, *tt.expected.MinTimestamp, *result.MinTimestamp)
+			}
+
+			if tt.expected.MaxTimestamp == nil {
+				assert.Nil(t, result.MaxTimestamp, "MaxTimestamp should be nil")
+			} else {
+				require.NotNil(t, result.MaxTimestamp, "MaxTimestamp should not be nil")
+				assert.Equal(t, *tt.expected.MaxTimestamp, *result.MaxTimestamp)
+			}
+
+			// Cleanup
+			for _, pw := range tt.parts {
+				if pw != nil {
+					pw.release()
+				}
+			}
+		})
+	}
+}
+
+func intPtr(v int64) *int64 {
+	return &v
 }

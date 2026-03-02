@@ -34,13 +34,13 @@ import (
 var (
 	elementsSet1 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 100, make([]byte, 1600), []Tag{
+		es.mustAppend(1, 100, 1000000000, make([]byte, 1600), []Tag{
 			{Name: "service", Value: []byte("service1"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(2, 200, make([]byte, 40), []Tag{
+		es.mustAppend(2, 200, 2000000000, make([]byte, 40), []Tag{
 			{Name: "env", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(3, 300, make([]byte, 25), []Tag{
+		es.mustAppend(3, 300, 3000000000, make([]byte, 25), []Tag{
 			{Name: "region", Value: []byte("us"), ValueType: pbv1.ValueTypeStr},
 		})
 		return es
@@ -48,13 +48,13 @@ var (
 
 	elementsSet2 = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 150, make([]byte, 1600), []Tag{
+		es.mustAppend(1, 150, 1500000000, make([]byte, 1600), []Tag{
 			{Name: "service", Value: []byte("service1"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(2, 250, make([]byte, 40), []Tag{
+		es.mustAppend(2, 250, 2500000000, make([]byte, 40), []Tag{
 			{Name: "env", Value: []byte("prod"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(3, 350, make([]byte, 25), []Tag{
+		es.mustAppend(3, 350, 3500000000, make([]byte, 25), []Tag{
 			{Name: "region", Value: []byte("us"), ValueType: pbv1.ValueTypeStr},
 		})
 		return es
@@ -62,10 +62,10 @@ var (
 
 	sameKeyElements = func() *elements {
 		es := generateElements()
-		es.mustAppend(1, 100, make([]byte, 25), []Tag{
+		es.mustAppend(1, 100, 1000000000, make([]byte, 25), []Tag{
 			{Name: "service", Value: []byte("service1"), ValueType: pbv1.ValueTypeStr},
 		})
-		es.mustAppend(1, 100, make([]byte, 35), []Tag{
+		es.mustAppend(1, 100, 1000000001, make([]byte, 35), []Tag{
 			{Name: "service", Value: []byte("service2"), ValueType: pbv1.ValueTypeStr},
 		})
 		return es

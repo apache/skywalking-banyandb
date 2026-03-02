@@ -228,12 +228,21 @@ func (t *trace) prepareSIDXStreaming(
 		return nil, sidx.QueryRequest{}, false
 	}
 
-	seriesIDs := make([]common.SeriesID, 0, len(qo.seriesToEntity))
-	for seriesID := range qo.seriesToEntity {
-		seriesIDs = append(seriesIDs, seriesID)
+	var seriesIDs []common.SeriesID
+	if len(qo.seriesToEntity) > 0 {
+		seriesIDs = make([]common.SeriesID, 0, len(qo.seriesToEntity))
+		for seriesID := range qo.seriesToEntity {
+			seriesIDs = append(seriesIDs, seriesID)
+		}
 	}
-	if len(seriesIDs) == 0 {
-		seriesIDs = []common.SeriesID{1}
+
+	// Extract timestamps from TimeRange for time-based part selection optimization
+	var minTimestamp, maxTimestamp *int64
+	if tqo.TimeRange != nil {
+		minTS := tqo.TimeRange.Start.UnixNano()
+		maxTS := tqo.TimeRange.End.UnixNano()
+		minTimestamp = &minTS
+		maxTimestamp = &maxTS
 	}
 
 	req := sidx.QueryRequest{
@@ -243,6 +252,8 @@ func (t *trace) prepareSIDXStreaming(
 		MaxBatchSize: tqo.MaxTraceSize,
 		MinKey:       &tqo.MinVal,
 		MaxKey:       &tqo.MaxVal,
+		MinTimestamp: minTimestamp,
+		MaxTimestamp: maxTimestamp,
 		SeriesIDs:    seriesIDs,
 	}
 	if tqo.TagProjection != nil {

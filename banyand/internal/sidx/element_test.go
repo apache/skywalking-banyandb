@@ -90,6 +90,7 @@ func TestElementReset(t *testing.T) {
 		// Set up elements with data
 		es.seriesIDs = []common.SeriesID{1, 2, 3}
 		es.userKeys = []int64{100, 200, 300}
+		es.timestamps = []int64{100, 200, 300} // Initialize timestamps
 		es.data = [][]byte{[]byte("data1"), []byte("data2"), []byte("data3")}
 		// Create tag pointers
 		tag1 := generateTag()
@@ -138,6 +139,7 @@ func TestSizeCalculation(t *testing.T) {
 		es := generateElements()
 		es.seriesIDs = []common.SeriesID{1, 2}
 		es.userKeys = []int64{100, 200}
+		es.timestamps = []int64{100, 200}                    // Initialize timestamps
 		es.data = [][]byte{[]byte("data1"), []byte("data2")} // 5 + 5 = 10 bytes
 		// Create tag pointers
 		tag1 := generateTag()
@@ -164,6 +166,7 @@ func TestElementsSorting(t *testing.T) {
 		es := generateElements()
 		es.seriesIDs = []common.SeriesID{3, 1, 2, 1}
 		es.userKeys = []int64{100, 300, 200, 100}
+		es.timestamps = []int64{100, 300, 200, 100} // Initialize timestamps (using userKey as timestamp)
 		es.data = [][]byte{[]byte("data3"), []byte("data1"), []byte("data2"), []byte("data1b")}
 		// Create tag pointers
 		tag3 := generateTag()
@@ -204,6 +207,7 @@ func TestElementsSorting(t *testing.T) {
 		es := generateElements()
 		es.seriesIDs = []common.SeriesID{2, 1, 3}
 		es.userKeys = []int64{200, 100, 300}
+		es.timestamps = []int64{200, 100, 300} // Initialize timestamps
 		es.data = [][]byte{[]byte("data2"), []byte("data1"), []byte("data3")}
 		// Create tag pointers
 		tag2 := generateTag()
@@ -237,6 +241,7 @@ func TestElementsSorting(t *testing.T) {
 		es := generateElements()
 		es.seriesIDs = []common.SeriesID{1, 1, 1}
 		es.userKeys = []int64{300, 100, 200}
+		es.timestamps = []int64{300, 100, 200} // Initialize timestamps
 		es.data = [][]byte{[]byte("data300"), []byte("data100"), []byte("data200")}
 		// Create tag pointers
 		tag300 := generateTag()

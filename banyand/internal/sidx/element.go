@@ -37,10 +37,11 @@ type tag struct {
 
 // elements is a collection of elements optimized for batch operations.
 type elements struct {
-	seriesIDs []common.SeriesID // Pooled slice
-	userKeys  []int64           // Pooled slice (replaces timestamps)
-	data      [][]byte          // Pooled slice of slices
-	tags      [][]*tag          // Pooled slice of tag pointer slices
+	seriesIDs  []common.SeriesID // Pooled slice
+	userKeys   []int64           // Pooled slice (replaces timestamps)
+	timestamps []int64           // Pooled slice of timestamps (Unix nanoseconds)
+	data       [][]byte          // Pooled slice of slices
+	tags       [][]*tag          // Pooled slice of tag pointer slices
 }
 
 // reset clears tag for reuse.
@@ -81,6 +82,7 @@ func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte
 func (e *elements) reset() {
 	e.seriesIDs = e.seriesIDs[:0]
 	e.userKeys = e.userKeys[:0]
+	e.timestamps = e.timestamps[:0]
 	// Reset data slices
 	for i := range e.data {
 		e.data[i] = nil
@@ -139,6 +141,7 @@ func (e *elements) Less(i, j int) bool {
 func (e *elements) Swap(i, j int) {
 	e.seriesIDs[i], e.seriesIDs[j] = e.seriesIDs[j], e.seriesIDs[i]
 	e.userKeys[i], e.userKeys[j] = e.userKeys[j], e.userKeys[i]
+	e.timestamps[i], e.timestamps[j] = e.timestamps[j], e.timestamps[i]
 	e.data[i], e.data[j] = e.data[j], e.data[i]
 	e.tags[i], e.tags[j] = e.tags[j], e.tags[i]
 }
@@ -185,9 +188,10 @@ func releaseTag(t *tag) {
 }
 
 // mustAppend adds a new element to the collection.
-func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, data []byte, tags []Tag) {
+func (e *elements) mustAppend(seriesID common.SeriesID, userKey int64, timestamp int64, data []byte, tags []Tag) {
 	e.seriesIDs = append(e.seriesIDs, seriesID)
 	e.userKeys = append(e.userKeys, userKey)
+	e.timestamps = append(e.timestamps, timestamp)
 
 	// Copy data
 	dataCopy := make([]byte, len(data))
