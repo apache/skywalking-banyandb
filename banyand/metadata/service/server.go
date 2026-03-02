@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/schemaserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -50,12 +51,16 @@ var (
 type Service interface {
 	metadata.Service
 	GetSchemaServerPort() *uint32
+	GetSchemaGossipPort() *uint32
+	SetPropertyPipelineClient(queue.Client)
 }
 
 type server struct {
 	metadata.Service
 	etcdServer              embeddedetcd.Server
 	propServer              schemaserver.Server
+	repairSvc               schemaserver.RepairService
+	pipelineClient          queue.Client
 	omr                     observability.MetricsRegistry
 	serviceFlags            *run.FlagSet
 	scheduler               *timestamp.Scheduler
@@ -78,7 +83,8 @@ func (s *server) Name() string {
 }
 
 func (s *server) Role() databasev1.Role {
-	if s.schemaRegistryMode == schemaTypeProperty {
+	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
+	if s.schemaRegistryMode == schemaTypeProperty || (s.embedded && needEtcd) {
 		return databasev1.Role_ROLE_META
 	}
 	return databasev1.Role_ROLE_UNSPECIFIED
@@ -155,7 +161,12 @@ func (s *server) Validate() error {
 		return validateErr
 	}
 	if s.schemaRegistryMode == schemaTypeProperty && s.propServer != nil {
-		return s.propServer.Validate()
+		if propValidateErr := s.propServer.Validate(); propValidateErr != nil {
+			return propValidateErr
+		}
+		if s.repairSvc != nil {
+			return s.repairSvc.Validate()
+		}
 	}
 	return nil
 }
@@ -175,10 +186,16 @@ func (s *server) PreRun(ctx context.Context) error {
 	switch s.schemaRegistryMode {
 	case schemaTypeEtcd:
 		s.propServer = nil
+		s.repairSvc = nil
 	case schemaTypeProperty:
 		ctx = s.enrichContextWithSchemaAddress(ctx)
 		if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
 			return propPreRunErr
+		}
+		if s.repairSvc != nil {
+			if repairPreRunErr := s.repairSvc.PreRun(ctx); repairPreRunErr != nil {
+				return repairPreRunErr
+			}
 		}
 	default:
 		return errors.New("unknown schema storage type")
@@ -194,6 +211,13 @@ func (s *server) Serve() run.StopNotify {
 			<-s.propServer.Serve()
 		}()
 	}
+	if s.repairSvc != nil {
+		s.closer.AddRunning()
+		go func() {
+			defer s.closer.Done()
+			<-s.repairSvc.Serve()
+		}()
+	}
 	if s.etcdServer != nil {
 		s.registerDefrag()
 		s.closer.AddRunning()
@@ -207,6 +231,9 @@ func (s *server) Serve() run.StopNotify {
 }
 
 func (s *server) GracefulStop() {
+	if s.repairSvc != nil {
+		s.repairSvc.GracefulStop()
+	}
 	if s.propServer != nil {
 		s.propServer.GracefulStop()
 	}
@@ -254,6 +281,19 @@ func (s *server) SetMetricsRegistry(omr observability.MetricsRegistry) {
 func (s *server) GetSchemaServerPort() *uint32 {
 	if s.propServer != nil && s.schemaRegistryMode == schemaTypeProperty {
 		return s.propServer.GetPort()
+	}
+	return nil
+}
+
+// SetPropertyPipelineClient injects the pipeline client used by the schema gossip repair service.
+func (s *server) SetPropertyPipelineClient(client queue.Client) {
+	s.pipelineClient = client
+}
+
+// GetSchemaGossipPort returns the schema gossip gRPC port.
+func (s *server) GetSchemaGossipPort() *uint32 {
+	if s.repairSvc != nil {
+		return s.repairSvc.GetGossipPort()
 	}
 	return nil
 }

@@ -150,7 +150,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 					sel.SetNodeSelector(ls)
 				}
 			}
-			node, err := common.GenerateNode(internalPipeline.GetPort(), httpServer.GetPort(), nil, nil)
+			node, err := common.GenerateNode(internalPipeline.GetPort(), httpServer.GetPort(), nil, nil, nil)
 			if err != nil {
 				return err
 			}

@@ -651,7 +651,9 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		node1ID = fmt.Sprintf("127.0.0.1:%s", node1Port)
 		node2ID = fmt.Sprintf("127.0.0.1:%s", node2Port)
 
-		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger = gossip.NewMessengerWithoutMetadata("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			observability.NewBypassRegistry(), 9999)
 		messenger.Validate()
 		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: "not-exist",
@@ -767,6 +769,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
@@ -783,7 +786,9 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		defUITemplateWithSchema(rootCmd, addr, 1, nodeCount)
 
 		// Setup gossip messenger
-		messenger = gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), 9999)
+		messenger = gossip.NewMessengerWithoutMetadata("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			observability.NewBypassRegistry(), 9999)
 		messenger.Validate()
 		err = messenger.PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{
 			NodeID: "test-client",
@@ -856,6 +861,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")
 			// Update node ID to use 127.0.0.1
@@ -1131,5 +1137,5 @@ func waitForRepairTreeRegeneration(nodeDirs []string, group string, beforeTime t
 			}
 		}
 		return allRegenerated
-	}, flags.EventuallyTimeout).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
+	}, time.Minute).Should(BeTrue(), "All nodes should regenerate repair tree after data write")
 }

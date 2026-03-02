@@ -145,7 +145,9 @@ func (s *service) initTracing(ctx context.Context) error {
 		ModRevision: dbStream.GetMetadata().GetModRevision(),
 	}
 	s.traceStreamSelector = node.NewRoundRobinSelector(data.TopicStreamWrite.String(), s.metadata)
-	s.pipeline.Register(data.TopicStreamWrite, s)
+	if s.pipeline != nil {
+		s.pipeline.Register(data.TopicStreamWrite, s)
+	}
 	return nil
 }
 
@@ -174,7 +176,7 @@ func (s *service) initInternalTraceGroup(ctx context.Context) error {
 func (s *service) savingTracingSpans() (err error) {
 	spans := s.readAllReadySendTraceSpan()
 	s.log.Debug().Int("spans", len(spans)).Msg("ready to save trace spans to storage")
-	if len(spans) == 0 {
+	if len(spans) == 0 || s.pipeline == nil {
 		return nil
 	}
 	ctx := context.Background()
