@@ -48,7 +48,8 @@ const (
 	KindSize = 9
 )
 
-func (k Kind) key() string {
+// Key returns the etcd key prefix for this Kind.
+func (k Kind) Key() string {
 	switch k {
 	case KindGroup:
 		return groupsKeyPrefix
@@ -99,7 +100,7 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 	case KindProperty:
 		m = &databasev1.Property{}
 	default:
-		return Metadata{}, errUnsupportedEntityType
+		return Metadata{}, ErrUnsupportedEntityType
 	}
 	err := proto.Unmarshal(kv.Value, m)
 	if err != nil {
@@ -107,7 +108,7 @@ func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
 	}
 	if messageWithMetadata, ok := m.(HasMetadata); ok {
 		if messageWithMetadata.GetMetadata() == nil {
-			return Metadata{}, errors.Errorf("message %s does not have metadata", k.key())
+			return Metadata{}, errors.Errorf("message %s does not have metadata", k.Key())
 		}
 		// Assign readonly fields
 		messageWithMetadata.GetMetadata().CreateRevision = kv.CreateRevision
@@ -149,13 +150,23 @@ func (k Kind) String() string {
 	}
 }
 
-func allKeys() []string {
-	var keys []string
+// AllKinds returns all known Kind values.
+func AllKinds() []Kind {
+	var kinds []Kind
 	for i := 0; i < KindSize; i++ {
 		ki := Kind(1 << i)
 		if KindMask&ki > 0 {
-			keys = append(keys, ki.key())
+			kinds = append(kinds, ki)
 		}
+	}
+	return kinds
+}
+
+// AllKeys returns the key prefixes for all known kinds.
+func AllKeys() []string {
+	var keys []string
+	for _, ki := range AllKinds() {
+		keys = append(keys, ki.Key())
 	}
 	return keys
 }

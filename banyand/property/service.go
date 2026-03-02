@@ -148,6 +148,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = db.OpenDB(ctx, db.Config{
 		Location:               filepath.Join(path, storage.DataDir),
+		MetricsScopeName:       "property",
 		FlushInterval:          s.flushTimeout,
 		ExpireToDeleteDuration: s.expireTimeout,
 		Repair: db.RepairConfig{
