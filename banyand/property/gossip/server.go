@@ -156,23 +156,17 @@ func (q *protocolHandler) Propagation(_ context.Context, request *propertyv1.Pro
 
 func (q *protocolHandler) propagation0(_ context.Context, request *propertyv1.PropagationRequest, tracer Trace) (resp *propertyv1.PropagationResponse, err error) {
 	span := tracer.CreateSpan(tracer.ActivateSpan(), "receive gossip message")
-	defer span.End()
 	span.Tag(TraceTagGroupName, request.Group)
 	span.Tag(TraceTagShardID, fmt.Sprintf("%d", request.ShardId))
 	span.Tag(TraceTagOperateType, TraceTagOperateReceive)
 	q.s.serverMetrics.totalReceived.Inc(1, request.Group)
-	if q.s.log.Debug().Enabled() {
-		q.mu.RLock()
-		q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
-		q.mu.RUnlock()
-	}
+	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
+	span.End()
 
-	if q.addToProcess(request, tracer) {
-		span.Tag("added_to_process", "true")
+	if q.addToProcess(request, tracer, tracer.ActivateSpan()) {
 		q.s.serverMetrics.totalAddProcessed.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("add the propagation request to the process")
 	} else {
-		span.Tag("added_to_process", "false")
 		q.s.serverMetrics.totalSkipProcess.Inc(1, request.Group)
 		q.s.log.Debug().Msgf("propagation request discarded")
 	}
@@ -308,7 +302,7 @@ func (q *protocolHandler) contextIsDone(ctx context.Context) bool {
 	}
 }
 
-func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, tracer Trace) bool {
+func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, tracer Trace, span Span) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -317,7 +311,7 @@ func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, t
 	handlingRequestData := &handlingRequest{
 		PropagationRequest: request,
 		tracer:             tracer,
-		parentSpan:         tracer.ActivateSpan(),
+		parentSpan:         span,
 	}
 	if !exist {
 		groupShard = &groupWithShardPropagation{
