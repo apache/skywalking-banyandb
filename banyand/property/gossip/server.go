@@ -161,7 +161,11 @@ func (q *protocolHandler) propagation0(_ context.Context, request *propertyv1.Pr
 	span.Tag(TraceTagShardID, fmt.Sprintf("%d", request.ShardId))
 	span.Tag(TraceTagOperateType, TraceTagOperateReceive)
 	q.s.serverMetrics.totalReceived.Inc(1, request.Group)
-	q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
+	if q.s.log.Debug().Enabled() {
+		q.mu.RLock()
+		q.s.log.Debug().Stringer("request", request).Msg("received property repair gossip message for propagation")
+		q.mu.RUnlock()
+	}
 
 	if q.addToProcess(request, tracer) {
 		span.Tag("added_to_process", "true")
