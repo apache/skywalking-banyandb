@@ -401,6 +401,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	var db *database
 	dbInstance, err := OpenDB(ctx, Config{
 		Location:               dbLocation,
+		MetricsScopeName:       fmt.Sprintf("property_gossip_test_%s", addr),
 		FlushInterval:          time.Minute * 10,
 		ExpireToDeleteDuration: time.Minute * 10,
 		Repair: RepairConfig{

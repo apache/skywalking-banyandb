@@ -62,6 +62,7 @@ type Service struct {
 
 // Config holds configuration for DNS discovery service.
 type Config struct {
+	OMR                  observability.MetricsRegistry
 	CACertPaths          []string
 	SRVAddresses         []string
 	InitInterval         time.Duration
@@ -156,6 +157,12 @@ func NewService(cfg Config) (*Service, error) {
 			svc.GetLogger().Info().Str("certPath", certPath).Int("srvIndex", srvIdx).
 				Str("srvAddress", srvAddr).Msg("Initialized DNS CA certificate reloader")
 		}
+	}
+
+	if cfg.OMR != nil {
+		factory := observability.RootScope.SubScope("metadata").SubScope("dns_discovery")
+		svc.metrics = newMetrics(cfg.OMR.With(factory))
+		svc.DiscoveryServiceBase.SetMetrics(svc.metrics)
 	}
 
 	return svc, nil
@@ -265,6 +272,7 @@ func (s *Service) getTLSDialOptions(srvAddr, address string) ([]grpc.DialOption,
 // Start begins the DNS discovery background process.
 func (s *Service) Start(ctx context.Context) error {
 	s.GetLogger().Debug().Msg("Starting DNS-based node discovery service")
+	s.NodeCacheBase.StartForNotification()
 
 	// start all Reloaders
 	if len(s.pathToReloader) > 0 {
@@ -592,14 +600,8 @@ func (s *Service) Close() error {
 
 // ListNode list all existing nodes from cache.
 func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	// if the service hasn't begun/finished, then try to query and update DNS first
-	s.lastQueryMutex.RLock()
-	notQueried := s.lastQueryTime.IsZero()
-	s.lastQueryMutex.RUnlock()
-	if notQueried {
-		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
-			return nil, err
-		}
+	if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
+		return nil, err
 	}
 	// delegate to base for filtering
 	return s.NodeCacheBase.ListNode(ctx, role)

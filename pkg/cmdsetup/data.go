@@ -84,9 +84,9 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	var units []run.Unit
 	units = append(units, runners...)
 	units = append(units,
-		metaSvc,
 		metricsPipeline,
 		metricSvc,
+		metaSvc,
 		pm,
 		pipeline,
 		propertyStreamPipeline,

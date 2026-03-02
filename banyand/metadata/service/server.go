@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package service implements an embedded meta server.
+// Package service implements the metadata server wrapper supporting both
+// embedded etcd (standalone) and external etcd (data node) modes.
 package service
 
 import (
@@ -42,8 +43,8 @@ import (
 )
 
 var (
-	schemaTypeEtcd     = "etcd"
-	schemaTypeProperty = "property"
+	schemaTypeEtcd     = metadata.RegistryModeEtcd
+	schemaTypeProperty = metadata.RegistryModeProperty
 )
 
 // Service extends metadata.Service with schema server port access.
@@ -113,20 +114,10 @@ func (s *server) FlagSet() *run.FlagSet {
 		}
 		s.propServer = schemaserver.NewServer(omr)
 	}
-	if s.repairSvc == nil && s.pipelineClient != nil {
-		omr := s.omr
-		if omr == nil {
-			omr = observability.BypassRegistry
-		}
-		s.repairSvc = schemaserver.NewGossipService(s.propServer.RegisterGossip, s.Service, s.pipelineClient, omr)
-	}
 	if s.serviceFlags == nil {
 		s.serviceFlags = s.Service.FlagSet()
 	}
 	fs.AddFlagSet(s.propServer.FlagSet().FlagSet)
-	if s.repairSvc != nil {
-		fs.AddFlagSet(s.repairSvc.FlagSet().FlagSet)
-	}
 	fs.AddFlagSet(s.serviceFlags.FlagSet)
 	return fs
 }
@@ -134,6 +125,9 @@ func (s *server) FlagSet() *run.FlagSet {
 func (s *server) Validate() error {
 	if s.serviceFlags == nil {
 		return errors.New("service flags are not initialized")
+	}
+	if err := s.serviceFlags.Set("schema-registry-mode", s.schemaRegistryMode); err != nil {
+		return err
 	}
 	if err := s.serviceFlags.Set("node-discovery-mode", s.nodeDiscoveryMode); err != nil {
 		return err

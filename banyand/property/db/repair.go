@@ -953,8 +953,8 @@ type repairScheduler struct {
 }
 
 // nolint: contextcheck
-func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, buildTreeCronExp string,
-	quickBuildTreeTime time.Duration, treeSlotCount int, db *database,
+func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, metricsScope meter.Scope,
+	buildTreeCronExp string, quickBuildTreeTime time.Duration, treeSlotCount int, db *database,
 	buildSnapshotFunc func(context.Context) (string, error),
 ) (*repairScheduler, error) {
 	var quickRepairNotified int32
@@ -966,7 +966,7 @@ func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, bui
 		quickRepairNotified: &quickRepairNotified,
 		closer:              run.NewCloser(1),
 		quickBuildTreeTime:  quickBuildTreeTime,
-		metrics:             newRepairSchedulerMetrics(omr.With(propertyScope.SubScope("scheduler"))),
+		metrics:             newRepairSchedulerMetrics(omr.With(metricsScope.SubScope("scheduler"))),
 		treeSlotCount:       treeSlotCount,
 		scheduleBasicFile:   filepath.Join(db.repairBaseDir, "scheduled.json"),
 		gossipRepairing:     new(int32),

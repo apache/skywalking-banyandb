@@ -107,7 +107,7 @@ func (db *database) newShard(
 		waitForPersistence: db.indexConfig.WaitForPersistence,
 	}
 	batchWaitSec := db.indexConfig.BatchWaitSec
-	metricsFactory := db.omr.With(propertyScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
+	metricsFactory := db.omr.With(db.metricsScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
 	opts := inverted.StoreOpts{
 		Path:                 location,
 		Logger:               si.l,
