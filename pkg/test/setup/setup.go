@@ -145,6 +145,7 @@ func standaloneServerWithAuth(path string, ports []int, schemaLoaders []SchemaLo
 		"--metadata-root-path=" + path,
 		"--property-root-path=" + path,
 		"--trace-root-path=" + path,
+		"--schema-server-root-path=" + path,
 		fmt.Sprintf("--etcd-listen-client-url=%s", endpoint), fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
 	}
 	tlsEnabled := false
@@ -261,6 +262,7 @@ func startDataNode(etcdEndpoint, dataDir string, flags ...string) (string, strin
 		"--measure-root-path="+dataDir,
 		"--property-root-path="+dataDir,
 		"--trace-root-path="+dataDir,
+		"--schema-server-root-path="+dataDir,
 		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,

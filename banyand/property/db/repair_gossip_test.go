@@ -383,7 +383,9 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 
 	ports, err := test.AllocateFreePorts(1)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	messenger := gossip.NewMessengerWithoutMetadata(observability.NewBypassRegistry(), ports[0])
+	messenger := gossip.NewMessengerWithoutMetadata("property-repair",
+		func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+		observability.NewBypassRegistry(), ports[0])
 	addr := fmt.Sprintf("127.0.0.1:%d", ports[0])
 	result.nodeID = addr
 	err = messenger.Validate()
@@ -399,6 +401,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	var db *database
 	dbInstance, err := OpenDB(ctx, Config{
 		Location:               dbLocation,
+		MetricsScopeName:       fmt.Sprintf("property_gossip_test_%s", addr),
 		FlushInterval:          time.Minute * 10,
 		ExpireToDeleteDuration: time.Minute * 10,
 		Repair: RepairConfig{

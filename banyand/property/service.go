@@ -158,6 +158,7 @@ func (s *service) PreRun(ctx context.Context) error {
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = db.OpenDB(ctx, db.Config{
 		Location:               filepath.Join(path, storage.DataDir),
+		MetricsScopeName:       "property",
 		FlushInterval:          s.flushTimeout,
 		ExpireToDeleteDuration: s.expireTimeout,
 		Repair: db.RepairConfig{
@@ -286,6 +287,8 @@ func NewService(metadata metadata.Repo, pipeline queue.Server, pipelineClient qu
 		pm:       pm,
 		closer:   run.NewCloser(0),
 
-		gossipMessenger: gossip.NewMessenger(omr, metadata, pipelineClient),
+		gossipMessenger: gossip.NewMessenger("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			omr, metadata, pipelineClient, 17932),
 	}, nil
 }

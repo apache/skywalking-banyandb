@@ -133,7 +133,7 @@ func (s *service) OnAddOrUpdate(md schema.Metadata) {
 		s.log.Warn().Msg("invalid metadata type")
 		return
 	}
-	address := node.PropertyRepairGossipGrpcAddress
+	address := s.addressExtractor(node)
 	if address == "" {
 		s.log.Warn().Stringer("node", node).Msg("node does not have gossip address, skipping registration")
 		return
