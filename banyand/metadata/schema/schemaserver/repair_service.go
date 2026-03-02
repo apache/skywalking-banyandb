@@ -147,9 +147,6 @@ func (r *repairService) OnAddOrUpdate(md schema.Metadata) {
 	if !ok {
 		return
 	}
-	if node.PropertySchemaGossipGrpcAddress == "" {
-		return
-	}
 	containsMetaRole := false
 	for _, role := range node.Roles {
 		if role == databasev1.Role_ROLE_META {
@@ -162,6 +159,10 @@ func (r *repairService) OnAddOrUpdate(md schema.Metadata) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if node.PropertySchemaGossipGrpcAddress == "" {
+		delete(r.metaNodes, node.Metadata.GetName())
+		return
+	}
 	r.metaNodes[node.Metadata.GetName()] = struct{}{}
 }
 
