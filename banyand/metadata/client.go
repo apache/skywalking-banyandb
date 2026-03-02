@@ -436,6 +436,7 @@ func (s *clientService) registerNodeIfNeeded(ctx context.Context, l *logger.Logg
 
 		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
+		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
 	}
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
