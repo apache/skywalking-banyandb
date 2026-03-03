@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_schema_test
+// Package schema contains integration tests for standalone schema deletion.
+package schema
 
 import (
-	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,55 +33,57 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	casesschema "github.com/apache/skywalking-banyandb/test/cases/schema"
-	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
-func TestSchemaDeletion(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Standalone Schema Deletion Suite", Label(integration_standalone.Labels...))
+// SetupResult contains all info returned by SetupFunc.
+type SetupResult struct {
+	Now      time.Time
+	StopFunc func()
+	Addr     string
 }
 
+// SetupFunc is provided by sub-packages to start the environment.
+var SetupFunc func() SetupResult
+
 var (
+	result     SetupResult
 	connection *grpc.ClientConn
-	deferFunc  func()
 	goods      []gleak.Goroutine
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	goods = gleak.Goroutines()
-	pool.EnableStackTracking(true)
-	Expect(logger.Init(logger.Logging{
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
-	addr, _, closeFn := setup.EmptyStandalone()
-	deferFunc = closeFn
-	return []byte(addr)
+	})).To(gomega.Succeed())
+	pool.EnableStackTracking(true)
+	goods = gleak.Goroutines()
+	result = SetupFunc()
+	return []byte(result.Addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesschema.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   time.Now(),
+		BaseTime:   result.Now,
 	}
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 }, func() {})
 
-var _ = ReportAfterSuite("Standalone Schema Deletion Suite", func(report Report) {
+var _ = ginkgo.ReportAfterSuite("Standalone Schema Deletion Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if deferFunc != nil {
-			deferFunc()
+		if result.StopFunc != nil {
+			result.StopFunc()
 		}
-		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}
 })

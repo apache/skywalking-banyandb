@@ -443,7 +443,15 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 	propID := query.Ids[0]
 	info := propMap[propID]
 	if info == nil || info.best == nil || info.best.deleteTime > 0 {
+		entry := r.cache.Get(propID)
+		if entry != nil {
+			r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+		}
 		return nil, nil
+	}
+	md, convErr := ToSchema(kind, info.best.property)
+	if convErr == nil {
+		r.processInitialResourceFromProperty(kind, info.best.property, md.Spec.(proto.Message))
 	}
 	return info.best.property, nil
 }
@@ -456,12 +464,31 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	if queryErr != nil {
 		return nil, queryErr
 	}
+	serverPropIDs := make(map[string]struct{})
 	result := make([]*propertyv1.Property, 0, len(propMap))
-	for _, info := range propMap {
+	for propID, info := range propMap {
 		if info.best == nil || info.best.deleteTime != 0 {
+			entry := r.cache.Get(propID)
+			if entry != nil {
+				r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+			}
 			continue
 		}
+		serverPropIDs[propID] = struct{}{}
+		md, convErr := ToSchema(kind, info.best.property)
+		if convErr == nil {
+			r.processInitialResourceFromProperty(kind, info.best.property, md.Spec.(proto.Message))
+		}
 		result = append(result, info.best.property)
+	}
+	cachedEntries := r.cache.GetEntriesByKind(kind)
+	for propID, entry := range cachedEntries {
+		if group != "" && entry.group != group {
+			continue
+		}
+		if _, found := serverPropIDs[propID]; !found {
+			r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+		}
 	}
 	return result, nil
 }
@@ -957,8 +984,6 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 	if kind&schema.KindMask != kind {
 		panic(fmt.Sprintf("invalid kind %d", kind))
 	}
-	r.mux.Lock()
-	defer r.mux.Unlock()
 	var kinds []schema.Kind
 	for idx := 0; idx < schema.KindSize; idx++ {
 		ki := schema.Kind(1 << idx)
@@ -968,6 +993,8 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 	}
 	r.l.Info().Str("name", name).Interface("kinds", kinds).Msg("registering property schema handler")
 	handler.OnInit(kinds)
+	r.mux.Lock()
+	defer r.mux.Unlock()
 	for _, ki := range kinds {
 		r.handlers[ki] = append(r.handlers[ki], handler)
 	}

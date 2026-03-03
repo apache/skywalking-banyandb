@@ -50,15 +50,16 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		pf := filepath.Join(dir, "progress.json")
 		rf := filepath.Join(dir, "report")
 		lifecycleCmd := lifecycle.NewCommand()
-		lifecycleCmd.SetArgs([]string{
+		args := []string{
 			"--grpc-addr", SharedContext.DataAddr,
 			"--stream-root-path", SharedContext.SrcDir,
 			"--measure-root-path", SharedContext.SrcDir,
 			"--trace-root-path", SharedContext.SrcDir,
-			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
 			"--report-dir", rf,
-		})
+		}
+		args = append(args, SharedContext.MetadataFlags...)
+		lifecycleCmd.SetArgs(args)
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifySourceDirectoriesAfterMigration()
@@ -114,17 +115,18 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		pf := filepath.Join(dir, "progress.json")
 		rf := filepath.Join(dir, "report")
 		lifecycleCmd := lifecycle.NewCommand()
-		lifecycleCmd.SetArgs([]string{
+		args := []string{
 			"--grpc-addr", SharedContext.DataAddr,
 			"--stream-root-path", SharedContext.SrcDir,
 			"--measure-root-path", SharedContext.SrcDir,
 			"--trace-root-path", SharedContext.SrcDir,
-			"--etcd-endpoints", SharedContext.EtcdAddr,
 			"--progress-file", pf,
 			"--report-dir", rf,
 			"--schedule", "@every 5s",
 			"--max-execution-times", "2",
-		})
+		}
+		args = append(args, SharedContext.MetadataFlags...)
+		lifecycleCmd.SetArgs(args)
 		err = lifecycleCmd.Execute()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifySourceDirectoriesAfterMigration()

@@ -65,7 +65,7 @@ var _ = g.Describe("bydbctl test with authentication", func() {
 		gm.Expect(len(cfg.Users)).Should(gm.BeNumerically(">", 0))
 		testUser = cfg.Users[0]
 		// Username and password must be provided because health checks require authentication when --enable-health-auth=true is enabled.
-		_, httpAddr, deferFn = setup.EmptyStandaloneWithAuth(
+		_, httpAddr, deferFn = setup.EmptyStandaloneWithAuth(nil,
 			testUser.Username, testUser.Password,
 			fmt.Sprintf("--auth-config-file=%s", authCfgFile),
 			"--enable-health-auth=true",

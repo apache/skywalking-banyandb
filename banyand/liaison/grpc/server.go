@@ -36,6 +36,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -90,8 +91,10 @@ type NodeRegistries struct {
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	databasev1.UnimplementedClusterStateServiceServer
+	databasev1.UnimplementedNodeQueryServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
+	curNode    *databasev1.Node
 	protector  protector.Memory
 	traceSVC   *traceService
 	stopCh     chan struct{}
@@ -212,8 +215,9 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	return s
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
+	s.initCurrentNode(ctx)
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
 	s.traceSVC.setLogger(s.log.Named("trace"))
@@ -278,6 +282,24 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *server) initCurrentNode(ctx context.Context) {
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	roleVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || roleVal == nil {
+		return
+	}
+	node := nodeVal.(common.Node)
+	nodeRoles := roleVal.([]databasev1.Role)
+	s.curNode = node.ToProtoNode(nodeRoles)
+}
+
+// GetCurrentNode returns the current node information.
+func (s *server) GetCurrentNode(context.Context, *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
+	return &databasev1.GetCurrentNodeResponse{
+		Node: s.curNode,
+	}, nil
 }
 
 func (s *server) Name() string {
@@ -427,6 +449,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
 	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
 	databasev1.RegisterClusterStateServiceServer(s.ser, s)
+	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})

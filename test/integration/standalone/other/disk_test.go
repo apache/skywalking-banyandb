@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+package other
 
 import (
 	"context"
@@ -57,7 +57,7 @@ var _ = g.Describe("Disk", func() {
 		gm.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
-		addr, _, deferFn := setup.Standalone(
+		addr, _, deferFn := setup.Standalone(testConfig,
 			"--measure-retention-high-watermark",
 			"0",
 			"--measure-retention-low-watermark",
@@ -100,12 +100,13 @@ var _ = g.Describe("Disk", func() {
 		defer schemaRegistry.Close()
 		ctx := context.Background()
 		test_measure.PreloadSchema(ctx, schemaRegistry)
+		clusterConfig := setup.EtcdClusterConfig(ep)
 		g.By("Starting data node 0")
-		closeDataNode0 := setup.DataNode(ep)
+		closeDataNode0 := setup.DataNode(clusterConfig)
 		g.By("Starting data node 1")
-		closeDataNode1 := setup.DataNode(ep)
+		closeDataNode1 := setup.DataNode(clusterConfig)
 		g.By("Starting liaison node")
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep,
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(clusterConfig,
 			"--measure-max-disk-usage-percent",
 			"0")
 		defer func() {

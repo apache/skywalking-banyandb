@@ -44,7 +44,7 @@ var _ = Describe("Trace Schema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		// extracting the operation of creating trace schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -216,7 +216,7 @@ var _ = Describe("Trace Data Query", func() {
 		nowStr = now.Format(time.RFC3339)
 		interval = 500 * time.Millisecond
 		endStr = now.Add(1 * time.Hour).Format(time.RFC3339)
-		grpcAddr, addr, deferFunc = setup.Standalone()
+		grpcAddr, addr, deferFunc = setup.Standalone(nil)
 		addr = httpSchema + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

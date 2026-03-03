@@ -15,27 +15,41 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+package property_test
 
 import (
 	"testing"
+	"time"
 
-	g "github.com/onsi/ginkgo/v2"
-	gm "github.com/onsi/gomega"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
+	"github.com/apache/skywalking-banyandb/test/integration/standalone/schema"
 )
 
-func TestIntegrationOther(t *testing.T) {
-	gm.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Integration Other Suite", g.Label(integration_standalone.Labels...))
+func init() {
+	schema.SetupFunc = func() schema.SetupResult {
+		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+		Expect(tmpErr).NotTo(HaveOccurred())
+		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+		config := setup.PropertyClusterConfig(dfWriter)
+		addr, _, closeFn := setup.EmptyStandalone(config)
+		now := time.Now()
+		return schema.SetupResult{
+			Addr: addr,
+			Now:  now,
+			StopFunc: func() {
+				closeFn()
+				tmpDirCleanup()
+			},
+		}
+	}
 }
 
-var _ = g.BeforeSuite(func() {
-	gm.Expect(logger.Init(logger.Logging{
-		Env:   "dev",
-		Level: flags.LogLevel,
-	})).To(gm.Succeed())
-})
+func TestPropertySchemaDeletion(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Standalone Property Schema Deletion Suite", Label(integration_standalone.Labels...))
+}

@@ -28,7 +28,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -424,20 +423,7 @@ func (s *clientService) registerNodeIfNeeded(ctx context.Context, l *logger.Logg
 		return errors.New("node roles is empty")
 	}
 	nodeRoles := val.([]databasev1.Role)
-	nodeInfo := &databasev1.Node{
-		Metadata: &commonv1.Metadata{
-			Name: node.NodeID,
-		},
-		GrpcAddress: node.GrpcAddress,
-		HttpAddress: node.HTTPAddress,
-		Roles:       nodeRoles,
-		Labels:      node.Labels,
-		CreatedAt:   timestamppb.Now(),
-
-		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
-		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
-		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
-	}
+	nodeInfo := node.ToProtoNode(nodeRoles)
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
 		err := s.nodeDiscoveryRegistry.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)

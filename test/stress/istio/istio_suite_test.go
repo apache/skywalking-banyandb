@@ -68,7 +68,7 @@ var _ = g.Describe("Istio", func() {
 		var ports []int
 		ports, err = test.AllocateFreePorts(4)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		addr, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
+		addr, _, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(nil,
 			path, ports,
 			[]setup.SchemaLoader{&preloadService{name: "oap"}},
 			"--logging-level", "info")
