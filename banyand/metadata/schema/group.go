@@ -58,7 +58,7 @@ func (e *etcdSchemaRegistry) DeleteGroup(ctx context.Context, group string) (boo
 	if err != nil {
 		return false, errors.Wrap(err, group)
 	}
-	keysToDelete := allKeys()
+	keysToDelete := AllKeys()
 	deleteOPs := make([]clientv3.Op, 0, len(keysToDelete)+1)
 	for _, key := range keysToDelete {
 		deleteOPs = append(deleteOPs, clientv3.OpDelete(e.prependNamespace(listPrefixesForEntity(group, key)), clientv3.WithPrefix()))

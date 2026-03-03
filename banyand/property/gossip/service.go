@@ -47,12 +47,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// AddressExtractor extracts the gossip gRPC address from a node.
+type AddressExtractor func(*databasev1.Node) string
+
 var (
 	errServerCert = errors.New("invalid server cert file")
 	errServerKey  = errors.New("invalid server key file")
 	errNoAddr     = errors.New("no address")
-
-	serverScope = observability.RootScope.SubScope("property_repair_gossip_server")
 )
 
 const (
@@ -63,6 +64,7 @@ const (
 
 type service struct {
 	schema.UnimplementedOnInitHandler
+	addressExtractor    AddressExtractor
 	pipeline            queue.Client
 	metadata            metadata.Repo
 	creds               credentials.TransportCredentials
@@ -76,6 +78,7 @@ type service struct {
 	protocolHandler     *protocolHandler
 	registered          map[string]*databasev1.Node
 	traceSpanNotified   *int32
+	prefix              string
 	caCertPath          string
 	host                string
 	addr                string
@@ -99,8 +102,13 @@ type service struct {
 }
 
 // NewMessenger creates a new instance of Messenger for gossip propagation communication between nodes.
-func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo, pipeline queue.Client) Messenger {
+func NewMessenger(prefix string, addressExtractor AddressExtractor,
+	omr observability.MetricsRegistry, metadata metadata.Repo, pipeline queue.Client, defaultPort uint32,
+) Messenger {
+	serverScope := observability.RootScope.SubScope(prefix + "_gossip_server")
 	return &service{
+		prefix:           prefix,
+		addressExtractor: addressExtractor,
 		metadata:         metadata,
 		omr:              omr,
 		closer:           run.NewCloser(1),
@@ -112,15 +120,13 @@ func NewMessenger(omr observability.MetricsRegistry, metadata metadata.Repo, pip
 		registered:       make(map[string]*databasev1.Node),
 		scheduleInterval: time.Hour * 2,
 		sel:              node.NewRoundRobinSelector("", metadata),
-		port:             17932,
+		port:             defaultPort,
 	}
 }
 
 // NewMessengerWithoutMetadata creates a new instance of Messenger without metadata.
-func NewMessengerWithoutMetadata(omr observability.MetricsRegistry, port int) Messenger {
-	messenger := NewMessenger(omr, nil, nil)
-	messenger.(*service).port = uint32(port)
-	return messenger
+func NewMessengerWithoutMetadata(prefix string, addressExtractor AddressExtractor, omr observability.MetricsRegistry, port int) Messenger {
+	return NewMessenger(prefix, addressExtractor, omr, nil, nil, uint32(port))
 }
 
 func (s *service) PreRun(ctx context.Context) error {
@@ -130,13 +136,14 @@ func (s *service) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.nodeID = node.NodeID
-	s.log = logger.GetLogger("gossip-messenger")
+	s.log = logger.GetLogger(s.prefix + "-gossip-messenger")
 	s.listeners = make([]MessageListener, 0)
-	s.serverMetrics = newServerMetrics(s.omr.With(serverScope))
+	metricsScope := observability.RootScope.SubScope(s.prefix + "_gossip_server")
+	s.serverMetrics = newServerMetrics(s.omr.With(metricsScope))
 	if s.metadata != nil {
 		s.sel.OnInit([]schema.Kind{schema.KindGroup})
-		s.metadata.RegisterHandler("property-repair-nodes", schema.KindNode, s)
-		s.metadata.RegisterHandler("property-repair-groups", schema.KindGroup, s)
+		s.metadata.RegisterHandler(s.prefix+"-nodes", schema.KindNode, s)
+		s.metadata.RegisterHandler(s.prefix+"-groups", schema.KindGroup, s)
 		if err := s.initTracing(ctx); err != nil {
 			s.log.Warn().Err(err).Msg("failed to init internal trace stream")
 		}
@@ -151,7 +158,7 @@ func (s *service) GetServerPort() *uint32 {
 }
 
 func (s *service) Name() string {
-	return "gossip-messenger"
+	return s.prefix + "-gossip-messenger"
 }
 
 func (s *service) Role() databasev1.Role {
@@ -159,18 +166,18 @@ func (s *service) Role() databasev1.Role {
 }
 
 func (s *service) FlagSet() *run.FlagSet {
-	fs := run.NewFlagSet("gossip-messenger")
+	fs := run.NewFlagSet(s.prefix + "-gossip-messenger")
 
-	fs.VarP(&s.maxRecvMsgSize, "property-repair-gossip-grpc-max-recv-msg-size", "", "the size of max receiving message")
-	fs.StringVar(&s.host, "property-repair-gossip-grpc-host", "", "the host of banyand listens")
-	fs.Uint32Var(&s.port, "property-repair-gossip-grpc-port", s.port, "the port of banyand listens")
+	fs.VarP(&s.maxRecvMsgSize, s.prefix+"-gossip-grpc-max-recv-msg-size", "", "the size of max receiving message")
+	fs.StringVar(&s.host, s.prefix+"-gossip-grpc-host", "", "the host of banyand listens")
+	fs.Uint32Var(&s.port, s.prefix+"-gossip-grpc-port", s.port, "the port of banyand listens")
 
-	fs.BoolVar(&s.tls, "property-repair-gossip-grpc-tls", false, "connection uses TLS if true, else plain TCP")
-	fs.StringVar(&s.certFile, "property-repair-gossip-grpc-server-cert-file", "", "the TLS cert file")
-	fs.StringVar(&s.keyFile, "property-repair-gossip-grpc-server-key-file", "", "the TLS key file")
-	fs.StringVar(&s.caCertPath, "property-repair-gossip-client-ca-cert", "", "Path to the CA certificate for gossip client TLS communication.")
-	fs.DurationVar(&s.totalTimeout, "property-repair-gossip-total-timeout", defaultTotalTimeout, "the total timeout for gossip propagation")
-	fs.BoolVar(&s.traceLogEnabled, "property-repair-gossip-trace-log", true, "enable trace log")
+	fs.BoolVar(&s.tls, s.prefix+"-gossip-grpc-tls", false, "connection uses TLS if true, else plain TCP")
+	fs.StringVar(&s.certFile, s.prefix+"-gossip-grpc-server-cert-file", "", "the TLS cert file")
+	fs.StringVar(&s.keyFile, s.prefix+"-gossip-grpc-server-key-file", "", "the TLS key file")
+	fs.StringVar(&s.caCertPath, s.prefix+"-gossip-client-ca-cert", "", "Path to the CA certificate for gossip client TLS communication.")
+	fs.DurationVar(&s.totalTimeout, s.prefix+"-gossip-total-timeout", defaultTotalTimeout, "the total timeout for gossip propagation")
+	fs.BoolVar(&s.traceLogEnabled, s.prefix+"-gossip-trace-log", true, "enable trace log")
 	return fs
 }
 
@@ -181,9 +188,6 @@ func (s *service) Validate() error {
 	}
 
 	// server side validation
-	if s.port == 0 {
-		s.port = 17932
-	}
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr

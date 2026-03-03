@@ -128,7 +128,10 @@ func CheckInterval(d time.Duration) WatcherOption {
 	}
 }
 
-var _ Registry = (*etcdSchemaRegistry)(nil)
+var (
+	_ Registry      = (*etcdSchemaRegistry)(nil)
+	_ NodeDiscovery = (*etcdSchemaRegistry)(nil)
+)
 
 type etcdSchemaRegistry struct {
 	client        *clientv3.Client
@@ -138,6 +141,8 @@ type etcdSchemaRegistry struct {
 	namespace     string
 	checkInterval time.Duration
 	mux           sync.RWMutex
+	startOnce     sync.Once
+	closeOnce     sync.Once
 }
 
 type etcdSchemaRegistryConfig struct {
@@ -206,23 +211,33 @@ func (e *etcdSchemaRegistry) Compact(ctx context.Context, revision int64) error 
 	return err
 }
 
-func (e *etcdSchemaRegistry) StartWatcher() {
-	e.mux.RLock()
-	defer e.mux.RUnlock()
-	for _, w := range e.watchers {
-		w.Start()
-	}
+// Start launches all registered watchers. It is idempotent.
+func (e *etcdSchemaRegistry) Start(_ context.Context) error {
+	//nolint:contextcheck
+	e.startOnce.Do(func() {
+		e.mux.RLock()
+		defer e.mux.RUnlock()
+		for _, w := range e.watchers {
+			w.Start()
+		}
+	})
+	return nil
 }
 
+// Close shuts down watchers and the etcd client. It is idempotent.
 func (e *etcdSchemaRegistry) Close() error {
-	e.closer.Done()
-	e.closer.CloseThenWait()
-	e.mux.RLock()
-	defer e.mux.RUnlock()
-	for i := range e.watchers {
-		e.watchers[i].Close()
-	}
-	return e.client.Close()
+	var closeErr error
+	e.closeOnce.Do(func() {
+		e.closer.Done()
+		e.closer.CloseThenWait()
+		e.mux.RLock()
+		defer e.mux.RUnlock()
+		for i := range e.watchers {
+			e.watchers[i].Close()
+		}
+		closeErr = e.client.Close()
+	})
+	return closeErr
 }
 
 // NewEtcdSchemaRegistry returns a Registry powered by Etcd.
@@ -592,7 +607,7 @@ func (e *etcdSchemaRegistry) revokeLease(lease *clientv3.LeaseGrantResponse) {
 
 func (e *etcdSchemaRegistry) NewWatcher(name string, kind Kind, revision int64, opts ...WatcherOption) *watcher {
 	wc := watcherConfig{
-		key:           e.prependNamespace(kind.key()),
+		key:           e.prependNamespace(kind.Key()),
 		kind:          kind,
 		revision:      revision,
 		checkInterval: 5 * time.Minute, // Default value

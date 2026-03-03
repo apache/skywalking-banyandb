@@ -86,26 +86,29 @@ var _ = ginkgo.Describe("etcd_register", func() {
 	})
 
 	ginkgo.It("should revoke the leaser", func() {
-		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		_, err := r.GetNode(context.Background(), node)
+		gomega.Expect(schema.RegisterNode(context.Background(), r, md, true)).ShouldNot(gomega.HaveOccurred())
+		nr := r.(schema.NodeDiscovery)
+		_, err := nr.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(r.Close()).ShouldNot(gomega.HaveOccurred())
 		r, err = schema.NewEtcdSchemaRegistry(
 			schema.Namespace("test"),
 			schema.ConfigureServerEndpoints(endpoints))
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		_, err = r.GetNode(context.Background(), node)
+		nr = r.(schema.NodeDiscovery)
+		_, err = nr.GetNode(context.Background(), node)
 		gomega.Expect(err).Should(gomega.MatchError(schema.ErrGRPCResourceNotFound))
 	})
 
 	ginkgo.It("should register only once", func() {
-		gomega.Expect(r.Register(context.Background(), md, false)).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(r.Register(context.Background(), md, false)).Should(gomega.MatchError(schema.ErrGRPCAlreadyExists))
+		gomega.Expect(schema.RegisterNode(context.Background(), r, md, false)).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(schema.RegisterNode(context.Background(), r, md, false)).Should(gomega.MatchError(schema.ErrGRPCAlreadyExists))
 	})
 
 	ginkgo.It("should reconnect", func() {
-		gomega.Expect(r.Register(context.Background(), md, true)).ShouldNot(gomega.HaveOccurred())
-		_, err := r.GetNode(context.Background(), node)
+		gomega.Expect(schema.RegisterNode(context.Background(), r, md, true)).ShouldNot(gomega.HaveOccurred())
+		nr := r.(schema.NodeDiscovery)
+		_, err := nr.GetNode(context.Background(), node)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(server.Close()).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(1 * time.Second)
@@ -122,8 +125,9 @@ var _ = ginkgo.Describe("etcd_register", func() {
 		<-server.ReadyNotify()
 
 		gomega.Eventually(func() error {
-			_, err := r.GetNode(context.Background(), node)
-			return err
+			reconnectNR := r.(schema.NodeDiscovery)
+			_, getErr := reconnectNR.GetNode(context.Background(), node)
+			return getErr
 		}, flags.EventuallyTimeout).ShouldNot(gomega.HaveOccurred())
 	})
 })

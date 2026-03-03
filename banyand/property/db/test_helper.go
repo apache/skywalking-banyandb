@@ -46,6 +46,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 	snapshotDir := tmpPath // Use same directory for snapshot
 	dbInstance, err := OpenDB(context.Background(), Config{
 		Location:               tmpPath,
+		MetricsScopeName:       "property_test",
 		FlushInterval:          3 * time.Second,
 		ExpireToDeleteDuration: time.Hour,
 		Repair: RepairConfig{

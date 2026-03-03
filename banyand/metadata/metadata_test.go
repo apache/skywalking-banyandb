@@ -46,7 +46,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 		Level: flags.LogLevel,
 	}))
 	ctx := context.TODO()
-	s, _ := service.NewService(ctx)
+	s, _ := service.NewService(ctx, true)
 	req.NotNil(s)
 	rootDir, deferFn, err := testhelper.NewSpace()
 	req.NoError(err)

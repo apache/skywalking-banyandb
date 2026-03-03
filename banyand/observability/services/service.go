@@ -80,17 +80,17 @@ type metricService struct {
 	metadata         metadata.Repo
 	nodeSelector     native.NodeSelector
 	pipeline         queue.Client
-	svr              *http.Server
+	scheduler        *timestamp.Scheduler
 	l                *logger.Logger
 	closer           *run.Closer
-	scheduler        *timestamp.Scheduler
+	svr              *http.Server
 	nCollection      *native.MetricCollection
 	promReg          *prometheus.Registry
 	schedulerMetrics *SchedulerMetrics
-	npf              nativeProviderFactory
 	listenAddr       string
 	nodeType         string
 	modes            []string
+	npf              nativeProviderFactory
 	mutex            sync.Mutex
 }
 
@@ -157,6 +157,11 @@ func (p *metricService) Serve() run.StopNotify {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.initMetrics()
+	if containsMode(p.modes, flagNativeMode) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		p.npf.initAllSchemas(ctx)
+		cancel()
+	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))

@@ -20,6 +20,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -28,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -44,16 +45,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 const (
 	lockFilename = "lock"
 )
 
-var (
-	lfs           = fs.NewLocalFileSystemWithLogger(logger.GetLogger("property"))
-	propertyScope = observability.RootScope.SubScope("property")
-)
+var lfs = fs.NewLocalFileSystemWithLogger(logger.GetLogger("property"))
 
 // QueriedProperty represents a property returned from a query.
 type QueriedProperty interface {
@@ -114,6 +113,7 @@ type IndexConfig struct {
 type Config struct {
 	Snapshot               SnapshotConfig
 	Location               string
+	MetricsScopeName       string
 	Repair                 RepairConfig
 	Index                  IndexConfig
 	FlushInterval          time.Duration
@@ -122,6 +122,7 @@ type Config struct {
 
 type database struct {
 	omr                 observability.MetricsRegistry
+	metricsScope        meter.Scope
 	lfs                 fs.FileSystem
 	lock                fs.File
 	logger              *logger.Logger
@@ -140,14 +141,19 @@ type database struct {
 
 // OpenDB opens a property database with the given configuration.
 func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, lfs fs.FileSystem) (Database, error) {
+	if cfg.MetricsScopeName == "" {
+		return nil, errors.New("metrics scope name must not be empty")
+	}
 	loc := filepath.Clean(cfg.Location)
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
+	metricsScope := observability.RootScope.SubScope(cfg.MetricsScopeName)
 
 	db := &database{
 		location:            loc,
 		logger:              l,
 		omr:                 omr,
+		metricsScope:        metricsScope,
 		flushInterval:       cfg.FlushInterval,
 		expireDelete:        cfg.ExpireToDeleteDuration,
 		repairTreeSlotCount: cfg.Repair.TreeSlotCount,
@@ -159,10 +165,10 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 	var err error
 	// init repair scheduler
 	if cfg.Repair.Enabled {
-		scheduler, schedulerErr := newRepairScheduler(l, omr, cfg.Repair.BuildTreeCron, cfg.Repair.QuickBuildTreeTime,
+		scheduler, schedulerErr := newRepairScheduler(l, omr, metricsScope, cfg.Repair.BuildTreeCron, cfg.Repair.QuickBuildTreeTime,
 			cfg.Repair.TreeSlotCount, db, cfg.Snapshot.Func)
 		if schedulerErr != nil {
-			return nil, errors.Wrapf(schedulerErr, "failed to create repair scheduler for %s", loc)
+			return nil, pkgerrors.Wrapf(schedulerErr, "failed to create repair scheduler for %s", loc)
 		}
 		db.repairScheduler = scheduler
 	}
@@ -426,7 +432,7 @@ func (db *database) collect() {
 func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
 	s, err := db.loadShard(ctx, property.Metadata.Group, common.ShardID(shardID))
 	if err != nil {
-		return errors.WithMessagef(err, "failed to load shard %d", id)
+		return pkgerrors.WithMessagef(err, "failed to load shard %d", id)
 	}
 	_, _, err = s.repair(ctx, id, property, deleteTime)
 	return err
@@ -489,7 +495,7 @@ func walkDir(root, prefix string, wf walkFn) error {
 		segs := strings.Split(f.Name(), "-")
 		errWalk := wf(segs[len(segs)-1])
 		if errWalk != nil {
-			return errors.WithMessagef(errWalk, "failed to load: %s", f.Name())
+			return pkgerrors.WithMessagef(errWalk, "failed to load: %s", f.Name())
 		}
 	}
 	return nil

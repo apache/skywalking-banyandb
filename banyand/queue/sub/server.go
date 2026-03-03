@@ -168,6 +168,7 @@ func (s *server) PreRun(ctx context.Context) error {
 
 		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
 		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
+		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
 	}
 
 	return nil

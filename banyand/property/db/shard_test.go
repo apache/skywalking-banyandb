@@ -102,6 +102,7 @@ func TestMergeDeleted(t *testing.T) {
 			defers = append(defers, snapshotDeferFunc)
 			db, err := OpenDB(context.Background(), Config{
 				Location:               dataDir,
+				MetricsScopeName:       "property_test",
 				FlushInterval:          3 * time.Second,
 				ExpireToDeleteDuration: tt.expireDeletionTime,
 				Repair: RepairConfig{
@@ -328,6 +329,7 @@ func TestRepair(t *testing.T) {
 			defers = append(defers, snapshotDeferFunc)
 			db, err := OpenDB(context.Background(), Config{
 				Location:               dataDir,
+				MetricsScopeName:       "property_test",
 				FlushInterval:          3 * time.Second,
 				ExpireToDeleteDuration: 1 * time.Hour,
 				Repair: RepairConfig{

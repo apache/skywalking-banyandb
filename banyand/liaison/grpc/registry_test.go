@@ -181,7 +181,7 @@ func setupForRegistry() func() {
 	// Init `Queue` module
 	pipeline := queue.Local()
 	// Init `Metadata` module
-	metaSvc, err := service.NewService(context.TODO())
+	metaSvc, err := service.NewService(context.TODO(), true)
 	Expect(err).NotTo(HaveOccurred())
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "standalone", nil)
 

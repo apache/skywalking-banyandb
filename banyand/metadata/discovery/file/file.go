@@ -54,6 +54,7 @@ type Service struct {
 
 // Config holds configuration for file discovery service.
 type Config struct {
+	OMR                  observability.MetricsRegistry
 	FilePath             string
 	GRPCTimeout          time.Duration
 	FetchInterval        time.Duration
@@ -131,6 +132,12 @@ func NewService(cfg Config) (*Service, error) {
 		}
 	})
 
+	if cfg.OMR != nil {
+		factory := observability.RootScope.SubScope("metadata").SubScope("file_discovery")
+		svc.metrics = newMetrics(cfg.OMR.With(factory))
+		svc.DiscoveryServiceBase.SetMetrics(svc.metrics)
+	}
+
 	return svc, nil
 }
 
@@ -150,6 +157,7 @@ func (s *Service) GetDialOptions(address string) ([]grpc.DialOption, error) {
 // Start begins the file discovery background process.
 func (s *Service) Start(ctx context.Context) error {
 	s.GetLogger().Debug().Str("file_path", s.filePath).Msg("Starting file-based node discovery service")
+	s.NodeCacheBase.StartForNotification()
 
 	// initial load
 	if err := s.loadAndParseFile(ctx); err != nil {
@@ -216,6 +224,15 @@ func (s *Service) loadAndParseFile(ctx context.Context) error {
 
 	s.GetLogger().Debug().Int("node_count", len(cfg.Nodes)).Msg("Successfully loaded configuration file")
 	return nil
+}
+
+// ListNode list all existing nodes from cache.
+func (s *Service) ListNode(ctx context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
+	if err := s.loadAndParseFile(ctx); err != nil {
+		return nil, err
+	}
+	// delegate to base for filtering
+	return s.NodeCacheBase.ListNode(ctx, role)
 }
 
 // FetchNodeWithRetry implements NodeFetcher interface for retry manager.

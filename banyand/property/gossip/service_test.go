@@ -183,7 +183,9 @@ func startNodes(count int) []*nodeContext {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// starting gossip messenger
-		messenger := NewMessengerWithoutMetadata(observability.NewBypassRegistry(), ports[0])
+		messenger := NewMessengerWithoutMetadata("property-repair",
+			func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
+			observability.NewBypassRegistry(), ports[0])
 		gomega.Expect(messenger).NotTo(gomega.BeNil())
 		addr := fmt.Sprintf("127.0.0.1:%d", ports[0])
 		messenger.(run.PreRunner).PreRun(context.WithValue(context.Background(), common.ContextNodeKey, common.Node{

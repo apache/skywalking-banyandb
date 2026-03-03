@@ -60,25 +60,27 @@ type ConnectionHandler[C Client] interface {
 
 // ConnManagerConfig holds configuration for ConnManager.
 type ConnManagerConfig[C Client] struct {
-	Handler        ConnectionHandler[C]
-	Logger         *logger.Logger
-	RetryPolicy    string
-	ExtraDialOpts  []grpc.DialOption
-	MaxRecvMsgSize int
+	Handler            ConnectionHandler[C]
+	Logger             *logger.Logger
+	RetryPolicy        string
+	ExtraDialOpts      []grpc.DialOption
+	MaxRecvMsgSize     int
+	HealthCheckTimeout time.Duration
 }
 
 // ConnManager manages gRPC connections with health checking, circuit breaking, and eviction.
 type ConnManager[C Client] struct {
-	handler    ConnectionHandler[C]
-	log        *logger.Logger
-	registered map[string]*databasev1.Node
-	active     map[string]*managedNode[C]
-	evictable  map[string]evictNode
-	cbStates   map[string]*circuitState
-	closer     *run.Closer
-	dialOpts   []grpc.DialOption
-	mu         sync.RWMutex
-	cbMu       sync.RWMutex
+	handler            ConnectionHandler[C]
+	log                *logger.Logger
+	registered         map[string]*databasev1.Node
+	active             map[string]*managedNode[C]
+	evictable          map[string]evictNode
+	cbStates           map[string]*circuitState
+	closer             *run.Closer
+	dialOpts           []grpc.DialOption
+	healthCheckTimeout time.Duration
+	mu                 sync.RWMutex
+	cbMu               sync.RWMutex
 }
 
 type managedNode[C Client] struct {
@@ -102,15 +104,20 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(cfg.MaxRecvMsgSize)))
 	}
 	dialOpts = append(dialOpts, cfg.ExtraDialOpts...)
+	healthCheckTimeout := cfg.HealthCheckTimeout
+	if healthCheckTimeout == 0 {
+		healthCheckTimeout = 2 * time.Second
+	}
 	m := &ConnManager[C]{
-		handler:    cfg.Handler,
-		log:        cfg.Logger,
-		registered: make(map[string]*databasev1.Node),
-		active:     make(map[string]*managedNode[C]),
-		evictable:  make(map[string]evictNode),
-		cbStates:   make(map[string]*circuitState),
-		closer:     run.NewCloser(1),
-		dialOpts:   dialOpts,
+		handler:            cfg.Handler,
+		log:                cfg.Logger,
+		registered:         make(map[string]*databasev1.Node),
+		active:             make(map[string]*managedNode[C]),
+		evictable:          make(map[string]evictNode),
+		cbStates:           make(map[string]*circuitState),
+		closer:             run.NewCloser(1),
+		dialOpts:           dialOpts,
+		healthCheckTimeout: healthCheckTimeout,
 	}
 	return m
 }
@@ -494,7 +501,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 
 func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
 	var resp *grpc_health_v1.HealthCheckResponse
-	if requestErr := Request(context.Background(), 2*time.Second, func(rpcCtx context.Context) (err error) {
+	if requestErr := Request(context.Background(), m.healthCheckTimeout, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
 				Service: "",

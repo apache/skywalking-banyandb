@@ -42,6 +42,7 @@ message Node {
   map<string, string> labels = 6;
   string property_repair_gossip_grpc_address = 7;
   string property_schema_grpc_address = 8;
+  string property_schema_gossip_grpc_address = 9;
 }
 
 message Shard {

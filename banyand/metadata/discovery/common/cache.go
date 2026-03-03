@@ -75,6 +75,29 @@ func (b *NodeCacheBase) ListNode(_ context.Context, role databasev1.Role) ([]*da
 	return result, nil
 }
 
+// StartForNotification replays all cached nodes to registered handlers.
+// This is for the case where nodes are already cached (PreRun phase) before the handlers are registered.
+func (b *NodeCacheBase) StartForNotification() {
+	b.cacheMutex.RLock()
+	cachedNodes := make([]*databasev1.Node, 0, len(b.nodeCache))
+	for _, node := range b.nodeCache {
+		cachedNodes = append(cachedNodes, node)
+	}
+	b.cacheMutex.RUnlock()
+
+	for _, handler := range b.handlers {
+		for _, node := range cachedNodes {
+			handler.OnAddOrUpdate(schema.Metadata{
+				TypeMeta: schema.TypeMeta{
+					Kind: schema.KindNode,
+					Name: node.GetMetadata().GetName(),
+				},
+				Spec: node,
+			})
+		}
+	}
+}
+
 // GetNode retrieves a specific node by name.
 func (b *NodeCacheBase) GetNode(_ context.Context, nodeName string) (*databasev1.Node, error) {
 	b.cacheMutex.RLock()
@@ -89,7 +112,7 @@ func (b *NodeCacheBase) GetNode(_ context.Context, nodeName string) (*databasev1
 }
 
 // RegisterHandler registers an event handler for node changes.
-func (b *NodeCacheBase) RegisterHandler(name string, handler schema.EventHandler) {
+func (b *NodeCacheBase) RegisterHandler(name string, _ schema.Kind, handler schema.EventHandler) {
 	b.handlersMutex.Lock()
 	defer b.handlersMutex.Unlock()
 
