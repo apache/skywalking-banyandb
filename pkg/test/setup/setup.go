@@ -84,6 +84,7 @@ type ClusterConfig struct {
 	SchemaRegistry    SchemaRegistryConfig
 	EtcdEndpoint      string
 	schemaServerAddrs []string
+	loadedKinds       []schema.Kind
 	mu                sync.Mutex
 }
 
@@ -108,6 +109,21 @@ func (c *ClusterConfig) addSchemaServerAddr(addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.schemaServerAddrs = append(c.schemaServerAddrs, addr)
+}
+
+// AddLoadedKinds records which schema kinds have been preloaded.
+func (c *ClusterConfig) AddLoadedKinds(kinds ...schema.Kind) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.loadedKinds = append(c.loadedKinds, kinds...)
+}
+
+func (c *ClusterConfig) getLoadedKinds() []schema.Kind {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]schema.Kind, len(c.loadedKinds))
+	copy(result, c.loadedKinds)
+	return result
 }
 
 // EtcdClusterConfig creates a ClusterConfig that uses etcd for discovery and schema registry.
@@ -706,8 +722,8 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 		"--stream-sync-interval=1s",
 		"--measure-sync-interval=1s",
 		"--trace-sync-interval=1s",
-		"--logging-modules", "trace,sidx",
-		"--logging-levels", "debug,debug",
+		"--logging-modules", "trace,sidx,property-schema-registry",
+		"--logging-levels", "debug,debug,debug",
 		"--schema-registry-mode="+config.SchemaRegistry.Mode,
 		"--node-discovery-mode="+config.NodeDiscovery.Mode,
 	)
@@ -735,7 +751,7 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 		)
 	}
 	if isPropertyMode {
-		waitForActiveDataNodes(grpcAddr)
+		waitForActiveDataNodes(grpcAddr, config)
 	}
 
 	return grpcAddr, httpAddr, func() {
@@ -772,7 +788,7 @@ func waitForSchemaSync(grpcAddr string) {
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 }
 
-func waitForActiveDataNodes(grpcAddr string) {
+func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
@@ -803,5 +819,41 @@ func waitForActiveDataNodes(grpcAddr string) {
 		g.Expect(tire2Table.GetActive()).NotTo(gomega.BeEmpty(),
 			"no active data nodes in tire2 route table")
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	for _, kind := range config.getLoadedKinds() {
+		waitForSchemaKind(conn, kind)
+	}
 	time.Sleep(5 * time.Second)
+}
+
+func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind) {
+	switch kind {
+	case schema.KindStream:
+		streamClient := databasev1.NewStreamRegistryServiceClient(conn)
+		gomega.Eventually(func(g gomega.Gomega) {
+			resp, listErr := streamClient.List(
+				context.Background(), &databasev1.StreamRegistryServiceListRequest{})
+			g.Expect(listErr).NotTo(gomega.HaveOccurred())
+			g.Expect(resp.GetStream()).NotTo(gomega.BeEmpty(),
+				"no stream schemas found in liaison schema registry")
+		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	case schema.KindMeasure:
+		measureClient := databasev1.NewMeasureRegistryServiceClient(conn)
+		gomega.Eventually(func(g gomega.Gomega) {
+			resp, listErr := measureClient.List(
+				context.Background(), &databasev1.MeasureRegistryServiceListRequest{})
+			g.Expect(listErr).NotTo(gomega.HaveOccurred())
+			g.Expect(resp.GetMeasure()).NotTo(gomega.BeEmpty(),
+				"no measure schemas found in liaison schema registry")
+		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	case schema.KindTrace:
+		traceClient := databasev1.NewTraceRegistryServiceClient(conn)
+		gomega.Eventually(func(g gomega.Gomega) {
+			resp, listErr := traceClient.List(
+				context.Background(), &databasev1.TraceRegistryServiceListRequest{})
+			g.Expect(listErr).NotTo(gomega.HaveOccurred())
+			g.Expect(resp.GetTrace()).NotTo(gomega.BeEmpty(),
+				"no trace schemas found in liaison schema registry")
+		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	default:
+	}
 }

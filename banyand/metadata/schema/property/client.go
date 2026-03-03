@@ -1056,14 +1056,18 @@ func (r *SchemaRegistry) performSync(ctx context.Context) {
 	isFullReconcile := r.shouldFullReconcile(round)
 	names := r.connMgr.ActiveNames()
 	if len(names) == 0 {
+		r.l.Debug().Uint64("round", round).Msg("performSync: no active connections, skipping")
 		return
 	}
+	r.l.Debug().Uint64("round", round).Bool("fullReconcile", isFullReconcile).
+		Int("activeNodes", len(names)).Msg("performSync: starting")
 	collector := newSyncCollector()
 	if isFullReconcile {
 		r.collectFullSync(ctx, collector)
 	} else {
 		r.collectIncrementalSync(ctx, collector)
 	}
+	r.l.Debug().Uint64("round", round).Int("collectedKinds", len(collector.entries)).Msg("performSync: reconciling")
 	r.reconcileFromCollector(collector)
 }
 

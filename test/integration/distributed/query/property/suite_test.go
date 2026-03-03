@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
@@ -47,6 +48,7 @@ func init() {
 		closeDataNode1 := setup.DataNode(config)
 		By("Loading schema via property")
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
+		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
 		By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 		By("Initializing test cases")
