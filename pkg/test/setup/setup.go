@@ -826,34 +826,61 @@ func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 }
 
 func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind) {
+	catalog := kindToCatalog(kind)
+	if catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
+		return
+	}
+	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
+	gomega.Eventually(func(g gomega.Gomega) {
+		groupResp, groupListErr := groupClient.List(
+			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+		g.Expect(groupListErr).NotTo(gomega.HaveOccurred())
+		var found bool
+		var err error
+		for _, grp := range groupResp.GetGroup() {
+			if grp.GetCatalog() != catalog {
+				continue
+			}
+			groupName := grp.GetMetadata().GetName()
+			found, err = hasSchemaInGroup(conn, kind, groupName)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			if found {
+				break
+			}
+		}
+		g.Expect(found).To(gomega.BeTrue(),
+			fmt.Sprintf("no %s schemas found in liaison schema registry", kind))
+	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+}
+
+func kindToCatalog(kind schema.Kind) commonv1.Catalog {
 	switch kind {
 	case schema.KindStream:
-		streamClient := databasev1.NewStreamRegistryServiceClient(conn)
-		gomega.Eventually(func(g gomega.Gomega) {
-			resp, listErr := streamClient.List(
-				context.Background(), &databasev1.StreamRegistryServiceListRequest{})
-			g.Expect(listErr).NotTo(gomega.HaveOccurred())
-			g.Expect(resp.GetStream()).NotTo(gomega.BeEmpty(),
-				"no stream schemas found in liaison schema registry")
-		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+		return commonv1.Catalog_CATALOG_STREAM
 	case schema.KindMeasure:
-		measureClient := databasev1.NewMeasureRegistryServiceClient(conn)
-		gomega.Eventually(func(g gomega.Gomega) {
-			resp, listErr := measureClient.List(
-				context.Background(), &databasev1.MeasureRegistryServiceListRequest{})
-			g.Expect(listErr).NotTo(gomega.HaveOccurred())
-			g.Expect(resp.GetMeasure()).NotTo(gomega.BeEmpty(),
-				"no measure schemas found in liaison schema registry")
-		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+		return commonv1.Catalog_CATALOG_MEASURE
 	case schema.KindTrace:
-		traceClient := databasev1.NewTraceRegistryServiceClient(conn)
-		gomega.Eventually(func(g gomega.Gomega) {
-			resp, listErr := traceClient.List(
-				context.Background(), &databasev1.TraceRegistryServiceListRequest{})
-			g.Expect(listErr).NotTo(gomega.HaveOccurred())
-			g.Expect(resp.GetTrace()).NotTo(gomega.BeEmpty(),
-				"no trace schemas found in liaison schema registry")
-		}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+		return commonv1.Catalog_CATALOG_TRACE
 	default:
+		return commonv1.Catalog_CATALOG_UNSPECIFIED
 	}
+}
+
+func hasSchemaInGroup(conn *grpclib.ClientConn, kind schema.Kind, group string) (bool, error) {
+	ctx := context.Background()
+	switch kind {
+	case schema.KindStream:
+		client := databasev1.NewStreamRegistryServiceClient(conn)
+		resp, listErr := client.List(ctx, &databasev1.StreamRegistryServiceListRequest{Group: group})
+		return listErr == nil && len(resp.GetStream()) > 0, listErr
+	case schema.KindMeasure:
+		client := databasev1.NewMeasureRegistryServiceClient(conn)
+		resp, listErr := client.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: group})
+		return listErr == nil && len(resp.GetMeasure()) > 0, listErr
+	case schema.KindTrace:
+		client := databasev1.NewTraceRegistryServiceClient(conn)
+		resp, listErr := client.List(ctx, &databasev1.TraceRegistryServiceListRequest{Group: group})
+		return listErr == nil && len(resp.GetTrace()) > 0, listErr
+	}
+	return false, nil
 }
