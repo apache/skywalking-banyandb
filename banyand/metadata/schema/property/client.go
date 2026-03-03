@@ -1083,6 +1083,8 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 			if queryErr != nil {
 				return fmt.Errorf("failed to query schemas for full sync for kind: %s", kind)
 			}
+			r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
+				Int("schemas", len(schemas)).Msg("collectFullSync: collected")
 			collector.add(nodeName, kind, schemas)
 		}
 		return nil
@@ -1094,11 +1096,14 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 
 func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *syncCollector) {
 	sinceRevision := r.cache.GetMaxRevision()
+	r.l.Debug().Int64("sinceRevision", sinceRevision).Msg("collectIncrementalSync: querying updates")
 	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
 		updatedKindNames, queryErr := r.queryUpdatedSchemas(ctx, sc.update, sinceRevision)
 		if queryErr != nil {
 			return queryErr
 		}
+		r.l.Debug().Str("node", nodeName).Int("updatedKinds", len(updatedKindNames)).
+			Strs("kinds", updatedKindNames).Msg("collectIncrementalSync: got updates")
 		for _, kindName := range updatedKindNames {
 			kind, kindErr := KindFromString(kindName)
 			if kindErr != nil {
@@ -1110,6 +1115,8 @@ func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *
 			if schemasErr != nil {
 				return fmt.Errorf("failed to query updated schemas for kind %s: %w", kind, schemasErr)
 			}
+			r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
+				Int("schemas", len(schemas)).Msg("collectIncrementalSync: collected")
 			collector.add(nodeName, kind, schemas)
 		}
 		return nil
