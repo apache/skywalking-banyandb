@@ -53,12 +53,15 @@ jobs:
         with:
           version: v1.30.0
 
-      - name: Setup Kind
-        uses: helm/kind-action@v1.12.0
-        with:
-          cluster_name: banyand-ktm
-          config: test/fodc/kind.yaml
-          wait: 180s
+      - name: Install kind
+        run: |
+          mkdir -p "${HOME}/.local/bin"
+          curl -fsSL -o "${RUNNER_TEMP}/kind" "https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64"
+          install -m 0755 "${RUNNER_TEMP}/kind" "${HOME}/.local/bin/kind"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Create Kind cluster
+        run: kind create cluster --name banyand-ktm --config test/fodc/kind.yaml --wait 180s
 
       - name: Build BanyanDB image
         run: |
