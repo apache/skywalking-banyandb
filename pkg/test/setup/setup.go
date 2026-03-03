@@ -881,6 +881,7 @@ func hasSchemaInGroup(conn *grpclib.ClientConn, kind schema.Kind, group string) 
 		client := databasev1.NewTraceRegistryServiceClient(conn)
 		resp, listErr := client.List(ctx, &databasev1.TraceRegistryServiceListRequest{Group: group})
 		return listErr == nil && len(resp.GetTrace()) > 0, listErr
+	default:
 	}
 	return false, nil
 }
