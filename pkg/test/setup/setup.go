@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -285,10 +286,47 @@ func PreloadSchemaViaProperty(config *ClusterConfig, loaders ...func(ctx context
 	})
 	gomega.Expect(regErr).NotTo(gomega.HaveOccurred())
 	defer func() { _ = reg.Close() }()
+	gomega.Eventually(func() int {
+		return len(reg.ActiveNodeNames())
+	}).WithTimeout(testflags.EventuallyTimeout).WithPolling(200 * time.Millisecond).
+		Should(gomega.Equal(len(nodes)))
 	ctx := context.Background()
 	for _, loader := range loaders {
 		gomega.Expect(loader(ctx, reg)).To(gomega.Succeed())
 	}
+}
+
+// QueryNodeGroups returns active group names from each schema server.
+func QueryNodeGroups(config *ClusterConfig) map[string][]string {
+	result := make(map[string][]string)
+	addrs := config.SchemaServerAddrs()
+	ctx := context.Background()
+	for _, addr := range addrs {
+		nodes := []*databasev1.Node{{
+			Metadata:                  &commonv1.Metadata{Name: "verify-node"},
+			Roles:                     []databasev1.Role{databasev1.Role_ROLE_META},
+			PropertySchemaGrpcAddress: addr,
+		}}
+		reg, regErr := property.NewSchemaRegistryClient(&property.ClientConfig{
+			GRPCTimeout:  10 * time.Second,
+			NodeRegistry: &testNodeRegistry{nodes: nodes},
+		})
+		gomega.Expect(regErr).NotTo(gomega.HaveOccurred())
+		gomega.Eventually(func() int {
+			return len(reg.ActiveNodeNames())
+		}).WithTimeout(testflags.EventuallyTimeout).WithPolling(200 * time.Millisecond).
+			Should(gomega.Equal(1))
+		groups, listErr := reg.ListGroup(ctx)
+		gomega.Expect(listErr).NotTo(gomega.HaveOccurred())
+		groupNames := make([]string, 0, len(groups))
+		for _, group := range groups {
+			groupNames = append(groupNames, group.GetMetadata().GetName())
+		}
+		sort.Strings(groupNames)
+		result[addr] = groupNames
+		_ = reg.Close()
+	}
+	return result
 }
 
 // Standalone wires standalone modules to build a testing ready runtime.
@@ -599,8 +637,8 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		"--schema-server-root-path="+dataDir,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
-		"--logging-modules", "trace,sidx",
-		"--logging-levels", "debug,debug",
+		"--logging-modules", "trace,sidx,property-schema-registry",
+		"--logging-levels", "debug,debug,debug",
 		"--schema-registry-mode="+config.SchemaRegistry.Mode,
 		"--node-discovery-mode="+config.NodeDiscovery.Mode,
 	)
@@ -732,7 +770,7 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
 	if isPropertyMode {
-		flags = append(flags, "--schema-property-client-sync-interval", "300ms")
+		flags = append(flags, "--schema-property-client-sync-interval", "1s")
 	} else {
 		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
 	}

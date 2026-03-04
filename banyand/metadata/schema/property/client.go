@@ -1100,8 +1100,22 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 			if queryErr != nil {
 				return fmt.Errorf("failed to query schemas for full sync for kind: %s", kind)
 			}
-			r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
-				Int("schemas", len(schemas)).Msg("collectFullSync: collected")
+			if r.l.Debug().Enabled() {
+				activeSchemas := 0
+				deletedSchemas := 0
+				for _, s := range schemas {
+					if s.deleteTime > 0 {
+						deletedSchemas++
+						continue
+					}
+					activeSchemas++
+				}
+				r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
+					Int("schemas", len(schemas)).
+					Int("activeSchemas", activeSchemas).
+					Int("deletedSchemas", deletedSchemas).
+					Msg("collectFullSync: collected")
+			}
 			collector.add(nodeName, kind, schemas)
 		}
 		return nil

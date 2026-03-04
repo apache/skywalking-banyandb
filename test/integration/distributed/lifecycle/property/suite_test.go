@@ -19,6 +19,7 @@ package property_test
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -50,9 +51,26 @@ func init() {
 		By("Starting warm data node")
 		_, destDir, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=warm",
 			"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
-		By("Loading schema via property")
 		setup.PreloadSchemaViaProperty(config, test_stream.LoadSchemaWithStages, test_measure.LoadSchemaWithStages,
 			test_trace.PreloadSchemaWithStages, test_property.PreloadSchema)
+		By("Capturing per-node group snapshots after property schema preload")
+		nodeGroups := setup.QueryNodeGroups(config)
+		schemaAddrs := config.SchemaServerAddrs()
+		sort.Strings(schemaAddrs)
+		for _, schemaAddr := range schemaAddrs {
+			groups := nodeGroups[schemaAddr]
+			By(fmt.Sprintf("Schema server %s groups(%d): %v", schemaAddr, len(groups), groups))
+		}
+		if len(schemaAddrs) >= 2 {
+			baseAddr := schemaAddrs[0]
+			for _, schemaAddr := range schemaAddrs[1:] {
+				onlyInBase := diffGroups(nodeGroups[baseAddr], nodeGroups[schemaAddr])
+				onlyInCurrent := diffGroups(nodeGroups[schemaAddr], nodeGroups[baseAddr])
+				if len(onlyInBase) > 0 || len(onlyInCurrent) > 0 {
+					By(fmt.Sprintf("Group snapshot mismatch: onlyIn(%s)=%v onlyIn(%s)=%v", baseAddr, onlyInBase, schemaAddr, onlyInCurrent))
+				}
+			}
+		}
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
 		By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--data-node-selector", "type=hot")
@@ -73,6 +91,7 @@ func init() {
 				"--schema-registry-mode=property",
 				"--node-discovery-mode=file",
 				fmt.Sprintf("--node-discovery-file-path=%s", dfWriter.Path()),
+				"--schema-property-client-sync-interval=300ms",
 			},
 			StopFunc: func() {
 				closerLiaisonNode()
@@ -82,6 +101,21 @@ func init() {
 			},
 		}
 	}
+}
+
+func diffGroups(left, right []string) []string {
+	rightSet := make(map[string]struct{}, len(right))
+	for _, groupName := range right {
+		rightSet[groupName] = struct{}{}
+	}
+	result := make([]string, 0)
+	for _, groupName := range left {
+		if _, exists := rightSet[groupName]; exists {
+			continue
+		}
+		result = append(result, groupName)
+	}
+	return result
 }
 
 func TestPropertyLifecycle(t *testing.T) {
