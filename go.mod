@@ -7,6 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
 	github.com/RoaringBitmap/roaring v1.9.4
+	github.com/SkyAPM/ktm-ebpf v0.0.0-20260228024820-81a19d950bff
 	github.com/alecthomas/participle/v2 v2.1.4
 	github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe
 	github.com/aws/aws-sdk-go-v2 v1.40.0
@@ -15,6 +16,7 @@ require (
 	github.com/benbjohnson/clock v1.3.5
 	github.com/blugelabs/bluge v0.2.2
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/cilium/ebpf v0.19.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/envoyproxy/protoc-gen-validate v1.2.1
 	github.com/go-chi/chi/v5 v5.2.3

@@ -19,6 +19,7 @@
 package flags
 
 import (
+	"strconv"
 	"time"
 )
 
@@ -28,6 +29,8 @@ var (
 	neverTimeout string
 
 	consistentlyTimeout string
+
+	requireKTM string
 
 	// EventuallyTimeout is the timeout of async time cases execution.
 	EventuallyTimeout time.Duration
@@ -40,6 +43,9 @@ var (
 
 	// LogLevel is the log level of test cases.
 	LogLevel = "debug"
+
+	// RequireKTM indicates whether KTM integration tests must run and should fail instead of skipping when requirements are missing.
+	RequireKTM bool
 )
 
 func init() {
@@ -52,6 +58,14 @@ func init() {
 	if consistentlyTimeout == "" {
 		consistentlyTimeout = "5s"
 	}
+	if requireKTM == "" {
+		requireKTM = "false"
+	}
+	requireKTMParsed, requireKTMParseErr := strconv.ParseBool(requireKTM)
+	if requireKTMParseErr != nil {
+		panic(requireKTMParseErr)
+	}
+	RequireKTM = requireKTMParsed
 	d, err := time.ParseDuration(eventuallyTimeout)
 	if err != nil {
 		panic(err)
