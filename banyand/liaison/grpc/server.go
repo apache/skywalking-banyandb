@@ -114,6 +114,7 @@ type server struct {
 	*indexRuleBindingRegistryServer
 	metrics                  *metrics
 	routeTableProviders      map[string]route.TableProvider
+	groupDropSubscriber      GroupDropSubscriber
 	keyFile                  string
 	authConfigFile           string
 	addr                     string
@@ -136,8 +137,12 @@ type server struct {
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
 	protectorService protector.Memory, routeProviders map[string]route.TableProvider,
+	dropSubscriber GroupDropSubscriber,
 ) Server {
-	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
+	gr := &groupRepo{
+		resourceOpts: make(map[string]*commonv1.ResourceOpts),
+		inflight:     make(map[string]*groupInflight),
+	}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
@@ -205,6 +210,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		authReloader:        auth.InitAuthReloader(),
 		protector:           protectorService,
 		routeTableProviders: routeProviders,
+		groupDropSubscriber: dropSubscriber,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -212,13 +218,19 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	return s
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
 	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
 	s.bydbQLSVC.setLogger(s.log.Named("bydbql"))
+	s.groupRegistryServer.deletionTaskManager = newGroupDeletionTaskManager(
+		s.groupRegistryServer.schemaRegistry, s.propertyServer, s.groupRepo, s.groupDropSubscriber, s.log.Named("group-deletion"),
+	)
+	if initErr := s.groupRegistryServer.deletionTaskManager.initPropertyStorage(ctx); initErr != nil {
+		return initErr
+	}
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,

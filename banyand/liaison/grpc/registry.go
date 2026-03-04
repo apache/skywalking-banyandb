@@ -577,8 +577,9 @@ func (rs *measureRegistryServer) Exist(ctx context.Context,
 
 type groupRegistryServer struct {
 	databasev1.UnimplementedGroupRegistryServiceServer
-	schemaRegistry metadata.Repo
-	metrics        *metrics
+	schemaRegistry      metadata.Repo
+	deletionTaskManager *groupDeletionTaskManager
+	metrics             *metrics
 }
 
 func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.GroupRegistryServiceCreateRequest) (
@@ -618,21 +619,38 @@ func (rs *groupRegistryServer) Update(ctx context.Context, req *databasev1.Group
 func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.GroupRegistryServiceDeleteRequest) (
 	*databasev1.GroupRegistryServiceDeleteResponse, error,
 ) {
-	g := ""
+	g := req.GetGroup()
 	rs.metrics.totalRegistryStarted.Inc(1, g, "group", "delete")
 	start := time.Now()
 	defer func() {
 		rs.metrics.totalRegistryFinished.Inc(1, g, "group", "delete")
 		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "group", "delete")
 	}()
-	deleted, err := rs.schemaRegistry.GroupRegistry().DeleteGroup(ctx, req.GetGroup())
-	if err != nil {
+	if g == internalDeletionTaskGroup {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
-		return nil, err
+		return nil, status.Errorf(codes.PermissionDenied, "cannot delete internal system group %s", g)
 	}
-	return &databasev1.GroupRegistryServiceDeleteResponse{
-		Deleted: deleted,
-	}, nil
+	if _, getErr := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, g); getErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+		return nil, getErr
+	}
+	if !req.GetForce() {
+		hasResources, checkErr := rs.deletionTaskManager.hasNonEmptyResources(ctx, g)
+		if checkErr != nil {
+			rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+			return nil, checkErr
+		}
+		if hasResources {
+			rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"group %s is not empty, use force=true to delete non-empty groups", g)
+		}
+	}
+	if startErr := rs.deletionTaskManager.startDeletion(ctx, g); startErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+		return nil, startErr
+	}
+	return &databasev1.GroupRegistryServiceDeleteResponse{}, nil
 }
 
 func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupRegistryServiceGetRequest) (
@@ -738,10 +756,24 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 	}, nil
 }
 
-func (rs *groupRegistryServer) Query(_ context.Context, _ *databasev1.GroupRegistryServiceQueryRequest) (
+func (rs *groupRegistryServer) Query(ctx context.Context, req *databasev1.GroupRegistryServiceQueryRequest) (
 	*databasev1.GroupRegistryServiceQueryResponse, error,
 ) {
-	return nil, status.Error(codes.Unimplemented, "Query method not implemented yet")
+	g := req.GetGroup()
+	rs.metrics.totalRegistryStarted.Inc(1, g, "group", "query")
+	start := time.Now()
+	defer func() {
+		rs.metrics.totalRegistryFinished.Inc(1, g, "group", "query")
+		rs.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "group", "query")
+	}()
+	task, queryErr := rs.deletionTaskManager.getDeletionTask(ctx, g)
+	if queryErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "query")
+		return nil, queryErr
+	}
+	return &databasev1.GroupRegistryServiceQueryResponse{
+		Task: task,
+	}, nil
 }
 
 func (rs *groupRegistryServer) collectSchemaInfo(ctx context.Context, group string) (*databasev1.SchemaInfo, error) {

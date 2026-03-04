@@ -175,6 +175,20 @@ func (d *database[T, O]) Close() error {
 	return nil
 }
 
+// Drop closes the database and removes all data files from disk.
+func (d *database[T, O]) Drop() (err error) {
+	if closeErr := d.Close(); closeErr != nil {
+		return closeErr
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("failed to remove database directory %s: %v", d.location, r)
+		}
+	}()
+	d.lfs.MustRMAll(d.location)
+	return nil
+}
+
 // OpenTSDB returns a new tsdb runtime. This constructor will create a new database if it's absent,
 // or load an existing one.
 func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache Cache, group string) (TSDB[T, O], error) {

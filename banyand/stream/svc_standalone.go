@@ -60,6 +60,7 @@ type Service interface {
 	Query
 	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
+	SubscribeGroupDrop(groupName string) <-chan struct{}
 }
 
 var _ Service = (*standalone)(nil)
@@ -94,6 +95,10 @@ func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
 
 func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
+}
+
+func (s *standalone) SubscribeGroupDrop(groupName string) <-chan struct{} {
+	return s.schemaRepo.SubscribeGroupDrop(groupName)
 }
 
 func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {

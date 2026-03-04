@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -87,6 +86,7 @@ type schemaRepo struct {
 	indexRuleMap           sync.Map
 	bindingForwardMap      sync.Map
 	bindingBackwardMap     sync.Map
+	pendingGroupDrops      sync.Map
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
@@ -106,6 +106,13 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 // StopCh implements Repository.
 func (sr *schemaRepo) StopCh() <-chan struct{} {
 	return sr.closer.CloseNotify()
+}
+
+// SubscribeGroupDrop returns a channel that is closed after the group's physical storage is dropped.
+func (sr *schemaRepo) SubscribeGroupDrop(groupName string) <-chan struct{} {
+	ch := make(chan struct{})
+	sr.pendingGroupDrops.Store(groupName, ch)
+	return ch
 }
 
 // NewRepository return a new Repository.
@@ -197,6 +204,10 @@ func (sr *schemaRepo) Watcher() {
 						switch evt.Kind {
 						case EventKindGroup:
 							err = sr.deleteGroup(evt.Metadata.GetMetadata())
+							groupName := evt.Metadata.GetMetadata().GetName()
+							if dropCh, loaded := sr.pendingGroupDrops.LoadAndDelete(groupName); loaded {
+								close(dropCh.(chan struct{}))
+							}
 						case EventKindResource:
 							sr.deleteResource(evt.Metadata.GetMetadata())
 						case EventKindIndexRule:
@@ -295,11 +306,10 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
 	g, loaded := sr.groupMap.LoadAndDelete(name)
-	log.Info().Str("group", name).Bool("loaded", loaded).Msg("deleting group")
 	if !loaded {
 		return nil
 	}
-	return g.(*group).close()
+	return g.(*group).drop()
 }
 
 func (sr *schemaRepo) getGroup(name string) (*group, bool) {
@@ -568,4 +578,15 @@ func (g *group) close() (err error) {
 		return nil
 	}
 	return multierr.Append(err, g.SupplyTSDB().Close())
+}
+
+func (g *group) drop() error {
+	if !g.isInit() || g.isPortable() {
+		return nil
+	}
+	db := g.db.Load()
+	if db == nil {
+		return nil
+	}
+	return db.(DB).Drop()
 }

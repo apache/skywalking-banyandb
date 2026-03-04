@@ -222,6 +222,10 @@ func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
+func (s *standalone) SubscribeGroupDrop(groupName string) <-chan struct{} {
+	return s.schemaRepo.SubscribeGroupDrop(groupName)
+}
+
 func (s *standalone) Trace(metadata *commonv1.Metadata) (Trace, error) {
 	sm, ok := s.schemaRepo.Trace(metadata)
 	if !ok {

@@ -68,6 +68,7 @@ type Service interface {
 	Query
 	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
+	SubscribeGroupDrop(groupName string) <-chan struct{}
 }
 
 // Query allows retrieving traces.
