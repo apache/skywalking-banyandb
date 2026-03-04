@@ -79,6 +79,7 @@ func Initialize(addr string, now time.Time) {
 			},
 			DataFile: "sw_spec_order2.json",
 		})
+	time.Sleep(5 * time.Second)
 	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
@@ -131,7 +132,7 @@ func Initialize(addr string, now time.Time) {
 			},
 			DataFile: "service_cpm_minute_spec_order2.json",
 		})
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
 	// trace
 	interval = 500 * time.Millisecond
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now, interval)

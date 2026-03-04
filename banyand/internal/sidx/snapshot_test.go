@@ -410,10 +410,11 @@ func TestSnapshotReplacement_Basic(t *testing.T) {
 	// Perform writes that will trigger snapshot replacements
 	for i := 0; i < 5; i++ {
 		req := WriteRequest{
-			SeriesID: common.SeriesID(i + 1),
-			Key:      int64(i),
-			Data:     []byte(fmt.Sprintf("test-data-%d", i)),
-			Tags:     []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
+			SeriesID:  common.SeriesID(i + 1),
+			Key:       int64(i),
+			Timestamp: 0, // Test data doesn't require timestamp
+			Data:      []byte(fmt.Sprintf("test-data-%d", i)),
+			Tags:      []Tag{{Name: "test", Value: []byte("snapshot-replacement")}},
 		}
 
 		writeTestDataToSIDX(t, sidx, []WriteRequest{req}, int64(i+1), uint64(i+1))

@@ -198,21 +198,26 @@ func (sw *writers) GetTagWriters(tagName string) (*writer, *writer, *writer) {
 }
 
 // blockWriter handles writing blocks to files.
+//
+//nolint:govet // struct layout optimized for readability; field alignment acceptable
 type blockWriter struct {
 	writers                    writers
 	metaData                   []byte
 	primaryBlockData           []byte
 	primaryBlockMetadata       primaryBlockMetadata
-	totalBlocksCount           uint64
-	maxKey                     int64
+	minKey                     int64
+	minKeyLast                 int64
 	totalUncompressedSizeBytes uint64
 	totalCount                 uint64
-	minKey                     int64
+	totalBlocksCount           uint64
 	totalMinKey                int64
 	totalMaxKey                int64
-	minKeyLast                 int64
-	sidFirst                   common.SeriesID
+	maxKey                     int64
+	totalMinTimestamp          int64
+	totalMaxTimestamp          int64
 	sidLast                    common.SeriesID
+	sidFirst                   common.SeriesID
+	hasTimestamp               bool
 	hasWrittenBlocks           bool
 }
 
@@ -230,6 +235,9 @@ func (bw *blockWriter) reset() {
 	bw.totalBlocksCount = 0
 	bw.totalMinKey = 0
 	bw.totalMaxKey = 0
+	bw.totalMinTimestamp = 0
+	bw.totalMaxTimestamp = 0
+	bw.hasTimestamp = false
 	bw.primaryBlockData = bw.primaryBlockData[:0]
 	bw.metaData = bw.metaData[:0]
 	bw.primaryBlockMetadata.reset()
@@ -262,7 +270,7 @@ func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string
 }
 
 // MustWriteElements writes elements to the block writer.
-func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, data [][]byte, tags [][]*tag) {
+func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, timestamps []int64, data [][]byte, tags [][]*tag) {
 	if len(userKeys) == 0 {
 		return
 	}
@@ -276,11 +284,11 @@ func (bw *blockWriter) MustWriteElements(sid common.SeriesID, userKeys []int64, 
 	// Process tags
 	b.mustInitFromTags(tags)
 
-	bw.mustWriteBlock(sid, b)
+	bw.mustWriteBlock(sid, b, timestamps)
 }
 
 // mustWriteBlock writes a block with metadata tracking.
-func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
+func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block, timestamps []int64) {
 	if b.Len() == 0 {
 		return
 	}
@@ -324,6 +332,28 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 	}
 	bw.minKeyLast = minKey
 
+	// Update timestamp ranges
+	// Note: timestamps with value 0 are skipped as they indicate "not set"
+	// (see WriteRequest.Timestamp comment for details)
+	if len(timestamps) > 0 {
+		for _, ts := range timestamps {
+			if ts != 0 {
+				if !bw.hasTimestamp {
+					bw.totalMinTimestamp = ts
+					bw.totalMaxTimestamp = ts
+					bw.hasTimestamp = true
+				} else {
+					if ts < bw.totalMinTimestamp {
+						bw.totalMinTimestamp = ts
+					}
+					if ts > bw.totalMaxTimestamp {
+						bw.totalMaxTimestamp = ts
+					}
+				}
+			}
+		}
+	}
+
 	bw.totalUncompressedSizeBytes += b.uncompressedSizeBytes()
 	bw.totalCount += uint64(b.Len())
 	bw.totalBlocksCount++
@@ -356,6 +386,12 @@ func (bw *blockWriter) Flush(pm *partMetadata) {
 	pm.BlocksCount = bw.totalBlocksCount
 	pm.MinKey = bw.totalMinKey
 	pm.MaxKey = bw.totalMaxKey
+
+	// Set timestamp ranges if available
+	if bw.hasTimestamp {
+		pm.MinTimestamp = &bw.totalMinTimestamp
+		pm.MaxTimestamp = &bw.totalMaxTimestamp
+	}
 
 	bw.mustFlushPrimaryBlock(bw.primaryBlockData)
 

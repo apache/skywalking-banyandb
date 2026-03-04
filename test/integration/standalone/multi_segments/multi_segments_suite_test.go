@@ -103,6 +103,7 @@ var _ = ReportAfterSuite("Integration Query Suite", func(report Report) {
 		if deferFunc != nil {
 			deferFunc()
 		}
+		time.Sleep(3 * time.Second)
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}

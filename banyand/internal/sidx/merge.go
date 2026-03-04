@@ -94,7 +94,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, err := mergeBlocks(closeCh, bw, br)
+	pm, err := mergeBlocks(closeCh, bw, br, parts)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -110,7 +110,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	return newPartWrapper(nil, p), nil
 }
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, parts []*partWrapper) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -146,7 +146,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
 			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) ||
 			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
-			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+			// During merge, timestamps are not available in blocks, only in part metadata
+			// Timestamps will be recomputed from source parts after merge
+			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block, nil)
 			releaseDecoder()
 			br.loadBlockData(getDecoder())
 			pendingBlock.copyFrom(b)
@@ -168,7 +170,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+		// During merge, timestamps are not available in blocks, only in part metadata
+		// Timestamps will be recomputed from source parts after merge
+		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block, nil)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()
@@ -178,12 +182,47 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
-		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+		// During merge, timestamps are not available in blocks, only in part metadata
+		// Timestamps will be recomputed from source parts after merge
+		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block, nil)
 	}
 	releaseDecoder()
 	var result partMetadata
 	bw.Flush(&result)
+
+	// Recompute timestamp ranges from source parts
+	// (timestamps are not stored in blocks, only in part metadata)
+	recomputeTimestampRanges(&result, parts)
+
 	return &result, nil
+}
+
+// recomputeTimestampRanges computes min/max timestamps from source parts.
+func recomputeTimestampRanges(result *partMetadata, parts []*partWrapper) {
+	var minTimestamp *int64
+	var maxTimestamp *int64
+
+	for _, pw := range parts {
+		if pw.p == nil || pw.p.partMetadata == nil {
+			continue
+		}
+		pm := pw.p.partMetadata
+		if pm.MinTimestamp != nil && pm.MaxTimestamp != nil {
+			if minTimestamp == nil || *pm.MinTimestamp < *minTimestamp {
+				ts := *pm.MinTimestamp
+				minTimestamp = &ts
+			}
+			if maxTimestamp == nil || *pm.MaxTimestamp > *maxTimestamp {
+				ts := *pm.MaxTimestamp
+				maxTimestamp = &ts
+			}
+		}
+	}
+
+	if minTimestamp != nil && maxTimestamp != nil {
+		result.MinTimestamp = minTimestamp
+		result.MaxTimestamp = maxTimestamp
+	}
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {
