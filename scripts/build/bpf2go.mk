@@ -16,25 +16,22 @@
 # under the License.
 #
 
-NAME := fodc
-BINARIES := $(NAME)-agent
+BPF2GO := $(tool_bin)/bpf2go
+IS_LINUX := $(shell uname -s | grep -i linux)
 
-IMG_NAME := skywalking-banyandb-fodc-agent
-
-# Override SOURCE_DIR to match the actual Go module path structure
-SOURCE_DIR := fodc/agent
-
-include ../../scripts/build/version.mk
-include ../../scripts/build/base.mk
-include ../../scripts/build/build.mk
-include ../../scripts/build/docker.mk
-include ../../scripts/build/test.mk
-include ../../scripts/build/lint.mk
-include ../../scripts/build/vendor.mk
-include ../../scripts/build/help.mk
-
-prepare-build: generate
-
-.PHONY: generate
-generate:
-	@echo "Skipping KTM eBPF generation (using github.com/SkyAPM/ktm-ebpf prebuilt artifacts)"
+$(BPF2GO):
+	@echo "Installing bpf2go..."
+	@mkdir -p $(tool_bin)
+	@GOBIN=$(tool_bin) go install github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION)
+	@if [ ! -f "$(BPF2GO)" ]; then \
+		echo "WARNING: Failed to install bpf2go at $(BPF2GO)"; \
+		if [ "$(IS_LINUX)" = "Linux" ]; then \
+			echo "ERROR: bpf2go is required on Linux"; \
+			exit 1; \
+		fi; \
+		echo "Creating a stub bpf2go executable for non-Linux platform"; \
+		echo '#!/bin/sh' > $(BPF2GO); \
+		echo 'echo "bpf2go stub: eBPF code generation only works on Linux"' >> $(BPF2GO); \
+		echo 'exit 0' >> $(BPF2GO); \
+		chmod +x $(BPF2GO); \
+	fi

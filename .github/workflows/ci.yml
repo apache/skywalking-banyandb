@@ -74,6 +74,43 @@ jobs:
         run: make license-dep
       - name: Check
         run: make check
+  detect_fodc_e2e_changes:
+    name: Detect FODC E2E Changes
+    runs-on: ubuntu-latest
+    needs: [check]
+    outputs:
+      should_run: ${{ steps.filter.outputs.should_run }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changed files for FODC E2E
+        id: filter
+        run: |
+          set -euo pipefail
+
+          should_run=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            should_run=false
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files="$(git diff --name-only "${base_sha}" "${head_sha}")"
+            while IFS= read -r changed_file; do
+              case "${changed_file}" in
+                fodc/*|test/fodc/*|banyand/*|api/proto/*|scripts/build/*)
+                  should_run=true
+                  break
+                  ;;
+                .github/actions/setup-build-env/*|.github/workflows/test-fodc-e2e.yml|.github/workflows/prepare.yml|.github/workflows/ci.yml)
+                  should_run=true
+                  break
+                  ;;
+              esac
+            done <<< "${changed_files}"
+          fi
+
+          echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
   test-banyand:
     name: Test Banyand
     needs: [check]
@@ -86,6 +123,11 @@ jobs:
     name: Test FODC
     needs: [check]
     uses: ./.github/workflows/test-fodc.yml
+  test-fodc-e2e:
+    name: Test FODC E2E
+    if: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
+    needs: [check, detect_fodc_e2e_changes]
+    uses: ./.github/workflows/test-fodc-e2e.yml
   test-pkg:
     name: Test Pkg
     needs: [check]
@@ -106,6 +148,7 @@ jobs:
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
-    needs: [test-banyand, test-bydbctl, test-fodc, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
+    needs:
+      [detect_fodc_e2e_changes, test-banyand, test-bydbctl, test-fodc, test-fodc-e2e, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
     steps:
       - run: echo 'success'
