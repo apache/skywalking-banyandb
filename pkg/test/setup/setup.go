@@ -835,21 +835,25 @@ func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind) {
 		groupResp, groupListErr := groupClient.List(
 			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
 		g.Expect(groupListErr).NotTo(gomega.HaveOccurred())
-		var found bool
-		var err error
+		var matchingGroups int
+		var syncedGroups int
 		for _, grp := range groupResp.GetGroup() {
 			if grp.GetCatalog() != catalog {
 				continue
 			}
+			matchingGroups++
 			groupName := grp.GetMetadata().GetName()
-			found, err = hasSchemaInGroup(conn, kind, groupName)
-			g.Expect(err).NotTo(gomega.HaveOccurred())
+			found, schemaErr := hasSchemaInGroup(conn, kind, groupName)
+			g.Expect(schemaErr).NotTo(gomega.HaveOccurred())
 			if found {
-				break
+				syncedGroups++
 			}
 		}
-		g.Expect(found).To(gomega.BeTrue(),
-			fmt.Sprintf("no %s schemas found in liaison schema registry", kind))
+		g.Expect(matchingGroups).To(gomega.BeNumerically(">", 0),
+			fmt.Sprintf("no groups with catalog %s found", catalog))
+		g.Expect(syncedGroups).To(gomega.Equal(matchingGroups),
+			fmt.Sprintf("only %d/%d %s groups have schemas synced",
+				syncedGroups, matchingGroups, kind))
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 }
 

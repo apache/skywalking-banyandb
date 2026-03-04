@@ -84,6 +84,7 @@ type SchemaRegistry struct {
 	syncInterval       time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
+	started            atomic.Bool
 	mux                sync.RWMutex
 }
 
@@ -442,6 +443,12 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 	}
 	propID := query.Ids[0]
 	info := propMap[propID]
+	if !r.started.Load() {
+		if info == nil || info.best == nil || info.best.deleteTime > 0 {
+			return nil, nil
+		}
+		return info.best.property, nil
+	}
 	if info == nil || info.best == nil || info.best.deleteTime > 0 {
 		entry := r.cache.Get(propID)
 		if entry != nil {
@@ -463,6 +470,15 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	propMap, queryErr := r.queryAndRepairSchemas(ctx, query)
 	if queryErr != nil {
 		return nil, queryErr
+	}
+	if !r.started.Load() {
+		result := make([]*propertyv1.Property, 0, len(propMap))
+		for _, info := range propMap {
+			if info.best != nil && info.best.deleteTime == 0 {
+				result = append(result, info.best.property)
+			}
+		}
+		return result, nil
 	}
 	serverPropIDs := make(map[string]struct{})
 	result := make([]*propertyv1.Property, 0, len(propMap))
@@ -1028,6 +1044,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 	r.forEachActiveNode(func(_ string, sc *schemaClient) error {
 		return r.initializeFromSchemaClient(ctx, sc)
 	}, "failed to initialize from schema client at startup")
+	r.started.Store(true)
 	go r.syncLoop(ctx)
 	return nil
 }
@@ -1298,7 +1315,10 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 		latestUpdateAt: parsed.UpdatedAt,
 		kind:           kind,
 	}
-	if r.cache.Update(propID, entry) {
+	updated := r.cache.Update(propID, entry)
+	r.l.Debug().Stringer("kind", kind).Str("group", parsed.Group).Str("name", parsed.Name).
+		Str("propID", propID).Bool("cacheUpdated", updated).Msg("processing initial resource from property")
+	if updated {
 		r.notifyHandlers(kind, schema.Metadata{
 			TypeMeta: schema.TypeMeta{
 				Kind:  kind,
@@ -1327,6 +1347,8 @@ func (r *SchemaRegistry) notifyHandlers(kind schema.Kind, md schema.Metadata, is
 	r.mux.RLock()
 	handlers := r.handlers[kind]
 	r.mux.RUnlock()
+	r.l.Debug().Stringer("kind", kind).Str("group", md.Group).Str("name", md.Name).
+		Bool("isDelete", isDelete).Int("handlerCount", len(handlers)).Msg("notifying schema event handlers")
 	for _, handler := range handlers {
 		if isDelete {
 			handler.OnDelete(md)
