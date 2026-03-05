@@ -15,20 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package integration_inspect_test provides integration tests for the inspect functionality in distributed mode.
-package integration_inspect_test
+// Package inspect provides integration tests for the inspect functionality in standalone mode.
+package inspect
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
-	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -40,25 +38,27 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-func TestInspect(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Inspect Suite")
+// SetupResult contains all info returned by SetupFunc.
+type SetupResult struct {
+	StopFunc func()
+	Addr     string
 }
 
+// SetupFunc is provided by sub-packages to start the environment.
+var SetupFunc func() SetupResult
+
+var result SetupResult
+
 var (
-	deferFunc          func()
-	goods              []gleak.Goroutine
 	connection         *grpc.ClientConn
+	goods              []gleak.Goroutine
 	groupClient        databasev1.GroupRegistryServiceClient
 	measureRegClient   databasev1.MeasureRegistryServiceClient
 	streamRegClient    databasev1.StreamRegistryServiceClient
@@ -66,64 +66,22 @@ var (
 	measureWriteClient measurev1.MeasureServiceClient
 	streamWriteClient  streamv1.StreamServiceClient
 	traceWriteClient   tracev1.TraceServiceClient
-	etcdEndpoint       string
-	liaisonGrpcAddr    string
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
-	Expect(logger.Init(logger.Logging{
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
+	})).To(gomega.Succeed())
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
-
-	By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
-	dir, spaceDef, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	Expect(err).ShouldNot(HaveOccurred())
-	<-server.ReadyNotify()
-
-	By("Starting data node 0")
-	closeDataNode0 := setup.DataNode(ep)
-	By("Starting data node 1")
-	closeDataNode1 := setup.DataNode(ep)
-	By("Starting liaison node")
-	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(ep)
-
-	deferFunc = func() {
-		closerLiaisonNode()
-		closeDataNode0()
-		closeDataNode1()
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
-	}
-
-	return []byte(fmt.Sprintf("%s,%s", liaisonAddr, ep))
+	result = SetupFunc()
+	return []byte(result.Addr)
 }, func(address []byte) {
-	parts := strings.Split(string(address), ",")
-	if len(parts) != 2 {
-		panic(fmt.Sprintf("expected 2 parts, got %d", len(parts)))
-	}
-	liaisonGrpcAddr = parts[0]
-	etcdEndpoint = parts[1]
-
 	var err error
-	connection, err = grpchelper.Conn(liaisonGrpcAddr, 10*time.Second,
+	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	Expect(err).NotTo(HaveOccurred())
-
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	groupClient = databasev1.NewGroupRegistryServiceClient(connection)
 	measureRegClient = databasev1.NewMeasureRegistryServiceClient(connection)
 	streamRegClient = databasev1.NewStreamRegistryServiceClient(connection)
@@ -133,25 +91,26 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	traceWriteClient = tracev1.NewTraceServiceClient(connection)
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
-}, func() {})
+}, func() {
+	if result.StopFunc != nil {
+		result.StopFunc()
+	}
+})
 
-var _ = ReportAfterSuite("Distributed Inspect Suite", func(report Report) {
+var _ = ginkgo.ReportAfterSuite("Standalone Inspect Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if deferFunc != nil {
-			deferFunc()
-		}
-		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}
 })
 
 func writeMeasureData(ctx context.Context, groupName, measureName string, dataCount int) {
 	writeClient, writeErr := measureWriteClient.Write(ctx)
-	Expect(writeErr).ShouldNot(HaveOccurred())
+	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
 
 	metadata := &commonv1.Metadata{
 		Name:  measureName,
@@ -175,18 +134,18 @@ func writeMeasureData(ctx context.Context, groupName, measureName string, dataCo
 			MessageId: uint64(time.Now().UnixNano()),
 		}
 		sendErr := writeClient.Send(req)
-		Expect(sendErr).ShouldNot(HaveOccurred())
+		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
 	}
-	Expect(writeClient.CloseSend()).To(Succeed())
-	Eventually(func() error {
+	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
+	gomega.Eventually(func() error {
 		_, recvErr := writeClient.Recv()
 		return recvErr
-	}, flags.EventuallyTimeout).Should(Equal(io.EOF))
+	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
 }
 
 func writeStreamData(ctx context.Context, groupName, streamName string, dataCount int) {
 	writeClient, writeErr := streamWriteClient.Write(ctx)
-	Expect(writeErr).ShouldNot(HaveOccurred())
+	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
 
 	metadata := &commonv1.Metadata{
 		Name:  streamName,
@@ -208,18 +167,18 @@ func writeStreamData(ctx context.Context, groupName, streamName string, dataCoun
 			MessageId: uint64(time.Now().UnixNano()),
 		}
 		sendErr := writeClient.Send(req)
-		Expect(sendErr).ShouldNot(HaveOccurred())
+		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
 	}
-	Expect(writeClient.CloseSend()).To(Succeed())
-	Eventually(func() error {
+	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
+	gomega.Eventually(func() error {
 		_, recvErr := writeClient.Recv()
 		return recvErr
-	}, flags.EventuallyTimeout).Should(Equal(io.EOF))
+	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
 }
 
 func writeTraceData(ctx context.Context, groupName, traceName string, dataCount int) {
 	writeClient, writeErr := traceWriteClient.Write(ctx)
-	Expect(writeErr).ShouldNot(HaveOccurred())
+	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
 
 	metadata := &commonv1.Metadata{
 		Name:  traceName,
@@ -242,27 +201,27 @@ func writeTraceData(ctx context.Context, groupName, traceName string, dataCount 
 			Version: uint64(idx + 1),
 		}
 		sendErr := writeClient.Send(req)
-		Expect(sendErr).ShouldNot(HaveOccurred())
+		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
 	}
-	Expect(writeClient.CloseSend()).To(Succeed())
-	Eventually(func() error {
+	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
+	gomega.Eventually(func() error {
 		_, recvErr := writeClient.Recv()
 		return recvErr
-	}, flags.EventuallyTimeout).Should(Equal(io.EOF))
+	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
 }
 
-var _ = Describe("Inspect in distributed mode", func() {
+var _ = ginkgo.Describe("Inspect measure in standalone mode", func() {
 	var groupName string
 	var measureName string
 	var ctx context.Context
-	const dataCount = 100
+	const dataCount = 10
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		ctx = context.TODO()
-		groupName = fmt.Sprintf("inspect-test-%d", time.Now().UnixNano())
+		groupName = fmt.Sprintf("inspect-measure-test-%d", time.Now().UnixNano())
 		measureName = "test_measure"
 
-		By("Creating measure group")
+		ginkgo.By("Creating measure group")
 		_, createErr := groupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
 			Group: &commonv1.Group{
 				Metadata: &commonv1.Metadata{
@@ -282,9 +241,9 @@ var _ = Describe("Inspect in distributed mode", func() {
 				},
 			},
 		})
-		Expect(createErr).ShouldNot(HaveOccurred())
+		gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
 
-		By("Creating measure schema")
+		ginkgo.By("Creating measure schema")
 		_, measureErr := measureRegClient.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{
 			Measure: &databasev1.Measure{
 				Metadata: &commonv1.Metadata{
@@ -309,87 +268,89 @@ var _ = Describe("Inspect in distributed mode", func() {
 				}},
 			},
 		})
-		Expect(measureErr).ShouldNot(HaveOccurred())
+		gomega.Expect(measureErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(2 * time.Second)
 
-		By("Writing measure data")
+		ginkgo.By("Writing measure data")
 		writeMeasureData(ctx, groupName, measureName, dataCount)
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	It("should return schema info", func() {
-		By("Inspecting group")
+	ginkgo.It("should return group info", func() {
+		ginkgo.By("Inspecting group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying group info")
+		gomega.Expect(resp.Group).NotTo(gomega.BeNil())
+		gomega.Expect(resp.Group.Metadata.Name).To(gomega.Equal(groupName))
+		gomega.Expect(resp.Group.Catalog).To(gomega.Equal(commonv1.Catalog_CATALOG_MEASURE))
+	})
 
-		By("Verifying schema info contains the measure")
-		Expect(resp.SchemaInfo).NotTo(BeNil())
-		Expect(len(resp.SchemaInfo.Measures)).Should(BeNumerically(">=", 1))
-		Expect(resp.SchemaInfo.Measures).To(ContainElement(measureName))
-		GinkgoWriter.Printf("Schema info: measures=%d, streams=%d, traces=%d, indexRules=%d\n",
+	ginkgo.It("should return schema info", func() {
+		ginkgo.By("Inspecting group")
+		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying schema info contains the measure")
+		gomega.Expect(resp.SchemaInfo).NotTo(gomega.BeNil())
+		gomega.Expect(len(resp.SchemaInfo.Measures)).Should(gomega.BeNumerically(">=", 1))
+		gomega.Expect(resp.SchemaInfo.Measures).To(gomega.ContainElement(measureName))
+		ginkgo.GinkgoWriter.Printf("Schema info: measures=%d, streams=%d, traces=%d, indexRules=%d\n",
 			len(resp.SchemaInfo.Measures),
 			len(resp.SchemaInfo.Streams),
 			len(resp.SchemaInfo.Traces),
 			len(resp.SchemaInfo.IndexRules))
 	})
 
-	It("should return data info", func() {
-		By("Inspecting group")
+	ginkgo.It("should return data info", func() {
+		ginkgo.By("Inspecting group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying data collected from multiple nodes")
-		Expect(len(resp.DataInfo)).Should(BeNumerically(">=", 1), "should collect from at least one data node")
-
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying data info collected")
+		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
 		var totalDataSize int64
 		for idx, dataInfo := range resp.DataInfo {
-			Expect(dataInfo.Node).NotTo(BeNil(), "data node %d should have node info", idx)
-			Expect(dataInfo.DataSizeBytes).Should(BeNumerically(">", 0), "data node %d (%s) should have DataSizeBytes > 0", idx, dataInfo.Node.Metadata.Name)
+			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "data node %d should have node info", idx)
+			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "data node %d should have data size > 0", idx)
 			totalDataSize += dataInfo.DataSizeBytes
-			GinkgoWriter.Printf("Data node %d: %s, segments: %d, size: %d bytes\n",
+			ginkgo.GinkgoWriter.Printf("Data node %d: %s, segments: %d, size: %d bytes\n",
 				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
 		}
-		Expect(totalDataSize).Should(BeNumerically(">", 0), "total data size should be > 0")
-		GinkgoWriter.Printf("Total data size across all nodes: %d bytes\n", totalDataSize)
+		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total data size should be > 0")
+		ginkgo.GinkgoWriter.Printf("Total data size: %d bytes\n", totalDataSize)
 	})
 
-	It("should return liaison info", func() {
-		By("Inspecting group")
+	ginkgo.It("should return liaison info", func() {
+		ginkgo.By("Inspecting group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying liaison info collected")
-		Expect(len(resp.LiaisonInfo)).Should(BeNumerically(">=", 1), "should collect from at least one liaison node")
-
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying liaison info in standalone mode")
+		gomega.Expect(len(resp.LiaisonInfo)).Should(gomega.BeNumerically(">=", 1), "should have liaison info in standalone mode")
 		for idx, liaisonInfo := range resp.LiaisonInfo {
-			GinkgoWriter.Printf("Liaison node %d: PendingWrite=%d, PendingSync=%d parts (%d bytes)\n",
-				idx,
-				liaisonInfo.PendingWriteDataCount,
-				liaisonInfo.PendingSyncPartCount,
-				liaisonInfo.PendingSyncDataSizeBytes)
+			ginkgo.GinkgoWriter.Printf("Liaison node %d: PendingWrite=%d\n", idx, liaisonInfo.PendingWriteDataCount)
 		}
 	})
 })
 
-var _ = Describe("Inspect stream in distributed mode", func() {
+var _ = ginkgo.Describe("Inspect stream in standalone mode", func() {
 	var groupName string
 	var streamName string
 	var ctx context.Context
-	const dataCount = 100
+	const dataCount = 10
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		ctx = context.TODO()
 		groupName = fmt.Sprintf("inspect-stream-test-%d", time.Now().UnixNano())
 		streamName = "test_stream"
 
-		By("Creating stream group")
+		ginkgo.By("Creating stream group")
 		_, createErr := groupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
 			Group: &commonv1.Group{
 				Metadata: &commonv1.Metadata{
@@ -409,9 +370,9 @@ var _ = Describe("Inspect stream in distributed mode", func() {
 				},
 			},
 		})
-		Expect(createErr).ShouldNot(HaveOccurred())
+		gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
 
-		By("Creating stream schema")
+		ginkgo.By("Creating stream schema")
 		_, streamErr := streamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
 			Stream: &databasev1.Stream{
 				Metadata: &commonv1.Metadata{
@@ -430,84 +391,75 @@ var _ = Describe("Inspect stream in distributed mode", func() {
 				}},
 			},
 		})
-		Expect(streamErr).ShouldNot(HaveOccurred())
+		gomega.Expect(streamErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(2 * time.Second)
 
-		By("Writing stream data")
+		ginkgo.By("Writing stream data")
 		writeStreamData(ctx, groupName, streamName, dataCount)
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	It("should return schema info", func() {
-		By("Inspecting stream group")
+	ginkgo.It("should return group info", func() {
+		ginkgo.By("Inspecting stream group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying group info")
+		gomega.Expect(resp.Group).NotTo(gomega.BeNil())
+		gomega.Expect(resp.Group.Metadata.Name).To(gomega.Equal(groupName))
+		gomega.Expect(resp.Group.Catalog).To(gomega.Equal(commonv1.Catalog_CATALOG_STREAM))
+	})
 
-		By("Verifying schema info contains the stream")
-		Expect(resp.SchemaInfo).NotTo(BeNil())
-		Expect(len(resp.SchemaInfo.Streams)).Should(BeNumerically(">=", 1))
-		Expect(resp.SchemaInfo.Streams).To(ContainElement(streamName))
-		GinkgoWriter.Printf("Stream schema info: streams=%d, indexRules=%d\n",
+	ginkgo.It("should return data info", func() {
+		ginkgo.By("Inspecting stream group")
+		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying stream data info collected")
+		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
+		var totalDataSize int64
+		for idx, dataInfo := range resp.DataInfo {
+			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "stream data node %d should have node info", idx)
+			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "stream data node %d should have data size > 0", idx)
+			totalDataSize += dataInfo.DataSizeBytes
+			ginkgo.GinkgoWriter.Printf("Stream data node %d: %s, segments: %d, size: %d bytes\n",
+				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
+		}
+		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total stream data size should be > 0")
+		ginkgo.GinkgoWriter.Printf("Total stream data size: %d bytes\n", totalDataSize)
+	})
+
+	ginkgo.It("should return schema info", func() {
+		ginkgo.By("Inspecting stream group")
+		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying schema info contains the stream")
+		gomega.Expect(resp.SchemaInfo).NotTo(gomega.BeNil())
+		gomega.Expect(len(resp.SchemaInfo.Streams)).Should(gomega.BeNumerically(">=", 1))
+		gomega.Expect(resp.SchemaInfo.Streams).To(gomega.ContainElement(streamName))
+		ginkgo.GinkgoWriter.Printf("Stream schema info: streams=%d, indexRules=%d\n",
 			len(resp.SchemaInfo.Streams),
 			len(resp.SchemaInfo.IndexRules))
 	})
-
-	It("should return data info", func() {
-		By("Inspecting stream group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying stream data collected from multiple nodes")
-		Expect(len(resp.DataInfo)).Should(BeNumerically(">=", 1), "should collect from at least one stream data node")
-
-		var totalDataSize int64
-		for idx, dataInfo := range resp.DataInfo {
-			Expect(dataInfo.Node).NotTo(BeNil(), "stream data node %d should have node info", idx)
-			Expect(dataInfo.DataSizeBytes).Should(BeNumerically(">", 0), "stream data node %d (%s) should have DataSizeBytes > 0", idx, dataInfo.Node.Metadata.Name)
-			totalDataSize += dataInfo.DataSizeBytes
-			GinkgoWriter.Printf("Stream data node %d: %s, segments: %d, size: %d bytes\n",
-				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
-		}
-		Expect(totalDataSize).Should(BeNumerically(">", 0), "total stream data size should be > 0")
-		GinkgoWriter.Printf("Total stream data size: %d bytes\n", totalDataSize)
-	})
-
-	It("should return liaison info", func() {
-		By("Inspecting stream group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying stream liaison info collected")
-		Expect(len(resp.LiaisonInfo)).Should(BeNumerically(">=", 1), "should collect from at least one liaison node")
-
-		for idx, liaisonInfo := range resp.LiaisonInfo {
-			logger.Infof("Inspecting stream liaison node %d: PendingWrite=%d, PendingSync=%d parts",
-				idx, liaisonInfo.PendingWriteDataCount, liaisonInfo.PendingSyncPartCount)
-			GinkgoWriter.Printf("Stream liaison node %d: PendingWrite=%d, PendingSync=%d parts\n",
-				idx, liaisonInfo.PendingWriteDataCount, liaisonInfo.PendingSyncPartCount)
-		}
-	})
 })
 
-var _ = Describe("Inspect trace in distributed mode", func() {
+var _ = ginkgo.Describe("Inspect trace in standalone mode", func() {
 	var groupName string
 	var traceName string
 	var ctx context.Context
-	const dataCount = 100
+	const dataCount = 10
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		ctx = context.TODO()
 		groupName = fmt.Sprintf("inspect-trace-test-%d", time.Now().UnixNano())
 		traceName = "test_trace"
 
-		By("Creating trace group")
+		ginkgo.By("Creating trace group")
 		_, createErr := groupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
 			Group: &commonv1.Group{
 				Metadata: &commonv1.Metadata{
@@ -527,18 +479,15 @@ var _ = Describe("Inspect trace in distributed mode", func() {
 				},
 			},
 		})
-		Expect(createErr).ShouldNot(HaveOccurred())
+		gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
 
-		By("Creating trace schema")
+		ginkgo.By("Creating trace schema")
 		_, traceErr := traceRegClient.Create(ctx, &databasev1.TraceRegistryServiceCreateRequest{
 			Trace: &databasev1.Trace{
 				Metadata: &commonv1.Metadata{
 					Name:  traceName,
 					Group: groupName,
 				},
-				TraceIdTagName:   "trace_id",
-				SpanIdTagName:    "span_id",
-				TimestampTagName: "timestamp",
 				Tags: []*databasev1.TraceTagSpec{
 					{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -546,68 +495,64 @@ var _ = Describe("Inspect trace in distributed mode", func() {
 					{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
 				},
+				TraceIdTagName:   "trace_id",
+				SpanIdTagName:    "span_id",
+				TimestampTagName: "timestamp",
 			},
 		})
-		Expect(traceErr).ShouldNot(HaveOccurred())
+		gomega.Expect(traceErr).ShouldNot(gomega.HaveOccurred())
 		time.Sleep(2 * time.Second)
 
-		By("Writing trace data")
+		ginkgo.By("Writing trace data")
 		writeTraceData(ctx, groupName, traceName, dataCount)
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	})
 
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	It("should return schema info", func() {
-		By("Inspecting trace group")
+	ginkgo.It("should return group info", func() {
+		ginkgo.By("Inspecting trace group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying schema info contains the trace")
-		Expect(resp.SchemaInfo).NotTo(BeNil())
-		Expect(len(resp.SchemaInfo.Traces)).Should(BeNumerically(">=", 1))
-		Expect(resp.SchemaInfo.Traces).To(ContainElement(traceName))
-		GinkgoWriter.Printf("Trace schema info: traces=%d, indexRules=%d\n",
-			len(resp.SchemaInfo.Traces),
-			len(resp.SchemaInfo.IndexRules))
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying group info")
+		gomega.Expect(resp.Group).NotTo(gomega.BeNil())
+		gomega.Expect(resp.Group.Metadata.Name).To(gomega.Equal(groupName))
+		gomega.Expect(resp.Group.Catalog).To(gomega.Equal(commonv1.Catalog_CATALOG_TRACE))
 	})
 
-	It("should return data info", func() {
-		By("Inspecting trace group")
+	ginkgo.It("should return data info", func() {
+		ginkgo.By("Inspecting trace group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying trace data collected from multiple nodes")
-		Expect(len(resp.DataInfo)).Should(BeNumerically(">=", 1), "should collect from at least one trace data node")
-
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying trace data info collected")
+		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
 		var totalDataSize int64
 		for idx, dataInfo := range resp.DataInfo {
-			Expect(dataInfo.Node).NotTo(BeNil(), "trace data node %d should have node info", idx)
-			Expect(dataInfo.DataSizeBytes).Should(BeNumerically(">", 0), "trace data node %d (%s) should have DataSizeBytes > 0", idx, dataInfo.Node.Metadata.Name)
+			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "trace data node %d should have node info", idx)
+			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "trace data node %d should have data size > 0", idx)
 			totalDataSize += dataInfo.DataSizeBytes
-			GinkgoWriter.Printf("Trace data node %d: %s, segments: %d, size: %d bytes\n",
+			ginkgo.GinkgoWriter.Printf("Trace data node %d: %s, segments: %d, size: %d bytes\n",
 				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
 		}
-		Expect(totalDataSize).Should(BeNumerically(">", 0), "total trace data size should be > 0")
-		GinkgoWriter.Printf("Total trace data size: %d bytes\n", totalDataSize)
+		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total trace data size should be > 0")
+		ginkgo.GinkgoWriter.Printf("Total trace data size: %d bytes\n", totalDataSize)
 	})
 
-	It("should return liaison info", func() {
-		By("Inspecting trace group")
+	ginkgo.It("should return schema info", func() {
+		ginkgo.By("Inspecting trace group")
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		Expect(err).ShouldNot(HaveOccurred())
-		Expect(resp).NotTo(BeNil())
-
-		By("Verifying trace liaison info collected")
-		Expect(len(resp.LiaisonInfo)).Should(BeNumerically(">=", 1), "should collect from at least one liaison node")
-
-		for idx, liaisonInfo := range resp.LiaisonInfo {
-			GinkgoWriter.Printf("Trace liaison node %d: PendingWrite=%d, PendingSync=%d parts\n",
-				idx, liaisonInfo.PendingWriteDataCount, liaisonInfo.PendingSyncPartCount)
-		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		gomega.Expect(resp).NotTo(gomega.BeNil())
+		ginkgo.By("Verifying schema info contains the trace")
+		gomega.Expect(resp.SchemaInfo).NotTo(gomega.BeNil())
+		gomega.Expect(len(resp.SchemaInfo.Traces)).Should(gomega.BeNumerically(">=", 1))
+		gomega.Expect(resp.SchemaInfo.Traces).To(gomega.ContainElement(traceName))
+		ginkgo.GinkgoWriter.Printf("Trace schema info: traces=%d, indexRules=%d\n",
+			len(resp.SchemaInfo.Traces),
+			len(resp.SchemaInfo.IndexRules))
 	})
 })

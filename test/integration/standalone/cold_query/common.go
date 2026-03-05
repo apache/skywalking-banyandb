@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_query_test
+// Package coldquery provides shared test setup for cold data query integration tests.
+package coldquery
 
 import (
-	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,81 +33,76 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
-	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
 
-func TestIntegrationQuery(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Query Suite", Label(integration_standalone.Labels...))
+// SetupResult contains all info returned by SetupFunc.
+type SetupResult struct {
+	Now      time.Time
+	StopFunc func()
+	Addr     string
 }
 
+// SetupFunc is provided by sub-packages to start the environment.
+var SetupFunc func() SetupResult
+
 var (
+	result     SetupResult
 	connection *grpc.ClientConn
-	now        time.Time
-	deferFunc  func()
 	goods      []gleak.Goroutine
 )
 
-var _ = SynchronizedBeforeSuite(func() []byte {
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
-	pool.EnableStackTracking(true)
-	Expect(logger.Init(logger.Logging{
+	gomega.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
-	})).To(Succeed())
-	var addr string
-	addr, _, deferFunc = setup.Standalone()
-	ns := timestamp.NowMilli().UnixNano()
-	now = time.Unix(0, ns-ns%int64(time.Minute))
-	test_cases.Initialize(addr, now)
-	return []byte(addr)
+	})).To(gomega.Succeed())
+	result = SetupFunc()
+	return []byte(result.Addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   now,
+		BaseTime:   result.Now,
 	}
 	casesmeasure.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   now,
+		BaseTime:   result.Now,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   now,
+		BaseTime:   result.Now,
 	}
 	casestrace.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   now,
+		BaseTime:   result.Now,
 	}
 	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   now,
+		BaseTime:   result.Now,
 	}
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
 
-var _ = SynchronizedAfterSuite(func() {
+var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
-		Expect(connection.Close()).To(Succeed())
+		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 }, func() {})
 
-var _ = ReportAfterSuite("Integration Query Suite", func(report Report) {
+var _ = ginkgo.ReportAfterSuite("Integration Query Cold Data Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if deferFunc != nil {
-			deferFunc()
+		if result.StopFunc != nil {
+			result.StopFunc()
 		}
-		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
+		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}
 })

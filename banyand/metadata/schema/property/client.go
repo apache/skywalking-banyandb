@@ -84,6 +84,7 @@ type SchemaRegistry struct {
 	syncInterval       time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
+	started            atomic.Bool
 	mux                sync.RWMutex
 }
 
@@ -442,8 +443,22 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 	}
 	propID := query.Ids[0]
 	info := propMap[propID]
+	if !r.started.Load() {
+		if info == nil || info.best == nil || info.best.deleteTime > 0 {
+			return nil, nil
+		}
+		return info.best.property, nil
+	}
 	if info == nil || info.best == nil || info.best.deleteTime > 0 {
+		entry := r.cache.Get(propID)
+		if entry != nil {
+			r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+		}
 		return nil, nil
+	}
+	md, convErr := ToSchema(kind, info.best.property)
+	if convErr == nil {
+		r.processInitialResourceFromProperty(kind, info.best.property, md.Spec.(proto.Message))
 	}
 	return info.best.property, nil
 }
@@ -456,12 +471,40 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	if queryErr != nil {
 		return nil, queryErr
 	}
+	if !r.started.Load() {
+		result := make([]*propertyv1.Property, 0, len(propMap))
+		for _, info := range propMap {
+			if info.best != nil && info.best.deleteTime == 0 {
+				result = append(result, info.best.property)
+			}
+		}
+		return result, nil
+	}
+	serverPropIDs := make(map[string]struct{})
 	result := make([]*propertyv1.Property, 0, len(propMap))
-	for _, info := range propMap {
+	for propID, info := range propMap {
 		if info.best == nil || info.best.deleteTime != 0 {
+			entry := r.cache.Get(propID)
+			if entry != nil {
+				r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+			}
 			continue
 		}
+		serverPropIDs[propID] = struct{}{}
+		md, convErr := ToSchema(kind, info.best.property)
+		if convErr == nil {
+			r.processInitialResourceFromProperty(kind, info.best.property, md.Spec.(proto.Message))
+		}
 		result = append(result, info.best.property)
+	}
+	cachedEntries := r.cache.GetEntriesByKind(kind)
+	for propID, entry := range cachedEntries {
+		if group != "" && entry.group != group {
+			continue
+		}
+		if _, found := serverPropIDs[propID]; !found {
+			r.handleDeletion(kind, propID, entry, entry.latestUpdateAt)
+		}
 	}
 	return result, nil
 }
@@ -957,8 +1000,6 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 	if kind&schema.KindMask != kind {
 		panic(fmt.Sprintf("invalid kind %d", kind))
 	}
-	r.mux.Lock()
-	defer r.mux.Unlock()
 	var kinds []schema.Kind
 	for idx := 0; idx < schema.KindSize; idx++ {
 		ki := schema.Kind(1 << idx)
@@ -968,6 +1009,8 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 	}
 	r.l.Info().Str("name", name).Interface("kinds", kinds).Msg("registering property schema handler")
 	handler.OnInit(kinds)
+	r.mux.Lock()
+	defer r.mux.Unlock()
 	for _, ki := range kinds {
 		r.handlers[ki] = append(r.handlers[ki], handler)
 	}
@@ -1001,6 +1044,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 	r.forEachActiveNode(func(_ string, sc *schemaClient) error {
 		return r.initializeFromSchemaClient(ctx, sc)
 	}, "failed to initialize from schema client at startup")
+	r.started.Store(true)
 	go r.syncLoop(ctx)
 	return nil
 }
@@ -1029,14 +1073,18 @@ func (r *SchemaRegistry) performSync(ctx context.Context) {
 	isFullReconcile := r.shouldFullReconcile(round)
 	names := r.connMgr.ActiveNames()
 	if len(names) == 0 {
+		r.l.Debug().Uint64("round", round).Msg("performSync: no active connections, skipping")
 		return
 	}
+	r.l.Debug().Uint64("round", round).Bool("fullReconcile", isFullReconcile).
+		Int("activeNodes", len(names)).Msg("performSync: starting")
 	collector := newSyncCollector()
 	if isFullReconcile {
 		r.collectFullSync(ctx, collector)
 	} else {
 		r.collectIncrementalSync(ctx, collector)
 	}
+	r.l.Debug().Uint64("round", round).Int("collectedKinds", len(collector.entries)).Msg("performSync: reconciling")
 	r.reconcileFromCollector(collector)
 }
 
@@ -1052,6 +1100,22 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 			if queryErr != nil {
 				return fmt.Errorf("failed to query schemas for full sync for kind: %s", kind)
 			}
+			if r.l.Debug().Enabled() {
+				activeSchemas := 0
+				deletedSchemas := 0
+				for _, s := range schemas {
+					if s.deleteTime > 0 {
+						deletedSchemas++
+						continue
+					}
+					activeSchemas++
+				}
+				r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
+					Int("schemas", len(schemas)).
+					Int("activeSchemas", activeSchemas).
+					Int("deletedSchemas", deletedSchemas).
+					Msg("collectFullSync: collected")
+			}
 			collector.add(nodeName, kind, schemas)
 		}
 		return nil
@@ -1063,11 +1127,14 @@ func (r *SchemaRegistry) collectFullSync(ctx context.Context, collector *syncCol
 
 func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *syncCollector) {
 	sinceRevision := r.cache.GetMaxRevision()
+	r.l.Debug().Int64("sinceRevision", sinceRevision).Msg("collectIncrementalSync: querying updates")
 	broadcastErr := r.broadcastAll(func(nodeName string, sc *schemaClient) error {
 		updatedKindNames, queryErr := r.queryUpdatedSchemas(ctx, sc.update, sinceRevision)
 		if queryErr != nil {
 			return queryErr
 		}
+		r.l.Debug().Str("node", nodeName).Int("updatedKinds", len(updatedKindNames)).
+			Strs("kinds", updatedKindNames).Msg("collectIncrementalSync: got updates")
 		for _, kindName := range updatedKindNames {
 			kind, kindErr := KindFromString(kindName)
 			if kindErr != nil {
@@ -1079,6 +1146,8 @@ func (r *SchemaRegistry) collectIncrementalSync(ctx context.Context, collector *
 			if schemasErr != nil {
 				return fmt.Errorf("failed to query updated schemas for kind %s: %w", kind, schemasErr)
 			}
+			r.l.Debug().Stringer("kind", kind).Str("node", nodeName).
+				Int("schemas", len(schemas)).Msg("collectIncrementalSync: collected")
 			collector.add(nodeName, kind, schemas)
 		}
 		return nil
@@ -1260,7 +1329,10 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 		latestUpdateAt: parsed.UpdatedAt,
 		kind:           kind,
 	}
-	if r.cache.Update(propID, entry) {
+	updated := r.cache.Update(propID, entry)
+	r.l.Debug().Stringer("kind", kind).Str("group", parsed.Group).Str("name", parsed.Name).
+		Str("propID", propID).Bool("cacheUpdated", updated).Msg("processing initial resource from property")
+	if updated {
 		r.notifyHandlers(kind, schema.Metadata{
 			TypeMeta: schema.TypeMeta{
 				Kind:  kind,
@@ -1289,6 +1361,8 @@ func (r *SchemaRegistry) notifyHandlers(kind schema.Kind, md schema.Metadata, is
 	r.mux.RLock()
 	handlers := r.handlers[kind]
 	r.mux.RUnlock()
+	r.l.Debug().Stringer("kind", kind).Str("group", md.Group).Str("name", md.Name).
+		Bool("isDelete", isDelete).Int("handlerCount", len(handlers)).Msg("notifying schema event handlers")
 	for _, handler := range handlers {
 		if isDelete {
 			handler.OnDelete(md)

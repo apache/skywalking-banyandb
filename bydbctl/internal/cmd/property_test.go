@@ -121,7 +121,7 @@ var _ = Describe("Property Operation", func() {
 	p2Proto := new(propertyv1.Property)
 	helpers.UnmarshalYAML([]byte(p2YAML), p2Proto)
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		// extracting the operation of creating property schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -179,7 +179,7 @@ var _ = Describe("Property Schema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
@@ -416,7 +416,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
-		_, node1Addr, node1Defer := setup.ClosableStandalone(node1Dir, ports)
+		_, node1Addr, node1Defer := setup.ClosableStandalone(nil, node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
 		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
 		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
@@ -434,7 +434,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
-		_, node2Addr, node2Defer := setup.ClosableStandalone(node2Dir, ports)
+		_, node2Addr, node2Defer := setup.ClosableStandalone(nil, node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
 		defUITemplateWithSchema(rootCmd, node2Addr, 1, 0)
 		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
@@ -458,12 +458,13 @@ var _ = Describe("Property Cluster Operation", func() {
 		)
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
+		config := setup.EtcdClusterConfig(ep)
 		By("Starting data node 0")
-		_, _, closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir)
+		_, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir)
 		By("Starting data node 1")
-		_, _, closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir)
+		_, _, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir)
 		By("Starting liaison node")
-		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(config)
 		By("Initializing test cases")
 
 		deferFunc = func() {
@@ -598,7 +599,7 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
-		_, node1Addr, node1Defer := setup.ClosableStandalone(node1Dir, ports)
+		_, node1Addr, node1Defer := setup.ClosableStandalone(nil, node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
 		defUITemplateWithSchema(rootCmd, node1Addr, 1, 0)
 		applyData(rootCmd, node1Addr, p1YAML, true, propertyTagCount)
@@ -609,7 +610,7 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		ports, err = test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
-		_, node2Addr, node2Defer := setup.ClosableStandalone(node2Dir, ports)
+		_, node2Addr, node2Defer := setup.ClosableStandalone(nil, node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
 		defUITemplateWithSchema(rootCmd, node2Addr, 1, 0)
 		applyData(rootCmd, node2Addr, p2YAML, true, propertyTagCount)
@@ -628,13 +629,14 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		)
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
+		config := setup.EtcdClusterConfig(ep)
 		By("Starting data node 0")
 		var node1Repair, node2Repair string
-		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(ep, node1Dir, "--property-repair-enabled=true")
+		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir, "--property-repair-enabled=true")
 		By("Starting data node 1")
-		node2ID, node2Repair, closeNode2 = setup.DataNodeFromDataDir(ep, node2Dir, "--property-repair-enabled=true")
+		node2ID, node2Repair, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir, "--property-repair-enabled=true")
 		By("Initializing test cases")
-		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(config)
 		addr = httpSchema + liaisonHTTPAddr
 
 		// update the node ID to use 127.0.0.1
@@ -719,6 +721,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 	var messenger gossip.Messenger
 	var server embeddedetcd.Server
 	var ep string
+	var clusterConfig *setup.ClusterConfig
 	nodeCount := 5
 	closedNodeCount := 3
 
@@ -756,10 +759,11 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		<-server.ReadyNotify()
 
+		clusterConfig = setup.EtcdClusterConfig(ep)
 		// Start 5 data nodes
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")
@@ -770,7 +774,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		}
 
 		By("Starting liaison node")
-		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(ep)
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(clusterConfig)
 		addr = httpSchema + liaisonHTTPAddr
 
 		By("Creating test group with shard=1, copies=5")
@@ -851,7 +855,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		By(fmt.Sprintf("Restarting the %d closed nodes with existing data directories", closedNodeCount))
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(ep, nodeDirs[i],
+			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s")

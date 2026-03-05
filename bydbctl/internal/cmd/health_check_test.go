@@ -41,7 +41,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		}
 		certFile = filepath.Join(basePath, "test/integration/standalone/other/testdata/server_cert.pem")
 		keyFile := filepath.Join(basePath, "test/integration/standalone/other/testdata/server_key.pem")
-		grpcAddr, httpAddr, deferFunc = setup.StandaloneWithTLS(certFile, keyFile)
+		grpcAddr, httpAddr, deferFunc = setup.StandaloneWithTLS(nil, certFile, keyFile)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})
@@ -104,7 +104,7 @@ var _ = Describe("health check after launching banyandb server", func() {
 	var grpcAddr, httpAddr string
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		grpcAddr, httpAddr, deferFunc = setup.Standalone()
+		grpcAddr, httpAddr, deferFunc = setup.Standalone(nil)
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
 	})

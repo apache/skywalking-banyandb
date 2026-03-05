@@ -79,15 +79,16 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	<-etcdServer.ReadyNotify()
 
 	// 2. Start data node
+	config := setup.EtcdClusterConfig(etcdEp)
 	var dataNodeCloseFn func()
-	dataNodeGRPCAddr, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(etcdEp,
+	dataNodeGRPCAddr, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(config,
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2121",
 	)
 
 	// 3. Start liaison node
 	var liaisonCloseFn func()
-	banyanDBGRPCAddr, banyanDBHTTPAddr, liaisonCloseFn = setup.LiaisonNodeWithHTTP(etcdEp,
+	banyanDBGRPCAddr, banyanDBHTTPAddr, liaisonCloseFn = setup.LiaisonNodeWithHTTP(config,
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2122",
 	)

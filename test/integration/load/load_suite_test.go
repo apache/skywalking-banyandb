@@ -77,7 +77,7 @@ var _ = Describe("Load Test Suit", func() {
 		ports, err := test.AllocateFreePorts(4)
 		Expect(err).NotTo(HaveOccurred())
 		var addr string
-		addr, _, deferFunc = setup.ClosableStandalone(dir, ports)
+		addr, _, deferFunc = setup.ClosableStandalone(nil, dir, ports)
 		Eventually(
 			helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials())),
 			flags.EventuallyTimeout).Should(Succeed())

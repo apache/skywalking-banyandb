@@ -99,9 +99,11 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 	test_measure.PreloadSchema(ctx, schemaRegistry)
 	test_trace.PreloadSchema(ctx, schemaRegistry)
 
+	clusterConfig := setup.EtcdClusterConfig(clientEP)
+
 	// Start two data nodes to ensure replication targets exist
 	startDataNode := func() (string, string) {
-		addr, path, closeFn := setup.DataNodeWithAddrAndDir(clientEP)
+		addr, path, closeFn := setup.DataNodeWithAddrAndDir(clusterConfig)
 		cleanupFuncs = append(cleanupFuncs, closeFn)
 		return addr, path
 	}
@@ -110,7 +112,7 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 	_, path1 := startDataNode()
 	paths := []string{path0, path1}
 
-	liaisonAddrLocal, _, closeLiaison := setup.LiaisonNodeWithHTTP(clientEP)
+	liaisonAddrLocal, _, closeLiaison := setup.LiaisonNodeWithHTTP(clusterConfig)
 	cleanupFuncs = append(cleanupFuncs, closeLiaison)
 
 	cfg := suiteConfig{
