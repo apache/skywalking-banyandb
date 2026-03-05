@@ -45,10 +45,11 @@ services:
         reservations:
           cpus: '1.0'
           memory: 2G
-    command: 
+    command:
       - "standalone"
       - "--trace-data-path=/data"
       - "--logging-level=info"
+      - "--schema-registry-mode=etcd"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:17913/api/healthz"]
       interval: 10s

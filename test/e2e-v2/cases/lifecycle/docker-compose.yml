@@ -26,7 +26,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd
     volumes:
       - ./data-generator/tmp/metadata:/tmp/measure/data/metadata
     networks:
@@ -37,7 +37,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot2  
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd
     volumes:
       - ./data-generator/tmp/measure-data/measure:/tmp/measure
       - ./data-generator/tmp/stream-data/stream:/tmp/stream
@@ -50,7 +50,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-cold1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=cold
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=cold --schema-registry-mode=etcd
     volumes:
       - /tmp/measure/data-cold1:/tmp/measure
       - /tmp/stream/data-cold1:/tmp/stream
@@ -62,7 +62,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --etcd-endpoints=http://etcd:2379 --data-node-selector type=hot
+    command: liaison --etcd-endpoints=http://etcd:2379 --data-node-selector type=hot --schema-registry-mode=etcd
     networks:
       - e2e
 
