@@ -92,7 +92,7 @@ func (s *server) Role() databasev1.Role {
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeEtcd,
+	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeProperty,
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
 	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeEtcd,
 		"Node discovery mode: 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")

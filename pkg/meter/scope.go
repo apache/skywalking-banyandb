@@ -35,15 +35,19 @@ func NewHierarchicalScope(name, sep string) Scope {
 	return &HierarchicalScope{sep: sep, name: name}
 }
 
-// ConstLabels merges the given labels with the labels of the parent scope.
+// ConstLabels returns a new scope with the given labels merged with the parent's labels.
 func (s *HierarchicalScope) ConstLabels(labels LabelPairs) Scope {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.parent != nil {
 		labels = s.parent.GetLabels().Merge(labels)
 	}
-	s.labels = labels
-	return s
+	return &HierarchicalScope{
+		parent: s.parent,
+		name:   s.name,
+		sep:    s.sep,
+		labels: labels,
+	}
 }
 
 // SubScope creates a new sub-scope with the given name.

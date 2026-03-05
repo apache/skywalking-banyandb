@@ -61,7 +61,7 @@ var _ = g.Describe("Trace Streaming Performance", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Start BanyanDB with schema
-			addr, pprofAddr, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(
+			addr, pprofAddr, closerServerFunc := setup.ClosableStandaloneWithSchemaLoaders(nil,
 				testPath, ports,
 				[]setup.SchemaLoader{NewSchemaLoader("trace-streaming")},
 				"--logging-level", "info")

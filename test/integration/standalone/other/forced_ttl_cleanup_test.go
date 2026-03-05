@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+package other
 
 import (
 	"context"
@@ -66,7 +66,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// Start standalone server with forced cleanup enabled, using the temp directory as root
-		addr, _, deferFn := setup.ClosableStandalone(tempDir, ports,
+		addr, _, deferFn := setup.ClosableStandalone(testConfig, tempDir, ports,
 			"--measure-retention-high-watermark", "20.0", // Trigger at 20%
 			"--measure-retention-low-watermark", "10.0", // Stop at 10%
 			"--measure-retention-check-interval", "1s", // Check every second

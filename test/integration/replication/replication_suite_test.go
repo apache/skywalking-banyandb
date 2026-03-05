@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -63,6 +64,7 @@ var (
 	liaisonAddr     string
 	etcdEndpoint    string
 	dataNodeClosers []func()
+	clusterConfig   *setup.ClusterConfig
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -106,17 +108,43 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	test_trace.PreloadSchema(ctx, schemaRegistry)
 	test_property.PreloadSchema(ctx, schemaRegistry)
 
+	clusterConfig = setup.EtcdClusterConfig(ep)
+
 	By("Starting 3 data nodes for replication test")
 	dataNodeClosers = make([]func(), 0, 3)
 
 	for i := 0; i < 3; i++ {
-		closeDataNode := setup.DataNode(ep)
+		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
 		dataNodeClosers = append(dataNodeClosers, closeDataNode)
 	}
 
 	By("Starting liaison node")
-	liaisonAddr2, closerLiaisonNode := setup.LiaisonNode(ep)
+	liaisonAddr2, closerLiaisonNode := setup.LiaisonNode(clusterConfig, "--data-node-selector", "role=data")
 	liaisonAddr = liaisonAddr2
+
+	By("Waiting for liaison to discover all data nodes")
+	waitConn, waitConnErr := grpchelper.Conn(liaisonAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	Expect(waitConnErr).NotTo(HaveOccurred())
+	clusterClient := databasev1.NewClusterStateServiceClient(waitConn)
+	Eventually(func(g Gomega) {
+		state, stateErr := clusterClient.GetClusterState(
+			context.Background(), &databasev1.GetClusterStateRequest{})
+		g.Expect(stateErr).NotTo(HaveOccurred())
+		tire2Table := state.GetRouteTables()["tire2"]
+		g.Expect(tire2Table).NotTo(BeNil(), "tire2 route table not found")
+		g.Expect(len(tire2Table.GetActive())).To(Equal(3),
+			"should have 3 active data nodes in tire2 route table")
+	}, flags.EventuallyTimeout).Should(Succeed())
+	groupClient := databasev1.NewGroupRegistryServiceClient(waitConn)
+	Eventually(func(g Gomega) {
+		resp, listErr := groupClient.List(
+			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+		g.Expect(listErr).NotTo(HaveOccurred())
+		g.Expect(resp.GetGroup()).NotTo(BeEmpty(),
+			"no groups found in liaison schema registry")
+	}, flags.EventuallyTimeout).Should(Succeed())
+	Expect(waitConn.Close()).To(Succeed())
 
 	By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
