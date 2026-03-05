@@ -67,7 +67,7 @@ func InitAzuriteContainer() error {
 	azuriteRes, err = azuritePool.RunWithOptions(&dockertest.RunOptions{
 		Repository: "mcr.microsoft.com/azure-storage/azurite",
 		Tag:        "latest",
-		Cmd:        []string{"azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", AzuritePort},
+		Cmd:        []string{"azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", AzuritePort, "--skipApiVersionCheck"},
 		Name:       AzuriteContainerName,
 	}, func(config *docker.HostConfig) {
 		config.AutoRemove = true

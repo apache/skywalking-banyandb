@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
@@ -90,12 +91,21 @@ func NewFS(p string, cfg *config2.FsConfig) (remote.FS, error) {
 	var client *storage.Client
 	var err error
 	if cfg.GCP.GCPServiceAccountFile != "" {
-		if info, statErr := os.Stat(cfg.GCP.GCPServiceAccountFile); statErr != nil {
-			return nil, fmt.Errorf("credentials file error: %w", statErr)
+		var info os.FileInfo
+		if info, err = os.Stat(cfg.GCP.GCPServiceAccountFile); err != nil {
+			return nil, fmt.Errorf("credentials file error: %w", err)
 		} else if info.Mode().Perm() != 0o600 {
 			return nil, fmt.Errorf("credentials file %s must have permission 0600", cfg.GCP.GCPServiceAccountFile)
 		}
-		client, err = storage.NewClient(ctx, option.WithCredentialsFile(cfg.GCP.GCPServiceAccountFile))
+		var credData []byte
+		if credData, err = os.ReadFile(cfg.GCP.GCPServiceAccountFile); err != nil {
+			return nil, fmt.Errorf("failed to read credentials file: %w", err)
+		}
+		var creds *google.Credentials
+		if creds, err = google.CredentialsFromJSONWithType(ctx, credData, google.ServiceAccount, storage.ScopeFullControl); err != nil {
+			return nil, fmt.Errorf("failed to parse credentials: %w", err)
+		}
+		client, err = storage.NewClient(ctx, option.WithCredentials(creds))
 	} else {
 		client, err = storage.NewClient(ctx)
 	}
