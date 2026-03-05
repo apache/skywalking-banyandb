@@ -48,7 +48,10 @@ func init() {
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)
 		config.AddLoadedKinds(schemapkg.KindStream, schemapkg.KindMeasure, schemapkg.KindTrace)
 		By("Starting liaison node")
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config,
+			"--measure-metadata-cache-wait-duration=3s",
+			"--stream-metadata-cache-wait-duration=3s",
+			"--trace-metadata-cache-wait-duration=3s")
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		return schema.SetupResult{
