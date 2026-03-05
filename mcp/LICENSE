@@ -61,7 +61,7 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    @hono/node-server 1.19.9 MIT
+    @hono/node-server 1.19.11 MIT
     @modelcontextprotocol/sdk 1.27.1 MIT
     @types/node 24.11.0 MIT
     @types/node-fetch 2.6.13 MIT
@@ -115,7 +115,7 @@ MIT licenses
     has-symbols 1.1.0 MIT
     has-tostringtag 1.0.2 MIT
     hasown 2.0.2 MIT
-    hono 4.12.3 MIT
+    hono 4.12.5 MIT
     http-errors 2.0.1 MIT
     humanize-ms 1.2.1 MIT
     iconv-lite 0.7.2 MIT
