@@ -151,7 +151,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.etcdFullSyncInterval, "etcd-full-sync-interval", 30*time.Minute, "The interval for full sync etcd")
 
 	// schema registry mode
-	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", RegistryModeEtcd,
+	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", RegistryModeProperty,
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", property.DefaultSyncInterval,
 		"Polling interval for property-based schema sync")

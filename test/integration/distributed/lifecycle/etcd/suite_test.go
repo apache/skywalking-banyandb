@@ -64,7 +64,7 @@ func init() {
 			SrcDir:           srcDir,
 			DestDir:          destDir,
 			TenDaysBeforeNow: tenDaysBeforeNow,
-			MetadataFlags:    []string{"--etcd-endpoints", ep},
+			MetadataFlags:    []string{"--etcd-endpoints", ep, "--schema-registry-mode=etcd"},
 			StopFunc: func() {
 				closerLiaisonNode()
 				closeDataNode0()
