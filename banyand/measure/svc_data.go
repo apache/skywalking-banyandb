@@ -384,7 +384,7 @@ func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) error {
 		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
+	if _, err := tsdb.TakeFileSnapshot(dstDir); err != nil {
 		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
 	}
 	return nil

@@ -477,7 +477,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 	snapshotPath := filepath.Join(tmpPath, "snapshot")
 	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
 
-	if err := tst.TakeFileSnapshot(snapshotPath); err != nil {
+	if _, err := tst.TakeFileSnapshot(snapshotPath); err != nil {
 		t.Fatalf("TakeFileSnapshot failed: %v", err)
 	}
 

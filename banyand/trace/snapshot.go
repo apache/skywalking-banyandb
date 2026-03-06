@@ -217,20 +217,21 @@ func parseSnapshot(name string) (uint64, error) {
 	return parseEpoch(name[:16])
 }
 
-func (tst *tsTable) TakeFileSnapshot(dst string) error {
+func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 	for k, v := range tst.sidxMap {
 		indexDir := filepath.Join(dst, sidxDirName, k)
 		tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
 		if err := v.TakeFileSnapshot(indexDir); err != nil {
-			return fmt.Errorf("failed to take file snapshot for index, %s: %w", k, err)
+			return false, fmt.Errorf("failed to take file snapshot for index, %s: %w", k, err)
 		}
 	}
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
-		return fmt.Errorf("no current snapshot available")
+		return false, fmt.Errorf("no current snapshot available")
 	}
 	defer snapshot.decRef()
 
+	hasDiskParts := false
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil {
 			continue
@@ -241,13 +242,17 @@ func (tst *tsTable) TakeFileSnapshot(dst string) error {
 		destPartPath := filepath.Join(dst, filepath.Base(srcPath))
 
 		if err := tst.fileSystem.CreateHardLink(srcPath, destPartPath, nil); err != nil {
-			return fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
+			return false, fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
 		}
+		hasDiskParts = true
+	}
+	if !hasDiskParts {
+		return false, nil
 	}
 	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)
 	tst.fileSystem.SyncPath(parent)
-	return nil
+	return true, nil
 }
 
 func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
