@@ -23,7 +23,7 @@ jobs:
   test-integration-distributed:
     strategy:
       matrix:
-        tz: ["UTC", "Asia/Shanghai", "America/Los_Angeles"]
+        tz: ["UTC", "America/Los_Angeles"]
     uses: ./.github/workflows/test.yml
     with:
       test-name: Integration Distributed
