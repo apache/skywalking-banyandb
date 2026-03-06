@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -797,6 +798,13 @@ func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, 
 		}
 	}
 
+	// Discover projected tag value types so binary values (for example int64) can be rendered as readable values.
+	projectionTagTypes, err := discoverProjectionTagTypes(sidxPath, projectionTagNames)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to discover projection tag types: %v\n", err)
+		projectionTagTypes = nil
+	}
+
 	// Create dynamic tag registry if criteria is provided
 	var tagRegistry *dynamicTagRegistry
 	if criteria != nil {
@@ -878,9 +886,9 @@ func dumpSidxFullScan(sidxPath, segmentPath string, criteria *modelv1.Criteria, 
 
 	// Output results
 	if csvOutput {
-		return outputScanResultsAsCSV(results, seriesMap, projectionTagNames, dataFilter)
+		return outputScanResultsAsCSV(results, seriesMap, projectionTagNames, projectionTagTypes, dataFilter)
 	}
-	return outputScanResultsAsText(results, sidxPath, seriesMap, projectionTagNames, dataFilter)
+	return outputScanResultsAsText(results, sidxPath, seriesMap, projectionTagNames, projectionTagTypes, dataFilter)
 }
 
 // parseProjectionTags parses a comma-separated list of tag names.
@@ -939,7 +947,9 @@ func loadSeriesMap(segmentPath string) (map[common.SeriesID]string, error) {
 	return seriesMap, nil
 }
 
-func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, seriesMap map[common.SeriesID]string, projectionTagNames []string, dataFilter string) error {
+func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, seriesMap map[common.SeriesID]string,
+	projectionTagNames []string, projectionTagTypes map[string]pbv1.ValueType, dataFilter string,
+) error {
 	fmt.Printf("Opening sidx: %s\n", sidxPath)
 	fmt.Printf("================================================================================\n\n")
 
@@ -984,9 +994,9 @@ func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, ser
 			if len(projectionTagNames) > 0 && resp.Tags != nil {
 				for _, tagName := range projectionTagNames {
 					if tagValues, ok := resp.Tags[tagName]; ok && i < len(tagValues) {
-						tagValue := tagValues[i]
+						tagValue := decodeProjectedTagValue(tagValues[i], projectionTagTypes[tagName])
 						// Calculate size of the tag value
-						tagSize := len(tagValue)
+						tagSize := len(tagValues[i])
 						fmt.Printf("  %s: %s (size: %d bytes)\n", tagName, tagValue, tagSize)
 					}
 				}
@@ -1008,7 +1018,9 @@ func outputScanResultsAsText(results []*sidx.QueryResponse, sidxPath string, ser
 	return nil
 }
 
-func outputScanResultsAsCSV(results []*sidx.QueryResponse, seriesMap map[common.SeriesID]string, projectionTagNames []string, dataFilter string) error {
+func outputScanResultsAsCSV(results []*sidx.QueryResponse, seriesMap map[common.SeriesID]string,
+	projectionTagNames []string, projectionTagTypes map[string]pbv1.ValueType, dataFilter string,
+) error {
 	writer := csv.NewWriter(os.Stdout)
 	defer writer.Flush()
 
@@ -1058,9 +1070,9 @@ func outputScanResultsAsCSV(results []*sidx.QueryResponse, seriesMap map[common.
 
 				if resp.Tags != nil {
 					if tagValues, ok := resp.Tags[tagName]; ok && i < len(tagValues) {
-						tagValue = tagValues[i]
+						tagValue = decodeProjectedTagValue(tagValues[i], projectionTagTypes[tagName])
 						// Calculate size of the tag value
-						tagSize = fmt.Sprintf("%d", len(tagValue))
+						tagSize = fmt.Sprintf("%d", len(tagValues[i]))
 					}
 				}
 
@@ -1076,4 +1088,82 @@ func outputScanResultsAsCSV(results []*sidx.QueryResponse, seriesMap map[common.
 	}
 
 	return nil
+}
+
+func discoverProjectionTagTypes(sidxPath string, projectionTagNames []string) (map[string]pbv1.ValueType, error) {
+	if len(projectionTagNames) == 0 {
+		return nil, nil
+	}
+	partEntries, err := os.ReadDir(sidxPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read sidx path %s: %w", sidxPath, err)
+	}
+	partPaths := make([]string, 0, len(partEntries))
+	for _, entry := range partEntries {
+		if !entry.IsDir() {
+			continue
+		}
+		partPaths = append(partPaths, filepath.Join(sidxPath, entry.Name()))
+	}
+	sort.Strings(partPaths)
+
+	result := make(map[string]pbv1.ValueType, len(projectionTagNames))
+	for _, tagName := range projectionTagNames {
+		for _, partPath := range partPaths {
+			tmPath := filepath.Join(partPath, tagName+".tm")
+			data, readErr := os.ReadFile(tmPath)
+			if readErr != nil {
+				continue
+			}
+			valueType, parseErr := parseSidxTagValueType(data)
+			if parseErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", tmPath, parseErr)
+				break
+			}
+			result[tagName] = valueType
+			break
+		}
+	}
+	return result, nil
+}
+
+func parseSidxTagValueType(data []byte) (pbv1.ValueType, error) {
+	src, _, err := encoding.DecodeBytes(data)
+	if err != nil {
+		return pbv1.ValueTypeUnknown, fmt.Errorf("cannot decode tag name: %w", err)
+	}
+	if len(src) < 1 {
+		return pbv1.ValueTypeUnknown, fmt.Errorf("invalid tag metadata: missing value type")
+	}
+	return pbv1.ValueType(src[0]), nil
+}
+
+func decodeProjectedTagValue(raw string, valueType pbv1.ValueType) string {
+	if raw == "" {
+		return raw
+	}
+	rawBytes := []byte(raw)
+
+	switch valueType {
+	case pbv1.ValueTypeInt64:
+		if len(rawBytes) != 8 {
+			return raw
+		}
+		return strconv.FormatInt(convert.BytesToInt64(rawBytes), 10)
+	case pbv1.ValueTypeFloat64:
+		if len(rawBytes) != 8 {
+			return raw
+		}
+		return strconv.FormatFloat(convert.BytesToFloat64(rawBytes), 'f', -1, 64)
+	case pbv1.ValueTypeTimestamp:
+		if len(rawBytes) != 8 {
+			return raw
+		}
+		nanos := convert.BytesToInt64(rawBytes)
+		return strconv.FormatInt(nanos, 10)
+	case pbv1.ValueTypeBinaryData:
+		return fmt.Sprintf("%x", rawBytes)
+	default:
+		return raw
+	}
 }

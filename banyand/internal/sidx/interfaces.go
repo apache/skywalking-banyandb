@@ -123,13 +123,11 @@ type ScanProgressFunc func(currentPart, totalParts int, rowsFound int)
 //nolint:govet // struct layout optimized for readability; 64 bytes is acceptable
 type ScanQueryRequest struct {
 	TagFilter     model.TagFilterMatcher
-	TagProjection []model.TagProjection
 	OnProgress    ScanProgressFunc
 	MinKey        *int64
 	MaxKey        *int64
+	TagProjection []model.TagProjection
 	MaxBatchSize  int
-	// OnProgress is an optional callback for progress reporting during scan.
-	// Called after processing each part with the current progress.
 }
 
 // QueryResponse contains a batch of query results and execution metadata.

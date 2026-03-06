@@ -21,6 +21,9 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/blugelabs/bluge/numeric"
+
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -148,7 +151,7 @@ func (tfo *tagFilterOp) Range(tagName string, rangeOpts index.RangeOpts) (bool, 
 
 	// Only perform range check for numeric types with min/max values
 	if cache.valueType != pbv1.ValueTypeInt64 || len(cache.min) == 0 || len(cache.max) == 0 {
-		return true, nil // Conservative approach for non-numeric or missing min/max
+		return false, nil // Conservative approach for non-numeric or missing min/max - don't skip
 	}
 
 	// Check lower bound
@@ -157,10 +160,9 @@ func (tfo *tagFilterOp) Range(tagName string, rangeOpts index.RangeOpts) (bool, 
 		if !ok {
 			return false, fmt.Errorf("lower bound is not a float value: %v", rangeOpts.Lower)
 		}
-		value := make([]byte, 0)
-		value = encoding.Int64ToBytes(value, int64(lower.Value))
+		value := convert.Int64ToBytes(numeric.Float64ToInt64(lower.Value))
 		if bytes.Compare(cache.max, value) == -1 || (!rangeOpts.IncludesLower && bytes.Equal(cache.max, value)) {
-			return false, nil
+			return true, nil
 		}
 	}
 
@@ -170,14 +172,13 @@ func (tfo *tagFilterOp) Range(tagName string, rangeOpts index.RangeOpts) (bool, 
 		if !ok {
 			return false, fmt.Errorf("upper bound is not a float value: %v", rangeOpts.Upper)
 		}
-		value := make([]byte, 0)
-		value = encoding.Int64ToBytes(value, int64(upper.Value))
+		value := convert.Int64ToBytes(numeric.Float64ToInt64(upper.Value))
 		if bytes.Compare(cache.min, value) == 1 || (!rangeOpts.IncludesUpper && bytes.Equal(cache.min, value)) {
-			return false, nil
+			return true, nil
 		}
 	}
 
-	return true, nil
+	return false, nil
 }
 
 // getTagFilterCache retrieves or creates cached tag filter data.
