@@ -247,7 +247,7 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 		hasDiskParts = true
 	}
 	if !hasDiskParts {
-		return false, nil
+		return len(tst.sidxMap) > 0, nil
 	}
 	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)

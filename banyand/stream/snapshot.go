@@ -227,7 +227,7 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 		hasDiskParts = true
 	}
 	if !hasDiskParts {
-		return false, nil
+		return true, nil
 	}
 	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)
@@ -435,7 +435,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			continue
 		}
 		if !created {
-			s.s.l.Debug().Str("group", groupName).Msg("skip empty group snapshot")
+			s.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
 			continue
 		}
 		snapshotCreated++

@@ -477,9 +477,11 @@ func TestSnapshotFunctionality(t *testing.T) {
 	snapshotPath := filepath.Join(tmpPath, "snapshot")
 	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
 
-	if _, err := tst.TakeFileSnapshot(snapshotPath); err != nil {
+	created, err := tst.TakeFileSnapshot(snapshotPath)
+	if err != nil {
 		t.Fatalf("TakeFileSnapshot failed: %v", err)
 	}
+	assert.True(t, created, "TakeFileSnapshot should return true when disk parts exist")
 
 	entries := fileSystem.ReadDir(snapshotPath)
 
@@ -558,4 +560,52 @@ func TestGetDisjointParts(t *testing.T) {
 	require.Equal(t, 2, len(groupsDesc), "expected 2 groups in descending order")
 	require.Equal(t, groupsAsc[1], groupsDesc[0], "first group in descending order should match second group in ascending order")
 	require.Equal(t, groupsAsc[0], groupsDesc[1], "second group in descending order should match first group in ascending order")
+}
+
+func TestTakeFileSnapshotNoDiskParts(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+
+	tst, err := newTSTable(
+		fileSystem,
+		tabDir,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicy(),
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	defer tst.Close()
+
+	// Set an empty snapshot (no parts) to simulate having a snapshot but no disk parts.
+	emptySnp := &snapshot{ref: 1}
+	tst.Lock()
+	tst.snapshot = emptySnp
+	tst.Unlock()
+
+	snapshotPath := filepath.Join(tmpPath, "snapshot")
+	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
+
+	created, err := tst.TakeFileSnapshot(snapshotPath)
+	require.NoError(t, err)
+	assert.True(t, created, "TakeFileSnapshot should return true when index exists even without disk parts")
+
+	entries := fileSystem.ReadDir(snapshotPath)
+	hasIndex := false
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() == elementIndexFilename {
+			hasIndex = true
+		}
+	}
+	assert.True(t, hasIndex, "expected index directory in snapshot")
 }
