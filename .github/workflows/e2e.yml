@@ -104,13 +104,13 @@ jobs:
           df -h
           du -sh .
           docker images
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         name: Upload Logs
         with:
           name: test-logs-${{ matrix.test.name }}
           path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
         name: Upload generated data
         with:

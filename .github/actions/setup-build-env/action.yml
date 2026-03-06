@@ -32,7 +32,7 @@ runs:
   steps:
     - name: Download build artifacts
       if: inputs.download-artifacts == 'true'
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: build-artifacts
 

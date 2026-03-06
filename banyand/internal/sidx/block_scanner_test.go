@@ -20,6 +20,7 @@ package sidx
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 func TestBlockScannerStructures(t *testing.T) {
@@ -452,4 +454,99 @@ func TestBlockScanner_BatchSizeHandling(t *testing.T) {
 	t.Logf("Configured batch size limit: %d", blockScannerBatchSize)
 
 	scanner.close()
+}
+
+func TestBlockScanner_SpanRecordsSkippedBlocks(t *testing.T) {
+	// Build a simple in-memory part with data so that iter produces at least one block,
+	// then apply a block filter that skips all blocks and verify the scan-blocks span
+	// records the skip reason and summary tags.
+	testElements := []testElement{
+		{
+			seriesID: common.SeriesID(1),
+			userKey:  100,
+			data:     []byte("data1"),
+		},
+		{
+			seriesID: common.SeriesID(1),
+			userKey:  200,
+			data:     []byte("data2"),
+		},
+	}
+
+	elements := createTestElements(testElements)
+	defer releaseElements(elements)
+
+	mp := GenerateMemPart()
+	defer ReleaseMemPart(mp)
+	mp.mustInitFromElements(elements)
+
+	testPart := openMemPart(mp)
+	defer testPart.close()
+
+	// Block filter that skips every candidate block.
+	skipAllFilter := &mockBlockFilter{shouldSkip: true}
+
+	scanner := &blockScanner{
+		pm:        &test.MockMemoryProtector{ExpectQuotaExceeded: false},
+		l:         logger.GetLogger(),
+		parts:     []*part{testPart},
+		seriesIDs: []common.SeriesID{1},
+		minKey:    0,
+		maxKey:    1000,
+		filter:    skipAllFilter,
+		asc:       true,
+	}
+
+	// Attach a tracer to the context so blockScanner.scan creates the sidx.scan-blocks span.
+	baseCtx := context.Background()
+	tracer, tracedCtx := query.NewTracer(baseCtx, "test-trace-skip-blocks")
+	require.NotNil(t, tracer)
+
+	blockCh := make(chan *blockScanResultBatch, 4)
+
+	go func() {
+		defer close(blockCh)
+		scanner.scan(tracedCtx, blockCh)
+	}()
+
+	for batch := range blockCh {
+		if batch != nil {
+			releaseBlockScanResultBatch(batch)
+		}
+	}
+
+	scanner.close()
+
+	trace := tracer.ToProto()
+	require.NotNil(t, trace)
+
+	var scanSpanTags map[string]string
+	for _, span := range trace.Spans {
+		if span.GetMessage() != "sidx.scan-blocks" {
+			continue
+		}
+		scanSpanTags = make(map[string]string, len(span.Tags))
+		for _, tag := range span.Tags {
+			if tag == nil {
+				continue
+			}
+			scanSpanTags[tag.Key] = tag.Value
+		}
+		break
+	}
+
+	require.NotNil(t, scanSpanTags, "expected sidx.scan-blocks span to be present")
+
+	// Verify that total skipped blocks is recorded.
+	skippedTotal, ok := scanSpanTags["skipped_total"]
+	require.True(t, ok, "skipped_total tag must be present on scan-blocks span")
+	parsedTotal, err := strconv.Atoi(skippedTotal)
+	require.NoError(t, err, "skipped_total must be an integer")
+	require.Greater(t, parsedTotal, 0, "skipped_total should be greater than 0")
+
+	// Verify that the dominant skip reason is captured and summarized.
+	require.Equal(t, "block_filter_should_skip", scanSpanTags["skipped_reason_1"])
+
+	// Verify that at least the first skipped block's detail is recorded.
+	require.Equal(t, "block_filter_should_skip", scanSpanTags["skip_0_reason"])
 }

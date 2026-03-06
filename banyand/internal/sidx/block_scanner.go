@@ -20,6 +20,7 @@ package sidx
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/dustin/go-humanize"
 
@@ -28,9 +29,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-const blockScannerBatchSize = 32
+const (
+	blockScannerBatchSize  = 32
+	perBlockSkipTraceLimit = 20
+	skipSummaryTopN        = 3
+)
 
 type blockScanResult struct {
 	p  *part
@@ -72,19 +78,36 @@ func releaseBlockScanResultBatch(bsb *blockScanResultBatch) {
 
 var blockScanResultBatchPool = pool.Register[*blockScanResultBatch]("sidx-blockScannerBatch")
 
+type blockSkipRecorderFunc func(reason string, bm *blockMetadata)
+
+type blockSkipDetail struct {
+	reason   string
+	seriesID common.SeriesID
+	minKey   int64
+	maxKey   int64
+}
+
+type blockSkipStats struct {
+	reasonCounts map[string]int
+	details      []blockSkipDetail
+	totalSkipped int
+}
+
 type scanFinalizer func()
 
 type blockScanner struct {
 	pm         protector.Memory
 	filter     index.Filter
 	l          *logger.Logger
+	span       *query.Span
+	skipStats  *blockSkipStats
 	parts      []*part
 	finalizers []scanFinalizer
 	seriesIDs  []common.SeriesID
 	minKey     int64
 	maxKey     int64
-	asc        bool
 	batchSize  int
+	asc        bool
 }
 
 func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResultBatch) {
@@ -96,10 +119,37 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		return
 	}
 
+	var (
+		totalBlockBytes uint64
+		scannedBlocks   int
+	)
+
+	var skipRecorder blockSkipRecorderFunc
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		span, spanCtx := tracer.StartSpan(ctx, "sidx.scan-blocks")
+		bsn.span = span
+		ctx = spanCtx
+		skipRecorder = bsn.recordSkip
+		span.Tagf("part_count", "%d", len(bsn.parts))
+		span.Tagf("series_id_count", "%d", len(bsn.seriesIDs))
+		span.Tagf("min_key", "%d", bsn.minKey)
+		span.Tagf("max_key", "%d", bsn.maxKey)
+		span.Tagf("ascending", "%t", bsn.asc)
+		span.Tagf("batch_size", "%d", bsn.batchSize)
+		defer func() {
+			if span != nil {
+				span.Tagf("scanned_blocks", "%d", scannedBlocks)
+				span.Tagf("total_block_bytes", "%d", totalBlockBytes)
+				bsn.flushSkipSummaryToSpan()
+				span.Stop()
+			}
+		}()
+	}
+
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc)
+	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc, skipRecorder)
 
 	batch := generateBlockScanResultBatch()
 	if it.Error() != nil {
@@ -113,7 +163,6 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		batchThreshold = blockScannerBatchSize
 	}
 
-	var totalBlockBytes uint64
 	for it.nextBlock() {
 		if !bsn.checkContext(ctx) {
 			releaseBlockScanResultBatch(batch)
@@ -141,6 +190,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		// Quota OK, add block to batch
 		bsn.addBlockToBatch(batch, bm, p)
 		totalBlockBytes += blockSize
+		scannedBlocks++
 
 		// Check if batch is full
 		if len(batch.bss) >= batchThreshold || len(batch.bss) >= cap(batch.bss) {
@@ -232,5 +282,81 @@ func (bsn *blockScanner) addBlockToBatch(batch *blockScanResultBatch, bm *blockM
 func (bsn *blockScanner) close() {
 	for i := range bsn.finalizers {
 		bsn.finalizers[i]()
+	}
+}
+
+func (bsn *blockScanner) recordSkip(reason string, bm *blockMetadata) {
+	if bsn == nil || reason == "" {
+		return
+	}
+	if bsn.skipStats == nil {
+		bsn.skipStats = &blockSkipStats{
+			reasonCounts: make(map[string]int),
+			details:      make([]blockSkipDetail, 0, perBlockSkipTraceLimit),
+		}
+	}
+	bsn.skipStats.totalSkipped++
+	bsn.skipStats.reasonCounts[reason]++
+	if len(bsn.skipStats.details) >= perBlockSkipTraceLimit || bm == nil {
+		return
+	}
+	bsn.skipStats.details = append(bsn.skipStats.details, blockSkipDetail{
+		reason:   reason,
+		seriesID: bm.seriesID,
+		minKey:   bm.minKey,
+		maxKey:   bm.maxKey,
+	})
+}
+
+func (bsn *blockScanner) flushSkipSummaryToSpan() {
+	if bsn == nil || bsn.span == nil || bsn.skipStats == nil || bsn.skipStats.totalSkipped == 0 {
+		return
+	}
+
+	stats := bsn.skipStats
+	bsn.span.Tagf("skipped_total", "%d", stats.totalSkipped)
+
+	if len(stats.reasonCounts) == 0 {
+		return
+	}
+
+	type reasonCount struct {
+		reason string
+		count  int
+	}
+
+	reasons := make([]reasonCount, 0, len(stats.reasonCounts))
+	for reason, count := range stats.reasonCounts {
+		reasons = append(reasons, reasonCount{
+			reason: reason,
+			count:  count,
+		})
+	}
+
+	sort.Slice(reasons, func(i, j int) bool {
+		return reasons[i].count > reasons[j].count
+	})
+
+	otherCount := 0
+	for i, rc := range reasons {
+		if i < skipSummaryTopN {
+			idx := i + 1
+			bsn.span.Tag(fmt.Sprintf("skipped_reason_%d", idx), rc.reason)
+			bsn.span.Tagf(fmt.Sprintf("skipped_reason_%d_count", idx), "%d", rc.count)
+			continue
+		}
+		otherCount += rc.count
+	}
+
+	if otherCount > 0 && len(reasons) > skipSummaryTopN {
+		bsn.span.Tagf("skipped_other_reason_count", "%d", otherCount)
+	}
+
+	for i, detail := range stats.details {
+		prefix := fmt.Sprintf("skip_%d_", i)
+		bsn.span.Tag(prefix+"reason", detail.reason)
+		bsn.span.Tagf(prefix+"series_id", "%d", detail.seriesID)
+		bsn.span.Tagf(prefix+"min_key", "%d", detail.minKey)
+		bsn.span.Tagf(prefix+"max_key", "%d", detail.maxKey)
 	}
 }
