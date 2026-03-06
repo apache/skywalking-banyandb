@@ -313,7 +313,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		if len(v) != 8 {
 			return
 		}
-		val := encoding.BytesToInt64(v)
+		val := convert.BytesToInt64(v)
 		if !hasMinMax {
 			minVal = val
 			maxVal = val
@@ -351,8 +351,8 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 	}
 
 	if td.valueType == pbv1.ValueTypeInt64 && hasMinMax {
-		tm.min = encoding.Int64ToBytes(nil, minVal)
-		tm.max = encoding.Int64ToBytes(nil, maxVal)
+		tm.min = convert.Int64ToBytes(minVal)
+		tm.max = convert.Int64ToBytes(maxVal)
 	}
 	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
 	if !isDictionaryEncoded {
@@ -543,7 +543,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	}
 }
 
-func assertIdxAndOffset(name string, length int, idx int, offset int) {
+func assertIdxAndOffset(name string, length, idx, offset int) {
 	if idx >= offset {
 		logger.Panicf("%q idx %d must be less than offset %d", name, idx, offset)
 	}

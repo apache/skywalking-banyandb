@@ -71,7 +71,7 @@ func (it *iter) reset() {
 	it.asc = false
 }
 
-func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) {
+func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool, skipRecorder blockSkipRecorderFunc) {
 	it.reset()
 	it.parts = append(it.parts[:0], parts...)
 	it.asc = asc
@@ -94,7 +94,7 @@ func (it *iter) init(parts []*part, sids []common.SeriesID, minKey, maxKey int64
 		pki := generatePartKeyIter()
 		it.partIters[i] = pki
 
-		pki.init(p, sids, minKey, maxKey, blockFilter, asc)
+		pki.init(p, sids, minKey, maxKey, blockFilter, asc, skipRecorder)
 		if err := pki.error(); err != nil {
 			if !errors.Is(err, io.EOF) {
 				releasePartKeyIter(pki)

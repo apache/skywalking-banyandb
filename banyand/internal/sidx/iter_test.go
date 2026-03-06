@@ -270,7 +270,7 @@ func TestIterEdgeCases(t *testing.T) {
 	t.Run("empty_parts_list", func(t *testing.T) {
 		for _, asc := range []bool{true, false} {
 			it := generateIter()
-			it.init(nil, []common.SeriesID{1, 2, 3}, 100, 200, nil, asc)
+			it.init(nil, []common.SeriesID{1, 2, 3}, 100, 200, nil, asc, nil)
 			assert.False(t, it.nextBlock())
 			assert.Nil(t, it.Error())
 			releaseIter(it)
@@ -295,7 +295,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 		for _, asc := range []bool{true, false} {
 			it := generateIter()
-			it.init([]*part{testPart}, []common.SeriesID{}, 0, 1000, nil, asc)
+			it.init([]*part{testPart}, []common.SeriesID{}, 0, 1000, nil, asc, nil)
 			assert.False(t, it.nextBlock())
 			assert.Nil(t, it.Error())
 			releaseIter(it)
@@ -335,7 +335,7 @@ func TestIterEdgeCases(t *testing.T) {
 		for _, asc := range []bool{true, false} {
 			it := generateIter()
 			// Query range that doesn't overlap with any blocks
-			it.init([]*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil, asc)
+			it.init([]*part{testPart1, testPart2}, []common.SeriesID{1, 2}, 400, 500, nil, asc, nil)
 			assert.False(t, it.nextBlock())
 			assert.Nil(t, it.Error())
 			releaseIter(it)
@@ -359,7 +359,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 		for _, asc := range []bool{true, false} {
 			it := generateIter()
-			it.init([]*part{testPart}, []common.SeriesID{1}, 50, 150, nil, asc)
+			it.init([]*part{testPart}, []common.SeriesID{1}, 50, 150, nil, asc, nil)
 
 			assert.True(t, it.nextBlock())
 			assert.False(t, it.nextBlock()) // Should be only one block
@@ -386,7 +386,7 @@ func TestIterEdgeCases(t *testing.T) {
 
 		for _, asc := range []bool{true, false} {
 			it := generateIter()
-			it.init([]*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter, asc)
+			it.init([]*part{testPart}, []common.SeriesID{1}, 0, 200, mockFilter, asc, nil)
 
 			assert.False(t, it.nextBlock())
 			assert.Error(t, it.Error())
@@ -558,7 +558,7 @@ func TestIterOverlappingBlockGroups(t *testing.T) {
 
 	for _, asc := range []bool{true, false} {
 		it := generateIter()
-		it.init([]*part{part1, part2}, []common.SeriesID{1, 2}, 0, 500, nil, asc)
+		it.init([]*part{part1, part2}, []common.SeriesID{1, 2}, 0, 500, nil, asc, nil)
 
 		// Now we iterate individual blocks from both parts
 		partsSeen := make(map[*part]struct{})
@@ -603,7 +603,7 @@ func runIteratorPass(t *testing.T, tc iterTestCase, parts []*part, asc bool) []b
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter, asc)
+	it.init(parts, tc.querySids, tc.minKey, tc.maxKey, tc.blockFilter, asc, nil)
 
 	var foundBlocks []blockExpectation
 

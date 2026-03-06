@@ -130,7 +130,16 @@ func (sc *seriesCursor) advance() (bool, error) {
 			return false, fmt.Errorf("block index %d out of range for primary %d", ref.blockIdx, ref.primaryIdx)
 		}
 		bm := &bma.arr[ref.blockIdx]
-		if bm.maxKey < sc.iter.minKey || bm.minKey > sc.iter.maxKey {
+		if bm.maxKey < sc.iter.minKey {
+			if sc.iter != nil {
+				sc.iter.recordBlockSkip("block_out_of_key_range_before_min_key", bm)
+			}
+			continue
+		}
+		if bm.minKey > sc.iter.maxKey {
+			if sc.iter != nil {
+				sc.iter.recordBlockSkip("block_out_of_key_range_after_max_key", bm)
+			}
 			continue
 		}
 		if sc.iter.blockFilter != nil {
@@ -139,6 +148,9 @@ func (sc *seriesCursor) advance() (bool, error) {
 				return false, err
 			}
 			if shouldSkip {
+				if sc.iter != nil {
+					sc.iter.recordBlockSkip("block_filter_should_skip", bm)
+				}
 				continue
 			}
 		}
@@ -184,17 +196,18 @@ func (sch *seriesCursorHeap) Pop() any {
 }
 
 type partKeyIter struct {
-	err                  error
 	blockFilter          index.Filter
+	err                  error
+	recordSkip           blockSkipRecorderFunc
 	sidSet               map[common.SeriesID]struct{}
 	p                    *part
 	primaryCache         map[int]*blockMetadataArray
 	curBlock             *blockMetadata
 	cursorPool           []seriesCursor
-	cursorHeap           seriesCursorHeap
 	sids                 []common.SeriesID
 	primaryBuf           []byte
 	compressedPrimaryBuf []byte
+	cursorHeap           seriesCursorHeap
 	minKey               int64
 	maxKey               int64
 	asc                  bool
@@ -243,15 +256,17 @@ func (pki *partKeyIter) reset() {
 
 	pki.compressedPrimaryBuf = pki.compressedPrimaryBuf[:0]
 	pki.primaryBuf = pki.primaryBuf[:0]
+	pki.recordSkip = nil
 }
 
-func (pki *partKeyIter) init(p *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool) {
+func (pki *partKeyIter) init(p *part, sids []common.SeriesID, minKey, maxKey int64, blockFilter index.Filter, asc bool, skipRecorder blockSkipRecorderFunc) {
 	pki.reset()
 	pki.p = p
 	pki.minKey = minKey
 	pki.maxKey = maxKey
 	pki.blockFilter = blockFilter
 	pki.asc = asc
+	pki.recordSkip = skipRecorder
 
 	if len(sids) == 0 {
 		pki.err = io.EOF
@@ -464,6 +479,13 @@ func (pki *partKeyIter) shouldSkipBlock(bm *blockMetadata) (bool, error) {
 	tfo := generateTagFilterOp(bm, pki.p)
 	defer releaseTagFilterOp(tfo)
 	return pki.blockFilter.ShouldSkip(tfo)
+}
+
+func (pki *partKeyIter) recordBlockSkip(reason string, bm *blockMetadata) {
+	if pki == nil || pki.recordSkip == nil {
+		return
+	}
+	pki.recordSkip(reason, bm)
 }
 
 func (pki *partKeyIter) current() (*blockMetadata, *part) {

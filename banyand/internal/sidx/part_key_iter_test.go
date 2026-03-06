@@ -58,7 +58,7 @@ func runPartKeyIterPass(t *testing.T, part *part, sids []common.SeriesID, minKey
 	iter := generatePartKeyIter()
 	defer releasePartKeyIter(iter)
 
-	iter.init(part, sids, minKey, maxKey, blockFilter, asc)
+	iter.init(part, sids, minKey, maxKey, blockFilter, asc, nil)
 
 	var results []blockExpectation
 	for iter.nextBlock() {
@@ -261,7 +261,7 @@ func TestPartKeyIterGroupsOverlappingRanges(t *testing.T) {
 
 	iter := generatePartKeyIter()
 	defer releasePartKeyIter(iter)
-	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 500, nil, true)
+	iter.init(part, []common.SeriesID{1, 2, 3}, 0, 500, nil, true, nil)
 	var ids []common.SeriesID
 	for iter.nextBlock() {
 		block, _ := iter.current()
@@ -372,7 +372,7 @@ func TestPartKeyIterExhaustion(t *testing.T) {
 			iter := generatePartKeyIter()
 			defer releasePartKeyIter(iter)
 
-			iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil, asc)
+			iter.init(part, []common.SeriesID{1, 2}, 0, 200, nil, asc, nil)
 
 			blockCount := 0
 			for iter.nextBlock() {
@@ -450,7 +450,7 @@ func TestPartKeyIterRequeuesOnGapBetweenBlocks(t *testing.T) {
 			iter := generatePartKeyIter()
 			defer releasePartKeyIter(iter)
 
-			iter.init(part, []common.SeriesID{1}, 0, 100000, nil, asc)
+			iter.init(part, []common.SeriesID{1}, 0, 100000, nil, asc, nil)
 
 			var blocks []struct {
 				min int64
