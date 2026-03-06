@@ -124,10 +124,12 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		scannedBlocks   int
 	)
 
+	var skipRecorder blockSkipRecorderFunc
 	if tracer := query.GetTracer(ctx); tracer != nil {
 		span, spanCtx := tracer.StartSpan(ctx, "sidx.scan-blocks")
 		bsn.span = span
 		ctx = spanCtx
+		skipRecorder = bsn.recordSkip
 		span.Tagf("part_count", "%d", len(bsn.parts))
 		span.Tagf("series_id_count", "%d", len(bsn.seriesIDs))
 		span.Tagf("min_key", "%d", bsn.minKey)
@@ -147,7 +149,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	it := generateIter()
 	defer releaseIter(it)
 
-	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc, bsn.recordSkip)
+	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc, skipRecorder)
 
 	batch := generateBlockScanResultBatch()
 	if it.Error() != nil {

@@ -1146,17 +1146,17 @@ func decodeProjectedTagValue(raw string, valueType pbv1.ValueType) string {
 
 	switch valueType {
 	case pbv1.ValueTypeInt64:
-		if len(rawBytes) < 8 {
+		if len(rawBytes) != 8 {
 			return raw
 		}
 		return strconv.FormatInt(convert.BytesToInt64(rawBytes), 10)
 	case pbv1.ValueTypeFloat64:
-		if len(rawBytes) < 8 {
+		if len(rawBytes) != 8 {
 			return raw
 		}
 		return strconv.FormatFloat(convert.BytesToFloat64(rawBytes), 'f', -1, 64)
 	case pbv1.ValueTypeTimestamp:
-		if len(rawBytes) < 8 {
+		if len(rawBytes) != 8 {
 			return raw
 		}
 		nanos := convert.BytesToInt64(rawBytes)
