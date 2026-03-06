@@ -273,7 +273,7 @@ func TestTakeFileSnapshot(t *testing.T) {
 		require.NoError(t, tsdb.Close())
 	})
 
-	t.Run("Take snapshot with of segments", func(t *testing.T) {
+	t.Run("Take snapshot without segments", func(t *testing.T) {
 		dir, defFn := test.Space(require.New(t))
 		defer defFn()
 
