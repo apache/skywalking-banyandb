@@ -374,20 +374,21 @@ func (s *dataSVC) createDataNativeObservabilityGroup(ctx context.Context) error 
 	return nil
 }
 
-func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) error {
+func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) (bool, error) {
 	group, ok := s.schemaRepo.LoadGroup(groupName)
 	if !ok {
-		return errors.Errorf("group %s not found", groupName)
+		return false, errors.Errorf("group %s not found", groupName)
 	}
 	db := group.SupplyTSDB()
 	if db == nil {
-		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+		return false, errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
-		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	created, err := tsdb.TakeFileSnapshot(dstDir)
+	if err != nil {
+		return false, errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
 	}
-	return nil
+	return created, nil
 }
 
 // NewDataSVC returns a new data service.
@@ -493,17 +494,29 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
+	var snapshotCreated int
 	for _, g := range gg {
 		select {
 		case <-ctx.Done():
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := d.s.takeGroupSnapshot(filepath.Join(d.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
-			d.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+		groupName := g.GetSchema().Metadata.Name
+		snapshotPath := filepath.Join(d.s.snapshotDir, sn, groupName)
+		created, errGroup := d.s.takeGroupSnapshot(snapshotPath, groupName)
+		if errGroup != nil {
+			d.s.l.Error().Err(errGroup).Str("group", groupName).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue
 		}
+		if !created {
+			d.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
+			continue
+		}
+		snapshotCreated++
+	}
+	if snapshotCreated == 0 && err == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,
