@@ -384,7 +384,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 			continue
 		}
 		if !created {
-			s.s.l.Debug().Str("group", groupName).Msg("skip empty group snapshot")
+			s.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
 			continue
 		}
 		snapshotCreated++
