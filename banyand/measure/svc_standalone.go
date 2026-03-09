@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -240,6 +241,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
+	var err error
+	if s.root, err = banyandbpath.Get(s.root); err != nil {
+		return err
+	}
+	if s.dataPath != "" {
+		if s.dataPath, err = banyandbpath.Get(s.dataPath); err != nil {
+			return err
+		}
+	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	obsservice.UpdatePath(path)
@@ -294,7 +304,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 			return err
 		}
 	}
-	err := s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
+	err = s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 	if err != nil {
 		return err
 	}
