@@ -55,9 +55,10 @@ func newServerMetrics(factory observability.Factory) *serverMetrics {
 
 type schemaManagementServer struct {
 	schemav1.UnimplementedSchemaManagementServiceServer
-	server  *server
-	l       *logger.Logger
-	metrics *serverMetrics
+	server   *server
+	watchers *watcherManager
+	l        *logger.Logger
+	metrics  *serverMetrics
 }
 
 // InsertSchema inserts a new schema property.
@@ -101,6 +102,10 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 		s.l.Error().Err(updateErr).Msg("failed to insert schema")
 		return nil, updateErr
 	}
+	s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+		EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT,
+		Property:  req.Property,
+	})
 	return &schemav1.InsertSchemaResponse{}, nil
 }
 
@@ -128,6 +133,10 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 		s.l.Error().Err(updateErr).Msg("failed to update schema")
 		return nil, updateErr
 	}
+	s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+		EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UPDATE,
+		Property:  req.Property,
+	})
 	return &schemav1.UpdateSchemaResponse{}, nil
 }
 
@@ -206,11 +215,16 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil
 	}
 	ids := make([][]byte, 0, len(results))
+	var deletedProps []*propertyv1.Property
 	for _, result := range results {
 		if result.DeleteTime() > 0 {
 			continue
 		}
 		ids = append(ids, result.ID())
+		var p propertyv1.Property
+		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr == nil {
+			deletedProps = append(deletedProps, &p)
+		}
 	}
 	if len(ids) == 0 {
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil
@@ -219,6 +233,12 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		s.metrics.totalErr.Inc(1, "delete")
 		s.l.Error().Err(deleteErr).Msg("failed to delete schema")
 		return nil, deleteErr
+	}
+	for _, dp := range deletedProps {
+		s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+			EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE,
+			Property:  dp,
+		})
 	}
 	return &schemav1.DeleteSchemaResponse{Found: true}, nil
 }
@@ -252,9 +272,10 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 
 type schemaUpdateServer struct {
 	schemav1.UnimplementedSchemaUpdateServiceServer
-	server  *server
-	l       *logger.Logger
-	metrics *serverMetrics
+	server   *server
+	watchers *watcherManager
+	l        *logger.Logger
+	metrics  *serverMetrics
 }
 
 // AggregateSchemaUpdates returns distinct schema names that have been modified.
@@ -293,6 +314,27 @@ func (s *schemaUpdateServer) AggregateSchemaUpdates(ctx context.Context,
 		names = append(names, name)
 	}
 	return &schemav1.AggregateSchemaUpdatesResponse{Names: names}, nil
+}
+
+// WatchSchemas streams schema change events to clients.
+func (s *schemaUpdateServer) WatchSchemas(_ *schemav1.WatchSchemasRequest,
+	stream grpc.ServerStreamingServer[schemav1.WatchSchemasResponse],
+) error {
+	id, ch := s.watchers.Subscribe()
+	defer s.watchers.Unsubscribe(id)
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case resp, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if sendErr := stream.Send(resp); sendErr != nil {
+				return sendErr
+			}
+		}
+	}
 }
 
 func errInvalidRequest(msg string) error {

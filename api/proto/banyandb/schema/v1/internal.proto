@@ -85,4 +85,19 @@ message AggregateSchemaUpdatesResponse {
 
 service SchemaUpdateService {
   rpc AggregateSchemaUpdates(AggregateSchemaUpdatesRequest) returns (AggregateSchemaUpdatesResponse);
+  rpc WatchSchemas(WatchSchemasRequest) returns (stream WatchSchemasResponse);
+}
+
+enum SchemaEventType {
+  SCHEMA_EVENT_TYPE_UNSPECIFIED = 0;
+  SCHEMA_EVENT_TYPE_INSERT = 1;
+  SCHEMA_EVENT_TYPE_UPDATE = 2;
+  SCHEMA_EVENT_TYPE_DELETE = 3;
+}
+
+message WatchSchemasRequest {}
+
+message WatchSchemasResponse {
+  SchemaEventType event_type = 1;
+  property.v1.Property property = 2;
 }

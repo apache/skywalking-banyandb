@@ -45,6 +45,7 @@ var _ grpchelper.Client = (*schemaClient)(nil)
 
 type connectionHandler struct {
 	l              *logger.Logger
+	registry       *SchemaRegistry
 	caCertReloader *pkgtls.Reloader
 	tlsEnabled     bool
 }
@@ -81,8 +82,11 @@ func (h *connectionHandler) NewClient(conn *grpc.ClientConn, _ *databasev1.Node)
 }
 
 // OnActive is called when a node transitions to active.
-func (h *connectionHandler) OnActive(name string, _ *schemaClient) {
+func (h *connectionHandler) OnActive(name string, client *schemaClient) {
 	h.l.Info().Str("node", name).Msg("schema server node is active")
+	if h.registry != nil {
+		h.registry.launchWatch(name, client)
+	}
 }
 
 // OnInactive is called when a node leaves active.

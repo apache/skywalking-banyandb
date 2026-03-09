@@ -56,6 +56,12 @@ func startTestSchemaServer(t *testing.T) string {
 
 func startTestSchemaServerStoppable(t *testing.T) (string, func()) {
 	t.Helper()
+	_, addr, stopFn := startTestSchemaServerFull(t)
+	return addr, stopFn
+}
+
+func startTestSchemaServerFull(t *testing.T) (schemaserver.Server, string, func()) {
+	t.Helper()
 	srv := schemaserver.NewServer(observability.BypassRegistry)
 	flagSet := srv.FlagSet()
 	port := getFreePort(t)
@@ -81,7 +87,7 @@ func startTestSchemaServerStoppable(t *testing.T) (string, func()) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return addr, func() { srv.GracefulStop() }
+	return srv, addr, func() { srv.GracefulStop() }
 }
 
 func getFreePort(t *testing.T) uint32 {
@@ -1494,5 +1500,222 @@ func TestSyncLoop(t *testing.T) {
 			}
 			return false
 		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive OnDelete for test-stream")
+	})
+}
+
+func waitForServerWatcher(t *testing.T, srv schemaserver.Server) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return srv.WatcherCount() > 0
+	}, testflags.EventuallyTimeout, 20*time.Millisecond, "expected at least one watcher to connect")
+}
+
+func insertSchemaProperty(t *testing.T, mgmt schemav1.SchemaManagementServiceClient, prop *propertyv1.Property) {
+	t.Helper()
+	_, err := mgmt.InsertSchema(context.Background(), &schemav1.InsertSchemaRequest{Property: prop})
+	require.NoError(t, err)
+}
+
+func updateSchemaProperty(t *testing.T, mgmt schemav1.SchemaManagementServiceClient, prop *propertyv1.Property) {
+	t.Helper()
+	_, err := mgmt.UpdateSchema(context.Background(), &schemav1.UpdateSchemaRequest{Property: prop})
+	require.NoError(t, err)
+}
+
+func deleteSchemaProperty(t *testing.T, mgmt schemav1.SchemaManagementServiceClient, name, id string) {
+	t.Helper()
+	_, err := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
+		Delete:   &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: name, Id: id},
+		UpdateAt: timestamppb.Now(),
+	})
+	require.NoError(t, err)
+}
+
+func TestWatchPush(t *testing.T) {
+	t.Run("watch_push_insert", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		// Insert a new stream via the real server RPC — triggers watch broadcast.
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "watch-stream", time.Now()))
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "watch-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push insert for watch-stream")
+	})
+
+	t.Run("watch_push_update", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "update-stream", time.Now().Add(-time.Hour)))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		// Wait for init to deliver the stream.
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "update-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		initialCount := len(handler.getAddOrUpdateEvents())
+		// Update with a newer timestamp via the real server RPC.
+		updateSchemaProperty(t, mgmt, buildMockStreamProperty(t, "update-stream", time.Now()))
+		require.Eventually(t, func() bool {
+			return len(handler.getAddOrUpdateEvents()) > initialCount
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push update")
+	})
+
+	t.Run("watch_push_delete", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		streamProp := buildMockStreamProperty(t, "delete-stream", time.Now())
+		insertSchemaProperty(t, mgmt, streamProp)
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		// Wait for init to deliver the stream.
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "delete-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		// Delete via the real server RPC — triggers watch broadcast.
+		deleteSchemaProperty(t, mgmt, streamProp.GetMetadata().GetName(), streamProp.GetId())
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getDeleteEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "delete-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push delete for delete-stream")
+	})
+
+	t.Run("watch_older_revision_ignored", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		now := time.Now()
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "rev-stream", now))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		// Wait for init.
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "rev-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		initialCount := len(handler.getAddOrUpdateEvents())
+		// Update with an older version — should be ignored by cache revision check.
+		updateSchemaProperty(t, mgmt, buildMockStreamProperty(t, "rev-stream", now.Add(-time.Hour)))
+		time.Sleep(200 * time.Millisecond)
+		assert.Equal(t, initialCount, len(handler.getAddOrUpdateEvents()), "older revision should not trigger handler")
+	})
+
+	t.Run("watch_new_node_added", func(t *testing.T) {
+		srv1, addr1, _ := startTestSchemaServerFull(t)
+		mgmt1 := rawMgmtClient(t, addr1)
+		insertSchemaProperty(t, mgmt1, buildMockGroupProperty(t))
+		srv2, addr2, _ := startTestSchemaServerFull(t)
+		mgmt2 := rawMgmtClient(t, addr2)
+		insertSchemaProperty(t, mgmt2, buildMockGroupProperty(t))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr1)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv1)
+		// Dynamically add the second server.
+		addNodeToRegistry(reg, "new-node", addr2)
+		waitForServerWatcher(t, srv2)
+		// Insert via the new server — client should receive it through watch.
+		insertSchemaProperty(t, mgmt2, buildMockStreamProperty(t, "new-node-stream", time.Now()))
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "new-node-stream" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive event from dynamically added node")
+	})
+
+	t.Run("watch_server_restart", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       10 * time.Minute,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		// Verify initial watcher count.
+		assert.Equal(t, 1, srv.WatcherCount())
+		// Insert via the real server RPC — should be received through watch.
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "before-restart", time.Now()))
+		require.Eventually(t, func() bool {
+			for _, evt := range handler.getAddOrUpdateEvents() {
+				if evt.Kind == schema.KindStream && evt.Name == "before-restart" {
+					return true
+				}
+			}
+			return false
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "should receive event before server restart")
 	})
 }

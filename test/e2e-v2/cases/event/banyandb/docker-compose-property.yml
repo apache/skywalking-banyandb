@@ -18,7 +18,7 @@ services:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
       service: banyandb
-    command: standalone --schema-registry-mode=property --schema-property-client-sync-interval=10s
+    command: standalone --schema-registry-mode=property
     networks:
       - e2e
 

@@ -372,6 +372,10 @@
     - [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse)
     - [UpdateSchemaRequest](#banyandb-schema-v1-UpdateSchemaRequest)
     - [UpdateSchemaResponse](#banyandb-schema-v1-UpdateSchemaResponse)
+    - [WatchSchemasRequest](#banyandb-schema-v1-WatchSchemasRequest)
+    - [WatchSchemasResponse](#banyandb-schema-v1-WatchSchemasResponse)
+  
+    - [SchemaEventType](#banyandb-schema-v1-SchemaEventType)
   
     - [SchemaManagementService](#banyandb-schema-v1-SchemaManagementService)
     - [SchemaUpdateService](#banyandb-schema-v1-SchemaUpdateService)
@@ -5607,7 +5611,47 @@ WriteResponse is the response contract for write
 
 
 
+
+<a name="banyandb-schema-v1-WatchSchemasRequest"></a>
+
+### WatchSchemasRequest
+
+
+
+
+
+
+
+<a name="banyandb-schema-v1-WatchSchemasResponse"></a>
+
+### WatchSchemasResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_type | [SchemaEventType](#banyandb-schema-v1-SchemaEventType) |  |  |
+| property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+
+
+
+
+
  
+
+
+<a name="banyandb-schema-v1-SchemaEventType"></a>
+
+### SchemaEventType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SCHEMA_EVENT_TYPE_UNSPECIFIED | 0 |  |
+| SCHEMA_EVENT_TYPE_INSERT | 1 |  |
+| SCHEMA_EVENT_TYPE_UPDATE | 2 |  |
+| SCHEMA_EVENT_TYPE_DELETE | 3 |  |
+
 
  
 
@@ -5636,6 +5680,7 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | AggregateSchemaUpdates | [AggregateSchemaUpdatesRequest](#banyandb-schema-v1-AggregateSchemaUpdatesRequest) | [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse) |  |
+| WatchSchemas | [WatchSchemasRequest](#banyandb-schema-v1-WatchSchemasRequest) | [WatchSchemasResponse](#banyandb-schema-v1-WatchSchemasResponse) stream |  |
 
  
 

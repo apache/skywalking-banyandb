@@ -131,6 +131,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		syncInterval:       syncInterval,
 		fullReconcileEvery: fullReconcileEvery,
 	}
+	handler.registry = reg
 
 	if cfg.CurNode != nil && isPropertySchemaNode(cfg.CurNode) {
 		connMgr.OnAddOrUpdate(cfg.CurNode)
@@ -1064,6 +1065,102 @@ func (r *SchemaRegistry) syncLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			r.performSync(ctx)
+		}
+	}
+}
+
+func (r *SchemaRegistry) launchWatch(nodeName string, client *schemaClient) {
+	if r.closer.AddRunning() {
+		go func() {
+			defer r.closer.Done()
+			r.watchLoop(nodeName, client.update)
+		}()
+	}
+}
+
+const (
+	watchInitialBackoff = time.Second
+	watchMaxBackoff     = 30 * time.Second
+)
+
+func (r *SchemaRegistry) watchLoop(nodeName string, updateClient schemav1.SchemaUpdateServiceClient) {
+	backoff := watchInitialBackoff
+	ctx := r.closer.Ctx()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		err := r.consumeWatchStream(ctx, updateClient)
+		if err != nil {
+			st, ok := status.FromError(err)
+			if ok && st.Code() == codes.Unimplemented {
+				r.l.Debug().Str("node", nodeName).Msg("watch: server does not support WatchSchemas, stopping watch")
+				return
+			}
+			r.l.Warn().Err(err).Str("node", nodeName).Dur("backoff", backoff).Msg("watch stream disconnected, will retry")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > watchMaxBackoff {
+			backoff = watchMaxBackoff
+		}
+	}
+}
+
+func (r *SchemaRegistry) consumeWatchStream(ctx context.Context, client schemav1.SchemaUpdateServiceClient) error {
+	stream, err := client.WatchSchemas(ctx, &schemav1.WatchSchemasRequest{})
+	if err != nil {
+		return err
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			return recvErr
+		}
+		r.handleWatchEvent(resp)
+	}
+}
+
+func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
+	prop := resp.GetProperty()
+	if prop == nil {
+		return
+	}
+	parsed := ParseTags(prop.GetTags())
+	kindStr := parsed.Kind
+	if kindStr == "" {
+		kindStr = prop.GetMetadata().GetName()
+	}
+	kind, kindErr := KindFromString(kindStr)
+	if kindErr != nil {
+		r.l.Warn().Str("kind", kindStr).Msg("watch: unknown kind in event")
+		return
+	}
+	r.l.Debug().Stringer("eventType", resp.GetEventType()).Stringer("kind", kind).
+		Str("propID", prop.GetId()).Msg("watch: received event")
+	switch resp.GetEventType() {
+	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT, schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UPDATE:
+		md, convErr := ToSchema(kind, prop)
+		if convErr != nil {
+			r.l.Warn().Err(convErr).Stringer("kind", kind).Msg("watch: failed to convert property")
+			return
+		}
+		r.processInitialResourceFromProperty(kind, prop, md.Spec.(proto.Message))
+	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE:
+		propID := prop.GetId()
+		if r.cache.Delete(propID, parsed.UpdatedAt) {
+			md, convErr := ToSchema(kind, prop)
+			if convErr != nil {
+				r.l.Warn().Err(convErr).Stringer("kind", kind).Msg("watch: failed to convert deleted property")
+				return
+			}
+			r.notifyHandlers(kind, md, true)
 		}
 	}
 }
