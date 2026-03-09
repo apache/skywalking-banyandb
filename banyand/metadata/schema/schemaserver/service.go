@@ -70,7 +70,6 @@ type Server interface {
 	run.Service
 	GetPort() *uint32
 	RegisterGossip(messenger gossip.Messenger)
-	WatcherCount() int
 }
 
 type server struct {

@@ -222,9 +222,12 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		}
 		ids = append(ids, result.ID())
 		var p propertyv1.Property
-		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr == nil {
-			deletedProps = append(deletedProps, &p)
+		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr != nil {
+			s.metrics.totalErr.Inc(1, "delete")
+			s.l.Error().Err(unmarshalErr).Msg("failed to unmarshal property for delete broadcast")
+			return nil, unmarshalErr
 		}
+		deletedProps = append(deletedProps, &p)
 	}
 	if len(ids) == 0 {
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil

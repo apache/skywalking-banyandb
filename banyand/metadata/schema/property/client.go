@@ -81,11 +81,13 @@ type SchemaRegistry struct {
 	cache              *schemaCache
 	caCertReloader     *pkgtls.Reloader
 	handlers           map[schema.Kind][]schema.EventHandler
+	watchCancels       map[string]context.CancelFunc
 	syncInterval       time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
 	started            atomic.Bool
 	mux                sync.RWMutex
+	watchMu            sync.Mutex
 }
 
 // NewSchemaRegistryClient creates a new property-based schema registry client.
@@ -128,6 +130,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		cache:              newSchemaCache(),
 		caCertReloader:     caCertReloader,
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
+		watchCancels:       make(map[string]context.CancelFunc),
 		syncInterval:       syncInterval,
 		fullReconcileEvery: fullReconcileEvery,
 	}
@@ -1070,11 +1073,30 @@ func (r *SchemaRegistry) syncLoop(ctx context.Context) {
 }
 
 func (r *SchemaRegistry) launchWatch(nodeName string, client *schemaClient) {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	if _, exists := r.watchCancels[nodeName]; exists {
+		return
+	}
+	ctx, cancel := context.WithCancel(r.closer.Ctx())
+	r.watchCancels[nodeName] = cancel
 	if r.closer.AddRunning() {
 		go func() {
 			defer r.closer.Done()
-			r.watchLoop(nodeName, client.update)
+			r.watchLoop(ctx, nodeName, client.update)
 		}()
+	} else {
+		cancel()
+		delete(r.watchCancels, nodeName)
+	}
+}
+
+func (r *SchemaRegistry) stopWatch(nodeName string) {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	if cancel, exists := r.watchCancels[nodeName]; exists {
+		cancel()
+		delete(r.watchCancels, nodeName)
 	}
 }
 
@@ -1083,9 +1105,8 @@ const (
 	watchMaxBackoff     = 30 * time.Second
 )
 
-func (r *SchemaRegistry) watchLoop(nodeName string, updateClient schemav1.SchemaUpdateServiceClient) {
+func (r *SchemaRegistry) watchLoop(ctx context.Context, nodeName string, updateClient schemav1.SchemaUpdateServiceClient) {
 	backoff := watchInitialBackoff
-	ctx := r.closer.Ctx()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1479,6 +1500,12 @@ func (r *SchemaRegistry) Close() error {
 	if r.caCertReloader != nil {
 		r.caCertReloader.Stop()
 	}
+	r.watchMu.Lock()
+	for nodeName, cancel := range r.watchCancels {
+		cancel()
+		delete(r.watchCancels, nodeName)
+	}
+	r.watchMu.Unlock()
 	r.closer.Done()
 	r.closer.CloseThenWait()
 	r.connMgr.GracefulStop()

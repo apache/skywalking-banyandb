@@ -73,7 +73,9 @@ func startTestSchemaServerFull(t *testing.T) (schemaserver.Server, string, func(
 	require.NoError(t, srv.Validate())
 	require.NoError(t, srv.PreRun(context.Background()))
 	srv.Serve()
-	t.Cleanup(func() { srv.GracefulStop() })
+	var once sync.Once
+	stopFn := func() { once.Do(func() { srv.GracefulStop() }) }
+	t.Cleanup(stopFn)
 	addr := net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(port), 10))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -87,7 +89,7 @@ func startTestSchemaServerFull(t *testing.T) (schemaserver.Server, string, func(
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return srv, addr, func() { srv.GracefulStop() }
+	return srv, addr, stopFn
 }
 
 func getFreePort(t *testing.T) uint32 {
@@ -1505,8 +1507,11 @@ func TestSyncLoop(t *testing.T) {
 
 func waitForServerWatcher(t *testing.T, srv schemaserver.Server) {
 	t.Helper()
+	type watcherCounter interface{ WatcherCount() int }
+	wc, ok := srv.(watcherCounter)
+	require.True(t, ok, "server does not implement WatcherCount")
 	require.Eventually(t, func() bool {
-		return srv.WatcherCount() > 0
+		return wc.WatcherCount() > 0
 	}, testflags.EventuallyTimeout, 20*time.Millisecond, "expected at least one watcher to connect")
 }
 
@@ -1706,7 +1711,10 @@ func TestWatchPush(t *testing.T) {
 		require.NoError(t, reg.Start(ctx))
 		waitForServerWatcher(t, srv)
 		// Verify initial watcher count.
-		assert.Equal(t, 1, srv.WatcherCount())
+		type watcherCounter interface{ WatcherCount() int }
+		wc, ok := srv.(watcherCounter)
+		require.True(t, ok, "server does not implement WatcherCount")
+		assert.Equal(t, 1, wc.WatcherCount())
 		// Insert via the real server RPC — should be received through watch.
 		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "before-restart", time.Now()))
 		require.Eventually(t, func() bool {

@@ -92,4 +92,7 @@ func (h *connectionHandler) OnActive(name string, client *schemaClient) {
 // OnInactive is called when a node leaves active.
 func (h *connectionHandler) OnInactive(name string, _ *schemaClient) {
 	h.l.Info().Str("node", name).Msg("schema server node is inactive")
+	if h.registry != nil {
+		h.registry.stopWatch(name)
+	}
 }
