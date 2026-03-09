@@ -24,7 +24,7 @@ import (
 
 // Get resolves the given path to an absolute path.
 // If the path is empty, it returns an empty string.
-// If the path is already absolute, it returns the path as is.
+// If the path is already absolute, it returns the cleaned path.
 // Otherwise, it returns the absolute path relative to the current working directory.
 func Get(p string) (string, error) {
 	if p == "" {

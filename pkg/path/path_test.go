@@ -28,6 +28,7 @@ func TestGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get working directory: %v", err)
 	}
+	absPath := filepath.Join(t.TempDir(), "test")
 
 	tests := []struct {
 		name    string
@@ -43,8 +44,8 @@ func TestGet(t *testing.T) {
 		},
 		{
 			name:    "absolute path",
-			input:   "/tmp/test",
-			want:    filepath.Clean("/tmp/test"),
+			input:   absPath,
+			want:    filepath.Clean(absPath),
 			wantErr: false,
 		},
 		{
