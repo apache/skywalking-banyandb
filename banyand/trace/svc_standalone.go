@@ -300,20 +300,21 @@ func (s *standalone) GetServiceName() string {
 	return s.Name()
 }
 
-func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
+func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) (bool, error) {
 	group, ok := s.schemaRepo.LoadGroup(groupName)
 	if !ok {
-		return errors.Errorf("group %s not found", groupName)
+		return false, errors.Errorf("group %s not found", groupName)
 	}
 	db := group.SupplyTSDB()
 	if db == nil {
-		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+		return false, errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
-		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	created, err := tsdb.TakeFileSnapshot(dstDir)
+	if err != nil {
+		return false, errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
 	}
-	return nil
+	return created, nil
 }
 
 // collectSegDirs walks a directory tree and collects all seg-* directory paths.
@@ -459,6 +460,7 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
+	var snapshotCreated int
 	for _, g := range gg {
 		select {
 		case <-ctx.Done():
@@ -467,15 +469,24 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 		}
 		groupName := g.GetSchema().Metadata.Name
 		snapshotPath := filepath.Join(d.s.snapshotDir, sn, groupName)
-		if errGroup := d.s.takeGroupSnapshot(snapshotPath, groupName); errGroup != nil {
+		created, errGroup := d.s.takeGroupSnapshot(snapshotPath, groupName)
+		if errGroup != nil {
 			d.s.l.Error().Err(errGroup).Str("group", groupName).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue
 		}
+		if !created {
+			d.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
+			continue
+		}
+		snapshotCreated++
 
 		// Compare snapshot with data directory to verify consistency
 		dataPath := filepath.Join(d.s.dataPath, groupName)
 		d.compareSnapshotWithData(snapshotPath, dataPath, groupName)
+	}
+	if snapshotCreated == 0 && err == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,

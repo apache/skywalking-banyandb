@@ -153,30 +153,35 @@ func parseSnapshot(name string) (uint64, error) {
 	return parseEpoch(name[:16])
 }
 
-func (tst *tsTable) TakeFileSnapshot(dst string) error {
+func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
-		return fmt.Errorf("no current snapshot available")
+		return false, fmt.Errorf("no current snapshot available")
 	}
 	defer snapshot.decRef()
 
+	hasDiskParts := false
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil {
 			continue
 		}
+		hasDiskParts = true
 
 		part := pw.p
 		srcPath := part.path
 		destPartPath := filepath.Join(dst, filepath.Base(srcPath))
 
 		if err := tst.fileSystem.CreateHardLink(srcPath, destPartPath, nil); err != nil {
-			return fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
+			return false, fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
 		}
+	}
+	if !hasDiskParts {
+		return false, nil
 	}
 	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)
 	tst.fileSystem.SyncPath(parent)
-	return nil
+	return true, nil
 }
 
 func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
@@ -202,20 +207,21 @@ func (tst *tsTable) createMetadata(dst string, snapshot *snapshot) {
 	}
 }
 
-func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) error {
+func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) (bool, error) {
 	group, ok := s.schemaRepo.LoadGroup(groupName)
 	if !ok {
-		return errors.Errorf("group %s not found", groupName)
+		return false, errors.Errorf("group %s not found", groupName)
 	}
 	db := group.SupplyTSDB()
 	if db == nil {
-		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+		return false, errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
-		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	created, err := tsdb.TakeFileSnapshot(dstDir)
+	if err != nil {
+		return false, errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
 	}
-	return nil
+	return created, nil
 }
 
 // collectSegDirs walks a directory tree and collects all seg-* directory paths.
@@ -362,6 +368,7 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
 	var err error
+	var snapshotCreated int
 	for _, g := range gg {
 		select {
 		case <-ctx.Done():
@@ -370,15 +377,24 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 		}
 		groupName := g.GetSchema().Metadata.Name
 		snapshotPath := filepath.Join(s.s.snapshotDir, sn, groupName)
-		if errGroup := s.s.takeGroupSnapshot(snapshotPath, groupName); errGroup != nil {
+		created, errGroup := s.s.takeGroupSnapshot(snapshotPath, groupName)
+		if errGroup != nil {
 			s.s.l.Error().Err(errGroup).Str("group", groupName).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue
 		}
+		if !created {
+			s.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
+			continue
+		}
+		snapshotCreated++
 
 		// Compare snapshot with data directory to verify consistency
 		dataPath := filepath.Join(s.s.dataPath, groupName)
 		s.compareSnapshotWithData(snapshotPath, dataPath, groupName)
+	}
+	if snapshotCreated == 0 && err == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,
