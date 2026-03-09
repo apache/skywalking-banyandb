@@ -13,26 +13,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+version: '3.8'
+
 services:
   banyandb:
     extends:
-      file: ../../../script/docker-compose/base-compose.yml
+      file: ../../../../script/docker-compose/base-compose.yml
       service: banyandb
+    command: standalone --schema-registry-mode=etcd
     networks:
       - e2e
 
+  agent:
+    extends:
+      file: ../../../../script/docker-compose/base-compose.yml
+      service: agent
+    networks:
+      - e2e
+
+  provider:
+    extends:
+      file: ../../../../script/docker-compose/base-compose.yml
+      service: provider
+    depends_on:
+      oap:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+    ports:
+      - 9090
+
   oap:
     extends:
-      file: ../../../script/docker-compose/base-compose.yml
+      file: ../../../../script/docker-compose/base-compose.yml
       service: oap
     environment:
       SW_STORAGE: banyandb
     depends_on:
       banyandb:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
     ports:
-    - 11800
-    - 12800
+      - 12800
 
 networks:
   e2e:
+
+volumes:
+  sw_agent:

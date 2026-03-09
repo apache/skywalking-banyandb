@@ -56,14 +56,22 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: BanyanDB
-            config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
-          - name: Trace Profiling BanyanDB
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
-          - name: Event BanyanDB
-            config: test/e2e-v2/cases/event/banyandb/e2e.yaml
-          - name: BanyanDB Cluster Mode
-            config: test/e2e-v2/cases/cluster/e2e.yaml
+          - name: BanyanDB Etcd
+            config: test/e2e-v2/cases/storage/banyandb/e2e-etcd.yaml
+          - name: BanyanDB Property
+            config: test/e2e-v2/cases/storage/banyandb/e2e-property.yaml
+          - name: Trace Profiling BanyanDB Etcd
+            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-etcd.yaml
+          - name: Trace Profiling BanyanDB Property
+            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-property.yaml
+          - name: Event BanyanDB Etcd
+            config: test/e2e-v2/cases/event/banyandb/e2e-etcd.yaml
+          - name: Event BanyanDB Property
+            config: test/e2e-v2/cases/event/banyandb/e2e-property.yaml
+          - name: BanyanDB Cluster Mode Etcd
+            config: test/e2e-v2/cases/cluster/e2e-etcd.yaml
+          - name: BanyanDB Cluster Mode Property
+            config: test/e2e-v2/cases/cluster/e2e-property.yaml
           # TODO: Enable Lifecycle test when it is ready
           # - name: Lifecycle
           #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
