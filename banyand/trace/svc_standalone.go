@@ -141,10 +141,8 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
 		return err
 	}
-	if s.dataPath != "" {
-		if s.dataPath, err = banyandbpath.Get(s.dataPath); err != nil {
-			return err
-		}
+	if s.dataPath, err = banyandbpath.Get(s.dataPath); err != nil {
+		return err
 	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
