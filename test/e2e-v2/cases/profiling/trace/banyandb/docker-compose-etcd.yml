@@ -20,6 +20,7 @@ services:
     extends:
       file: ../../../../script/docker-compose/base-compose.yml
       service: banyandb
+    command: standalone --schema-registry-mode=etcd
     networks:
       - e2e
 

@@ -17,34 +17,21 @@
 
 setup:
   env: compose
-  file: docker-compose.yml
+  file: docker-compose-property.yml
   timeout: 20m
-  init-system-environment: ../../script/env
+  init-system-environment: ../../../script/env
   steps:
-  - name: set PATH
-    command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
-  - name: install yq
-    command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh yq
-  - name: install swctl
-    command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
-
-trigger:
-  action: http
-  interval: 5s
-  times: -1
-  url: http://${consumer_host}:${consumer_9092}/users
-  method: POST
-  body: '{"id":"123","name":"skywalking"}'
-  headers:
-    "Content-Type": "application/json"
+    - name: set PATH
+      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+    - name: install yq
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh yq
+    - name: install swctl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
 
 verify:
-  # verify with retry strategy
   retry:
-    # max retry count
     count: 20
-    # the interval between two retries, in millisecond.
-    interval: 10s
+    interval: 3s
   cases:
-  - includes:
-    - ../storage/storage-cases.yaml
+    - includes:
+        - ../event-cases.yaml

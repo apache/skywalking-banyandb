@@ -17,7 +17,7 @@
 
 setup:
   env: compose
-  file: docker-compose.yml
+  file: docker-compose-etcd.yml
   timeout: 20m
   init-system-environment: ../../../script/env
   steps:
