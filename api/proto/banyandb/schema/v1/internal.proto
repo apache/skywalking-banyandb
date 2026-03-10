@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.schema.v1;
 
+import "banyandb/model/v1/query.proto";
 import "banyandb/property/v1/property.proto";
 import "banyandb/property/v1/rpc.proto";
 import "google/protobuf/timestamp.proto";
@@ -74,18 +75,8 @@ service SchemaManagementService {
   rpc RepairSchema(RepairSchemaRequest) returns (RepairSchemaResponse);
 }
 
-message AggregateSchemaUpdatesRequest {
-  property.v1.QueryRequest query = 1;
-}
-
-message AggregateSchemaUpdatesResponse {
-  // which names/schemas has updates
-  repeated string names = 1;
-}
-
 service SchemaUpdateService {
-  rpc AggregateSchemaUpdates(AggregateSchemaUpdatesRequest) returns (AggregateSchemaUpdatesResponse);
-  rpc WatchSchemas(WatchSchemasRequest) returns (stream WatchSchemasResponse);
+  rpc WatchSchemas(stream WatchSchemasRequest) returns (stream WatchSchemasResponse);
 }
 
 enum SchemaEventType {
@@ -93,11 +84,17 @@ enum SchemaEventType {
   SCHEMA_EVENT_TYPE_INSERT = 1;
   SCHEMA_EVENT_TYPE_UPDATE = 2;
   SCHEMA_EVENT_TYPE_DELETE = 3;
+  SCHEMA_EVENT_TYPE_REPLAY_DONE = 4;
 }
 
-message WatchSchemasRequest {}
+message WatchSchemasRequest {
+  model.v1.Criteria criteria = 1;
+  repeated string tag_projection = 2;
+}
 
 message WatchSchemasResponse {
   SchemaEventType event_type = 1;
   property.v1.Property property = 2;
+  bool metadata_only = 3;
+  int64 delete_time = 4;
 }

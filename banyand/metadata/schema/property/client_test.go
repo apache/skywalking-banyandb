@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +36,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -46,7 +46,10 @@ import (
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-const testStreamName = "test-stream"
+const (
+	testStreamName       = "test-stream"
+	testDeleteStreamName = "delete-stream"
+)
 
 func startTestSchemaServer(t *testing.T) string {
 	t.Helper()
@@ -907,21 +910,14 @@ func TestOnAddOrUpdate_NewNodeWithData(t *testing.T) {
 	reg.RegisterHandler("test-handler", schema.KindGroup|schema.KindStream, handler)
 	// Now add server2 which has pre-existing data.
 	addNodeToRegistry(reg, "node-2", addr2)
-	// Start triggers initializeFromSchemaClient for all active nodes.
+	// Start replays cached entries to handlers. Watch replay is async, so
+	// we need to wait for the handler to receive notifications.
 	reg.Start(context.Background())
 	// Handler should receive OnAddOrUpdate events for the group and stream from server2.
-	events := handler.getAddOrUpdateEvents()
-	var hasGroup, hasStream bool
-	for _, evt := range events {
-		if evt.Kind == schema.KindGroup && evt.Name == "test-group" {
-			hasGroup = true
-		}
-		if evt.Kind == schema.KindStream && evt.Name == testStreamName {
-			hasStream = true
-		}
-	}
-	assert.True(t, hasGroup, "handler should receive group OnAddOrUpdate, events: %+v", events)
-	assert.True(t, hasStream, "handler should receive stream OnAddOrUpdate, events: %+v", events)
+	groupEvt := waitForAddOrUpdateEvent(t, handler, schema.KindGroup, "test-group")
+	assert.Equal(t, schema.KindGroup, groupEvt.Kind)
+	streamEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, testStreamName)
+	assert.Equal(t, "test-group", streamEvt.Group)
 	// Registry should be able to read the stream.
 	ctx := context.Background()
 	got, getErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
@@ -1072,29 +1068,37 @@ func TestOnAddOrUpdate_HandlerNotification(t *testing.T) {
 	reg.RegisterHandler("measure-handler", schema.KindMeasure, measureHandler)
 	// Add server2 with pre-existing data.
 	addNodeToRegistry(reg, "node-2", addr2)
-	// Start triggers initializeFromSchemaClient for all active nodes.
+	// Start replays cached entries to handlers. Watch replay is async.
 	reg.Start(context.Background())
-	time.Sleep(500 * time.Millisecond)
-	// Stream handler should get stream events but not measure events.
+	// Wait for async watch replay to complete and handlers to receive events.
+	require.Eventually(t, func() bool {
+		streamEvents := streamHandler.getAddOrUpdateEvents()
+		var streamHasStream bool
+		for _, evt := range streamEvents {
+			if evt.Kind == schema.KindStream && evt.Name == testStreamName {
+				streamHasStream = true
+			}
+		}
+		measureEvents := measureHandler.getAddOrUpdateEvents()
+		var measureHasMeasure bool
+		for _, evt := range measureEvents {
+			if evt.Kind == schema.KindMeasure && evt.Name == "test-measure" {
+				measureHasMeasure = true
+			}
+		}
+		return streamHasStream && measureHasMeasure
+	}, 5*time.Second, 100*time.Millisecond, "handlers should receive their respective events")
+	// Verify handler isolation with concrete data checks.
 	streamEvents := streamHandler.getAddOrUpdateEvents()
-	var streamHasStream bool
-	for _, evt := range streamEvents {
-		if evt.Kind == schema.KindStream && evt.Name == testStreamName {
-			streamHasStream = true
-		}
-		assert.NotEqual(t, schema.KindMeasure, evt.Kind, "stream handler should not receive measure events")
-	}
-	assert.True(t, streamHasStream, "stream handler should receive stream OnAddOrUpdate")
-	// Measure handler should get measure events but not stream events.
+	assert.Len(t, streamEvents, 1, "stream handler should receive exactly 1 event")
+	assert.Equal(t, schema.KindStream, streamEvents[0].Kind)
+	assert.Equal(t, testStreamName, streamEvents[0].Name)
+	assert.Equal(t, "test-group", streamEvents[0].Group)
 	measureEvents := measureHandler.getAddOrUpdateEvents()
-	var measureHasMeasure bool
-	for _, evt := range measureEvents {
-		if evt.Kind == schema.KindMeasure && evt.Name == "test-measure" {
-			measureHasMeasure = true
-		}
-		assert.NotEqual(t, schema.KindStream, evt.Kind, "measure handler should not receive stream events")
-	}
-	assert.True(t, measureHasMeasure, "measure handler should receive measure OnAddOrUpdate")
+	assert.Len(t, measureEvents, 1, "measure handler should receive exactly 1 event")
+	assert.Equal(t, schema.KindMeasure, measureEvents[0].Kind)
+	assert.Equal(t, "test-measure", measureEvents[0].Name)
+	assert.Equal(t, "measure-group", measureEvents[0].Group)
 }
 
 func startTestSchemaServerTLS(t *testing.T) string {
@@ -1191,9 +1195,8 @@ type storedSchema struct {
 type recordingSchemaServer struct {
 	schemav1.UnimplementedSchemaManagementServiceServer
 	schemav1.UnimplementedSchemaUpdateServiceServer
-	schemas        map[string]*storedSchema
-	sinceRevisions []int64
-	mu             sync.Mutex
+	schemas map[string]*storedSchema
+	mu      sync.Mutex
 }
 
 func newRecordingSchemaServer() *recordingSchemaServer {
@@ -1208,27 +1211,18 @@ func (s *recordingSchemaServer) addSchema(prop *propertyv1.Property) {
 	s.schemas[prop.GetId()] = &storedSchema{prop: prop}
 }
 
+func (s *recordingSchemaServer) updateSchema(prop *propertyv1.Property) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.schemas[prop.GetId()] = &storedSchema{prop: prop}
+}
+
 func (s *recordingSchemaServer) markDeleted(propID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if stored, ok := s.schemas[propID]; ok {
 		stored.deleteTime = time.Now().UnixNano()
 	}
-}
-
-func (s *recordingSchemaServer) aggregateCallCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.sinceRevisions)
-}
-
-func (s *recordingSchemaServer) lastSinceRevision() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.sinceRevisions) == 0 {
-		return 0
-	}
-	return s.sinceRevisions[len(s.sinceRevisions)-1]
 }
 
 func (s *recordingSchemaServer) ListSchemas(req *schemav1.ListSchemasRequest, stream grpc.ServerStreamingServer[schemav1.ListSchemasResponse]) error {
@@ -1266,26 +1260,62 @@ func (s *recordingSchemaServer) ListSchemas(req *schemav1.ListSchemasRequest, st
 	return nil
 }
 
-func (s *recordingSchemaServer) AggregateSchemaUpdates(_ context.Context, req *schemav1.AggregateSchemaUpdatesRequest) (*schemav1.AggregateSchemaUpdatesResponse, error) {
-	sinceRevision := extractSinceRevision(req.GetQuery())
-	s.mu.Lock()
-	s.sinceRevisions = append(s.sinceRevisions, sinceRevision)
-	kindSet := make(map[string]struct{})
-	for _, stored := range s.schemas {
-		if stored.deleteTime > 0 {
-			continue
+func (s *recordingSchemaServer) WatchSchemas(stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
 		}
-		parsed := property.ParseTags(stored.prop.GetTags())
-		if parsed.UpdatedAt > sinceRevision {
-			kindSet[stored.prop.GetMetadata().GetName()] = struct{}{}
+		metadataOnly := len(req.TagProjection) > 0
+		maxRevision := extractMaxRevisionFromCriteria(req.Criteria)
+		s.mu.Lock()
+		for _, stored := range s.schemas {
+			parsed := property.ParseTags(stored.prop.GetTags())
+			if maxRevision > 0 && parsed.UpdatedAt <= maxRevision {
+				continue
+			}
+			eventType := schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT
+			if stored.deleteTime > 0 {
+				eventType = schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE
+			}
+			if sendErr := stream.Send(&schemav1.WatchSchemasResponse{
+				EventType:    eventType,
+				Property:     stored.prop,
+				MetadataOnly: metadataOnly,
+				DeleteTime:   stored.deleteTime,
+			}); sendErr != nil {
+				s.mu.Unlock()
+				return sendErr
+			}
+		}
+		s.mu.Unlock()
+		if sendErr := stream.Send(&schemav1.WatchSchemasResponse{
+			EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE,
+		}); sendErr != nil {
+			return sendErr
 		}
 	}
-	s.mu.Unlock()
-	names := make([]string, 0, len(kindSet))
-	for kindName := range kindSet {
-		names = append(names, kindName)
+}
+
+// extractMaxRevisionFromCriteria extracts the max_revision value from a Criteria condition.
+// It looks for a condition on "updated_at" with BINARY_OP_GT.
+func extractMaxRevisionFromCriteria(c *modelv1.Criteria) int64 {
+	if c == nil {
+		return 0
 	}
-	return &schemav1.AggregateSchemaUpdatesResponse{Names: names}, nil
+	if cond := c.GetCondition(); cond != nil {
+		if cond.GetName() == "updated_at" && cond.GetOp() == modelv1.Condition_BINARY_OP_GT {
+			return cond.GetValue().GetInt().GetValue()
+		}
+		return 0
+	}
+	if le := c.GetLe(); le != nil {
+		if v := extractMaxRevisionFromCriteria(le.GetLeft()); v > 0 {
+			return v
+		}
+		return extractMaxRevisionFromCriteria(le.GetRight())
+	}
+	return 0
 }
 
 func (s *recordingSchemaServer) InsertSchema(_ context.Context, req *schemav1.InsertSchemaRequest) (*schemav1.InsertSchemaResponse, error) {
@@ -1305,14 +1335,6 @@ func (s *recordingSchemaServer) DeleteSchema(_ context.Context, req *schemav1.De
 		return &schemav1.DeleteSchemaResponse{Found: true}, nil
 	}
 	return &schemav1.DeleteSchemaResponse{Found: false}, nil
-}
-
-func extractSinceRevision(query *propertyv1.QueryRequest) int64 {
-	cond := query.GetCriteria().GetCondition()
-	if cond != nil && cond.GetName() == "updated_at" {
-		return cond.GetValue().GetInt().GetValue()
-	}
-	return 0
 }
 
 func startRecordingServer(t *testing.T) (*recordingSchemaServer, string) {
@@ -1380,101 +1402,35 @@ func buildMockStreamProperty(t *testing.T, name string, updatedAt time.Time) *pr
 }
 
 func TestSyncLoop(t *testing.T) {
-	t.Run("incremental_sync_calls_aggregate", func(t *testing.T) {
-		mock, addr := startRecordingServer(t)
-		mock.addSchema(buildMockGroupProperty(t))
-		mock.addSchema(buildMockStreamProperty(t, testStreamName, time.Now()))
-		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       50 * time.Millisecond,
-			FullReconcileEvery: 100,
-		}, addr)
-		handler := &testEventHandler{}
-		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
-		ctx, cancel := context.WithCancel(context.Background())
-		t.Cleanup(cancel)
-		require.NoError(t, reg.Start(ctx))
-		require.Eventually(t, func() bool {
-			return mock.aggregateCallCount() >= 3
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "expected at least 3 AggregateSchemaUpdates calls")
-	})
-
-	t.Run("full_sync_skips_aggregate", func(t *testing.T) {
-		mock, addr := startRecordingServer(t)
-		mock.addSchema(buildMockGroupProperty(t))
-		mock.addSchema(buildMockStreamProperty(t, testStreamName, time.Now()))
-		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       50 * time.Millisecond,
-			FullReconcileEvery: 1,
-		}, addr)
-		handler := &testEventHandler{}
-		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
-		ctx, cancel := context.WithCancel(context.Background())
-		t.Cleanup(cancel)
-		require.NoError(t, reg.Start(ctx))
-		// Wait for init to deliver the stream.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == testStreamName {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
-		// Let several sync rounds fire (all full).
-		time.Sleep(300 * time.Millisecond)
-		assert.Equal(t, 0, mock.aggregateCallCount(), "full sync should not call AggregateSchemaUpdates")
-	})
-
-	t.Run("sinceRevision_advances_with_new_data", func(t *testing.T) {
-		mock, addr := startRecordingServer(t)
-		mock.addSchema(buildMockGroupProperty(t))
-		mock.addSchema(buildMockStreamProperty(t, testStreamName, time.Now()))
-		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       50 * time.Millisecond,
-			FullReconcileEvery: 100,
-		}, addr)
-		handler := &testEventHandler{}
-		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
-		ctx, cancel := context.WithCancel(context.Background())
-		t.Cleanup(cancel)
-		require.NoError(t, reg.Start(ctx))
-		// Wait for at least 2 aggregate calls to establish a baseline revision.
-		require.Eventually(t, func() bool {
-			return mock.aggregateCallCount() >= 2
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
-		rev0 := mock.lastSinceRevision()
-		assert.Greater(t, rev0, int64(0), "sinceRevision should be > 0 after init")
-		// With no new data, sinceRevision should remain stable.
-		countBefore := mock.aggregateCallCount()
-		require.Eventually(t, func() bool {
-			return mock.aggregateCallCount() >= countBefore+2
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
-		assert.Equal(t, rev0, mock.lastSinceRevision(), "sinceRevision should not change without new data")
-		// Add a new stream with a far-future updatedAt.
-		futureTime := time.Now().Add(time.Hour)
-		mock.addSchema(buildMockStreamProperty(t, "new-stream", futureTime))
-		// sinceRevision should advance after the new data is picked up.
-		require.Eventually(t, func() bool {
-			return mock.lastSinceRevision() > rev0
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "sinceRevision should advance after new data")
-		// Handler should have received the new stream.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "new-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive OnAddOrUpdate for new-stream")
-	})
-
 	t.Run("full_reconcile_detects_deletion", func(t *testing.T) {
 		mock, addr := startRecordingServer(t)
 		mock.addSchema(buildMockGroupProperty(t))
 		mock.addSchema(buildMockStreamProperty(t, testStreamName, time.Now()))
 		streamPropID := property.BuildPropertyID(schema.KindStream, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       50 * time.Millisecond,
+			SyncInterval: 50 * time.Millisecond,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		initEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, testStreamName)
+		assert.Equal(t, "test-group", initEvt.Group)
+		// Mark stream as deleted on the server.
+		mock.markDeleted(streamPropID)
+		// Full reconcile should detect the deletion and notify the handler.
+		deleteEvt := waitForDeleteEvent(t, handler, schema.KindStream, testStreamName)
+		assert.Equal(t, "test-group", deleteEvt.Group)
+	})
+
+	t.Run("full_reconcile_detects_update", func(t *testing.T) {
+		mock, addr := startRecordingServer(t)
+		mock.addSchema(buildMockGroupProperty(t))
+		initialTime := time.Now()
+		mock.addSchema(buildMockStreamProperty(t, testStreamName, initialTime))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       500 * time.Millisecond,
 			FullReconcileEvery: 1,
 		}, addr)
 		handler := &testEventHandler{}
@@ -1482,27 +1438,102 @@ func TestSyncLoop(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		require.NoError(t, reg.Start(ctx))
-		// Wait for init to deliver the stream.
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, testStreamName)
+		// Update the stream on the server with a newer revision.
+		mock.updateSchema(buildMockStreamProperty(t, testStreamName, initialTime.Add(10*time.Second)))
+		// Full reconcile should detect the higher revision and re-fetch + update cache.
 		require.Eventually(t, func() bool {
+			count := 0
 			for _, evt := range handler.getAddOrUpdateEvents() {
 				if evt.Kind == schema.KindStream && evt.Name == testStreamName {
-					return true
+					count++
 				}
 			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
-		// Mark stream as deleted on the server.
-		mock.markDeleted(streamPropID)
-		// Full reconcile should detect the deletion and notify the handler.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getDeleteEvents() {
-				if evt.Kind == schema.KindStream && strings.Contains(evt.Name, testStreamName) {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive OnDelete for test-stream")
+			return count >= 2
+		}, testflags.EventuallyTimeout, 20*time.Millisecond, "full reconcile should detect updated stream")
+		latestEvt := findLastEvent(handler.getAddOrUpdateEvents(), schema.KindStream, testStreamName)
+		assert.Equal(t, "test-group", latestEvt.Group)
 	})
+
+	t.Run("incremental_sync_picks_up_new_data", func(t *testing.T) {
+		srv, addr, _ := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "initial-stream", time.Now()))
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       500 * time.Millisecond,
+			FullReconcileEvery: 100,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForServerWatcher(t, srv)
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, "initial-stream")
+		// Insert new stream directly on server.
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "incremental-stream", time.Now()))
+		found := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "incremental-stream")
+		assert.Equal(t, "test-group", found.Group)
+	})
+
+	t.Run("full_reconcile_every_1_runs_each_tick", func(t *testing.T) {
+		mock, addr := startRecordingServer(t)
+		mock.addSchema(buildMockGroupProperty(t))
+		mock.addSchema(buildMockStreamProperty(t, "s1", time.Now()))
+		mock.addSchema(buildMockStreamProperty(t, "s2", time.Now()))
+		s2PropID := property.BuildPropertyID(schema.KindStream, &commonv1.Metadata{Group: "test-group", Name: "s2"})
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       500 * time.Millisecond,
+			FullReconcileEvery: 1,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("sync-handler", schema.KindGroup|schema.KindStream, handler)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, "s1")
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, "s2")
+		// Mark s2 as deleted. Full reconcile (every tick) should detect it quickly.
+		mock.markDeleted(s2PropID)
+		deleteEvt := waitForDeleteEvent(t, handler, schema.KindStream, "s2")
+		assert.Equal(t, "test-group", deleteEvt.Group)
+	})
+}
+
+func waitForAddOrUpdateEvent(t *testing.T, handler *testEventHandler, kind schema.Kind, name string) schema.Metadata {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, evt := range handler.getAddOrUpdateEvents() {
+			if evt.Kind == kind && evt.Name == name {
+				return true
+			}
+		}
+		return false
+	}, testflags.EventuallyTimeout, 20*time.Millisecond, "expected AddOrUpdate event for %s/%s", kind, name)
+	return findLastEvent(handler.getAddOrUpdateEvents(), kind, name)
+}
+
+func waitForDeleteEvent(t *testing.T, handler *testEventHandler, kind schema.Kind, name string) schema.Metadata {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, evt := range handler.getDeleteEvents() {
+			if evt.Kind == kind && evt.Name == name {
+				return true
+			}
+		}
+		return false
+	}, testflags.EventuallyTimeout, 20*time.Millisecond, "expected Delete event for %s/%s", kind, name)
+	return findLastEvent(handler.getDeleteEvents(), kind, name)
+}
+
+func findLastEvent(events []schema.Metadata, kind schema.Kind, name string) schema.Metadata {
+	for idx := len(events) - 1; idx >= 0; idx-- {
+		if events[idx].Kind == kind && events[idx].Name == name {
+			return events[idx]
+		}
+	}
+	return schema.Metadata{}
 }
 
 func waitForServerWatcher(t *testing.T, srv schemaserver.Server) {
@@ -1542,8 +1573,7 @@ func TestWatchPush(t *testing.T) {
 		mgmt := rawMgmtClient(t, addr)
 		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1553,14 +1583,8 @@ func TestWatchPush(t *testing.T) {
 		waitForServerWatcher(t, srv)
 		// Insert a new stream via the real server RPC — triggers watch broadcast.
 		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "watch-stream", time.Now()))
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "watch-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push insert for watch-stream")
+		insertEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "watch-stream")
+		assert.Equal(t, "test-group", insertEvt.Group)
 	})
 
 	t.Run("watch_push_update", func(t *testing.T) {
@@ -1569,8 +1593,7 @@ func TestWatchPush(t *testing.T) {
 		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
 		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "update-stream", time.Now().Add(-time.Hour)))
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1578,32 +1601,26 @@ func TestWatchPush(t *testing.T) {
 		t.Cleanup(cancel)
 		require.NoError(t, reg.Start(ctx))
 		waitForServerWatcher(t, srv)
-		// Wait for init to deliver the stream.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "update-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		initEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "update-stream")
+		assert.Equal(t, "test-group", initEvt.Group)
 		initialCount := len(handler.getAddOrUpdateEvents())
 		// Update with a newer timestamp via the real server RPC.
 		updateSchemaProperty(t, mgmt, buildMockStreamProperty(t, "update-stream", time.Now()))
 		require.Eventually(t, func() bool {
 			return len(handler.getAddOrUpdateEvents()) > initialCount
 		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push update")
+		lastEvt := findLastEvent(handler.getAddOrUpdateEvents(), schema.KindStream, "update-stream")
+		assert.Equal(t, "test-group", lastEvt.Group)
 	})
 
 	t.Run("watch_push_delete", func(t *testing.T) {
 		srv, addr, _ := startTestSchemaServerFull(t)
 		mgmt := rawMgmtClient(t, addr)
 		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
-		streamProp := buildMockStreamProperty(t, "delete-stream", time.Now())
+		streamProp := buildMockStreamProperty(t, testDeleteStreamName, time.Now())
 		insertSchemaProperty(t, mgmt, streamProp)
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1611,25 +1628,12 @@ func TestWatchPush(t *testing.T) {
 		t.Cleanup(cancel)
 		require.NoError(t, reg.Start(ctx))
 		waitForServerWatcher(t, srv)
-		// Wait for init to deliver the stream.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "delete-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		initEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, testDeleteStreamName)
+		assert.Equal(t, "test-group", initEvt.Group)
 		// Delete via the real server RPC — triggers watch broadcast.
 		deleteSchemaProperty(t, mgmt, streamProp.GetMetadata().GetName(), streamProp.GetId())
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getDeleteEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "delete-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive watch push delete for delete-stream")
+		deleteEvt := waitForDeleteEvent(t, handler, schema.KindStream, testDeleteStreamName)
+		assert.Equal(t, "test-group", deleteEvt.Group)
 	})
 
 	t.Run("watch_older_revision_ignored", func(t *testing.T) {
@@ -1639,8 +1643,7 @@ func TestWatchPush(t *testing.T) {
 		now := time.Now()
 		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "rev-stream", now))
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1648,15 +1651,8 @@ func TestWatchPush(t *testing.T) {
 		t.Cleanup(cancel)
 		require.NoError(t, reg.Start(ctx))
 		waitForServerWatcher(t, srv)
-		// Wait for init.
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "rev-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond)
+		initEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "rev-stream")
+		assert.Equal(t, "test-group", initEvt.Group)
 		initialCount := len(handler.getAddOrUpdateEvents())
 		// Update with an older version — should be ignored by cache revision check.
 		updateSchemaProperty(t, mgmt, buildMockStreamProperty(t, "rev-stream", now.Add(-time.Hour)))
@@ -1672,8 +1668,7 @@ func TestWatchPush(t *testing.T) {
 		mgmt2 := rawMgmtClient(t, addr2)
 		insertSchemaProperty(t, mgmt2, buildMockGroupProperty(t))
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr1)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1686,14 +1681,8 @@ func TestWatchPush(t *testing.T) {
 		waitForServerWatcher(t, srv2)
 		// Insert via the new server — client should receive it through watch.
 		insertSchemaProperty(t, mgmt2, buildMockStreamProperty(t, "new-node-stream", time.Now()))
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "new-node-stream" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "handler should receive event from dynamically added node")
+		newNodeEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "new-node-stream")
+		assert.Equal(t, "test-group", newNodeEvt.Group)
 	})
 
 	t.Run("watch_server_restart", func(t *testing.T) {
@@ -1701,8 +1690,7 @@ func TestWatchPush(t *testing.T) {
 		mgmt := rawMgmtClient(t, addr)
 		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
 		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
-			SyncInterval:       10 * time.Minute,
-			FullReconcileEvery: 100,
+			SyncInterval: 10 * time.Minute,
 		}, addr)
 		handler := &testEventHandler{}
 		reg.RegisterHandler("watch-handler", schema.KindGroup|schema.KindStream, handler)
@@ -1717,13 +1705,7 @@ func TestWatchPush(t *testing.T) {
 		assert.Equal(t, 1, wc.WatcherCount())
 		// Insert via the real server RPC — should be received through watch.
 		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "before-restart", time.Now()))
-		require.Eventually(t, func() bool {
-			for _, evt := range handler.getAddOrUpdateEvents() {
-				if evt.Kind == schema.KindStream && evt.Name == "before-restart" {
-					return true
-				}
-			}
-			return false
-		}, testflags.EventuallyTimeout, 20*time.Millisecond, "should receive event before server restart")
+		restartEvt := waitForAddOrUpdateEvent(t, handler, schema.KindStream, "before-restart")
+		assert.Equal(t, "test-group", restartEvt.Group)
 	})
 }
