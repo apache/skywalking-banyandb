@@ -1,10 +1,112 @@
 # Quick Start Tutorial
+
 The following tutorial will guide you through setting up a SkyWalking OAP with BanyanDB as the storage backend using Docker Compose.
 It is a quick way to get started with BanyanDB if you are a SkyWalking user and want to try out BanyanDB.
 
-## Set up quickstart cluster with Showcase
+## Option 1: Use the Docker Compose Example (Recommended)
 
-Clone the showcase repository:
+This repository includes a ready-to-use docker-compose file at [docker-compose.yaml](docker-compose.yaml) that sets up:
+
+- **BanyanDB** - Standalone instance with property-based schema registry
+- **SkyWalking OAP** - Configured to use BanyanDB as storage
+- **SkyWalking UI** - Web interface for visualizing traces, metrics, and topology
+- **Demo Services** - Sample microservices that generate trace traffic automatically
+
+### Prerequisites
+
+- Docker Engine 20.10+
+- Docker Compose v2.0+
+
+### Quick Start
+
+1. Navigate to the quick-start directory:
+   ```shell
+   cd docs/guides/quick-start
+   ```
+
+2. Start the stack:
+   ```shell
+   docker compose up -d
+   ```
+
+3. Wait for all services to be healthy (may take 1-2 minutes):
+   ```shell
+   docker compose ps
+   ```
+
+### Accessing the Services
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| SkyWalking UI | http://localhost:8080 | Web interface for traces, metrics, topology |
+| BanyanDB HTTP | http://localhost:17913 | HTTP endpoint for bydbctl and embedded UI |
+| BanyanDB UI | http://localhost:17913 | Embedded UI for querying data |
+| OAP HTTP | http://localhost:12800 | OAP REST API |
+| OAP gRPC | localhost:11800 | gRPC endpoint for agents |
+
+### Verifying the Setup
+
+1. **Check BanyanDB is healthy**:
+   ```shell
+   nc -z localhost 17913
+   ```
+
+2. **Check OAP is healthy**:
+   ```shell
+   docker logs skywalking-oap 2>&1 | grep "Health status"
+   ```
+
+3. **View traces in SkyWalking UI**:
+   - Open http://localhost:8080
+   - Go to "General" > "Service" to see the demo services
+   - Go to "Traces" to view trace data
+
+### Configuration
+
+The docker-compose.yaml includes environment variables for customization:
+
+```yaml
+# BanyanDB configuration
+command: standalone
+
+# SkyWalking OAP with BanyanDB storage
+environment:
+  SW_STORAGE: banyandb
+  SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+
+  # Enable VM metrics collection
+  SW_OTEL_RECEIVER: default
+  SW_OTEL_RECEIVER_ENABLED_OC_RULES: vm
+  SW_OTEL_RECEIVER_ENABLED_OTEL_METRICS_RULES: vm
+```
+
+### Environment Variables
+
+You can customize the deployment using environment variables:
+
+```shell
+# Use specific image versions
+BANYANDB_IMAGE=apache/skywalking-banyandb:0.9.0 \
+OAP_IMAGE=apache/skywalking-oap-server:10.3.0 \
+OAP_UI_IMAGE=apache/skywalking-ui:10.3.0 \
+docker compose up -d
+```
+
+### Stopping the Stack
+
+```shell
+docker compose down
+```
+
+To also remove data volumes:
+```shell
+docker compose down -v
+```
+
+## Option 2: Use SkyWalking Showcase
+
+Clone the showcase repository to use their pre-configured demo:
+
 ```shell
 git clone https://github.com/apache/skywalking-showcase.git
 cd skywalking-showcase
@@ -17,18 +119,30 @@ make deploy.docker FEATURE_FLAGS=single-node,agent
 
 You could find the details of the showcase cluster in the [SkyWalking Showcase](https://skywalking.apache.org/docs/skywalking-showcase/next/readme/)
 
-## Data presentation
-### Get into the SkyWalking UI
-The UI can be accessed at `http://localhost:9999`.
+## Data Presentation
+
+### Using Docker Compose (Option 1)
+
+Access the UIs at:
+
+- **SkyWalking UI**: http://localhost:8080
+- **BanyanDB UI**: http://localhost:17913
+
+### Using Showcase (Option 2)
+
+- **SkyWalking UI**: http://localhost:9999
+- **BanyanDB UI**: http://localhost:17913
+
 We can view the final presentation of the metrics/traces/logs/topology for the demo system on the UI dashboards.
 The following image shows the `General-Service` service list in the SkyWalking UI:
 ![skywalking-ui.png](https://skywalking.apache.org/doc-graph/banyandb/v0.8.0/skywalking-ui.png)
 
-### Query the data in BanyanDB
-If you interested in the raw data stored in BanyanDB, you can use the BanyanDB embedded UI or BanyanDB CLI(bydbctl) to query the data.
+### Query the Data in BanyanDB
+
+If you are interested in the raw data stored in BanyanDB, you can use the BanyanDB embedded UI or BanyanDB CLI(bydbctl) to query the data.
 
 - BanyanDB embedded UI can be accessed at `http://localhost:17913`.
-The following image shows how to query all the services from the BanyanDB:
+  The following image shows how to query all the services from the BanyanDB:
 
 ![banyandb-ui.png](https://skywalking.apache.org/doc-graph/banyandb/v0.8.0/banyandb-ui.png)
 
@@ -278,4 +392,3 @@ dataPoints:
   version: "9017360854850545"
 trace: null
 ```
-
