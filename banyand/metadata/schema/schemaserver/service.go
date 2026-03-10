@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
@@ -70,6 +71,7 @@ type Server interface {
 	run.Service
 	GetPort() *uint32
 	RegisterGossip(messenger gossip.Messenger)
+	TakeSnapshot(ctx context.Context) *databasev1.Snapshot
 }
 
 type server struct {
@@ -89,6 +91,7 @@ type server struct {
 	keyFile                  string
 	addr                     string
 	repairBuildTreeCron      string
+	snapshotDir              string
 	minFileSnapshotAge       time.Duration
 	flushTimeout             time.Duration
 	snapshotSeq              uint64
@@ -209,9 +212,9 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 
-	dataDir := filepath.Join(s.root, "schema-property", "data")
-	snapshotDir := filepath.Join(s.root, "schema-property", "snapshots")
-	repairDir := filepath.Join(s.root, "schema-property", "repair")
+	dataDir := filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "data")
+	s.snapshotDir = filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "snapshots")
+	repairDir := filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "repair")
 
 	cfg := db.Config{
 		Location:               dataDir,
@@ -230,17 +233,17 @@ func (s *server) PreRun(_ context.Context) error {
 			WaitForPersistence: false,
 		},
 		Snapshot: db.SnapshotConfig{
-			Location: snapshotDir,
+			Location: s.snapshotDir,
 			Func: func(ctx context.Context) (string, error) {
 				s.snapshotMu.Lock()
 				defer s.snapshotMu.Unlock()
-				storage.DeleteStaleSnapshots(snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
+				storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
 				sn := s.snapshotName()
-				snapshot := s.db.TakeSnapShot(ctx, sn)
-				if snapshot.Error != "" {
-					return "", fmt.Errorf("failed to take snapshot %s: %s", sn, snapshot.Error)
+				snp := s.db.TakeSnapShot(ctx, sn)
+				if snp.Error != "" {
+					return "", fmt.Errorf("failed to take snapshot %s: %s", sn, snp.Error)
 				}
-				return filepath.Join(snapshotDir, sn, storage.DataDir), nil
+				return filepath.Join(s.snapshotDir, sn, storage.DataDir), nil
 			},
 		},
 	}
@@ -307,6 +310,15 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}()
 	return nil
+}
+
+// TakeSnapshot creates a new snapshot and returns the snapshot metadata.
+func (s *server) TakeSnapshot(ctx context.Context) *databasev1.Snapshot {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
+	sn := s.snapshotName()
+	return s.db.TakeSnapShot(ctx, sn)
 }
 
 func (s *server) snapshotName() string {
