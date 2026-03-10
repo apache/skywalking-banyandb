@@ -5607,7 +5607,7 @@ WriteResponse is the response contract for write
 | event_type | [SchemaEventType](#banyandb-schema-v1-SchemaEventType) |  |  |
 | property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
 | metadata_only | [bool](#bool) |  |  |
-| delete_time | [int64](#int64) |  | delete_time is the deletion timestamp in nanoseconds. 0 means not deleted, &gt;0 means the property was deleted at this time. |
+| delete_time | [int64](#int64) |  |  |
 
 
 
