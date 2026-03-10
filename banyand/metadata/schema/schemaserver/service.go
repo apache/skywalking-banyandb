@@ -80,6 +80,7 @@ type server struct {
 	l                        *logger.Logger
 	ser                      *grpclib.Server
 	tlsReloader              *pkgtls.Reloader
+	watchers                 *watcherManager
 	schemaService            *schemaManagementServer
 	updateService            *schemaUpdateServer
 	host                     string
@@ -112,6 +113,14 @@ func NewServer(omr observability.MetricsRegistry) Server {
 // GetPort returns the gRPC server port.
 func (s *server) GetPort() *uint32 {
 	return &s.port
+}
+
+// WatcherCount returns the number of active schema watchers.
+func (s *server) WatcherCount() int {
+	if s.watchers == nil {
+		return 0
+	}
+	return s.watchers.Count()
 }
 
 // RegisterGossip registers the DB's repair gRPC services with the gossip messenger.
@@ -176,17 +185,20 @@ func (s *server) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger("schema-server")
 	s.lfs = fs.NewLocalFileSystem()
 
+	s.watchers = newWatcherManager(s.l)
 	grpcFactory := s.omr.With(schemaServerScope.SubScope("grpc"))
 	sm := newServerMetrics(grpcFactory)
 	s.schemaService = &schemaManagementServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
+		server:   s,
+		watchers: s.watchers,
+		l:        s.l,
+		metrics:  sm,
 	}
 	s.updateService = &schemaUpdateServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
+		server:   s,
+		watchers: s.watchers,
+		l:        s.l,
+		metrics:  sm,
 	}
 
 	if s.tls {
@@ -307,6 +319,9 @@ func (s *server) Serve() run.StopNotify {
 }
 
 func (s *server) GracefulStop() {
+	if s.watchers != nil {
+		s.watchers.Close()
+	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()
 	}

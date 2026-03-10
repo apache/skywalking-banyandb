@@ -19,6 +19,8 @@ package schemaserver
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -26,6 +28,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -55,9 +58,10 @@ func newServerMetrics(factory observability.Factory) *serverMetrics {
 
 type schemaManagementServer struct {
 	schemav1.UnimplementedSchemaManagementServiceServer
-	server  *server
-	l       *logger.Logger
-	metrics *serverMetrics
+	server   *server
+	watchers *watcherManager
+	l        *logger.Logger
+	metrics  *serverMetrics
 }
 
 // InsertSchema inserts a new schema property.
@@ -101,6 +105,10 @@ func (s *schemaManagementServer) InsertSchema(ctx context.Context, req *schemav1
 		s.l.Error().Err(updateErr).Msg("failed to insert schema")
 		return nil, updateErr
 	}
+	s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+		EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT,
+		Property:  req.Property,
+	})
 	return &schemav1.InsertSchemaResponse{}, nil
 }
 
@@ -128,6 +136,10 @@ func (s *schemaManagementServer) UpdateSchema(ctx context.Context, req *schemav1
 		s.l.Error().Err(updateErr).Msg("failed to update schema")
 		return nil, updateErr
 	}
+	s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+		EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UPDATE,
+		Property:  req.Property,
+	})
 	return &schemav1.UpdateSchemaResponse{}, nil
 }
 
@@ -206,11 +218,19 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil
 	}
 	ids := make([][]byte, 0, len(results))
+	var deletedProps []*propertyv1.Property
 	for _, result := range results {
 		if result.DeleteTime() > 0 {
 			continue
 		}
 		ids = append(ids, result.ID())
+		var p propertyv1.Property
+		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr != nil {
+			s.metrics.totalErr.Inc(1, "delete")
+			s.l.Error().Err(unmarshalErr).Msg("failed to unmarshal property for delete broadcast")
+			return nil, unmarshalErr
+		}
+		deletedProps = append(deletedProps, &p)
 	}
 	if len(ids) == 0 {
 		return &schemav1.DeleteSchemaResponse{Found: false}, nil
@@ -219,6 +239,14 @@ func (s *schemaManagementServer) DeleteSchema(ctx context.Context, req *schemav1
 		s.metrics.totalErr.Inc(1, "delete")
 		s.l.Error().Err(deleteErr).Msg("failed to delete schema")
 		return nil, deleteErr
+	}
+	deleteTimeNano := req.UpdateAt.AsTime().UnixNano()
+	for _, dp := range deletedProps {
+		s.watchers.Broadcast(&schemav1.WatchSchemasResponse{
+			EventType:  schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE,
+			Property:   dp,
+			DeleteTime: deleteTimeNano,
+		})
 	}
 	return &schemav1.DeleteSchemaResponse{Found: true}, nil
 }
@@ -252,47 +280,119 @@ func (s *schemaManagementServer) RepairSchema(ctx context.Context, req *schemav1
 
 type schemaUpdateServer struct {
 	schemav1.UnimplementedSchemaUpdateServiceServer
-	server  *server
-	l       *logger.Logger
-	metrics *serverMetrics
+	server   *server
+	watchers *watcherManager
+	l        *logger.Logger
+	metrics  *serverMetrics
 }
 
-// AggregateSchemaUpdates returns distinct schema names that have been modified.
-func (s *schemaUpdateServer) AggregateSchemaUpdates(ctx context.Context,
-	req *schemav1.AggregateSchemaUpdatesRequest,
-) (*schemav1.AggregateSchemaUpdatesResponse, error) {
-	s.metrics.totalStarted.Inc(1, "aggregate")
-	start := time.Now()
-	defer func() {
-		s.metrics.totalFinished.Inc(1, "aggregate")
-		s.metrics.totalLatency.Inc(time.Since(start).Seconds(), "aggregate")
+// WatchSchemas implements bi-directional streaming for schema change events.
+// Clients send requests on the stream to trigger replay (with max_revision and metadata_only).
+// The server continuously pushes live events and replays historical data on request.
+func (s *schemaUpdateServer) WatchSchemas(
+	stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse],
+) error {
+	id, ch := s.watchers.Subscribe()
+	defer s.watchers.Unsubscribe(id)
+
+	reqCh := make(chan *schemav1.WatchSchemasRequest, 1)
+	reqErrCh := make(chan error, 1)
+	go func() {
+		for {
+			req, err := stream.Recv()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					close(reqCh)
+					return
+				}
+				reqErrCh <- err
+				close(reqCh)
+				return
+			}
+			reqCh <- req
+		}
 	}()
-	if req.Query == nil {
-		return nil, errInvalidRequest("query is required")
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case err := <-reqErrCh:
+			return err
+		case req, ok := <-reqCh:
+			if !ok {
+				return nil
+			}
+			if replayErr := s.replaySchemas(stream, req); replayErr != nil {
+				return replayErr
+			}
+			if doneErr := stream.Send(&schemav1.WatchSchemasResponse{
+				EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE,
+			}); doneErr != nil {
+				return doneErr
+			}
+		case resp, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if sendErr := stream.Send(resp); sendErr != nil {
+				return sendErr
+			}
+		}
 	}
-	req.Query.Groups = []string{schema.SchemaGroup}
-	results, queryErr := s.server.db.Query(ctx, req.Query)
-	if queryErr != nil {
-		s.metrics.totalErr.Inc(1, "aggregate")
-		s.l.Error().Err(queryErr).Msg("failed to aggregate schema updates")
-		return nil, queryErr
+}
+
+func (s *schemaUpdateServer) replaySchemas(
+	stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse],
+	req *schemav1.WatchSchemasRequest,
+) error {
+	metadataOnly := len(req.TagProjection) > 0
+	query := &propertyv1.QueryRequest{
+		Groups:   []string{schema.SchemaGroup},
+		Criteria: req.Criteria,
 	}
-	nameSet := make(map[string]struct{}, len(results))
+	results, err := s.server.db.Query(stream.Context(), query)
+	if err != nil {
+		return err
+	}
 	for _, result := range results {
 		var p propertyv1.Property
 		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr != nil {
-			s.metrics.totalErr.Inc(1, "aggregate")
-			return nil, unmarshalErr
+			s.metrics.totalErr.Inc(1, "replay")
+			return unmarshalErr
 		}
-		if p.Metadata != nil && p.Metadata.Name != "" {
-			nameSet[p.Metadata.Name] = struct{}{}
+		if metadataOnly {
+			p.Tags = filterTags(p.Tags, req.TagProjection)
+		}
+		eventType := schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT
+		dt := result.DeleteTime()
+		if dt > 0 {
+			eventType = schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE
+		}
+		if sendErr := stream.Send(&schemav1.WatchSchemasResponse{
+			EventType:    eventType,
+			Property:     &p,
+			MetadataOnly: metadataOnly,
+			DeleteTime:   dt,
+		}); sendErr != nil {
+			return sendErr
 		}
 	}
-	names := make([]string, 0, len(nameSet))
-	for name := range nameSet {
-		names = append(names, name)
+	return nil
+}
+
+func filterTags(tags []*modelv1.Tag, projection []string) []*modelv1.Tag {
+	allowed := make(map[string]struct{}, len(projection))
+	for _, key := range projection {
+		allowed[key] = struct{}{}
 	}
-	return &schemav1.AggregateSchemaUpdatesResponse{Names: names}, nil
+	filtered := make([]*modelv1.Tag, 0, len(projection))
+	for _, tag := range tags {
+		if _, ok := allowed[tag.GetKey()]; ok {
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
 }
 
 func errInvalidRequest(msg string) error {

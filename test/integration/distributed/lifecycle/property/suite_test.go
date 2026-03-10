@@ -91,7 +91,6 @@ func init() {
 				"--schema-registry-mode=property",
 				"--node-discovery-mode=file",
 				fmt.Sprintf("--node-discovery-file-path=%s", dfWriter.Path()),
-				"--schema-property-client-sync-interval=300ms",
 			},
 			StopFunc: func() {
 				closerLiaisonNode()
