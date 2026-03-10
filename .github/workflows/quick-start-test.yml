@@ -129,7 +129,9 @@ jobs:
         run: |
           set -e
           # shellcheck source=test/e2e-v2/script/env
+          set -a
           . test/e2e-v2/script/env
+          set +a
           bash test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh /tmp /usr/local
           swctl --version
 
@@ -145,7 +147,7 @@ jobs:
             echo "Attempt $i of $MAX_RETRIES..."
 
             # Query services - should return at least the demo services
-            SERVICES=$(swctl --base-url=http://localhost:12800 service list 2>&1)
+            SERVICES=$(swctl --base-url=http://localhost:12800/graphql service list 2>&1)
             echo "Services:"
             echo "$SERVICES"
 

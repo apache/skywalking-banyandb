@@ -86,7 +86,9 @@ docker logs skywalking-oap 2>&1 | grep -i "banyandb" | tail -5
 
 echo "=== Install swctl ==="
 # shellcheck source=test/e2e-v2/script/env
+set -a
 . "$REPO_ROOT/test/e2e-v2/script/env"
+set +a
 bash "$REPO_ROOT/test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh" /tmp /usr/local
 swctl --version
 
@@ -95,7 +97,7 @@ MAX_RETRIES=10
 RETRY_INTERVAL=10
 for i in $(seq 1 $MAX_RETRIES); do
   echo "Attempt $i of $MAX_RETRIES..."
-  SERVICES=$(swctl --base-url=http://localhost:12800 service list 2>&1)
+  SERVICES=$(swctl --base-url=http://localhost:12800/graphql service list 2>&1)
   echo "Services:"
   echo "$SERVICES"
   if echo "$SERVICES" | grep -q "service-provider\|service-consumer"; then
