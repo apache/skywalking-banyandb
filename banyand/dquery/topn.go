@@ -103,11 +103,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
+	originalTopN := request.GetTopN()
+	truncationDataNode(request)
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
-	originalTopN := request.GetTopN()
-	// Set topN to 0 to disable truncation on data nodes
-	request.TopN = 0
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
@@ -181,6 +180,13 @@ var _ sort.Comparable = (*comparableTopNItem)(nil)
 
 type comparableTopNItem struct {
 	*measurev1.TopNList_Item
+}
+
+func truncationDataNode(request *measurev1.TopNRequest) {
+	// Set topN to 0 to disable truncation on data nodes
+	if request.Agg != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX {
+		request.TopN = 0
+	}
 }
 
 func (c *comparableTopNItem) SortedField() []byte {
