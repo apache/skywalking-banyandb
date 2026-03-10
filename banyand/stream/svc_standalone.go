@@ -266,10 +266,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 
 	s.localPipeline = queue.Local()
-	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
 		return err
 	}
-	if err := s.pipeline.Subscribe(data.TopicDeleteExpiredStreamSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicDeleteExpiredStreamSegments, &deleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
 

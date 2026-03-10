@@ -283,11 +283,11 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return nil
 	}
 
-	if err := s.createNativeObservabilityGroup(ctx); err != nil {
+	if err = s.createNativeObservabilityGroup(ctx); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicSnapshot, &snapshotListener{s: s}); err != nil {
 		return err
 	}
 
@@ -299,7 +299,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
-		err := s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
+		err = s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 		if err != nil {
 			return err
 		}

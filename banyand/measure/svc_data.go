@@ -276,15 +276,15 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to collect data info topic: %w", subscribeErr)
 	}
 
-	if err := s.createDataNativeObservabilityGroup(ctx); err != nil {
+	if err = s.createDataNativeObservabilityGroup(ctx); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicSnapshot, &dataSnapshotListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicSnapshot, &dataSnapshotListener{s: s}); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &dataDeleteStreamSegmentsListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &dataDeleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
 
