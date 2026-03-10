@@ -19,6 +19,8 @@ package schemaserver
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -299,6 +301,10 @@ func (s *schemaUpdateServer) WatchSchemas(
 		for {
 			req, err := stream.Recv()
 			if err != nil {
+				if errors.Is(err, io.EOF) {
+					close(reqCh)
+					return
+				}
 				reqErrCh <- err
 				close(reqCh)
 				return
@@ -352,8 +358,8 @@ func (s *schemaUpdateServer) replaySchemas(
 	for _, result := range results {
 		var p propertyv1.Property
 		if unmarshalErr := protojson.Unmarshal(result.Source(), &p); unmarshalErr != nil {
-			s.l.Warn().Err(unmarshalErr).Msg("replay: failed to unmarshal property")
-			continue
+			s.metrics.totalErr.Inc(1, "replay")
+			return unmarshalErr
 		}
 		if metadataOnly {
 			p.Tags = filterTags(p.Tags, req.TagProjection)

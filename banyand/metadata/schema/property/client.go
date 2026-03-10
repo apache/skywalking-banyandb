@@ -1236,14 +1236,17 @@ func (r *SchemaRegistry) sendSyncRequest(ctx context.Context,
 	sessions map[string]*watchSession, req *syncRequest,
 ) map[string][]*digestEntry {
 	r.l.Debug().Int("sessionCount", len(sessions)).Msg("sendSyncRequest: dispatching to watch sessions")
-	for _, s := range sessions {
+	sent := make(map[string]*watchSession, len(sessions))
+	for name, s := range sessions {
 		select {
 		case s.syncReqCh <- req:
+			sent[name] = s
 		default:
+			r.l.Warn().Str("node", name).Msg("sendSyncRequest: channel full, skipping session")
 		}
 	}
-	allDigests := make(map[string][]*digestEntry, len(sessions))
-	for name, s := range sessions {
+	allDigests := make(map[string][]*digestEntry, len(sent))
+	for name, s := range sent {
 		select {
 		case digests := <-s.syncResCh:
 			allDigests[name] = digests
@@ -1327,7 +1330,8 @@ func (r *SchemaRegistry) mergeDigests(allDigests map[string][]*digestEntry) map[
 	for _, digests := range allDigests {
 		for _, d := range digests {
 			existing, exists := merged[d.propID]
-			if !exists || d.revision > existing.revision {
+			if !exists || d.revision > existing.revision ||
+				(d.revision == existing.revision && d.deleteTime > existing.deleteTime) {
 				merged[d.propID] = d
 			}
 		}

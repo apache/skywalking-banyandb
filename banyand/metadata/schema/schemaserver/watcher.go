@@ -67,8 +67,12 @@ func (wm *watcherManager) Unsubscribe(id uint64) {
 func (wm *watcherManager) Broadcast(resp *schemav1.WatchSchemasResponse) {
 	wm.mu.RLock()
 	defer wm.mu.RUnlock()
+	var propertyID string
+	if prop := resp.GetProperty(); prop != nil {
+		propertyID = prop.GetId()
+	}
 	wm.l.Debug().Stringer("eventType", resp.GetEventType()).
-		Str("propertyID", resp.GetProperty().GetId()).
+		Str("propertyID", propertyID).
 		Int("watcherCount", len(wm.watchers)).
 		Msg("broadcasting schema event")
 	for id, ch := range wm.watchers {
@@ -77,7 +81,7 @@ func (wm *watcherManager) Broadcast(resp *schemav1.WatchSchemasResponse) {
 		default:
 			wm.l.Warn().Uint64("watcherID", id).
 				Stringer("eventType", resp.GetEventType()).
-				Str("propertyID", resp.GetProperty().GetId()).
+				Str("propertyID", propertyID).
 				Msg("watcher channel full, dropping event")
 		}
 	}
