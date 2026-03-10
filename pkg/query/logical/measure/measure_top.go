@@ -23,16 +23,17 @@ import (
 	"sort"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 )
 
 // TopElement seals a sortable value and its data point which this value belongs to.
 type TopElement struct {
 	idp   *measurev1.InternalDataPoint
-	value int64
+	value measure.SortableValue
 }
 
 // NewTopElement returns a TopElement.
-func NewTopElement(idp *measurev1.InternalDataPoint, value int64) TopElement {
+func NewTopElement(idp *measurev1.InternalDataPoint, value measure.SortableValue) TopElement {
 	return TopElement{
 		idp:   idp,
 		value: value,
@@ -40,7 +41,7 @@ func NewTopElement(idp *measurev1.InternalDataPoint, value int64) TopElement {
 }
 
 // Val returns the sortable value.
-func (e TopElement) Val() int64 {
+func (e TopElement) Val() measure.SortableValue {
 	return e.value
 }
 
@@ -55,9 +56,9 @@ func (h topSortedList) Len() int {
 
 func (h topSortedList) Less(i, j int) bool {
 	if h.reverted {
-		return h.elements[i].value < h.elements[j].value
+		return h.elements[i].value.Less(h.elements[j].value)
 	}
-	return h.elements[i].value > h.elements[j].value
+	return h.elements[i].value.Greater(h.elements[j].value)
 }
 
 func (h *topSortedList) Swap(i, j int) {
@@ -75,9 +76,9 @@ func (h topHeap) Len() int {
 
 func (h topHeap) Less(i, j int) bool {
 	if h.reverted {
-		return h.elements[i].value > h.elements[j].value
+		return h.elements[i].value.Greater(h.elements[j].value)
 	}
-	return h.elements[i].value < h.elements[j].value
+	return h.elements[i].value.Less(h.elements[j].value)
 }
 
 func (h *topHeap) Swap(i, j int) {
@@ -115,18 +116,23 @@ func NewTopQueue(n int, reverted bool) *TopQueue {
 // It returns true if the element are accepted by the queue,
 // returns false if it's evicted.
 func (s *TopQueue) Insert(element TopElement) bool {
+	// If n <= 0, accept all elements without truncation
+	if s.n <= 0 {
+		heap.Push(&s.th, element)
+		return true
+	}
 	if len(s.th.elements) < s.n {
 		heap.Push(&s.th, element)
 		return true
 	}
 	minElement := heap.Pop(&s.th).(TopElement)
 	if s.th.reverted {
-		if minElement.value < element.value {
+		if minElement.value.Less(element.value) {
 			heap.Push(&s.th, minElement)
 			return false
 		}
 	} else {
-		if minElement.value > element.value {
+		if minElement.value.Greater(element.value) {
 			heap.Push(&s.th, minElement)
 			return false
 		}

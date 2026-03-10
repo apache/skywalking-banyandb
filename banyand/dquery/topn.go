@@ -105,13 +105,16 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
+	originalTopN := request.GetTopN()
+	// Set topN to 0 to disable truncation on data nodes
+	request.TopN = 0
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
 		return
 	}
 	var allErr error
-	aggregator := measure.CreateTopNPostProcessor(request.GetTopN(),
+	aggregator := measure.CreateTopNPostProcessor(originalTopN,
 		agg, request.GetFieldValueSort())
 	var tags []string
 	var responseCount int
@@ -137,7 +140,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
+					aggregator.Put(entityValues, measure.FieldValueToSortableValue(tn.Value), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
 				}
 			}
 		}
@@ -181,6 +184,9 @@ type comparableTopNItem struct {
 }
 
 func (c *comparableTopNItem) SortedField() []byte {
+	if c.Value.GetFloat() != nil {
+		return convert.Float64ToOrderedBytes(c.Value.GetFloat().GetValue())
+	}
 	return convert.Int64ToBytes(c.Value.GetInt().Value)
 }
 

@@ -124,7 +124,7 @@ func BytesToUint32(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
 }
 
-// Float64ToBytes converts float64 to byes.
+// Float64ToBytes converts float64 to bytes.
 func Float64ToBytes(f float64) []byte {
 	bs := make([]byte, 8)
 	binary.BigEndian.PutUint64(bs, math.Float64bits(f))
@@ -134,6 +134,31 @@ func Float64ToBytes(f float64) []byte {
 // BytesToFloat64 converts bytes to float64.
 func BytesToFloat64(b []byte) float64 {
 	return math.Float64frombits(binary.BigEndian.Uint64(b))
+}
+
+// Float64ToOrderedBytes converts float64 to bytes with order-preserving encoding.
+// This ensures that byte comparison matches numeric comparison for sorting purposes.
+func Float64ToOrderedBytes(f float64) []byte {
+	bs := make([]byte, 8)
+	bits := math.Float64bits(f)
+	if f >= 0 {
+		bits ^= 0x8000000000000000
+	} else {
+		bits ^= 0xFFFFFFFFFFFFFFFF
+	}
+	binary.BigEndian.PutUint64(bs, bits)
+	return bs
+}
+
+// OrderedBytesToFloat64 converts bytes to float64 with order-preserving decoding.
+func OrderedBytesToFloat64(b []byte) float64 {
+	bits := binary.BigEndian.Uint64(b)
+	if bits&0x8000000000000000 != 0 {
+		bits ^= 0x8000000000000000
+	} else {
+		bits ^= 0xFFFFFFFFFFFFFFFF
+	}
+	return math.Float64frombits(bits)
 }
 
 // BytesToBool converts bytes to bool.

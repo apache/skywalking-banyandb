@@ -235,14 +235,8 @@ func (ei *topNMIterator) Next() bool {
 				})
 			}
 			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name: fieldName,
-				Value: &modelv1.FieldValue{
-					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{
-							Value: values[j],
-						},
-					},
-				},
+				Name:  fieldName,
+				Value: measure.SortableValueToFieldValue(values[j]),
 			})
 			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
 		}

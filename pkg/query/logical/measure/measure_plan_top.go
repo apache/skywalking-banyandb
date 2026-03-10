@@ -26,6 +26,7 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	banyandmeasure "github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -103,11 +104,8 @@ func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) 
 	for iter.Next() {
 		dpp := iter.Current()
 		for _, idp := range dpp {
-			value := idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].
-				GetValue().
-				GetInt().
-				GetValue()
-			g.topNStream.Insert(NewTopElement(idp, value))
+			fieldValue := idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].GetValue()
+			g.topNStream.Insert(NewTopElement(idp, banyandmeasure.FieldValueToSortableValue(fieldValue)))
 		}
 	}
 	return newTopIterator(g.topNStream.Elements()), nil

@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	banyandmeasure "github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
@@ -65,12 +66,12 @@ func TestTopNStream(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := measure.NewTopQueue(tt.fields.n, tt.fields.reverted)
 			for _, v := range tt.args.elements {
-				s.Insert(measure.NewTopElement(nil, v))
+				s.Insert(measure.NewTopElement(nil, banyandmeasure.IntValue(v)))
 			}
 			ee := s.Elements()
 			got := make([]int64, 0, len(ee))
 			for _, e := range ee {
-				got = append(got, e.Val())
+				got = append(got, int64(e.Val().(banyandmeasure.IntValue)))
 			}
 			assert.Equal(t, tt.wants, got)
 		})

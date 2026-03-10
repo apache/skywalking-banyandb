@@ -44,7 +44,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			srcTopNVal: &TopNValue{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []int64{1000, 200, 300, 400, 500},
+				values:         []SortableValue{IntValue(1000), IntValue(200), IntValue(300), IntValue(400), IntValue(500)},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
@@ -56,7 +56,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			destTopNVal: &TopNValue{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []int64{550, 200, 500, 600, 400},
+				values:         []SortableValue{IntValue(550), IntValue(200), IntValue(500), IntValue(600), IntValue(400)},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
@@ -70,7 +70,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			wantTopNVal: &TopNValue{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []int64{550, 600, 1000},
+				values:         []SortableValue{IntValue(550), IntValue(600), IntValue(1000)},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},

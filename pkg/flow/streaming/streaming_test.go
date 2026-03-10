@@ -25,6 +25,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -153,11 +154,11 @@ var _ = g.Describe("Streaming", func() {
 				TopN(3, WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
 				}),
-					WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
-						return record.Data().(flow.Data)[1].(int64)
+					WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
+						return record.Data().(flow.Data)[1]
 					}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 						return record.Data().(flow.Data)[0].(string)
-					})).
+					}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).
 				To(snk)
 
 			errCh = f.Open()
@@ -218,11 +219,11 @@ var _ = g.Describe("Streaming", func() {
 				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
 				TopN(3, WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
-				}), WithSortKeyExtractor(func(record flow.StreamRecord) int64 {
-					return record.Data().(flow.Data)[1].(int64)
+				}), WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
+					return record.Data().(flow.Data)[1]
 				}), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 					return record.Data().(flow.Data)[0].(string)
-				})).
+				}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).
 				To(snk)
 
 			errCh = f.Open()

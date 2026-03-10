@@ -613,7 +613,7 @@ var (
 	leftTopNValue = &TopNValue{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
-		values:         []int64{1000, 200, 300, 400, 500},
+		values:         []SortableValue{IntValue(1000), IntValue(200), IntValue(300), IntValue(400), IntValue(500)},
 		entities: [][]*modelv1.TagValue{
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
@@ -625,7 +625,7 @@ var (
 	rightTopNValue = &TopNValue{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
-		values:         []int64{600, 550, 530, 400, 300},
+		values:         []SortableValue{IntValue(600), IntValue(550), IntValue(530), IntValue(400), IntValue(300)},
 		entities: [][]*modelv1.TagValue{
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
@@ -638,7 +638,7 @@ var (
 	mergedTopNValue = &TopNValue{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
-		values:         []int64{1000, 600, 550, 530, 400, 300, 200},
+		values:         []SortableValue{IntValue(1000), IntValue(600), IntValue(550), IntValue(530), IntValue(400), IntValue(300), IntValue(200)},
 		entities: [][]*modelv1.TagValue{
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},

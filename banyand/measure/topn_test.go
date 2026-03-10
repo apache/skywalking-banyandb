@@ -44,7 +44,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2"},
-				values:         []int64{1, 2, 3},
+				values:         []SortableValue{IntValue(1), IntValue(2), IntValue(3)},
 				entities: [][]*modelv1.TagValue{
 					{
 						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
@@ -66,7 +66,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2"},
-				values:         []int64{1},
+				values:         []SortableValue{IntValue(1)},
 				entities: [][]*modelv1.TagValue{
 					{
 						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
@@ -85,7 +85,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 			originalValueName := tt.topNVal.valueName
 			originalEntityTagNames := make([]string, len(tt.topNVal.entityTagNames))
 			copy(originalEntityTagNames, tt.topNVal.entityTagNames)
-			originalValues := make([]int64, len(tt.topNVal.values))
+			originalValues := make([]SortableValue, len(tt.topNVal.values))
 			copy(originalValues, tt.topNVal.values)
 
 			originalEntities := make([][]*modelv1.TagValue, len(tt.topNVal.entities))
@@ -123,7 +123,7 @@ func TestTopNValue_Marshal_EmptyValues(t *testing.T) {
 	topNVal := &TopNValue{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1"},
-		values:         []int64{},
+		values:         []SortableValue{},
 		entities:       [][]*modelv1.TagValue{},
 	}
 	_, err := topNVal.marshal(nil)
@@ -180,8 +180,8 @@ func TestTopNValue_AddValue(t *testing.T) {
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
 	}
-	topNVal.addValue(100, entityValues)
-	require.Equal(t, []int64{100}, topNVal.values)
+	topNVal.addValue(IntValue(100), entityValues)
+	require.Equal(t, []SortableValue{IntValue(100)}, topNVal.values)
 	require.Len(t, topNVal.entities, 1)
 	require.Len(t, topNVal.entities[0], 2)
 	require.Equal(t, entityValues, topNVal.entities[0], "entityValues should be copied and equal")
@@ -192,7 +192,7 @@ func TestTopNValue_Values(t *testing.T) {
 	topNVal := &TopNValue{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
-		values:         []int64{1, 2, 3},
+		values:         []SortableValue{IntValue(1), IntValue(2), IntValue(3)},
 		entities: [][]*modelv1.TagValue{
 			{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
@@ -202,7 +202,7 @@ func TestTopNValue_Values(t *testing.T) {
 	valueName, entityTagNames, values, entities := topNVal.Values()
 	require.Equal(t, "testValue", valueName)
 	require.Equal(t, []string{"tag1", "tag2"}, entityTagNames)
-	require.Equal(t, []int64{1, 2, 3}, values)
+	require.Equal(t, []SortableValue{IntValue(1), IntValue(2), IntValue(3)}, values)
 	require.Equal(t, topNVal.entities, entities)
 }
 
@@ -210,7 +210,7 @@ func TestTopNValue_Reset(t *testing.T) {
 	topNVal := &TopNValue{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
-		values:         []int64{1, 2, 3},
+		values:         []SortableValue{IntValue(1), IntValue(2), IntValue(3)},
 		entities: [][]*modelv1.TagValue{
 			{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
@@ -686,7 +686,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{},
-				values:         []int64{1, 2, 3},
+				values:         []SortableValue{IntValue(1), IntValue(2), IntValue(3)},
 				entities: [][]*modelv1.TagValue{
 					{},
 					{},
@@ -699,7 +699,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1"},
-				values:         []int64{-9223372036854775808, 9223372036854775807, 0},
+				values:         []SortableValue{IntValue(-9223372036854775808), IntValue(9223372036854775807), IntValue(0)},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 1}}}},
 					{{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 2}}}},
@@ -712,7 +712,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2", "tag3", "tag4", "tag5"},
-				values:         []int64{1},
+				values:         []SortableValue{IntValue(1)},
 				entities: [][]*modelv1.TagValue{
 					{
 						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}},
@@ -729,7 +729,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 			topNVal: &TopNValue{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2", "tag3"},
-				values:         []int64{1, 2},
+				values:         []SortableValue{IntValue(1), IntValue(2)},
 				entities: [][]*modelv1.TagValue{
 					{
 						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "str"}}},
@@ -751,7 +751,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 			originalValueName := tt.topNVal.valueName
 			originalEntityTagNames := make([]string, len(tt.topNVal.entityTagNames))
 			copy(originalEntityTagNames, tt.topNVal.entityTagNames)
-			originalValues := make([]int64, len(tt.topNVal.values))
+			originalValues := make([]SortableValue, len(tt.topNVal.values))
 			copy(originalValues, tt.topNVal.values)
 
 			originalEntities := make([][]*modelv1.TagValue, len(tt.topNVal.entities))
@@ -785,7 +785,7 @@ func TestTopNValue_Unmarshal_InvalidEntityLength(t *testing.T) {
 	topNVal := &TopNValue{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
-		values:         []int64{1},
+		values:         []SortableValue{IntValue(1)},
 		entities: [][]*modelv1.TagValue{
 			{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
@@ -837,4 +837,118 @@ func TestNewDataPointWithEntityValues(t *testing.T) {
 	require.NotNil(t, result.fieldIndex)
 	require.Equal(t, 0, result.fieldIndex["field1"])
 	require.NotNil(t, result.tagSpec)
+}
+
+func TestTopNValue_Float64_MarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		topNVal *TopNValue
+		name    string
+	}{
+		{
+			name: "simple_float_case",
+			topNVal: &TopNValue{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"service", "instance"},
+				values:         []SortableValue{FloatValue(3.14), FloatValue(2.71), FloatValue(1.41)},
+				entities: [][]*modelv1.TagValue{
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst1"}}},
+					},
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst2"}}},
+					},
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc2"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst1"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "single_float",
+			topNVal: &TopNValue{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"tag1"},
+				values:         []SortableValue{FloatValue(3.14159)},
+				entities: [][]*modelv1.TagValue{
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "negative_and_special_floats",
+			topNVal: &TopNValue{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"service"},
+				values:         []SortableValue{FloatValue(-3.14), FloatValue(0.0), FloatValue(1e10), FloatValue(-1e-10)},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc2"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc4"}}}},
+				},
+			},
+		},
+	}
+
+	decoder := generateColumnValuesDecoder()
+	defer releaseColumnValuesDecoder(decoder)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clone the original val
+			originalValueName := tt.topNVal.valueName
+			originalEntityTagNames := make([]string, len(tt.topNVal.entityTagNames))
+			copy(originalEntityTagNames, tt.topNVal.entityTagNames)
+			originalValues := make([]SortableValue, len(tt.topNVal.values))
+			copy(originalValues, tt.topNVal.values)
+
+			originalEntities := make([][]*modelv1.TagValue, len(tt.topNVal.entities))
+			for i, entityGroup := range tt.topNVal.entities {
+				originalEntities[i] = make([]*modelv1.TagValue, len(entityGroup))
+				for j, tagValue := range entityGroup {
+					originalEntities[i][j] = proto.Clone(tagValue).(*modelv1.TagValue)
+				}
+			}
+
+			// Marshal the topNValue
+			dst, err := tt.topNVal.marshal(nil)
+			require.NoError(t, err)
+
+			// Unmarshal the topNValue
+			tt.topNVal.Reset()
+			err = tt.topNVal.Unmarshal(dst, decoder)
+			require.NoError(t, err)
+
+			// Compare the original and decoded topNValue
+			require.Equal(t, originalValueName, tt.topNVal.valueName)
+			require.Equal(t, originalEntityTagNames, tt.topNVal.entityTagNames)
+			require.Equal(t, originalValues, tt.topNVal.values)
+			diff := cmp.Diff(originalEntities, tt.topNVal.entities, protocmp.Transform())
+			require.True(t, diff == "", "entities differ: %s", diff)
+		})
+	}
+}
+
+func TestTopNValue_AddFloatValue(t *testing.T) {
+	topNVal := &TopNValue{}
+	topNVal.setMetadata("floatValue", []string{"tag1"})
+
+	topNVal.addValue(FloatValue(3.14), []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
+	})
+
+	topNVal.addValue(FloatValue(2.71), []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity2"}}},
+	})
+
+	valueName, entityTagNames, values, entities := topNVal.Values()
+	require.Equal(t, "floatValue", valueName)
+	require.Equal(t, []string{"tag1"}, entityTagNames)
+	require.Equal(t, []SortableValue{FloatValue(3.14), FloatValue(2.71)}, values)
+	require.Len(t, entities, 2)
 }
