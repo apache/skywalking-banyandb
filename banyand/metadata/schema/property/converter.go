@@ -166,6 +166,28 @@ func ParseTags(tags []*modelv1.Tag) ParsedTags {
 	return pt
 }
 
+// basicTagKeys are the tag keys used for metadata-only projections (full sync digest).
+var basicTagKeys = []string{TagKeyKind, TagKeyGroup, TagKeyName, TagKeyUpdatedAt}
+
+// buildRevisionCriteria builds a Criteria for updated_at > sinceRevision.
+// Returns nil if sinceRevision <= 0.
+func buildRevisionCriteria(sinceRevision int64) *modelv1.Criteria {
+	if sinceRevision <= 0 {
+		return nil
+	}
+	return &modelv1.Criteria{
+		Exp: &modelv1.Criteria_Condition{
+			Condition: &modelv1.Condition{
+				Name: TagKeyUpdatedAt,
+				Op:   modelv1.Condition_BINARY_OP_GT,
+				Value: &modelv1.TagValue{
+					Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sinceRevision}},
+				},
+			},
+		},
+	}
+}
+
 func buildSchemaQuery(kind schema.Kind, group, name string, sinceRevision int64) *propertyv1.QueryRequest {
 	query := &propertyv1.QueryRequest{
 		Groups: []string{schema.SchemaGroup},
@@ -219,24 +241,39 @@ func buildSchemaQuery(kind schema.Kind, group, name string, sinceRevision int64)
 	return query
 }
 
-func buildUpdatedSchemasQuery(sinceRevision int64) *propertyv1.QueryRequest {
-	query := &propertyv1.QueryRequest{
-		Groups: []string{schema.SchemaGroup},
-	}
-	if sinceRevision > 0 {
-		query.Criteria = &modelv1.Criteria{
-			Exp: &modelv1.Criteria_Condition{
-				Condition: &modelv1.Condition{
-					Name: TagKeyUpdatedAt,
-					Op:   modelv1.Condition_BINARY_OP_GT,
-					Value: &modelv1.TagValue{
-						Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sinceRevision}},
-					},
-				},
-			},
+// ParsePropID parses a property ID into kind, group, and name.
+// Format: "<kind>_<group>/<name>" or "<kind>_<name>" (for KindGroup).
+func ParsePropID(propID string) (kind schema.Kind, group, name string, err error) {
+	underscoreIdx := -1
+	for idx := range propID {
+		if propID[idx] == '_' {
+			underscoreIdx = idx
+			break
 		}
 	}
-	return query
+	if underscoreIdx < 0 {
+		return 0, "", "", fmt.Errorf("invalid propID format: %s", propID)
+	}
+	kindStr := propID[:underscoreIdx]
+	rest := propID[underscoreIdx+1:]
+	kind, err = KindFromString(kindStr)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if kind == schema.KindGroup {
+		return kind, "", rest, nil
+	}
+	slashIdx := -1
+	for idx := range rest {
+		if rest[idx] == '/' {
+			slashIdx = idx
+			break
+		}
+	}
+	if slashIdx < 0 {
+		return 0, "", "", fmt.Errorf("invalid propID format (missing group/name separator): %s", propID)
+	}
+	return kind, rest[:slashIdx], rest[slashIdx+1:], nil
 }
 
 // buildDeleteRequest builds a DeleteSchema request.

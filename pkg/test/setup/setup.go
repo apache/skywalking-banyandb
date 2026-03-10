@@ -460,7 +460,6 @@ func standaloneServerWithAuth(config *ClusterConfig, path string, ports []int, s
 		ff = append(ff,
 			"--schema-server-grpc-host=127.0.0.1",
 			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-			"--schema-property-client-sync-interval=300ms",
 		)
 		config.addSchemaServerAddr(schemaAddr)
 	} else {
@@ -654,7 +653,6 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		flags = append(flags,
 			"--schema-server-grpc-host="+nodeHost,
 			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-			"--schema-property-client-sync-interval=300ms",
 		)
 		config.addSchemaServerAddr(schemaAddr)
 	} else {
@@ -769,9 +767,7 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 		flags = append(flags,
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
-	if isPropertyMode {
-		flags = append(flags, "--schema-property-client-sync-interval", "1s")
-	} else {
+	if !isPropertyMode {
 		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
 	}
 	closeFn := CMD(flags...)

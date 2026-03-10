@@ -417,17 +417,30 @@ func TestBuildSchemaQuery_WithNameIgnoresSinceRevision(t *testing.T) {
 	assert.Nil(t, query.GetCriteria(), "name-based lookup should not have criteria even with sinceRevision")
 }
 
-func TestBuildUpdatedSchemasQuery_Zero(t *testing.T) {
-	query := buildUpdatedSchemasQuery(0)
-	assert.Nil(t, query.GetCriteria())
-	assert.Empty(t, query.GetName())
-	assert.Equal(t, []string{schema.SchemaGroup}, query.GetGroups())
-}
+func TestParsePropID(t *testing.T) {
+	kind, group, name, err := ParsePropID("stream_g1/s1")
+	require.NoError(t, err)
+	assert.Equal(t, schema.KindStream, kind)
+	assert.Equal(t, "g1", group)
+	assert.Equal(t, "s1", name)
 
-func TestBuildUpdatedSchemasQuery_Positive(t *testing.T) {
-	query := buildUpdatedSchemasQuery(100)
-	assert.NotNil(t, query.GetCriteria())
-	assert.Equal(t, []string{schema.SchemaGroup}, query.GetGroups())
+	kind, group, name, err = ParsePropID("group_my-group")
+	require.NoError(t, err)
+	assert.Equal(t, schema.KindGroup, kind)
+	assert.Empty(t, group)
+	assert.Equal(t, "my-group", name)
+
+	invalidKind, invalidGroup, invalidName, err := ParsePropID("invalid")
+	assert.Error(t, err)
+	assert.Equal(t, schema.Kind(0), invalidKind)
+	assert.Empty(t, invalidGroup)
+	assert.Empty(t, invalidName)
+
+	unknownKind, unknownGroup, unknownName, err := ParsePropID("unknown_g1/s1")
+	assert.Error(t, err)
+	assert.Equal(t, schema.Kind(0), unknownKind)
+	assert.Empty(t, unknownGroup)
+	assert.Empty(t, unknownName)
 }
 
 func TestBuildDeleteRequest(t *testing.T) {
