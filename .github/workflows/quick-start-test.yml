@@ -149,7 +149,8 @@ jobs:
           LOCAL_SWCTL_DIR="$PWD/.local-swctl"
           mkdir -p "$LOCAL_SWCTL_DIR"
           bash test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh /tmp "$LOCAL_SWCTL_DIR"
-          # Make swctl available to subsequent steps
+          # Make swctl available in this step and subsequent steps
+          export PATH="$LOCAL_SWCTL_DIR:$PATH"
           echo "$LOCAL_SWCTL_DIR" >> "$GITHUB_PATH"
           swctl --version
 
