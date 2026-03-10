@@ -36,6 +36,7 @@ jobs:
       test-name: Slow Tests
       options: --label-filter slow
       timeout-minutes: 120
+      load-test-minutes: "4320"
 
   e2e:
     if: github.repository == 'apache/skywalking-banyandb'

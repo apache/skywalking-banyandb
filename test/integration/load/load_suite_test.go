@@ -21,6 +21,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -54,11 +55,20 @@ func TestIntegrationLoad(t *testing.T) {
 }
 
 const (
-	minutes        = 10 * 24 * 60
+	defaultMinutes = 10 * 24 * 60
 	interval       = 10 * time.Second
 	queryInterval  = time.Hour
 	reportInterval = 24 * time.Hour
 )
+
+func loadTestMinutes() int {
+	if v := os.Getenv("LOAD_TEST_MINUTES"); v != "" {
+		if m, err := strconv.Atoi(v); err == nil && m > 0 {
+			return m
+		}
+	}
+	return defaultMinutes
+}
 
 var _ = Describe("Load Test Suit", func() {
 	var (
@@ -100,6 +110,7 @@ var _ = Describe("Load Test Suit", func() {
 			var lastQueryTime, lastReportTime time.Time
 			latest1HourQueryLatencyData := make([]float64, 0)
 			allQueryLatencyData := make([]float64, 0)
+			minutes := loadTestMinutes()
 			for i := 0; i < minutes; i++ {
 				GinkgoWriter.Printf("writing data at %s\n", now)
 				cases_stream_data.Write(connection, "sw", now, interval)

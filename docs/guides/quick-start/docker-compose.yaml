@@ -1,52 +1,101 @@
-# Licensed to the Apache Software Foundation (ASF) under one or more
-# contributor license agreements.  See the NOTICE file distributed with
-# this work for additional information regarding copyright ownership.
-# The ASF licenses this file to You under the Apache License, Version 2.0
-# (the "License"); you may not use this file except in compliance with
-# the License.  You may obtain a copy of the License at
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements.  See the NOTICE file distributed with this work for
+# additional information regarding copyright ownership. The ASF licenses this
+# file to you under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain a
+# copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing, software distributed
+# under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# CONDITIONS OF ANY KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations under the License.
+
+
+# This docker-compose file demonstrates how to use BanyanDB as the storage
+# backend for SkyWalking OAP. It includes:
+# - BanyanDB standalone instance with data persistence
+# - SkyWalking OAP server with BanyanDB storage
+# - SkyWalking UI
+# - Demo services (agent, provider, consumer) for generating trace traffic
+#
+# For VM metrics collection, add an OTEL collector or use node_exporter.
+# See: https://skywalking.apache.org/docs/main/next/en/setup/backend/backend-storage/
+#
+# Usage:
+#   docker compose up -d
+#
+# To use different versions, override the image tags:
+#   BANYANDB_IMAGE=apache/skywalking-banyandb:0.9.0 \
+#   OAP_IMAGE=apache/skywalking-oap-server:10.3.0 \
+#   OAP_UI_IMAGE=apache/skywalking-ui:10.3.0 \
+#   docker compose up -d
 
 services:
   banyandb:
-    image: ${BANYANDB_IMAGE:-apache/skywalking-banyandb:latest}
+    image: ${BANYANDB_IMAGE:-apache/skywalking-banyandb:0.9.0}
     container_name: banyandb
     command: standalone
     expose:
       - 17912
     ports:
-    - 17913:17913
+      - 17913:17913  # HTTP port for bydbctl and embedded UI
+      - 6060:6060    # pprof/debug endpoint
+      - 2121:2121    # observability/metrics endpoint
+    volumes:
+      - banyandb-data:/tmp/banyanDB
     networks:
       - demo
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
 
   oap:
-    image: ${OAP_IMAGE:-apache/skywalking-oap-server:latest}
+    image: ${OAP_IMAGE:-apache/skywalking-oap-server:10.3.0}
+    container_name: skywalking-oap
     environment:
+      # Storage configuration - use BanyanDB as the backend
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+
+      # Enable VM metrics collection via OpenTelemetry
+      # These settings enable the OTel receiver and VM metrics rules
+      SW_OTEL_RECEIVER: default
+      SW_OTEL_RECEIVER_ENABLED_OC_RULES: vm
+      SW_OTEL_RECEIVER_ENABLED_OTEL_METRICS_RULES: vm
+
+      # Telemetry and performance settings
+      SW_TELEMETRY: prometheus
+      SW_CORE_RECORD_DATA_TTL: 7
+      SW_CORE_METRICS_DATA_TTL: 7
+      # Optional: Increase max message size for high throughput scenarios.
+      # Disabled by default for the quick-start to avoid excessive memory usage.
+      # SW_DCS_MAX_INBOUND_MESSAGE_SIZE: 5000000000
     expose:
-      - 11800
+      - 11800  # gRPC port for agents
+      - 12800  # HTTP port for OAP API
+      - 9090   # Prometheus metrics
     ports:
       - 12800:12800
+      - 11800:11800
     networks:
       - demo
     depends_on:
       banyandb:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/11800"]
-      interval: 5s
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/12800"]
+      interval: 10s
       timeout: 60s
-      retries: 120
+      retries: 30
+    restart: unless-stopped
 
   oap-ui:
-    image: ${OAP_UI_IMAGE:-apache/skywalking-ui:latest}
+    image: ${OAP_UI_IMAGE:-apache/skywalking-ui:10.3.0}
+    container_name: skywalking-ui
     ports:
       - 8080:8080
     environment:
@@ -56,7 +105,9 @@ services:
     depends_on:
       oap:
         condition: service_healthy
+    restart: unless-stopped
 
+  # Demo services - generates trace traffic automatically
   agent:
     image: ${AGENT_IMAGE:-apache/skywalking-java-agent:9.2.0-java11}
     command: cp -r /skywalking/agent/ /skywalking-java-agent/
@@ -146,4 +197,6 @@ networks:
   demo:
 
 volumes:
+  banyandb-data:
+    driver: local
   sw_agent: {}
