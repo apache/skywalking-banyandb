@@ -48,11 +48,10 @@ services:
     networks:
       - demo
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/17913"]
-      interval: 10s
-      timeout: 30s
-      retries: 10
-      start_period: 30s
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
 
   oap:
     image: ${OAP_IMAGE:-apache/skywalking-oap-server:10.3.0}
