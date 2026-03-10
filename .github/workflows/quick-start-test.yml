@@ -1,0 +1,215 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Quick Start Test
+
+on:
+  schedule:
+    # Run daily at 3:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docs/guides/quick-start/**'
+
+concurrency:
+  group: quick-start-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-quick-start:
+    name: Test Quick Start Example
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h
+          docker system prune -af --volumes || true
+          df -h
+
+      - name: Pull images
+        working-directory: docs/guides/quick-start
+        run: |
+          MAX_PULL_RETRIES=5
+          for i in $(seq 1 "$MAX_PULL_RETRIES"); do
+            if docker compose pull; then
+              break
+            fi
+            if [ "$i" -eq "$MAX_PULL_RETRIES" ]; then
+              echo "ERROR: docker compose pull failed after $MAX_PULL_RETRIES attempts"
+              exit 1
+            fi
+            echo "docker compose pull failed, retrying in 10 seconds (attempt $i of $MAX_PULL_RETRIES)..."
+            sleep 10
+          done
+
+      - name: Start the stack
+        working-directory: docs/guides/quick-start
+        run: |
+          docker compose up -d
+          sleep 10
+
+      - name: Check container status
+        working-directory: docs/guides/quick-start
+        run: |
+          docker compose ps
+
+      - name: Wait for BanyanDB to start
+        run: |
+          echo "Waiting for BanyanDB..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:17913/api/healthz > /dev/null; then
+              echo "BanyanDB is ready"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -sf http://localhost:17913/api/healthz; then
+            echo "BanyanDB failed to become ready within the expected time window"
+            echo "=== docker compose ps ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml ps || true
+            echo "=== docker compose logs (banyandb) ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml logs --tail 100 banyandb || true
+            exit 1
+          fi
+
+      - name: Wait for OAP to start
+        run: |
+          echo "Waiting for OAP..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}' > /dev/null; then
+              echo "OAP is ready"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}'; then
+            echo "OAP failed to become ready within the expected time window"
+            echo "=== docker compose ps ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml ps || true
+            echo "=== docker compose logs (skywalking-oap) ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml logs --tail 100 skywalking-oap || true
+            exit 1
+          fi
+
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for services to initialize..."
+          sleep 60
+          docker compose -f docs/guides/quick-start/docker-compose.yaml ps
+
+      - name: Verify BanyanDB is running
+        run: |
+          docker logs banyandb 2>&1 | tail -20
+          curl -sf http://localhost:17913/api/healthz
+
+      - name: Verify OAP is running
+        run: |
+          docker logs skywalking-oap 2>&1 | grep -i "BanyanDB\|Health status" | tail -10
+          curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}'
+
+      - name: Verify UI is running
+        run: |
+          curl -s http://localhost:8080/ | head -5
+          curl -sf http://localhost:8080/
+
+      - name: Verify demo services
+        run: |
+          docker compose -f docs/guides/quick-start/docker-compose.yaml ps | grep -E "provider|consumer|traffic_loader"
+
+      - name: Check OAP logs for BanyanDB connection
+        run: |
+          docker logs skywalking-oap 2>&1 | grep -i "banyandb" | tail -5
+
+      - name: Install swctl
+        run: |
+          set -e
+          # shellcheck source=test/e2e-v2/script/env
+          set -a
+          . test/e2e-v2/script/env
+          set +a
+          LOCAL_SWCTL_DIR="$PWD/.local-swctl"
+          mkdir -p "$LOCAL_SWCTL_DIR"
+          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh /tmp "$LOCAL_SWCTL_DIR"
+          # Make swctl available in this step and subsequent steps
+          export PATH="$LOCAL_SWCTL_DIR:$PATH"
+          echo "$LOCAL_SWCTL_DIR" >> "$GITHUB_PATH"
+          swctl --version
+
+      - name: Verify data via swctl
+        run: |
+          echo "Verifying data via swctl..."
+
+          # Retry logic to wait for data to appear
+          MAX_RETRIES=10
+          RETRY_INTERVAL=10
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+
+            # Query services - should return at least the demo services
+            SERVICES=$(swctl --base-url=http://localhost:12800/graphql service list 2>&1)
+            echo "Services:"
+            echo "$SERVICES"
+
+            # Check if we got any services
+            if echo "$SERVICES" | grep -q "service-provider\|service-consumer"; then
+              echo "SUCCESS: Demo services found in SkyWalking!"
+              exit 0
+            fi
+
+            echo "Demo services not found, waiting $RETRY_INTERVAL seconds..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "ERROR: No demo services found in SkyWalking after $MAX_RETRIES attempts"
+          exit 1
+
+      - name: Verify UI shows data
+        run: |
+          echo "Checking UI is accessible and showing data..."
+          # Check UI loads
+          UI_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
+          echo "UI HTTP status: $UI_RESPONSE"
+          if [ "$UI_RESPONSE" != "200" ]; then
+            echo "ERROR: UI is not accessible"
+            exit 1
+          fi
+
+          # Check UI contains expected content
+          UI_CONTENT=$(curl -s http://localhost:8080/ | grep -i "skywalking" | head -3)
+          echo "UI content preview: $UI_CONTENT"
+          if [ -z "$UI_CONTENT" ]; then
+            echo "ERROR: UI content is empty"
+            exit 1
+          fi
+          echo "UI is showing content successfully"
+
+      - name: Stop the stack
+        if: always()
+        working-directory: docs/guides/quick-start
+        run: |
+          docker compose down -v || true
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker system prune -af --volumes || true
