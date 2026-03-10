@@ -44,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/gcp"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -151,6 +152,24 @@ func backupAction(options backupOptions) error {
 	if options.dest == "" {
 		return errors.New("dest is required")
 	}
+	var err error
+	options.streamRoot, err = banyandbpath.Get(options.streamRoot)
+	if err != nil {
+		return err
+	}
+	options.measureRoot, err = banyandbpath.Get(options.measureRoot)
+	if err != nil {
+		return err
+	}
+	options.propertyRoot, err = banyandbpath.Get(options.propertyRoot)
+	if err != nil {
+		return err
+	}
+	options.traceRoot, err = banyandbpath.Get(options.traceRoot)
+	if err != nil {
+		return err
+	}
+
 	fs, err := newFS(options.dest, &options.fsConfig)
 	if err != nil {
 		return err

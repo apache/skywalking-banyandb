@@ -2,6 +2,8 @@
 
 BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable `BYDB_PORT`.
 
+> BanyanDB supports both absolute and relative paths for directory and file configurations (such as data directories, TLS certificates, keys, etc.). Relative paths are resolved against the current working directory where the BanyanD process is started.
+
 ## Commands
 
 ### Bootstrap commands
