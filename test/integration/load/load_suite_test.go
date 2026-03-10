@@ -111,7 +111,7 @@ var _ = Describe("Load Test Suit", func() {
 			latest1HourQueryLatencyData := make([]float64, 0)
 			allQueryLatencyData := make([]float64, 0)
 			minutes := loadTestMinutes()
-		for i := 0; i < minutes; i++ {
+			for i := 0; i < minutes; i++ {
 				GinkgoWriter.Printf("writing data at %s\n", now)
 				cases_stream_data.Write(connection, "sw", now, interval)
 				if now.Sub(lastQueryTime) > queryInterval {
