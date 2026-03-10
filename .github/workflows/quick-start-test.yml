@@ -74,26 +74,40 @@ jobs:
       - name: Wait for BanyanDB to start
         run: |
           echo "Waiting for BanyanDB..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:17913/api/healthz > /dev/null; then
               echo "BanyanDB is ready"
               break
             fi
             sleep 2
           done
-          curl -sf http://localhost:17913/api/healthz
+          if ! curl -sf http://localhost:17913/api/healthz; then
+            echo "BanyanDB failed to become ready within the expected time window"
+            echo "=== docker compose ps ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml ps || true
+            echo "=== docker compose logs (banyandb) ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml logs --tail 100 banyandb || true
+            exit 1
+          fi
 
       - name: Wait for OAP to start
         run: |
           echo "Waiting for OAP..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}' > /dev/null; then
               echo "OAP is ready"
               break
             fi
             sleep 2
           done
-          curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}'
+          if ! curl -sf http://localhost:12800/graphql -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}'; then
+            echo "OAP failed to become ready within the expected time window"
+            echo "=== docker compose ps ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml ps || true
+            echo "=== docker compose logs (skywalking-oap) ==="
+            docker compose -f docs/guides/quick-start/docker-compose.yaml logs --tail 100 skywalking-oap || true
+            exit 1
+          fi
 
 
       - name: Wait for services to be healthy
@@ -132,7 +146,8 @@ jobs:
           set -a
           . test/e2e-v2/script/env
           set +a
-          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh /tmp /usr/local
+          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh /tmp /tmp
+          echo "/tmp" >> "$GITHUB_PATH"
           swctl --version
 
       - name: Verify data via swctl

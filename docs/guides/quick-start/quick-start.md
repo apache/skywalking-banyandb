@@ -7,7 +7,7 @@ It is a quick way to get started with BanyanDB if you are a SkyWalking user and 
 
 This repository includes a ready-to-use docker-compose file at [docker-compose.yaml](docker-compose.yaml) that sets up:
 
-- **BanyanDB** - Standalone instance with etcd schema registry
+- **BanyanDB** - Standalone instance with property-based schema registry
 - **SkyWalking OAP** - Configured to use BanyanDB as storage
 - **SkyWalking UI** - Web interface for visualizing traces, metrics, and topology
 - **Demo Services** - Sample microservices that generate trace traffic automatically
@@ -39,7 +39,7 @@ This repository includes a ready-to-use docker-compose file at [docker-compose.y
 | Service | URL | Description |
 |---------|-----|-------------|
 | SkyWalking UI | http://localhost:8080 | Web interface for traces, metrics, topology |
-| BanyanDB gRPC | localhost:17913 | gRPC endpoint for bydbctl |
+| BanyanDB HTTP | http://localhost:17913 | HTTP endpoint for bydbctl and embedded UI |
 | BanyanDB UI | http://localhost:17913 | Embedded UI for querying data |
 | OAP HTTP | http://localhost:12800 | OAP REST API |
 | OAP gRPC | localhost:11800 | gRPC endpoint for agents |

@@ -40,9 +40,9 @@ services:
     expose:
       - 17912
     ports:
-      - 17913:17913  # HTTP port for bydbctl and UI
-      - 6060:6060    # Prometheus metrics endpoint
-      - 2121:2121    # Data port
+      - 17913:17913  # HTTP port for bydbctl and embedded UI
+      - 6060:6060    # pprof/debug endpoint
+      - 2121:2121    # observability/metrics endpoint
     volumes:
       - banyandb-data:/tmp/banyanDB
     networks:
@@ -72,9 +72,9 @@ services:
       SW_TELEMETRY: prometheus
       SW_CORE_RECORD_DATA_TTL: 7
       SW_CORE_METRICS_DATA_TTL: 7
-
-      # Optional: Increase max message size for high throughput scenarios
-      SW_DCS_MAX_INBOUND_MESSAGE_SIZE: 5000000000
+      # Optional: Increase max message size for high throughput scenarios.
+      # Disabled by default for the quick-start to avoid excessive memory usage.
+      # SW_DCS_MAX_INBOUND_MESSAGE_SIZE: 5000000000
     expose:
       - 11800  # gRPC port for agents
       - 12800  # HTTP port for OAP API
@@ -86,7 +86,7 @@ services:
       - demo
     depends_on:
       banyandb:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/12800"]
       interval: 10s
@@ -105,7 +105,7 @@ services:
       - demo
     depends_on:
       oap:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   # Demo services - generates trace traffic automatically
@@ -135,7 +135,7 @@ services:
       - demo
     depends_on:
       oap:
-        condition: service_started
+        condition: service_healthy
       agent:
         condition: service_completed_successfully
     healthcheck:
@@ -163,9 +163,9 @@ services:
       - demo
     depends_on:
       oap:
-        condition: service_started
+        condition: service_healthy
       provider:
-        condition: service_started
+        condition: service_healthy
       agent:
         condition: service_completed_successfully
     healthcheck:
@@ -180,11 +180,11 @@ services:
       - demo
     depends_on:
       oap:
-        condition: service_started
+        condition: service_healthy
       provider:
-        condition: service_started
+        condition: service_healthy
       consumer:
-        condition: service_started
+        condition: service_healthy
     entrypoint: >
       sh -c "
       echo 'Starting traffic generation...';

@@ -28,7 +28,12 @@ cd "$REPO_ROOT"
 
 echo "=== Free disk space ==="
 df -h
-docker system prune -af --volumes || true
+if [ "${PRUNE_DOCKER:-0}" = "1" ]; then
+  echo "PRUNE_DOCKER=1 set - running 'docker system prune -af --volumes'"
+  docker system prune -af --volumes || true
+else
+  echo "Skipping 'docker system prune -af --volumes'. Set PRUNE_DOCKER=1 to enable full cleanup."
+fi
 df -h
 
 echo "=== Pull images ==="
@@ -54,7 +59,7 @@ echo "=== Check container status ==="
 docker compose ps
 
 echo "=== Wait for BanyanDB to start ==="
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
   if curl -sf "http://localhost:17913/api/healthz" > /dev/null 2>&1; then
     echo "BanyanDB is ready"
     break
@@ -64,7 +69,7 @@ done
 curl -sf "http://localhost:17913/api/healthz" > /dev/null || { echo "BanyanDB not ready"; exit 1; }
 
 echo "=== Wait for OAP to start ==="
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
   if curl -sf "http://localhost:12800/internal/v3/health" > /dev/null 2>&1 || curl -sf "http://localhost:12800/graphql" -X POST -H "Content-Type: application/json" -d '{"query":"{ __typename }"}' > /dev/null 2>&1; then
     echo "OAP is ready"
     break
@@ -100,7 +105,10 @@ echo "=== Install swctl ==="
 set -a
 . "$REPO_ROOT/test/e2e-v2/script/env"
 set +a
-bash "$REPO_ROOT/test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh" /tmp /usr/local
+LOCAL_SWCTL_DIR="$REPO_ROOT/.local-swctl"
+mkdir -p "$LOCAL_SWCTL_DIR"
+bash "$REPO_ROOT/test/e2e-v2/script/prepare/setup-e2e-shell/install-swctl.sh" /tmp "$LOCAL_SWCTL_DIR"
+export PATH="$LOCAL_SWCTL_DIR:$PATH"
 swctl --version
 
 echo "=== Verify data via swctl ==="
@@ -137,7 +145,12 @@ cd "$QUICK_START_DIR"
 docker compose down -v || true
 
 echo "=== Clean up ==="
-docker system prune -af --volumes || true
+if [ "${PRUNE_DOCKER:-0}" = "1" ]; then
+  echo "PRUNE_DOCKER=1 set - running 'docker system prune -af --volumes'"
+  docker system prune -af --volumes || true
+else
+  echo "Skipping 'docker system prune -af --volumes'. Set PRUNE_DOCKER=1 to enable full cleanup."
+fi
 
 echo ""
 echo "✅ Quick start test passed!"
