@@ -25,7 +25,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
@@ -104,11 +103,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
-	}, metricSvc, pm, routeProviders, &liaisonGroupDropSubscriber{
-		streamSvc:  streamSVC,
-		measureSvc: measureSVC,
-		traceSvc:   traceSVC,
-	})
+	}, metricSvc, pm, routeProviders)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 	var units []run.Unit
@@ -173,25 +168,4 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	liaisonCmd.PersistentFlags().StringVar(&nodeSelector, "data-node-selector", "",
 		"the data node selector. e.g. key1=value1,key2=value2. If not set, all nodes are selected")
 	return liaisonCmd
-}
-
-type liaisonGroupDropSubscriber struct {
-	streamSvc  stream.Service
-	measureSvc measure.Service
-	traceSvc   trace.Service
-}
-
-func (w *liaisonGroupDropSubscriber) SubscribeGroupDrop(catalog commonv1.Catalog, groupName string) <-chan struct{} {
-	switch catalog {
-	case commonv1.Catalog_CATALOG_STREAM:
-		return w.streamSvc.SubscribeGroupDrop(groupName)
-	case commonv1.Catalog_CATALOG_MEASURE:
-		return w.measureSvc.SubscribeGroupDrop(groupName)
-	case commonv1.Catalog_CATALOG_TRACE:
-		return w.traceSvc.SubscribeGroupDrop(groupName)
-	default:
-	}
-	ch := make(chan struct{})
-	close(ch)
-	return ch
 }

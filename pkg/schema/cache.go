@@ -86,7 +86,6 @@ type schemaRepo struct {
 	indexRuleMap           sync.Map
 	bindingForwardMap      sync.Map
 	bindingBackwardMap     sync.Map
-	pendingGroupDrops      sync.Map
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
@@ -106,13 +105,6 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 // StopCh implements Repository.
 func (sr *schemaRepo) StopCh() <-chan struct{} {
 	return sr.closer.CloseNotify()
-}
-
-// SubscribeGroupDrop returns a channel that is closed after the group's physical storage is dropped.
-func (sr *schemaRepo) SubscribeGroupDrop(groupName string) <-chan struct{} {
-	ch := make(chan struct{})
-	sr.pendingGroupDrops.Store(groupName, ch)
-	return ch
 }
 
 // NewRepository return a new Repository.
@@ -204,10 +196,6 @@ func (sr *schemaRepo) Watcher() {
 						switch evt.Kind {
 						case EventKindGroup:
 							err = sr.deleteGroup(evt.Metadata.GetMetadata())
-							groupName := evt.Metadata.GetMetadata().GetName()
-							if dropCh, loaded := sr.pendingGroupDrops.LoadAndDelete(groupName); loaded {
-								close(dropCh.(chan struct{}))
-							}
 						case EventKindResource:
 							sr.deleteResource(evt.Metadata.GetMetadata())
 						case EventKindIndexRule:
@@ -309,7 +297,15 @@ func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	if !loaded {
 		return nil
 	}
-	return g.(*group).drop()
+	grp := g.(*group)
+	return grp.close()
+}
+
+func (sr *schemaRepo) DropGroup(name string) error {
+	if g, ok := sr.groupMap.Load(name); ok {
+		return g.(*group).drop()
+	}
+	return nil
 }
 
 func (sr *schemaRepo) getGroup(name string) (*group, bool) {

@@ -58,7 +58,6 @@ type Service interface {
 	Query
 	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
-	SubscribeGroupDrop(groupName string) <-chan struct{}
 }
 
 var _ Service = (*standalone)(nil)
@@ -98,8 +97,8 @@ func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
-func (s *standalone) SubscribeGroupDrop(groupName string) <-chan struct{} {
-	return s.schemaRepo.SubscribeGroupDrop(groupName)
+func (s *standalone) DropGroup(_ context.Context, groupName string) error {
+	return s.schemaRepo.DropGroup(groupName)
 }
 
 func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
@@ -269,6 +268,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_MEASURE, s.schemaRepo)
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_MEASURE, s)
+		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_MEASURE, s)
 	}
 
 	s.cm = newCacheMetrics(s.omr)

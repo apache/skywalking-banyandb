@@ -19,8 +19,10 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,8 +38,9 @@ import (
 
 const (
 	internalDeletionTaskGroup        = "_deletion_task"
-	internalDeletionTaskPropertyName = "deletion_task"
+	internalDeletionTaskPropertyName = "_deletion_task"
 	taskDataTagName                  = "task_data"
+	taskStaleTimeout                 = 10 * time.Minute
 )
 
 type propertyApplier interface {
@@ -45,28 +48,21 @@ type propertyApplier interface {
 	Query(ctx context.Context, req *propertyv1.QueryRequest) (*propertyv1.QueryResponse, error)
 }
 
-// GroupDropSubscriber defines an interface for subscribing to group drop events.
-type GroupDropSubscriber interface {
-	SubscribeGroupDrop(catalog commonv1.Catalog, groupName string) <-chan struct{}
-}
-
 type groupDeletionTaskManager struct {
 	schemaRegistry metadata.Repo
 	propServer     propertyApplier
 	log            *logger.Logger
 	groupRepo      *groupRepo
-	dropSubscriber GroupDropSubscriber
 	tasks          sync.Map
 }
 
 func newGroupDeletionTaskManager(
-	schemaRegistry metadata.Repo, propServer *propertyServer, gr *groupRepo, dropSubscriber GroupDropSubscriber, l *logger.Logger,
+	schemaRegistry metadata.Repo, propServer *propertyServer, gr *groupRepo, l *logger.Logger,
 ) *groupDeletionTaskManager {
 	return &groupDeletionTaskManager{
 		schemaRegistry: schemaRegistry,
 		propServer:     propServer,
 		groupRepo:      gr,
-		dropSubscriber: dropSubscriber,
 		log:            l,
 	}
 }
@@ -109,6 +105,43 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 }
 
 func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group string) error {
+	existingTask, getTaskErr := m.getDeletionTask(ctx, group)
+	if getTaskErr == nil {
+		switch existingTask.CurrentPhase {
+		case databasev1.GroupDeletionTask_PHASE_COMPLETED:
+			_, getGroupErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group)
+			if getGroupErr != nil {
+				if errors.Is(getGroupErr, schema.ErrGRPCResourceNotFound) {
+					return fmt.Errorf("group %s has already been deleted", group)
+				}
+				return fmt.Errorf("failed to check group existence: %w", getGroupErr)
+			}
+			m.tasks.Delete(group)
+		case databasev1.GroupDeletionTask_PHASE_FAILED:
+			if _, loaded := m.tasks.LoadOrStore(group, existingTask); loaded {
+				return fmt.Errorf("deletion task for group %s is already in progress", group)
+			}
+			existingTask.CurrentPhase = databasev1.GroupDeletionTask_PHASE_PENDING
+			existingTask.Message = "retrying after previous failure"
+			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask)
+			return nil
+		case databasev1.GroupDeletionTask_PHASE_PENDING,
+			databasev1.GroupDeletionTask_PHASE_IN_PROGRESS:
+			if existingTask.GetUpdatedAt() != nil &&
+				time.Since(existingTask.GetUpdatedAt().AsTime()) < taskStaleTimeout {
+				return fmt.Errorf("deletion task for group %s is already in progress (last updated %s ago)",
+					group, time.Since(existingTask.GetUpdatedAt().AsTime()).Truncate(time.Second))
+			}
+			if _, loaded := m.tasks.LoadOrStore(group, existingTask); loaded {
+				return fmt.Errorf("deletion task for group %s is already in progress", group)
+			}
+			existingTask.CurrentPhase = databasev1.GroupDeletionTask_PHASE_PENDING
+			existingTask.Message = "retrying after stale task detected"
+			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask)
+			return nil
+		}
+	}
+
 	task := &databasev1.GroupDeletionTask{
 		CurrentPhase:  databasev1.GroupDeletionTask_PHASE_PENDING,
 		TotalCounts:   make(map[string]int32),
@@ -118,6 +151,7 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 	if _, loaded := m.tasks.LoadOrStore(group, task); loaded {
 		return fmt.Errorf("deletion task for group %s is already in progress", group)
 	}
+
 	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
 		m.tasks.Delete(group)
@@ -137,16 +171,29 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 }
 
 func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group string, task *databasev1.GroupDeletionTask) {
-	opt := schema.ListOpt{Group: group}
-
 	task.Message = "waiting for in-flight requests to complete"
 	m.saveProgress(ctx, group, task)
-	done := m.groupRepo.startPendingDeletion(group)
-	defer m.groupRepo.clearPendingDeletion(group)
+	done := m.groupRepo.waitInflightRequests(group)
+	defer m.groupRepo.markDeleted(group)
 	<-done
 
 	task.CurrentPhase = databasev1.GroupDeletionTask_PHASE_IN_PROGRESS
+	groupMeta, getGroupErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group)
+	notFound := errors.Is(getGroupErr, schema.ErrGRPCResourceNotFound)
+	if getGroupErr != nil && !notFound {
+		m.failTask(ctx, group, task, fmt.Sprintf("failed to get group metadata: %v", getGroupErr))
+		return
+	}
+	if !notFound && groupMeta != nil {
+		task.Message = "deleting data files"
+		m.saveProgress(ctx, group, task)
+		if dropErr := m.schemaRegistry.DropGroup(ctx, groupMeta.Catalog, group); dropErr != nil {
+			m.failTask(ctx, group, task, fmt.Sprintf("failed to delete data files: %v", dropErr))
+			return
+		}
+	}
 
+	opt := schema.ListOpt{Group: group}
 	type deletionStep struct {
 		fn      func() error
 		message string
@@ -159,6 +206,7 @@ func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group st
 		{func() error { return m.deleteMeasures(ctx, opt, task) }, "deleting measures"},
 		{func() error { return m.deleteTraces(ctx, opt, task) }, "deleting traces"},
 		{func() error { return m.deleteTopNAggregations(ctx, opt, task) }, "deleting topN aggregations"},
+		{func() error { return m.deleteGroup(ctx, group) }, "deleting group"},
 	}
 	for _, step := range steps {
 		if stepErr := m.runStep(ctx, group, task, step.message, step.fn); stepErr != nil {
@@ -166,27 +214,6 @@ func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group st
 		}
 	}
 
-	task.Message = "deleting group and data files"
-	var dropCh <-chan struct{}
-	if m.dropSubscriber != nil {
-		groupMeta, getErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, group)
-		if getErr != nil {
-			m.failTask(ctx, group, task, fmt.Sprintf("failed to get group for drop subscription: %v", getErr))
-			return
-		}
-		dropCh = m.dropSubscriber.SubscribeGroupDrop(groupMeta.Catalog, group)
-	}
-	_, deleteGroupErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
-	if deleteGroupErr != nil {
-		m.failTask(ctx, group, task, fmt.Sprintf("failed to delete group: %v", deleteGroupErr))
-		if dropCh != nil {
-			go func() { <-dropCh }()
-		}
-		return
-	}
-	if dropCh != nil {
-		<-dropCh
-	}
 	task.CurrentPhase = databasev1.GroupDeletionTask_PHASE_COMPLETED
 	task.Message = "group deleted successfully"
 	m.saveProgress(ctx, group, task)
@@ -311,6 +338,14 @@ func (m *groupDeletionTaskManager) deleteTopNAggregations(
 	return nil
 }
 
+func (m *groupDeletionTaskManager) deleteGroup(ctx context.Context, group string) error {
+	_, deleteErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
+	if deleteErr != nil && !errors.Is(deleteErr, schema.ErrGRPCResourceNotFound) {
+		return fmt.Errorf("failed to delete group %s: %w", group, deleteErr)
+	}
+	return nil
+}
+
 func (m *groupDeletionTaskManager) runStep(
 	ctx context.Context, group string, task *databasev1.GroupDeletionTask,
 	message string, fn func() error,
@@ -325,6 +360,7 @@ func (m *groupDeletionTaskManager) runStep(
 }
 
 func (m *groupDeletionTaskManager) saveProgress(ctx context.Context, group string, task *databasev1.GroupDeletionTask) {
+	task.UpdatedAt = timestamppb.Now()
 	snapshot := proto.Clone(task).(*databasev1.GroupDeletionTask)
 	m.tasks.Store(group, snapshot)
 	if saveErr := m.saveDeletionTask(ctx, group, snapshot); saveErr != nil {

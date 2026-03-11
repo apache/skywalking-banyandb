@@ -2834,6 +2834,7 @@ GroupDeletionTask represents the status of a group deletion operation.
 | deleted_data_size_bytes | [int64](#int64) |  | deleted_data_size_bytes is the size of data that has been deleted in bytes. |
 | message | [string](#string) |  | message provides additional information about the task status. |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the timestamp when the task was created. |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at is the timestamp when the task was last updated. |
 
 
 

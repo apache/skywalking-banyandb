@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/multierr"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -36,11 +38,17 @@ type GroupGetter interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
 }
 
+// GroupDropHandler handles dropping group physical data files on the local node.
+type GroupDropHandler interface {
+	DropGroup(ctx context.Context, group string) error
+}
+
 // InfoCollectorRegistry manages data and liaison info collectors.
 type InfoCollectorRegistry struct {
 	groupGetter        GroupGetter
 	dataCollectors     map[commonv1.Catalog]DataInfoCollector
 	liaisonCollectors  map[commonv1.Catalog]LiaisonInfoCollector
+	dropHandlers       map[commonv1.Catalog]GroupDropHandler
 	dataBroadcaster    bus.Broadcaster
 	liaisonBroadcaster bus.Broadcaster
 	l                  *logger.Logger
@@ -53,6 +61,7 @@ func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCo
 		groupGetter:       groupGetter,
 		dataCollectors:    make(map[commonv1.Catalog]DataInfoCollector),
 		liaisonCollectors: make(map[commonv1.Catalog]LiaisonInfoCollector),
+		dropHandlers:      make(map[commonv1.Catalog]GroupDropHandler),
 		l:                 l,
 	}
 }
@@ -199,6 +208,72 @@ func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, c
 	return nil, nil
 }
 
+// DropGroup drops the group data files on all nodes.
+func (icr *InfoCollectorRegistry) DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error {
+	if localErr := icr.dropGroupLocal(ctx, catalog, group); localErr != nil {
+		return fmt.Errorf("failed to drop group locally: %w", localErr)
+	}
+	icr.mux.RLock()
+	dataBroadcaster := icr.dataBroadcaster
+	liaisonBroadcaster := icr.liaisonBroadcaster
+	icr.mux.RUnlock()
+
+	var topic bus.Topic
+	switch catalog {
+	case commonv1.Catalog_CATALOG_MEASURE:
+		topic = data.TopicMeasureDropGroup
+	case commonv1.Catalog_CATALOG_STREAM:
+		topic = data.TopicStreamDropGroup
+	case commonv1.Catalog_CATALOG_TRACE:
+		topic = data.TopicTraceDropGroup
+	default:
+		return nil
+	}
+
+	var errs []error
+	if dataBroadcaster != nil {
+		if broadcastErr := icr.broadcastDropGroup(dataBroadcaster, topic, group); broadcastErr != nil {
+			errs = append(errs, fmt.Errorf("data nodes: %w", broadcastErr))
+		}
+	}
+	if liaisonBroadcaster != nil {
+		if broadcastErr := icr.broadcastDropGroup(liaisonBroadcaster, topic, group); broadcastErr != nil {
+			errs = append(errs, fmt.Errorf("liaison nodes: %w", broadcastErr))
+		}
+	}
+	return multierr.Combine(errs...)
+}
+
+func (icr *InfoCollectorRegistry) broadcastDropGroup(broadcaster bus.Broadcaster, topic bus.Topic, group string) error {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	futures, broadcastErr := broadcaster.Broadcast(30*time.Second, topic, message)
+	if broadcastErr != nil {
+		return fmt.Errorf("failed to broadcast drop group request: %w", broadcastErr)
+	}
+	var errs []error
+	for _, future := range futures {
+		msg, getErr := future.Get()
+		if getErr != nil {
+			errs = append(errs, getErr)
+			continue
+		}
+		if errMsg, ok := msg.Data().(*common.Error); ok {
+			errs = append(errs, fmt.Errorf("node reported error dropping group: %s", errMsg.Error()))
+		}
+	}
+	return multierr.Combine(errs...)
+}
+
+func (icr *InfoCollectorRegistry) dropGroupLocal(ctx context.Context, catalog commonv1.Catalog, group string) error {
+	icr.mux.RLock()
+	handler, hasHandler := icr.dropHandlers[catalog]
+	icr.mux.RUnlock()
+	if hasHandler && handler != nil {
+		return handler.DropGroup(ctx, group)
+	}
+	return nil
+}
+
 // RegisterDataCollector registers a data info collector for a specific catalog.
 func (icr *InfoCollectorRegistry) RegisterDataCollector(catalog commonv1.Catalog, collector DataInfoCollector) {
 	icr.mux.Lock()
@@ -211,6 +286,13 @@ func (icr *InfoCollectorRegistry) RegisterLiaisonCollector(catalog commonv1.Cata
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.liaisonCollectors[catalog] = collector
+}
+
+// RegisterGroupDropHandler registers a group drop handler for a specific catalog.
+func (icr *InfoCollectorRegistry) RegisterGroupDropHandler(catalog commonv1.Catalog, handler GroupDropHandler) {
+	icr.mux.Lock()
+	defer icr.mux.Unlock()
+	icr.dropHandlers[catalog] = handler
 }
 
 // SetDataBroadcaster sets the broadcaster for data info collection.

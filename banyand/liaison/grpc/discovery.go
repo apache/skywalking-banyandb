@@ -178,7 +178,7 @@ func (s *groupRepo) releaseRequest(groupName string) {
 	}
 }
 
-func (s *groupRepo) startPendingDeletion(groupName string) <-chan struct{} {
+func (s *groupRepo) waitInflightRequests(groupName string) <-chan struct{} {
 	s.RWMutex.Lock()
 	item, ok := s.inflight[groupName]
 	if !ok {
@@ -194,7 +194,7 @@ func (s *groupRepo) startPendingDeletion(groupName string) <-chan struct{} {
 	return item.done
 }
 
-func (s *groupRepo) clearPendingDeletion(groupName string) {
+func (s *groupRepo) markDeleted(groupName string) {
 	s.RWMutex.Lock()
 	defer s.RWMutex.Unlock()
 	delete(s.inflight, groupName)

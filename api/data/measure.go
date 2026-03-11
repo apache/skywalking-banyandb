@@ -109,3 +109,6 @@ var TopicMeasureCollectDataInfo = bus.BiTopic("measure-collect-data-info")
 
 // TopicMeasureCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
 var TopicMeasureCollectLiaisonInfo = bus.BiTopic("measure-collect-liaison-info")
+
+// TopicMeasureDropGroup is the topic for dropping group data files.
+var TopicMeasureDropGroup = bus.BiTopic("measure-drop-group")

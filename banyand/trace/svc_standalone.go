@@ -154,10 +154,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_TRACE, &s.schemaRepo)
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, s)
+		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_TRACE, s)
 	}
 	subErr := s.pipeline.Subscribe(data.TopicTraceCollectDataInfo, &collectDataInfoListener{s: s})
 	if subErr != nil {
 		return fmt.Errorf("failed to subscribe to TopicTraceCollectDataInfo: %w", subErr)
+	}
+	dropGroupErr := s.pipeline.Subscribe(data.TopicTraceDropGroup, &dropGroupDataListener{s: s})
+	if dropGroupErr != nil {
+		return fmt.Errorf("failed to subscribe to TopicTraceDropGroup: %w", dropGroupErr)
 	}
 
 	// Initialize snapshot directory
@@ -222,8 +227,8 @@ func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
-func (s *standalone) SubscribeGroupDrop(groupName string) <-chan struct{} {
-	return s.schemaRepo.SubscribeGroupDrop(groupName)
+func (s *standalone) DropGroup(_ context.Context, groupName string) error {
+	return s.schemaRepo.DropGroup(groupName)
 }
 
 func (s *standalone) Trace(metadata *commonv1.Metadata) (Trace, error) {
@@ -546,6 +551,22 @@ func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) 
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
 	}
 	return bus.NewMessage(message.ID(), dataInfo)
+}
+
+type dropGroupDataListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (l *dropGroupDataListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for drop group request"))
+	}
+	if dropErr := l.s.DropGroup(ctx, req.Group); dropErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to drop group data: %v", dropErr))
+	}
+	return bus.NewMessage(message.ID(), req)
 }
 
 // NewService returns a new service.

@@ -31,5 +31,4 @@ type Service interface {
 	route.TableProvider
 
 	GetGossIPGrpcPort() *uint32
-	SubscribeGroupDrop(groupName string) <-chan struct{}
 }

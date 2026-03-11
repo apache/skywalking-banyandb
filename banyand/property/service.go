@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -69,7 +68,6 @@ type service struct {
 	closer                   *run.Closer
 	l                        *logger.Logger
 	repairScheduler          *repairScheduler
-	pendingGroupDrops        sync.Map
 	snapshotDir              string
 	root                     string
 	repairDir                string
@@ -124,12 +122,6 @@ func (s *service) Validate() error {
 		return fmt.Errorf("gossip vilidate failure: %w", err)
 	}
 	return nil
-}
-
-func (s *service) SubscribeGroupDrop(groupName string) <-chan struct{} {
-	ch := make(chan struct{})
-	s.pendingGroupDrops.Store(groupName, ch)
-	return ch
 }
 
 func (s *service) Name() string {
@@ -237,9 +229,6 @@ func (h *propertyGroupEventHandler) OnDelete(md schema.Metadata) {
 	groupName := group.Metadata.GetName()
 	if dropErr := h.svc.db.Drop(groupName); dropErr != nil {
 		h.svc.l.Error().Err(dropErr).Str("group", groupName).Msg("failed to drop group")
-	}
-	if ch, loaded := h.svc.pendingGroupDrops.LoadAndDelete(groupName); loaded {
-		close(ch.(chan struct{}))
 	}
 }
 

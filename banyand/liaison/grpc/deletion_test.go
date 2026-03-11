@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -133,7 +134,10 @@ func TestHasNonEmptyResources(t *testing.T) {
 func TestDeletion(t *testing.T) {
 	t.Run("duplicate prevention", func(t *testing.T) {
 		m := &groupDeletionTaskManager{}
-		m.tasks.Store("existing-group", true)
+		m.tasks.Store("existing-group", &databasev1.GroupDeletionTask{
+			CurrentPhase: databasev1.GroupDeletionTask_PHASE_IN_PROGRESS,
+			UpdatedAt:    timestamppb.Now(),
+		})
 
 		err := m.startDeletion(context.Background(), "existing-group")
 		require.Error(t, err)
@@ -213,6 +217,11 @@ func TestDeletion(t *testing.T) {
 		mockRepo.EXPECT().TopNAggregationRegistry().Return(mockTopN)
 
 		mockGroup := schema.NewMockGroup(ctrl)
+		mockGroup.EXPECT().GetGroup(gomock.Any(), group).Return(&commonv1.Group{
+			Metadata: &commonv1.Metadata{Name: group},
+			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+		}, nil)
+		mockRepo.EXPECT().DropGroup(gomock.Any(), commonv1.Catalog_CATALOG_STREAM, group).Return(nil)
 		mockGroup.EXPECT().DeleteGroup(gomock.Any(), group).DoAndReturn(
 			func(_ context.Context, g string) (bool, error) {
 				go func() {
@@ -229,7 +238,7 @@ func TestDeletion(t *testing.T) {
 				return true, nil
 			},
 		)
-		mockRepo.EXPECT().GroupRegistry().Return(mockGroup)
+		mockRepo.EXPECT().GroupRegistry().Return(mockGroup).Times(2)
 
 		m := &groupDeletionTaskManager{
 			schemaRegistry: mockRepo,

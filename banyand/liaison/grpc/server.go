@@ -114,7 +114,6 @@ type server struct {
 	*indexRuleBindingRegistryServer
 	metrics                  *metrics
 	routeTableProviders      map[string]route.TableProvider
-	groupDropSubscriber      GroupDropSubscriber
 	keyFile                  string
 	authConfigFile           string
 	addr                     string
@@ -137,7 +136,6 @@ type server struct {
 func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Client,
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
 	protectorService protector.Memory, routeProviders map[string]route.TableProvider,
-	dropSubscriber GroupDropSubscriber,
 ) Server {
 	gr := &groupRepo{
 		resourceOpts: make(map[string]*commonv1.ResourceOpts),
@@ -210,7 +208,6 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		authReloader:        auth.InitAuthReloader(),
 		protector:           protectorService,
 		routeTableProviders: routeProviders,
-		groupDropSubscriber: dropSubscriber,
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -226,7 +223,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.propertyServer.SetLogger(s.log)
 	s.bydbQLSVC.setLogger(s.log.Named("bydbql"))
 	s.groupRegistryServer.deletionTaskManager = newGroupDeletionTaskManager(
-		s.groupRegistryServer.schemaRegistry, s.propertyServer, s.groupRepo, s.groupDropSubscriber, s.log.Named("group-deletion"),
+		s.groupRegistryServer.schemaRegistry, s.propertyServer, s.groupRepo, s.log.Named("group-deletion"),
 	)
 	if initErr := s.groupRegistryServer.deletionTaskManager.initPropertyStorage(ctx); initErr != nil {
 		return initErr

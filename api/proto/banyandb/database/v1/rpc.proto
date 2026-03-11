@@ -394,6 +394,8 @@ message GroupDeletionTask {
   string message = 6;
   // created_at is the timestamp when the task was created.
   google.protobuf.Timestamp created_at = 7;
+  // updated_at is the timestamp when the task was last updated.
+  google.protobuf.Timestamp updated_at = 8;
 }
 
 // GroupRegistryServiceQueryRequest is the request for querying a group deletion task.

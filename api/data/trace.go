@@ -81,3 +81,6 @@ var TopicTraceCollectDataInfo = bus.BiTopic("trace-collect-data-info")
 
 // TopicTraceCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
 var TopicTraceCollectLiaisonInfo = bus.BiTopic("trace-collect-liaison-info")
+
+// TopicTraceDropGroup is the topic for dropping group data files.
+var TopicTraceDropGroup = bus.BiTopic("trace-drop-group")

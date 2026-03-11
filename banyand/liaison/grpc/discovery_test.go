@@ -54,12 +54,12 @@ func TestGroupRepo_AcquireDuringPendingDeletion(t *testing.T) {
 		inflight:     make(map[string]*groupInflight),
 	}
 
-	_ = gr.startPendingDeletion("del-group")
+	_ = gr.waitInflightRequests("del-group")
 	err := gr.acquireRequest("del-group")
 	assert.ErrorIs(t, err, errGroupPendingDeletion)
 }
 
-func TestGroupRepo_PendingDeletion(t *testing.T) {
+func TestGroupRepo_WaitInflightRequests(t *testing.T) {
 	tests := []struct {
 		name       string
 		acquireNum int
@@ -77,7 +77,7 @@ func TestGroupRepo_PendingDeletion(t *testing.T) {
 			for range tc.acquireNum {
 				require.NoError(t, gr.acquireRequest("g"))
 			}
-			done := gr.startPendingDeletion("g")
+			done := gr.waitInflightRequests("g")
 			if tc.acquireNum > 0 {
 				select {
 				case <-done:
@@ -97,15 +97,15 @@ func TestGroupRepo_PendingDeletion(t *testing.T) {
 	}
 }
 
-func TestGroupRepo_ClearPendingDeletion(t *testing.T) {
+func TestGroupRepo_MarkDeleted(t *testing.T) {
 	gr := &groupRepo{
 		log:          logger.GetLogger("test"),
 		resourceOpts: make(map[string]*commonv1.ResourceOpts),
 		inflight:     make(map[string]*groupInflight),
 	}
 
-	gr.startPendingDeletion("g3")
-	gr.clearPendingDeletion("g3")
+	gr.waitInflightRequests("g3")
+	gr.markDeleted("g3")
 
 	gr.RWMutex.RLock()
 	_, ok := gr.inflight["g3"]

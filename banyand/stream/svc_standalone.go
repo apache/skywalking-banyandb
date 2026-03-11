@@ -60,7 +60,6 @@ type Service interface {
 	Query
 	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
-	SubscribeGroupDrop(groupName string) <-chan struct{}
 }
 
 var _ Service = (*standalone)(nil)
@@ -97,8 +96,8 @@ func (s *standalone) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
-func (s *standalone) SubscribeGroupDrop(groupName string) <-chan struct{} {
-	return s.schemaRepo.SubscribeGroupDrop(groupName)
+func (s *standalone) DropGroup(_ context.Context, groupName string) error {
+	return s.schemaRepo.DropGroup(groupName)
 }
 
 func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
@@ -250,6 +249,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_STREAM, s)
 	}
 	if s.pipeline == nil {
 		return nil
@@ -258,6 +258,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	collectDataInfoListener := &collectDataInfoListener{s: s}
 	if subscribeErr := s.pipeline.Subscribe(data.TopicStreamCollectDataInfo, collectDataInfoListener); subscribeErr != nil {
 		return fmt.Errorf("failed to subscribe to collect data info topic: %w", subscribeErr)
+	}
+	if dropGroupErr := s.pipeline.Subscribe(data.TopicStreamDropGroup, &dropGroupDataListener{s: s}); dropGroupErr != nil {
+		return fmt.Errorf("failed to subscribe to drop group topic: %w", dropGroupErr)
 	}
 
 	s.localPipeline = queue.Local()
@@ -394,4 +397,20 @@ func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) 
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
 	}
 	return bus.NewMessage(message.ID(), dataInfo)
+}
+
+type dropGroupDataListener struct {
+	*bus.UnImplementedHealthyListener
+	s *standalone
+}
+
+func (l *dropGroupDataListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for drop group request"))
+	}
+	if dropErr := l.s.DropGroup(ctx, req.Group); dropErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to drop group data: %v", dropErr))
+	}
+	return bus.NewMessage(message.ID(), req)
 }

@@ -62,6 +62,9 @@ var (
 		TopicStreamCollectLiaisonInfo.String():  TopicStreamCollectLiaisonInfo,
 		TopicTraceCollectDataInfo.String():      TopicTraceCollectDataInfo,
 		TopicTraceCollectLiaisonInfo.String():   TopicTraceCollectLiaisonInfo,
+		TopicMeasureDropGroup.String():          TopicMeasureDropGroup,
+		TopicStreamDropGroup.String():           TopicStreamDropGroup,
+		TopicTraceDropGroup.String():            TopicTraceDropGroup,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -157,6 +160,15 @@ var (
 		TopicTraceCollectLiaisonInfo: func() proto.Message {
 			return &databasev1.GroupRegistryServiceInspectRequest{}
 		},
+		TopicMeasureDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicStreamDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicTraceDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
 	}
 
 	// TopicResponseMap is the map of topic name to response message.
@@ -206,6 +218,15 @@ var (
 		},
 		TopicTraceCollectLiaisonInfo: func() proto.Message {
 			return &databasev1.LiaisonInfo{}
+		},
+		TopicMeasureDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicStreamDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
+		},
+		TopicTraceDropGroup: func() proto.Message {
+			return &databasev1.GroupRegistryServiceInspectRequest{}
 		},
 	}
 
