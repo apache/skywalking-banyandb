@@ -259,8 +259,9 @@ func TestTakeFileSnapshot(t *testing.T) {
 		segLocation := seg.(*segment[*MockTSTable, any]).location // to verify snapshot files/dirs later
 		seg.DecRef()
 
-		err = tsdb.TakeFileSnapshot(snapshotDir)
-		require.NoError(t, err, "taking file snapshot should not produce an error")
+		created, snapshotErr := tsdb.TakeFileSnapshot(snapshotDir)
+		require.NoError(t, snapshotErr, "taking file snapshot should not produce an error")
+		require.True(t, created, "snapshot should have been created")
 
 		segDir := filepath.Join(snapshotDir, filepath.Base(segLocation))
 		require.DirExists(t, segDir, "snapshot of the segment directory should exist")
@@ -268,6 +269,42 @@ func TestTakeFileSnapshot(t *testing.T) {
 		indexDir := filepath.Join(segDir, seriesIndexDirName) // "seriesIndexDirName" comes from the TSDB code.
 		require.DirExists(t, indexDir,
 			"index directory must be present in the snapshot")
+
+		require.NoError(t, tsdb.Close())
+	})
+
+	t.Run("Take snapshot without segments", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		snapshotDir := filepath.Join(dir, "snapshot")
+
+		opts := TSDBOpts[*MockTSTable, any]{
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+			TTL:             IntervalRule{Unit: DAY, Num: 3},
+			ShardNum:        1,
+			TSTableCreator:  MockTSTableCreator,
+		}
+
+		ctx := context.Background()
+		mc := timestamp.NewMockClock()
+
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+		require.NoError(t, err)
+		mc.Set(ts)
+		ctx = timestamp.SetClock(ctx, mc)
+
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
+		require.NoError(t, err)
+		require.NotNil(t, tsdb)
+
+		created, snapshotErr := tsdb.TakeFileSnapshot(snapshotDir)
+		require.NoError(t, snapshotErr, "taking file snapshot should not produce an error")
+		require.False(t, created, "snapshot should not have been created when no segments exist")
+
+		require.NoDirExists(t, snapshotDir, "snapshot directory should not exist when no segments")
 
 		require.NoError(t, tsdb.Close())
 	})

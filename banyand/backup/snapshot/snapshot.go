@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -33,6 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// SchemaPropertyCatalogName is the catalog name for schema property data.
+const SchemaPropertyCatalogName = "schema-property"
 
 // Conn connects to the gRPC server and executes the given function.
 func Conn[T any](gRPCAddr string, enableTLS, insecure bool, cert string, delFn func(conn *grpc.ClientConn) (T, error)) (T, error) {
@@ -64,7 +68,12 @@ func Get(gRPCAddr string, enableTLS, insecure bool, cert string, groups ...*data
 }
 
 // Dir returns the directory path of the snapshot.
-func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, traceRoot string) (string, error) {
+func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot string) (string, error) {
+	if strings.HasPrefix(snapshot.Name, SchemaPropertyCatalogName+"/") {
+		actualName := strings.TrimPrefix(snapshot.Name, SchemaPropertyCatalogName+"/")
+		baseDir := filepath.Join(schemaRoot, SchemaPropertyCatalogName)
+		return filepath.Join(baseDir, storage.SnapshotsDir, actualName), nil
+	}
 	var baseDir string
 	switch snapshot.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:

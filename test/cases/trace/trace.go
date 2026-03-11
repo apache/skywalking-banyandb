@@ -49,6 +49,8 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	g.Entry("order by duration", helpers.Args{Input: "order_duration_desc", Duration: 1 * time.Hour}),
 	g.Entry("duration range 10-1000 order by timestamp",
 		helpers.Args{Input: "duration_range_order_timestamp", Duration: 1 * time.Hour}),
+	g.Entry("duration range and ipv4 filter order by timestamp",
+		helpers.Args{Input: "duration_range_and_ipv4_order_timestamp", Duration: 1 * time.Hour}),
 	g.Entry("filter by service id", helpers.Args{Input: "eq_service_order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("filter by service instance id", helpers.Args{Input: "eq_service_instance_order_time_asc", Duration: 1 * time.Hour}),
 	g.Entry("filter by endpoint", helpers.Args{Input: "eq_endpoint_order_duration_asc", Duration: 1 * time.Hour}),

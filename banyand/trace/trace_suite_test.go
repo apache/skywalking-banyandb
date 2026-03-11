@@ -93,7 +93,8 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--trace-root-path="+rootPath)
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL)
+	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL,
+		"--schema-registry-mode=etcd")
 	moduleDeferFunc := test.SetupModules(
 		flags,
 		pipeline,

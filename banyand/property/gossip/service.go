@@ -44,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -182,6 +183,23 @@ func (s *service) FlagSet() *run.FlagSet {
 }
 
 func (s *service) Validate() error {
+	var err error
+	if s.caCertPath != "" {
+		if s.caCertPath, err = banyandbpath.Get(s.caCertPath); err != nil {
+			return err
+		}
+	}
+	if s.certFile != "" {
+		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
+			return err
+		}
+	}
+	if s.keyFile != "" {
+		if s.keyFile, err = banyandbpath.Get(s.keyFile); err != nil {
+			return err
+		}
+	}
+
 	// client side tls validation
 	if s.tls && s.caCertPath == "" {
 		return fmt.Errorf("CA certificate path must be provided when TLS is enabled")

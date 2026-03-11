@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/gcp"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -58,6 +60,7 @@ type backupOptions struct {
 	measureRoot  string
 	propertyRoot string
 	traceRoot    string
+	schemaRoot   string
 	dest         string
 	enableTLS    bool
 	insecure     bool
@@ -124,6 +127,7 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&backupOpts.measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&backupOpts.propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
 	cmd.Flags().StringVar(&backupOpts.traceRoot, "trace-root-path", "/tmp", "Root directory for trace catalog")
+	cmd.Flags().StringVar(&backupOpts.schemaRoot, "schema-root-path", "/tmp", "Root directory for schema property catalog")
 	cmd.Flags().StringVar(&backupOpts.dest, "dest", "", "Destination URL (e.g., file:///backups)")
 	cmd.Flags().StringVar(&backupOpts.timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
 	cmd.Flags().StringVar(
@@ -151,6 +155,24 @@ func backupAction(options backupOptions) error {
 	if options.dest == "" {
 		return errors.New("dest is required")
 	}
+	var err error
+	options.streamRoot, err = banyandbpath.Get(options.streamRoot)
+	if err != nil {
+		return err
+	}
+	options.measureRoot, err = banyandbpath.Get(options.measureRoot)
+	if err != nil {
+		return err
+	}
+	options.propertyRoot, err = banyandbpath.Get(options.propertyRoot)
+	if err != nil {
+		return err
+	}
+	options.traceRoot, err = banyandbpath.Get(options.traceRoot)
+	if err != nil {
+		return err
+	}
+
 	fs, err := newFS(options.dest, &options.fsConfig)
 	if err != nil {
 		return err
@@ -166,12 +188,16 @@ func backupAction(options backupOptions) error {
 
 	for _, snp := range snapshots {
 		var snapshotDir string
-		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot, options.traceRoot)
+		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot, options.traceRoot, options.schemaRoot)
 		if err != nil {
 			logger.Warningf("Failed to get snapshot directory for %s: %v", snp.Name, err)
 			continue
 		}
-		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, snapshot.CatalogName(snp.Catalog), timeDir))
+		catalogName := snapshot.CatalogName(snp.Catalog)
+		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
+			catalogName = snapshot.SchemaPropertyCatalogName
+		}
+		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, catalogName, timeDir))
 	}
 	return err
 }

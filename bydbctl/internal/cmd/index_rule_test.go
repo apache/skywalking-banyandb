@@ -37,7 +37,7 @@ var _ = Describe("IndexRuleSchema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		// extracting the operation of creating indexRule schema
 		rootCmd = &cobra.Command{Use: "root"}

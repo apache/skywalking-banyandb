@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+package other
 
 import (
 	"context"
@@ -66,7 +66,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// Start standalone server with forced cleanup enabled, using the temp directory as root
-		addr, _, deferFn := setup.ClosableStandalone(tempDir, ports,
+		addr, _, deferFn := setup.ClosableStandalone(testConfig, tempDir, ports,
 			"--measure-retention-high-watermark", "20.0", // Trigger at 20%
 			"--measure-retention-low-watermark", "10.0", // Stop at 10%
 			"--measure-retention-check-interval", "1s", // Check every second
@@ -109,7 +109,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 
 		// Wait for segments to be persisted and properly organized
 		g.By("Waiting for segments to be persisted to disk")
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 
 		// Verify data was written successfully
 		ctx := context.Background()
@@ -180,7 +180,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 
 		// Wait additional time for segment deletions to complete
 		g.By("Waiting for segment deletions to complete")
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		// Verify old snapshot was cleaned up
 		g.By("Verifying snapshot cleanup behavior")

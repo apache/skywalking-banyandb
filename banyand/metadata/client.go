@@ -28,7 +28,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -40,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -152,7 +152,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.etcdFullSyncInterval, "etcd-full-sync-interval", 30*time.Minute, "The interval for full sync etcd")
 
 	// schema registry mode
-	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", RegistryModeEtcd,
+	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", RegistryModeProperty,
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", property.DefaultSyncInterval,
 		"Polling interval for property-based schema sync")
@@ -263,6 +263,40 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			close(stopCh)
 		}
 	}()
+
+	var err error
+	if s.etcdTLSCAFile != "" {
+		if s.etcdTLSCAFile, err = banyandbpath.Get(s.etcdTLSCAFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSCAFile %q", s.etcdTLSCAFile)
+		}
+	}
+	if s.etcdTLSCertFile != "" {
+		if s.etcdTLSCertFile, err = banyandbpath.Get(s.etcdTLSCertFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSCertFile %q", s.etcdTLSCertFile)
+		}
+	}
+	if s.etcdTLSKeyFile != "" {
+		if s.etcdTLSKeyFile, err = banyandbpath.Get(s.etcdTLSKeyFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSKeyFile %q", s.etcdTLSKeyFile)
+		}
+	}
+	if s.propertySchemaClientCACert != "" {
+		if s.propertySchemaClientCACert, err = banyandbpath.Get(s.propertySchemaClientCACert); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for propertySchemaClientCACert %q", s.propertySchemaClientCACert)
+		}
+	}
+	if s.filePath != "" {
+		if s.filePath, err = banyandbpath.Get(s.filePath); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for filePath %q", s.filePath)
+		}
+	}
+	for i, certPath := range s.dnsCACertPaths {
+		if certPath != "" {
+			if s.dnsCACertPaths[i], err = banyandbpath.Get(certPath); err != nil {
+				return err
+			}
+		}
+	}
 
 	// initialize etcd registry when needed for node discovery or etcd schema mode
 	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd || s.schemaRegistryMode == RegistryModeEtcd {
@@ -424,20 +458,7 @@ func (s *clientService) registerNodeIfNeeded(ctx context.Context, l *logger.Logg
 		return errors.New("node roles is empty")
 	}
 	nodeRoles := val.([]databasev1.Role)
-	nodeInfo := &databasev1.Node{
-		Metadata: &commonv1.Metadata{
-			Name: node.NodeID,
-		},
-		GrpcAddress: node.GrpcAddress,
-		HttpAddress: node.HTTPAddress,
-		Roles:       nodeRoles,
-		Labels:      node.Labels,
-		CreatedAt:   timestamppb.Now(),
-
-		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
-		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
-		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
-	}
+	nodeInfo := node.ToProtoNode(nodeRoles)
 	for {
 		ctxCancelable, cancel := context.WithTimeout(ctx, time.Second*10)
 		err := s.nodeDiscoveryRegistry.RegisterNode(ctxCancelable, nodeInfo, s.forceRegisterNode)

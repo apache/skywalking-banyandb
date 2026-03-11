@@ -360,8 +360,6 @@
     - [RepairService](#banyandb-property-v1-RepairService)
   
 - [banyandb/schema/v1/internal.proto](#banyandb_schema_v1_internal-proto)
-    - [AggregateSchemaUpdatesRequest](#banyandb-schema-v1-AggregateSchemaUpdatesRequest)
-    - [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse)
     - [DeleteSchemaRequest](#banyandb-schema-v1-DeleteSchemaRequest)
     - [DeleteSchemaResponse](#banyandb-schema-v1-DeleteSchemaResponse)
     - [InsertSchemaRequest](#banyandb-schema-v1-InsertSchemaRequest)
@@ -372,6 +370,10 @@
     - [RepairSchemaResponse](#banyandb-schema-v1-RepairSchemaResponse)
     - [UpdateSchemaRequest](#banyandb-schema-v1-UpdateSchemaRequest)
     - [UpdateSchemaResponse](#banyandb-schema-v1-UpdateSchemaResponse)
+    - [WatchSchemasRequest](#banyandb-schema-v1-WatchSchemasRequest)
+    - [WatchSchemasResponse](#banyandb-schema-v1-WatchSchemasResponse)
+  
+    - [SchemaEventType](#banyandb-schema-v1-SchemaEventType)
   
     - [SchemaManagementService](#banyandb-schema-v1-SchemaManagementService)
     - [SchemaUpdateService](#banyandb-schema-v1-SchemaUpdateService)
@@ -5441,36 +5443,6 @@ WriteResponse is the response contract for write
 
 
 
-<a name="banyandb-schema-v1-AggregateSchemaUpdatesRequest"></a>
-
-### AggregateSchemaUpdatesRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| query | [banyandb.property.v1.QueryRequest](#banyandb-property-v1-QueryRequest) |  |  |
-
-
-
-
-
-
-<a name="banyandb-schema-v1-AggregateSchemaUpdatesResponse"></a>
-
-### AggregateSchemaUpdatesResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| names | [string](#string) | repeated | which names/schemas has updates |
-
-
-
-
-
-
 <a name="banyandb-schema-v1-DeleteSchemaRequest"></a>
 
 ### DeleteSchemaRequest
@@ -5608,7 +5580,56 @@ WriteResponse is the response contract for write
 
 
 
+
+<a name="banyandb-schema-v1-WatchSchemasRequest"></a>
+
+### WatchSchemasRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| criteria | [banyandb.model.v1.Criteria](#banyandb-model-v1-Criteria) |  |  |
+| tag_projection | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-WatchSchemasResponse"></a>
+
+### WatchSchemasResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_type | [SchemaEventType](#banyandb-schema-v1-SchemaEventType) |  |  |
+| property | [banyandb.property.v1.Property](#banyandb-property-v1-Property) |  |  |
+| metadata_only | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  |  |
+
+
+
+
+
  
+
+
+<a name="banyandb-schema-v1-SchemaEventType"></a>
+
+### SchemaEventType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SCHEMA_EVENT_TYPE_UNSPECIFIED | 0 |  |
+| SCHEMA_EVENT_TYPE_INSERT | 1 |  |
+| SCHEMA_EVENT_TYPE_UPDATE | 2 |  |
+| SCHEMA_EVENT_TYPE_DELETE | 3 |  |
+| SCHEMA_EVENT_TYPE_REPLAY_DONE | 4 |  |
+
 
  
 
@@ -5636,7 +5657,7 @@ WriteResponse is the response contract for write
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| AggregateSchemaUpdates | [AggregateSchemaUpdatesRequest](#banyandb-schema-v1-AggregateSchemaUpdatesRequest) | [AggregateSchemaUpdatesResponse](#banyandb-schema-v1-AggregateSchemaUpdatesResponse) |  |
+| WatchSchemas | [WatchSchemasRequest](#banyandb-schema-v1-WatchSchemasRequest) stream | [WatchSchemasResponse](#banyandb-schema-v1-WatchSchemasResponse) stream |  |
 
  
 

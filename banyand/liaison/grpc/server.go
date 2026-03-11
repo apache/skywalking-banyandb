@@ -36,6 +36,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -53,6 +54,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -90,8 +92,10 @@ type NodeRegistries struct {
 type server struct {
 	databasev1.UnimplementedSnapshotServiceServer
 	databasev1.UnimplementedClusterStateServiceServer
+	databasev1.UnimplementedNodeQueryServiceServer
 	omr        observability.MetricsRegistry
 	schemaRepo metadata.Repo
+	curNode    *databasev1.Node
 	protector  protector.Memory
 	traceSVC   *traceService
 	stopCh     chan struct{}
@@ -217,6 +221,30 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 
 func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
+	s.initCurrentNode(ctx)
+
+	var err error
+	if s.accessLogRootPath != "" {
+		if s.accessLogRootPath, err = banyandbpath.Get(s.accessLogRootPath); err != nil {
+			return err
+		}
+	}
+	if s.certFile != "" {
+		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
+			return err
+		}
+	}
+	if s.keyFile != "" {
+		if s.keyFile, err = banyandbpath.Get(s.keyFile); err != nil {
+			return err
+		}
+	}
+	if s.authConfigFile != "" {
+		if s.authConfigFile, err = banyandbpath.Get(s.authConfigFile); err != nil {
+			return err
+		}
+	}
+
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
 	s.traceSVC.setLogger(s.log.Named("trace"))
@@ -287,6 +315,24 @@ func (s *server) PreRun(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *server) initCurrentNode(ctx context.Context) {
+	nodeVal := ctx.Value(common.ContextNodeKey)
+	roleVal := ctx.Value(common.ContextNodeRolesKey)
+	if nodeVal == nil || roleVal == nil {
+		return
+	}
+	node := nodeVal.(common.Node)
+	nodeRoles := roleVal.([]databasev1.Role)
+	s.curNode = node.ToProtoNode(nodeRoles)
+}
+
+// GetCurrentNode returns the current node information.
+func (s *server) GetCurrentNode(context.Context, *databasev1.GetCurrentNodeRequest) (*databasev1.GetCurrentNodeResponse, error) {
+	return &databasev1.GetCurrentNodeResponse{
+		Node: s.curNode,
+	}, nil
 }
 
 func (s *server) Name() string {
@@ -436,6 +482,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
 	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
 	databasev1.RegisterClusterStateServiceServer(s.ser, s)
+	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})

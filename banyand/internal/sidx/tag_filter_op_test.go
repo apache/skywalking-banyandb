@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/blugelabs/bluge/numeric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -225,11 +227,11 @@ func TestTagFilterOpRange(t *testing.T) {
 }
 
 func TestTagFilterOpRangeWithCache(t *testing.T) {
-	// Create a cache with numeric data
+	// Create a cache with numeric data using convert.Int64ToBytes (order-preserving encoding)
 	cache := &tagFilterCache{
 		valueType: pbv1.ValueTypeInt64,
-		min:       encoding.Int64ToBytes(nil, 100),
-		max:       encoding.Int64ToBytes(nil, 500),
+		min:       convert.Int64ToBytes(100),
+		max:       convert.Int64ToBytes(500),
 	}
 
 	tfo := &tagFilterOp{
@@ -252,72 +254,73 @@ func TestTagFilterOpRangeWithCache(t *testing.T) {
 		expectError    bool
 	}{
 		{
-			name: "range completely below",
-			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 10},
-				Upper:         &index.FloatTermValue{Value: 50},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
-			expectedResult: false,
-			expectError:    false,
-			description:    "should return false when range is completely below min",
-		},
-		{
-			name: "range completely above",
-			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 600},
-				Upper:         &index.FloatTermValue{Value: 800},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
-			expectedResult: false,
-			expectError:    false,
-			description:    "should return false when range is completely above max",
-		},
-		{
-			name: "range overlaps",
-			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 200},
-				Upper:         &index.FloatTermValue{Value: 300},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
+			name:           "range completely below",
+			rangeOpts:      index.NewIntRangeOpts(10, 50, true, true),
 			expectedResult: true,
 			expectError:    false,
-			description:    "should return true when range overlaps with min/max",
+			description:    "should skip when range is completely below min",
 		},
 		{
-			name: "range contains all",
-			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 50},
-				Upper:         &index.FloatTermValue{Value: 600},
-				IncludesLower: true,
-				IncludesUpper: true,
-			},
+			name:           "range completely above",
+			rangeOpts:      index.NewIntRangeOpts(600, 800, true, true),
 			expectedResult: true,
 			expectError:    false,
-			description:    "should return true when range contains all values",
+			description:    "should skip when range is completely above max",
+		},
+		{
+			name:           "range overlaps",
+			rangeOpts:      index.NewIntRangeOpts(200, 300, true, true),
+			expectedResult: false,
+			expectError:    false,
+			description:    "should not skip when range overlaps with min/max",
+		},
+		{
+			name:           "range contains all",
+			rangeOpts:      index.NewIntRangeOpts(50, 600, true, true),
+			expectedResult: false,
+			expectError:    false,
+			description:    "should not skip when range contains all values",
 		},
 		{
 			name: "lower boundary exclusive miss",
 			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: 500},
+				Lower:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(500)},
 				IncludesLower: false,
 			},
-			expectedResult: false,
+			expectedResult: true,
 			expectError:    false,
-			description:    "should return false when lower boundary is exclusive and equals max",
+			description:    "should skip when lower boundary is exclusive and equals max",
 		},
 		{
 			name: "upper boundary exclusive miss",
 			rangeOpts: index.RangeOpts{
-				Upper:         &index.FloatTermValue{Value: 100},
+				Upper:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(100)},
 				IncludesUpper: false,
 			},
+			expectedResult: true,
+			expectError:    false,
+			description:    "should skip when upper boundary is exclusive and equals min",
+		},
+		{
+			name:           "inclusive lower equals block max",
+			rangeOpts:      index.NewIntRangeOpts(500, 600, true, true),
 			expectedResult: false,
 			expectError:    false,
-			description:    "should return false when upper boundary is exclusive and equals min",
+			description:    "should not skip when lower is inclusive and equals max",
+		},
+		{
+			name:           "inclusive upper equals block min",
+			rangeOpts:      index.NewIntRangeOpts(50, 100, true, true),
+			expectedResult: false,
+			expectError:    false,
+			description:    "should not skip when upper is inclusive and equals min",
+		},
+		{
+			name:           "query above block max - adjacent exclusive",
+			rangeOpts:      index.NewIntRangeOpts(200, 300, false, true),
+			expectedResult: false,
+			expectError:    false,
+			description:    "should not skip when exclusive lower (200) is within block [100,500]",
 		},
 	}
 
@@ -356,16 +359,11 @@ func TestTagFilterOpRangeNonNumeric(t *testing.T) {
 		},
 	}
 
-	// For non-numeric types, should always return true (conservative approach)
-	result, err := tfo.Range("service", index.RangeOpts{
-		Lower:         &index.FloatTermValue{Value: 100},
-		Upper:         &index.FloatTermValue{Value: 200},
-		IncludesLower: true,
-		IncludesUpper: true,
-	})
+	// For non-numeric types, should not skip (conservative approach - return false)
+	result, err := tfo.Range("service", index.NewIntRangeOpts(100, 200, true, true))
 
 	assert.NoError(t, err)
-	assert.True(t, result, "should return true for non-numeric types")
+	assert.False(t, result, "should not skip for non-numeric types (conservative approach)")
 }
 
 func TestDecodeBloomFilterFromBytes(t *testing.T) {
@@ -440,8 +438,8 @@ func BenchmarkTagFilterOpRange(b *testing.B) {
 	// Setup
 	cache := &tagFilterCache{
 		valueType: pbv1.ValueTypeInt64,
-		min:       encoding.Int64ToBytes(nil, 100),
-		max:       encoding.Int64ToBytes(nil, 500),
+		min:       convert.Int64ToBytes(100),
+		max:       convert.Int64ToBytes(500),
 	}
 
 	tfo := &tagFilterOp{
@@ -456,12 +454,7 @@ func BenchmarkTagFilterOpRange(b *testing.B) {
 		},
 	}
 
-	rangeOpts := index.RangeOpts{
-		Lower:         &index.FloatTermValue{Value: 200},
-		Upper:         &index.FloatTermValue{Value: 300},
-		IncludesLower: true,
-		IncludesUpper: true,
-	}
+	rangeOpts := index.NewIntRangeOpts(200, 300, true, true)
 
 	b.ResetTimer()
 
@@ -821,8 +814,8 @@ func TestTagFilterOpErrorHandling(t *testing.T) {
 	t.Run("invalid range bounds", func(t *testing.T) {
 		cache := &tagFilterCache{
 			valueType: pbv1.ValueTypeInt64,
-			min:       encoding.Int64ToBytes(nil, 100),
-			max:       encoding.Int64ToBytes(nil, 500),
+			min:       convert.Int64ToBytes(100),
+			max:       convert.Int64ToBytes(500),
 		}
 
 		tfo := &tagFilterOp{

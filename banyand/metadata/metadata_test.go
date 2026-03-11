@@ -50,7 +50,7 @@ func Test_service_RulesBySubject(t *testing.T) {
 	req.NotNil(s)
 	rootDir, deferFn, err := testhelper.NewSpace()
 	req.NoError(err)
-	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir})
+	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir, "--schema-registry-mode=etcd"})
 	req.NoError(err)
 	req.NoError(s.Validate())
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})

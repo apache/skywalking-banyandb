@@ -41,12 +41,14 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -70,6 +72,7 @@ type Server interface {
 	run.Service
 	GetPort() *uint32
 	RegisterGossip(messenger gossip.Messenger)
+	TakeSnapshot(ctx context.Context) *databasev1.Snapshot
 }
 
 type server struct {
@@ -80,6 +83,7 @@ type server struct {
 	l                        *logger.Logger
 	ser                      *grpclib.Server
 	tlsReloader              *pkgtls.Reloader
+	watchers                 *watcherManager
 	schemaService            *schemaManagementServer
 	updateService            *schemaUpdateServer
 	host                     string
@@ -88,6 +92,7 @@ type server struct {
 	keyFile                  string
 	addr                     string
 	repairBuildTreeCron      string
+	snapshotDir              string
 	minFileSnapshotAge       time.Duration
 	flushTimeout             time.Duration
 	snapshotSeq              uint64
@@ -112,6 +117,14 @@ func NewServer(omr observability.MetricsRegistry) Server {
 // GetPort returns the gRPC server port.
 func (s *server) GetPort() *uint32 {
 	return &s.port
+}
+
+// WatcherCount returns the number of active schema watchers.
+func (s *server) WatcherCount() int {
+	if s.watchers == nil {
+		return 0
+	}
+	return s.watchers.Count()
 }
 
 // RegisterGossip registers the DB's repair gRPC services with the gossip messenger.
@@ -174,19 +187,26 @@ func (s *server) Validate() error {
 
 func (s *server) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger("schema-server")
+	var err error
+	if s.root, err = banyandbpath.Get(s.root); err != nil {
+		return err
+	}
 	s.lfs = fs.NewLocalFileSystem()
 
+	s.watchers = newWatcherManager(s.l)
 	grpcFactory := s.omr.With(schemaServerScope.SubScope("grpc"))
 	sm := newServerMetrics(grpcFactory)
 	s.schemaService = &schemaManagementServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
+		server:   s,
+		watchers: s.watchers,
+		l:        s.l,
+		metrics:  sm,
 	}
 	s.updateService = &schemaUpdateServer{
-		server:  s,
-		l:       s.l,
-		metrics: sm,
+		server:   s,
+		watchers: s.watchers,
+		l:        s.l,
+		metrics:  sm,
 	}
 
 	if s.tls {
@@ -197,9 +217,9 @@ func (s *server) PreRun(_ context.Context) error {
 		}
 	}
 
-	dataDir := filepath.Join(s.root, "schema-property", "data")
-	snapshotDir := filepath.Join(s.root, "schema-property", "snapshots")
-	repairDir := filepath.Join(s.root, "schema-property", "repair")
+	dataDir := filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "data")
+	s.snapshotDir = filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "snapshots")
+	repairDir := filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "repair")
 
 	cfg := db.Config{
 		Location:               dataDir,
@@ -218,17 +238,17 @@ func (s *server) PreRun(_ context.Context) error {
 			WaitForPersistence: false,
 		},
 		Snapshot: db.SnapshotConfig{
-			Location: snapshotDir,
+			Location: s.snapshotDir,
 			Func: func(ctx context.Context) (string, error) {
 				s.snapshotMu.Lock()
 				defer s.snapshotMu.Unlock()
-				storage.DeleteStaleSnapshots(snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
+				storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
 				sn := s.snapshotName()
-				snapshot := s.db.TakeSnapShot(ctx, sn)
-				if snapshot.Error != "" {
-					return "", fmt.Errorf("failed to take snapshot %s: %s", sn, snapshot.Error)
+				snp := s.db.TakeSnapShot(ctx, sn)
+				if snp.Error != "" {
+					return "", fmt.Errorf("failed to take snapshot %s: %s", sn, snp.Error)
 				}
-				return filepath.Join(snapshotDir, sn, storage.DataDir), nil
+				return filepath.Join(s.snapshotDir, sn, storage.DataDir), nil
 			},
 		},
 	}
@@ -297,6 +317,15 @@ func (s *server) PreRun(_ context.Context) error {
 	return nil
 }
 
+// TakeSnapshot creates a new snapshot and returns the snapshot metadata.
+func (s *server) TakeSnapshot(ctx context.Context) *databasev1.Snapshot {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	storage.DeleteStaleSnapshots(s.snapshotDir, s.maxFileSnapshotNum, s.minFileSnapshotAge, s.lfs)
+	sn := s.snapshotName()
+	return s.db.TakeSnapShot(ctx, sn)
+}
+
 func (s *server) snapshotName() string {
 	s.snapshotSeq++
 	return fmt.Sprintf("%s-%08X", time.Now().UTC().Format(storage.SnapshotTimeFormat), s.snapshotSeq)
@@ -307,6 +336,9 @@ func (s *server) Serve() run.StopNotify {
 }
 
 func (s *server) GracefulStop() {
+	if s.watchers != nil {
+		s.watchers.Close()
+	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()
 	}

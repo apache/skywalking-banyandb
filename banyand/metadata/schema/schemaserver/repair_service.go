@@ -26,6 +26,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -67,7 +68,7 @@ func NewGossipService(registerGossip func(gossip.Messenger), metadata metadata.R
 		closer:         run.NewCloser(1),
 		metaNodes:      make(map[string]struct{}),
 		messenger: gossip.NewMessenger(
-			"schema-property",
+			snapshot.SchemaPropertyCatalogName,
 			func(n *databasev1.Node) string { return n.PropertySchemaGossipGrpcAddress },
 			omr, metadata, pipelineClient, 17933,
 		),

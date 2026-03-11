@@ -25,6 +25,10 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -157,6 +161,23 @@ type Node struct {
 	PropertyGossipGrpcAddress       string
 	PropertySchemaGrpcAddress       string
 	PropertySchemaGossipGrpcAddress string
+}
+
+// ToProtoNode converts a Node to a databasev1.Node with the given roles.
+func (n Node) ToProtoNode(roles []databasev1.Role) *databasev1.Node {
+	return &databasev1.Node{
+		Metadata: &commonv1.Metadata{
+			Name: n.NodeID,
+		},
+		GrpcAddress:                     n.GrpcAddress,
+		HttpAddress:                     n.HTTPAddress,
+		Roles:                           roles,
+		Labels:                          n.Labels,
+		CreatedAt:                       timestamppb.Now(),
+		PropertyRepairGossipGrpcAddress: n.PropertyGossipGrpcAddress,
+		PropertySchemaGrpcAddress:       n.PropertySchemaGrpcAddress,
+		PropertySchemaGossipGrpcAddress: n.PropertySchemaGossipGrpcAddress,
+	}
 }
 
 var (

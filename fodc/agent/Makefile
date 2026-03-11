@@ -26,7 +26,6 @@ SOURCE_DIR := fodc/agent
 
 include ../../scripts/build/version.mk
 include ../../scripts/build/base.mk
-include ../../scripts/build/generate_go.mk
 include ../../scripts/build/build.mk
 include ../../scripts/build/docker.mk
 include ../../scripts/build/test.mk
@@ -35,3 +34,7 @@ include ../../scripts/build/vendor.mk
 include ../../scripts/build/help.mk
 
 prepare-build: generate
+
+.PHONY: generate
+generate:
+	@echo "Skipping KTM eBPF generation (using github.com/SkyAPM/ktm-ebpf prebuilt artifacts)"

@@ -38,11 +38,9 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -54,6 +52,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -141,6 +140,12 @@ func (s *server) PreRun(ctx context.Context) error {
 	// Initialize TLS reloader if TLS is enabled
 	if s.tls {
 		var err error
+		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
+			return errors.Wrap(err, "failed to get absolute path for certFile")
+		}
+		if s.keyFile, err = banyandbpath.Get(s.keyFile); err != nil {
+			return errors.Wrap(err, "failed to get absolute path for keyFile")
+		}
 		s.tlsReloader, err = pkgtls.NewReloader(s.certFile, s.keyFile, s.log)
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize TLS reloader for queue server")
@@ -156,20 +161,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	}
 	nodeRoles := roleVal.([]databasev1.Role)
 	node := nodeVal.(common.Node)
-	s.curNode = &databasev1.Node{
-		Metadata: &commonv1.Metadata{
-			Name: node.NodeID,
-		},
-		GrpcAddress: node.GrpcAddress,
-		HttpAddress: node.HTTPAddress,
-		Roles:       nodeRoles,
-		Labels:      node.Labels,
-		CreatedAt:   timestamppb.Now(),
-
-		PropertyRepairGossipGrpcAddress: node.PropertyGossipGrpcAddress,
-		PropertySchemaGrpcAddress:       node.PropertySchemaGrpcAddress,
-		PropertySchemaGossipGrpcAddress: node.PropertySchemaGossipGrpcAddress,
-	}
+	s.curNode = node.ToProtoNode(nodeRoles)
 
 	return nil
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -237,6 +238,15 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
+	var err error
+	if s.root, err = banyandbpath.Get(s.root); err != nil {
+		return err
+	}
+	if s.dataPath != "" {
+		if s.dataPath, err = banyandbpath.Get(s.dataPath); err != nil {
+			return err
+		}
+	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	obsservice.UpdatePath(path)
@@ -273,21 +283,21 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to drop group topic: %w", dropGroupErr)
 	}
 
-	if err := s.createDataNativeObservabilityGroup(ctx); err != nil {
+	if err = s.createDataNativeObservabilityGroup(ctx); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicSnapshot, &dataSnapshotListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicSnapshot, &dataSnapshotListener{s: s}); err != nil {
 		return err
 	}
 
-	if err := s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &dataDeleteStreamSegmentsListener{s: s}); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicMeasureDeleteExpiredSegments, &dataDeleteStreamSegmentsListener{s: s}); err != nil {
 		return err
 	}
 
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasureSeriesSync, setUpSyncSeriesCallback(s.l, s.schemaRepo))
-	err := s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
+	err = s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
 	if err != nil {
 		return err
 	}
@@ -381,20 +391,21 @@ func (s *dataSVC) createDataNativeObservabilityGroup(ctx context.Context) error 
 	return nil
 }
 
-func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) error {
+func (s *dataSVC) takeGroupSnapshot(dstDir string, groupName string) (bool, error) {
 	group, ok := s.schemaRepo.LoadGroup(groupName)
 	if !ok {
-		return errors.Errorf("group %s not found", groupName)
+		return false, errors.Errorf("group %s not found", groupName)
 	}
 	db := group.SupplyTSDB()
 	if db == nil {
-		return errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
+		return false, errors.Errorf("group %s has no tsdb", group.GetSchema().Metadata.Name)
 	}
 	tsdb := db.(storage.TSDB[*tsTable, option])
-	if err := tsdb.TakeFileSnapshot(dstDir); err != nil {
-		return errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
+	created, err := tsdb.TakeFileSnapshot(dstDir)
+	if err != nil {
+		return false, errors.WithMessagef(err, "snapshot %s fail to take file snapshot for group %s", dstDir, group.GetSchema().Metadata.Name)
 	}
-	return nil
+	return created, nil
 }
 
 // NewDataSVC returns a new data service.
@@ -500,17 +511,29 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error
+	var snapshotCreated int
 	for _, g := range gg {
 		select {
 		case <-ctx.Done():
 			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 		default:
 		}
-		if errGroup := d.s.takeGroupSnapshot(filepath.Join(d.s.snapshotDir, sn, g.GetSchema().Metadata.Name), g.GetSchema().Metadata.Name); err != nil {
-			d.s.l.Error().Err(errGroup).Str("group", g.GetSchema().Metadata.Name).Msg("fail to take group snapshot")
+		groupName := g.GetSchema().Metadata.Name
+		snapshotPath := filepath.Join(d.s.snapshotDir, sn, groupName)
+		created, errGroup := d.s.takeGroupSnapshot(snapshotPath, groupName)
+		if errGroup != nil {
+			d.s.l.Error().Err(errGroup).Str("group", groupName).Msg("fail to take group snapshot")
 			err = multierr.Append(err, errGroup)
 			continue
 		}
+		if !created {
+			d.s.l.Info().Str("group", groupName).Msg("skip empty group snapshot")
+			continue
+		}
+		snapshotCreated++
+	}
+	if snapshotCreated == 0 && err == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
 	snp := &databasev1.Snapshot{
 		Name:    sn,

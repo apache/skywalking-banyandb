@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -155,7 +156,7 @@ func (sr *schemaRepo) Watcher() {
 			defer func() {
 				sr.closer.ReceiverDone()
 				if err := recover(); err != nil {
-					sr.l.Warn().Interface("err", err).Msg("watching the events")
+					sr.l.Warn().Interface("err", err).Str("stack", string(debug.Stack())).Msg("watching the events")
 				}
 				sr.metrics.totalPanics.Inc(1)
 			}()

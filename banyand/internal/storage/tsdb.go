@@ -262,20 +262,24 @@ func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	d.segmentController.updateOptions(resourceOpts)
 }
 
-func (d *database[T, O]) TakeFileSnapshot(dst string) error {
+func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 	if d.closed.Load() {
-		return errors.New("database is closed")
+		return false, errors.New("database is closed")
 	}
 
 	segments, err := d.segmentController.segments(true)
 	if err != nil {
-		return errors.Wrap(err, "failed to get segments")
+		return false, errors.Wrap(err, "failed to get segments")
 	}
 	defer func() {
 		for _, seg := range segments {
 			seg.DecRef()
 		}
 	}()
+
+	if len(segments) == 0 {
+		return false, nil
+	}
 
 	log.Info().Int("segment_count", len(segments)).Str("db_location", d.location).
 		Msgf("taking file snapshot for %s", dst)
@@ -287,13 +291,13 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 		metadataSrc := filepath.Join(seg.location, metadataFilename)
 		metadataDest := filepath.Join(segPath, metadataFilename)
 		if err := d.lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
-			return errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
+			return false, errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
 		}
 
 		indexPath := filepath.Join(segPath, seriesIndexDirName)
 		d.lfs.MkdirIfNotExist(indexPath, DirPerm)
 		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {
-			return errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
+			return false, errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
 		}
 
 		sLst := seg.sLst.Load()
@@ -304,13 +308,13 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) error {
 			shardDir := filepath.Base(shard.location)
 			shardPath := filepath.Join(segPath, shardDir)
 			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
-			if err := shard.table.TakeFileSnapshot(shardPath); err != nil {
-				return errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
+			if _, err := shard.table.TakeFileSnapshot(shardPath); err != nil {
+				return false, errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
 			}
 		}
 	}
 
-	return nil
+	return true, nil
 }
 
 func (d *database[T, O]) GetExpiredSegmentsTimeRange() *timestamp.TimeRange {

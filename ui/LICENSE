@@ -28,14 +28,14 @@ The text of each license is also included at licenses/ui-licenses/LICENSE-[proje
 Apache-2.0 licenses
 ========================================================================
 
-    detect-libc 1.0.3 Apache-2.0
+    detect-libc 2.1.2 Apache-2.0
     echarts 5.6.0 Apache-2.0
 
 ========================================================================
 BSD-2-Clause licenses
 ========================================================================
 
-    entities 4.5.0 BSD-2-Clause
+    entities 7.0.1 BSD-2-Clause
 
 ========================================================================
 BSD-3-Clause licenses
@@ -52,8 +52,8 @@ ISC licenses
     graceful-fs 4.2.11 ISC
     inherits 2.0.4 ISC
     picocolors 1.1.1 ISC
-    semver 7.7.3 ISC
-    yaml 2.8.1 ISC
+    semver 7.7.4 ISC
+    yaml 2.8.2 ISC
 
 ========================================================================
 MIT licenses
@@ -61,52 +61,49 @@ MIT licenses
 
     @babel/helper-string-parser 7.27.1 MIT
     @babel/helper-validator-identifier 7.28.5 MIT
-    @babel/parser 7.28.5 MIT
-    @babel/types 7.28.5 MIT
+    @babel/parser 7.29.0 MIT
+    @babel/types 7.29.0 MIT
     @ctrl/tinycolor 3.6.1 MIT
     @element-plus/icons-vue 2.3.2 MIT
-    @floating-ui/core 1.7.3 MIT
-    @floating-ui/dom 1.7.4 MIT
-    @floating-ui/utils 0.2.10 MIT
+    @floating-ui/core 1.7.5 MIT
+    @floating-ui/dom 1.7.6 MIT
+    @floating-ui/utils 0.2.11 MIT
     @jridgewell/sourcemap-codec 1.5.5 MIT
-    @parcel/watcher 2.5.1 MIT
-    @parcel/watcher-linux-x64-glibc 2.5.1 MIT
-    @parcel/watcher-linux-x64-musl 2.5.1 MIT
-    @popperjs/core 2.11.7 MIT
+    @parcel/watcher 2.5.6 MIT
+    @parcel/watcher-linux-x64-glibc 2.5.6 MIT
+    @parcel/watcher-linux-x64-musl 2.5.6 MIT
+    @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.90.10 MIT
-    @tanstack/vue-query 5.91.2 MIT
-    @types/lodash 4.17.23 MIT
+    @tanstack/query-core 5.90.20 MIT
+    @tanstack/vue-query 5.92.9 MIT
+    @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
-    @types/web-bluetooth 0.0.16 MIT
-    @vue/compiler-core 3.5.24 MIT
-    @vue/compiler-dom 3.5.24 MIT
-    @vue/compiler-sfc 3.5.24 MIT
-    @vue/compiler-ssr 3.5.24 MIT
+    @types/web-bluetooth 0.0.20 MIT
+    @vue/compiler-core 3.5.29 MIT
+    @vue/compiler-dom 3.5.29 MIT
+    @vue/compiler-sfc 3.5.29 MIT
+    @vue/compiler-ssr 3.5.29 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.24 MIT
-    @vue/runtime-core 3.5.24 MIT
-    @vue/runtime-dom 3.5.24 MIT
-    @vue/server-renderer 3.5.24 MIT
-    @vue/shared 3.5.24 MIT
-    @vueuse/core 9.13.0 MIT
-    @vueuse/metadata 9.13.0 MIT
-    @vueuse/shared 9.13.0 MIT
+    @vue/reactivity 3.5.29 MIT
+    @vue/runtime-core 3.5.29 MIT
+    @vue/runtime-dom 3.5.29 MIT
+    @vue/server-renderer 3.5.29 MIT
+    @vue/shared 3.5.29 MIT
+    @vueuse/core 10.11.1 MIT
+    @vueuse/metadata 10.11.1 MIT
+    @vueuse/shared 10.11.1 MIT
     async-validator 4.2.5 MIT
-    braces 3.0.3 MIT
     chokidar 4.0.3 MIT
-    codemirror 5.65.20 MIT
+    codemirror 5.65.21 MIT
     core-util-is 1.0.3 MIT
     csstype 3.2.3 MIT
     dayjs 1.11.19 MIT
-    element-plus 2.11.8 MIT
+    element-plus 2.13.3 MIT
     estree-walker 2.0.2 MIT
-    fill-range 7.1.1 MIT
     immediate 3.0.6 MIT
-    immutable 5.1.4 MIT
+    immutable 5.1.5 MIT
     is-extglob 2.1.1 MIT
     is-glob 4.0.3 MIT
-    is-number 7.0.0 MIT
     isarray 1.0.0 MIT
     js-yaml 4.1.1 MIT
     jsonfile 6.2.0 MIT
@@ -116,27 +113,25 @@ MIT licenses
     lodash-unified 1.0.3 MIT
     magic-string 0.30.21 MIT
     memoize-one 6.0.0 MIT
-    micromatch 4.0.8 MIT
     mitt 3.0.1 MIT
     nanoid 3.3.11 MIT
     node-addon-api 7.1.1 MIT
-    picomatch 2.3.1 MIT
+    picomatch 4.0.3 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.6 MIT
+    postcss 8.5.8 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 4.1.2 MIT
     remove-accents 0.5.0 MIT
     safe-buffer 5.1.2 MIT
-    sass 1.94.2 MIT
+    sass 1.97.3 MIT
     setimmediate 1.0.5 MIT
     string_decoder 1.1.1 MIT
-    to-regex-range 5.0.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.24 MIT
+    vue 3.5.29 MIT
     vue-demi 0.14.10 MIT
-    vue-router 4.6.3 MIT
+    vue-router 4.6.4 MIT
 
 ========================================================================
 Python-2.0 licenses

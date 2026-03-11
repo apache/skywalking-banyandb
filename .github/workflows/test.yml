@@ -42,6 +42,9 @@ on:
         required: false
         type: string
         default: UTC
+      load-test-minutes:
+        required: false
+        type: string
 
 jobs:
   test:
@@ -67,6 +70,8 @@ jobs:
           path: bin
           key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
       - name: Test integration and banyand
+        env:
+          LOAD_TEST_MINUTES: ${{ inputs.load-test-minutes }}
         run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
       - if: ${{ failure() }}
         run: |
@@ -75,7 +80,7 @@ jobs:
         if: ${{ failure() }}
         id: sanitize-name
         run: echo "sanitized=$(echo '${{ inputs.test-name }}-${{ inputs.timezone }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:

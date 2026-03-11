@@ -72,7 +72,7 @@ var _ = g.Describe("GroupDeletion", func() {
 		gm.Expect(portsErr).NotTo(gm.HaveOccurred())
 		var addr string
 		var serverCloseFn func()
-		addr, _, serverCloseFn = setup.ClosableStandalone(dataPath, ports)
+		addr, _, serverCloseFn = setup.ClosableStandalone(nil, dataPath, ports)
 		var connErr error
 		conn, connErr = grpchelper.Conn(addr, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(connErr).NotTo(gm.HaveOccurred())

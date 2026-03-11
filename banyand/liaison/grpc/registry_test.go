@@ -197,7 +197,7 @@ func setupForRegistry() func() {
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	Expect(err).NotTo(HaveOccurred())
 	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
-		"--etcd-listen-peer-url="+listenPeerURL)
+		"--etcd-listen-peer-url="+listenPeerURL, "--schema-registry-mode=etcd")
 	deferFunc := test.SetupModules(
 		flags,
 		pipeline,

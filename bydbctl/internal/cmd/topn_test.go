@@ -44,7 +44,7 @@ var _ = Describe("Topn Schema Operation", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		// extracting the operation of creating topn schema
 		rootCmd = &cobra.Command{Use: "root"}
@@ -240,7 +240,7 @@ var _ = Describe("Topn Data Query", func() {
 		startStr = now.Add(-20 * time.Minute).Format(time.RFC3339)
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)
-		grpcAddr, addr, deferFunc = setup.Standalone()
+		grpcAddr, addr, deferFunc = setup.Standalone(nil)
 		addr = httpSchema + addr
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)

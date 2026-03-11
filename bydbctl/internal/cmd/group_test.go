@@ -38,7 +38,7 @@ var _ = Describe("Group", func() {
 	var deferFunc func()
 	var rootCmd *cobra.Command
 	BeforeEach(func() {
-		_, addr, deferFunc = setup.EmptyStandalone()
+		_, addr, deferFunc = setup.EmptyStandalone(nil)
 		addr = httpSchema + addr
 		// extracting the operation of creating group
 		rootCmd = &cobra.Command{Use: "root"}

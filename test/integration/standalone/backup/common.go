@@ -78,7 +78,7 @@ func InitStandaloneEnv() (*CommonTestVars, string, error) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	var addr string
-	addr, _, vars.DeferFunc = setup.ClosableStandalone(vars.Dir, ports)
+	addr, _, vars.DeferFunc = setup.ClosableStandalone(nil, vars.Dir, ports)
 
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))

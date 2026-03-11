@@ -212,6 +212,8 @@ func (sr *schemaRepo) processTrace(ctx context.Context, gName string) {
 }
 
 func (sr *schemaRepo) initGroup(groupSchema *commonv1.Group) (*group, error) {
+	sr.groupMux.Lock()
+	defer sr.groupMux.Unlock()
 	g, ok := sr.getGroup(groupSchema.Metadata.Name)
 	if ok {
 		return g, nil

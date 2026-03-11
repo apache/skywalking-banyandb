@@ -86,12 +86,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).ShouldNot(HaveOccurred())
 	<-server.ReadyNotify()
 
+	clusterConfig := setup.EtcdClusterConfig(ep)
 	By("Starting data node 0")
-	_, dn0Path, closeDataNode0 := setup.DataNodeWithAddrAndDir(ep)
+	_, dn0Path, closeDataNode0 := setup.DataNodeWithAddrAndDir(clusterConfig)
 	By("Starting data node 1")
-	_, dn1Path, closeDataNode1 := setup.DataNodeWithAddrAndDir(ep)
+	_, dn1Path, closeDataNode1 := setup.DataNodeWithAddrAndDir(clusterConfig)
 	By("Starting liaison node")
-	liaisonAddr, liaisonPath, closerLiaisonNode := setup.LiaisonNodeWithAddrAndDir(ep)
+	liaisonAddr, liaisonPath, closerLiaisonNode := setup.LiaisonNodeWithAddrAndDir(clusterConfig)
 
 	deferFunc = func() {
 		closerLiaisonNode()

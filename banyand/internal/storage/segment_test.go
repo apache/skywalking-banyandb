@@ -46,7 +46,7 @@ func (m mockTSTable) Close() error {
 
 func (m mockTSTable) Collect(Metrics) {}
 
-func (m mockTSTable) TakeFileSnapshot(string) error { return nil }
+func (m mockTSTable) TakeFileSnapshot(string) (bool, error) { return true, nil }
 
 // mockTSTableOpener implements the necessary functions to open a TSTable.
 type mockTSTableOpener struct{}

@@ -84,6 +84,18 @@ func (c *schemaCache) GetMaxRevision() int64 {
 	return c.latestUpdateAt
 }
 
+// Get returns a copy of the entry for the given propID, or nil if not found.
+func (c *schemaCache) Get(propID string) *cacheEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.entries[propID]
+	if !ok {
+		return nil
+	}
+	copied := *entry
+	return &copied
+}
+
 // GetAllEntries returns a copy of all entries.
 func (c *schemaCache) GetAllEntries() map[string]*cacheEntry {
 	c.mu.RLock()

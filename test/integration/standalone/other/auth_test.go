@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package integration_other_test
+package other
 
 import (
 	"embed"
@@ -75,7 +75,7 @@ var _ = g.Describe("Query service_cpm_minute with authentication", func() {
 		gm.Expect(len(cfg.Users)).Should(gm.BeNumerically(">", 0))
 		testUser = cfg.Users[0]
 		// Username and password must be provided because health checks require authentication when --enable-health-auth=true is enabled.
-		grpcAddr, httpAddr, deferFn = setup.StandaloneWithAuth(
+		grpcAddr, httpAddr, deferFn = setup.StandaloneWithAuth(testConfig,
 			testUser.Username, testUser.Password,
 			fmt.Sprintf("--auth-config-file=%s", authCfgFile),
 			"--enable-health-auth=true",

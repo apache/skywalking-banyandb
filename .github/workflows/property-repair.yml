@@ -64,7 +64,7 @@ jobs:
         if: ${{ failure() }}
         id: sanitize-name
         run: echo "sanitized=$(echo '${{ inputs.test-name }}' | sed 's/[^a-zA-Z0-9._-]/-/g')" >> $GITHUB_OUTPUT
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         name: Upload BanyanDB Data Folder
         with:

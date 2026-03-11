@@ -397,39 +397,152 @@ func TestRepairSchema(t *testing.T) {
 	})
 }
 
-func TestAggregateSchemaUpdates(t *testing.T) {
-	t.Run("nil query", func(t *testing.T) {
-		_, upd := startTestServer(t)
-		_, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{})
-		require.Error(t, rpcErr)
-		assert.Equal(t, codes.InvalidArgument, grpcstatus.Code(rpcErr))
-		assert.Contains(t, rpcErr.Error(), "query is required")
-	})
-	t.Run("empty results", func(t *testing.T) {
-		_, upd := startTestServer(t)
-		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "nonexistent"},
-		})
-		require.NoError(t, rpcErr)
-		assert.Empty(t, resp.Names)
-	})
-	t.Run("single result", func(t *testing.T) {
+func TestWatchSchemas_BiDirReplay(t *testing.T) {
+	t.Run("replay_from_revision", func(t *testing.T) {
 		mgmt, upd := startTestServer(t)
+		// Insert a property.
 		insertProperty(t, mgmt, "svc-a", "id1")
-		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc-a"},
+		// Wait a bit then insert another.
+		time.Sleep(10 * time.Millisecond)
+		// Get the first property's updatedAt to use as max_revision.
+		stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
+			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc-a", Ids: []string{"id1"}},
 		})
-		require.NoError(t, rpcErr)
-		assert.Equal(t, []string{"svc-a"}, resp.Names)
+		require.NoError(t, streamErr)
+		responses, recvErr := collectListResponses(stream)
+		require.NoError(t, recvErr)
+		require.Len(t, responses, 1)
+		// Insert a second property after the first.
+		insertProperty(t, mgmt, "svc-b", "id2")
+		// Start bidi watch with max_revision = 0 (replay all).
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		watchStream, watchErr := upd.WatchSchemas(ctx)
+		require.NoError(t, watchErr)
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{}))
+		// Collect events until REPLAY_DONE.
+		var events []*schemav1.WatchSchemasResponse
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+			events = append(events, resp)
+		}
+		assert.GreaterOrEqual(t, len(events), 2, "should replay all properties")
 	})
-	t.Run("duplicates deduped", func(t *testing.T) {
+
+	t.Run("metadata_only_replay", func(t *testing.T) {
 		mgmt, upd := startTestServer(t)
-		insertProperty(t, mgmt, "svc-a", "id1")
-		insertProperty(t, mgmt, "svc-a", "id2")
-		resp, rpcErr := upd.AggregateSchemaUpdates(context.Background(), &schemav1.AggregateSchemaUpdatesRequest{
-			Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc-a"},
+		insertProperty(t, mgmt, "svc-meta", "id-meta")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		watchStream, watchErr := upd.WatchSchemas(ctx)
+		require.NoError(t, watchErr)
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{
+			TagProjection: []string{"kind", "group", "name", "updated_at"},
+		}))
+		var events []*schemav1.WatchSchemasResponse
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+			events = append(events, resp)
+		}
+		require.NotEmpty(t, events)
+		for _, evt := range events {
+			assert.True(t, evt.MetadataOnly, "replay events should have metadata_only=true")
+			// Verify that only projected tags are returned, not the full property tags.
+			allowedKeys := map[string]bool{"kind": true, "group": true, "name": true, "updated_at": true}
+			for _, tag := range evt.Property.GetTags() {
+				assert.True(t, allowedKeys[tag.GetKey()],
+					"unexpected tag key %q in metadata_only replay; only projected tags should be returned", tag.GetKey())
+			}
+		}
+	})
+
+	t.Run("live_events_after_replay", func(t *testing.T) {
+		mgmt, upd := startTestServer(t)
+		insertProperty(t, mgmt, "svc-live", "id-live")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		watchStream, watchErr := upd.WatchSchemas(ctx)
+		require.NoError(t, watchErr)
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{}))
+		// Drain replay.
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+		}
+		// Insert new data - should come through as live event.
+		insertProperty(t, mgmt, "svc-new", "id-new")
+		resp, err := watchStream.Recv()
+		require.NoError(t, err)
+		assert.Equal(t, schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT, resp.EventType)
+		assert.Equal(t, "id-new", resp.Property.GetId())
+	})
+
+	t.Run("multiple_requests", func(t *testing.T) {
+		mgmt, upd := startTestServer(t)
+		insertProperty(t, mgmt, "svc-multi", "id-multi")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		watchStream, watchErr := upd.WatchSchemas(ctx)
+		require.NoError(t, watchErr)
+		// First request.
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{}))
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+		}
+		// Second request on same stream (metadata only).
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{
+			TagProjection: []string{"kind", "group", "name", "updated_at"},
+		}))
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+			assert.True(t, resp.MetadataOnly)
+		}
+	})
+
+	t.Run("replay_includes_deleted", func(t *testing.T) {
+		mgmt, upd := startTestServer(t)
+		insertProperty(t, mgmt, "svc-del", "id-del")
+		_, deleteErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
+			Delete:   &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc-del", Id: "id-del"},
+			UpdateAt: timestamppb.Now(),
 		})
-		require.NoError(t, rpcErr)
-		assert.Equal(t, []string{"svc-a"}, resp.Names)
+		require.NoError(t, deleteErr)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		watchStream, watchErr := upd.WatchSchemas(ctx)
+		require.NoError(t, watchErr)
+		require.NoError(t, watchStream.Send(&schemav1.WatchSchemasRequest{}))
+		var hasDeleteEvent bool
+		for {
+			resp, err := watchStream.Recv()
+			require.NoError(t, err)
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
+				break
+			}
+			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE && resp.Property.GetId() == "id-del" {
+				hasDeleteEvent = true
+				assert.Greater(t, resp.DeleteTime, int64(0), "delete event should carry a non-zero delete_time")
+			}
+		}
+		assert.True(t, hasDeleteEvent, "replay should include deleted entries as DELETE events")
 	})
 }

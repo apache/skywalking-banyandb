@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -68,6 +69,7 @@ func newRunCommand() *cobra.Command {
 		measureRoot  string
 		propertyRoot string
 		traceRoot    string
+		schemaRoot   string
 		fsConfig     remoteconfig.FsConfig
 	)
 	// Initialize nested structs to avoid nil pointer during flag binding
@@ -79,85 +81,51 @@ func newRunCommand() *cobra.Command {
 		Use:   "run",
 		Short: "Restore BanyanDB data from remote storage",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if streamRoot == "" && measureRoot == "" && propertyRoot == "" && traceRoot == "" {
-				return errors.New("at least one of stream-root-path, measure-root-path, property-root-path or trace-root-path is required")
+			if streamRoot == "" && measureRoot == "" && propertyRoot == "" && traceRoot == "" && schemaRoot == "" {
+				return errors.New("at least one of stream-root-path, measure-root-path, property-root-path, trace-root-path or schema-root-path is required")
 			}
 			if source == "" {
 				return errors.New("source is required")
 			}
+
+			cleanPaths := func(paths ...*string) error {
+				for _, p := range paths {
+					if *p != "" {
+						var err error
+						if *p, err = banyandbpath.Get(*p); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}
+
+			if err := cleanPaths(&streamRoot, &measureRoot, &propertyRoot, &traceRoot); err != nil {
+				return err
+			}
+
 			fs, err := newFS(source, &fsConfig)
 			if err != nil {
 				return err
 			}
 			defer fs.Close()
 
+			catalogs := []catalogEntry{
+				{rootPath: streamRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM)},
+				{rootPath: measureRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_MEASURE)},
+				{rootPath: propertyRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_PROPERTY)},
+				{rootPath: traceRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_TRACE)},
+				{rootPath: schemaRoot, catalogName: snapshot.SchemaPropertyCatalogName},
+			}
 			var errs error
-
-			if streamRoot != "" {
-				timeDirPath := filepath.Join(streamRoot, "stream", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, streamRoot, commonv1.Catalog_CATALOG_STREAM); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("stream restore failed: %w", err))
-					} else {
-						logger.Infof("delete stream time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no stream time-dir file found, skip it: %s", timeDirPath)
+			for _, c := range catalogs {
+				if c.rootPath == "" {
+					continue
+				}
+				if err := restoreFromTimeDir(fs, c.rootPath, c.catalogName); err != nil {
+					errs = multierr.Append(errs, err)
 				}
 			}
-			if measureRoot != "" {
-				timeDirPath := filepath.Join(measureRoot, "measure", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, measureRoot, commonv1.Catalog_CATALOG_MEASURE); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("measure restore failed: %w", err))
-					} else {
-						logger.Infof("delete measure time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no measure time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-			if propertyRoot != "" {
-				timeDirPath := filepath.Join(propertyRoot, "property", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, propertyRoot, commonv1.Catalog_CATALOG_PROPERTY); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("property restore failed: %w", err))
-					} else {
-						logger.Infof("delete property time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no property time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-			if traceRoot != "" {
-				timeDirPath := filepath.Join(traceRoot, "trace", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, traceRoot, commonv1.Catalog_CATALOG_TRACE); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("trace restore failed: %w", err))
-					} else {
-						logger.Infof("delete trace time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no trace time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-
 			return errs
 		},
 	}
@@ -166,6 +134,7 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&measureRoot, "measure-root-path", "/tmp", "Root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root-path", "/tmp", "Root directory for property catalog")
 	cmd.Flags().StringVar(&traceRoot, "trace-root-path", "/tmp", "Root directory for trace catalog")
+	cmd.Flags().StringVar(&schemaRoot, "schema-root-path", "/tmp", "Root directory for schema property catalog")
 	cmd.Flags().StringVar(&fsConfig.S3.S3ConfigFilePath, "s3-config-file", "", "Path to the s3 configuration file")
 	cmd.Flags().StringVar(&fsConfig.S3.S3CredentialFilePath, "s3-credential-file", "", "Path to the s3 credential file")
 	cmd.Flags().StringVar(&fsConfig.S3.S3ProfileName, "s3-profile", "", "S3 profile name")
@@ -180,8 +149,35 @@ func newRunCommand() *cobra.Command {
 	return cmd
 }
 
+type catalogEntry struct {
+	rootPath    string
+	catalogName string
+}
+
+func restoreFromTimeDir(fs remote.FS, rootPath, catalogName string) error {
+	timeDirPath := filepath.Join(rootPath, catalogName, "time-dir")
+	data, err := os.ReadFile(timeDirPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Infof("no %s time-dir file found, skip it: %s", catalogName, timeDirPath)
+			return nil
+		}
+		return err
+	}
+	timeDir := strings.TrimSpace(string(data))
+	if err = restoreByName(fs, timeDir, rootPath, catalogName); err != nil {
+		return fmt.Errorf("%s restore failed: %w", catalogName, err)
+	}
+	logger.Infof("delete %s time-dir file", catalogName)
+	_ = os.Remove(timeDirPath)
+	return nil
+}
+
 func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Catalog) error {
-	catalogName := snapshot.CatalogName(catalog)
+	return restoreByName(fs, timeDir, rootPath, snapshot.CatalogName(catalog))
+}
+
+func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	remotePrefix := filepath.Join(timeDir, catalogName, "/")
 
 	remoteFiles, err := fs.List(context.Background(), remotePrefix)
@@ -189,7 +185,7 @@ func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Cat
 		return fmt.Errorf("failed to list remote files: %w", err)
 	}
 
-	localDir := filepath.Join(snapshot.LocalDir(rootPath, catalog), storage.DataDir)
+	localDir := filepath.Join(rootPath, catalogName, storage.DataDir)
 	if err = os.MkdirAll(localDir, storage.DirPerm); err != nil {
 		return fmt.Errorf("failed to create local directory %s: %w", localDir, err)
 	}
