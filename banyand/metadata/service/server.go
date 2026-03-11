@@ -31,12 +31,15 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/schemaserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -54,6 +57,7 @@ type Service interface {
 	GetSchemaServerPort() *uint32
 	GetSchemaGossipPort() *uint32
 	SetPropertyPipelineClient(queue.Client)
+	SetSnapshotPipeline(queue.Server)
 }
 
 type server struct {
@@ -62,6 +66,7 @@ type server struct {
 	propServer              schemaserver.Server
 	repairSvc               schemaserver.RepairService
 	pipelineClient          queue.Client
+	snapshotPipeline        queue.Server
 	omr                     observability.MetricsRegistry
 	serviceFlags            *run.FlagSet
 	scheduler               *timestamp.Scheduler
@@ -203,6 +208,12 @@ func (s *server) PreRun(ctx context.Context) error {
 				return repairPreRunErr
 			}
 		}
+		if s.snapshotPipeline != nil {
+			if subscribeErr := s.snapshotPipeline.Subscribe(data.TopicSnapshot,
+				&schemaPropertySnapshotListener{s: s}); subscribeErr != nil {
+				return subscribeErr
+			}
+		}
 	default:
 		return errors.New("unknown schema storage type")
 	}
@@ -296,6 +307,11 @@ func (s *server) SetPropertyPipelineClient(client queue.Client) {
 	s.pipelineClient = client
 }
 
+// SetSnapshotPipeline stores the pipeline server for subscribing to snapshot topics.
+func (s *server) SetSnapshotPipeline(pipeline queue.Server) {
+	s.snapshotPipeline = pipeline
+}
+
 // GetSchemaGossipPort returns the schema gossip gRPC port.
 func (s *server) GetSchemaGossipPort() *uint32 {
 	if s.repairSvc != nil {
@@ -329,6 +345,23 @@ func (s *server) enrichContextWithSchemaAddress(ctx context.Context) context.Con
 	}
 	node.PropertySchemaGrpcAddress = net.JoinHostPort(nodeHost, strconv.FormatUint(uint64(*port), 10))
 	return context.WithValue(ctx, common.ContextNodeKey, node)
+}
+
+type schemaPropertySnapshotListener struct {
+	*bus.UnImplementedHealthyListener
+	s *server
+}
+
+func (l *schemaPropertySnapshotListener) Rev(ctx context.Context, _ bus.Message) bus.Message {
+	if l.s.propServer == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	snp := l.s.propServer.TakeSnapshot(ctx)
+	if snp == nil {
+		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
+	}
+	snp.Name = snapshot.SchemaPropertyCatalogName + "/" + snp.Name
+	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
 }
 
 func performDefrag(listenURLs []string, ecli *clientv3.Client) error {

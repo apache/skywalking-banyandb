@@ -28,6 +28,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 )
@@ -120,7 +121,7 @@ func newListCmd() *cobra.Command {
 
 func newCreateCmd() *cobra.Command {
 	var catalogs []string
-	var streamRoot, measureRoot, propertyRoot, traceRoot string
+	var streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot string
 	var timeStyle string
 
 	cmd := &cobra.Command{
@@ -128,7 +129,7 @@ func newCreateCmd() *cobra.Command {
 		Short: "Create local 'time-dir' file(s) in catalog directories",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(catalogs) == 0 {
-				catalogs = []string{"stream", "measure", "property", "trace"}
+				catalogs = []string{"stream", "measure", "property", "trace", snapshot.SchemaPropertyCatalogName}
 			}
 			var tValue string
 			if len(args) > 0 {
@@ -138,7 +139,7 @@ func newCreateCmd() *cobra.Command {
 			}
 
 			for _, cat := range catalogs {
-				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot)
+				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot)
 				if err != nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "Skipping unknown catalog '%s': %v\n", cat, err)
 					continue
@@ -157,30 +158,31 @@ func newCreateCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil, "Catalog(s) to create time-dir file (e.g., stream, measure, property, trace). Defaults to all if not provided.")
+	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil,
+		"Catalog(s) to create time-dir file (e.g., stream, measure, property, trace, schema-property). Defaults to all if not provided.")
 	cmd.Flags().StringVar(&streamRoot, "stream-root", "/tmp", "Local root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root", "/tmp", "Local root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root", "/tmp", "Local root directory for property catalog")
 	cmd.Flags().StringVar(&traceRoot, "trace-root", "/tmp", "Local root directory for trace catalog")
+	cmd.Flags().StringVar(&schemaRoot, "schema-root", "/tmp", "Local root directory for schema property catalog")
 	cmd.Flags().StringVar(&timeStyle, "time-style", "daily", "Time style to compute time string (daily or hourly)")
 	return cmd
 }
 
 func newReadCmd() *cobra.Command {
 	var catalogs []string
-	var streamRoot, measureRoot, propertyRoot, traceRoot string
+	var streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot string
 
 	cmd := &cobra.Command{
 		Use:   "read",
 		Short: "Read local 'time-dir' file(s) from catalog directories",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// If no catalog is specified, process all three.
 			if len(catalogs) == 0 {
-				catalogs = []string{"stream", "measure", "property", "trace"}
+				catalogs = []string{"stream", "measure", "property", "trace", snapshot.SchemaPropertyCatalogName}
 			}
 
 			for _, cat := range catalogs {
-				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot)
+				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot)
 				if err != nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "Skipping unknown catalog '%s': %v\n", cat, err)
 					continue
@@ -200,28 +202,29 @@ func newReadCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil, "Catalog(s) to read time-dir file (e.g., stream, measure, property). Defaults to all if not provided.")
+	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil,
+		"Catalog(s) to read time-dir file (e.g., stream, measure, property, schema-property). Defaults to all if not provided.")
 	cmd.Flags().StringVar(&streamRoot, "stream-root", "/tmp", "Local root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root", "/tmp", "Local root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root", "/tmp", "Local root directory for property catalog")
 	cmd.Flags().StringVar(&traceRoot, "trace-root", "/tmp", "Local root directory for trace catalog")
+	cmd.Flags().StringVar(&schemaRoot, "schema-root", "/tmp", "Local root directory for schema property catalog")
 	return cmd
 }
 
 func newDeleteCmd() *cobra.Command {
 	var catalogs []string
-	var streamRoot, measureRoot, propertyRoot, traceRoot string
+	var streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot string
 
 	cmd := &cobra.Command{
 		Use:   "delete",
 		Short: "Delete local 'time-dir' file(s) from catalog directories",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// If no catalog is specified, process all three.
 			if len(catalogs) == 0 {
-				catalogs = []string{"stream", "measure", "property"}
+				catalogs = []string{"stream", "measure", "property", "trace", snapshot.SchemaPropertyCatalogName}
 			}
 			for _, cat := range catalogs {
-				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot)
+				filePath, err := getLocalTimeDirFilePath(cat, streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot)
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Skipping unknown catalog '%s': %v\n", cat, err)
 					continue
@@ -241,15 +244,17 @@ func newDeleteCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil, "Catalog(s) to delete time-dir file (e.g., stream, measure, property). Defaults to all if not provided.")
+	cmd.Flags().StringSliceVar(&catalogs, "catalog", nil,
+		"Catalog(s) to delete time-dir file (e.g., stream, measure, property, schema-property). Defaults to all if not provided.")
 	cmd.Flags().StringVar(&streamRoot, "stream-root", "/tmp", "Local root directory for stream catalog")
 	cmd.Flags().StringVar(&measureRoot, "measure-root", "/tmp", "Local root directory for measure catalog")
 	cmd.Flags().StringVar(&propertyRoot, "property-root", "/tmp", "Local root directory for property catalog")
-	cmd.Flags().StringVar(&traceRoot, "trace-root", "/tmp", "Local root directory for property catalog")
+	cmd.Flags().StringVar(&traceRoot, "trace-root", "/tmp", "Local root directory for trace catalog")
+	cmd.Flags().StringVar(&schemaRoot, "schema-root", "/tmp", "Local root directory for schema property catalog")
 	return cmd
 }
 
-func getLocalTimeDirFilePath(catalog, streamRoot, measureRoot, propertyRoot, traceRoot string) (string, error) {
+func getLocalTimeDirFilePath(catalog, streamRoot, measureRoot, propertyRoot, traceRoot, schemaRoot string) (string, error) {
 	switch strings.ToLower(catalog) {
 	case "stream":
 		return filepath.Join(streamRoot, "stream", "time-dir"), nil
@@ -259,6 +264,8 @@ func getLocalTimeDirFilePath(catalog, streamRoot, measureRoot, propertyRoot, tra
 		return filepath.Join(propertyRoot, "property", "time-dir"), nil
 	case "trace":
 		return filepath.Join(traceRoot, "trace", "time-dir"), nil
+	case snapshot.SchemaPropertyCatalogName:
+		return filepath.Join(schemaRoot, snapshot.SchemaPropertyCatalogName, "time-dir"), nil
 	default:
 		return "", fmt.Errorf("unknown catalog type: %s", catalog)
 	}
