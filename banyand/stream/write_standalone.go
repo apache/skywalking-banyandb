@@ -313,15 +313,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		if req != nil && req.GetTagFamilySpec() != nil {
 			spec = req.GetTagFamilySpec()
 		}
-		var err error
-		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
-			w.l.Error().Err(err).Msg("cannot handle write event")
-			groups = make(map[string]*elementsInGroup)
+		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
+		if handleErr != nil {
+			w.l.Error().Err(handleErr).Msg("cannot handle write event")
 			continue
 		}
+		groups = newGroups
 	}
-	for i := range groups {
-		g := groups[i]
+	for groupName := range groups {
+		g := groups[groupName]
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.mustAddElements(es.elements)

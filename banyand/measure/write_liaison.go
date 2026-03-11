@@ -105,15 +105,15 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		var err error
-		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
-			w.l.Error().Err(err).Msg("cannot handle write event")
-			groups = make(map[string]*dataPointsInQueue)
+		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
+		if handleErr != nil {
+			w.l.Error().Err(handleErr).Msg("cannot handle write event")
 			continue
 		}
+		groups = newGroups
 	}
-	for i := range groups {
-		g := groups[i]
+	for groupName := range groups {
+		g := groups[groupName]
 		for j := range g.tables {
 			es := g.tables[j]
 			// Marshal series metadata for persistence in part folder

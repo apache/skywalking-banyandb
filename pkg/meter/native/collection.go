@@ -66,13 +66,20 @@ func (m *MetricCollection) AddCollector(c collector) {
 // FlushMetrics write all the metrics by flushing.
 func (m *MetricCollection) FlushMetrics() {
 	if len(m.collectors) == 0 {
+		log.Debug().Msg("native metric collection skipped: no collectors registered")
 		return
 	}
+	log.Debug().Int("collector_count", len(m.collectors)).Msg("native metric collection started")
 	publisher := m.pipeline.NewBatchPublisher(writeTimeout)
 	defer publisher.Close()
 	var messages []bus.Message
 	for _, collector := range m.collectors {
 		name, metrics := collector.Collect()
+		if len(metrics) == 0 {
+			log.Debug().Str("metric_name", name).Msg("native metric collector returned no metrics")
+			continue
+		}
+		log.Debug().Str("metric_name", name).Int("metric_count", len(metrics)).Msg("native metric collector collected metrics")
 		for _, metric := range metrics {
 			iwr := m.buildIWR(name, metric)
 			nodeID := ""
@@ -90,7 +97,9 @@ func (m *MetricCollection) FlushMetrics() {
 	_, err := publisher.Publish(context.TODO(), data.TopicMeasureWrite, messages...)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to publish messasges")
+		return
 	}
+	log.Debug().Int("message_count", len(messages)).Msg("native metric collection published messages")
 }
 
 func (m *MetricCollection) buildIWR(metricName string, metric metricWithLabelValues) *measurev1.InternalWriteRequest {
