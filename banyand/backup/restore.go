@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	remoteconfig "github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -86,6 +87,23 @@ func newRunCommand() *cobra.Command {
 			if source == "" {
 				return errors.New("source is required")
 			}
+
+			cleanPaths := func(paths ...*string) error {
+				for _, p := range paths {
+					if *p != "" {
+						var err error
+						if *p, err = banyandbpath.Get(*p); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}
+
+			if err := cleanPaths(&streamRoot, &measureRoot, &propertyRoot, &traceRoot); err != nil {
+				return err
+			}
+
 			fs, err := newFS(source, &fsConfig)
 			if err != nil {
 				return err

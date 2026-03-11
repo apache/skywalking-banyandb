@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -179,6 +180,11 @@ func (s *server) Validate() error {
 func (s *server) PreRun(ctx context.Context) error {
 	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
 	if s.embedded && needEtcd {
+		var err error
+		s.rootDir, err = banyandbpath.Get(s.rootDir)
+		if err != nil {
+			return err
+		}
 		etcdServer, startErr := embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
 			embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
 			embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))

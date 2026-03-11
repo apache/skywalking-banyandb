@@ -48,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -186,6 +187,10 @@ func (s *server) Validate() error {
 
 func (s *server) PreRun(_ context.Context) error {
 	s.l = logger.GetLogger("schema-server")
+	var err error
+	if s.root, err = banyandbpath.Get(s.root); err != nil {
+		return err
+	}
 	s.lfs = fs.NewLocalFileSystem()
 
 	s.watchers = newWatcherManager(s.l)

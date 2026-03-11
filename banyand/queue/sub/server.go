@@ -52,6 +52,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -139,6 +140,12 @@ func (s *server) PreRun(ctx context.Context) error {
 	// Initialize TLS reloader if TLS is enabled
 	if s.tls {
 		var err error
+		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
+			return errors.Wrap(err, "failed to get absolute path for certFile")
+		}
+		if s.keyFile, err = banyandbpath.Get(s.keyFile); err != nil {
+			return errors.Wrap(err, "failed to get absolute path for keyFile")
+		}
 		s.tlsReloader, err = pkgtls.NewReloader(s.certFile, s.keyFile, s.log)
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize TLS reloader for queue server")
