@@ -61,12 +61,14 @@ const (
 	ModeFile = "file"
 	// ModeProperty is the property-based mode for schema registry.
 	ModeProperty = "property"
+	// ModeNone is the none mode for node discovery (standalone).
+	ModeNone = "none"
 )
 
 // NodeDiscoveryConfig configures node discovery mode.
 type NodeDiscoveryConfig struct {
 	FileWriter *DiscoveryFileWriter
-	Mode       string // ModeEtcd (default) or ModeFile
+	Mode       string // ModeEtcd (default), ModeFile, or ModeNone
 }
 
 // SchemaRegistryConfig configures schema registry mode.

@@ -34,6 +34,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/dns"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/none"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
@@ -56,6 +57,8 @@ const (
 	NodeDiscoveryModeDNS = "dns"
 	// NodeDiscoveryModeFile represents file-based node discovery mode.
 	NodeDiscoveryModeFile = "file"
+	// NodeDiscoveryModeNone represents none node discovery mode for standalone use.
+	NodeDiscoveryModeNone = "none"
 )
 
 const (
@@ -164,8 +167,8 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"CA certificate file to verify the property schema server")
 
 	// node discovery configuration
-	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", NodeDiscoveryModeEtcd,
-		"Node discovery mode: 'etcd' for etcd-based discovery, 'dns' for DNS-based discovery, 'file' for file-based discovery")
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", NodeDiscoveryModeNone,
+		"Node discovery mode: 'none' for standalone, 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based discovery")
 	fs.StringSliceVar(&s.dnsSRVAddresses, "node-discovery-dns-srv-addresses", []string{},
 		"DNS SRV addresses for node discovery (e.g., _grpc._tcp.banyandb.svc.cluster.local)")
 	fs.DurationVar(&s.dnsFetchInitInterval, "node-discovery-dns-fetch-init-interval", 5*time.Second,
@@ -196,9 +199,9 @@ func (s *clientService) FlagSet() *run.FlagSet {
 
 func (s *clientService) Validate() error {
 	if s.nodeDiscoveryMode != NodeDiscoveryModeEtcd && s.nodeDiscoveryMode != NodeDiscoveryModeDNS &&
-		s.nodeDiscoveryMode != NodeDiscoveryModeFile {
-		return fmt.Errorf("invalid node-discovery-mode: %s, must be '%s', '%s', or '%s'",
-			s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS, NodeDiscoveryModeFile)
+		s.nodeDiscoveryMode != NodeDiscoveryModeFile && s.nodeDiscoveryMode != NodeDiscoveryModeNone {
+		return fmt.Errorf("invalid node-discovery-mode: %s, must be '%s', '%s', '%s', or '%s'",
+			s.nodeDiscoveryMode, NodeDiscoveryModeEtcd, NodeDiscoveryModeDNS, NodeDiscoveryModeFile, NodeDiscoveryModeNone)
 	}
 
 	if s.schemaRegistryMode != RegistryModeEtcd && s.schemaRegistryMode != RegistryModeProperty {
@@ -303,6 +306,9 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			return fmt.Errorf("failed to create file discovery service: %w", createErr)
 		}
 		s.nodeDiscoveryRegistry = fileSvc
+	}
+	if s.nodeDiscoveryMode == NodeDiscoveryModeNone {
+		s.nodeDiscoveryRegistry = none.NewService(ctx)
 	}
 
 	// If property mode, initialize the property schema registry

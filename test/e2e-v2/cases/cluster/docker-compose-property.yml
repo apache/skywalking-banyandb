@@ -27,7 +27,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
-    command: data --etcd-endpoints=http://etcd:2379 --schema-registry-mode=property
+    command: data --etcd-endpoints=http://etcd:2379 --schema-registry-mode=property --node-discovery-mode=etcd
     networks:
       - e2e
 
@@ -35,7 +35,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --etcd-endpoints=http://etcd:2379 --schema-registry-mode=property
+    command: liaison --etcd-endpoints=http://etcd:2379 --schema-registry-mode=property --node-discovery-mode=etcd
     networks:
       - e2e
 
