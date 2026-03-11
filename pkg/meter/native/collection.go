@@ -21,6 +21,7 @@ package native
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -45,6 +46,7 @@ type collector interface {
 
 // MetricCollection contains all the native implementations of metrics.
 type MetricCollection struct {
+	mu           sync.RWMutex
 	pipeline     queue.Client
 	nodeSelector NodeSelector
 	collectors   []collector
@@ -60,20 +62,27 @@ func NewMetricsCollection(pipeline queue.Client, nodeSelector NodeSelector) *Met
 
 // AddCollector Add native metric to MetricCollection.
 func (m *MetricCollection) AddCollector(c collector) {
+	m.mu.Lock()
 	m.collectors = append(m.collectors, c)
+	m.mu.Unlock()
 }
 
 // FlushMetrics write all the metrics by flushing.
 func (m *MetricCollection) FlushMetrics() {
+	m.mu.RLock()
 	if len(m.collectors) == 0 {
+		m.mu.RUnlock()
 		log.Debug().Msg("native metric collection skipped: no collectors registered")
 		return
 	}
-	log.Debug().Int("collector_count", len(m.collectors)).Msg("native metric collection started")
+	collectorsCopy := append([]collector(nil), m.collectors...)
+	m.mu.RUnlock()
+
+	log.Debug().Int("collector_count", len(collectorsCopy)).Msg("native metric collection started")
 	publisher := m.pipeline.NewBatchPublisher(writeTimeout)
 	defer publisher.Close()
 	var messages []bus.Message
-	for _, collector := range m.collectors {
+	for _, collector := range collectorsCopy {
 		name, metrics := collector.Collect()
 		if len(metrics) == 0 {
 			log.Debug().Str("metric_name", name).Msg("native metric collector returned no metrics")
@@ -96,7 +105,7 @@ func (m *MetricCollection) FlushMetrics() {
 	}
 	_, err := publisher.Publish(context.TODO(), data.TopicMeasureWrite, messages...)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to publish messasges")
+		log.Error().Err(err).Msg("Failed to publish messages")
 		return
 	}
 	log.Debug().Int("message_count", len(messages)).Msg("native metric collection published messages")

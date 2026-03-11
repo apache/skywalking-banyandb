@@ -19,7 +19,6 @@
 package observability
 
 import (
-	"fmt"
 	"net"
 	"time"
 
@@ -68,7 +67,7 @@ func Setup() {
 	// Use EmptyStandalone so we can get the real data root path used by the server.
 	grpcAddr, httpAddr, closeFn := setup.EmptyStandalone(config,
 		"--observability-modes=native",
-		"--observability-listener-addr=:2121",
+		"--observability-listener-addr=:0",
 		"--observability-metrics-interval=2s",
 		"--observability-native-flush-interval=2s",
 		"--measure-flush-timeout=100ms",
@@ -108,13 +107,11 @@ func Setup() {
 
 func waitForHTTPReady(httpAddr string) {
 	host, port, err := net.SplitHostPort(httpAddr)
-	if err != nil {
-		return
-	}
+	gm.Expect(err).NotTo(gm.HaveOccurred())
 	if host == "" {
 		host = "localhost"
 	}
-	addr := fmt.Sprintf("%s:%s", host, port)
+	addr := net.JoinHostPort(host, port)
 	client := &net.Dialer{Timeout: 2 * time.Second}
 	gm.Eventually(func() error {
 		conn, dialErr := client.Dial("tcp", addr)
