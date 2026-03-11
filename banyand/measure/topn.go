@@ -21,9 +21,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -727,6 +729,16 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 		return nil, databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("field %s is not found in %s schema", fieldName, manager.m.Metadata.GetName())
 	}
 	fieldType := manager.m.GetFields()[fieldIdx].GetFieldType()
+	// Validate that the field type is supported by TopN streaming (INT or FLOAT only)
+	if fieldType != databasev1.FieldType_FIELD_TYPE_INT && fieldType != databasev1.FieldType_FIELD_TYPE_FLOAT {
+		manager.l.Error().
+			Str("fieldName", fieldName).
+			Str("fieldType", fieldType.String()).
+			Str("measure", manager.m.Metadata.GetName()).
+			Msg("TopNAggregation field type must be INT or FLOAT")
+		return nil, databasev1.FieldType_FIELD_TYPE_UNSPECIFIED,
+			fmt.Errorf("field %s has unsupported type %s for TopNAggregation (must be INT or FLOAT)", fieldName, fieldType.String())
+	}
 	if len(groupByNames) == 0 {
 		return func(_ context.Context, request any) any {
 			dpWithEvs := request.(*dataPointWithEntityValues)
@@ -970,8 +982,13 @@ func (t *TopNValue) marshalFloat64(dst []byte) ([]byte, error) {
 
 func (t *TopNValue) float64ListToBytes(dst []byte, values []float64) []byte {
 	dst = dst[:0]
+	// Pre-grow dst to avoid per-value allocations
+	expectedLen := len(values) * 8
+	if cap(dst) < expectedLen {
+		dst = make([]byte, 0, expectedLen)
+	}
 	for _, v := range values {
-		dst = append(dst, convert.Float64ToBytes(v)...)
+		dst = binary.BigEndian.AppendUint64(dst, math.Float64bits(v))
 	}
 	return dst
 }
@@ -1077,7 +1094,10 @@ func (t *TopNValue) unmarshalFloat64(src []byte, decoder *encoding.BytesBlockDec
 		return fmt.Errorf("src is too short for reading float values with size %d; len(src)=%d", valueLen, len(src))
 	}
 
-	floatValues := t.bytesToFloat64List(nil, src[:valueLen], int(valuesCount))
+	floatValues, err := t.bytesToFloat64List(nil, src[:valueLen], int(valuesCount))
+	if err != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.floatValues: %w", err)
+	}
 	t.values = make([]SortableValue, len(floatValues))
 	for i, v := range floatValues {
 		t.values[i] = FloatValue(v)
@@ -1102,17 +1122,18 @@ func (t *TopNValue) unmarshalFloat64(src []byte, decoder *encoding.BytesBlockDec
 	return nil
 }
 
-func (t *TopNValue) bytesToFloat64List(dst []float64, src []byte, count int) []float64 {
+func (t *TopNValue) bytesToFloat64List(dst []float64, src []byte, count int) ([]float64, error) {
+	expectedLen := count * 8
+	if len(src) != expectedLen {
+		return nil, fmt.Errorf("invalid float64 data length: expected %d bytes, got %d bytes", expectedLen, len(src))
+	}
 	dst = dst[:0]
 	for i := 0; i < count; i++ {
-		if len(src) < 8 {
-			break
-		}
-		v := convert.BytesToFloat64(src[:8])
+		v := math.Float64frombits(binary.BigEndian.Uint64(src[:8]))
 		dst = append(dst, v)
 		src = src[8:]
 	}
-	return dst
+	return dst, nil
 }
 
 // GroupName returns the group name.

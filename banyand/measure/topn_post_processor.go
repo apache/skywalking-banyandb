@@ -60,7 +60,7 @@ func (v FloatValue) Less(other interface{}) bool {
 
 // Greater returns true if v is greater than other.
 func (v FloatValue) Greater(other interface{}) bool {
-	return float64(v) > float64(other.(FloatValue))
+	return v > other.(FloatValue)
 }
 
 // FieldValueToSortableValue converts a FieldValue to a SortableValue.
@@ -352,6 +352,13 @@ func (taggr *topNPostProcessor) Put(entityValues pbv1.EntityValues, val Sortable
 		key:     key,
 		values:  entityValues,
 		version: version,
+	}
+
+	// If topN <= 0, accept all items without truncation (unbounded mode for distributed aggregation)
+	if taggr.topN <= 0 {
+		heap.Push(timeline.queue, newItem)
+		timeline.items[key] = newItem
+		return
 	}
 
 	if timeline.queue.Len() < int(taggr.topN) {

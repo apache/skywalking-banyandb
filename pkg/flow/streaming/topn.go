@@ -64,8 +64,9 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 		}
 		if topNAggrFunc.fieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
 			s.f.drainErr(errors.New("fieldType must be specified"))
+		} else {
+			topNAggrFunc.setComparatorFromFieldType()
 		}
-		topNAggrFunc.setComparatorFromFieldType()
 		topNAggrFunc.aggregatorGroup = make(map[string]*topNAggregator)
 		return topNAggrFunc
 	}
@@ -213,7 +214,16 @@ func (t *topNAggregatorGroup) setComparatorFromFieldType() {
 	case databasev1.FieldType_FIELD_TYPE_FLOAT:
 		baseComparator = utils.Float64Comparator
 	default:
-		panic("unsupported field type: must be ValueTypeInt64 or ValueTypeFloat64")
+		// Unsupported field type: log and fall back to a no-op comparator instead of panicking.
+		if t.l != nil {
+			t.l.Error().
+				Interface("fieldType", t.fieldType).
+				Msg("unsupported field type for TopN; defaulting to no-op comparator")
+		}
+		// Treat all values as equal to avoid type assumptions and panics.
+		baseComparator = func(_, _ interface{}) int {
+			return 0
+		}
 	}
 	if t.sort == ASC {
 		t.comparator = baseComparator
