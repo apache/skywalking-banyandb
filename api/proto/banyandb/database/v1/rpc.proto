@@ -364,6 +364,9 @@ message GroupRegistryServiceDeleteRequest {
   // force indicates whether to force delete the group even if it contains data.
   // When false, deletion will fail if the group is not empty.
   bool force = 3;
+  // data_only indicates whether to delete only data files without removing metadata.
+  // When true, metadata are preserved.
+  bool data_only = 4;
 }
 
 // GroupRegistryServiceDeleteResponse is the response for deleting a group.

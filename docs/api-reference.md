@@ -2909,6 +2909,7 @@ GroupRegistryServiceDeleteRequest is the request for deleting a group.
 | group | [string](#string) |  | group is the name of the group to delete. |
 | dry_run | [bool](#bool) |  | dry_run indicates whether to perform a dry run without actually deleting data. When true, returns what would be deleted without making changes. |
 | force | [bool](#bool) |  | force indicates whether to force delete the group even if it contains data. When false, deletion will fail if the group is not empty. |
+| data_only | [bool](#bool) |  | data_only indicates whether to delete only data files without removing metadata. When true, metadata are preserved. |
 
 
 

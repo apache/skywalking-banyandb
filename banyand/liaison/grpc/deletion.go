@@ -104,7 +104,7 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 	return nil
 }
 
-func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group string) error {
+func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group string, dataOnly bool) error {
 	existingTask, getTaskErr := m.getDeletionTask(ctx, group)
 	if getTaskErr == nil {
 		switch existingTask.CurrentPhase {
@@ -123,7 +123,7 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 			}
 			existingTask.CurrentPhase = databasev1.GroupDeletionTask_PHASE_PENDING
 			existingTask.Message = "retrying after previous failure"
-			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask)
+			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask, dataOnly)
 			return nil
 		case databasev1.GroupDeletionTask_PHASE_PENDING,
 			databasev1.GroupDeletionTask_PHASE_IN_PROGRESS:
@@ -137,7 +137,7 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 			}
 			existingTask.CurrentPhase = databasev1.GroupDeletionTask_PHASE_PENDING
 			existingTask.Message = "retrying after stale task detected"
-			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask)
+			go m.executeDeletion(context.WithoutCancel(ctx), group, existingTask, dataOnly)
 			return nil
 		}
 	}
@@ -166,11 +166,11 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 		m.tasks.Delete(group)
 		return fmt.Errorf("failed to save initial deletion task for group %s: %w", group, saveErr)
 	}
-	go m.executeDeletion(context.WithoutCancel(ctx), group, task)
+	go m.executeDeletion(context.WithoutCancel(ctx), group, task, dataOnly)
 	return nil
 }
 
-func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group string, task *databasev1.GroupDeletionTask) {
+func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group string, task *databasev1.GroupDeletionTask, dataOnly bool) {
 	task.Message = "waiting for in-flight requests to complete"
 	m.saveProgress(ctx, group, task)
 	done := m.groupRepo.waitInflightRequests(group)
@@ -191,6 +191,13 @@ func (m *groupDeletionTaskManager) executeDeletion(ctx context.Context, group st
 			m.failTask(ctx, group, task, fmt.Sprintf("failed to delete data files: %v", dropErr))
 			return
 		}
+	}
+
+	if dataOnly {
+		task.CurrentPhase = databasev1.GroupDeletionTask_PHASE_COMPLETED
+		task.Message = "data files deleted successfully"
+		m.saveProgress(ctx, group, task)
+		return
 	}
 
 	opt := schema.ListOpt{Group: group}

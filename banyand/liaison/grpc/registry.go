@@ -649,7 +649,7 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 				"group %s is not empty, use force=true to delete non-empty groups", g)
 		}
 	}
-	if startErr := rs.deletionTaskManager.startDeletion(ctx, g); startErr != nil {
+	if startErr := rs.deletionTaskManager.startDeletion(ctx, g, req.GetDataOnly()); startErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
 		return nil, startErr
 	}

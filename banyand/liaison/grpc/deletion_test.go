@@ -139,7 +139,7 @@ func TestDeletion(t *testing.T) {
 			UpdatedAt:    timestamppb.Now(),
 		})
 
-		err := m.startDeletion(context.Background(), "existing-group")
+		err := m.startDeletion(context.Background(), "existing-group", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already in progress")
 	})
@@ -246,7 +246,7 @@ func TestDeletion(t *testing.T) {
 			groupRepo:      gr,
 			log:            logger.GetLogger("test"),
 		}
-		require.NoError(t, m.startDeletion(context.Background(), group))
+		require.NoError(t, m.startDeletion(context.Background(), group, false))
 		require.Eventually(t, func() bool {
 			acquireErr := gr.acquireRequest(group)
 			if acquireErr == nil {
