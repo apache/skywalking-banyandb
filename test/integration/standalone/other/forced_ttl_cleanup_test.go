@@ -109,7 +109,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 
 		// Wait for segments to be persisted and properly organized
 		g.By("Waiting for segments to be persisted to disk")
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 
 		// Verify data was written successfully
 		ctx := context.Background()
@@ -180,7 +180,7 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 
 		// Wait additional time for segment deletions to complete
 		g.By("Waiting for segment deletions to complete")
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		// Verify old snapshot was cleaned up
 		g.By("Verifying snapshot cleanup behavior")

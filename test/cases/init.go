@@ -131,13 +131,13 @@ func Initialize(addr string, now time.Time) {
 			},
 			DataFile: "service_cpm_minute_spec_order2.json",
 		})
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 	// trace
 	interval = 500 * time.Millisecond
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now, interval)
 	casestrace.WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", now, interval)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
 	casestrace.WriteMixed(conn, now.Add(2*time.Minute), interval,
 		casestrace.WriteSpec{

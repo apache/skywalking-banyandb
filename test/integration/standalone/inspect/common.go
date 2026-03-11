@@ -210,13 +210,13 @@ func writeTraceData(ctx context.Context, groupName, traceName string, dataCount 
 	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
 }
 
-var _ = ginkgo.Describe("Inspect measure in standalone mode", func() {
+var _ = ginkgo.Describe("Inspect measure in standalone mode", ginkgo.Ordered, func() {
 	var groupName string
 	var measureName string
 	var ctx context.Context
 	const dataCount = 10
 
-	ginkgo.BeforeEach(func() {
+	ginkgo.BeforeAll(func() {
 		ctx = context.TODO()
 		groupName = fmt.Sprintf("inspect-measure-test-%d", time.Now().UnixNano())
 		measureName = "test_measure"
@@ -269,14 +269,14 @@ var _ = ginkgo.Describe("Inspect measure in standalone mode", func() {
 			},
 		})
 		gomega.Expect(measureErr).ShouldNot(gomega.HaveOccurred())
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Second)
 
 		ginkgo.By("Writing measure data")
 		writeMeasureData(ctx, groupName, measureName, dataCount)
 		time.Sleep(2 * time.Second)
 	})
 
-	ginkgo.AfterEach(func() {
+	ginkgo.AfterAll(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
@@ -339,13 +339,13 @@ var _ = ginkgo.Describe("Inspect measure in standalone mode", func() {
 	})
 })
 
-var _ = ginkgo.Describe("Inspect stream in standalone mode", func() {
+var _ = ginkgo.Describe("Inspect stream in standalone mode", ginkgo.Ordered, func() {
 	var groupName string
 	var streamName string
 	var ctx context.Context
 	const dataCount = 10
 
-	ginkgo.BeforeEach(func() {
+	ginkgo.BeforeAll(func() {
 		ctx = context.TODO()
 		groupName = fmt.Sprintf("inspect-stream-test-%d", time.Now().UnixNano())
 		streamName = "test_stream"
@@ -392,14 +392,14 @@ var _ = ginkgo.Describe("Inspect stream in standalone mode", func() {
 			},
 		})
 		gomega.Expect(streamErr).ShouldNot(gomega.HaveOccurred())
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Second)
 
 		ginkgo.By("Writing stream data")
 		writeStreamData(ctx, groupName, streamName, dataCount)
 		time.Sleep(2 * time.Second)
 	})
 
-	ginkgo.AfterEach(func() {
+	ginkgo.AfterAll(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
@@ -448,13 +448,13 @@ var _ = ginkgo.Describe("Inspect stream in standalone mode", func() {
 	})
 })
 
-var _ = ginkgo.Describe("Inspect trace in standalone mode", func() {
+var _ = ginkgo.Describe("Inspect trace in standalone mode", ginkgo.Ordered, func() {
 	var groupName string
 	var traceName string
 	var ctx context.Context
 	const dataCount = 10
 
-	ginkgo.BeforeEach(func() {
+	ginkgo.BeforeAll(func() {
 		ctx = context.TODO()
 		groupName = fmt.Sprintf("inspect-trace-test-%d", time.Now().UnixNano())
 		traceName = "test_trace"
@@ -501,14 +501,14 @@ var _ = ginkgo.Describe("Inspect trace in standalone mode", func() {
 			},
 		})
 		gomega.Expect(traceErr).ShouldNot(gomega.HaveOccurred())
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Second)
 
 		ginkgo.By("Writing trace data")
 		writeTraceData(ctx, groupName, traceName, dataCount)
 		time.Sleep(2 * time.Second)
 	})
 
-	ginkgo.AfterEach(func() {
+	ginkgo.AfterAll(func() {
 		_, _ = groupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
