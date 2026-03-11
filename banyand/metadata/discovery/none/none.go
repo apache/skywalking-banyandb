@@ -55,6 +55,9 @@ func (n *noneDiscovery) ListNode(_ context.Context, role databasev1.Role) ([]*da
 	if n.curNode == nil {
 		return nil, nil
 	}
+	if role == databasev1.Role_ROLE_UNSPECIFIED {
+		return []*databasev1.Node{n.curNode}, nil
+	}
 	for _, r := range n.curNode.GetRoles() {
 		if r == role {
 			return []*databasev1.Node{n.curNode}, nil
