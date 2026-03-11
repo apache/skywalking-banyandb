@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -162,6 +163,15 @@ func (l *liaison) PreRun(ctx context.Context) error {
 	l.l = logger.GetLogger(l.Name())
 	l.l.Info().Msg("memory protector is initialized in PreRun")
 	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
+	var err error
+	if l.root, err = banyandbpath.Get(l.root); err != nil {
+		return err
+	}
+	if l.dataPath != "" {
+		if l.dataPath, err = banyandbpath.Get(l.dataPath); err != nil {
+			return err
+		}
+	}
 	path := path.Join(l.root, l.Name())
 	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
@@ -218,7 +228,8 @@ func (l *liaison) PreRun(ctx context.Context) error {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			groupSchema, err := l.metadata.GroupRegistry().GetGroup(ctx, group)
+			var groupSchema *commonv1.Group
+			groupSchema, err = l.metadata.GroupRegistry().GetGroup(ctx, group)
 			if err != nil {
 				return nil, err
 			}
@@ -244,7 +255,6 @@ func (l *liaison) PreRun(ctx context.Context) error {
 			return nodes, nil
 		}
 
-		var err error
 		// nolint:contextcheck
 		l.handoffCtrl, err = newHandoffController(l.lfs, l.dataPath, l.option.tire2Client, l.dataNodeList, maxSizeBytes, l.l, resolveAssignments)
 		if err != nil {
