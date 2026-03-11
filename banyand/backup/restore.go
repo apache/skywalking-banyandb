@@ -110,89 +110,22 @@ func newRunCommand() *cobra.Command {
 			}
 			defer fs.Close()
 
+			catalogs := []catalogEntry{
+				{rootPath: streamRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM)},
+				{rootPath: measureRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_MEASURE)},
+				{rootPath: propertyRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_PROPERTY)},
+				{rootPath: traceRoot, catalogName: snapshot.CatalogName(commonv1.Catalog_CATALOG_TRACE)},
+				{rootPath: schemaRoot, catalogName: snapshot.SchemaPropertyCatalogName},
+			}
 			var errs error
-
-			if streamRoot != "" {
-				timeDirPath := filepath.Join(streamRoot, "stream", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, streamRoot, commonv1.Catalog_CATALOG_STREAM); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("stream restore failed: %w", err))
-					} else {
-						logger.Infof("delete stream time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no stream time-dir file found, skip it: %s", timeDirPath)
+			for _, c := range catalogs {
+				if c.rootPath == "" {
+					continue
+				}
+				if err := restoreFromTimeDir(fs, c.rootPath, c.catalogName); err != nil {
+					errs = multierr.Append(errs, err)
 				}
 			}
-			if measureRoot != "" {
-				timeDirPath := filepath.Join(measureRoot, "measure", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, measureRoot, commonv1.Catalog_CATALOG_MEASURE); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("measure restore failed: %w", err))
-					} else {
-						logger.Infof("delete measure time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no measure time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-			if propertyRoot != "" {
-				timeDirPath := filepath.Join(propertyRoot, "property", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, propertyRoot, commonv1.Catalog_CATALOG_PROPERTY); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("property restore failed: %w", err))
-					} else {
-						logger.Infof("delete property time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no property time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-			if traceRoot != "" {
-				timeDirPath := filepath.Join(traceRoot, "trace", "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreCatalog(fs, timeDir, traceRoot, commonv1.Catalog_CATALOG_TRACE); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("trace restore failed: %w", err))
-					} else {
-						logger.Infof("delete trace time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no trace time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-			if schemaRoot != "" {
-				timeDirPath := filepath.Join(schemaRoot, snapshot.SchemaPropertyCatalogName, "time-dir")
-				if data, err := os.ReadFile(timeDirPath); err == nil {
-					timeDir := strings.TrimSpace(string(data))
-					if err = restoreByName(fs, timeDir, schemaRoot, snapshot.SchemaPropertyCatalogName); err != nil {
-						errs = multierr.Append(errs, fmt.Errorf("schema-property restore failed: %w", err))
-					} else {
-						logger.Infof("delete schema-property time-dir file")
-						_ = os.Remove(timeDirPath)
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				} else {
-					logger.Infof("no schema-property time-dir file found, skip it: %s", timeDirPath)
-				}
-			}
-
 			return errs
 		},
 	}
@@ -214,6 +147,30 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&fsConfig.GCP.GCPServiceAccountFile, "gcp-service-account-file", "", "Path to the GCP service account JSON file")
 
 	return cmd
+}
+
+type catalogEntry struct {
+	rootPath    string
+	catalogName string
+}
+
+func restoreFromTimeDir(fs remote.FS, rootPath, catalogName string) error {
+	timeDirPath := filepath.Join(rootPath, catalogName, "time-dir")
+	data, err := os.ReadFile(timeDirPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Infof("no %s time-dir file found, skip it: %s", catalogName, timeDirPath)
+			return nil
+		}
+		return err
+	}
+	timeDir := strings.TrimSpace(string(data))
+	if err = restoreByName(fs, timeDir, rootPath, catalogName); err != nil {
+		return fmt.Errorf("%s restore failed: %w", catalogName, err)
+	}
+	logger.Infof("delete %s time-dir file", catalogName)
+	_ = os.Remove(timeDirPath)
+	return nil
 }
 
 func restoreCatalog(fs remote.FS, timeDir, rootPath string, catalog commonv1.Catalog) error {
