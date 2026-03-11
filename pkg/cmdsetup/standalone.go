@@ -50,6 +50,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}
+	metaSvc.SetSnapshotPipeline(dataPipeline)
 	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)

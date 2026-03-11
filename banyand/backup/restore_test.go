@@ -30,6 +30,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
 )
 
+const testTimeDir = "2023-10-10"
+
 func TestRestoreDownload(t *testing.T) {
 	remoteDir := t.TempDir()
 	localRestoreDir := t.TempDir()
@@ -39,7 +41,7 @@ func TestRestoreDownload(t *testing.T) {
 		t.Fatalf("failed to create remote FS: %v", err)
 	}
 
-	timeDir := "2023-10-10"
+	timeDir := testTimeDir
 	remoteFilePath := filepath.Join(timeDir, snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM), "test.txt")
 	content := "hello"
 	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
@@ -81,10 +83,71 @@ func TestRestoreDelete(t *testing.T) {
 		t.Fatalf("failed to write extra local file: %v", err)
 	}
 
-	timeDir := "2023-10-10"
+	timeDir := testTimeDir
 	err = restoreCatalog(fs, timeDir, localRestoreDir, commonv1.Catalog_CATALOG_STREAM)
 	if err != nil {
 		t.Fatalf("restoreCatalog failed: %v", err)
+	}
+
+	if _, err := os.Stat(extraFilePath); !os.IsNotExist(err) {
+		t.Fatalf("expected extra file %q to be deleted", extraFilePath)
+	}
+}
+
+func TestRestoreSchemaProperty(t *testing.T) {
+	remoteDir := t.TempDir()
+	localRestoreDir := t.TempDir()
+
+	fs, err := local.NewFS(remoteDir)
+	if err != nil {
+		t.Fatalf("failed to create remote FS: %v", err)
+	}
+
+	timeDir := testTimeDir
+	remoteFilePath := filepath.Join(timeDir, snapshot.SchemaPropertyCatalogName, "test.txt")
+	content := "schema-hello"
+	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("failed to upload file: %v", err)
+	}
+
+	err = restoreByName(fs, timeDir, localRestoreDir, snapshot.SchemaPropertyCatalogName)
+	if err != nil {
+		t.Fatalf("restoreByName failed: %v", err)
+	}
+
+	localFilePath := filepath.Join(localRestoreDir, snapshot.SchemaPropertyCatalogName, storage.DataDir, "test.txt")
+	got, err := os.ReadFile(localFilePath)
+	if err != nil {
+		t.Fatalf("failed to read local file: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("expected content %q, got %q", content, string(got))
+	}
+}
+
+func TestRestoreSchemaPropertyDelete(t *testing.T) {
+	remoteDir := t.TempDir()
+	localRestoreDir := t.TempDir()
+
+	fs, err := local.NewFS(remoteDir)
+	if err != nil {
+		t.Fatalf("failed to create remote FS: %v", err)
+	}
+
+	schemaDir := filepath.Join(localRestoreDir, snapshot.SchemaPropertyCatalogName, storage.DataDir)
+	if err = os.MkdirAll(schemaDir, storage.DirPerm); err != nil {
+		t.Fatalf("failed to create local schema-property directory: %v", err)
+	}
+	extraFilePath := filepath.Join(schemaDir, "old.txt")
+	if err = os.WriteFile(extraFilePath, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("failed to write extra local file: %v", err)
+	}
+
+	timeDir := testTimeDir
+	err = restoreByName(fs, timeDir, localRestoreDir, snapshot.SchemaPropertyCatalogName)
+	if err != nil {
+		t.Fatalf("restoreByName failed: %v", err)
 	}
 
 	if _, err := os.Stat(extraFilePath); !os.IsNotExist(err) {
@@ -111,7 +174,7 @@ func TestRestoreSame(t *testing.T) {
 		t.Fatalf("failed to write extra local file: %v", err)
 	}
 
-	timeDir := "2023-10-10"
+	timeDir := testTimeDir
 	remoteFilePath := filepath.Join(timeDir, snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM), "test.txt")
 	content := "hello"
 	err = fs.Upload(context.Background(), remoteFilePath, strings.NewReader(content))
