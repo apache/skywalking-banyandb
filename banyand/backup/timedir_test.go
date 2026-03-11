@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
@@ -34,6 +35,7 @@ func TestNewCreateCmd(t *testing.T) {
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
 	traceDir := filepath.Join(baseDir, "trace")
+	schemaPropertyDir := filepath.Join(baseDir, snapshot.SchemaPropertyCatalogName)
 
 	content := "2023-10-12"
 	cmd := newCreateCmd()
@@ -43,6 +45,7 @@ func TestNewCreateCmd(t *testing.T) {
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
 		"--trace-root", baseDir,
+		"--schema-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newCreateCmd.Execute() error: %v", err)
@@ -56,6 +59,7 @@ func TestNewCreateCmd(t *testing.T) {
 		{"measure", measureDir},
 		{"property", propertyDir},
 		{"trace", traceDir},
+		{snapshot.SchemaPropertyCatalogName, schemaPropertyDir},
 	} {
 		fp := filepath.Join(dir.root, "time-dir")
 		data, err := os.ReadFile(fp)
@@ -75,7 +79,8 @@ func TestNewReadCmd(t *testing.T) {
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
 	traceDir := filepath.Join(baseDir, "trace")
-	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
+	schemaPropertyDir := filepath.Join(baseDir, snapshot.SchemaPropertyCatalogName)
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir, schemaPropertyDir} {
 		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
@@ -93,13 +98,14 @@ func TestNewReadCmd(t *testing.T) {
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
 		"--trace-root", baseDir,
+		"--schema-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newReadCmd.Execute() error: %v", err)
 	}
 
 	output := outBuf.String()
-	for _, catalog := range []string{"stream", "measure", "property", "trace"} {
+	for _, catalog := range []string{"stream", "measure", "property", "trace", snapshot.SchemaPropertyCatalogName} {
 		if !strings.Contains(output, "Catalog '"+catalog+"'") {
 			t.Errorf("Output missing expected catalog '%s'", catalog)
 		}
@@ -112,7 +118,8 @@ func TestNewDeleteCmd(t *testing.T) {
 	measureDir := filepath.Join(baseDir, "measure")
 	propertyDir := filepath.Join(baseDir, "property")
 	traceDir := filepath.Join(baseDir, "trace")
-	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
+	schemaPropertyDir := filepath.Join(baseDir, snapshot.SchemaPropertyCatalogName)
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir, schemaPropertyDir} {
 		if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 			t.Fatalf("Failed to create dir %s: %v", dir, err)
 		}
@@ -128,12 +135,13 @@ func TestNewDeleteCmd(t *testing.T) {
 		"--measure-root", baseDir,
 		"--property-root", baseDir,
 		"--trace-root", baseDir,
+		"--schema-root", baseDir,
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("newDeleteCmd.Execute() error: %v", err)
 	}
 
-	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir} {
+	for _, dir := range []string{streamDir, measureDir, propertyDir, traceDir, schemaPropertyDir} {
 		catalog := filepath.Base(dir)
 		fp := filepath.Join(dir, fmt.Sprintf("%s-time-dir", catalog))
 		if _, err := os.Stat(fp); !os.IsNotExist(err) {
