@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -133,6 +134,11 @@ func (s *service) Role() databasev1.Role {
 func (s *service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
+	var err error
+	s.root, err = banyandbpath.Get(s.root)
+	if err != nil {
+		return err
+	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
 	s.repairDir = filepath.Join(path, storage.RepairDir)
@@ -144,7 +150,6 @@ func (s *service) PreRun(ctx context.Context) error {
 	node := val.(common.Node)
 	s.nodeID = node.NodeID
 
-	var err error
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = db.OpenDB(ctx, db.Config{
 		Location:               filepath.Join(path, storage.DataDir),

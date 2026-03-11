@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -265,6 +266,40 @@ func (s *clientService) PreRun(ctx context.Context) error {
 			close(stopCh)
 		}
 	}()
+
+	var err error
+	if s.etcdTLSCAFile != "" {
+		if s.etcdTLSCAFile, err = banyandbpath.Get(s.etcdTLSCAFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSCAFile %q", s.etcdTLSCAFile)
+		}
+	}
+	if s.etcdTLSCertFile != "" {
+		if s.etcdTLSCertFile, err = banyandbpath.Get(s.etcdTLSCertFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSCertFile %q", s.etcdTLSCertFile)
+		}
+	}
+	if s.etcdTLSKeyFile != "" {
+		if s.etcdTLSKeyFile, err = banyandbpath.Get(s.etcdTLSKeyFile); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for etcdTLSKeyFile %q", s.etcdTLSKeyFile)
+		}
+	}
+	if s.propertySchemaClientCACert != "" {
+		if s.propertySchemaClientCACert, err = banyandbpath.Get(s.propertySchemaClientCACert); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for propertySchemaClientCACert %q", s.propertySchemaClientCACert)
+		}
+	}
+	if s.filePath != "" {
+		if s.filePath, err = banyandbpath.Get(s.filePath); err != nil {
+			return errors.Wrapf(err, "failed to resolve path for filePath %q", s.filePath)
+		}
+	}
+	for i, certPath := range s.dnsCACertPaths {
+		if certPath != "" {
+			if s.dnsCACertPaths[i], err = banyandbpath.Get(certPath); err != nil {
+				return err
+			}
+		}
+	}
 
 	// initialize etcd registry when needed for node discovery or etcd schema mode
 	if s.nodeDiscoveryMode == NodeDiscoveryModeEtcd || s.schemaRegistryMode == RegistryModeEtcd {

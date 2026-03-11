@@ -54,6 +54,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -218,6 +219,29 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 func (s *server) PreRun(ctx context.Context) error {
 	s.log = logger.GetLogger("liaison-grpc")
 	s.initCurrentNode(ctx)
+
+	var err error
+	if s.accessLogRootPath != "" {
+		if s.accessLogRootPath, err = banyandbpath.Get(s.accessLogRootPath); err != nil {
+			return err
+		}
+	}
+	if s.certFile != "" {
+		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
+			return err
+		}
+	}
+	if s.keyFile != "" {
+		if s.keyFile, err = banyandbpath.Get(s.keyFile); err != nil {
+			return err
+		}
+	}
+	if s.authConfigFile != "" {
+		if s.authConfigFile, err = banyandbpath.Get(s.authConfigFile); err != nil {
+			return err
+		}
+	}
+
 	s.streamSVC.setLogger(s.log.Named("stream-t1"))
 	s.measureSVC.setLogger(s.log)
 	s.traceSVC.setLogger(s.log.Named("trace"))
