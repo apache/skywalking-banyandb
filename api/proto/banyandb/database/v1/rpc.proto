@@ -358,13 +358,19 @@ message GroupRegistryServiceUpdateResponse {}
 message GroupRegistryServiceDeleteRequest {
   // group is the name of the group to delete.
   string group = 1;
+  // dry_run indicates whether to perform a dry run without actually deleting data.
+  // When true, returns what would be deleted without making changes.
+  bool dry_run = 2;
   // force indicates whether to force delete the group even if it contains data.
   // When false, deletion will fail if the group is not empty.
-  bool force = 2;
+  bool force = 3;
 }
 
 // GroupRegistryServiceDeleteResponse is the response for deleting a group.
-message GroupRegistryServiceDeleteResponse {}
+message GroupRegistryServiceDeleteResponse {
+  // schema_info contains the schema resources that would be deleted (populated in dry-run mode).
+  SchemaInfo schema_info = 1;
+}
 
 // GroupDeletionTask represents the status of a group deletion operation.
 message GroupDeletionTask {

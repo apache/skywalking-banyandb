@@ -634,6 +634,9 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
 		return nil, getErr
 	}
+	if req.GetDryRun() {
+		return rs.dryRunDelete(ctx, g)
+	}
 	if !req.GetForce() {
 		hasResources, checkErr := rs.deletionTaskManager.hasNonEmptyResources(ctx, g)
 		if checkErr != nil {
@@ -651,6 +654,19 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 		return nil, startErr
 	}
 	return &databasev1.GroupRegistryServiceDeleteResponse{}, nil
+}
+
+func (rs *groupRegistryServer) dryRunDelete(ctx context.Context, g string) (
+	*databasev1.GroupRegistryServiceDeleteResponse, error,
+) {
+	schemaInfo, schemaErr := rs.collectSchemaInfo(ctx, g)
+	if schemaErr != nil {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+		return nil, schemaErr
+	}
+	return &databasev1.GroupRegistryServiceDeleteResponse{
+		SchemaInfo: schemaInfo,
+	}, nil
 }
 
 func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupRegistryServiceGetRequest) (
