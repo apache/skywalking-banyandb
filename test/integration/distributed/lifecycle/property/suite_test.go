@@ -106,28 +106,37 @@ func verifyClusterNodeRoles(liaisonAddr string) {
 	Expect(connErr).NotTo(HaveOccurred())
 	defer func() { _ = conn.Close() }()
 	clusterClient := databasev1.NewClusterStateServiceClient(conn)
-	state, stateErr := clusterClient.GetClusterState(
-		context.Background(), &databasev1.GetClusterStateRequest{})
-	Expect(stateErr).NotTo(HaveOccurred())
-	tire2 := state.GetRouteTables()["tire2"]
-	Expect(tire2).NotTo(BeNil(), "tire2 route table not found")
-	for _, node := range tire2.GetRegistered() {
-		labels := node.GetLabels()
-		hasMetaRole := false
-		for _, role := range node.GetRoles() {
-			if role == databasev1.Role_ROLE_META {
-				hasMetaRole = true
-				break
+	Eventually(func(g Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		state, stateErr := clusterClient.GetClusterState(ctx, &databasev1.GetClusterStateRequest{})
+		g.Expect(stateErr).NotTo(HaveOccurred())
+		tire2 := state.GetRouteTables()["tire2"]
+		g.Expect(tire2).NotTo(BeNil(), "tire2 route table not found")
+		foundHot := false
+		foundWarm := false
+		for _, node := range tire2.GetRegistered() {
+			labels := node.GetLabels()
+			hasMetaRole := false
+			for _, role := range node.GetRoles() {
+				if role == databasev1.Role_ROLE_META {
+					hasMetaRole = true
+					break
+				}
+			}
+			if labels["type"] == "hot" {
+				foundHot = true
+				g.Expect(hasMetaRole).To(BeTrue(),
+					fmt.Sprintf("hot node %s should have ROLE_META", node.GetMetadata().GetName()))
+			} else if labels["type"] == "warm" {
+				foundWarm = true
+				g.Expect(hasMetaRole).To(BeFalse(),
+					fmt.Sprintf("warm node %s should NOT have ROLE_META", node.GetMetadata().GetName()))
 			}
 		}
-		if labels["type"] == "hot" {
-			Expect(hasMetaRole).To(BeTrue(),
-				fmt.Sprintf("hot node %s should have ROLE_META", node.GetMetadata().GetName()))
-		} else if labels["type"] == "warm" {
-			Expect(hasMetaRole).To(BeFalse(),
-				fmt.Sprintf("warm node %s should NOT have ROLE_META", node.GetMetadata().GetName()))
-		}
-	}
+		g.Expect(foundHot).To(BeTrue(), "no hot node found in cluster state")
+		g.Expect(foundWarm).To(BeTrue(), "no warm node found in cluster state")
+	}).WithTimeout(flags.EventuallyTimeout).WithPolling(time.Second).Should(Succeed())
 }
 
 func TestPropertyLifecycle(t *testing.T) {

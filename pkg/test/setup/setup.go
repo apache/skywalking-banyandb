@@ -609,9 +609,12 @@ func CMD(flags ...string) func() {
 	}
 }
 
-func hasFlag(flags []string, target string) bool {
-	for _, f := range flags {
-		if f == target {
+func hasFlagValue(flags []string, key, value string) bool {
+	for idx, f := range flags {
+		if f == key+"="+value {
+			return true
+		}
+		if f == key && idx+1 < len(flags) && flags[idx+1] == value {
 			return true
 		}
 	}
@@ -623,7 +626,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config = defaultClusterConfig
 	}
 	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
-	runSchemaServer := isPropertyMode && !hasFlag(flags, "--has-schema-role=false")
+	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-schema-role", "false")
 	portCount := 2
 	if runSchemaServer {
 		portCount = 3
