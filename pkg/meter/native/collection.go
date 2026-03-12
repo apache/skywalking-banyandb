@@ -46,10 +46,10 @@ type collector interface {
 
 // MetricCollection contains all the native implementations of metrics.
 type MetricCollection struct {
-	mu           sync.RWMutex
 	pipeline     queue.Client
 	nodeSelector NodeSelector
 	collectors   []collector
+	mu           sync.RWMutex
 }
 
 // NewMetricsCollection creates a new MetricCollection.
