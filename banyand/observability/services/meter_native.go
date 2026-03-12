@@ -20,6 +20,8 @@ package services
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -27,10 +29,11 @@ import (
 )
 
 type nativeProviderFactory struct {
-	metadata  metadata.Repo
-	nodeInfo  native.NodeInfo
-	providers []meter.Provider
-	mu        sync.Mutex
+	metadata     metadata.Repo
+	nodeInfo     native.NodeInfo
+	providers    []meter.Provider
+	serveStarted atomic.Bool
+	mu           sync.Mutex
 }
 
 func (f *nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
@@ -38,14 +41,25 @@ func (f *nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
 	f.mu.Lock()
 	f.providers = append(f.providers, p)
 	f.mu.Unlock()
+	if f.serveStarted.Load() {
+		go func(prov meter.Provider) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			native.InitSchema(ctx, prov)
+		}(p)
+	}
 	return p
+}
+
+func (f *nativeProviderFactory) setServeStarted() {
+	f.serveStarted.Store(true)
 }
 
 func (f *nativeProviderFactory) initAllSchemas(ctx context.Context) {
 	f.mu.Lock()
 	providers := append([]meter.Provider(nil), f.providers...)
 	f.mu.Unlock()
-	for _, p := range providers {
-		native.InitSchema(ctx, p)
+	for _, prov := range providers {
+		native.InitSchema(ctx, prov)
 	}
 }

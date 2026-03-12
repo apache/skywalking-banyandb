@@ -19,6 +19,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -58,11 +59,13 @@ var _ = Describe("Cluster Topology Integration", func() {
 		agentCancel1      context.CancelFunc
 		agentCtx2         context.Context
 		agentCancel2      context.CancelFunc
+		httpClient        *http.Client
 		testLogger        *logger.Logger
 	)
 
 	BeforeEach(func() {
 		testLogger = logger.GetLogger("test", "integration")
+		httpClient = &http.Client{Timeout: 500 * time.Millisecond}
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
@@ -90,11 +93,11 @@ var _ = Describe("Cluster Topology Integration", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, nil, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, clusterManager, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/health", proxyHTTPAddr))
+			resp, err := httpClient.Get(fmt.Sprintf("http://%s/health", proxyHTTPAddr))
 			if err != nil {
 				return err
 			}
@@ -205,34 +208,26 @@ var _ = Describe("Cluster Topology Integration", func() {
 			},
 		}
 
-		// Start collection in a goroutine - this sets up channels
-		ctx := context.Background()
-		done := make(chan *cluster.TopologyMap)
-		channelsReady := make(chan struct{})
-		go func() {
-			// Wait a bit to ensure channels are set up before we start waiting
-			time.Sleep(100 * time.Millisecond)
-			close(channelsReady)
-			done <- clusterManager.CollectClusterTopology(ctx)
-		}()
+		Eventually(func(g Gomega) {
+			g.Expect(grpcService.HasClusterStateStream(agents[0].AgentID)).To(BeTrue())
+			g.Expect(grpcService.HasClusterStateStream(agents[1].AgentID)).To(BeTrue())
+		}, "1s", "10ms").Should(Succeed())
 
-		// Wait for channels to be set up
-		<-channelsReady
+		Expect(proxyClient1.SetClusterTopology(testTopology1.Nodes, testTopology1.Calls)).To(Succeed())
+		Expect(proxyClient2.SetClusterTopology(testTopology2.Nodes, testTopology2.Calls)).To(Succeed())
 
-		// Update topology for both agents - this sends to collection channels
-		clusterManager.UpdateClusterTopology(agents[0].AgentID, testTopology1)
-		clusterManager.UpdateClusterTopology(agents[1].AgentID, testTopology2)
+		var topology cluster.TopologyMap
+		Eventually(func(g Gomega) {
+			resp, err := httpClient.Get(fmt.Sprintf("http://%s/cluster/topology", proxyHTTPAddr))
+			g.Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
-		// Wait for collection to complete
-		var topology *cluster.TopologyMap
-		select {
-		case topology = <-done:
-		case <-time.After(5 * time.Second):
-			Fail("Collection timed out")
-		}
-
-		Expect(topology).NotTo(BeNil())
-		Expect(len(topology.Nodes)).To(BeNumerically(">=", 2))
+			var result cluster.TopologyMap
+			g.Expect(json.NewDecoder(resp.Body).Decode(&result)).To(Succeed())
+			g.Expect(len(result.Nodes)).To(BeNumerically(">=", 2))
+			topology = result
+		}, "5s", "100ms").Should(Succeed())
 
 		// Check that both agents are present
 		nodeNames := make(map[string]bool)

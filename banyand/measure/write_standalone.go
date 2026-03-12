@@ -477,15 +477,15 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		var err error
-		if groups, err = w.handle(groups, writeEvent, metadata, spec); err != nil {
-			w.l.Error().Err(err).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
-			groups = make(map[string]*dataPointsInGroup)
+		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
+		if handleErr != nil {
+			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			continue
 		}
+		groups = newGroups
 	}
-	for i := range groups {
-		g := groups[i]
+	for groupName := range groups {
+		g := groups[groupName]
 		for j := range g.tables {
 			dps := g.tables[j]
 			if dps.tsTable != nil && dps.dataPoints != nil {
