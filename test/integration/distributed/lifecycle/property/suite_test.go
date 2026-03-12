@@ -55,7 +55,7 @@ func init() {
 			"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 		By("Starting warm data node")
 		_, destDir, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=warm",
-			"--has-schema-role=false",
+			"--has-meta-role=false",
 			"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 		setup.PreloadSchemaViaProperty(config, test_stream.LoadSchemaWithStages, test_measure.LoadSchemaWithStages,
 			test_trace.PreloadSchemaWithStages, test_property.PreloadSchema)

@@ -628,7 +628,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config = defaultClusterConfig
 	}
 	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
-	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-schema-role", "false")
+	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-meta-role", "false")
 	portCount := 2
 	if runSchemaServer {
 		portCount = 3
