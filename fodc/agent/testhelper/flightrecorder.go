@@ -23,6 +23,9 @@ import (
 	"fmt"
 	"time"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	agentcluster "github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	agentmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
@@ -129,6 +132,33 @@ func NewProxyClient(
 	flightRecorder interface{},
 	logger *logger.Logger,
 ) *proxy.Client {
+	return NewProxyClientWithCollector(
+		proxyAddr,
+		nodeRole,
+		podName,
+		containerNames,
+		labels,
+		heartbeatInterval,
+		reconnectInterval,
+		flightRecorder,
+		nil,
+		logger,
+	)
+}
+
+// NewProxyClientWithCollector creates a new ProxyClient instance for testing with optional cluster collector.
+func NewProxyClientWithCollector(
+	proxyAddr string,
+	nodeRole string,
+	podName string,
+	containerNames []string,
+	labels map[string]string,
+	heartbeatInterval time.Duration,
+	reconnectInterval time.Duration,
+	flightRecorder interface{},
+	collector *agentcluster.Collector,
+	logger *logger.Logger,
+) *proxy.Client {
 	frTyped, ok := flightRecorder.(*flightrecorder.FlightRecorder)
 	if !ok {
 		// This should not happen in normal usage, but handle gracefully
@@ -143,7 +173,7 @@ func NewProxyClient(
 		heartbeatInterval,
 		reconnectInterval,
 		frTyped,
-		nil,
+		collector,
 		logger,
 	)
 }
@@ -151,6 +181,7 @@ func NewProxyClient(
 // ProxyClientWrapper wraps ProxyClient methods for testing.
 type ProxyClientWrapper struct {
 	client        *proxy.Client
+	collector     *agentcluster.Collector
 	ctx           context.Context
 	connMgrActive bool
 }
@@ -198,6 +229,18 @@ func (w *ProxyClientWrapper) Disconnect() error {
 	return w.client.Disconnect()
 }
 
+// SetClusterTopology seeds the wrapped client's cluster collector for testing.
+func (w *ProxyClientWrapper) SetClusterTopology(nodes []*databasev1.Node, calls []*fodcv1.Call) error {
+	if w == nil || w.collector == nil {
+		return fmt.Errorf("cluster collector not available")
+	}
+	w.collector.SetClusterTopology(agentcluster.TopologyMap{
+		Nodes: nodes,
+		Calls: calls,
+	})
+	return nil
+}
+
 // NewProxyClientWrapper creates a wrapped ProxyClient for testing.
 func NewProxyClientWrapper(
 	proxyAddr string,
@@ -210,7 +253,8 @@ func NewProxyClientWrapper(
 	flightRecorder interface{},
 	logger *logger.Logger,
 ) *ProxyClientWrapper {
-	client := NewProxyClient(
+	collector := &agentcluster.Collector{}
+	client := NewProxyClientWithCollector(
 		proxyAddr,
 		nodeRole,
 		podName,
@@ -219,10 +263,11 @@ func NewProxyClientWrapper(
 		heartbeatInterval,
 		reconnectInterval,
 		flightRecorder,
+		collector,
 		logger,
 	)
 	if client == nil {
 		return nil
 	}
-	return &ProxyClientWrapper{client: client}
+	return &ProxyClientWrapper{client: client, collector: collector}
 }
