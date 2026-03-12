@@ -181,9 +181,9 @@ func NewProxyClientWithCollector(
 // ProxyClientWrapper wraps ProxyClient methods for testing.
 type ProxyClientWrapper struct {
 	client        *proxy.Client
+	collector     *agentcluster.Collector
 	ctx           context.Context
 	connMgrActive bool
-	collector     *agentcluster.Collector
 }
 
 // StartConnManager starts the connection manager.

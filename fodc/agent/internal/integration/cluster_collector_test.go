@@ -95,15 +95,14 @@ var _ = Describe("Cluster Collector Integration", func() {
 			err = collector.WaitForNodeFetched(waitCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() bool {
+			Eventually(func() int {
 				topology := collector.GetClusterTopology()
-				return topology.Nodes != nil && topology.Calls != nil
-			}, 10*time.Second, 200*time.Millisecond).Should(BeTrue(), "Expected initial cluster topology collection to complete")
+				return len(topology.Nodes)
+			}, 10*time.Second, 200*time.Millisecond).Should(BeNumerically(">", 0), "Expected initial cluster topology collection to produce nodes")
 
 			topology := collector.GetClusterTopology()
 			Expect(topology).NotTo(BeNil())
-			Expect(topology.Nodes).NotTo(BeNil())
-			Expect(topology.Calls).NotTo(BeNil())
+			Expect(topology.Nodes).NotTo(BeEmpty())
 		})
 
 		It("should handle node role determination correctly", func() {
@@ -180,25 +179,25 @@ var _ = Describe("Cluster Collector Integration", func() {
 			err = collector.WaitForNodeFetched(waitCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() bool {
+			Eventually(func() int {
 				topology := collector.GetClusterTopology()
-				return topology.Nodes != nil && topology.Calls != nil
-			}, 10*time.Second, 200*time.Millisecond).Should(BeTrue(), "Expected initial topology collection to complete")
+				return len(topology.Nodes)
+			}, 10*time.Second, 200*time.Millisecond).Should(BeNumerically(">", 0), "Expected initial topology collection to produce nodes")
 
 			initialTopology := collector.GetClusterTopology()
 			Expect(initialTopology).NotTo(BeNil())
-			Expect(initialTopology.Nodes).NotTo(BeNil())
-			Expect(initialTopology.Calls).NotTo(BeNil())
+			Expect(initialTopology.Nodes).NotTo(BeEmpty())
+			initialNodeCount := len(initialTopology.Nodes)
+			initialCallCount := len(initialTopology.Calls)
 
 			Consistently(func() bool {
 				topology := collector.GetClusterTopology()
-				return topology.Nodes != nil && topology.Calls != nil
+				return len(topology.Nodes) >= initialNodeCount && len(topology.Calls) >= initialCallCount
 			}, 3*time.Second, 200*time.Millisecond).Should(BeTrue())
 
 			updatedTopology := collector.GetClusterTopology()
 			Expect(updatedTopology).NotTo(BeNil())
-			Expect(updatedTopology.Nodes).NotTo(BeNil())
-			Expect(updatedTopology.Calls).NotTo(BeNil())
+			Expect(updatedTopology.Nodes).NotTo(BeEmpty())
 			// The topology should be updated
 		})
 	})
