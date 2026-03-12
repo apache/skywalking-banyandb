@@ -31,9 +31,9 @@ import (
 )
 
 type testHandler struct {
-	mu     sync.Mutex
 	added  []schema.Metadata
 	delete []schema.Metadata
+	mu     sync.Mutex
 }
 
 func (h *testHandler) OnAddOrUpdate(m schema.Metadata) {
