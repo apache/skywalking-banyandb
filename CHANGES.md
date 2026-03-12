@@ -42,6 +42,7 @@ Release Notes.
 - Fix trace queries with range conditions on the same tag (e.g., duration) combined with ORDER BY by deduplicating tag names when merging logical expression branches.
 - Fix sidx tag filter range check returning inverted skip decision and use correct int64 encoding for block min/max.
 - Ignore take snapshot when no data.
+- Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
 
 ### Document
 
