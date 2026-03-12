@@ -76,6 +76,13 @@ func (ac *agentConnection) setClusterStateStream(stream fodcv1.FODCService_Strea
 	ac.clusterStateStream = stream
 }
 
+// hasClusterStateStream reports whether the cluster topology stream is established.
+func (ac *agentConnection) hasClusterStateStream() bool {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	return ac.clusterStateStream != nil
+}
+
 // sendMetricsRequest sends a metrics request to the agent via the metrics stream.
 func (ac *agentConnection) sendMetricsRequest(resp *fodcv1.StreamMetricsResponse) error {
 	ac.mu.RLock()
@@ -133,6 +140,17 @@ func NewFODCService(
 		connections:         make(map[string]*agentConnection),
 		heartbeatInterval:   heartbeatInterval,
 	}
+}
+
+// HasClusterStateStream reports whether the given agent currently has a cluster topology stream.
+func (s *FODCService) HasClusterStateStream(agentID string) bool {
+	s.connectionsMu.RLock()
+	defer s.connectionsMu.RUnlock()
+	conn, exists := s.connections[agentID]
+	if !exists || conn == nil {
+		return false
+	}
+	return conn.hasClusterStateStream()
 }
 
 // RegisterAgent handles bi-directional agent registration stream.

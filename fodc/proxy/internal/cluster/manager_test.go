@@ -196,13 +196,20 @@ func TestManager_CollectClusterTopology_MultipleAgents(t *testing.T) {
 		done <- mgr.CollectClusterTopology(context.Background())
 	}()
 
-	// Give it a moment to set up channels and request data
-	time.Sleep(50 * time.Millisecond)
+	// Wait for collection channels to be registered and requests to be sent.
+	require.Eventually(t, func() bool {
+		mgr.collectingMu.RLock()
+		defer mgr.collectingMu.RUnlock()
+		_, hasAgent1 := mgr.collecting[agentID1]
+		_, hasAgent2 := mgr.collecting[agentID2]
+		return hasAgent1 && hasAgent2
+	}, time.Second, 10*time.Millisecond)
 
 	// Verify requests were made
-	requestedAgents := mockSender.GetRequestedAgents()
-	assert.Contains(t, requestedAgents, agentID1)
-	assert.Contains(t, requestedAgents, agentID2)
+	require.Eventually(t, func() bool {
+		requestedAgents := mockSender.GetRequestedAgents()
+		return assert.Contains(t, requestedAgents, agentID1) && assert.Contains(t, requestedAgents, agentID2)
+	}, time.Second, 10*time.Millisecond)
 
 	// Update topology - this should send to the collection channels
 	mgr.UpdateClusterTopology(agentID1, topology1)
