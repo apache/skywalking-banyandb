@@ -20,6 +20,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -77,27 +78,31 @@ func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType st
 }
 
 type metricService struct {
-	metadata         metadata.Repo
-	nodeSelector     native.NodeSelector
-	pipeline         queue.Client
-	scheduler        *timestamp.Scheduler
-	l                *logger.Logger
-	closer           *run.Closer
-	svr              *http.Server
-	nCollection      *native.MetricCollection
-	promReg          *prometheus.Registry
-	schedulerMetrics *SchedulerMetrics
-	listenAddr       string
-	nodeType         string
-	modes            []string
-	npf              nativeProviderFactory
-	mutex            sync.Mutex
+	metadata            metadata.Repo
+	nodeSelector        native.NodeSelector
+	pipeline            queue.Client
+	promReg             *prometheus.Registry
+	l                   *logger.Logger
+	closer              *run.Closer
+	svr                 *http.Server
+	nCollection         *native.MetricCollection
+	scheduler           *timestamp.Scheduler
+	schedulerMetrics    *SchedulerMetrics
+	listenAddr          string
+	nodeType            string
+	modes               []string
+	npf                 nativeProviderFactory
+	metricsInterval     time.Duration
+	nativeFlushInterval time.Duration
+	mutex               sync.Mutex
 }
 
 func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet := run.NewFlagSet("observability")
 	flagSet.StringVar(&p.listenAddr, "observability-listener-addr", ":2121", "listen addr for observability")
 	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
+	flagSet.DurationVar(&p.metricsInterval, "observability-metrics-interval", 15*time.Second, "interval for metrics collection")
+	flagSet.DurationVar(&p.nativeFlushInterval, "observability-native-flush-interval", 5*time.Second, "interval for native metrics flush")
 	return flagSet
 }
 
@@ -107,6 +112,9 @@ func (p *metricService) Validate() error {
 	}
 	if len(p.modes) == 0 {
 		return errNoMode
+	}
+	if p.metricsInterval <= 0 || p.nativeFlushInterval <= 0 {
+		return errors.New("observability-metrics-interval and observability-native-flush-interval must be greater than 0")
 	}
 	set := make(map[string]struct{})
 	for _, mode := range p.modes {
@@ -158,14 +166,21 @@ func (p *metricService) Serve() run.StopNotify {
 	defer p.mutex.Unlock()
 	p.initMetrics()
 	if containsMode(p.modes, flagNativeMode) {
+		p.npf.setServeStarted()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		p.npf.initAllSchemas(ctx)
 		cancel()
 	}
+	// First collection on startup so metrics arrive sooner.
+	MetricsCollector.collect()
+	if containsMode(p.modes, flagNativeMode) {
+		p.nCollection.FlushMetrics()
+	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, "@every 15s", func(_ time.Time, _ *logger.Logger) bool {
+	metricsCollectorExpr := fmt.Sprintf("@every %s", p.metricsInterval)
+	err := p.scheduler.Register("metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		metrics := p.scheduler.Metrics()
 		for job, m := range metrics {
@@ -182,7 +197,8 @@ func (p *metricService) Serve() run.StopNotify {
 		registerMetricsEndpoint(p.promReg, metricsMux)
 	}
 	if containsMode(p.modes, flagNativeMode) {
-		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, "@every 5s", func(_ time.Time, _ *logger.Logger) bool {
+		nativeFlushExpr := fmt.Sprintf("@every %s", p.nativeFlushInterval)
+		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, nativeFlushExpr, func(_ time.Time, _ *logger.Logger) bool {
 			p.nCollection.FlushMetrics()
 			return true
 		})
