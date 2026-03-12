@@ -43,6 +43,7 @@ x-data-base: &data_base
          --measure-root-path=/tmp/banyandb-data
          --property-root-path=/tmp/banyandb-data
          --schema-registry-mode=etcd
+         --node-discovery-mode=etcd
 
 # Base services for property repair tests
 services:
@@ -73,7 +74,7 @@ services:
       - "17912:17912"
       - "17913:17913"
       - "2121:2121"  # observability port for metrics
-    command: liaison --etcd-endpoints=http://etcd:2379 --observability-modes=prometheus --schema-registry-mode=etcd
+    command: liaison --etcd-endpoints=http://etcd:2379 --observability-modes=prometheus --schema-registry-mode=etcd --node-discovery-mode=etcd
 
   # Data nodes with specific configurations
   data-node-1:
@@ -94,6 +95,7 @@ services:
            --property-root-path=/tmp/banyandb-data
            --property-repair-trigger-cron="*/3 * * * *"
            --schema-registry-mode=etcd
+           --node-discovery-mode=etcd
 
   data-node-2:
     <<: *data_base

@@ -26,6 +26,7 @@ Release Notes.
 - Support map-reduce aggregation for measure queries: map phase (partial aggregation on data nodes) and reduce phase (final aggregation on liaison).
 - Add eBPF-based KTM I/O monitor for FODC agent.
 - Support relative paths in configuration.
+- Support 'none' node discovery and make it the default.
 
 ### Bug Fixes
 
