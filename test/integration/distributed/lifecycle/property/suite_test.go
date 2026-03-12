@@ -18,6 +18,7 @@
 package property_test
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -25,8 +26,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
@@ -50,6 +55,7 @@ func init() {
 			"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 		By("Starting warm data node")
 		_, destDir, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=warm",
+			"--has-schema-role=false",
 			"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 		setup.PreloadSchemaViaProperty(config, test_stream.LoadSchemaWithStages, test_measure.LoadSchemaWithStages,
 			test_trace.PreloadSchemaWithStages, test_property.PreloadSchema)
@@ -61,19 +67,11 @@ func init() {
 			groups := nodeGroups[schemaAddr]
 			By(fmt.Sprintf("Schema server %s groups(%d): %v", schemaAddr, len(groups), groups))
 		}
-		if len(schemaAddrs) >= 2 {
-			baseAddr := schemaAddrs[0]
-			for _, schemaAddr := range schemaAddrs[1:] {
-				onlyInBase := diffGroups(nodeGroups[baseAddr], nodeGroups[schemaAddr])
-				onlyInCurrent := diffGroups(nodeGroups[schemaAddr], nodeGroups[baseAddr])
-				if len(onlyInBase) > 0 || len(onlyInCurrent) > 0 {
-					By(fmt.Sprintf("Group snapshot mismatch: onlyIn(%s)=%v onlyIn(%s)=%v", baseAddr, onlyInBase, schemaAddr, onlyInCurrent))
-				}
-			}
-		}
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
 		By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--data-node-selector", "type=hot")
+		By("Verifying cluster state: hot node has ROLE_META, warm node does not")
+		verifyClusterNodeRoles(liaisonAddr)
 		By("Initializing test cases with 10 days before")
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
@@ -102,19 +100,34 @@ func init() {
 	}
 }
 
-func diffGroups(left, right []string) []string {
-	rightSet := make(map[string]struct{}, len(right))
-	for _, groupName := range right {
-		rightSet[groupName] = struct{}{}
-	}
-	result := make([]string, 0)
-	for _, groupName := range left {
-		if _, exists := rightSet[groupName]; exists {
-			continue
+func verifyClusterNodeRoles(liaisonAddr string) {
+	conn, connErr := grpchelper.Conn(liaisonAddr, 10*time.Second,
+		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	Expect(connErr).NotTo(HaveOccurred())
+	defer func() { _ = conn.Close() }()
+	clusterClient := databasev1.NewClusterStateServiceClient(conn)
+	state, stateErr := clusterClient.GetClusterState(
+		context.Background(), &databasev1.GetClusterStateRequest{})
+	Expect(stateErr).NotTo(HaveOccurred())
+	tire2 := state.GetRouteTables()["tire2"]
+	Expect(tire2).NotTo(BeNil(), "tire2 route table not found")
+	for _, node := range tire2.GetRegistered() {
+		labels := node.GetLabels()
+		hasMetaRole := false
+		for _, role := range node.GetRoles() {
+			if role == databasev1.Role_ROLE_META {
+				hasMetaRole = true
+				break
+			}
 		}
-		result = append(result, groupName)
+		if labels["type"] == "hot" {
+			Expect(hasMetaRole).To(BeTrue(),
+				fmt.Sprintf("hot node %s should have ROLE_META", node.GetMetadata().GetName()))
+		} else if labels["type"] == "warm" {
+			Expect(hasMetaRole).To(BeFalse(),
+				fmt.Sprintf("warm node %s should NOT have ROLE_META", node.GetMetadata().GetName()))
+		}
 	}
-	return result
 }
 
 func TestPropertyLifecycle(t *testing.T) {
