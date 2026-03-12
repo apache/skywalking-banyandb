@@ -21,6 +21,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -383,7 +384,7 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 }
 
 // Drop closes and removes all shards for the given group and deletes the group directory.
-func (db *database) Drop(groupName string) error {
+func (db *database) Drop(groupName string) (err error) {
 	value, ok := db.groups.LoadAndDelete(groupName)
 	if !ok {
 		return nil
@@ -391,7 +392,6 @@ func (db *database) Drop(groupName string) error {
 	gs := value.(*groupShards)
 	sLst := gs.shards.Load()
 	if sLst != nil {
-		var err error
 		for _, s := range *sLst {
 			multierr.AppendInto(&err, s.close())
 		}
@@ -399,6 +399,11 @@ func (db *database) Drop(groupName string) error {
 			return err
 		}
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("failed to remove group directory %s: %v", gs.location, r)
+		}
+	}()
 	db.lfs.MustRMAll(gs.location)
 	return nil
 }

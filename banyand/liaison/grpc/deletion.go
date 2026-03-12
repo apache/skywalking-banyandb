@@ -79,6 +79,9 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 	}
 	_, getGroupErr := m.schemaRegistry.GroupRegistry().GetGroup(ctx, internalDeletionTaskGroup)
 	if getGroupErr != nil {
+		if !errors.Is(getGroupErr, schema.ErrGRPCResourceNotFound) {
+			return fmt.Errorf("failed to get internal deletion task group: %w", getGroupErr)
+		}
 		if createErr := m.schemaRegistry.GroupRegistry().CreateGroup(ctx, group); createErr != nil {
 			return fmt.Errorf("failed to create internal deletion task group: %w", createErr)
 		}
@@ -97,6 +100,9 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 	}
 	_, getPropErr := m.schemaRegistry.PropertyRegistry().GetProperty(ctx, propSchema.Metadata)
 	if getPropErr != nil {
+		if !errors.Is(getPropErr, schema.ErrGRPCResourceNotFound) {
+			return fmt.Errorf("failed to get internal deletion task property schema: %w", getPropErr)
+		}
 		if createErr := m.schemaRegistry.PropertyRegistry().CreateProperty(ctx, propSchema); createErr != nil {
 			return fmt.Errorf("failed to create internal deletion task property schema: %w", createErr)
 		}

@@ -185,13 +185,19 @@ func (s *groupRepo) waitInflightRequests(groupName string) <-chan struct{} {
 		item = &groupInflight{}
 		s.inflight[groupName] = item
 	}
-	item.done = make(chan struct{})
+	if item.done != nil {
+		ch := item.done
+		s.RWMutex.Unlock()
+		return ch
+	}
+	ch := make(chan struct{})
+	item.done = ch
 	s.RWMutex.Unlock()
-	go func() {
-		item.wg.Wait()
-		close(item.done)
-	}()
-	return item.done
+	go func(wg *sync.WaitGroup, done chan struct{}) {
+		wg.Wait()
+		close(done)
+	}(&item.wg, ch)
+	return ch
 }
 
 func (s *groupRepo) markDeleted(groupName string) {
