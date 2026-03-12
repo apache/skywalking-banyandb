@@ -59,11 +59,13 @@ var _ = Describe("Cluster Topology Integration", func() {
 		agentCancel1      context.CancelFunc
 		agentCtx2         context.Context
 		agentCancel2      context.CancelFunc
+		httpClient        *http.Client
 		testLogger        *logger.Logger
 	)
 
 	BeforeEach(func() {
 		testLogger = logger.GetLogger("test", "integration")
+		httpClient = &http.Client{Timeout: 500 * time.Millisecond}
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
@@ -95,7 +97,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/health", proxyHTTPAddr))
+			resp, err := httpClient.Get(fmt.Sprintf("http://%s/health", proxyHTTPAddr))
 			if err != nil {
 				return err
 			}
@@ -216,7 +218,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 
 		var topology cluster.TopologyMap
 		Eventually(func(g Gomega) {
-			resp, err := http.Get(fmt.Sprintf("http://%s/cluster/topology", proxyHTTPAddr))
+			resp, err := httpClient.Get(fmt.Sprintf("http://%s/cluster/topology", proxyHTTPAddr))
 			g.Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
 			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
