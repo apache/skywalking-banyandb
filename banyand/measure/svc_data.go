@@ -602,7 +602,7 @@ type dropGroupDataListener struct {
 }
 
 func (l *dropGroupDataListener) Rev(ctx context.Context, message bus.Message) bus.Message {
-	req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest)
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceDeleteRequest)
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for drop group request"))
 	}

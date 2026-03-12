@@ -245,7 +245,7 @@ func (icr *InfoCollectorRegistry) DropGroup(ctx context.Context, catalog commonv
 }
 
 func (icr *InfoCollectorRegistry) broadcastDropGroup(broadcaster bus.Broadcaster, topic bus.Topic, group string) error {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceDeleteRequest{Group: group})
 	futures, broadcastErr := broadcaster.Broadcast(30*time.Second, topic, message)
 	if broadcastErr != nil {
 		return fmt.Errorf("failed to broadcast drop group request: %w", broadcastErr)

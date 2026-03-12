@@ -161,13 +161,13 @@ var (
 			return &databasev1.GroupRegistryServiceInspectRequest{}
 		},
 		TopicMeasureDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 		TopicStreamDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 		TopicTraceDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 	}
 
@@ -220,13 +220,13 @@ var (
 			return &databasev1.LiaisonInfo{}
 		},
 		TopicMeasureDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 		TopicStreamDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 		TopicTraceDropGroup: func() proto.Message {
-			return &databasev1.GroupRegistryServiceInspectRequest{}
+			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
 	}
 
