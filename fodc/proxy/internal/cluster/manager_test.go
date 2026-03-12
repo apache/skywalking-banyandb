@@ -70,6 +70,15 @@ func (m *mockRequestSender) SetRequestError(agentID string, err error) {
 	m.requestErrors[agentID] = err
 }
 
+func containsAgent(agents []string, target string) bool {
+	for _, agentID := range agents {
+		if agentID == target {
+			return true
+		}
+	}
+	return false
+}
+
 func initTestLogger(t *testing.T) *logger.Logger {
 	t.Helper()
 	initErr := logger.Init(logger.Logging{Env: "dev", Level: "debug"})
@@ -196,10 +205,20 @@ func TestManager_CollectClusterTopology_MultipleAgents(t *testing.T) {
 		done <- mgr.CollectClusterTopology(context.Background())
 	}()
 
-	// Give it a moment to set up channels and request data
-	time.Sleep(50 * time.Millisecond)
+	// Wait for collection channels to be registered and requests to be sent.
+	require.Eventually(t, func() bool {
+		mgr.collectingMu.RLock()
+		defer mgr.collectingMu.RUnlock()
+		_, hasAgent1 := mgr.collecting[agentID1]
+		_, hasAgent2 := mgr.collecting[agentID2]
+		return hasAgent1 && hasAgent2
+	}, time.Second, 10*time.Millisecond)
 
 	// Verify requests were made
+	require.Eventually(t, func() bool {
+		requestedAgents := mockSender.GetRequestedAgents()
+		return containsAgent(requestedAgents, agentID1) && containsAgent(requestedAgents, agentID2)
+	}, time.Second, 10*time.Millisecond)
 	requestedAgents := mockSender.GetRequestedAgents()
 	assert.Contains(t, requestedAgents, agentID1)
 	assert.Contains(t, requestedAgents, agentID2)
