@@ -190,8 +190,9 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	} else {
 		s.l.Info().Msg("failed parts storage limit disabled (percent set to 0)")
 	}
+	node := val.(common.Node)
 	streamDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicStreamPartSync, s.option.tire2Client, s.dataNodeSelector)
-	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, streamDataNodeRegistry)
+	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, streamDataNodeRegistry, node.NodeID)
 	s.writeListener = setUpWriteQueueCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client)
 
 	// Register chunked sync handler for stream data
