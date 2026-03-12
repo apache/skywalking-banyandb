@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/idgen"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -54,6 +55,7 @@ type schemaRepo struct {
 	resourceSchema.Repository
 	l        *logger.Logger
 	metadata metadata.Repo
+	idGen    *idgen.Generator
 	path     string
 	nodeID   string
 	role     databasev1.Role
@@ -65,6 +67,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		path:     path,
 		metadata: svc.metadata,
 		nodeID:   nodeID,
+		idGen:    idgen.NewGenerator(nodeID, svc.l),
 		role:     databasev1.Role_ROLE_DATA,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
@@ -77,11 +80,13 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	return sr
 }
 
-func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc.NodeRegistry, nodeID string) schemaRepo {
 	sr := schemaRepo{
 		l:        svc.l,
 		path:     path,
 		metadata: svc.metadata,
+		nodeID:   nodeID,
+		idGen:    idgen.NewGenerator(nodeID, svc.l),
 		role:     databasev1.Role_ROLE_LIAISON,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
