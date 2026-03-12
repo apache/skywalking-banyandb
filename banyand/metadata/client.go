@@ -168,7 +168,7 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"CA certificate file to verify the property schema server")
 
 	// node discovery configuration
-	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", NodeDiscoveryModeEtcd,
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", NodeDiscoveryModeNone,
 		"Node discovery mode: 'none' for standalone, 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based discovery")
 	fs.StringSliceVar(&s.dnsSRVAddresses, "node-discovery-dns-srv-addresses", []string{},
 		"DNS SRV addresses for node discovery (e.g., _grpc._tcp.banyandb.svc.cluster.local)")

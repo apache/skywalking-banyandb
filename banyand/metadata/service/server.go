@@ -100,7 +100,7 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeProperty,
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
-	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeEtcd,
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeNone,
 		"Node discovery mode: 'none' for standalone, 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
 	if s.embedded {
 		fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")

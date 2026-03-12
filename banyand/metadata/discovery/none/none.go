@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	discoverycommon "github.com/apache/skywalking-banyandb/banyand/metadata/discovery/common"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
@@ -32,46 +33,25 @@ var _ schema.NodeDiscovery = (*noneDiscovery)(nil)
 var errNotSupported = errors.New("none discovery does not support node registration or update")
 
 type noneDiscovery struct {
-	curNode *databasev1.Node
+	*discoverycommon.NodeCacheBase
 }
 
 // NewService creates a new none discovery service for standalone mode.
-// It extracts the current node information from the context.
+// It extracts the current node information from the context and adds it to the cache.
 func NewService(ctx context.Context) schema.NodeDiscovery {
-	n := &noneDiscovery{}
+	n := &noneDiscovery{
+		NodeCacheBase: discoverycommon.NewNodeCacheBase("none-discovery"),
+	}
 	if val := ctx.Value(common.ContextNodeKey); val != nil {
 		node := val.(common.Node)
 		var nodeRoles []databasev1.Role
 		if rolesVal := ctx.Value(common.ContextNodeRolesKey); rolesVal != nil {
 			nodeRoles = rolesVal.([]databasev1.Role)
 		}
-		n.curNode = node.ToProtoNode(nodeRoles)
+		protoNode := node.ToProtoNode(nodeRoles)
+		n.AddNode(node.GrpcAddress, protoNode)
 	}
 	return n
-}
-
-// ListNode returns the current node if it matches the given role.
-func (n *noneDiscovery) ListNode(_ context.Context, role databasev1.Role) ([]*databasev1.Node, error) {
-	if n.curNode == nil {
-		return nil, nil
-	}
-	if role == databasev1.Role_ROLE_UNSPECIFIED {
-		return []*databasev1.Node{n.curNode}, nil
-	}
-	for _, r := range n.curNode.GetRoles() {
-		if r == role {
-			return []*databasev1.Node{n.curNode}, nil
-		}
-	}
-	return nil, nil
-}
-
-// GetNode returns the current node if the name matches.
-func (n *noneDiscovery) GetNode(_ context.Context, name string) (*databasev1.Node, error) {
-	if n.curNode != nil && n.curNode.GetMetadata().GetName() == name {
-		return n.curNode, nil
-	}
-	return nil, schema.ErrGRPCResourceNotFound
 }
 
 // RegisterNode is not supported in none discovery mode.
@@ -84,11 +64,9 @@ func (n *noneDiscovery) UpdateNode(_ context.Context, _ *databasev1.Node) error 
 	return errNotSupported
 }
 
-// RegisterHandler is a no-op for none discovery.
-func (n *noneDiscovery) RegisterHandler(string, schema.Kind, schema.EventHandler) {}
-
-// Start is a no-op for none discovery.
+// Start replays cached nodes to all registered handlers.
 func (n *noneDiscovery) Start(context.Context) error {
+	n.NodeCacheBase.StartForNotification()
 	return nil
 }
 
