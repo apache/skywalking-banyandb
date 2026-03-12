@@ -27,6 +27,7 @@ Release Notes.
 - Add eBPF-based KTM I/O monitor for FODC agent.
 - Support relative paths in configuration.
 - Support 'none' node discovery and make it the default.
+- Support server-side element ID generation for stream writes when clients omit element_id.
 
 ### Bug Fixes
 
