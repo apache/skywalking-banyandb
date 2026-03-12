@@ -89,12 +89,21 @@ var _ = Describe("Cluster Collector Integration", func() {
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait a bit for cluster topology to be collected
-			time.Sleep(2 * time.Second)
+			waitCtx, waitCancel := context.WithTimeout(collectionCtx, 30*time.Second)
+			defer waitCancel()
+
+			err = collector.WaitForNodeFetched(waitCtx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				topology := collector.GetClusterTopology()
+				return topology.Nodes != nil && topology.Calls != nil
+			}, 10*time.Second, 200*time.Millisecond).Should(BeTrue(), "Expected initial cluster topology collection to complete")
 
 			topology := collector.GetClusterTopology()
 			Expect(topology).NotTo(BeNil())
-			Expect(len(topology.Nodes)).To(BeNumerically(">=", 0))
+			Expect(topology.Nodes).NotTo(BeNil())
+			Expect(topology.Calls).NotTo(BeNil())
 		})
 
 		It("should handle node role determination correctly", func() {
@@ -139,8 +148,8 @@ var _ = Describe("Cluster Collector Integration", func() {
 			Expect(nodes).To(BeEmpty(), "No nodes should be fetched with invalid address")
 		})
 
-		It("should handle connection timeouts", func() {
-			// Use a valid address format but non-existent server
+		It("should handle invalid port addresses gracefully", func() {
+			// Use an invalid port value to verify address handling remains graceful.
 			collector = cluster.NewCollector(testLogger, []string{"127.0.0.1:99999"}, 1*time.Second, "test-pod")
 
 			err := collector.Start(collectionCtx)
@@ -165,17 +174,31 @@ var _ = Describe("Cluster Collector Integration", func() {
 			err := collector.Start(collectionCtx)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Wait for initial collection
-			time.Sleep(3 * time.Second)
+			waitCtx, waitCancel := context.WithTimeout(collectionCtx, 30*time.Second)
+			defer waitCancel()
+
+			err = collector.WaitForNodeFetched(waitCtx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				topology := collector.GetClusterTopology()
+				return topology.Nodes != nil && topology.Calls != nil
+			}, 10*time.Second, 200*time.Millisecond).Should(BeTrue(), "Expected initial topology collection to complete")
 
 			initialTopology := collector.GetClusterTopology()
 			Expect(initialTopology).NotTo(BeNil())
+			Expect(initialTopology.Nodes).NotTo(BeNil())
+			Expect(initialTopology.Calls).NotTo(BeNil())
 
-			// Wait for another collection cycle
-			time.Sleep(3 * time.Second)
+			Consistently(func() bool {
+				topology := collector.GetClusterTopology()
+				return topology.Nodes != nil && topology.Calls != nil
+			}, 3*time.Second, 200*time.Millisecond).Should(BeTrue())
 
 			updatedTopology := collector.GetClusterTopology()
 			Expect(updatedTopology).NotTo(BeNil())
+			Expect(updatedTopology.Nodes).NotTo(BeNil())
+			Expect(updatedTopology.Calls).NotTo(BeNil())
 			// The topology should be updated
 		})
 	})
