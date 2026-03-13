@@ -669,12 +669,20 @@ func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string) ([
 	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group)
 }
 
+func (s *clientService) DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error {
+	return s.infoCollectorRegistry.DropGroup(ctx, catalog, group)
+}
+
 func (s *clientService) RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector) {
 	s.infoCollectorRegistry.RegisterDataCollector(catalog, collector)
 }
 
 func (s *clientService) RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector) {
 	s.infoCollectorRegistry.RegisterLiaisonCollector(catalog, collector)
+}
+
+func (s *clientService) RegisterGroupDropHandler(catalog commonv1.Catalog, handler schema.GroupDropHandler) {
+	s.infoCollectorRegistry.RegisterGroupDropHandler(catalog, handler)
 }
 
 func (s *clientService) SetDataBroadcaster(broadcaster bus.Broadcaster) {

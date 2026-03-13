@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package inspect provides integration tests for the inspect functionality in standalone mode.
-package inspect
+// Package inspection provides integration tests for the inspect functionality in standalone mode.
+package inspection
 
 import (
 	"context"
