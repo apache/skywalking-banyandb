@@ -104,6 +104,37 @@ func TestPartMetadata_Validation(t *testing.T) {
 			},
 			expectErr: false,
 		},
+		{
+			name: "invalid timestamp range - MinTimestamp > MaxTimestamp",
+			metadata: &partMetadata{
+				CompressedSizeBytes:   100,
+				UncompressedSizeBytes: 200,
+				TotalCount:            10,
+				BlocksCount:           2,
+				MinKey:                1,
+				MaxKey:                100,
+				ID:                    1,
+				MinTimestamp:          ptrInt64(200),
+				MaxTimestamp:          ptrInt64(100),
+			},
+			expectErr: true,
+			errMsg:    "invalid timestamp range",
+		},
+		{
+			name: "valid metadata with optional timestamps",
+			metadata: &partMetadata{
+				CompressedSizeBytes:   100,
+				UncompressedSizeBytes: 200,
+				TotalCount:            10,
+				BlocksCount:           2,
+				MinKey:                1,
+				MaxKey:                100,
+				MinTimestamp:          ptrInt64(100),
+				MaxTimestamp:          ptrInt64(200),
+				ID:                    1,
+			},
+			expectErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -451,6 +482,34 @@ func TestPartMetadata_Serialization(t *testing.T) {
 	assert.Equal(t, original.MinKey, restored.MinKey)
 	assert.Equal(t, original.MaxKey, restored.MaxKey)
 	assert.Equal(t, original.ID, restored.ID)
+}
+
+func TestPartMetadata_SerializationWithTimestamps(t *testing.T) {
+	minTS := int64(1000)
+	maxTS := int64(2000)
+	original := &partMetadata{
+		CompressedSizeBytes:   1000,
+		UncompressedSizeBytes: 2000,
+		TotalCount:            50,
+		BlocksCount:           5,
+		MinKey:                10,
+		MaxKey:                1000,
+		MinTimestamp:          &minTS,
+		MaxTimestamp:          &maxTS,
+		ID:                    12345,
+	}
+
+	data, err := original.marshal()
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "minTimestamp")
+	assert.Contains(t, string(data), "maxTimestamp")
+
+	restored, err := unmarshalPartMetadata(data)
+	require.NoError(t, err)
+	require.NotNil(t, restored.MinTimestamp)
+	require.NotNil(t, restored.MaxTimestamp)
+	assert.Equal(t, *original.MinTimestamp, *restored.MinTimestamp)
+	assert.Equal(t, *original.MaxTimestamp, *restored.MaxTimestamp)
 }
 
 func TestBlockMetadata_Serialization(t *testing.T) {
