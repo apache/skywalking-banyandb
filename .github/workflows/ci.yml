@@ -125,9 +125,10 @@ jobs:
     uses: ./.github/workflows/test-fodc.yml
   test-fodc-e2e:
     name: Test FODC E2E
-    if: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
     needs: [check, detect_fodc_e2e_changes]
     uses: ./.github/workflows/test-fodc-e2e.yml
+    with:
+      should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
   test-pkg:
     name: Test Pkg
     needs: [check]
