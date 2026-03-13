@@ -49,7 +49,7 @@ jobs:
 
   StoragePlugins:
     name: Storage E2E
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
@@ -74,6 +74,10 @@ jobs:
             config: test/e2e-v2/cases/cluster/e2e-property.yaml
           - name: Rover Istio BanyanDB
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
+            env: |
+              ISTIO_VERSION=1.28.0
+              KUBERNETES_VERSION=28
+            runs-on: ubuntu-24.04
           # TODO: Enable Lifecycle test when it is ready
           # - name: Lifecycle
           #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
@@ -84,6 +88,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+      - name: Load env
+        run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
@@ -98,6 +104,14 @@ jobs:
         run: |
           docker load --input /tmp/banyandb-testing-image.tar.gz
           docker image ls
+      - name: Login to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set env var
+        run: echo "${{ matrix.test.env }}" >> $GITHUB_ENV
       - name: Generate data for lifecycle
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
