@@ -611,13 +611,26 @@ func CMD(flags ...string) func() {
 	}
 }
 
+func hasFlagValue(flags []string, key, value string) bool {
+	for idx, f := range flags {
+		if f == key+"="+value {
+			return true
+		}
+		if f == key && idx+1 < len(flags) && flags[idx+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
 func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (string, string, func()) {
 	if config == nil {
 		config = defaultClusterConfig
 	}
 	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
+	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-meta-role", "false")
 	portCount := 2
-	if isPropertyMode {
+	if runSchemaServer {
 		portCount = 3
 	}
 	ports, err := test.AllocateFreePorts(portCount)
@@ -650,13 +663,15 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 	}
 
 	if isPropertyMode {
-		schemaPort := ports[2]
-		schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
-		flags = append(flags,
-			"--schema-server-grpc-host="+nodeHost,
-			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-		)
-		config.addSchemaServerAddr(schemaAddr)
+		if runSchemaServer {
+			schemaPort := ports[2]
+			schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
+			flags = append(flags,
+				"--schema-server-grpc-host="+nodeHost,
+				fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
+			)
+			config.addSchemaServerAddr(schemaAddr)
+		}
 	} else {
 		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
 	}
