@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package property_test
+package observability_test
 
 import (
 	"testing"
@@ -23,31 +23,15 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
-	"github.com/apache/skywalking-banyandb/test/integration/standalone/inspect"
+	"github.com/apache/skywalking-banyandb/test/integration/standalone/observability"
 )
 
-func init() {
-	inspect.SetupFunc = func() inspect.SetupResult {
-		By("Starting standalone server with property mode")
-		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
-		Expect(tmpErr).NotTo(HaveOccurred())
-		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
-		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.EmptyStandalone(config)
-		return inspect.SetupResult{
-			Addr: addr,
-			StopFunc: func() {
-				closeFn()
-				tmpDirCleanup()
-			},
-		}
-	}
+func TestNativeObservabilityMetrics(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Native Observability Metrics Suite", Label(integration_standalone.Labels...))
 }
 
-func TestPropertyInspect(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Standalone Property Inspect Suite", Label(integration_standalone.Labels...))
-}
+var _ = BeforeSuite(func() {
+	observability.Setup()
+})

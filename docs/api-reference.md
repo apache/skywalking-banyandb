@@ -2836,6 +2836,7 @@ GroupDeletionTask represents the status of a group deletion operation.
 | deleted_data_size_bytes | [int64](#int64) |  | deleted_data_size_bytes is the size of data that has been deleted in bytes. |
 | message | [string](#string) |  | message provides additional information about the task status. |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the timestamp when the task was created. |
+| updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at is the timestamp when the task was last updated. |
 
 
 
@@ -2910,6 +2911,7 @@ GroupRegistryServiceDeleteRequest is the request for deleting a group.
 | group | [string](#string) |  | group is the name of the group to delete. |
 | dry_run | [bool](#bool) |  | dry_run indicates whether to perform a dry run without actually deleting data. When true, returns what would be deleted without making changes. |
 | force | [bool](#bool) |  | force indicates whether to force delete the group even if it contains data. When false, deletion will fail if the group is not empty. |
+| data_only | [bool](#bool) |  | data_only indicates whether to delete only data files without removing metadata. When true, metadata are preserved. |
 
 
 
@@ -2924,8 +2926,7 @@ GroupRegistryServiceDeleteResponse is the response for deleting a group.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| deleted | [bool](#bool) |  | deleted indicates whether the group was deleted. |
-| task_id | [string](#string) |  | task_id is the ID of the background deletion task. |
+| schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  | schema_info contains the schema resources that would be deleted (populated in dry-run mode). |
 
 
 

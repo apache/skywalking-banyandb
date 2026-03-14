@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package etcd_test
+package property_test
 
 import (
 	"testing"
@@ -23,16 +23,17 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	"github.com/apache/skywalking-banyandb/test/integration/distributed/inspect"
+	"github.com/apache/skywalking-banyandb/test/integration/distributed/inspection"
 )
 
 func init() {
-	inspect.SetupFunc = func() inspect.SetupResult {
-		By("Starting etcd server")
-		ep, _, etcdCleanup := setup.StartEmbeddedEtcd()
-		config := setup.EtcdClusterConfig(ep)
-
+	inspection.SetupFunc = func() inspection.SetupResult {
+		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+		Expect(tmpErr).NotTo(HaveOccurred())
+		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
 		closeDataNode0 := setup.DataNode(config)
 		By("Starting data node 1")
@@ -40,20 +41,19 @@ func init() {
 		By("Starting liaison node")
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 
-		return inspect.SetupResult{
-			LiaisonAddr:  liaisonAddr,
-			EtcdEndpoint: ep,
+		return inspection.SetupResult{
+			LiaisonAddr: liaisonAddr,
 			StopFunc: func() {
 				closerLiaisonNode()
 				closeDataNode0()
 				closeDataNode1()
-				etcdCleanup()
+				tmpDirCleanup()
 			},
 		}
 	}
 }
 
-func TestEtcdInspect(t *testing.T) {
+func TestPropertyInspect(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Etcd Inspect Suite")
+	RunSpecs(t, "Distributed Property Inspect Suite")
 }

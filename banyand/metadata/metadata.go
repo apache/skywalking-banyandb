@@ -55,6 +55,7 @@ type Repo interface {
 	PropertyRegistry() schema.Property
 	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) ([]*databasev1.LiaisonInfo, error)
+	DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error
 }
 
 // Service is the metadata repository.
@@ -69,4 +70,5 @@ type Service interface {
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)
 	RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector)
+	RegisterGroupDropHandler(catalog commonv1.Catalog, handler schema.GroupDropHandler)
 }

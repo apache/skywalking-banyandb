@@ -99,3 +99,6 @@ var TopicStreamCollectDataInfo = bus.BiTopic("stream-collect-data-info")
 
 // TopicStreamCollectLiaisonInfo is the topic for collecting liaison info from liaison nodes.
 var TopicStreamCollectLiaisonInfo = bus.BiTopic("stream-collect-liaison-info")
+
+// TopicStreamDropGroup is the topic for dropping group data files.
+var TopicStreamDropGroup = bus.BiTopic("stream-drop-group")

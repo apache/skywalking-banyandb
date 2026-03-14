@@ -21,6 +21,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -75,6 +76,8 @@ type Database interface {
 	Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error
 	// TakeSnapShot takes a snapshot of the database.
 	TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot
+	// Drop closes and removes all shards for the given group and deletes the group directory.
+	Drop(groupName string) error
 	// RegisterGossip registers the repair scheduler's gossip services with the given messenger.
 	RegisterGossip(messenger gossip.Messenger)
 	// Close closes the database.
@@ -378,6 +381,31 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 		}
 	}
 	return nil, false
+}
+
+// Drop closes and removes all shards for the given group and deletes the group directory.
+func (db *database) Drop(groupName string) (err error) {
+	value, ok := db.groups.LoadAndDelete(groupName)
+	if !ok {
+		return nil
+	}
+	gs := value.(*groupShards)
+	sLst := gs.shards.Load()
+	if sLst != nil {
+		for _, s := range *sLst {
+			multierr.AppendInto(&err, s.close())
+		}
+		if err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("failed to remove group directory %s: %v", gs.location, r)
+		}
+	}()
+	db.lfs.MustRMAll(gs.location)
+	return nil
 }
 
 // RegisterGossip registers the repair scheduler's gossip services with the given messenger.

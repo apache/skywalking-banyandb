@@ -24,22 +24,36 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
-	"github.com/apache/skywalking-banyandb/test/integration/standalone/inspect"
+	"github.com/apache/skywalking-banyandb/test/integration/distributed/inspection"
 )
 
 func init() {
-	inspect.SetupFunc = func() inspect.SetupResult {
-		By("Starting standalone server")
-		addr, _, closeFn := setup.EmptyStandalone(nil)
-		return inspect.SetupResult{
-			Addr:     addr,
-			StopFunc: closeFn,
+	inspection.SetupFunc = func() inspection.SetupResult {
+		By("Starting etcd server")
+		ep, _, etcdCleanup := setup.StartEmbeddedEtcd()
+		config := setup.EtcdClusterConfig(ep)
+
+		By("Starting data node 0")
+		closeDataNode0 := setup.DataNode(config)
+		By("Starting data node 1")
+		closeDataNode1 := setup.DataNode(config)
+		By("Starting liaison node")
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+
+		return inspection.SetupResult{
+			LiaisonAddr:  liaisonAddr,
+			EtcdEndpoint: ep,
+			StopFunc: func() {
+				closerLiaisonNode()
+				closeDataNode0()
+				closeDataNode1()
+				etcdCleanup()
+			},
 		}
 	}
 }
 
 func TestEtcdInspect(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Standalone Inspect Suite", Label(integration_standalone.Labels...))
+	RunSpecs(t, "Distributed Etcd Inspect Suite")
 }
