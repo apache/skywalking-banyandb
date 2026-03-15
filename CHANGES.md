@@ -28,6 +28,7 @@ Release Notes.
 - Support relative paths in configuration.
 - Support 'none' node discovery and make it the default.
 - Support server-side element ID generation for stream writes when clients omit element_id.
+- Implement entire group deletion.
 
 ### Bug Fixes
 
