@@ -160,9 +160,6 @@ func (gba *unresolvedAggregation) Analyze(measureSchema logical.Schema) (logical
 		return nil, errors.Wrap(errFieldNotDefined, "aggregation schema")
 	}
 	fieldRef := aggregationFieldRefs[0]
-	if gba.aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT {
-		return newAggregationPlan[int64](gba, prevPlan, schema, fieldRef)
-	}
 	switch fieldRef.Spec.Spec.FieldType {
 	case databasev1.FieldType_FIELD_TYPE_INT:
 		return newAggregationPlan[int64](gba, prevPlan, schema, fieldRef)

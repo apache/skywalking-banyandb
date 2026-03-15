@@ -24,9 +24,10 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	banyandmeasure "github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -64,35 +65,45 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 	if gba.top.FieldValueSort == modelv1.Sort_SORT_ASC {
 		reverted = true
 	}
-	return &topOp{
+	fieldRef := fieldRefs[0]
+	switch fieldRef.Spec.Spec.FieldType {
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		return newTopOp[float64](gba, prevPlan, fieldRef, reverted), nil
+	default:
+		return newTopOp[int64](gba, prevPlan, fieldRef, reverted), nil
+	}
+}
+
+func newTopOp[N aggregation.Number](gba *unresolvedTop, prevPlan logical.Plan, fieldRef *logical.FieldRef, reverted bool) *topOp[N] {
+	return &topOp[N]{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
 		},
-		topNStream: NewTopQueue(int(gba.top.Number), reverted),
-		fieldRef:   fieldRefs[0],
-	}, nil
+		topNStream: NewTopQueue[N](int(gba.top.Number), reverted),
+		fieldRef:   fieldRef,
+	}
 }
 
-type topOp struct {
+type topOp[N aggregation.Number] struct {
 	*logical.Parent
-	topNStream *TopQueue
+	topNStream *TopQueue[N]
 	fieldRef   *logical.FieldRef
 }
 
-func (g *topOp) String() string {
+func (g *topOp[N]) String() string {
 	return fmt.Sprintf("%s top %s", g.Input, g.topNStream.String())
 }
 
-func (g *topOp) Children() []logical.Plan {
+func (g *topOp[N]) Children() []logical.Plan {
 	return []logical.Plan{g.Input}
 }
 
-func (g *topOp) Schema() logical.Schema {
+func (g *topOp[N]) Schema() logical.Schema {
 	return g.Input.Schema()
 }
 
-func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) {
+func (g *topOp[N]) Execute(ec context.Context) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -105,33 +116,40 @@ func (g *topOp) Execute(ec context.Context) (mit executor.MIterator, err error) 
 		dpp := iter.Current()
 		for _, idp := range dpp {
 			fieldValue := idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].GetValue()
-			g.topNStream.Insert(NewTopElement(idp, banyandmeasure.FieldValueToSortableValue(fieldValue)))
+			g.topNStream.Insert(extractTopElementValue[N](idp, fieldValue))
 		}
 	}
 	return newTopIterator(g.topNStream.Elements()), nil
 }
 
-type topIterator struct {
-	elements []TopElement
+func extractTopElementValue[N aggregation.Number](idp *measurev1.InternalDataPoint, fieldValue *modelv1.FieldValue) TopElement[N] {
+	if fieldValue.GetFloat() != nil {
+		return any(NewTopElement[float64](idp, fieldValue.GetFloat().GetValue())).(TopElement[N])
+	}
+	return any(NewTopElement[int64](idp, fieldValue.GetInt().GetValue())).(TopElement[N])
+}
+
+type topIterator[N aggregation.Number] struct {
+	elements []TopElement[N]
 	index    int
 }
 
-func newTopIterator(elements []TopElement) executor.MIterator {
-	return &topIterator{
+func newTopIterator[N aggregation.Number](elements []TopElement[N]) executor.MIterator {
+	return &topIterator[N]{
 		elements: elements,
 		index:    -1,
 	}
 }
 
-func (ami *topIterator) Next() bool {
+func (ami *topIterator[N]) Next() bool {
 	ami.index++
 	return ami.index < len(ami.elements)
 }
 
-func (ami *topIterator) Current() []*measurev1.InternalDataPoint {
+func (ami *topIterator[N]) Current() []*measurev1.InternalDataPoint {
 	return []*measurev1.InternalDataPoint{ami.elements[ami.index].idp}
 }
 
-func (ami *topIterator) Close() error {
+func (ami *topIterator[N]) Close() error {
 	return nil
 }

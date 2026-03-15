@@ -32,19 +32,19 @@ import (
 
 func TestBlockCursor_MergeTopNResult(t *testing.T) {
 	tests := []struct {
-		srcTopNVal  *TopNValue
-		destTopNVal *TopNValue
-		wantTopNVal *TopNValue
+		srcTopNVal  *TopNValue[int64]
+		destTopNVal *TopNValue[int64]
+		wantTopNVal *TopNValue[int64]
 		name        string
 		sort        modelv1.Sort
 		topN        int32
 	}{
 		{
 			name: "Test block merge TopN result",
-			srcTopNVal: &TopNValue{
+			srcTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []SortableValue{IntValue(1000), IntValue(200), IntValue(300), IntValue(400), IntValue(500)},
+				values:         []int64{1000, 200, 300, 400, 500},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
@@ -53,10 +53,10 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
 				},
 			},
-			destTopNVal: &TopNValue{
+			destTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []SortableValue{IntValue(550), IntValue(200), IntValue(500), IntValue(600), IntValue(400)},
+				values:         []int64{550, 200, 500, 600, 400},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
@@ -67,10 +67,10 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			},
 			sort: modelv1.Sort_SORT_DESC,
 			topN: 3,
-			wantTopNVal: &TopNValue{
+			wantTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
-				values:         []SortableValue{IntValue(550), IntValue(600), IntValue(1000)},
+				values:         []int64{550, 600, 1000},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
@@ -118,8 +118,6 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 				},
 			}
 
-			topNPostAggregator := CreateTopNPostProcessor(tt.topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, tt.sort)
-
 			expectedTagValue := "endpoint_resp_time-service"
 			storedIndexValue := map[common.SeriesID]map[string]*modelv1.TagValue{
 				1: {
@@ -131,7 +129,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 				},
 			}
 
-			bc.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort)
 
 			tagValue := result.TagFamilies[0].Tags[0].Values[0]
 			require.Equal(t, expectedTagValue, tagValue.GetStr().GetValue())
@@ -139,8 +137,8 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			mergedFieldValue := result.Fields[0].Values[0]
 			require.NotNil(t, mergedFieldValue.GetBinaryData())
 
-			gotTopNVal := GenerateTopNValue()
-			defer ReleaseTopNValue(gotTopNVal)
+			gotTopNVal := GenerateTopNValueInt()
+			defer ReleaseTopNValueInt(gotTopNVal)
 			decoder := GenerateTopNValuesDecoder()
 			defer ReleaseTopNValuesDecoder(decoder)
 

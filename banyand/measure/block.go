@@ -672,7 +672,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 }
 
 func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
-	topNPostAggregator PostProcessor,
+	topN int32, sort modelv1.Sort,
 ) {
 	r.SID = bc.bm.seriesID
 	var indexValue map[string]*modelv1.TagValue
@@ -710,8 +710,6 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 		}
 	}
 
-	topNValue := GenerateTopNValue()
-	defer ReleaseTopNValue(topNValue)
 	decoder := GenerateTopNValuesDecoder()
 	defer ReleaseTopNValuesDecoder(decoder)
 
@@ -721,46 +719,24 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 		srcFieldValue := r.Fields[i].Values[len(r.Fields[i].Values)-1]
 		destFieldValue := mustDecodeFieldValue(c.valueType, c.values[bc.idx])
 
-		topNValue.Reset()
-
-		if err := topNValue.Unmarshal(srcFieldValue.GetBinaryData(), decoder); err != nil {
-			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
+		merged, mergeErr := MergeTopNBinaryValues(
+			srcFieldValue.GetBinaryData(),
+			destFieldValue.GetBinaryData(),
+			topN,
+			sort,
+			decoder,
+			uTimestamps,
+			r.Versions[len(r.Versions)-1],
+			bc.versions[bc.idx],
+		)
+		if mergeErr != nil {
+			log.Error().Err(mergeErr).Msg("failed to merge topN values, skip current batch")
 			continue
-		}
-
-		valueName := topNValue.valueName
-		entityTagNames := topNValue.entityTagNames
-
-		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamps, r.Versions[len(r.Versions)-1])
-
-		topNValue.Reset()
-		if err := topNValue.Unmarshal(destFieldValue.GetBinaryData(), decoder); err != nil {
-			log.Error().Err(err).Msg("failed to unmarshal topN value, skip current batch")
-			continue
-		}
-
-		putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamps, bc.versions[bc.idx])
-
-		items, err := topNPostAggregator.Flush()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to flush aggregator")
-		}
-
-		topNValue.Reset()
-		topNValue.setMetadata(valueName, entityTagNames)
-
-		for _, item := range items {
-			topNValue.addValue(item.val, item.values)
-		}
-
-		buf, err := topNValue.marshal(make([]byte, 0, 128))
-		if err != nil {
-			log.Error().Err(err).Msg("failed to flush aggregator")
 		}
 
 		r.Fields[i].Values[len(r.Fields[i].Values)-1] = &modelv1.FieldValue{
 			Value: &modelv1.FieldValue_BinaryData{
-				BinaryData: buf,
+				BinaryData: merged,
 			},
 		}
 	}
@@ -1129,16 +1105,11 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 	}
 }
 
-func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, right *blockPointer, rightIdx int, topNPostAggregator PostProcessor) {
-	topNValue := GenerateTopNValue()
-	defer ReleaseTopNValue(topNValue)
+func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, right *blockPointer, rightIdx int, topN int32, sort modelv1.Sort) {
 	decoder := GenerateTopNValuesDecoder()
 	defer ReleaseTopNValuesDecoder(decoder)
 
-	topNPostAggregator.Reset()
-
 	uTimestamp := uint64(right.timestamps[rightIdx])
-	marshalBuf := make([]byte, 0, 128)
 	leftVer, rightVer := left.versions[leftIdx], right.versions[rightIdx]
 
 	if len(bi.field.columns) == 0 {
@@ -1152,58 +1123,23 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 	}
 
 	for idx := range right.field.columns {
-		topNValue.Reset()
-
-		var valueName string
-		var entityTagNames []string
-		hasValidData := false
-
-		if err := topNValue.Unmarshal(left.field.columns[idx].values[leftIdx], decoder); err != nil {
-			log.Warn().Err(err).Msg("failed to unmarshal left topN value, ignoring left side")
-		} else {
-			valueName = topNValue.valueName
-			entityTagNames = topNValue.entityTagNames
-			putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, leftVer)
-			hasValidData = true
-		}
-
-		topNValue.Reset()
-		if err := topNValue.Unmarshal(right.field.columns[idx].values[rightIdx], decoder); err != nil {
-			log.Warn().Err(err).Msg("failed to unmarshal right topN value, ignoring right side")
-		} else {
-			if !hasValidData {
-				valueName = topNValue.valueName
-				entityTagNames = topNValue.entityTagNames
-			}
-			putEntitiesToAggregator(topNValue, topNPostAggregator, uTimestamp, rightVer)
-			hasValidData = true
-		}
-
-		if !hasValidData {
-			log.Error().Msg("both sides of topN value are malformed, append empty value")
+		merged, mergeErr := MergeTopNBinaryValues(
+			left.field.columns[idx].values[leftIdx],
+			right.field.columns[idx].values[rightIdx],
+			topN,
+			sort,
+			decoder,
+			uTimestamp,
+			leftVer,
+			rightVer,
+		)
+		if mergeErr != nil {
+			log.Error().Err(mergeErr).Msg("both sides of topN value are malformed, append empty value")
 			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
 			continue
 		}
 
-		topNValue.Reset()
-		topNValue.setMetadata(valueName, entityTagNames)
-
-		items, err := topNPostAggregator.Flush()
-		if err != nil {
-			log.Panic().Err(err).Msg("failed to flush aggregator")
-		}
-
-		for _, item := range items {
-			topNValue.addValue(item.val, item.values)
-		}
-
-		marshalBuf = marshalBuf[:0]
-		buf, err := topNValue.marshal(marshalBuf)
-		if err != nil {
-			log.Panic().Err(err).Msg("failed to marshal merged topN value")
-		}
-
-		bi.field.columns[idx].values = append(bi.field.columns[idx].values, buf)
+		bi.field.columns[idx].values = append(bi.field.columns[idx].values, merged)
 	}
 
 	if rightVer >= leftVer {
@@ -1227,14 +1163,6 @@ func (bi *blockPointer) appendTagFamilies(b *blockPointer, offset int) {
 			log.Debug().Msgf("fastTagAppend failed: %v; falling back to fullTagAppend", err)
 		}
 		fullTagAppend(bi, b, offset)
-	}
-}
-
-func putEntitiesToAggregator(topNValue *TopNValue, aggregator PostProcessor, timestamp uint64, version int64) {
-	for i, entityList := range topNValue.entities {
-		entityValues := make(pbv1.EntityValues, len(entityList))
-		copy(entityValues, entityList)
-		aggregator.Put(entityValues, topNValue.values[i], timestamp, version)
 	}
 }
 
