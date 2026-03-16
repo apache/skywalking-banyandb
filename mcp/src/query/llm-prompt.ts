@@ -19,7 +19,6 @@
 
 import type { ResourcesByGroup } from './types.js';
 
-
 // Generates a BydbQL query based on the provided natural language description and available schema information.
 export function generateBydbQL(
   description: string,
