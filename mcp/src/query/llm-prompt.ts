@@ -22,7 +22,7 @@ import type { ResourcesByGroup } from './types.js';
 /**
  * Generate the LLM prompt for converting natural language to BydbQL queries.
  */
-export function generateQueryPrompt(
+export function generateBydbQL(
   description: string,
   args: Record<string, unknown>,
   groups: string[] = [],

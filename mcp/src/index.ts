@@ -18,12 +18,14 @@
  */
 
 import dotenv from 'dotenv';
+import { z } from 'zod';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
-import { QueryGenerator, QueryGeneratorResult, ResourcesByGroup } from './query/query-generator.js';
+import { generateBydbQL } from './query/llm-prompt.js';
+import { QueryGeneratorResult, ResourcesByGroup } from './query/types.js';
 import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
 // Load environment variables first
@@ -33,8 +35,97 @@ dotenv.config();
 setupGlobalErrorHandlers();
 
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
-const LLM_API_KEY = process.env.LLM_API_KEY;
-const LLM_BASE_URL = process.env.LLM_BASE_URL;
+
+const generateBydbQLPromptSchema = {
+  description: z.string().describe(
+    "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans order by time')",
+  ),
+  resource_type: z.enum(['stream', 'measure', 'trace', 'property']).optional().describe('Optional resource type hint: stream, measure, trace, or property'),
+  resource_name: z.string().optional().describe('Optional resource name hint (stream/measure/trace/property name)'),
+  group: z.string().optional().describe('Optional group hint, for example the properties group'),
+} as const;
+
+type GenerateBydbQLPromptArgs = {
+  description: string;
+  resource_type?: 'stream' | 'measure' | 'trace' | 'property';
+  resource_name?: string;
+  group?: string;
+};
+
+type QueryHints = {
+  description?: string;
+  BydbQL?: string;
+  resource_type?: string;
+  resource_name?: string;
+  group?: string;
+};
+
+function normalizeQueryHints(args: unknown): QueryHints {
+  if (!args || typeof args !== 'object') {
+    return {};
+  }
+
+  const rawArgs = args as Record<string, unknown>;
+  return {
+    description: typeof rawArgs.description === 'string' ? rawArgs.description.trim() : undefined,
+    BydbQL: typeof rawArgs.BydbQL === 'string' ? rawArgs.BydbQL.trim() : undefined,
+    resource_type: typeof rawArgs.resource_type === 'string' ? rawArgs.resource_type.trim() : undefined,
+    resource_name: typeof rawArgs.resource_name === 'string' ? rawArgs.resource_name.trim() : undefined,
+    group: typeof rawArgs.group === 'string' ? rawArgs.group.trim() : undefined,
+  };
+}
+
+function buildQueryResult(args: QueryHints): QueryGeneratorResult {
+  if (args.BydbQL) {
+    return {
+      description: 'Execute provided BydbQL query',
+      query: args.BydbQL,
+      resourceType: args.resource_type,
+      resourceName: args.resource_name,
+      group: args.group,
+    };
+  }
+
+  throw new Error('BydbQL is required');
+}
+
+async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<{ groups: string[]; resourcesByGroup: ResourcesByGroup }> {
+  let groups: string[] = [];
+  try {
+    const groupsList = await banyandbClient.listGroups();
+    groups = groupsList.map((groupResource) => groupResource.metadata?.name || '').filter((groupName) => groupName !== '');
+  } catch (error) {
+    log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
+  }
+
+  const resourcesByGroup: ResourcesByGroup = {};
+  for (const group of groups) {
+    try {
+      const [streams, measures, traces, properties, topNItems, indexRule] = await Promise.all([
+        banyandbClient.listStreams(group).catch(() => []),
+        banyandbClient.listMeasures(group).catch(() => []),
+        banyandbClient.listTraces(group).catch(() => []),
+        banyandbClient.listProperties(group).catch(() => []),
+        banyandbClient.listTopN(group).catch(() => []),
+        banyandbClient.listIndexRule(group).catch(() => []),
+      ]);
+
+      resourcesByGroup[group] = {
+        streams: streams.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        measures: measures.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        traces: traces.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        properties: properties.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        topNItems: topNItems.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        indexRule: indexRule.filter((resource) => !resource.noSort && resource.metadata?.name).map((resource) => resource.metadata?.name || ''),
+      };
+    } catch (error) {
+      log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
+      resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [], indexRule: [] };
+    }
+  }
+
+  return { groups, resourcesByGroup };
+}
 
 async function main() {
   // Create MCP server
@@ -53,19 +144,54 @@ async function main() {
   // Initialize BanyanDB client
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
 
-  // Validate API key before creating QueryGenerator
-  const validApiKey = LLM_API_KEY && LLM_API_KEY.trim().length > 0 ? LLM_API_KEY.trim() : undefined;
-  const validBaseURL = LLM_BASE_URL && LLM_BASE_URL.trim().length > 0 ? LLM_BASE_URL.trim() : undefined;
-  const queryGenerator = new QueryGenerator(validApiKey, validBaseURL);
+  log.info('Using built-in BydbQL prompt generation without external LLM connectivity');
 
-  if (validApiKey) {
-    log.info('LLM query generation enabled (using LLM API)');
-  } else {
-    log.info('LLM query generation disabled, using pattern matching');
-    if (LLM_API_KEY !== undefined) {
-      log.warn('LLM_API_KEY is set but appears to be empty or invalid');
-    }
-  }
+  const registerPrompt = server.registerPrompt.bind(server) as unknown as (
+    name: string,
+    config: {
+      description: string;
+      argsSchema: unknown;
+    },
+    cb: (args: GenerateBydbQLPromptArgs) => Promise<{
+      messages: Array<{
+        role: 'user';
+        content: {
+          type: 'text';
+          text: string;
+        };
+      }>;
+    }>,
+  ) => unknown;
+
+  registerPrompt(
+    'generateBydbQL',
+    {
+      description:
+        'Generate the prompt/context needed to derive correct BydbQL from natural language and BanyanDB schema hints. Use list_groups_schemas first to discover available resources.',
+      argsSchema: generateBydbQLPromptSchema,
+    },
+    async (args) => {
+      const queryHints = normalizeQueryHints(args);
+      if (!queryHints.description) {
+        throw new Error('description is required');
+      }
+
+      const { groups, resourcesByGroup } = await loadQueryContext(banyandbClient);
+      const prompt = generateBydbQL(queryHints.description, queryHints, groups, resourcesByGroup);
+
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: prompt,
+            },
+          },
+        ],
+      };
+    },
+  );
 
   // List available tools
   server.server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -94,30 +220,29 @@ async function main() {
         {
           name: 'list_resources_bydbql',
           description:
-            'Query BanyanDB data using natural language description. Supports querying streams, measures, traces, and properties. Use list_groups_schemas first to discover available resources.',
+            'Fetch streams, measures, traces, or properties from BanyanDB using a BydbQL query.',
           inputSchema: {
             type: 'object',
             properties: {
-              description: {
+              BydbQL: {
                 type: 'string',
-                description:
-                  "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans, order by time')",
+                description: 'BydbQL query to execute against BanyanDB.',
               },
               resource_type: {
                 type: 'string',
-                description: 'Optional resource type: stream, measure, trace, or property',
+                description: 'Optional resource type hint: stream, measure, trace, or property',
                 enum: ['stream', 'measure', 'trace', 'property'],
               },
               resource_name: {
                 type: 'string',
-                description: 'Optional resource name (stream/measure/trace/property name)',
+                description: 'Optional resource name hint (stream/measure/trace/property name)',
               },
               group: {
                 type: 'string',
-                description: 'Optional group name',
+                description: 'Optional group hint, for example the properties group',
               },
             },
-            required: ['description'],
+            required: ['BydbQL'],
           },
         },
       ],
@@ -209,78 +334,21 @@ async function main() {
     }
 
     if (name === 'list_resources_bydbql') {
-      const description = args?.description as string;
-      if (!description) {
-        throw new Error('description is required');
-      }
-
+      const queryHints = normalizeQueryHints(args);
       let bydbqlQueryResult: QueryGeneratorResult;
       try {
-        // Fetch groups from BanyanDB before generating query
-        let groups: string[] = [];
-        try {
-          const groupsList = await banyandbClient.listGroups();
-          groups = groupsList.map((g) => g.metadata?.name || '').filter((n) => n !== '');
-        } catch (error) {
-          log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
-        }
-
-        // Fetch resources from all groups before generating query
-        const resourcesByGroup: ResourcesByGroup = {};
-        for (const group of groups) {
-          try {
-            const [streams, measures, traces, properties, topNItems, indexRule] = await Promise.all([
-              banyandbClient.listStreams(group).catch(() => []),
-              banyandbClient.listMeasures(group).catch(() => []),
-              banyandbClient.listTraces(group).catch(() => []),
-              banyandbClient.listProperties(group).catch(() => []),
-              banyandbClient.listTopN(group).catch(() => []),
-              banyandbClient.listIndexRule(group).catch(() => []),
-            ]);
-
-            resourcesByGroup[group] = {
-              streams: streams.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              measures: measures.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              traces: traces.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              properties: properties.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              topNItems: topNItems.map((r) => r.metadata?.name || '').filter((n) => n !== ''),
-              indexRule: indexRule.filter((r) => !r.noSort && r.metadata?.name).map((r) => r.metadata?.name || ''),
-            };
-          } catch (error) {
-            log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
-            resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [], indexRule: [] };
-          }
-        }
-
-        // Generate BydbQL query from natural language description
-        bydbqlQueryResult = await queryGenerator.generateQuery(description, args || {}, groups, resourcesByGroup);
+        bydbqlQueryResult = buildQueryResult(queryHints);
       } catch (error) {
-        if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('Timeout'))) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text:
-                  `Query generation timeout: ${error.message}\n\n` +
-                  `The LLM query generation timed out. Falling back to pattern-based generation...\n` +
-                  `If this persists, try:\n` +
-                  `1. Check your API key and network connectivity\n` +
-                  `2. Use more specific query descriptions\n` +
-                  `3. Set LLM_API_KEY environment variable if not already set`,
-              },
-            ],
-          };
+        if (error instanceof Error) {
+          throw new Error(`Failed to build BydbQL query: ${error.message}`);
         }
-        throw error;
+        throw new Error(`Failed to build BydbQL query: ${String(error)}`);
       }
 
       try {
-        // Execute query via BanyanDB client
         const result = await banyandbClient.query(bydbqlQueryResult.query);
-        
-        // Build debug information section with only parameters that are present (excluding explanations)
         const debugParts: string[] = [];
-        
+
         if (bydbqlQueryResult.resourceType) {
           debugParts.push(`Resource Type: ${bydbqlQueryResult.resourceType}`);
         }
@@ -291,20 +359,17 @@ async function main() {
           debugParts.push(`Group: ${bydbqlQueryResult.group}`);
         }
 
-        const debugInfo = debugParts.length > 0 
-          ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}\n`
-          : '';
+        const debugInfo = debugParts.length > 0 ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}` : '';
         const explanations = bydbqlQueryResult.explanations
-          ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}\n`
+          ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}`
           : '';
-        
-        const resultWithDebug = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}${explanations}`;
+        const resultWithQuery = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}${explanations}`;
 
         return {
           content: [
             {
               type: 'text',
-              text: resultWithDebug,
+              text: resultWithQuery,
             },
           ],
         };
@@ -336,9 +401,6 @@ async function main() {
             error.message.includes('does not exist') ||
             error.message.includes('Empty response')
           ) {
-            const resourceType = args?.resource_type || 'resource';
-            const group = args?.group || 'default';
-
             return {
               content: [
                 {
@@ -347,8 +409,8 @@ async function main() {
                     `Query failed: ${error.message}\n\n` +
                     `Tip: Use the list_groups_schemas tool to discover available resources:\n` +
                     `- First list groups: list_groups_schemas with resource_type="groups"\n` +
-                    `- Then list ${resourceType}s: list_groups_schemas with resource_type="${resourceType}s" and group="${group}"\n` +
-                    `- Then query using the discovered resource names.`,
+                    `- Then list streams, measures, traces, or properties for a target group\n` +
+                    `- Then query using a natural language description and optional resource_type, resource_name, or group hints.`,
                 },
               ],
             };
