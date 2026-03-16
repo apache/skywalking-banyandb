@@ -132,9 +132,7 @@ Create `.vscode/launch.json` in the `mcp` directory:
         "${workspaceFolder}/inspector-config.json"
       ],
       "env": {
-        "BANYANDB_ADDRESS": "localhost:17900",
-        "LLM_API_KEY": "${env:LLM_API_KEY}",
-        "LLM_BASE_URL": "${env:LLM_BASE_URL}"
+        "BANYANDB_ADDRESS": "localhost:17900"
       },
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -220,8 +218,6 @@ After building, test the image:
 # Run the container
 docker run --rm \
   -e BANYANDB_ADDRESS=localhost:17900 \
-  -e LLM_API_KEY=your-api-key \
-  -e LLM_BASE_URL=your-api-key \
   apache/skywalking-banyandb-mcp:latest
 ```
 

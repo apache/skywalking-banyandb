@@ -429,7 +429,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
 async function main() {
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
 
-  log.info('Using built-in BydbQL prompt generation without external LLM connectivity');
+  log.info('Using built-in BydbQL prompt generation with natural language support and BanyanDB schema hints. Use the list_groups_schemas tool to discover available resources and guide your queries.');
 
   if (TRANSPORT === 'http') {
     const httpServer = createServer((req, res) => {
