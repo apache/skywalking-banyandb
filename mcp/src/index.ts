@@ -17,11 +17,14 @@
  * under the License.
  */
 
+import { createServer } from 'node:http';
+
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
 import { generateBydbQL } from './query/llm-prompt.js';
@@ -35,6 +38,8 @@ dotenv.config();
 setupGlobalErrorHandlers();
 
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
+const TRANSPORT = process.env.TRANSPORT || 'stdio';
+const MCP_PORT = parseInt(process.env.MCP_PORT || '3000', 10);
 
 const generateBydbQLPromptSchema = {
   description: z.string().describe(
@@ -127,8 +132,7 @@ async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<{ group
   return { groups, resourcesByGroup };
 }
 
-async function main() {
-  // Create MCP server
+function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
   const server = new McpServer(
     {
       name: 'banyandb-mcp',
@@ -140,11 +144,6 @@ async function main() {
       },
     },
   );
-
-  // Initialize BanyanDB client
-  const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
-
-  log.info('Using built-in BydbQL prompt generation without external LLM connectivity');
 
   const registerPrompt = server.registerPrompt.bind(server) as unknown as (
     name: string,
@@ -424,12 +423,52 @@ async function main() {
     throw new Error(`Unknown tool: ${name}`);
   });
 
-  // Start the server
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return server;
+}
 
-  log.info('BanyanDB MCP server started');
-  log.info(`Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
+async function main() {
+  const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
+
+  log.info('Using built-in BydbQL prompt generation without external LLM connectivity');
+
+  if (TRANSPORT === 'http') {
+    const httpServer = createServer((req, res) => {
+      if (req.url !== '/mcp') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const parsedBody = body ? JSON.parse(body) : undefined;
+          const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          const mcpServer = createMcpServer(banyandbClient);
+          await mcpServer.connect(transport);
+          await transport.handleRequest(req, res, parsedBody);
+        } catch (error) {
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+          }
+        }
+      });
+    });
+
+    httpServer.listen(MCP_PORT, () => {
+      log.info(`BanyanDB MCP HTTP server listening on :${MCP_PORT}/mcp`);
+      log.info(`Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
+    });
+  } else {
+    const mcpServer = createMcpServer(banyandbClient);
+    const transport = new StdioServerTransport();
+    await mcpServer.connect(transport);
+
+    log.info('BanyanDB MCP server started');
+    log.info(`Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
+  }
 }
 
 main().catch((error) => {
