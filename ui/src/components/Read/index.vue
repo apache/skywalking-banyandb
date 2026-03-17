@@ -251,7 +251,7 @@ orderBy:
           if (field.value[fieldTypes[fieldType]] === null) {
             dataItem[name] = 'Null';
           } else {
-            dataItem[name] = field.value[fieldTypes[fieldType]]?.value || field.value[fieldTypes[fieldType]];
+            dataItem[name] = field.value[fieldTypes[fieldType]]?.value ?? field.value[fieldTypes[fieldType]];
           }
         });
       }
