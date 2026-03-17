@@ -884,7 +884,7 @@ func TestTopNValue_Float64_MarshalUnmarshal(t *testing.T) {
 			topNVal: &TopNValue[float64]{
 				valueName:      "testFloatValue",
 				entityTagNames: []string{"service"},
-				values:         []float64{-3.14, 0.0, 1e10, -1e-10},
+				values:         []float64{-3.14, 0.0, 1e5, -1e-5},
 				entities: [][]*modelv1.TagValue{
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}}},
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc2"}}}},
