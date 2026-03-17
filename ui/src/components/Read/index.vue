@@ -238,7 +238,7 @@ orderBy:
         if (tag.value[tagType[type]] === null) {
           dataItem[tag.key] = 'Null';
         } else {
-          dataItem[tag.key] = tag.value[tagType[type]]?.value || tag.value[tagType[type]];
+          dataItem[tag.key] = tag.value[tagType[type]]?.value ?? tag.value[tagType[type]];
         }
       }
       if (data.type === CatalogToGroupType.CATALOG_MEASURE && tableFields.length > 0) {
