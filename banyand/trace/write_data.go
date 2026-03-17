@@ -87,11 +87,13 @@ func (s *syncPartContext) FinishSync() error {
 	}
 
 	if s.memPart != nil {
+		mp := s.memPart
+		s.memPart = nil
 		sidxPartContexts := make(map[string]*sidx.MemPart, len(s.sidxPartContexts))
 		for _, sidxPartContext := range s.sidxPartContexts {
 			sidxPartContexts[sidxPartContext.Name()] = sidxPartContext.GetMemPart()
 		}
-		s.tsTable.mustAddMemPart(s.memPart, sidxPartContexts)
+		s.tsTable.mustAddMemPart(mp, sidxPartContexts)
 	}
 	return s.Close()
 }
@@ -103,6 +105,7 @@ func (s *syncPartContext) Close() error {
 		s.writers = nil
 	}
 	if s.memPart != nil {
+		releaseMemPart(s.memPart)
 		s.memPart = nil
 	}
 	if s.sidxPartContexts != nil {

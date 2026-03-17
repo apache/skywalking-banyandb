@@ -43,7 +43,9 @@ func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
 }
 
 func (s *syncPartContext) FinishSync() error {
-	s.tsTable.mustAddMemPart(s.memPart)
+	mp := s.memPart
+	s.memPart = nil
+	s.tsTable.mustAddMemPart(mp)
 	return s.Close()
 }
 
@@ -51,7 +53,10 @@ func (s *syncPartContext) Close() error {
 	s.writers.MustClose()
 	releaseWriters(s.writers)
 	s.writers = nil
-	s.memPart = nil
+	if s.memPart != nil {
+		releaseMemPart(s.memPart)
+		s.memPart = nil
+	}
 	s.tsTable = nil
 	return nil
 }
