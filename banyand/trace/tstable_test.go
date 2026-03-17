@@ -235,6 +235,22 @@ var testSchemaTagTypes = map[string]pbv1.ValueType{
 	"intTag":    pbv1.ValueTypeInt64,
 }
 
+func Test_mustAddMemPart_closeNotifyReleasesMemPart(t *testing.T) {
+	tst := &tsTable{
+		loopCloser:    run.NewCloser(1),
+		introductions: make(chan *introduction),
+	}
+
+	mp := generateMemPart()
+	mp.mustInitFromTraces(tsTS1)
+	require.Greater(t, mp.partMetadata.TotalCount, uint64(0))
+
+	tst.Close()
+	tst.mustAddMemPart(mp, nil)
+
+	require.Equal(t, uint64(0), mp.partMetadata.TotalCount)
+}
+
 var tsTS1 = &traces{
 	traceIDs:   []string{"trace1", "trace2", "trace3"},
 	timestamps: []int64{1, 1, 1},

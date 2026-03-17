@@ -297,6 +297,22 @@ var fieldProjections = map[int][]string{
 	3: {"intField"},
 }
 
+func Test_mustAddMemPart_closeNotifyReleasesMemPart(t *testing.T) {
+	tst := &tsTable{
+		loopCloser:    run.NewCloser(1),
+		introductions: make(chan *introduction),
+	}
+
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(dpsTS1)
+	require.Greater(t, mp.partMetadata.TotalCount, uint64(0))
+
+	tst.Close()
+	tst.mustAddMemPart(mp)
+
+	require.Equal(t, uint64(0), mp.partMetadata.TotalCount)
+}
+
 var dpsTS1 = &dataPoints{
 	seriesIDs:  []common.SeriesID{1, 2, 3},
 	timestamps: []int64{1, 1, 1},
