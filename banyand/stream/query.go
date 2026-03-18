@@ -60,9 +60,13 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return bypassQueryResultInstance, nil
 	}
 
+	segmentsNeedRelease := true
 	defer func() {
-		if err != nil {
-			sqr.Release()
+		if !segmentsNeedRelease {
+			return
+		}
+		for i := range segments {
+			segments[i].DecRef()
 		}
 	}()
 
@@ -82,10 +86,17 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
 
 	if sqo.Order == nil || sqo.Order.Index == nil {
-		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
+		sqr = s.executeTimeSeriesQuery(segments, series, qo, &tr)
+		segmentsNeedRelease = false
+		return sqr, nil
 	}
 
-	return s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
+	sqr, err = s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
+	if err != nil {
+		return nil, err
+	}
+	segmentsNeedRelease = false
+	return sqr, nil
 }
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {

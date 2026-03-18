@@ -69,12 +69,22 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	segmentsNeedRelease := true
+	defer func() {
+		if !segmentsNeedRelease {
+			return
+		}
+		for i := range segments {
+			segments[i].DecRef()
+		}
+	}()
 
 	result := queryResult{
 		ctx:           ctx,
 		segments:      segments,
 		tagProjection: tqo.TagProjection,
 	}
+	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
 			result.Release()
@@ -105,6 +115,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(tqo, qo, tables)
 	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
+		result.Release()
 		return nilResult, nil
 	}
 

@@ -46,6 +46,7 @@ Release Notes.
 - Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
 - Fix memory part reference leak in mustAddMemPart when tsTable loop closes.
 - Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
+- Fix segment reference leaks in measure/stream/trace queries and ensure chunked sync sessions close part contexts correctly.
 
 ### Document
 
