@@ -42,8 +42,11 @@ const (
 	lockFilename    = "lock"
 )
 
-// ErrUnknownShard indicates that the shard is not found.
-var ErrUnknownShard = errors.New("unknown shard")
+var (
+	// ErrUnknownShard indicates that the shard is not found.
+	ErrUnknownShard = errors.New("unknown shard")
+	errQueueClosed  = errors.New("queue is closed")
+)
 
 // Metrics is the interface of metrics.
 type Metrics interface {
@@ -167,6 +170,9 @@ func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Q
 // If the shard already exists, it returns it without locking.
 // If the shard doesn't exist, it creates a new one with proper locking.
 func (q *Queue[S, O]) GetOrCreateShard(shardID common.ShardID) (*Shard[S], error) {
+	if q.closed.Load() {
+		return nil, errQueueClosed
+	}
 	// First check if shard exists without locking
 	if shard := q.getShard(shardID); shard != nil {
 		return shard, nil
@@ -175,6 +181,10 @@ func (q *Queue[S, O]) GetOrCreateShard(shardID common.ShardID) (*Shard[S], error
 	// Shard doesn't exist, need to create it with locking
 	q.Lock()
 	defer q.Unlock()
+
+	if q.closed.Load() {
+		return nil, errQueueClosed
+	}
 
 	// Double-check after acquiring lock
 	if shard := q.getShard(shardID); shard != nil {
