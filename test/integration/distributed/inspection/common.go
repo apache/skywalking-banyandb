@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package inspect provides shared test setup for the inspect functionality in distributed mode.
-package inspect
+// Package inspection provides shared test setup for the inspect functionality in distributed mode.
+package inspection
 
 import (
 	"context"

@@ -26,6 +26,8 @@ Release Notes.
 - Support map-reduce aggregation for measure queries: map phase (partial aggregation on data nodes) and reduce phase (final aggregation on liaison).
 - Add eBPF-based KTM I/O monitor for FODC agent.
 - Support relative paths in configuration.
+- Support 'none' node discovery and make it the default.
+- Support server-side element ID generation for stream writes when clients omit element_id.
 
 ### Bug Fixes
 
@@ -42,6 +44,8 @@ Release Notes.
 - Fix sidx tag filter range check returning inverted skip decision and use correct int64 encoding for block min/max.
 - Ignore take snapshot when no data.
 - Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
+- Fix memory part reference leak in mustAddMemPart when tsTable loop closes.
+- Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
 
 ### Document
 

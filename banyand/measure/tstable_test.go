@@ -29,12 +29,15 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -295,6 +298,36 @@ var testSchemaTagTypes = map[string]pbv1.ValueType{
 var fieldProjections = map[int][]string{
 	1: {"strField", "intField", "floatField", "binaryField"},
 	3: {"intField"},
+}
+
+func Test_mustAddMemPart_closeNotifyReleasesMemPart(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+	tst, err := newTSTable(
+		fs.NewLocalFileSystem(),
+		tmpPath,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(dpsTS1)
+	originalCount := mp.partMetadata.TotalCount
+	require.Greater(t, originalCount, uint64(0))
+
+	tst.Close()
+	tst.mustAddMemPart(mp)
+
+	// Verify the memPart was released by checking the count is reset to 0
+	// after mustAddMemPart returns (which handles the release via decRef)
+	require.Equal(t, uint64(0), mp.partMetadata.TotalCount)
 }
 
 var dpsTS1 = &dataPoints{

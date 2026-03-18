@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package etcd_test
+package property_test
 
 import (
 	"testing"
@@ -23,23 +23,31 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
-	"github.com/apache/skywalking-banyandb/test/integration/standalone/inspect"
+	"github.com/apache/skywalking-banyandb/test/integration/standalone/inspection"
 )
 
 func init() {
-	inspect.SetupFunc = func() inspect.SetupResult {
-		By("Starting standalone server")
-		addr, _, closeFn := setup.EmptyStandalone(nil)
-		return inspect.SetupResult{
-			Addr:     addr,
-			StopFunc: closeFn,
+	inspection.SetupFunc = func() inspection.SetupResult {
+		By("Starting standalone server with property mode")
+		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+		Expect(tmpErr).NotTo(HaveOccurred())
+		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+		config := setup.PropertyClusterConfig(dfWriter)
+		addr, _, closeFn := setup.EmptyStandalone(config)
+		return inspection.SetupResult{
+			Addr: addr,
+			StopFunc: func() {
+				closeFn()
+				tmpDirCleanup()
+			},
 		}
 	}
 }
 
-func TestEtcdInspect(t *testing.T) {
+func TestPropertyInspect(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Standalone Inspect Suite", Label(integration_standalone.Labels...))
+	RunSpecs(t, "Standalone Property Inspect Suite", Label(integration_standalone.Labels...))
 }

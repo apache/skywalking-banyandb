@@ -141,7 +141,10 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	schemaRegistry metadata.Repo, nr NodeRegistries, omr observability.MetricsRegistry,
 	protectorService protector.Memory, routeProviders map[string]route.TableProvider,
 ) Server {
-	gr := &groupRepo{resourceOpts: make(map[string]*commonv1.ResourceOpts)}
+	gr := &groupRepo{
+		resourceOpts: make(map[string]*commonv1.ResourceOpts),
+		inflight:     make(map[string]*groupInflight),
+	}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
@@ -247,6 +250,12 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.traceSVC.setLogger(s.log.Named("trace"))
 	s.propertyServer.SetLogger(s.log)
 	s.bydbQLSVC.setLogger(s.log.Named("bydbql"))
+	s.groupRegistryServer.deletionTaskManager = newGroupDeletionTaskManager(
+		s.groupRegistryServer.schemaRegistry, s.propertyServer, s.groupRepo, s.log.Named("group-deletion"),
+	)
+	if initErr := s.groupRegistryServer.deletionTaskManager.initPropertyStorage(ctx); initErr != nil {
+		return initErr
+	}
 	components := []*discoveryService{
 		s.streamSVC.discoveryService,
 		s.measureSVC.discoveryService,

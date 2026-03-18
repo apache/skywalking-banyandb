@@ -82,6 +82,7 @@ type server struct {
 	listenPeerURL           []string
 	quotaBackendBytes       run.Bytes
 	embedded                bool
+	hasMetaRole             bool
 }
 
 func (s *server) Name() string {
@@ -90,7 +91,7 @@ func (s *server) Name() string {
 
 func (s *server) Role() databasev1.Role {
 	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if s.schemaRegistryMode == schemaTypeProperty || (s.embedded && needEtcd) {
+	if (s.embedded && needEtcd) || (s.schemaRegistryMode == schemaTypeProperty && s.hasMetaRole) {
 		return databasev1.Role_ROLE_META
 	}
 	return databasev1.Role_ROLE_UNSPECIFIED
@@ -100,8 +101,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
 	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeProperty,
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
-	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeEtcd,
-		"Node discovery mode: 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
+	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeNone,
+		"Node discovery mode: 'none' for standalone, 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
+	fs.BoolVar(&s.hasMetaRole, "has-meta-role", true,
+		"Whether this data node runs the schema server. Only effective in property schema registry mode.")
 	if s.embedded {
 		fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
 		fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode: 'periodic' or 'revision'")
@@ -199,13 +202,18 @@ func (s *server) PreRun(ctx context.Context) error {
 		s.propServer = nil
 		s.repairSvc = nil
 	case schemaTypeProperty:
-		ctx = s.enrichContextWithSchemaAddress(ctx)
-		if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
-			return propPreRunErr
-		}
-		if s.repairSvc != nil {
-			if repairPreRunErr := s.repairSvc.PreRun(ctx); repairPreRunErr != nil {
-				return repairPreRunErr
+		if !s.hasMetaRole {
+			s.propServer = nil
+			s.repairSvc = nil
+		} else {
+			ctx = s.enrichContextWithSchemaAddress(ctx)
+			if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
+				return propPreRunErr
+			}
+			if s.repairSvc != nil {
+				if repairPreRunErr := s.repairSvc.PreRun(ctx); repairPreRunErr != nil {
+					return repairPreRunErr
+				}
 			}
 		}
 		if s.snapshotPipeline != nil {

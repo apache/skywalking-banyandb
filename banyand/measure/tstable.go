@@ -322,6 +322,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
 		tst.addPendingDataCount(-int64(totalCount))
+		ind.memPart.decRef()
 		return
 	}
 	select {

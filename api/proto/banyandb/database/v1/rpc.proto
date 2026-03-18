@@ -364,14 +364,15 @@ message GroupRegistryServiceDeleteRequest {
   // force indicates whether to force delete the group even if it contains data.
   // When false, deletion will fail if the group is not empty.
   bool force = 3;
+  // data_only indicates whether to delete only data files without removing metadata.
+  // When true, metadata are preserved.
+  bool data_only = 4;
 }
 
 // GroupRegistryServiceDeleteResponse is the response for deleting a group.
 message GroupRegistryServiceDeleteResponse {
-  // deleted indicates whether the group was deleted.
-  bool deleted = 1;
-  // task_id is the ID of the background deletion task.
-  string task_id = 2;
+  // schema_info contains the schema resources that would be deleted (populated in dry-run mode).
+  SchemaInfo schema_info = 1;
 }
 
 // GroupDeletionTask represents the status of a group deletion operation.
@@ -402,6 +403,8 @@ message GroupDeletionTask {
   string message = 6;
   // created_at is the timestamp when the task was created.
   google.protobuf.Timestamp created_at = 7;
+  // updated_at is the timestamp when the task was last updated.
+  google.protobuf.Timestamp updated_at = 8;
 }
 
 // GroupRegistryServiceQueryRequest is the request for querying a group deletion task.
