@@ -53,6 +53,8 @@ func (s *syncPartContext) Close() error {
 	releaseWriters(s.writers)
 	s.writers = nil
 	if s.memPart != nil {
+		// syncPartContext owns the memPart directly without partWrapper refcounting.
+		// It must release via releaseMemPart, not decRef, which is used in mustAddMemPart.
 		releaseMemPart(s.memPart)
 		s.memPart = nil
 	}
