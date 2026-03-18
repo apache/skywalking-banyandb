@@ -163,7 +163,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
   ) => unknown;
 
   registerPrompt(
-    'generateBydbQL',
+    'generate_BydbQL',
     {
       description:
         'Generate the prompt/context needed to derive correct BydbQL from natural language and BanyanDB schema hints. Use list_groups_schemas first to discover available resources.',
@@ -242,6 +242,35 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
               },
             },
             required: ['BydbQL'],
+          },
+        },
+        {
+          name: 'get_generate_bydbql_prompt',
+          description:
+            'Return the full prompt text used by generate_BydbQL, including live BanyanDB schema hints. This lets external projects retrieve the prompt text directly.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              description: {
+                type: 'string',
+                description:
+                  "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans order by time')",
+              },
+              resource_type: {
+                type: 'string',
+                description: 'Optional resource type hint: stream, measure, trace, or property',
+                enum: ['stream', 'measure', 'trace', 'property'],
+              },
+              resource_name: {
+                type: 'string',
+                description: 'Optional resource name hint (stream/measure/trace/property name)',
+              },
+              group: {
+                type: 'string',
+                description: 'Optional group hint, for example the properties group',
+              },
+            },
+            required: ['description'],
           },
         },
       ],
@@ -418,6 +447,25 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
         }
         throw new Error(`Query execution failed: ${String(error)}`);
       }
+    }
+
+    if (name === 'get_generate_bydbql_prompt') {
+      const queryHints = normalizeQueryHints(args);
+      if (!queryHints.description) {
+        throw new Error('description is required');
+      }
+
+      const { groups, resourcesByGroup } = await loadQueryContext(banyandbClient);
+      const prompt = generateBydbQL(queryHints.description, queryHints, groups, resourcesByGroup);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: prompt,
+          },
+        ],
+      };
     }
 
     throw new Error(`Unknown tool: ${name}`);
