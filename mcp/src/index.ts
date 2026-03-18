@@ -28,7 +28,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
 import { generateBydbQL } from './query/llm-prompt.js';
-import { QueryGeneratorResult, ResourcesByGroup } from './query/types.js';
+import { ResourcesByGroup } from './query/types.js';
 import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
 // Load environment variables first
@@ -41,6 +41,8 @@ const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
 const TRANSPORT = process.env.TRANSPORT || 'stdio';
 const MCP_PORT = parseInt(process.env.MCP_PORT || '3000', 10);
 
+// Prompt schema for generate_BydbQL — used with registerPrompt which requires a type cast
+// due to MCP SDK 1.x Zod v3/v4 compatibility layer causing TS2589 deep type instantiation.
 const generateBydbQLPromptSchema = {
   description: z.string().describe(
     "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans order by time')",
@@ -49,13 +51,6 @@ const generateBydbQLPromptSchema = {
   resource_name: z.string().optional().describe('Optional resource name hint (stream/measure/trace/property name)'),
   group: z.string().optional().describe('Optional group hint, for example the properties group'),
 } as const;
-
-type GenerateBydbQLPromptArgs = {
-  description: string;
-  resource_type?: 'stream' | 'measure' | 'trace' | 'property';
-  resource_name?: string;
-  group?: string;
-};
 
 type QueryHints = {
   description?: string;
@@ -78,20 +73,6 @@ function normalizeQueryHints(args: unknown): QueryHints {
     resource_name: typeof rawArgs.resource_name === 'string' ? rawArgs.resource_name.trim() : undefined,
     group: typeof rawArgs.group === 'string' ? rawArgs.group.trim() : undefined,
   };
-}
-
-function buildQueryResult(args: QueryHints): QueryGeneratorResult {
-  if (args.BydbQL) {
-    return {
-      description: 'Execute provided BydbQL query',
-      query: args.BydbQL,
-      resourceType: args.resource_type,
-      resourceName: args.resource_name,
-      group: args.group,
-    };
-  }
-
-  throw new Error('BydbQL is required');
 }
 
 async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<{ groups: string[]; resourcesByGroup: ResourcesByGroup }> {
@@ -151,7 +132,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
       description: string;
       argsSchema: unknown;
     },
-    cb: (args: GenerateBydbQLPromptArgs) => Promise<{
+    cb: (args: { description: string; resource_type?: string; resource_name?: string; group?: string }) => Promise<{
       messages: Array<{
         role: 'user';
         content: {
@@ -170,13 +151,13 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
       argsSchema: generateBydbQLPromptSchema,
     },
     async (args) => {
-      const queryHints = normalizeQueryHints(args);
-      if (!queryHints.description) {
+      const description = args.description.trim();
+      if (!description) {
         throw new Error('description is required');
       }
 
       const { groups, resourcesByGroup } = await loadQueryContext(banyandbClient);
-      const prompt = generateBydbQL(queryHints.description, queryHints, groups, resourcesByGroup);
+      const prompt = generateBydbQL(description, args, groups, resourcesByGroup);
 
       return {
         messages: [
@@ -218,8 +199,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
         },
         {
           name: 'list_resources_bydbql',
-          description:
-            'Fetch streams, measures, traces, or properties from BanyanDB using a BydbQL query.',
+          description: 'Fetch streams, measures, traces, or properties from BanyanDB using a BydbQL query.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -282,128 +262,71 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     const { name, arguments: args } = request.params;
 
     if (name === 'list_groups_schemas') {
-      if (!args || typeof args !== 'object') {
-        throw new Error('Invalid arguments: arguments object is required');
+      const resourceType = (args as Record<string, unknown>)?.resource_type as string | undefined;
+      if (!resourceType) {
+        throw new Error('resource_type is required and must be one of: groups, streams, measures, traces, properties');
       }
 
-      const resourceType = args.resource_type as string | undefined;
-      const validResourceTypes = ['groups', 'streams', 'measures', 'traces', 'properties'];
+      let result: string;
 
-      if (!resourceType || typeof resourceType !== 'string') {
-        throw new Error(`resource_type is required and must be one of: ${validResourceTypes.join(', ')}`);
-      }
-
-      if (!validResourceTypes.includes(resourceType)) {
-        throw new Error(`Invalid resource_type "${resourceType}". Must be one of: ${validResourceTypes.join(', ')}`);
-      }
-
-      try {
-        let result: string;
-
-        if (resourceType === 'groups') {
-          const groups = await banyandbClient.listGroups();
-          const groupNames = groups.map((g) => g.metadata?.name || 'unknown').filter((n) => n !== 'unknown');
-          result = `Available Groups (${groupNames.length}):\n${groupNames.join('\n')}`;
-          if (groupNames.length === 0) {
-            result += '\n\nNo groups found. BanyanDB may be empty or not configured.';
-          }
-        } else {
-          const group = args?.group as string;
-          if (!group) {
-            throw new Error(`group is required for listing ${resourceType}`);
-          }
-
-          let resources: ResourceMetadata[] = [];
-          let resourceName = '';
-
-          switch (resourceType) {
-            case 'streams':
-              resources = await banyandbClient.listStreams(group);
-              resourceName = 'Streams';
-              break;
-            case 'measures':
-              resources = await banyandbClient.listMeasures(group);
-              resourceName = 'Measures';
-              break;
-            case 'traces':
-              resources = await banyandbClient.listTraces(group);
-              resourceName = 'Traces';
-              break;
-            case 'properties':
-              resources = await banyandbClient.listProperties(group);
-              resourceName = 'Properties';
-              break;
-            default:
-              throw new Error(`Unknown resource type: ${resourceType}`);
-          }
-
-          const resourceNames = resources.map((r) => r.metadata?.name || 'unknown').filter((n) => n !== 'unknown');
-
-          result = `Available ${resourceName} in group "${group}" (${resourceNames.length}):\n${resourceNames.join('\n')}`;
-          if (resourceNames.length === 0) {
-            result += `\n\nNo ${resourceType} found in group "${group}".`;
-          }
+      if (resourceType === 'groups') {
+        const groups = await banyandbClient.listGroups();
+        const groupNames = groups.map((g) => g.metadata?.name || '').filter((n) => n !== '');
+        result = `Available Groups (${groupNames.length}):\n${groupNames.join('\n')}`;
+        if (groupNames.length === 0) {
+          result += '\n\nNo groups found. BanyanDB may be empty or not configured.';
+        }
+      } else {
+        const group = (args as Record<string, unknown>)?.group as string | undefined;
+        if (!group) {
+          throw new Error(`group is required for listing ${resourceType}`);
         }
 
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result,
-            },
-          ],
+        const resourceFetchers: Record<string, () => Promise<ResourceMetadata[]>> = {
+          streams: () => banyandbClient.listStreams(group),
+          measures: () => banyandbClient.listMeasures(group),
+          traces: () => banyandbClient.listTraces(group),
+          properties: () => banyandbClient.listProperties(group),
         };
-      } catch (error) {
-        if (error instanceof Error) {
-          throw error;
+
+        const fetcher = resourceFetchers[resourceType];
+        if (!fetcher) {
+          throw new Error(`Invalid resource_type "${resourceType}". Must be one of: groups, streams, measures, traces, properties`);
         }
-        throw new Error(`Failed to list resources: ${String(error)}`);
+
+        const resources = await fetcher();
+        const resourceNames = resources.map((r) => r.metadata?.name || '').filter((n) => n !== '');
+        const resourceLabel = resourceType.charAt(0).toUpperCase() + resourceType.slice(1);
+
+        result = `Available ${resourceLabel} in group "${group}" (${resourceNames.length}):\n${resourceNames.join('\n')}`;
+        if (resourceNames.length === 0) {
+          result += `\n\nNo ${resourceType} found in group "${group}".`;
+        }
       }
+
+      return { content: [{ type: 'text', text: result }] };
     }
 
     if (name === 'list_resources_bydbql') {
       const queryHints = normalizeQueryHints(args);
-      let bydbqlQueryResult: QueryGeneratorResult;
-      try {
-        bydbqlQueryResult = buildQueryResult(queryHints);
-      } catch (error) {
-        if (error instanceof Error) {
-          throw new Error(`Failed to build BydbQL query: ${error.message}`);
-        }
-        throw new Error(`Failed to build BydbQL query: ${String(error)}`);
+      if (!queryHints.BydbQL) {
+        throw new Error('BydbQL is required');
       }
 
       try {
-        const result = await banyandbClient.query(bydbqlQueryResult.query);
+        const result = await banyandbClient.query(queryHints.BydbQL);
         const debugParts: string[] = [];
 
-        if (bydbqlQueryResult.resourceType) {
-          debugParts.push(`Resource Type: ${bydbqlQueryResult.resourceType}`);
-        }
-        if (bydbqlQueryResult.resourceName) {
-          debugParts.push(`Resource Name: ${bydbqlQueryResult.resourceName}`);
-        }
-        if (bydbqlQueryResult.group) {
-          debugParts.push(`Group: ${bydbqlQueryResult.group}`);
-        }
+        if (queryHints.resource_type) debugParts.push(`Resource Type: ${queryHints.resource_type}`);
+        if (queryHints.resource_name) debugParts.push(`Resource Name: ${queryHints.resource_name}`);
+        if (queryHints.group) debugParts.push(`Group: ${queryHints.group}`);
 
         const debugInfo = debugParts.length > 0 ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}` : '';
-        const explanations = bydbqlQueryResult.explanations
-          ? `\n\n=== Explanations ===\n${bydbqlQueryResult.explanations}`
-          : '';
-        const resultWithQuery = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${bydbqlQueryResult.query}${debugInfo}${explanations}`;
+        const text = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${queryHints.BydbQL}${debugInfo}`;
 
-        return {
-          content: [
-            {
-              type: 'text',
-              text: resultWithQuery,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text }] };
       } catch (error) {
         if (error instanceof Error) {
-          // Check if it's a timeout error
           if (error.message.includes('timeout') || error.message.includes('Timeout')) {
             return {
               content: [
@@ -423,12 +346,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
               ],
             };
           }
-          // Check if it's a resource not found error
-          if (
-            error.message.includes('not found') ||
-            error.message.includes('does not exist') ||
-            error.message.includes('Empty response')
-          ) {
+          if (error.message.includes('not found') || error.message.includes('does not exist') || error.message.includes('Empty response')) {
             return {
               content: [
                 {
@@ -458,14 +376,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
       const { groups, resourcesByGroup } = await loadQueryContext(banyandbClient);
       const prompt = generateBydbQL(queryHints.description, queryHints, groups, resourcesByGroup);
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: prompt,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: prompt }] };
     }
 
     throw new Error(`Unknown tool: ${name}`);
