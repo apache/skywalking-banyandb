@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -47,6 +48,8 @@ const (
 )
 
 var nilResult = model.MeasureQueryResult(nil)
+
+var queryResultTracker = pool.RegisterTracker("measure.queryResult")
 
 // Query allow to retrieve measure data points.
 type Query interface {
@@ -140,6 +143,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
 	}
+	queryResultTracker.Acquire(&result)
 	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
@@ -803,6 +807,7 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 }
 
 func (qr *queryResult) Release() {
+	queryResultTracker.Release(qr)
 	for i, v := range qr.data {
 		releaseBlockCursor(v)
 		qr.data[i] = nil
