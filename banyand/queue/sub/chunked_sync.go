@@ -128,6 +128,7 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 	var sessionID string
 	defer func() {
 		if currentSession != nil {
+			s.unregisterSession(currentSession.sessionID)
 			if currentSession.partCtx != nil {
 				currentSession.partCtx.Close()
 			}
@@ -160,6 +161,7 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 				chunksReceived: 0,
 				partsProgress:  make(map[int]*partProgress),
 			}
+			s.registerSession(sessionID, currentSession)
 			if dl := s.log.Debug(); dl.Enabled() {
 				dl.Str("session_id", sessionID).
 					Str("topic", req.GetMetadata().Topic).

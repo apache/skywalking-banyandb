@@ -45,6 +45,8 @@ Release Notes.
 - Fix sidx tag filter range check returning inverted skip decision and use correct int64 encoding for block min/max.
 - Ignore take snapshot when no data.
 - Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
+- Fix memory part reference leak in mustAddMemPart when tsTable loop closes.
+- Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
 
 ### Document
 
