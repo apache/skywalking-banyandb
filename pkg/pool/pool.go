@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//go:build !slim
+
 // Package pool provides a pool for reusing objects.
 package pool
 
@@ -30,11 +32,6 @@ var (
 	stackTrackingEnabled atomic.Bool
 )
 
-// EnableStackTracking enables or disables stack tracking for all pools.
-func EnableStackTracking(enabled bool) {
-	stackTrackingEnabled.Store(enabled)
-}
-
 // Register registers a new pool with the given name.
 func Register[T any](name string) *Synced[T] {
 	p := new(Synced[T])
@@ -42,31 +39,6 @@ func Register[T any](name string) *Synced[T] {
 		panic(fmt.Sprintf("duplicated pool: %s", name))
 	}
 	return p
-}
-
-// AllRefsCount returns the reference count of all pools.
-func AllRefsCount() map[string]int {
-	result := make(map[string]int)
-	poolMap.Range(func(key, value any) bool {
-		result[key.(string)] = value.(Trackable).RefsCount()
-		return true
-	})
-	return result
-}
-
-// AllStacks returns all recorded stack traces for leaked objects from all pools.
-func AllStacks() map[string][]string {
-	result := make(map[string][]string)
-	poolMap.Range(func(key, value any) bool {
-		if st, ok := value.(StackTracker); ok {
-			stacks := st.Stacks()
-			if len(stacks) > 0 {
-				result[key.(string)] = stacks
-			}
-		}
-		return true
-	})
-	return result
 }
 
 // Trackable is the interface that wraps the RefsCount method.
