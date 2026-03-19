@@ -284,18 +284,19 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
-	var failedSnapshots []uint64
+	var failedSnapshotIDs []uint64
 	for _, epoch := range loadedSnapshots {
 		loadErr := tst.loadSnapshot(epoch, loadedParts)
-		if loadErr == nil {
-			return &tst, epoch
+		if loadErr != nil {
+			tst.l.Warn().Err(loadErr).Uint64("epoch", epoch).Msg("cannot load snapshot, trying next older")
+			failedSnapshotIDs = append(failedSnapshotIDs, epoch)
+			continue
 		}
-		tst.l.Warn().Err(loadErr).Uint64("epoch", epoch).Msg("cannot load snapshot, trying next older")
-		failedSnapshots = append(failedSnapshots, epoch)
-	}
-	for _, id := range failedSnapshots {
-		tst.l.Info().Str("path", filepath.Join(rootPath, snapshotName(id))).Msg("delete unreadable snapshot file")
-		fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		for _, id := range failedSnapshotIDs {
+			tst.l.Info().Str("path", filepath.Join(rootPath, snapshotName(id))).Msg("delete unreadable snapshot file")
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
+		return &tst, epoch
 	}
 	return &tst, uint64(time.Now().UnixNano())
 }
