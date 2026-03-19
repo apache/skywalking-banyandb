@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build !slim
-
 // Package pool provides a pool for reusing objects.
 package pool
 
