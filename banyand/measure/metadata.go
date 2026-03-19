@@ -763,14 +763,9 @@ func newQueueSupplier(path string, svc *liaison, measureDataNodeRegistry grpc.No
 
 func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
-	p := common.Position{
-		Module:   "measure",
-		Database: measureSchema.GetMetadata().GetGroup(),
-	}
-	factory := s.omr.With(measureScope.SubScope("query").ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, s.pm, s.schemaRepo, newQueryMetrics(factory))
+	}, s.l, nil, s.pm, s.schemaRepo, nil)
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
