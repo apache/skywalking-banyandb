@@ -238,7 +238,7 @@ Processing Rules:
 - For ORDER BY: Preserve ASC/DESC direction but validate and correct field name against indexed fields, or omit if no valid field exists
 
 JSON Response:
-- "bydbql": ALWAYS REQUIRED
+- "BydbQL": ALWAYS REQUIRED
 - "type": Include ONLY if description indicates debug information are needed. ${typeof args.resource_type === 'string' && args.resource_type ? `MUST be "${args.resource_type.toUpperCase()}"` : 'Extract from description'}
 - "name": Include ONLY if description indicates debug information are needed. ${typeof args.resource_name === 'string' && args.resource_name ? `MUST be "${args.resource_name}"` : 'Extract from description'}
 - "group": Include ONLY if description indicates debug information are needed. ${typeof args.group === 'string' && args.group ? `MUST be "${args.group}"` : 'Extract from description'}
@@ -248,19 +248,19 @@ Examples:
 1. Time range query (NO ORDER BY, NO LIMIT):
    Description: "list the last 3 days service_cpm_minute"
    Response: {
-     "bydbql": "SELECT * FROM MEASURE service_cpm_minute IN metricsMinute TIME > '-3d'"
+     "BydbQL": "SELECT * FROM MEASURE service_cpm_minute IN metricsMinute TIME > '-3d'"
    }
 
 2. Data points query (with ORDER BY and LIMIT):
    Description: "show the last 30 zipkin spans"
    Response: {
-     "bydbql": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30"
+     "BydbQL": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30"
    }
 
 3. Default example:
    Description: "show the last 30 zipkin spans order by time"
    Response: {
-     "bydbql": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30",
+     "BydbQL": "SELECT * FROM TRACE zipkin_span IN default ORDER BY timestamp_millis DESC LIMIT 30",
      "type": ${typeof args.resource_type === 'string' && args.resource_type ? `"${args.resource_type.toUpperCase()}"` : '"TRACE"'},
      "name": ${typeof args.resource_name === 'string' && args.resource_name ? `"${args.resource_name}"` : '"zipkin_span"'},
      "group": ${typeof args.group === 'string' && args.group ? `"${args.group}"` : '"default"'}
