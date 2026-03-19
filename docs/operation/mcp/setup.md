@@ -129,7 +129,7 @@ grpcurl -plaintext localhost:17912 list
 
 ## HTTP Transport Mode
 
-By default the MCP server communicates over standard I/O (`TRANSPORT=stdio`), which is suitable for desktop clients such as Claude Desktop. Set `TRANSPORT=http` to expose the server as an HTTP endpoint instead. This mode uses the MCP [Streamable HTTP](https://spec.modelcontextprotocol.io/specification/2025-03-26/basic/transports/#streamable-http) transport, which supports both streaming (SSE) and direct JSON responses.
+By default the MCP server communicates over standard I/O (`TRANSPORT=stdio`), which is suitable for desktop clients such as Claude Desktop. Set `TRANSPORT=http` to expose the server as an HTTP endpoint instead. This mode uses the MCP [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) transport, which supports both streaming (SSE) and direct JSON responses.
 
 ### Start in HTTP Mode
 
