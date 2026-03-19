@@ -26,7 +26,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BanyanDBClient, ResourceMetadata } from './client/banyandb-client.js';
+import { BanyanDBClient, ResourceMetadata } from './client/index.js';
 import { generateBydbQL } from './query/llm-prompt.js';
 import { ResourcesByGroup } from './query/types.js';
 import { log, setupGlobalErrorHandlers } from './utils/logger.js';

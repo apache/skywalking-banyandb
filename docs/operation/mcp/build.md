@@ -14,10 +14,15 @@ This guide is for developers who want to build the MCP server from source and cr
 mcp/
 ├── src/
 │   ├── index.ts              # MCP server implementation
-│   ├── banyandb-client.ts    # BanyanDB HTTP client
-│   ├── query-generator.ts    # Natural language to BydbQL translator
-│   ├── llm-prompt.ts         # LLM prompt generation
-│   └── logger.ts             # Logging utilities
+│   ├── client/
+│   │   ├── index.ts            # BanyanDB HTTP client
+│   │   └── types.ts            # Client type definitions
+│   ├── query/
+│   │   ├── llm-prompt.ts       # BydbQL prompt generation
+│   │   └── types.ts            # Query type definitions
+│   └── utils/
+│       ├── http.ts             # HTTP utilities
+│       └── logger.ts           # Logging utilities
 ├── tools/
 │   └── checkversion.js        # Version checking utility
 ├── dist/                     # Compiled JavaScript (generated)

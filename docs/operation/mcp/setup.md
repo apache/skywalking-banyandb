@@ -16,8 +16,10 @@ The MCP server binary is included in the BanyanDB release package. After extract
 
 ```bash
 cd mcp
-node dist/index.js --help
+node dist/index.js
 ```
+
+The server starts in stdio mode by default and waits for MCP client connections. Verify BanyanDB is accessible before starting (see [Verifying BanyanDB Connection](#verifying-banyandb-connection)).
 
 ### 2. Configure Environment Variables
 
@@ -38,8 +40,10 @@ Create a configuration file for your MCP client. For example, for MCP Inspector,
 
 The MCP server is available as a Docker image for easy deployment.
 
+### 1. Pull Docker Image
+
 ```bash
-docker pull apache/skywalking-banyandb-mcp:{COMMIT_ID}
+docker pull ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
 
 ### 2. Run the Container
