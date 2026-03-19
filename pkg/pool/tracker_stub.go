@@ -1,0 +1,41 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+//go:build slim
+// +build slim
+
+package pool
+
+// Tracker is a no-op stub in slim builds.
+type Tracker struct{}
+
+// Acquire is a no-op in slim builds.
+func (t *Tracker) Acquire(any) {}
+
+// Release is a no-op in slim builds.
+func (t *Tracker) Release(any) {}
+
+// RefsCount returns 0 in slim builds.
+func (t *Tracker) RefsCount() int { return 0 }
+
+// Stacks returns nil in slim builds.
+func (t *Tracker) Stacks() []string { return nil }
+
+// RegisterTracker returns a no-op tracker.
+func RegisterTracker(name string) *Tracker {
+	return new(Tracker)
+}
