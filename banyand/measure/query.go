@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -80,6 +81,16 @@ type topNQueryOptions struct {
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
+	startTime := time.Now()
+	defer func() {
+		if m.queryMetrics != nil {
+			m.queryMetrics.queryLatency.Observe(time.Since(startTime).Seconds())
+			if err != nil {
+				m.queryMetrics.queryErrors.Inc(1)
+			}
+		}
+	}()
+
 	if validateErr := validateMeasureQueryOptions(mqo); validateErr != nil {
 		return nil, validateErr
 	}
@@ -139,11 +150,15 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	}
 	result := queryResult{
 		ctx:              ctx,
+		qm:               m.queryMetrics,
 		segments:         segments,
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
 	}
 	queryResultTracker.Acquire(&result)
+	if m.queryMetrics != nil {
+		m.queryMetrics.totalQueryResultStarted.Inc(1)
+	}
 	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
@@ -194,6 +209,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 
 	applyMeasureQueryOrdering(mqo, &result)
 	applyTopNOptions(mqo, &result)
+
+	if m.queryMetrics != nil {
+		m.queryMetrics.resultPoints.Observe(float64(len(result.data)))
+	}
 
 	return &result, nil
 }
@@ -721,6 +740,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 
 type queryResult struct {
 	ctx              context.Context
+	qm               *queryMetrics
 	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
@@ -808,6 +828,9 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 
 func (qr *queryResult) Release() {
 	queryResultTracker.Release(qr)
+	if qr.qm != nil {
+		qr.qm.totalQueryResultFinished.Inc(1)
+	}
 	for i, v := range qr.data {
 		releaseBlockCursor(v)
 		qr.data[i] = nil

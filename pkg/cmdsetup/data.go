@@ -76,7 +76,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate trace service")
 	}
-	q, err := query.NewService(ctx, streamSvc, measureSvc, traceSvc, metaSvc, pipeline)
+	q, err := query.NewService(ctx, streamSvc, measureSvc, traceSvc, metaSvc, pipeline, metricSvc)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
 	}

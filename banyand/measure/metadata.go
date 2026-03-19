@@ -615,15 +615,16 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata   metadata.Repo
-	omr        observability.MetricsRegistry
-	c          storage.Cache
-	pm         protector.Memory
-	l          *logger.Logger
-	schemaRepo *schemaRepo
-	nodeLabels map[string]string
-	path       string
-	option     option
+	metadata     metadata.Repo
+	omr          observability.MetricsRegistry
+	c            storage.Cache
+	pm           protector.Memory
+	l            *logger.Logger
+	schemaRepo   *schemaRepo
+	nodeLabels   map[string]string
+	queryMetrics *queryMetrics
+	path         string
+	option       option
 }
 
 func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
@@ -654,7 +655,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo)
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -762,9 +763,14 @@ func newQueueSupplier(path string, svc *liaison, measureDataNodeRegistry grpc.No
 
 func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
+	p := common.Position{
+		Module:   "measure",
+		Database: measureSchema.GetMetadata().GetGroup(),
+	}
+	factory := s.omr.With(measureScope.SubScope("query").ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, s.pm, s.schemaRepo)
+	}, s.l, nil, s.pm, s.schemaRepo, newQueryMetrics(factory))
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
