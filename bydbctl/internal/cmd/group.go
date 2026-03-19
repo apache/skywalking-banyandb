@@ -106,21 +106,35 @@ func newGroupCmd() *cobra.Command {
 		},
 	}
 
+	var force, dryRun, dataOnly bool
 	deleteCmd := &cobra.Command{
-		Use:     "delete [-g group]",
+		Use:     "delete [-g group] [--force] [--dry-run] [--data-only]",
 		Version: version.Build(),
 		Short:   "Delete a group",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
 			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
-				return request.req.SetPathParam("group", request.group).Delete(getPath("/api/v1/group/schema/{group}"))
+				return request.req.
+					SetPathParam("group", request.group).
+					SetQueryParam("force", fmt.Sprintf("%v", force)).
+					SetQueryParam("dry_run", fmt.Sprintf("%v", dryRun)).
+					SetQueryParam("data_only", fmt.Sprintf("%v", dataOnly)).
+					Delete(getPath("/api/v1/group/schema/{group}"))
 			},
-				func(_ int, reqBody reqBody, _ []byte) error {
+				func(_ int, reqBody reqBody, respBody []byte) error {
+					if dryRun {
+						fmt.Printf("group %s dry-run deletion result:", reqBody.group)
+						fmt.Println()
+						return yamlPrinter(0, reqBody, respBody)
+					}
 					fmt.Printf("group %s is deleted", reqBody.group)
 					fmt.Println()
 					return nil
 				}, enableTLS, insecure, cert)
 		},
 	}
+	deleteCmd.Flags().BoolVarP(&force, "force", "", false, "Force delete the group even if it contains data")
+	deleteCmd.Flags().BoolVarP(&dryRun, "dry-run", "", false, "Preview what would be deleted without making changes")
+	deleteCmd.Flags().BoolVarP(&dataOnly, "data-only", "", false, "Delete only data files without removing metadata")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
