@@ -53,6 +53,7 @@ Release Notes.
 - Add design of KTM.
 - Add FODC overview doc.
 - Remove Java client doc, and recreate client APIs docs.
+- Add common issue documentation.
 
 ### Chores
 

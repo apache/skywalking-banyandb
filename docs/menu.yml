@@ -133,6 +133,8 @@ catalog:
             path: "/operation/troubleshooting/overhead"
           - name: "Troubleshooting Query"
             path: "/operation/troubleshooting/query"
+          - name: "Common Issues"
+            path: "/operation/troubleshooting/common-issues"
       - name: "Security"
         path: "/operation/security"
       - name: "Backup"
