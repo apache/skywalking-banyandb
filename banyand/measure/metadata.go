@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -615,15 +616,16 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata   metadata.Repo
-	omr        observability.MetricsRegistry
-	c          storage.Cache
-	pm         protector.Memory
-	l          *logger.Logger
-	schemaRepo *schemaRepo
-	nodeLabels map[string]string
-	path       string
-	option     option
+	metadata     metadata.Repo
+	omr          observability.MetricsRegistry
+	c            storage.Cache
+	pm           protector.Memory
+	l            *logger.Logger
+	schemaRepo   *schemaRepo
+	nodeLabels   map[string]string
+	queryMetrics atomic.Pointer[queryMetrics]
+	path         string
+	option       option
 }
 
 func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
@@ -654,7 +656,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo)
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load())
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -764,7 +766,7 @@ func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSche
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, s.pm, s.schemaRepo)
+	}, s.l, nil, s.pm, s.schemaRepo, nil)
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

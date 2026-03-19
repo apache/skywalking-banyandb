@@ -82,7 +82,7 @@ func setUp() (*services, func()) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	preloadTraceSvc := &preloadTraceService{metaSvc: metadataService}
 	// Init Query Service for trace queries
-	querySvc, err := query.NewService(context.TODO(), nil, nil, traceService, metadataService, pipeline)
+	querySvc, err := query.NewService(context.TODO(), nil, nil, traceService, metadataService, pipeline, metricSvc)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
