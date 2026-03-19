@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -622,7 +623,7 @@ type supplier struct {
 	l            *logger.Logger
 	schemaRepo   *schemaRepo
 	nodeLabels   map[string]string
-	queryMetrics *queryMetrics
+	queryMetrics atomic.Pointer[queryMetrics]
 	path         string
 	option       option
 }
@@ -655,7 +656,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics)
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load())
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
