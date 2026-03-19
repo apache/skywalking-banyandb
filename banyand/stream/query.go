@@ -35,10 +35,13 @@ import (
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+var streamQueryResultTracker = pool.RegisterTracker("stream.queryResult")
 
 const checkDoneEvery = 128
 
@@ -60,9 +63,13 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return bypassQueryResultInstance, nil
 	}
 
+	segmentsNeedRelease := true
 	defer func() {
-		if err != nil {
-			sqr.Release()
+		if !segmentsNeedRelease {
+			return
+		}
+		for i := range segments {
+			segments[i].DecRef()
 		}
 	}()
 
@@ -82,10 +89,17 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
 
 	if sqo.Order == nil || sqo.Order.Index == nil {
-		return s.executeTimeSeriesQuery(segments, series, qo, &tr), nil
+		sqr = s.executeTimeSeriesQuery(segments, series, qo, &tr)
+		segmentsNeedRelease = false
+		return sqr, nil
 	}
 
-	return s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
+	sqr, err = s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
+	if err != nil {
+		return nil, err
+	}
+	segmentsNeedRelease = false
+	return sqr, nil
 }
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {
@@ -157,6 +171,7 @@ func (s *stream) executeTimeSeriesQuery(
 		result.asc = true
 	}
 
+	streamQueryResultTracker.Acquire(result)
 	return result
 }
 
@@ -198,6 +213,7 @@ func (s *stream) executeIndexedQuery(
 		result.asc = true
 	}
 
+	streamQueryResultTracker.Acquire(&result)
 	return &result, nil
 }
 

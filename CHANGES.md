@@ -28,6 +28,7 @@ Release Notes.
 - Support relative paths in configuration.
 - Support 'none' node discovery and make it the default.
 - Support server-side element ID generation for stream writes when clients omit element_id.
+- Implement entire group deletion.
 
 ### Bug Fixes
 
@@ -46,6 +47,7 @@ Release Notes.
 - Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
 - Fix memory part reference leak in mustAddMemPart when tsTable loop closes.
 - Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
+- Fix segment reference leaks in measure/stream/trace queries and ensure chunked sync sessions close part contexts correctly.
 
 ### Document
 
