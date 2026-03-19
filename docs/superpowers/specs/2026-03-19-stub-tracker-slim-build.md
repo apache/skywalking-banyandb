@@ -61,8 +61,10 @@ func AllStacks() map[string][]string { return nil }
 #### 4. `pkg/pool/pool_debug.go` (new, `!slim`)
 Move `EnableStackTracking`, `AllRefsCount`, `AllStacks` from current `pool.go` with build tag `//go:build !slim`.
 
+Note: `stackTrackingEnabled` variable remains in `pool.go` because `Synced[T].Get()` and `Synced[T].Put()` use it.
+
 #### 5. `pkg/pool/pool.go`
-Keep only the pool structures (`Synced[T]`, interfaces, `Register`), remove debug-only functions.
+Keep `poolMap`, `stackTrackingEnabled`, `Trackable`, `StackTracker` interfaces, `Synced[T]` struct and its methods, and `Register`. Remove debug-only functions (`EnableStackTracking`, `AllRefsCount`, `AllStacks`) to `pool_debug.go`.
 
 ### File Changes
 
