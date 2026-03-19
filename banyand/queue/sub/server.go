@@ -85,6 +85,7 @@ type server struct {
 	listeners             map[bus.Topic][]bus.MessageListener
 	topicMap              map[string]bus.Topic
 	chunkedSyncHandlers   map[bus.Topic]queue.ChunkedSyncHandler
+	activeSessions        map[string]*syncSession
 	log                   *logger.Logger
 	httpSrv               *http.Server
 	tlsReloader           *pkgtls.Reloader
@@ -100,6 +101,7 @@ type server struct {
 	maxRecvMsgSize        run.Bytes
 	listenersLock         sync.RWMutex
 	routeTableProviderMu  sync.RWMutex
+	activeSessionsMu      sync.Mutex
 	port                  uint32
 	httpPort              uint32
 	maxChunkBufferSize    uint32
@@ -119,6 +121,7 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		listeners:           make(map[bus.Topic][]bus.MessageListener),
 		topicMap:            make(map[string]bus.Topic),
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
+		activeSessions:      make(map[string]*syncSession),
 		omr:                 omr,
 		maxRecvMsgSize:      defaultRecvSize,
 		flagNamePrefix:      flagNamePrefix,
@@ -377,6 +380,39 @@ func (s *server) GracefulStop() {
 	case <-stopped:
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
+	}
+
+	s.closeAllSessions()
+}
+
+// registerSession adds a session to the active sessions map.
+func (s *server) registerSession(id string, session *syncSession) {
+	s.activeSessionsMu.Lock()
+	s.activeSessions[id] = session
+	s.activeSessionsMu.Unlock()
+}
+
+// unregisterSession removes a session from the active sessions map.
+func (s *server) unregisterSession(id string) {
+	s.activeSessionsMu.Lock()
+	delete(s.activeSessions, id)
+	s.activeSessionsMu.Unlock()
+}
+
+// closeAllSessions closes the partCtx of every remaining active session.
+// It is called after the gRPC server has fully stopped as a safety net.
+func (s *server) closeAllSessions() {
+	s.activeSessionsMu.Lock()
+	sessions := s.activeSessions
+	s.activeSessions = make(map[string]*syncSession)
+	s.activeSessionsMu.Unlock()
+
+	for id, session := range sessions {
+		if session.partCtx != nil {
+			if closeErr := session.partCtx.Close(); closeErr != nil {
+				s.log.Error().Err(closeErr).Str("session_id", id).Msg("failed to close session partCtx during shutdown")
+			}
+		}
 	}
 }
 
