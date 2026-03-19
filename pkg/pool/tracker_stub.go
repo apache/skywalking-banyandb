@@ -16,7 +16,6 @@
 // under the License.
 
 //go:build slim
-// +build slim
 
 package pool
 
