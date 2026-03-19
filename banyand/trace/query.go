@@ -34,8 +34,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
+
+var traceQueryResultTracker = pool.RegisterTracker("trace.queryResult")
 
 const (
 	checkDoneEvery = 128
@@ -142,6 +145,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 
+	traceQueryResultTracker.Acquire(&result)
 	return &result, nil
 }
 
@@ -495,6 +499,7 @@ func (qr *queryResult) releaseCurrentBatch() {
 }
 
 func (qr *queryResult) Release() {
+	traceQueryResultTracker.Release(qr)
 	if qr.cancel != nil {
 		qr.cancel()
 	}
