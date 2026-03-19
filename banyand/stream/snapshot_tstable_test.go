@@ -231,6 +231,66 @@ func TestStreamTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newest is corrupt")
 	require.NotNil(t, tst2.snapshot)
 	require.Equal(t, validEpoch, tst2.snapshot.epoch)
+	require.False(t, fileSystem.IsExist(corruptPath), "corrupt newer snapshot must be deleted after fallback")
+	if tst2.index != nil {
+		_ = tst2.index.Close()
+	}
+}
+
+func TestStreamInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, streamSnapshotOption(), nil)
+	require.NoError(t, err)
+	tst.mustAddElements(esTS1)
+	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		dd := fileSystem.ReadDir(tabDir)
+		for _, d := range dd {
+			if d.IsDir() &&
+				d.Name() != elementIndexFilename &&
+				d.Name() != inverted.ExternalSegmentTempDirName &&
+				d.Name() != storage.FailedPartsDirName {
+				return true
+			}
+		}
+		return false
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	tst.Close()
+	snapshots := make([]uint64, 0)
+	for _, e := range fileSystem.ReadDir(tabDir) {
+		if filepath.Ext(e.Name()) == snapshotSuffix {
+			parsed, parseErr := parseSnapshot(e.Name())
+			if parseErr == nil {
+				snapshots = append(snapshots, parsed)
+			}
+		}
+	}
+	require.GreaterOrEqual(t, len(snapshots), 1)
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i] > snapshots[j] })
+	validEpoch := snapshots[0]
+	// Create two corrupt newer snapshots
+	corruptEpoch1 := validEpoch + 1
+	corruptEpoch2 := validEpoch + 2
+	corruptPath1 := filepath.Join(tabDir, snapshotName(corruptEpoch1))
+	corruptPath2 := filepath.Join(tabDir, snapshotName(corruptEpoch2))
+	_, writeErr := fileSystem.Write([]byte{}, corruptPath1, 0o600)
+	require.NoError(t, writeErr)
+	_, writeErr = fileSystem.Write([]byte{}, corruptPath2, 0o600)
+	require.NoError(t, writeErr)
+	tst2, epoch2, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		streamSnapshotOption(), nil, true)
+	require.NoError(t, initErr)
+	require.NotNil(t, tst2)
+	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newer ones are corrupt")
+	require.NotNil(t, tst2.snapshot)
+	require.Equal(t, validEpoch, tst2.snapshot.epoch)
+	require.False(t, fileSystem.IsExist(corruptPath1), "first corrupt snapshot must be deleted after fallback")
+	require.False(t, fileSystem.IsExist(corruptPath2), "second corrupt snapshot must be deleted after fallback")
 	if tst2.index != nil {
 		_ = tst2.index.Close()
 	}
