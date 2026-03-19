@@ -510,23 +510,25 @@ func (qr *queryResult) Release() {
 	}
 
 	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
-	for batch := range qr.cursorBatchCh {
-		if batch != nil {
-			if batch.cursorCh != nil {
-				// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
-				for result := range batch.cursorCh {
-					if result.cursor != nil {
-						releaseBlockCursor(result.cursor)
+	if qr.cursorBatchCh != nil {
+		for batch := range qr.cursorBatchCh {
+			if batch != nil {
+				if batch.cursorCh != nil {
+					// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
+					for result := range batch.cursorCh {
+						if result.cursor != nil {
+							releaseBlockCursor(result.cursor)
+						}
 					}
 				}
-			}
-			// Release snapshots from drained batches
-			for _, s := range batch.snapshots {
-				s.decRef()
+				// Release snapshots from drained batches
+				for _, s := range batch.snapshots {
+					s.decRef()
+				}
 			}
 		}
+		qr.cursorBatchCh = nil
 	}
-	qr.cursorBatchCh = nil
 
 	qr.releaseCurrentBatch()
 
