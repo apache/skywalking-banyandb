@@ -138,14 +138,22 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 
 		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
 
+		if acquireErr := ms.groupRepo.acquireRequest(metadata.Group); acquireErr != nil {
+			ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+			continue
+		}
+
 		if status := ms.validateWriteRequest(writeRequest, metadata, measure); status != modelv1.Status_STATUS_SUCCEED {
+			ms.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
 
 		if err := ms.processAndPublishRequest(ctx, writeRequest, metadata, spec,
 			specEntityLocator, specShardingKeyLocator, publisher, &succeedSent, measure, nodeMetadataSent, nodeSpecSent); err != nil {
+			ms.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
+		ms.groupRepo.releaseRequest(metadata.Group)
 	}
 }
 
@@ -359,6 +367,16 @@ var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*mea
 
 func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
 	for _, g := range req.Groups {
+		if acquireErr := ms.groupRepo.acquireRequest(g); acquireErr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+		}
+	}
+	defer func() {
+		for _, g := range req.Groups {
+			ms.groupRepo.releaseRequest(g)
+		}
+	}()
+	for _, g := range req.Groups {
 		ms.metrics.totalStarted.Inc(1, g, "measure", "query")
 	}
 	start := time.Now()
@@ -424,6 +442,16 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 }
 
 func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {
+	for _, g := range topNRequest.GetGroups() {
+		if acquireErr := ms.groupRepo.acquireRequest(g); acquireErr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
+		}
+	}
+	defer func() {
+		for _, g := range topNRequest.GetGroups() {
+			ms.groupRepo.releaseRequest(g)
+		}
+	}()
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)

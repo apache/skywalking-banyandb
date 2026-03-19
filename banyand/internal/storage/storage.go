@@ -121,6 +121,8 @@ type TSDB[T TSTable, O any] interface {
 	// DeleteOldestSegment deletes exactly one oldest segment if it exists and meets safety rules.
 	// Returns true if a segment was deleted, false otherwise.
 	DeleteOldestSegment() (bool, error)
+	// Drop closes the database and removes all data files from disk.
+	Drop() error
 }
 
 // Segment is a time range of data.

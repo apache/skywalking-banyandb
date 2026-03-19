@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
@@ -296,11 +295,18 @@ func (sr *schemaRepo) createGroup(name string) (g *group) {
 func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	name := groupMeta.GetName()
 	g, loaded := sr.groupMap.LoadAndDelete(name)
-	log.Info().Str("group", name).Bool("loaded", loaded).Msg("deleting group")
 	if !loaded {
 		return nil
 	}
-	return g.(*group).close()
+	grp := g.(*group)
+	return grp.close()
+}
+
+func (sr *schemaRepo) DropGroup(name string) error {
+	if g, ok := sr.groupMap.Load(name); ok {
+		return g.(*group).drop()
+	}
+	return nil
 }
 
 func (sr *schemaRepo) getGroup(name string) (*group, bool) {
@@ -569,4 +575,15 @@ func (g *group) close() (err error) {
 		return nil
 	}
 	return multierr.Append(err, g.SupplyTSDB().Close())
+}
+
+func (g *group) drop() error {
+	if !g.isInit() || g.isPortable() {
+		return nil
+	}
+	db := g.db.Load()
+	if db == nil {
+		return nil
+	}
+	return db.(DB).Drop()
 }

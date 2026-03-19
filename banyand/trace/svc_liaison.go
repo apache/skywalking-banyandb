@@ -104,6 +104,22 @@ func (cl *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messa
 	return bus.NewMessage(message.ID(), liaisonInfo)
 }
 
+type dropGroupLiaisonListener struct {
+	*bus.UnImplementedHealthyListener
+	l *liaison
+}
+
+func (dl *dropGroupLiaisonListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceDeleteRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for drop group liaison request"))
+	}
+	if dropErr := dl.l.DropGroup(ctx, req.Group); dropErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to drop group data on liaison: %v", dropErr))
+	}
+	return bus.NewMessage(message.ID(), req)
+}
+
 // LiaisonService returns a new liaison service (deprecated - use NewLiaison).
 func LiaisonService(_ context.Context) (Service, error) {
 	return &liaison{}, nil
@@ -280,11 +296,15 @@ func (l *liaison) PreRun(ctx context.Context) error {
 
 	if metaSvc, ok := l.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, l)
+		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_TRACE, l)
 	}
 
 	collectLiaisonInfoListener := &collectLiaisonInfoListener{l: l}
 	if subscribeErr := l.pipeline.Subscribe(data.TopicTraceCollectLiaisonInfo, collectLiaisonInfoListener); subscribeErr != nil {
 		return fmt.Errorf("failed to subscribe to collect liaison info topic: %w", subscribeErr)
+	}
+	if subscribeErr := l.pipeline.Subscribe(data.TopicTraceDropGroup, &dropGroupLiaisonListener{l: l}); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to drop group topic: %w", subscribeErr)
 	}
 
 	return l.pipeline.Subscribe(data.TopicTraceWrite, l.writeListener)
@@ -308,6 +328,10 @@ func (l *liaison) GracefulStop() {
 
 func (l *liaison) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return l.schemaRepo.LoadGroup(name)
+}
+
+func (l *liaison) DropGroup(_ context.Context, groupName string) error {
+	return l.schemaRepo.DropGroup(groupName)
 }
 
 func (l *liaison) Trace(metadata *commonv1.Metadata) (Trace, error) {

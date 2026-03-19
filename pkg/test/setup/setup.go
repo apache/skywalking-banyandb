@@ -61,12 +61,14 @@ const (
 	ModeFile = "file"
 	// ModeProperty is the property-based mode for schema registry.
 	ModeProperty = "property"
+	// ModeNone is the none mode for node discovery (standalone).
+	ModeNone = "none"
 )
 
 // NodeDiscoveryConfig configures node discovery mode.
 type NodeDiscoveryConfig struct {
 	FileWriter *DiscoveryFileWriter
-	Mode       string // ModeEtcd (default) or ModeFile
+	Mode       string // ModeEtcd (default), ModeFile, or ModeNone
 }
 
 // SchemaRegistryConfig configures schema registry mode.
@@ -609,13 +611,26 @@ func CMD(flags ...string) func() {
 	}
 }
 
+func hasFlagValue(flags []string, key, value string) bool {
+	for idx, f := range flags {
+		if f == key+"="+value {
+			return true
+		}
+		if f == key && idx+1 < len(flags) && flags[idx+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
 func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (string, string, func()) {
 	if config == nil {
 		config = defaultClusterConfig
 	}
 	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
+	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-meta-role", "false")
 	portCount := 2
-	if isPropertyMode {
+	if runSchemaServer {
 		portCount = 3
 	}
 	ports, err := test.AllocateFreePorts(portCount)
@@ -648,13 +663,15 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 	}
 
 	if isPropertyMode {
-		schemaPort := ports[2]
-		schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
-		flags = append(flags,
-			"--schema-server-grpc-host="+nodeHost,
-			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-		)
-		config.addSchemaServerAddr(schemaAddr)
+		if runSchemaServer {
+			schemaPort := ports[2]
+			schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
+			flags = append(flags,
+				"--schema-server-grpc-host="+nodeHost,
+				fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
+			)
+			config.addSchemaServerAddr(schemaAddr)
+		}
 	} else {
 		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
 	}
@@ -719,14 +736,7 @@ func DataNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, str
 	}
 }
 
-// LiaisonNode runs a liaison node.
-func LiaisonNode(config *ClusterConfig, flags ...string) (grpcAddr string, closeFn func()) {
-	grpcAddr, _, closeFn = LiaisonNodeWithHTTP(config, flags...)
-	return
-}
-
-// LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
-func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string, func()) {
+func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (string, string, func()) {
 	if config == nil {
 		config = defaultClusterConfig
 	}
@@ -735,7 +745,6 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 	grpcAddr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
 	nodeHost := "127.0.0.1"
-	path, deferFn, err := test.NewSpace()
 	logger.Infof("liaison test directory: %s", path)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
@@ -798,6 +807,33 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 			return nil
 		})
 		fmt.Println("done")
+		closeFn()
+	}
+}
+
+// LiaisonNode runs a liaison node.
+func LiaisonNode(config *ClusterConfig, flags ...string) (grpcAddr string, closeFn func()) {
+	grpcAddr, _, closeFn = LiaisonNodeWithHTTP(config, flags...)
+	return
+}
+
+// LiaisonNodeWithHTTP runs a liaison node with HTTP enabled and returns the gRPC and HTTP addresses.
+func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string, func()) {
+	dataDir, deferFn, dirErr := test.NewSpace()
+	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
+	grpcAddr, httpAddr, closeFn := startLiaisonNode(config, dataDir, flags...)
+	return grpcAddr, httpAddr, func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// LiaisonNodeWithAddrAndDir runs a liaison node and returns the gRPC address, root data path, and closer.
+func LiaisonNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, string, func()) {
+	dataDir, deferFn, dirErr := test.NewSpace()
+	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
+	grpcAddr, _, closeFn := startLiaisonNode(config, dataDir, flags...)
+	return grpcAddr, dataDir, func() {
 		closeFn()
 		deferFn()
 	}

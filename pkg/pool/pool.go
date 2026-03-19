@@ -30,11 +30,6 @@ var (
 	stackTrackingEnabled atomic.Bool
 )
 
-// EnableStackTracking enables or disables stack tracking for all pools.
-func EnableStackTracking(enabled bool) {
-	stackTrackingEnabled.Store(enabled)
-}
-
 // Register registers a new pool with the given name.
 func Register[T any](name string) *Synced[T] {
 	p := new(Synced[T])
@@ -42,31 +37,6 @@ func Register[T any](name string) *Synced[T] {
 		panic(fmt.Sprintf("duplicated pool: %s", name))
 	}
 	return p
-}
-
-// AllRefsCount returns the reference count of all pools.
-func AllRefsCount() map[string]int {
-	result := make(map[string]int)
-	poolMap.Range(func(key, value any) bool {
-		result[key.(string)] = value.(Trackable).RefsCount()
-		return true
-	})
-	return result
-}
-
-// AllStacks returns all recorded stack traces for leaked objects from all pools.
-func AllStacks() map[string][]string {
-	result := make(map[string][]string)
-	poolMap.Range(func(key, value any) bool {
-		if st, ok := value.(StackTracker); ok {
-			stacks := st.Stacks()
-			if len(stacks) > 0 {
-				result[key.(string)] = stacks
-			}
-		}
-		return true
-	})
-	return result
 }
 
 // Trackable is the interface that wraps the RefsCount method.
@@ -102,20 +72,19 @@ func (p *Synced[T]) Get() T {
 		result = v.(T)
 	}
 
-	// Capture stack trace if tracking is enabled
-	if stackTrackingEnabled.Load() {
-		// Lazy initialize maps on first use
+	// Capture stack trace if tracking is enabled.
+	// Skip tracking when the pool returns nil because the caller will create
+	// a new object whose pointer won't match the nil key in idMap,
+	// so Put() would never clean up the entry.
+	if v != nil && stackTrackingEnabled.Load() {
 		p.stacksMutex.Lock()
 		if p.stacks == nil {
 			p.stacks = make(map[uint64]string)
 			p.idMap = make(map[any]uint64)
 		}
-
-		// Generate unique ID and capture stack trace
 		id := p.idCounter.Add(1)
 		buf := make([]byte, 4096)
 		n := runtime.Stack(buf, false)
-
 		p.idMap[any(result)] = id
 		p.stacks[id] = "Pool.Get() called:\n" + string(buf[:n])
 		p.stacksMutex.Unlock()
@@ -126,10 +95,10 @@ func (p *Synced[T]) Get() T {
 
 // Put puts an object back to the pool.
 func (p *Synced[T]) Put(v T) {
-	p.Pool.Put(v)
-	p.refs.Add(-1)
-
-	// Remove the stack trace for this object if tracking is enabled
+	// Remove the stack trace BEFORE returning the object to the pool.
+	// Otherwise another goroutine's Get() can reuse the pointer and
+	// overwrite its idMap entry, causing this Put to delete the wrong
+	// stack and orphan the original one.
 	if stackTrackingEnabled.Load() {
 		p.stacksMutex.Lock()
 		if p.idMap != nil {
@@ -140,6 +109,8 @@ func (p *Synced[T]) Put(v T) {
 		}
 		p.stacksMutex.Unlock()
 	}
+	p.Pool.Put(v)
+	p.refs.Add(-1)
 }
 
 // RefsCount returns the reference count of the pool.

@@ -96,12 +96,25 @@ resource_opts:
 	})
 
 	It("delete group", func() {
-		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1"})
+		Eventually(func(g Gomega) {
+			rootCmd.SetArgs([]string{"group", "delete", "-g", "group1"})
+			out := capturer.CaptureStdout(func() {
+				g.Expect(rootCmd.Execute()).NotTo(HaveOccurred())
+			})
+			g.Expect(out).To(ContainSubstring("group group1 is deleted"))
+		}).Should(Succeed())
+	})
+
+	It("delete group with dry-run flag", func() {
+		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1", "--dry-run"})
 		out := capturer.CaptureStdout(func() {
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
 		})
-		Expect(out).To(ContainSubstring("group group1 is deleted"))
+		Expect(out).To(ContainSubstring("group group1 dry-run deletion result:"))
+		resp := new(databasev1.GroupRegistryServiceDeleteResponse)
+		helpers.UnmarshalYAML([]byte(out[strings.Index(out, "\n")+1:]), resp)
+		Expect(resp).NotTo(BeNil())
 	})
 
 	It("list group", func() {
@@ -132,7 +145,7 @@ resource_opts:
 		})
 		resp := new(databasev1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
-		Expect(resp.Group).To(HaveLen(2)) // group1, group2 [internal group]
+		Expect(resp.Group).To(HaveLen(3)) // group1, group2, _deletion_task (internal group)
 	})
 
 	AfterEach(func() {

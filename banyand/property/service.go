@@ -31,9 +31,11 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
@@ -63,19 +65,19 @@ type service struct {
 	omr                      observability.MetricsRegistry
 	lfs                      fs.FileSystem
 	pm                       protector.Memory
-	closer                   *run.Closer
 	db                       db.Database
+	closer                   *run.Closer
 	l                        *logger.Logger
-	nodeID                   string
 	repairScheduler          *repairScheduler
-	root                     string
 	snapshotDir              string
+	root                     string
 	repairDir                string
 	repairBuildTreeCron      string
 	repairTriggerCron        string
-	flushTimeout             time.Duration
-	expireTimeout            time.Duration
+	nodeID                   string
 	repairQuickBuildTreeTime time.Duration
+	expireTimeout            time.Duration
+	flushTimeout             time.Duration
 	repairTreeSlotCount      int
 	maxDiskUsagePercent      int
 	maxFileSnapshotNum       int
@@ -201,6 +203,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		}
 		s.repairScheduler = scheduler
 	}
+	s.metadata.RegisterHandler("property", schema.KindGroup, &propertyGroupEventHandler{svc: s})
 	return multierr.Combine(
 		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, l: s.l, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
@@ -208,6 +211,30 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.pipeline.Subscribe(data.TopicSnapshot, snapshotLis),
 		s.pipeline.Subscribe(data.TopicPropertyRepair, &repairListener{s: s}),
 	)
+}
+
+type propertyGroupEventHandler struct {
+	svc *service
+}
+
+func (h *propertyGroupEventHandler) OnInit([]schema.Kind) (bool, []int64) {
+	return false, nil
+}
+
+func (h *propertyGroupEventHandler) OnAddOrUpdate(_ schema.Metadata) {}
+
+func (h *propertyGroupEventHandler) OnDelete(md schema.Metadata) {
+	if md.Kind != schema.KindGroup {
+		return
+	}
+	group := md.Spec.(*commonv1.Group)
+	if group.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
+		return
+	}
+	groupName := group.Metadata.GetName()
+	if dropErr := h.svc.db.Drop(groupName); dropErr != nil {
+		h.svc.l.Error().Err(dropErr).Str("group", groupName).Msg("failed to drop group")
+	}
 }
 
 func (s *service) Serve() run.StopNotify {

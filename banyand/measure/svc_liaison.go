@@ -75,6 +75,10 @@ func (s *liaison) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return s.schemaRepo.LoadGroup(name)
 }
 
+func (s *liaison) DropGroup(_ context.Context, groupName string) error {
+	return s.schemaRepo.DropGroup(groupName)
+}
+
 func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
@@ -188,11 +192,15 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	}
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_MEASURE, s)
+		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_MEASURE, s)
 	}
 
 	collectLiaisonInfoListener := &collectLiaisonInfoListener{s: s}
 	if subscribeErr := s.pipeline.Subscribe(data.TopicMeasureCollectLiaisonInfo, collectLiaisonInfoListener); subscribeErr != nil {
 		return fmt.Errorf("failed to subscribe to collect liaison info topic: %w", subscribeErr)
+	}
+	if subscribeErr := s.pipeline.Subscribe(data.TopicMeasureDropGroup, &dropGroupLiaisonListener{s: s}); subscribeErr != nil {
+		return fmt.Errorf("failed to subscribe to drop group topic: %w", subscribeErr)
 	}
 
 	return topNResultPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
@@ -237,4 +245,20 @@ func (l *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messag
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
 	}
 	return bus.NewMessage(message.ID(), liaisonInfo)
+}
+
+type dropGroupLiaisonListener struct {
+	*bus.UnImplementedHealthyListener
+	s *liaison
+}
+
+func (l *dropGroupLiaisonListener) Rev(ctx context.Context, message bus.Message) bus.Message {
+	req, ok := message.Data().(*databasev1.GroupRegistryServiceDeleteRequest)
+	if !ok {
+		return bus.NewMessage(message.ID(), common.NewError("invalid data type for drop group liaison request"))
+	}
+	if dropErr := l.s.DropGroup(ctx, req.Group); dropErr != nil {
+		return bus.NewMessage(message.ID(), common.NewError("failed to drop group data on liaison: %v", dropErr))
+	}
+	return bus.NewMessage(message.ID(), req)
 }

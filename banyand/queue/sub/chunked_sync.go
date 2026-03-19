@@ -129,7 +129,9 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 	defer func() {
 		if currentSession != nil {
 			if currentSession.partCtx != nil {
-				currentSession.partCtx.Close()
+				if closeErr := currentSession.partCtx.Close(); closeErr != nil {
+					s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close session partCtx")
+				}
 			}
 		}
 	}()
@@ -153,6 +155,21 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 		sessionID = req.SessionId
 
 		if req.GetMetadata() != nil {
+			if currentSession != nil {
+				if currentSession.partCtx != nil {
+					if currentSession.partCtx.Handler != nil {
+						if finishErr := currentSession.partCtx.Handler.FinishSync(); finishErr != nil {
+							s.updateChunkOrderMetrics("finish_sync_err", currentSession.sessionID)
+							s.log.Error().Err(finishErr).Str("session_id", currentSession.sessionID).Msg("failed to finish sync for previous session")
+						}
+						if closeErr := currentSession.partCtx.Close(); closeErr != nil {
+							s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close previous session partCtx")
+						}
+					} else if closeErr := currentSession.partCtx.Close(); closeErr != nil {
+						s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close previous session partCtx")
+					}
+				}
+			}
 			currentSession = &syncSession{
 				sessionID:      sessionID,
 				metadata:       req.GetMetadata(),

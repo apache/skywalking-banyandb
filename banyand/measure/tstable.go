@@ -117,9 +117,21 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
 		return loadedSnapshots[i] > loadedSnapshots[j]
 	})
-	epoch := loadedSnapshots[0]
-	tst.loadSnapshot(epoch, loadedParts)
-	return &tst, epoch
+	var failedSnapshotIDs []uint64
+	for _, epoch := range loadedSnapshots {
+		loadErr := tst.loadSnapshot(epoch, loadedParts)
+		if loadErr != nil {
+			tst.l.Warn().Err(loadErr).Uint64("epoch", epoch).Msg("cannot load snapshot, trying next older")
+			failedSnapshotIDs = append(failedSnapshotIDs, epoch)
+			continue
+		}
+		for _, id := range failedSnapshotIDs {
+			tst.l.Info().Str("path", filepath.Join(rootPath, snapshotName(id))).Msg("delete unreadable snapshot file")
+			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
+		}
+		return &tst, epoch
+	}
+	return &tst, uint64(time.Now().UnixNano())
 }
 
 // newTSTable creates a new tsTable and starts the background loop.
@@ -165,8 +177,11 @@ type tsTable struct {
 	shardID common.ShardID
 }
 
-func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
-	parts := tst.mustReadSnapshot(epoch)
+func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) error {
+	parts, err := tst.readSnapshot(epoch)
+	if err != nil {
+		return err
+	}
 	snp := snapshot{
 		epoch: epoch,
 	}
@@ -200,13 +215,14 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) {
 	tst.gc.registerSnapshot(&snp)
 	tst.gc.clean()
 	if len(snp.parts) < 1 {
-		return
+		return nil
 	}
 	snp.incRef()
 	tst.snapshot = &snp
 	if needToPersist {
 		tst.persistSnapshot(&snp)
 	}
+	return nil
 }
 
 func (tst *tsTable) startLoop(cur uint64) {
@@ -235,38 +251,56 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 		logger.Panicf("cannot marshal partNames to JSON: %s", err)
 	}
 	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	lf, err := tst.fileSystem.CreateLockFile(snapshotPath, storage.FilePerm)
+	snapshotTempPath := snapshotPath + ".tmp"
+	lf, err := tst.fileSystem.CreateLockFile(snapshotTempPath, storage.FilePerm)
 	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", snapshotPath, err)
+		logger.Panicf("cannot create lock file %s: %s", snapshotTempPath, err)
 	}
 	n, err := lf.Write(data)
 	if err != nil {
-		logger.Panicf("cannot write snapshot %s: %s", snapshotPath, err)
+		_ = lf.Close()
+		logger.Panicf("cannot write snapshot %s: %s", snapshotTempPath, err)
 	}
 	if n != len(data) {
-		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotPath, n, len(data))
+		_ = lf.Close()
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotTempPath, n, len(data))
 	}
+	if closeErr := lf.Close(); closeErr != nil {
+		logger.Panicf("cannot close snapshot temp file %s: %s", snapshotTempPath, closeErr)
+	}
+	if renameErr := tst.fileSystem.Rename(snapshotTempPath, snapshotPath); renameErr != nil {
+		logger.Panicf("cannot rename snapshot %s to %s: %s", snapshotTempPath, snapshotPath, renameErr)
+	}
+	tst.fileSystem.SyncPath(tst.root)
 }
 
-func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
+func (tst *tsTable) readSnapshot(snapshot uint64) ([]uint64, error) {
 	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
 	data, err := tst.fileSystem.Read(snapshotPath)
 	if err != nil {
-		logger.Panicf("cannot read %s: %s", snapshotPath, err)
+		return nil, fmt.Errorf("cannot read %s: %w", snapshotPath, err)
 	}
 	var partNames []string
 	if err := json.Unmarshal(data, &partNames); err != nil {
-		logger.Panicf("cannot parse %s: %s", snapshotPath, err)
+		return nil, fmt.Errorf("cannot parse %s: %w", snapshotPath, err)
 	}
 	var result []uint64
 	for i := range partNames {
-		e, err := parseEpoch(partNames[i])
-		if err != nil {
-			logger.Panicf("cannot parse %s: %s", partNames[i], err)
+		e, parseErr := parseEpoch(partNames[i])
+		if parseErr != nil {
+			return nil, fmt.Errorf("cannot parse %s: %w", partNames[i], parseErr)
 		}
 		result = append(result, e)
 	}
-	return result
+	return result, nil
+}
+
+func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
+	parts, err := tst.readSnapshot(snapshot)
+	if err != nil {
+		logger.Panicf("%s", err)
+	}
+	return parts
 }
 
 func (tst *tsTable) Close() error {
@@ -322,6 +356,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
 		tst.addPendingDataCount(-int64(totalCount))
+		ind.memPart.decRef()
 		return
 	}
 	select {

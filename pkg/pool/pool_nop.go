@@ -15,31 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package etcd_test
+//go:build slim
 
-import (
-	"testing"
+package pool
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+// EnableStackTracking is a no-op in slim builds.
+func EnableStackTracking(enabled bool) {}
 
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
-	"github.com/apache/skywalking-banyandb/test/integration/standalone/inspect"
-)
+// AllRefsCount returns nil in slim builds.
+func AllRefsCount() map[string]int { return nil }
 
-func init() {
-	inspect.SetupFunc = func() inspect.SetupResult {
-		By("Starting standalone server")
-		addr, _, closeFn := setup.EmptyStandalone(nil)
-		return inspect.SetupResult{
-			Addr:     addr,
-			StopFunc: closeFn,
-		}
-	}
-}
-
-func TestEtcdInspect(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Standalone Inspect Suite", Label(integration_standalone.Labels...))
-}
+// AllStacks returns nil in slim builds.
+func AllStacks() map[string][]string { return nil }

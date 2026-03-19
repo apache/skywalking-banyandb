@@ -408,6 +408,7 @@ type metrics struct {
 	bufferTimeouts           meter.Counter
 	largeGapsRejected        meter.Counter
 	bufferCapacityExceeded   meter.Counter
+	finishSyncErr            meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -427,11 +428,12 @@ func newMetrics(factory observability.Factory) *metrics {
 		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "session_id"),
 		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "session_id"),
 		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "session_id"),
+		finishSyncErr:            factory.NewCounter("finish_sync_err", "session_id"),
 	}
 }
 
 // updateChunkOrderMetrics updates chunk ordering metrics.
-func (s *server) updateChunkOrderMetrics(event string, sessionID string) {
+func (s *server) updateChunkOrderMetrics(event, sessionID string) {
 	if s.metrics == nil {
 		return // Skip metrics if not initialized (e.g., during tests)
 	}
@@ -446,5 +448,7 @@ func (s *server) updateChunkOrderMetrics(event string, sessionID string) {
 		s.metrics.largeGapsRejected.Inc(1, sessionID)
 	case "buffer_full":
 		s.metrics.bufferCapacityExceeded.Inc(1, sessionID)
+	case "finish_sync_err":
+		s.metrics.finishSyncErr.Inc(1, sessionID)
 	}
 }
