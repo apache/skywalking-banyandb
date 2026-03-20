@@ -160,7 +160,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 		}
 	}
 
-	pushDownAgg := criteria.GetAgg() != nil && criteria.GetTop() == nil
+	pushDownAgg := criteria.GetAgg() != nil
 	plan := newUnresolvedDistributed(criteria, pushDownAgg)
 
 	// parse limit and offset
@@ -181,7 +181,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 			criteria.GetAgg().GetFunction(),
 			criteria.GetGroupBy() != nil,
 			false,       // emitPartial: liaison does not emit partial
-			pushDownAgg, // reduceMode: only reduce partials when push-down is active (no TopN)
+			pushDownAgg, // reduceMode: reduce partials from data nodes when push-down is active
 		)
 		pushedLimit = math.MaxInt
 	}
