@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "service_instance_traffic_rule_binding",
+    "group": "sw_metric"
+  },
+  "rules": [
+    "service_id",
+    "searchable_name"
+  ],
+  "subject":{
+    "catalog": "CATALOG_MEASURE",
+    "name": "service_instance_traffic"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

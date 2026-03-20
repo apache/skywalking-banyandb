@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "id": 5,
+    "name": "endpoint_name",
+    "group": "sw_metric"
+  },
+  "tags": [
+    "endpoint_name"
+  ],
+  "type": "TYPE_INVERTED",
+  "analyzer": "url",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "service_cpm_day",
+    "group": "sw_metric"
+  },
+  "rules": [
+    "id"
+  ],
+  "subject":{
+    "catalog": "CATALOG_MEASURE",
+    "name": "service_cpm_day"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}
