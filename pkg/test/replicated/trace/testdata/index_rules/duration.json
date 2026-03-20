@@ -1,0 +1,14 @@
+{
+    "metadata": {
+        "name": "duration",
+        "group": "test-trace-group"
+    },
+    "tags": [
+        "service_id",
+        "service_instance_id",
+        "state",
+        "duration"
+    ],
+    "type": "TYPE_TREE",
+    "updated_at": "2021-04-15T01:30:15.01Z"
+}

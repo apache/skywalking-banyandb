@@ -72,6 +72,7 @@ var _ = g.Describe("Trace Normal Mode Replication", func() {
 		})
 		gm.Expect(groupErr).NotTo(gm.HaveOccurred())
 		gm.Expect(groupResp.GetGroup()).NotTo(gm.BeNil())
+		gm.Expect(groupResp.GetGroup().GetResourceOpts()).NotTo(gm.BeNil())
 		gm.Expect(groupResp.GetGroup().GetResourceOpts().GetReplicas()).To(gm.Equal(uint32(2)),
 			"test-trace-group should have replicas=2")
 

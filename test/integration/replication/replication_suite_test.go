@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemapkg "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -37,10 +38,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	test_replicated_measure "github.com/apache/skywalking-banyandb/pkg/test/replicated/measure"
 	test_replicated_stream "github.com/apache/skywalking-banyandb/pkg/test/replicated/stream"
 	test_replicated_trace "github.com/apache/skywalking-banyandb/pkg/test/replicated/trace"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
@@ -59,7 +61,6 @@ var (
 	liaisonAddr     string
 	dataNodeClosers []func()
 	clusterConfig   *setup.ClusterConfig
-	tmpDirCleanup   func()
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -76,13 +77,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	clusterConfig = setup.PropertyClusterConfig(dfWriter)
 
-	// Load schemas via property-based registry
-	setup.PreloadSchemaViaProperty(clusterConfig,
-		test_replicated_measure.PreloadSchema,
-		test_replicated_stream.PreloadSchema,
-		test_replicated_trace.PreloadSchema,
-	)
-
 	By("Starting 3 data nodes for replication test")
 	dataNodeClosers = make([]func(), 0, 3)
 
@@ -90,6 +84,15 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
 		dataNodeClosers = append(dataNodeClosers, closeDataNode)
 	}
+
+	By("Loading schema via property")
+	setup.PreloadSchemaViaProperty(clusterConfig,
+		test_replicated_measure.PreloadSchema,
+		test_replicated_stream.PreloadSchema,
+		test_replicated_trace.PreloadSchema,
+		test_property.PreloadSchema,
+	)
+	clusterConfig.AddLoadedKinds(schemapkg.KindStream, schemapkg.KindMeasure, schemapkg.KindTrace, schemapkg.KindProperty)
 
 	By("Starting liaison node")
 	liaisonAddr2, closerLiaisonNode := setup.LiaisonNode(clusterConfig, "--data-node-selector", "role=data")

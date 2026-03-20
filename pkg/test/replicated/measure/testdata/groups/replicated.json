@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "name": "exception"
+    "name": "replicated_group"
   },
   "catalog": "CATALOG_MEASURE",
   "resource_opts": {
@@ -12,7 +12,8 @@
     "ttl": {
       "unit": "UNIT_DAY",
       "num": 7
-    }
+    },
+    "replicas": 2
   },
   "updated_at": "2021-04-15T01:30:15.01Z"
 }

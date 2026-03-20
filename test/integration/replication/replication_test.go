@@ -28,7 +28,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -66,14 +65,9 @@ var _ = g.Describe("Replication", func() {
 			gm.Expect(resp.GetMeasure()).NotTo(gm.BeNil())
 			gm.Expect(resp.GetMeasure().GetMetadata().GetGroup()).To(gm.Equal("replicated_group"))
 
-			g.By("Getting list of all nodes from etcd (includes data nodes + liaison)")
-			nodePath := "/" + metadata.DefaultNamespace + "/nodes"
-			allNodes, err2 := helpers.ListKeys(etcdEndpoint, nodePath)
-			gm.Expect(err2).NotTo(gm.HaveOccurred())
-
-			// We have: 3 data nodes + 1 liaison node = 4 nodes total
-			gm.Expect(len(allNodes)).To(gm.Equal(4),
-				"Should have 4 nodes total (3 data nodes + 1 liaison node), found %d", len(allNodes))
+			g.By("Verifying cluster is stable with 3 data nodes")
+			gm.Expect(isClusterStable(conn)).To(gm.BeTrue(),
+				"Cluster should have 3 active data nodes before test")
 
 			g.By("Stopping one data node")
 			// We should have 3 data node closers in dataNodeClosers
@@ -83,15 +77,11 @@ var _ = g.Describe("Replication", func() {
 			copy(closersToStop, dataNodeClosers)
 			closersToStop[0]()
 
-			// Wait for the cluster to stabilize
-			gm.Eventually(func() int {
-				nodes, err3 := helpers.ListKeys(etcdEndpoint, nodePath)
-				if err3 != nil {
-					return 0
-				}
-				return len(nodes)
-			}, flags.EventuallyTimeout).Should(gm.Equal(3),
-				"Should have 3 nodes total after stopping one data node (2 data nodes + 1 liaison)")
+			// Wait for the cluster to stabilize (should have 3 active nodes after failure)
+			gm.Eventually(func() bool {
+				return isClusterStable(conn)
+			}, flags.EventuallyTimeout).Should(gm.BeTrue(),
+				"Cluster should have 3 active data nodes after stopping one node")
 
 			g.By("Verifying data is still accessible after node failure")
 			verifyDataContentAfterNodeFailure(conn, now)

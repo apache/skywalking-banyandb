@@ -22,6 +22,7 @@ import (
 	"context"
 	"embed"
 	"path"
+	"reflect"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -100,16 +101,24 @@ func loadSchema[T proto.Message](dir string, resource T, loadFn func(resource T)
 		if err != nil {
 			return err
 		}
-		resource.ProtoReflect().Descriptor().RequiredNumbers()
-		if err := protojson.Unmarshal(data, resource); err != nil {
+		// Create a new instance for each file to avoid race conditions
+		// when the callback holds a reference to the resource
+		newResource := newProtoMessage(resource)
+		if err := protojson.Unmarshal(data, newResource); err != nil {
 			return err
 		}
-		if err := loadFn(resource); err != nil {
+		if err := loadFn(newResource); err != nil {
 			if errors.Is(err, schema.ErrGRPCAlreadyExists) {
-				return nil
+				continue
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+// newProtoMessage creates a new instance of the same type as the template.
+func newProtoMessage[T proto.Message](template T) T {
+	v := reflect.New(reflect.TypeOf(template).Elem()).Interface().(T)
+	return v
 }
