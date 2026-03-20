@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "sw-index-rule-binding",
+    "group": "updated"
+  },
+  "rules": [
+    "duration"
+  ],
+  "subject":{
+    "catalog": "CATALOG_STREAM",
+    "name": "sw"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "sw-index-rule-binding",
+    "group": "default"
+  },
+  "rules": [
+    "trace_id",
+    "duration",
+    "endpoint_id",
+    "status_code",
+    "http.method",
+    "db.instance",
+    "db.type",
+    "mq.broker",
+    "mq.queue",
+    "mq.topic",
+    "extended_tags"
+  ],
+  "subject":{
+    "catalog": "CATALOG_STREAM",
+    "name": "sw"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}
