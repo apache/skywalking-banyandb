@@ -20,7 +20,6 @@ package replication_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -31,9 +30,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -41,11 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
-	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
@@ -62,9 +54,9 @@ var (
 	now             time.Time
 	connection      *grpc.ClientConn
 	liaisonAddr     string
-	etcdEndpoint    string
 	dataNodeClosers []func()
 	clusterConfig   *setup.ClusterConfig
+	tmpDirCleanup   func()
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -75,40 +67,14 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
 
-	By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
-	dir, spaceDef, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	etcdEndpoint = ep
+	By("Creating discovery file writer for DNS-based node discovery")
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	Expect(tmpErr).NotTo(HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	clusterConfig = setup.PropertyClusterConfig(dfWriter)
 
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	Expect(err).ShouldNot(HaveOccurred())
-	<-server.ReadyNotify()
-
-	By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	defer schemaRegistry.Close()
-
-	ctx := context.Background()
-	// Preload all schemas since test_cases.Initialize needs them
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	test_trace.PreloadSchema(ctx, schemaRegistry)
-	test_property.PreloadSchema(ctx, schemaRegistry)
-
-	clusterConfig = setup.EtcdClusterConfig(ep)
+	// Note: Schema preloading for replicated schemas will be added in later tasks
+	// when test_replicated_* packages are created.
 
 	By("Starting 3 data nodes for replication test")
 	dataNodeClosers = make([]func(), 0, 3)
@@ -158,15 +124,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		for _, closeDataNode := range dataNodeClosers {
 			closeDataNode()
 		}
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
+		tmpDirCleanup()
 	}
 
 	suiteConfig := map[string]interface{}{
-		"liaison_addr":  liaisonAddr,
-		"etcd_endpoint": etcdEndpoint,
-		"now":           now.UnixNano(),
+		"liaison_addr": liaisonAddr,
+		"now":          now.UnixNano(),
 	}
 
 	configBytes, err := json.Marshal(suiteConfig)
@@ -178,7 +141,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 
 	liaisonAddr = config["liaison_addr"].(string)
-	etcdEndpoint = config["etcd_endpoint"].(string)
 	now = time.Unix(0, int64(config["now"].(float64)))
 
 	var err2 error
