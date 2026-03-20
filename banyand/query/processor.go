@@ -386,7 +386,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+		span, _ = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
 		defer func() {
 			respData := resp.Data()
