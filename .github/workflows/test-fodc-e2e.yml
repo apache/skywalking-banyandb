@@ -60,10 +60,10 @@ jobs:
           download-artifacts: 'true'
           setup-docker: 'true'
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.30.0
+      # - name: Setup kubectl
+      #   uses: azure/setup-kubectl@v4
+      #   with:
+      #     version: v1.30.0
 
       - name: Install kind
         run: |
