@@ -123,12 +123,12 @@ jobs:
     name: Test FODC
     needs: [check]
     uses: ./.github/workflows/test-fodc.yml
-  # test-fodc-e2e:
-  #   name: Test FODC E2E
-  #   needs: [check, detect_fodc_e2e_changes]
-  #   uses: ./.github/workflows/test-fodc-e2e.yml
-  #   with:
-  #     should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
+  test-fodc-e2e:
+    name: Test FODC E2E
+    needs: [check, detect_fodc_e2e_changes]
+    uses: ./.github/workflows/test-fodc-e2e.yml
+    with:
+      should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
   test-pkg:
     name: Test Pkg
     needs: [check]
@@ -150,6 +150,6 @@ jobs:
     name: Continuous Integration
     runs-on: ubuntu-24.04
     needs:
-      [detect_fodc_e2e_changes, test-banyand, test-bydbctl, test-fodc, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
+      [detect_fodc_e2e_changes, test-banyand, test-bydbctl, test-fodc, test-fodc-e2e, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
     steps:
       - run: echo 'success'

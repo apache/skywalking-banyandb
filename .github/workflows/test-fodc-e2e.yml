@@ -60,10 +60,10 @@ jobs:
           download-artifacts: 'true'
           setup-docker: 'true'
 
-      # - name: Setup kubectl
-      #   uses: azure/setup-kubectl@v4
-      #   with:
-      #     version: v1.30.0
+      - name: Install kubectl
+        run: |
+          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-kubectl.sh /tmp kubectl v1.30.0
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install kind
         run: |
