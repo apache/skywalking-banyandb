@@ -62,7 +62,8 @@ jobs:
 
       - name: Install kubectl
         run: |
-          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-kubectl.sh /tmp kubectl v1.30.0
+          mkdir -p "${HOME}/.local/bin"
+          bash test/e2e-v2/script/prepare/setup-e2e-shell/install-kubectl.sh /tmp "${HOME}/.local/bin" v1.30.0
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install kind
