@@ -28,6 +28,7 @@ Release Notes.
 - Support relative paths in configuration.
 - Support 'none' node discovery and make it the default.
 - Support server-side element ID generation for stream writes when clients omit element_id.
+- Implement entire group deletion.
 
 ### Bug Fixes
 
@@ -44,6 +45,10 @@ Release Notes.
 - Fix sidx tag filter range check returning inverted skip decision and use correct int64 encoding for block min/max.
 - Ignore take snapshot when no data.
 - Fix measure standalone write handler resetting accumulated groups on error, which dropped all successfully processed events in the batch.
+- Fix memory part reference leak in mustAddMemPart when tsTable loop closes.
+- Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
+- Fix segment reference leaks in measure/stream/trace queries and ensure chunked sync sessions close part contexts correctly.
+- Fix duplicate query execution in distributed measure Agg+TopN queries by enabling push-down aggregation, removing the wasteful double-query pattern.
 
 ### Document
 
@@ -51,6 +56,7 @@ Release Notes.
 - Add design of KTM.
 - Add FODC overview doc.
 - Remove Java client doc, and recreate client APIs docs.
+- Add common issue documentation.
 
 ### Chores
 

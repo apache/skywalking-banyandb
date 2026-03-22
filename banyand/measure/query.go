@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -47,6 +49,8 @@ const (
 )
 
 var nilResult = model.MeasureQueryResult(nil)
+
+var queryResultTracker = pool.RegisterTracker("measure.queryResult")
 
 // Query allow to retrieve measure data points.
 type Query interface {
@@ -77,11 +81,18 @@ type topNQueryOptions struct {
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
-	if mqo.TimeRange == nil {
-		return nil, errors.New("invalid query options: timeRange are required")
-	}
-	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
-		return nil, errors.New("invalid query options: tagProjection or fieldProjection is required")
+	startTime := time.Now()
+	defer func() {
+		if m.queryMetrics != nil {
+			m.queryMetrics.queryLatency.Observe(time.Since(startTime).Seconds())
+			if err != nil {
+				m.queryMetrics.queryErrors.Inc(1)
+			}
+		}
+	}()
+
+	if validateErr := validateMeasureQueryOptions(mqo); validateErr != nil {
+		return nil, validateErr
 	}
 
 	var tsdb storage.TSDB[*tsTable, option]
@@ -103,13 +114,23 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	segmentsNeedRelease := true
+	defer func() {
+		if !segmentsNeedRelease {
+			return
+		}
+		for i := range segments {
+			segments[i].DecRef()
+		}
+	}()
 
 	if m.schema.IndexMode {
+		segmentsNeedRelease = false
 		return m.buildIndexQueryResult(ctx, mqo, segments)
 	}
 
-	if len(mqo.Entities) < 1 {
-		return nil, errors.New("invalid query options: series is required")
+	if validateErr := validateMeasureEntities(mqo); validateErr != nil {
+		return nil, validateErr
 	}
 
 	series := make([]*pbv1.Series, len(mqo.Entities))
@@ -125,17 +146,20 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return nil, err
 	}
 	if len(sids) < 1 {
-		for i := range segments {
-			segments[i].DecRef()
-		}
 		return nilResult, nil
 	}
 	result := queryResult{
 		ctx:              ctx,
+		qm:               m.queryMetrics,
 		segments:         segments,
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
 	}
+	queryResultTracker.Acquire(&result)
+	if m.queryMetrics != nil {
+		m.queryMetrics.totalQueryResultStarted.Inc(1)
+	}
+	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
 			result.Release()
@@ -183,31 +207,53 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		return nil, err
 	}
 
-	if mqo.Order == nil {
-		result.ascTS = true
-		result.orderByTS = true
-	} else {
-		if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-			result.ascTS = true
-		}
-		switch mqo.Order.Type {
-		case index.OrderByTypeTime:
-			result.orderByTS = true
-		case index.OrderByTypeIndex:
-			result.orderByTS = false
-		case index.OrderByTypeSeries:
-			result.orderByTS = false
-		}
-	}
+	applyMeasureQueryOrdering(mqo, &result)
+	applyTopNOptions(mqo, &result)
 
-	if mqo.Name == TopNSchemaName {
-		result.topNQueryOptions = &topNQueryOptions{
-			sortDirection: mqo.Sort,
-			number:        mqo.Number,
-		}
+	if m.queryMetrics != nil {
+		m.queryMetrics.resultPoints.Observe(float64(len(result.data)))
 	}
 
 	return &result, nil
+}
+
+func validateMeasureQueryOptions(mqo model.MeasureQueryOptions) error {
+	if mqo.TimeRange == nil {
+		return errors.New("invalid query options: timeRange are required")
+	}
+	if len(mqo.TagProjection) == 0 && len(mqo.FieldProjection) == 0 {
+		return errors.New("invalid query options: tagProjection or fieldProjection is required")
+	}
+	return nil
+}
+
+func validateMeasureEntities(mqo model.MeasureQueryOptions) error {
+	if len(mqo.Entities) < 1 {
+		return errors.New("invalid query options: series is required")
+	}
+	return nil
+}
+
+func applyMeasureQueryOrdering(mqo model.MeasureQueryOptions, result *queryResult) {
+	if mqo.Order == nil {
+		result.ascTS = true
+		result.orderByTS = true
+		return
+	}
+	if mqo.Order.Sort == modelv1.Sort_SORT_ASC || mqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
+		result.ascTS = true
+	}
+	result.orderByTS = mqo.Order.Type == index.OrderByTypeTime
+}
+
+func applyTopNOptions(mqo model.MeasureQueryOptions, result *queryResult) {
+	if mqo.Name != TopNSchemaName {
+		return
+	}
+	result.topNQueryOptions = &topNQueryOptions{
+		sortDirection: mqo.Sort,
+		number:        mqo.Number,
+	}
 }
 
 type tagNameWithType struct {
@@ -694,6 +740,7 @@ func binaryDataFieldValue(value []byte) *modelv1.FieldValue {
 
 type queryResult struct {
 	ctx              context.Context
+	qm               *queryMetrics
 	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
@@ -780,6 +827,10 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 }
 
 func (qr *queryResult) Release() {
+	queryResultTracker.Release(qr)
+	if qr.qm != nil {
+		qr.qm.totalQueryResultFinished.Inc(1)
+	}
 	for i, v := range qr.data {
 		releaseBlockCursor(v)
 		qr.data[i] = nil

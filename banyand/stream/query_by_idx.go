@@ -277,6 +277,7 @@ func (qr *idxResult) releaseBlockCursor() {
 }
 
 func (qr *idxResult) Release() {
+	streamQueryResultTracker.Release(qr)
 	qr.releaseParts()
 	for i := range qr.segments {
 		qr.segments[i].DecRef()
