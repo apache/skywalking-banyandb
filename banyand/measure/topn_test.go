@@ -36,12 +36,12 @@ import (
 
 func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 	tests := []struct {
-		topNVal *TopNValue
+		topNVal *TopNValue[int64]
 		name    string
 	}{
 		{
 			name: "simple case",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2"},
 				values:         []int64{1, 2, 3},
@@ -63,7 +63,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 		},
 		{
 			name: "single",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2"},
 				values:         []int64{1},
@@ -120,7 +120,7 @@ func TestTopNValue_MarshalUnmarshal(t *testing.T) {
 }
 
 func TestTopNValue_Marshal_EmptyValues(t *testing.T) {
-	topNVal := &TopNValue{
+	topNVal := &TopNValue[int64]{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1"},
 		values:         []int64{},
@@ -159,7 +159,7 @@ func TestTopNValue_Unmarshal_InvalidData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			topNVal := &TopNValue{}
+			topNVal := &TopNValue[int64]{}
 			err := topNVal.Unmarshal(tt.src, decoder)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.wantErr)
@@ -168,14 +168,14 @@ func TestTopNValue_Unmarshal_InvalidData(t *testing.T) {
 }
 
 func TestTopNValue_SetMetadata(t *testing.T) {
-	topNVal := &TopNValue{}
+	topNVal := &TopNValue[int64]{}
 	topNVal.setMetadata("testValue", []string{"tag1", "tag2"})
 	require.Equal(t, "testValue", topNVal.valueName)
 	require.Equal(t, []string{"tag1", "tag2"}, topNVal.entityTagNames)
 }
 
 func TestTopNValue_AddValue(t *testing.T) {
-	topNVal := &TopNValue{}
+	topNVal := &TopNValue[int64]{}
 	entityValues := []*modelv1.TagValue{
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
 		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
@@ -189,7 +189,7 @@ func TestTopNValue_AddValue(t *testing.T) {
 }
 
 func TestTopNValue_Values(t *testing.T) {
-	topNVal := &TopNValue{
+	topNVal := &TopNValue[int64]{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
 		values:         []int64{1, 2, 3},
@@ -207,7 +207,7 @@ func TestTopNValue_Values(t *testing.T) {
 }
 
 func TestTopNValue_Reset(t *testing.T) {
-	topNVal := &TopNValue{
+	topNVal := &TopNValue[int64]{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
 		values:         []int64{1, 2, 3},
@@ -232,7 +232,7 @@ func TestTopNValue_Reset(t *testing.T) {
 }
 
 func TestTopNValue_ResizeEntityValues(t *testing.T) {
-	topNVal := &TopNValue{}
+	topNVal := &TopNValue[int64]{}
 	result := topNVal.resizeEntityValues(5)
 	require.Len(t, result, 5)
 	require.Len(t, topNVal.entityValues, 5)
@@ -245,7 +245,7 @@ func TestTopNValue_ResizeEntityValues(t *testing.T) {
 }
 
 func TestTopNValue_ResizeEntities(t *testing.T) {
-	topNVal := &TopNValue{}
+	topNVal := &TopNValue[int64]{}
 	result := topNVal.resizeEntities(3, 2)
 	require.Len(t, result, 3)
 	require.Len(t, topNVal.entities, 3)
@@ -678,12 +678,12 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 	defer releaseColumnValuesDecoder(decoder)
 
 	tests := []struct {
-		topNVal *TopNValue
+		topNVal *TopNValue[int64]
 		name    string
 	}{
 		{
 			name: "empty entityTagNames",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{},
 				values:         []int64{1, 2, 3},
@@ -696,7 +696,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "large values",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1"},
 				values:         []int64{-9223372036854775808, 9223372036854775807, 0},
@@ -709,7 +709,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "many entity tag names",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2", "tag3", "tag4", "tag5"},
 				values:         []int64{1},
@@ -726,7 +726,7 @@ func TestTopNValue_MarshalUnmarshal_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "different tag value types",
-			topNVal: &TopNValue{
+			topNVal: &TopNValue[int64]{
 				valueName:      "testValue",
 				entityTagNames: []string{"tag1", "tag2", "tag3"},
 				values:         []int64{1, 2},
@@ -782,7 +782,7 @@ func TestTopNValue_Unmarshal_InvalidEntityLength(t *testing.T) {
 	decoder := generateColumnValuesDecoder()
 	defer releaseColumnValuesDecoder(decoder)
 
-	topNVal := &TopNValue{
+	topNVal := &TopNValue[int64]{
 		valueName:      "testValue",
 		entityTagNames: []string{"tag1", "tag2"},
 		values:         []int64{1},
@@ -837,4 +837,114 @@ func TestNewDataPointWithEntityValues(t *testing.T) {
 	require.NotNil(t, result.fieldIndex)
 	require.Equal(t, 0, result.fieldIndex["field1"])
 	require.NotNil(t, result.tagSpec)
+}
+
+func TestTopNValue_Float64_MarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		topNVal *TopNValue[float64]
+		name    string
+	}{
+		{
+			name: "simple_float_case",
+			topNVal: &TopNValue[float64]{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"service", "instance"},
+				values:         []float64{3.14, 2.71, 1.41},
+				entities: [][]*modelv1.TagValue{
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst1"}}},
+					},
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst2"}}},
+					},
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc2"}}},
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst1"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "single_float",
+			topNVal: &TopNValue[float64]{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"tag1"},
+				values:         []float64{3.14159},
+				entities: [][]*modelv1.TagValue{
+					{
+						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
+					},
+				},
+			},
+		},
+		{
+			name: "negative_and_special_floats",
+			topNVal: &TopNValue[float64]{
+				valueName:      "testFloatValue",
+				entityTagNames: []string{"service"},
+				values:         []float64{-3.14, 0.0, 1e5, -1e-5},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc1"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc2"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc4"}}}},
+				},
+			},
+		},
+	}
+
+	decoder := generateColumnValuesDecoder()
+	defer releaseColumnValuesDecoder(decoder)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalValueName := tt.topNVal.valueName
+			originalEntityTagNames := make([]string, len(tt.topNVal.entityTagNames))
+			copy(originalEntityTagNames, tt.topNVal.entityTagNames)
+			originalValues := make([]float64, len(tt.topNVal.values))
+			copy(originalValues, tt.topNVal.values)
+
+			originalEntities := make([][]*modelv1.TagValue, len(tt.topNVal.entities))
+			for i, entityGroup := range tt.topNVal.entities {
+				originalEntities[i] = make([]*modelv1.TagValue, len(entityGroup))
+				for j, tagValue := range entityGroup {
+					originalEntities[i][j] = proto.Clone(tagValue).(*modelv1.TagValue)
+				}
+			}
+
+			dst, err := tt.topNVal.marshal(nil)
+			require.NoError(t, err)
+
+			tt.topNVal.Reset()
+			err = tt.topNVal.Unmarshal(dst, decoder)
+			require.NoError(t, err)
+
+			require.Equal(t, originalValueName, tt.topNVal.valueName)
+			require.Equal(t, originalEntityTagNames, tt.topNVal.entityTagNames)
+			require.Equal(t, originalValues, tt.topNVal.values)
+			diff := cmp.Diff(originalEntities, tt.topNVal.entities, protocmp.Transform())
+			require.True(t, diff == "", "entities differ: %s", diff)
+		})
+	}
+}
+
+func TestTopNValue_AddFloatValue(t *testing.T) {
+	topNVal := &TopNValue[float64]{}
+	topNVal.setMetadata("floatValue", []string{"tag1"})
+
+	topNVal.addValue(3.14, []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity1"}}},
+	})
+
+	topNVal.addValue(2.71, []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity2"}}},
+	})
+
+	valueName, entityTagNames, values, entities := topNVal.Values()
+	require.Equal(t, "floatValue", valueName)
+	require.Equal(t, []string{"tag1"}, entityTagNames)
+	require.Equal(t, []float64{3.14, 2.71}, values)
+	require.Len(t, entities, 2)
 }

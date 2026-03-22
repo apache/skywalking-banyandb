@@ -610,7 +610,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 }
 
 var (
-	leftTopNValue = &TopNValue{
+	leftTopNValue = &TopNValue[int64]{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
 		values:         []int64{1000, 200, 300, 400, 500},
@@ -622,7 +622,7 @@ var (
 			{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
 		},
 	}
-	rightTopNValue = &TopNValue{
+	rightTopNValue = &TopNValue[int64]{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
 		values:         []int64{600, 550, 530, 400, 300},
@@ -635,7 +635,7 @@ var (
 		},
 	}
 
-	mergedTopNValue = &TopNValue{
+	mergedTopNValue = &TopNValue[int64]{
 		valueName:      "value",
 		entityTagNames: []string{"entity_id"},
 		values:         []int64{1000, 600, 550, 530, 400, 300, 200},

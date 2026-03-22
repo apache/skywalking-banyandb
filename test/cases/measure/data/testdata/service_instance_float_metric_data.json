@@ -1,0 +1,422 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "1"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 1
+        }
+      },
+      {
+        "float": {
+          "value": 100.5
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "2"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 2
+        }
+      },
+      {
+        "float": {
+          "value": 200.75
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "3"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_3"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 3
+        }
+      },
+      {
+        "float": {
+          "value": 150.25
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "4"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_4"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 4
+        }
+      },
+      {
+        "float": {
+          "value": 300.0
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "5"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 5
+        }
+      },
+      {
+        "float": {
+          "value": 50.125
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "6"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_5"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_3"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 6
+        }
+      },
+      {
+        "float": {
+          "value": 450.875
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "7"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 7
+        }
+      },
+      {
+        "float": {
+          "value": 75.333
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "8"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_5"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_3"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 8
+        }
+      },
+      {
+        "float": {
+          "value": 125.666
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "9"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_2"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_2"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 9
+        }
+      },
+      {
+        "float": {
+          "value": 180.25
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "10"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_5"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_3"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 10
+        }
+      },
+      {
+        "float": {
+          "value": 275.5
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "11"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_1"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 11
+        }
+      },
+      {
+        "float": {
+          "value": 325.125
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "12"
+            }
+          },
+          {
+            "str": {
+              "value": "entity_6"
+            }
+          },
+          {
+            "str": {
+              "value": "svc_1"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 12
+        }
+      },
+      {
+        "float": {
+          "value": 95.875
+        }
+      }
+    ]
+  }
+]
