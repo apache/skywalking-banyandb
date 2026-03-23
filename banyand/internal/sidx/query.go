@@ -160,8 +160,7 @@ func (s *sidx) prepareStreamingResources(
 
 	minKey, maxKey := extractKeyRange(req)
 	asc := extractOrdering(req)
-
-	parts := selectPartsForQuery(snap, minKey, maxKey)
+	parts := selectPartsForQuery(snap, minKey, maxKey, req.MinTimestamp, req.MaxTimestamp)
 	if span != nil {
 		span.Tagf("min_key", "%d", minKey)
 		span.Tagf("max_key", "%d", maxKey)
@@ -484,15 +483,17 @@ func extractOrdering(req QueryRequest) bool {
 	return req.Order.Sort != modelv1.Sort_SORT_DESC
 }
 
-// selectPartsForQuery selects relevant parts from snapshot based on key range.
-func selectPartsForQuery(snap *Snapshot, minKey, maxKey int64) []*part {
+// selectPartsForQuery selects relevant parts from snapshot based on key range and optional timestamp range.
+func selectPartsForQuery(snap *Snapshot, minKey, maxKey int64, minTS, maxTS *int64) []*part {
 	var selectedParts []*part
-
 	for _, pw := range snap.parts {
-		if pw.overlapsKeyRange(minKey, maxKey) {
-			selectedParts = append(selectedParts, pw.p)
+		if !pw.overlapsKeyRange(minKey, maxKey) {
+			continue
 		}
+		if minTS != nil && maxTS != nil && !pw.overlapsTimestampRange(*minTS, *maxTS) {
+			continue
+		}
+		selectedParts = append(selectedParts, pw.p)
 	}
-
 	return selectedParts
 }

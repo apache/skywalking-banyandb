@@ -59,7 +59,7 @@ func (f *fakeSIDX) StreamingQuery(ctx context.Context, _ sidx.QueryRequest) (<-c
 func (f *fakeSIDX) IntroduceMemPart(uint64, *sidx.MemPart)          { panic("not implemented") }
 func (f *fakeSIDX) IntroduceFlushed(*sidx.FlusherIntroduction)      {}
 func (f *fakeSIDX) IntroduceMerged(*sidx.MergerIntroduction) func() { return func() {} }
-func (f *fakeSIDX) ConvertToMemPart([]sidx.WriteRequest, int64) (*sidx.MemPart, error) {
+func (f *fakeSIDX) ConvertToMemPart([]sidx.WriteRequest, int64, *int64, *int64) (*sidx.MemPart, error) {
 	panic("not implemented")
 }
 
@@ -654,7 +654,7 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 func (f *fakeSIDXInfinite) IntroduceMemPart(uint64, *sidx.MemPart)          { panic("not implemented") }
 func (f *fakeSIDXInfinite) IntroduceFlushed(*sidx.FlusherIntroduction)      {}
 func (f *fakeSIDXInfinite) IntroduceMerged(*sidx.MergerIntroduction) func() { return func() {} }
-func (f *fakeSIDXInfinite) ConvertToMemPart([]sidx.WriteRequest, int64) (*sidx.MemPart, error) {
+func (f *fakeSIDXInfinite) ConvertToMemPart([]sidx.WriteRequest, int64, *int64, *int64) (*sidx.MemPart, error) {
 	panic("not implemented")
 }
 
