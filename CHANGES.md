@@ -62,6 +62,7 @@ Release Notes.
 ### Chores
 
 - Upgrade Node.js support from 20.12 to 24.6.0, and align CI, license checks, and documentation
+- Add Claude Code skill for vendor dependency updates.
 
 ## 0.9.0
 
