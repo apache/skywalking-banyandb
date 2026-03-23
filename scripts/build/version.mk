@@ -35,4 +35,4 @@ GOVULNCHECK_VERSION := v1.1.4
 
 # Version for bpf2go tool used for eBPF code generation. Keep in sync with
 # pkg/fs/fadvismonitor/Dockerfile ARG BPF2GO_VERSION
-BPF2GO_VERSION := v0.13.0
+BPF2GO_VERSION := v0.21.0
