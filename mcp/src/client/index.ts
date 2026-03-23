@@ -47,7 +47,7 @@ export class BanyanDBClient {
   /**
    * Execute a BydbQL query and return the result as a formatted string.
    */
-  async query(bydbqlQuery: string, timeoutMs: number = 30000): Promise<string> {
+  async query(bydbqlQuery: string): Promise<string> {
     const request: QueryRequest = {
       query: bydbqlQuery,
     };
@@ -113,8 +113,7 @@ export class BanyanDBClient {
         // Check if it's a timeout error
         if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
-            `Query timeout after ${timeoutMs}ms. ` +
-              `BanyanDB may be slow or unresponsive. ` +
+            `Query timeout. BanyanDB may be slow or unresponsive. ` +
               `Check that BanyanDB is running and accessible at ${this.baseUrl}\n\n${queryDebugInfo}`,
           );
         }
@@ -162,12 +161,8 @@ export class BanyanDBClient {
     }
 
     if (measureResult) {
-      // Check if it's an empty result set
-      if (
-        measureResult.dataPoints &&
-        Array.isArray(measureResult.dataPoints) &&
-        measureResult.dataPoints.length === 0
-      ) {
+      const dataPoints = measureResult.dataPoints ?? measureResult.data_points;
+      if (Array.isArray(dataPoints) && dataPoints.length === 0) {
         return (
           'Measure Query Result: No data found (empty result set)\n\n' +
           'Possible reasons:\n' +
@@ -182,27 +177,7 @@ export class BanyanDBClient {
           '3. Verify data was written to BanyanDB for this measure'
         );
       }
-      // Also check for snake_case for backward compatibility
-      if (
-        measureResult.data_points &&
-        Array.isArray(measureResult.data_points) &&
-        measureResult.data_points.length === 0
-      ) {
-        return (
-          'Measure Query Result: No data found (empty result set)\n\n' +
-          'Possible reasons:\n' +
-          '- No data exists for the specified time range\n' +
-          '- The measure name or group name might be incorrect\n' +
-          '- The time range might not contain any data points\n\n' +
-          'Suggestions:\n' +
-          '1. Use list_groups_schemas to verify the measure exists:\n' +
-          '   - List groups: list_groups_schemas with resource_type="groups"\n' +
-          '   - List measures: list_groups_schemas with resource_type="measures" and group="<group_name>"\n' +
-          "2. Try expanding the time range (e.g., TIME >= '-24h' for last 24 hours)\n" +
-          '3. Verify data was written to BanyanDB for this measure'
-        );
-      }
-      return `Measure Query Result:\n${JSON.stringify(measureResult.dataPoints, null, 2)}`;
+      return `Measure Query Result:\n${JSON.stringify(dataPoints, null, 2)}`;
     }
 
     if (traceResult) {
@@ -234,7 +209,7 @@ export class BanyanDBClient {
   /**
    * List all groups.
    */
-  async listGroups(timeoutMs: number = 30000): Promise<Group[]> {
+  async listGroups(): Promise<Group[]> {
     const url = `${this.baseUrl}/v1/group/schema/lists`;
 
     try {
@@ -256,8 +231,7 @@ export class BanyanDBClient {
       if (error instanceof Error) {
         if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
-            `List groups timeout after ${timeoutMs}ms. ` +
-              `BanyanDB may be slow or unresponsive. ` +
+            `List groups timeout. BanyanDB may be slow or unresponsive. ` +
               `Check that BanyanDB is running and accessible at ${this.baseUrl}`,
           );
         }
@@ -398,7 +372,7 @@ export class BanyanDBClient {
   /**
    * List topN aggregations in a group.
    */
-  async listTopN(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listTopN(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/topn-agg/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -422,7 +396,7 @@ export class BanyanDBClient {
       if (error instanceof Error) {
         if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
-            `List topN aggregations timeout after ${timeoutMs}ms. ` +
+            `List topN aggregations timeout. ` +
               `BanyanDB may be slow or unresponsive. ` +
               `Check that BanyanDB is running and accessible at ${this.baseUrl}`,
           );
@@ -446,7 +420,7 @@ export class BanyanDBClient {
   /**
    * List index rules in a group.
    */
-  async listIndexRule(group: string, timeoutMs: number = 30000): Promise<ResourceMetadata[]> {
+  async listIndexRule(group: string): Promise<ResourceMetadata[]> {
     const url = `${this.baseUrl}/v1/index-rule/schema/lists/${encodeURIComponent(group)}`;
 
     try {
@@ -469,7 +443,7 @@ export class BanyanDBClient {
       if (error instanceof Error) {
         if (error.name === 'AbortError' || error.message.includes('aborted') || error.message.includes('timeout')) {
           throw new Error(
-            `List index rules timeout after ${timeoutMs}ms. ` +
+            `List index rules timeout. ` +
               `BanyanDB may be slow or unresponsive. ` +
               `Check that BanyanDB is running and accessible at ${this.baseUrl}`,
           );

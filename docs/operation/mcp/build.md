@@ -14,10 +14,15 @@ This guide is for developers who want to build the MCP server from source and cr
 mcp/
 ├── src/
 │   ├── index.ts              # MCP server implementation
-│   ├── banyandb-client.ts    # BanyanDB HTTP client
-│   ├── query-generator.ts    # Natural language to BydbQL translator
-│   ├── llm-prompt.ts         # LLM prompt generation
-│   └── logger.ts             # Logging utilities
+│   ├── client/
+│   │   ├── index.ts            # BanyanDB HTTP client
+│   │   └── types.ts            # Client type definitions
+│   ├── query/
+│   │   ├── llm-prompt.ts       # BydbQL prompt generation
+│   │   └── types.ts            # Query type definitions
+│   └── utils/
+│       ├── http.ts             # HTTP utilities
+│       └── logger.ts           # Logging utilities
 ├── tools/
 │   └── checkversion.js        # Version checking utility
 ├── dist/                     # Compiled JavaScript (generated)
@@ -132,9 +137,7 @@ Create `.vscode/launch.json` in the `mcp` directory:
         "${workspaceFolder}/inspector-config.json"
       ],
       "env": {
-        "BANYANDB_ADDRESS": "localhost:17900",
-        "LLM_API_KEY": "${env:LLM_API_KEY}",
-        "LLM_BASE_URL": "${env:LLM_BASE_URL}"
+        "BANYANDB_ADDRESS": "localhost:17900"
       },
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -220,8 +223,6 @@ After building, test the image:
 # Run the container
 docker run --rm \
   -e BANYANDB_ADDRESS=localhost:17900 \
-  -e LLM_API_KEY=your-api-key \
-  -e LLM_BASE_URL=your-api-key \
   apache/skywalking-banyandb-mcp:latest
 ```
 
