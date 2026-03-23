@@ -4,13 +4,15 @@ This directory contains [Claude Code](https://github.com/anthropics/claude-code)
 
 ## Installing Skills
 
-Download the `.skill` bundle and install it:
+Skills live in this `skills/` directory and are not auto-discovered by Claude Code.
+To use them, create a symlink to your Claude Code skills directory:
 
 ```bash
-claude --install-extension vendor-update.skill
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/vendor-update" ~/.claude/skills/vendor-update
 ```
 
-This installs the skill to `~/.claude/skills/` where Claude Code auto-discovers it.
+The skill is auto-triggered when you use the relevant phrases. No manual invocation needed.
 
 ## Available Skills
 
