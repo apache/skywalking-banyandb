@@ -52,6 +52,9 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 		maxKey = *req.MaxKey
 	}
 
+	// Select parts that overlap key and optional timestamp range
+	partsToScan := selectPartsForScan(snap, minKey, maxKey, req.MinTimestamp, req.MaxTimestamp)
+
 	var results []*QueryResponse
 
 	// Prepare Tags map if projection is specified
@@ -73,9 +76,9 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 		Tags:    tagsMap,
 	}
 
-	// Scan all parts
-	totalParts := len(snap.parts)
-	for partIdx, pw := range snap.parts {
+	// Scan selected parts
+	totalParts := len(partsToScan)
+	for partIdx, pw := range partsToScan {
 		var err error
 		if currentBatch, err = s.scanPart(ctx, pw, req, minKey, maxKey, &results, currentBatch, maxBatchSize); err != nil {
 			return nil, err
@@ -100,6 +103,31 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 	}
 
 	return results, nil
+}
+
+// selectPartsForScan selects parts that overlap key and optional timestamp range for scan queries.
+func selectPartsForScan(snap *Snapshot, minKey, maxKey int64, minTS, maxTS *int64) []*partWrapper {
+	var selected []*partWrapper
+	for _, pw := range snap.parts {
+		if !pw.overlapsKeyRange(minKey, maxKey) {
+			continue
+		}
+		if minTS != nil || maxTS != nil {
+			from := int64(math.MinInt64)
+			to := int64(math.MaxInt64)
+			if minTS != nil {
+				from = *minTS
+			}
+			if maxTS != nil {
+				to = *maxTS
+			}
+			if !pw.overlapsTimestampRange(from, to) {
+				continue
+			}
+		}
+		selected = append(selected, pw)
+	}
+	return selected
 }
 
 func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryRequest,
