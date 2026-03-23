@@ -7,9 +7,7 @@ description: >
   This skill also checks `scripts/build/version.mk` after upgrading to see if any
   tracked tool versions need updating too, and removes stale binaries from `bin/`
   when versions change.
-compat:
-  - go
-  - make
+compatibility: go, make
 ---
 
 ## Upgrade vendor dependencies
