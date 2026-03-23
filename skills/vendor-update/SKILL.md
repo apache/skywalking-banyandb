@@ -20,6 +20,16 @@ make vendor-update
 
 This runs `go get -u ./...` and `go mod tidy -compat=1.25` in each project directory (ui, banyand, bydbctl, mcp, fodc/agent, fodc/proxy, pkg, test).
 
+## Update license dependencies
+
+After the vendor upgrade completes, run `make license-dep` to update any license-related files that may have changed due to new or updated dependencies:
+
+```bash
+make license-dep
+```
+
+This ensures license headers and dependency license files stay in sync with the upgraded vendors.
+
 ## Check for tool version drift
 
 After upgrading, compare `go.mod` dependency versions against `scripts/build/version.mk` to find any tools whose library version was bumped and may need their tool version updated.
