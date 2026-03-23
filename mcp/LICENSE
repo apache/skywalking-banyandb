@@ -115,14 +115,14 @@ MIT licenses
     has-symbols 1.1.0 MIT
     has-tostringtag 1.0.2 MIT
     hasown 2.0.2 MIT
-    hono 4.12.5 MIT
+    hono 4.12.8 MIT
     http-errors 2.0.1 MIT
     humanize-ms 1.2.1 MIT
     iconv-lite 0.7.2 MIT
     ip-address 10.1.0 MIT
     ipaddr.js 1.9.1 MIT
     is-promise 4.0.0 MIT
-    jose 6.2.1 MIT
+    jose 6.2.2 MIT
     json-schema-traverse 1.0.0 MIT
     math-intrinsics 1.1.0 MIT
     media-typer 1.1.0 MIT
