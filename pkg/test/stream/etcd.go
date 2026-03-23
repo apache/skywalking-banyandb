@@ -52,6 +52,12 @@ var (
 	groupWithStagesJSON string
 )
 
+// PreloadResourcesOnly loads streams, index rules, and index rule bindings.
+// It does NOT load groups.
+func PreloadResourcesOnly(ctx context.Context, e schema.Registry) error {
+	return loadSchemas(ctx, e)
+}
+
 // loadSchemas loads streams, index rules, and index rule bindings.
 func loadSchemas(ctx context.Context, e schema.Registry) error {
 	streams, err := streamStore.ReadDir(streamDir)

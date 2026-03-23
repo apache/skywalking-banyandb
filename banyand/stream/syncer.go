@@ -262,7 +262,7 @@ func (tst *tsTable) executeSyncWithRetry(partsToSync []*part, nodes []string) er
 	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l, tst.option.failedPartsMaxTotalSizeBytes)
 	partsInfo := tst.buildPartsInfoMap(partsToSync)
 
-	ctx := context.Background()
+	ctx := tst.loopCloser.Ctx()
 	releaseFuncs := make([]func(), 0, len(partsToSync))
 	defer func() {
 		for _, release := range releaseFuncs {
