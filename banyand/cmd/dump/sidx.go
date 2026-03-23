@@ -280,26 +280,30 @@ func filterPartsByTimeRange(sidxPath string, partIDs []uint64, minKey, maxKey in
 		partPath := filepath.Join(sidxPath, fmt.Sprintf("%016x", partID))
 		manifestPath := filepath.Join(partPath, "manifest.json")
 
-		// Read manifest.json
 		manifestData, err := fileSystem.Read(manifestPath)
 		if err != nil {
-			// Skip parts that don't have a manifest
 			continue
 		}
 
-		// Parse manifest to get minKey and maxKey
 		var manifest struct {
-			MinKey int64 `json:"minKey"`
-			MaxKey int64 `json:"maxKey"`
+			MinTimestamp *int64 `json:"minTimestamp,omitempty"`
+			MaxTimestamp *int64 `json:"maxTimestamp,omitempty"`
+			MinKey       int64  `json:"minKey"`
+			MaxKey       int64  `json:"maxKey"`
 		}
-
 		if err := json.Unmarshal(manifestData, &manifest); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse manifest for part %016x: %v\n", partID, err)
 			continue
 		}
 
-		// Check if part overlaps with the requested time range
-		if manifest.MaxKey >= minKey && manifest.MinKey <= maxKey {
+		// Prefer timestamp overlap when manifest has minTimestamp/maxTimestamp; otherwise fallback to key range
+		overlaps := false
+		if manifest.MinTimestamp != nil && manifest.MaxTimestamp != nil {
+			overlaps = *manifest.MaxTimestamp >= minKey && *manifest.MinTimestamp <= maxKey
+		} else {
+			overlaps = manifest.MaxKey >= minKey && manifest.MinKey <= maxKey
+		}
+		if overlaps {
 			filteredParts = append(filteredParts, partID)
 		}
 	}

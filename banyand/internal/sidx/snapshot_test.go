@@ -32,7 +32,7 @@ import (
 // writeTestData is a helper function for writing test data using the new pattern.
 func writeTestDataToSIDX(t *testing.T, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
 	// Convert write requests to MemPart
-	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID, nil, nil)
 	if err != nil {
 		t.Errorf("ConvertToMemPart failed: %v", err)
 		return

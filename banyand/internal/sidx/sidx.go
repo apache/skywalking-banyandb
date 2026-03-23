@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func NewSIDX(fileSystem fs.FileSystem, opts *Options) (SIDX, error) {
 }
 
 // ConvertToMemPart converts a write request to a memPart.
-func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error) {
+func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64, minTimestamp, maxTimestamp *int64) (*MemPart, error) {
 	// Validate requests
 	for _, req := range reqs {
 		if err := req.Validate(); err != nil {
@@ -100,6 +101,12 @@ func (s *sidx) ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart,
 	mp := GenerateMemPart()
 	mp.mustInitFromElements(es)
 	mp.partMetadata.SegmentID = segmentID
+	mp.partMetadata.MinTimestamp = minTimestamp
+	mp.partMetadata.MaxTimestamp = maxTimestamp
+	// Validate timestamp range if both bounds are provided
+	if minTimestamp != nil && maxTimestamp != nil && *minTimestamp > *maxTimestamp {
+		return nil, fmt.Errorf("invalid timestamp range: minTimestamp (%d) > maxTimestamp (%d)", *minTimestamp, *maxTimestamp)
+	}
 	return mp, nil
 }
 
