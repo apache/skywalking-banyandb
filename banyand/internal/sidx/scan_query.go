@@ -112,8 +112,18 @@ func selectPartsForScan(snap *Snapshot, minKey, maxKey int64, minTS, maxTS *int6
 		if !pw.overlapsKeyRange(minKey, maxKey) {
 			continue
 		}
-		if minTS != nil && maxTS != nil && !pw.overlapsTimestampRange(*minTS, *maxTS) {
-			continue
+		if minTS != nil || maxTS != nil {
+			from := int64(math.MinInt64)
+			to := int64(math.MaxInt64)
+			if minTS != nil {
+				from = *minTS
+			}
+			if maxTS != nil {
+				to = *maxTS
+			}
+			if !pw.overlapsTimestampRange(from, to) {
+				continue
+			}
 		}
 		selected = append(selected, pw)
 	}

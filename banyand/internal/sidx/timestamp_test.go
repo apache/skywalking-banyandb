@@ -184,7 +184,7 @@ func TestQuery_TimestampSelection(t *testing.T) {
 			}
 		default:
 		}
-		assert.GreaterOrEqual(t, len(keys), 0, "key-range filter should work without timestamps")
+		assert.Equal(t, 2, len(keys), "key-range filter should work without timestamps")
 	})
 
 	t.Run("timestamp_filter_overlaps", func(t *testing.T) {
@@ -217,7 +217,7 @@ func TestQuery_TimestampSelection(t *testing.T) {
 			}
 		default:
 		}
-		assert.GreaterOrEqual(t, count, 0, "query with overlapping timestamp range")
+		assert.Greater(t, count, 0, "query with overlapping timestamp range")
 	})
 
 	t.Run("timestamp_filter_no_overlap_excludes_part", func(t *testing.T) {
@@ -271,7 +271,11 @@ func TestScanQuery_TimestampSelection(t *testing.T) {
 		sqr := ScanQueryRequest{}
 		res, err := sidx.ScanQuery(context.Background(), sqr)
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(res), 0)
+		total := 0
+		for _, r := range res {
+			total += r.Len()
+		}
+		assert.Equal(t, 1, total, "expected one row from back-compat scan without timestamp filter")
 	})
 
 	t.Run("timestamp_filter_excludes_non_overlapping", func(t *testing.T) {
