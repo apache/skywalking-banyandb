@@ -54,13 +54,15 @@ func TestReplication(t *testing.T) {
 }
 
 var (
-	deferFunc       func()
-	goods           []gleak.Goroutine
-	now             time.Time
-	connection      *grpc.ClientConn
-	liaisonAddr     string
-	dataNodeClosers []func()
-	clusterConfig   *setup.ClusterConfig
+	deferFunc           func()
+	goods               []gleak.Goroutine
+	now                 time.Time
+	connection          *grpc.ClientConn
+	liaisonAddr         string
+	dataNodeClosers     []func()
+	dataNodeDirs        []string
+	dataNodeDirCleanups []func()
+	clusterConfig       *setup.ClusterConfig
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -79,9 +81,15 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	By("Starting 3 data nodes for replication test")
 	dataNodeClosers = make([]func(), 0, 3)
+	dataNodeDirs = make([]string, 0, 3)
+	dataNodeDirCleanups = make([]func(), 0, 3)
 
 	for i := 0; i < 3; i++ {
-		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
+		nodeDir, nodeDirCleanup, dirErr := test.NewSpace()
+		Expect(dirErr).NotTo(HaveOccurred())
+		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, nodeDir, "--node-labels", "role=data")
+		dataNodeDirs = append(dataNodeDirs, nodeDir)
+		dataNodeDirCleanups = append(dataNodeDirCleanups, nodeDirCleanup)
 		dataNodeClosers = append(dataNodeClosers, closeDataNode)
 	}
 
@@ -134,6 +142,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		for _, closeDataNode := range dataNodeClosers {
 			closeDataNode()
 		}
+		for _, cleanup := range dataNodeDirCleanups {
+			cleanup()
+		}
 		tmpDirCleanup()
 	}
 
@@ -172,11 +183,27 @@ var _ = SynchronizedAfterSuite(func() {
 	}
 }, func() {})
 
+// AfterEach restores cluster to 3 active nodes if a spec left a node stopped.
+var _ = AfterEach(func() {
+	if len(dataNodeDirs) == 0 || connection == nil {
+		return
+	}
+	if isClusterStable(connection) {
+		return
+	}
+	// Node 0 may have been stopped by a spec — restart it from its data directory.
+	_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+	dataNodeClosers[0] = closeDataNode
+	Eventually(func() bool {
+		return isClusterStable(connection)
+	}, flags.EventuallyTimeout).Should(BeTrue(), "Cluster should stabilize after restoring node 0")
+})
+
 var _ = ReportAfterSuite("Replication Suite", func(report Report) {
+	if deferFunc != nil {
+		deferFunc()
+	}
 	if report.SuiteSucceeded {
-		if deferFunc != nil {
-			deferFunc()
-		}
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}

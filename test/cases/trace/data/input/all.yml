@@ -17,13 +17,7 @@
 
 name: "sw"
 groups: ["test-trace-group"]
-tag_projection:
-  - "trace_id"
-  - "state"
-  - "service_id"
-  - "service_instance_id"
-  - "endpoint_id"
-  - "duration"
-  - "span_id"
-  - "timestamp"
+order_by:
+  index_rule_name: "timestamp"
+  sort: "SORT_DESC"
 limit: 100

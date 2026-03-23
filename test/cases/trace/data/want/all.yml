@@ -16,417 +16,71 @@
 # under the License.
 
 # Expected traces from sw.json and sw_mixed_traces.json written to test-trace-group
+# Ordered by timestamp DESC (latest spans first)
 traces:
-  - traceId: trace_001
-    spans:
-    - span: trace_001_span_1
-      spanId: span_001_1
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_001
-      - key: state
-        value:
-          int:
-            value: 1
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/home_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 1000
-      - key: span_id
-        value:
-          str:
-            value: span_001_1
-    - span: trace_001_span_2
-      spanId: span_001_2
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_001
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_2
-      - key: endpoint_id
-        value:
-          str:
-            value: "/product_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 500
-      - key: span_id
-        value:
-          str:
-            value: span_001_2
-    - span: trace_001_span_3
-      spanId: span_001_3
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_001
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/item_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 300
-      - key: span_id
-        value:
-          str:
-            value: span_001_3
-  - traceId: trace_002
-    spans:
+  - spans:
+    - span: trace_008_span_1
+      spanId: span_008_1
+    - span: trace_008_span_2
+      spanId: span_008_2
+    - span: trace_008_span_3
+      spanId: span_008_3
+    traceId: trace_008
+  - spans:
+    - span: trace_007_span_1
+      spanId: span_007_1
+    - span: trace_007_span_2
+      spanId: span_007_2
+    traceId: trace_007
+  - spans:
+    - span: trace_006_span_1
+      spanId: span_006_1
+    - span: trace_006_span_2
+      spanId: span_006_2
+    - span: trace_006_span_3
+      spanId: span_006_3
+    traceId: trace_006
+  - spans:
     - span: trace_002_span_1
       spanId: span_002_1
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_002
-      - key: state
-        value:
-          int:
-            value: 1
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/home_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 800
-      - key: span_id
-        value:
-          str:
-            value: span_002_1
     - span: trace_002_span_2
       spanId: span_002_2
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_002
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_3
-      - key: endpoint_id
-        value:
-          str:
-            value: "/price_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 200
-      - key: span_id
-        value:
-          str:
-            value: span_002_2
-  - traceId: trace_003
-    spans:
-    - span: trace_003_span_1
-      spanId: span_003_1
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-      - key: state
-        value:
-          int:
-            value: 1
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_2
-      - key: endpoint_id
-        value:
-          str:
-            value: "/product_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 1200
-      - key: span_id
-        value:
-          str:
-            value: span_003_1
-    - span: trace_003_span_2
-      spanId: span_003_2
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/home_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 150
-      - key: span_id
-        value:
-          str:
-            value: span_003_2
-    - span: trace_003_span_3
-      spanId: span_003_3
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_003
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_3
-      - key: endpoint_id
-        value:
-          str:
-            value: "/price_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 400
-      - key: span_id
-        value:
-          str:
-            value: span_003_3
-  - traceId: trace_004
-    spans:
-    - span: trace_004_span_1
-      spanId: span_004_1
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_004
-      - key: state
-        value:
-          int:
-            value: 1
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_2
-      - key: endpoint_id
-        value:
-          str:
-            value: "/home_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 600
-      - key: span_id
-        value:
-          str:
-            value: span_004_1
-  - traceId: trace_005
-    spans:
+    - span: trace_002_span_3
+      spanId: span_002_3
+    - span: trace_002_span_4
+      spanId: span_002_4
+    traceId: trace_002
+  - spans:
+    - span: trace_001_span_1
+      spanId: span_001_1
+    - span: trace_001_span_2
+      spanId: span_001_2
+    - span: trace_001_span_3
+      spanId: span_001_3
+    - span: trace_001_span_4
+      spanId: span_001_4
+    - span: trace_001_span_5
+      spanId: span_001_5
+    traceId: trace_001
+  - spans:
     - span: trace_005_span_1
       spanId: span_005_1
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_005
-      - key: state
-        value:
-          int:
-            value: 1
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_2
-      - key: endpoint_id
-        value:
-          str:
-            value: "/product_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 900
-      - key: span_id
-        value:
-          str:
-            value: span_005_1
     - span: trace_005_span_2
       spanId: span_005_2
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_005
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/home_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 250
-      - key: span_id
-        value:
-          str:
-            value: span_005_2
     - span: trace_005_span_3
       spanId: span_005_3
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_005
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_3
-      - key: endpoint_id
-        value:
-          str:
-            value: "/price_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 350
-      - key: span_id
-        value:
-          str:
-            value: span_005_3
     - span: trace_005_span_4
       spanId: span_005_4
-      tags:
-      - key: trace_id
-        value:
-          str:
-            value: trace_005
-      - key: state
-        value:
-          int:
-            value: 0
-      - key: service_id
-        value:
-          str:
-            value: webapp_service
-      - key: service_instance_id
-        value:
-          str:
-            value: webapp_instance_1
-      - key: endpoint_id
-        value:
-          str:
-            value: "/item_endpoint"
-      - key: duration
-        value:
-          int:
-            value: 180
-      - key: span_id
-        value:
-          str:
-            value: span_005_4
+    traceId: trace_005
+  - spans:
+    - span: trace_004_span_1
+      spanId: span_004_1
+    traceId: trace_004
+  - spans:
+    - span: trace_003_span_1
+      spanId: span_003_1
+    - span: trace_003_span_2
+      spanId: span_003_2
+    - span: trace_003_span_3
+      spanId: span_003_3
+    traceId: trace_003

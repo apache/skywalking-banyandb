@@ -53,7 +53,8 @@ var _ = g.Describe("Trace Normal Mode Replication", func() {
 
 	g.It("should return consistent results from replicas", func() {
 		g.By("Verifying the trace exists in test-trace-group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		traceMetadata := &commonv1.Metadata{
 			Name:  "sw",
 			Group: "test-trace-group",
@@ -86,7 +87,8 @@ var _ = g.Describe("Trace Normal Mode Replication", func() {
 
 	g.It("should survive single node failure", func() {
 		g.By("Verifying the trace exists in test-trace-group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		traceMetadata := &commonv1.Metadata{
 			Name:  "sw",
 			Group: "test-trace-group",
@@ -112,7 +114,8 @@ var _ = g.Describe("Trace Normal Mode Replication", func() {
 
 	g.It("should recover data after node restart", func() {
 		g.By("Verifying the trace exists in test-trace-group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		traceMetadata := &commonv1.Metadata{
 			Name:  "sw",
 			Group: "test-trace-group",
@@ -136,8 +139,8 @@ var _ = g.Describe("Trace Normal Mode Replication", func() {
 		})
 
 		g.By("Restarting the data node")
-		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
-		dataNodeClosers = append(dataNodeClosers, closeDataNode)
+		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+		dataNodeClosers[0] = closeDataNode
 
 		g.By("Waiting for cluster to stabilize and handoff queue to drain")
 		gm.Eventually(func() bool {

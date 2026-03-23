@@ -38,7 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-const defaultQueryTimeout = 30 * time.Second
+const defaultQueryTimeout = 5 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 

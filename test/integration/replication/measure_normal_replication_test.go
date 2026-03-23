@@ -53,7 +53,8 @@ var _ = g.Describe("Measure Normal Mode Replication", func() {
 
 	g.It("should return consistent results from replicas", func() {
 		g.By("Verifying the measure exists in sw_metric group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		measureMetadata := &commonv1.Metadata{
 			Name:  "service_cpm_minute",
 			Group: "sw_metric",
@@ -85,7 +86,8 @@ var _ = g.Describe("Measure Normal Mode Replication", func() {
 
 	g.It("should survive single node failure", func() {
 		g.By("Verifying the measure exists in sw_metric group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		measureMetadata := &commonv1.Metadata{
 			Name:  "service_cpm_minute",
 			Group: "sw_metric",
@@ -111,7 +113,8 @@ var _ = g.Describe("Measure Normal Mode Replication", func() {
 
 	g.It("should recover data after node restart", func() {
 		g.By("Verifying the measure exists in sw_metric group")
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		measureMetadata := &commonv1.Metadata{
 			Name:  "service_cpm_minute",
 			Group: "sw_metric",
@@ -135,8 +138,8 @@ var _ = g.Describe("Measure Normal Mode Replication", func() {
 		})
 
 		g.By("Restarting the data node")
-		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
-		dataNodeClosers = append(dataNodeClosers, closeDataNode)
+		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+		dataNodeClosers[0] = closeDataNode
 
 		g.By("Waiting for cluster to stabilize and handoff queue to drain")
 		gm.Eventually(func() bool {
@@ -164,7 +167,8 @@ func verifyDataContentWithArgs(conn *grpc.ClientConn, baseTime time.Time, args h
 }
 
 func isClusterStable(conn *grpc.ClientConn) bool {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	clusterClient := databasev1.NewClusterStateServiceClient(conn)
 	state, err := clusterClient.GetClusterState(ctx, &databasev1.GetClusterStateRequest{})
 	if err != nil {

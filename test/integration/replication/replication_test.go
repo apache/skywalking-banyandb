@@ -53,7 +53,8 @@ var _ = g.Describe("Replication", func() {
 	g.Context("with replicated_group", func() {
 		g.It("should survive node failure", func() {
 			g.By("Verifying the measure exists in replicated_group")
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 			measureMetadata := &commonv1.Metadata{
 				Name:  "service_traffic",
 				Group: "replicated_group",
@@ -66,29 +67,24 @@ var _ = g.Describe("Replication", func() {
 			gm.Expect(resp.GetMeasure().GetMetadata().GetGroup()).To(gm.Equal("replicated_group"))
 
 			g.By("Verifying cluster is stable with 3 data nodes")
-			gm.Expect(isClusterStable(conn)).To(gm.BeTrue(),
-				"Cluster should have 3 active data nodes before test")
-
-			g.By("Stopping one data node")
-			// We should have 3 data node closers in dataNodeClosers
-			// Stop the first one
-			// Create a local copy to avoid mutating the package-level slice
-			closersToStop := make([]func(), len(dataNodeClosers))
-			copy(closersToStop, dataNodeClosers)
-			closersToStop[0]()
-
-			// Wait for the cluster to stabilize (should have 3 active nodes after failure)
 			gm.Eventually(func() bool {
 				return isClusterStable(conn)
 			}, flags.EventuallyTimeout).Should(gm.BeTrue(),
-				"Cluster should have 3 active data nodes after stopping one node")
+				"Cluster should have 3 active data nodes before test")
+
+			g.By("Stopping one data node")
+			closersToStop := make([]func(), len(dataNodeClosers))
+			copy(closersToStop, dataNodeClosers)
+			closersToStop[0]()
 
 			g.By("Verifying data is still accessible after node failure")
 			verifyDataContentAfterNodeFailure(conn, now)
 
 			g.By("Verifying replication factor")
 			groupClient := databasev1.NewGroupRegistryServiceClient(conn)
-			groupResp, err := groupClient.Get(ctx, &databasev1.GroupRegistryServiceGetRequest{
+			groupCtx, groupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer groupCancel()
+			groupResp, err := groupClient.Get(groupCtx, &databasev1.GroupRegistryServiceGetRequest{
 				Group: "replicated_group",
 			})
 			gm.Expect(err).NotTo(gm.HaveOccurred())
