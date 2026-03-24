@@ -147,7 +147,7 @@ The server prints the listening address on startup:
 BanyanDB MCP HTTP server listening on :3000/mcp
 ```
 
-The single endpoint is `POST /mcp` (also handles `GET /mcp` for server-to-client notifications). All other paths return 404.
+The single endpoint is `POST /mcp`. Other HTTP methods on `/mcp` return `405 Method Not Allowed`, and all other paths return `404`.
 
 ### Configure an MCP Client for HTTP
 
@@ -232,4 +232,3 @@ services:
 
 - [Test via Inspector Guide](inspector.md) - Learn how to test the MCP server using MCP Inspector
 - [Build and Package](build.md) - For developers who want to build from source
-

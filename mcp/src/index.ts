@@ -41,9 +41,9 @@ const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
 const TRANSPORT = process.env.TRANSPORT || 'stdio';
 const mcpPortRaw = parseInt(process.env.MCP_PORT || '3000', 10);
 if (!Number.isFinite(mcpPortRaw) || mcpPortRaw <= 0 || mcpPortRaw > 65535) {
-  log.error(`Invalid MCP_PORT value "${process.env.MCP_PORT}": must be an integer between 1 and 65535. Defaulting to 3000.`);
+  throw new Error(`Invalid MCP_PORT value "${process.env.MCP_PORT}": must be an integer between 1 and 65535.`);
 }
-const MCP_PORT = Number.isFinite(mcpPortRaw) && mcpPortRaw > 0 && mcpPortRaw <= 65535 ? mcpPortRaw : 3000;
+const MCP_PORT = mcpPortRaw;
 
 // Prompt schema for generate_BydbQL — used with registerPrompt which requires a type cast
 // due to MCP SDK 1.x Zod v3/v4 compatibility layer causing TS2589 deep type instantiation.
@@ -72,7 +72,7 @@ function normalizeQueryHints(args: unknown): QueryHints {
   const rawArgs = args as Record<string, unknown>;
   return {
     description: typeof rawArgs.description === 'string' ? rawArgs.description.trim() : undefined,
-    BydbQL: typeof rawArgs.BydbQL === 'string' ? rawArgs.BydbQL.trim() : typeof rawArgs.bydbql === 'string' ? rawArgs.bydbql.trim() : undefined,
+    BydbQL: typeof rawArgs.BydbQL === 'string' ? rawArgs.BydbQL.trim() : undefined,
     resource_type: typeof rawArgs.resource_type === 'string' ? rawArgs.resource_type.trim() : undefined,
     resource_name: typeof rawArgs.resource_name === 'string' ? rawArgs.resource_name.trim() : undefined,
     group: typeof rawArgs.group === 'string' ? rawArgs.group.trim() : undefined,
@@ -400,6 +400,15 @@ async function main() {
       if (pathname !== '/mcp') {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+
+      if (req.method !== 'POST') {
+        res.writeHead(405, {
+          'Content-Type': 'application/json',
+          Allow: 'POST',
+        });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
         return;
       }
 
