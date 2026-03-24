@@ -574,3 +574,38 @@ func TestPartWrapper_OverlapsKeyRange_EdgeCases(t *testing.T) {
 		assert.False(t, pw.overlapsKeyRange(25, 15))
 	})
 }
+
+func TestPartWrapper_OverlapsTimestampRange(t *testing.T) {
+	minTS := int64(100)
+	maxTS := int64(200)
+	tests := []struct { //nolint:govet // test table struct field order prioritizes readability
+		name      string
+		partMinTS *int64
+		partMaxTS *int64
+		queryMin  int64
+		queryMax  int64
+		expected  bool
+	}{
+		{name: "overlap", partMinTS: &minTS, partMaxTS: &maxTS, queryMin: 50, queryMax: 150, expected: true},
+		{name: "no_overlap_left", partMinTS: &minTS, partMaxTS: &maxTS, queryMin: 1, queryMax: 50, expected: false},
+		{name: "no_overlap_right", partMinTS: &minTS, partMaxTS: &maxTS, queryMin: 250, queryMax: 300, expected: false},
+		{name: "nil_timestamps_fallback", partMinTS: nil, partMaxTS: nil, queryMin: 1, queryMax: 1000, expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &part{
+				path: "/test/part/001",
+				partMetadata: &partMetadata{
+					ID:           1,
+					MinKey:       1,
+					MaxKey:       1000,
+					MinTimestamp: tt.partMinTS,
+					MaxTimestamp: tt.partMaxTS,
+				},
+			}
+			pw := newPartWrapper(nil, p)
+			assert.Equal(t, tt.expected, pw.overlapsTimestampRange(tt.queryMin, tt.queryMax))
+		})
+	}
+}

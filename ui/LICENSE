@@ -53,7 +53,7 @@ ISC licenses
     inherits 2.0.4 ISC
     picocolors 1.1.1 ISC
     semver 7.7.4 ISC
-    yaml 2.8.2 ISC
+    yaml 2.8.3 ISC
 
 ========================================================================
 MIT licenses
@@ -61,9 +61,9 @@ MIT licenses
 
     @babel/helper-string-parser 7.27.1 MIT
     @babel/helper-validator-identifier 7.28.5 MIT
-    @babel/parser 7.29.0 MIT
+    @babel/parser 7.29.2 MIT
     @babel/types 7.29.0 MIT
-    @ctrl/tinycolor 3.6.1 MIT
+    @ctrl/tinycolor 4.2.0 MIT
     @element-plus/icons-vue 2.3.2 MIT
     @floating-ui/core 1.7.5 MIT
     @floating-ui/dom 1.7.6 MIT
@@ -74,31 +74,31 @@ MIT licenses
     @parcel/watcher-linux-x64-musl 2.5.6 MIT
     @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.90.20 MIT
-    @tanstack/vue-query 5.92.9 MIT
+    @tanstack/query-core 5.95.0 MIT
+    @tanstack/vue-query 5.95.0 MIT
     @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.20 MIT
-    @vue/compiler-core 3.5.29 MIT
-    @vue/compiler-dom 3.5.29 MIT
-    @vue/compiler-sfc 3.5.29 MIT
-    @vue/compiler-ssr 3.5.29 MIT
+    @vue/compiler-core 3.5.30 MIT
+    @vue/compiler-dom 3.5.30 MIT
+    @vue/compiler-sfc 3.5.30 MIT
+    @vue/compiler-ssr 3.5.30 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.29 MIT
-    @vue/runtime-core 3.5.29 MIT
-    @vue/runtime-dom 3.5.29 MIT
-    @vue/server-renderer 3.5.29 MIT
-    @vue/shared 3.5.29 MIT
-    @vueuse/core 10.11.1 MIT
-    @vueuse/metadata 10.11.1 MIT
-    @vueuse/shared 10.11.1 MIT
+    @vue/reactivity 3.5.30 MIT
+    @vue/runtime-core 3.5.30 MIT
+    @vue/runtime-dom 3.5.30 MIT
+    @vue/server-renderer 3.5.30 MIT
+    @vue/shared 3.5.30 MIT
+    @vueuse/core 12.0.0 MIT
+    @vueuse/metadata 12.0.0 MIT
+    @vueuse/shared 12.0.0 MIT
     async-validator 4.2.5 MIT
     chokidar 4.0.3 MIT
     codemirror 5.65.21 MIT
     core-util-is 1.0.3 MIT
     csstype 3.2.3 MIT
-    dayjs 1.11.19 MIT
-    element-plus 2.13.3 MIT
+    dayjs 1.11.20 MIT
+    element-plus 2.13.6 MIT
     estree-walker 2.0.2 MIT
     immediate 3.0.6 MIT
     immutable 5.1.5 MIT
@@ -124,12 +124,13 @@ MIT licenses
     readdirp 4.1.2 MIT
     remove-accents 0.5.0 MIT
     safe-buffer 5.1.2 MIT
-    sass 1.97.3 MIT
+    sass 1.98.0 MIT
     setimmediate 1.0.5 MIT
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.29 MIT
+    vue 3.5.30 MIT
+    vue-component-type-helpers 3.2.6 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
 

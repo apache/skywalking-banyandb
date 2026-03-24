@@ -185,29 +185,34 @@ func (pw *partWrapper) overlapsKeyRange(minKey, maxKey int64) bool {
 	if pw.p == nil {
 		return false
 	}
-
-	// Validate input range
 	if minKey > maxKey {
 		return false
 	}
-
-	// Check if part metadata is available
 	if pw.p.partMetadata == nil {
-		// If no metadata available, assume overlap to be safe
-		// This ensures we don't skip parts that might contain relevant data
 		return true
 	}
-
 	pm := pw.p.partMetadata
-
-	// Check for non-overlapping ranges using De Morgan's law:
-	// Two ranges [a,b] and [c,d] don't overlap if: b < c OR a > d
-	// Therefore, they DO overlap if: NOT(b < c OR a > d) = (b >= c AND a <= d)
-	// Simplified: part.MaxKey >= query.MinKey AND part.MinKey <= query.MaxKey
 	if pm.MaxKey < minKey || pm.MinKey > maxKey {
 		return false
 	}
+	return true
+}
 
-	// Ranges overlap
+// overlapsTimestampRange checks if the part overlaps with the given timestamp range.
+// Returns true when part has no timestamp metadata (fallback) or when ranges overlap.
+func (pw *partWrapper) overlapsTimestampRange(minTS, maxTS int64) bool {
+	if pw.p == nil {
+		return false
+	}
+	if pw.p.partMetadata == nil {
+		return true
+	}
+	pm := pw.p.partMetadata
+	if pm.MinTimestamp == nil || pm.MaxTimestamp == nil {
+		return true
+	}
+	if *pm.MaxTimestamp < minTS || *pm.MinTimestamp > maxTS {
+		return false
+	}
 	return true
 }

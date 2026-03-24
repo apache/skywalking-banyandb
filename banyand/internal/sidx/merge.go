@@ -103,6 +103,28 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	if err != nil {
 		return nil, err
 	}
+	// Aggregate optional timestamp range from merged parts
+	var minVal, maxVal int64
+	var hasMinTS, hasMaxTS bool
+	for i := range parts {
+		p := parts[i].p.partMetadata
+		if p.MinTimestamp != nil {
+			if !hasMinTS || *p.MinTimestamp < minVal {
+				minVal = *p.MinTimestamp
+				hasMinTS = true
+			}
+		}
+		if p.MaxTimestamp != nil {
+			if !hasMaxTS || *p.MaxTimestamp > maxVal {
+				maxVal = *p.MaxTimestamp
+				hasMaxTS = true
+			}
+		}
+	}
+	if hasMinTS && hasMaxTS {
+		pm.MinTimestamp = &minVal
+		pm.MaxTimestamp = &maxVal
+	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	fileSystem.SyncPath(dstPath)
 	p := mustOpenPart(partID, dstPath, fileSystem)

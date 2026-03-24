@@ -49,6 +49,7 @@ Release Notes.
 - Fix memory part leak in syncPartContext Close and prevent double-release in FinishSync.
 - Fix segment reference leaks in measure/stream/trace queries and ensure chunked sync sessions close part contexts correctly.
 - Fix duplicate query execution in distributed measure Agg+TopN queries by enabling push-down aggregation, removing the wasteful double-query pattern.
+- Fix nil pointer panic in segment collectMetrics during shutdown.
 
 ### Document
 
@@ -61,6 +62,8 @@ Release Notes.
 ### Chores
 
 - Upgrade Node.js support from 20.12 to 24.6.0, and align CI, license checks, and documentation
+- Add Claude Code skill for vendor dependency updates.
+- Upgrade Go vendor dependencies and sync BPF2GO_VERSION with cilium/ebpf library.
 
 ## 0.9.0
 
