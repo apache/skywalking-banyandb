@@ -28,20 +28,27 @@ export class BanyanDBClient {
   private baseUrl: string;
 
   constructor(address: string) {
-    // Convert gRPC address to HTTP address
-    // Default HTTP port is 17913, gRPC is 17900
-    if (address.includes(':')) {
-      const [host, port] = address.split(':');
-      // If it's the gRPC port, convert to HTTP port
-      if (port === '17900') {
-        this.baseUrl = `http://${host}:17913/api`;
-      } else {
-        this.baseUrl = `http://${host}:${port}/api`;
-      }
-    } else {
-      // Default to HTTP port
-      this.baseUrl = `http://${address}:17913/api`;
+    this.baseUrl = BanyanDBClient.buildBaseUrl(address);
+  }
+
+  private static buildBaseUrl(address: string): string {
+    const trimmedAddress = address.trim();
+    const addressWithProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmedAddress) ? trimmedAddress : `http://${trimmedAddress}`;
+
+    let parsedAddress: URL;
+    try {
+      parsedAddress = new URL(addressWithProtocol);
+    } catch (error) {
+      throw new Error(`Invalid BANYANDB_ADDRESS "${address}": ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    const protocol = parsedAddress.protocol === 'https:' ? 'https:' : 'http:';
+    const hostname = parsedAddress.hostname.includes(':') ? `[${parsedAddress.hostname}]` : parsedAddress.hostname;
+    const port = !parsedAddress.port || parsedAddress.port === '17900' ? '17913' : parsedAddress.port;
+    const pathname = parsedAddress.pathname === '/' ? '' : parsedAddress.pathname.replace(/\/$/, '');
+    const apiPath = pathname.endsWith('/api') ? pathname : `${pathname}/api`;
+
+    return `${protocol}//${hostname}:${port}${apiPath}`;
   }
 
   /**
