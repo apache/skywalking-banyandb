@@ -33,13 +33,17 @@ export class BanyanDBClient {
 
   private static buildBaseUrl(address: string): string {
     const trimmedAddress = address.trim();
-    const addressWithProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmedAddress) ? trimmedAddress : `http://${trimmedAddress}`;
+    const addressWithProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmedAddress)
+      ? trimmedAddress
+      : `http://${trimmedAddress}`;
 
     let parsedAddress: URL;
     try {
       parsedAddress = new URL(addressWithProtocol);
     } catch (error) {
-      throw new Error(`Invalid BANYANDB_ADDRESS "${address}": ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Invalid BANYANDB_ADDRESS "${address}": ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const protocol = parsedAddress.protocol === 'https:' ? 'https:' : 'http:';
