@@ -20,13 +20,6 @@ import { log } from './logger.js';
 
 const Timeout = 2 * 60 * 1000;
 
-export let globalAbortController = new AbortController();
-
-export function abortRequestsAndUpdate() {
-  globalAbortController.abort(`Request timeout ${Timeout}ms`);
-  globalAbortController = new AbortController();
-}
-
 export async function httpFetch({
   url = '',
   method = 'GET',
@@ -38,8 +31,9 @@ export async function httpFetch({
   headers?: Record<string, string>;
   url: string;
 }) {
+  const abortController = new AbortController();
   const timeoutId = setTimeout(() => {
-    abortRequestsAndUpdate();
+    abortController.abort(`Request timeout ${Timeout}ms`);
   }, Timeout);
 
   // Only include body and Content-Type for requests that have a body
@@ -53,7 +47,7 @@ export async function httpFetch({
     method,
     headers: requestHeaders,
     body: hasBody ? JSON.stringify(json) : undefined,
-    signal: globalAbortController.signal,
+    signal: abortController.signal,
   }).finally(() => {
     clearTimeout(timeoutId);
   });
