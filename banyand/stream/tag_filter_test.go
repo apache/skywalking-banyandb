@@ -472,6 +472,49 @@ func BenchmarkTagFamilyFiltersUnmarshal(b *testing.B) {
 	}
 }
 
+func TestTagFamilyFilterUnmarshalMinMaxCorruption(t *testing.T) {
+	const (
+		minValue int64 = 100
+		maxValue int64 = 200
+	)
+
+	tfm := generateTagFamilyMetadata()
+	defer releaseTagFamilyMetadata(tfm)
+
+	bf := filter.NewBloomFilter(10)
+	bf.Add([]byte("test-value"))
+	filterBuf := make([]byte, 0)
+	filterBuf = encodeBloomFilter(filterBuf, bf)
+
+	tfm.tagMetadata = append(tfm.tagMetadata, tagMetadata{
+		name:      "numeric-tag",
+		valueType: pbv1.ValueTypeInt64,
+		min:       convert.Int64ToBytes(minValue),
+		max:       convert.Int64ToBytes(maxValue),
+		filterBlock: dataBlock{
+			offset: 0,
+			size:   uint64(len(filterBuf)),
+		},
+	})
+
+	metaBuf := make([]byte, 0)
+	metaBuf = tfm.marshal(metaBuf)
+
+	tff := generateTagFamilyFilter()
+	defer releaseTagFamilyFilter(tff)
+	tff.unmarshal(
+		&dataBlock{offset: 0, size: uint64(len(metaBuf))},
+		&mockReader{data: metaBuf},
+		&mockReader{data: filterBuf},
+		&mockReader{data: []byte{}},
+	)
+
+	tagFilter, _ := (*tff)["numeric-tag"]
+
+	assert.Equal(t, minValue, convert.BytesToInt64(tagFilter.min), "min value should not be corrupted by bb.Buf reuse")
+	assert.Equal(t, maxValue, convert.BytesToInt64(tagFilter.max), "max value should not be corrupted by bb.Buf reuse")
+}
+
 func generateMetaAndFilterWithScenarios(scenarios []struct {
 	name       string
 	valueType  pbv1.ValueType
