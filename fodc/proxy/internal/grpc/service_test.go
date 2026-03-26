@@ -221,7 +221,7 @@ func newTestService(t *testing.T) (*FODCService, *registry.AgentRegistry) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, nil, testLogger, 30*time.Second)
 	return service, testRegistry
 }
 
@@ -238,7 +238,7 @@ func TestNewFODCService(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	service := NewFODCService(testRegistry, aggregator, nil, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, nil, testLogger, 30*time.Second)
 
 	assert.NotNil(t, service)
 	assert.Equal(t, testRegistry, service.registry)
@@ -1077,4 +1077,295 @@ func TestRequestClusterData_SendError(t *testing.T) {
 	requestErr := service.RequestClusterData(agentID)
 	assert.Error(t, requestErr)
 	assert.Contains(t, requestErr.Error(), "send error")
+}
+
+// mockStreamLifecycleServer implements fodcv1.FODCService_StreamLifecycleServer for testing.
+type mockStreamLifecycleServer struct {
+	ctx           context.Context
+	recvErr       error
+	sendErr       error
+	sentResponses []*fodcv1.StreamLifecycleResponse
+	recvRequests  []*fodcv1.StreamLifecycleRequest
+	mu            sync.Mutex
+}
+
+func newMockStreamLifecycleServer(ctx context.Context) *mockStreamLifecycleServer {
+	return &mockStreamLifecycleServer{
+		ctx:           ctx,
+		sentResponses: make([]*fodcv1.StreamLifecycleResponse, 0),
+		recvRequests:  make([]*fodcv1.StreamLifecycleRequest, 0),
+	}
+}
+
+func (m *mockStreamLifecycleServer) Send(resp *fodcv1.StreamLifecycleResponse) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.sentResponses = append(m.sentResponses, resp)
+	return nil
+}
+
+func (m *mockStreamLifecycleServer) Recv() (*fodcv1.StreamLifecycleRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recvErr != nil {
+		return nil, m.recvErr
+	}
+	if len(m.recvRequests) == 0 {
+		return nil, io.EOF
+	}
+	req := m.recvRequests[0]
+	m.recvRequests = m.recvRequests[1:]
+	return req, nil
+}
+
+func (m *mockStreamLifecycleServer) SetRecvError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvErr = err
+}
+
+func (m *mockStreamLifecycleServer) SetSendError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sendErr = err
+}
+
+func (m *mockStreamLifecycleServer) AddRequest(req *fodcv1.StreamLifecycleRequest) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recvRequests = append(m.recvRequests, req)
+}
+
+func (m *mockStreamLifecycleServer) GetSentResponses() []*fodcv1.StreamLifecycleResponse {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*fodcv1.StreamLifecycleResponse, len(m.sentResponses))
+	copy(result, m.sentResponses)
+	return result
+}
+
+func (m *mockStreamLifecycleServer) Context() context.Context {
+	return m.ctx
+}
+
+func (m *mockStreamLifecycleServer) SendMsg(_ interface{}) error {
+	return nil
+}
+
+func (m *mockStreamLifecycleServer) RecvMsg(_ interface{}) error {
+	return nil
+}
+
+func (m *mockStreamLifecycleServer) SetHeader(_ metadata.MD) error {
+	return nil
+}
+
+func (m *mockStreamLifecycleServer) SendHeader(_ metadata.MD) error {
+	return nil
+}
+
+func (m *mockStreamLifecycleServer) SetTrailer(_ metadata.MD) {
+}
+
+func TestStreamLifecycle_Success(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	md := metadata.New(map[string]string{
+		"agent_id": agentID,
+	})
+	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
+	mockStream := newMockStreamLifecycleServer(ctxWithMetadata)
+	lifecycleReq := &fodcv1.StreamLifecycleRequest{
+		PodName:   "test-pod",
+		Timestamp: timestamppb.Now(),
+		LifecycleData: &fodcv1.LifecycleData{
+			Reports: []*fodcv1.LifecycleReport{
+				{
+					Filename:   "2026-03-26.json",
+					ReportJson: `{"status":"ok"}`,
+				},
+			},
+		},
+	}
+	mockStream.AddRequest(lifecycleReq)
+	mockStream.SetRecvError(io.EOF)
+	streamErr := service.StreamLifecycle(mockStream)
+	assert.NoError(t, streamErr)
+	service.connectionsMu.RLock()
+	conn, exists := service.connections[agentID]
+	service.connectionsMu.RUnlock()
+	assert.True(t, exists, "connection should remain (only RegisterAgent cleans up)")
+	assert.NotNil(t, conn)
+}
+
+func TestStreamLifecycle_NoAgentID(t *testing.T) {
+	initTestLogger(t)
+	service, _ := newTestService(t)
+	ctx := context.Background()
+	mockStream := newMockStreamLifecycleServer(ctx)
+	lifecycleReq := &fodcv1.StreamLifecycleRequest{
+		PodName:   "test-pod",
+		Timestamp: timestamppb.Now(),
+		LifecycleData: &fodcv1.LifecycleData{
+			Reports: []*fodcv1.LifecycleReport{
+				{
+					Filename:   "2026-03-26.json",
+					ReportJson: `{"status":"ok"}`,
+				},
+			},
+		},
+	}
+	mockStream.AddRequest(lifecycleReq)
+	mockStream.SetRecvError(io.EOF)
+	streamErr := service.StreamLifecycle(mockStream)
+	assert.Error(t, streamErr)
+	assert.Contains(t, streamErr.Error(), "agent ID not found")
+}
+
+func TestStreamLifecycle_RecvError(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	md := metadata.New(map[string]string{
+		"agent_id": agentID,
+	})
+	ctxWithMetadata := metadata.NewIncomingContext(ctx, md)
+	mockStream := newMockStreamLifecycleServer(ctxWithMetadata)
+	testErr := errors.New("recv error")
+	mockStream.SetRecvError(testErr)
+	streamErr := service.StreamLifecycle(mockStream)
+	assert.Error(t, streamErr)
+}
+
+func TestRequestLifecycleData_Success(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	mockStream := newMockStreamLifecycleServer(ctx)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:         agentID,
+		lifecycleStream: mockStream,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestLifecycleData(agentID)
+	assert.NoError(t, requestErr)
+	responses := mockStream.GetSentResponses()
+	require.Len(t, responses, 1)
+	assert.True(t, responses[0].RequestLifecycle)
+}
+
+func TestRequestLifecycleData_NoConnection(t *testing.T) {
+	initTestLogger(t)
+	service, _ := newTestService(t)
+	requestErr := service.RequestLifecycleData("non-existent-agent")
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "connection not found")
+}
+
+func TestRequestLifecycleData_NoStream(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:         agentID,
+		lifecycleStream: nil,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestLifecycleData(agentID)
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "lifecycle stream not established")
+}
+
+func TestRequestLifecycleData_SendError(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+	mockStream := newMockStreamLifecycleServer(ctx)
+	testErr := errors.New("send error")
+	mockStream.SetSendError(testErr)
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:         agentID,
+		lifecycleStream: mockStream,
+	}
+	service.connectionsMu.Unlock()
+	requestErr := service.RequestLifecycleData(agentID)
+	assert.Error(t, requestErr)
+	assert.Contains(t, requestErr.Error(), "send error")
+}
+
+func TestHasLifecycleStream(t *testing.T) {
+	initTestLogger(t)
+	service, testRegistry := newTestService(t)
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+
+	// No connection at all
+	assert.False(t, service.HasLifecycleStream(agentID))
+
+	// Connection exists but no lifecycle stream
+	service.connectionsMu.Lock()
+	service.connections[agentID] = &agentConnection{
+		agentID:         agentID,
+		lifecycleStream: nil,
+	}
+	service.connectionsMu.Unlock()
+	assert.False(t, service.HasLifecycleStream(agentID))
+
+	// Connection exists with lifecycle stream
+	mockStream := newMockStreamLifecycleServer(ctx)
+	service.connectionsMu.Lock()
+	service.connections[agentID].setLifecycleStream(mockStream)
+	service.connectionsMu.Unlock()
+	assert.True(t, service.HasLifecycleStream(agentID))
+
+	// Non-existent agent
+	assert.False(t, service.HasLifecycleStream("non-existent-agent"))
 }

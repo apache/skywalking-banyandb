@@ -23,25 +23,26 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/testhelper"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/api"
-	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	grpcproxy "github.com/apache/skywalking-banyandb/fodc/proxy/internal/grpc"
+	proxylifecycle "github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	metricsproxy "github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-var _ = Describe("Cluster Topology Integration", func() {
+const lifecycleReportDir = "/tmp/lifecycle-reports"
+
+var _ = Describe("Lifecycle Integration", func() {
 	var (
 		proxyGRPCAddr     string
 		proxyHTTPAddr     string
@@ -50,7 +51,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		agentRegistry     *registry.AgentRegistry
 		metricsAggregator *metricsproxy.Aggregator
 		grpcService       *grpcproxy.FODCService
-		clusterManager    *cluster.Manager
+		lifecycleMgr      *proxylifecycle.Manager
 		flightRecorder1   interface{}
 		flightRecorder2   interface{}
 		proxyClient1      *testhelper.ProxyClientWrapper
@@ -64,21 +65,22 @@ var _ = Describe("Cluster Topology Integration", func() {
 	)
 
 	BeforeEach(func() {
-		testLogger = logger.GetLogger("test", "integration")
-		httpClient = &http.Client{Timeout: 500 * time.Millisecond}
+		testLogger = logger.GetLogger("test", "lifecycle-integration")
+		httpClient = &http.Client{Timeout: 2 * time.Second}
+
+		Expect(os.RemoveAll(lifecycleReportDir)).To(Succeed())
+		Expect(os.MkdirAll(lifecycleReportDir, 0o755)).To(Succeed())
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
 		heartbeatInterval := 2 * time.Second
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 
-		// Create cluster manager for topology aggregation
-		clusterManager = cluster.NewManager(agentRegistry, nil, testLogger)
-
+		lifecycleMgr = proxylifecycle.NewManager(agentRegistry, nil, testLogger)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, clusterManager, nil, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, lifecycleMgr, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
-		clusterManager.SetGRPCService(grpcService)
+		lifecycleMgr.SetGRPCService(grpcService)
 
 		grpcListener, listenErr := net.Listen("tcp", "localhost:0")
 		Expect(listenErr).NotTo(HaveOccurred())
@@ -93,7 +95,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, clusterManager, nil, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, lifecycleMgr, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
@@ -130,17 +132,14 @@ var _ = Describe("Cluster Topology Integration", func() {
 		}
 	})
 
-	It("should aggregate topology from multiple agents", func() {
-		// Create contexts for agents
+	setupTwoAgents := func() {
 		agentCtx1, agentCancel1 = context.WithCancel(context.Background())
 		agentCtx2, agentCancel2 = context.WithCancel(context.Background())
 
-		// Create Flight Recorders for agents
 		capacitySize := int64(10 * 1024 * 1024)
 		flightRecorder1 = testhelper.NewFlightRecorder(capacitySize)
 		flightRecorder2 = testhelper.NewFlightRecorder(capacitySize)
 
-		// Create proxy clients for two agents
 		heartbeatInterval := 2 * time.Second
 		reconnectInterval := 1 * time.Second
 		proxyClient1 = testhelper.NewProxyClientWrapper(
@@ -168,81 +167,83 @@ var _ = Describe("Cluster Topology Integration", func() {
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 
-		// Start agent 1
 		Expect(proxyClient1.Connect(agentCtx1)).To(Succeed())
 		Expect(proxyClient1.StartRegistrationStream(agentCtx1)).To(Succeed())
-		Expect(proxyClient1.StartClusterStateStream(agentCtx1)).To(Succeed())
+		Expect(proxyClient1.StartLifecycleStream(agentCtx1)).To(Succeed())
 
-		// Start agent 2
 		Expect(proxyClient2.Connect(agentCtx2)).To(Succeed())
 		Expect(proxyClient2.StartRegistrationStream(agentCtx2)).To(Succeed())
-		Expect(proxyClient2.StartClusterStateStream(agentCtx2)).To(Succeed())
+		Expect(proxyClient2.StartLifecycleStream(agentCtx2)).To(Succeed())
 
-		// Wait for agents to register
 		Eventually(func() int {
 			return len(agentRegistry.ListAgents())
-		}, "10s", "100ms").Should(Equal(2))
+		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(2))
+	}
 
-		// Simulate topology data from agents
+	waitForLifecycleStreams := func() {
 		agents := agentRegistry.ListAgents()
 		Expect(len(agents)).To(Equal(2))
-
-		// Prepare topology data
-		testTopology1 := &fodcv1.Topology{
-			Nodes: []*databasev1.Node{
-				{
-					Metadata: &commonv1.Metadata{
-						Name: "node-1",
-					},
-				},
-			},
-		}
-
-		testTopology2 := &fodcv1.Topology{
-			Nodes: []*databasev1.Node{
-				{
-					Metadata: &commonv1.Metadata{
-						Name: "node-2",
-					},
-				},
-			},
-		}
-
 		Eventually(func(g Gomega) {
-			g.Expect(grpcService.HasClusterStateStream(agents[0].AgentID)).To(BeTrue())
-			g.Expect(grpcService.HasClusterStateStream(agents[1].AgentID)).To(BeTrue())
-		}, "1s", "10ms").Should(Succeed())
-
-		Expect(proxyClient1.SetClusterTopology(testTopology1.Nodes, testTopology1.Calls)).To(Succeed())
-		Expect(proxyClient2.SetClusterTopology(testTopology2.Nodes, testTopology2.Calls)).To(Succeed())
-
-		var topology cluster.TopologyMap
-		Eventually(func(g Gomega) {
-			resp, err := httpClient.Get(fmt.Sprintf("http://%s/cluster/topology", proxyHTTPAddr))
-			g.Expect(err).NotTo(HaveOccurred())
-			defer resp.Body.Close()
-			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-			var result cluster.TopologyMap
-			g.Expect(json.NewDecoder(resp.Body).Decode(&result)).To(Succeed())
-			g.Expect(len(result.Nodes)).To(BeNumerically(">=", 2))
-			topology = result
+			g.Expect(grpcService.HasLifecycleStream(agents[0].AgentID)).To(BeTrue())
+			g.Expect(grpcService.HasLifecycleStream(agents[1].AgentID)).To(BeTrue())
 		}, "5s", "100ms").Should(Succeed())
+	}
 
-		// Check that both agents are present
-		nodeNames := make(map[string]bool)
-		for _, node := range topology.Nodes {
-			if node.Metadata != nil {
-				nodeNames[node.Metadata.Name] = true
+	getLifecycleData := func() *proxylifecycle.InspectionResult {
+		resp, err := httpClient.Get(fmt.Sprintf("http://%s/cluster/lifecycle", proxyHTTPAddr))
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		var result proxylifecycle.InspectionResult
+		Expect(json.NewDecoder(resp.Body).Decode(&result)).To(Succeed())
+		return &result
+	}
+
+	writeReport := func(name, content string) {
+		Expect(os.WriteFile(filepath.Join(lifecycleReportDir, name), []byte(content), 0o600)).To(Succeed())
+	}
+
+	It("should return empty lifecycle data when no report files exist", func() {
+		setupTwoAgents()
+		waitForLifecycleStreams()
+
+		Eventually(func(g Gomega) {
+			data := getLifecycleData()
+			g.Expect(data.Groups).To(BeEmpty())
+			g.Expect(data.LifecycleStatuses).To(BeEmpty())
+		}, "5s", "100ms").Should(Succeed())
+	})
+
+	It("should aggregate lifecycle statuses from multiple agents via report files", func() {
+		setupTwoAgents()
+		waitForLifecycleStreams()
+
+		writeReport("2026-03-26.json", `{"status":"ok"}`)
+
+		Eventually(func(g Gomega) {
+			result := getLifecycleData()
+			g.Expect(result.Groups).To(BeEmpty())
+			g.Expect(len(result.LifecycleStatuses)).To(Equal(2))
+			podNames := []string{result.LifecycleStatuses[0].PodName, result.LifecycleStatuses[1].PodName}
+			g.Expect(podNames).To(ContainElements("pod-1", "pod-2"))
+		}, "5s", "100ms").Should(Succeed())
+	})
+
+	It("should include report filenames collected from disk", func() {
+		setupTwoAgents()
+		waitForLifecycleStreams()
+
+		writeReport("2026-03-25.json", `{"check":"pass"}`)
+		writeReport("2026-03-26.json", `{"check":"fail"}`)
+
+		Eventually(func(g Gomega) {
+			result := getLifecycleData()
+			g.Expect(len(result.LifecycleStatuses)).To(Equal(2))
+			for _, status := range result.LifecycleStatuses {
+				g.Expect(len(status.Reports)).To(Equal(2))
+				filenames := []string{status.Reports[0].Filename, status.Reports[1].Filename}
+				g.Expect(filenames).To(ContainElements("2026-03-25.json", "2026-03-26.json"))
 			}
-		}
-		Expect(nodeNames["node-1"]).To(BeTrue())
-		Expect(nodeNames["node-2"]).To(BeTrue())
-
-		// Clean up
-		agentCancel1()
-		agentCancel2()
-		proxyClient1.Disconnect()
-		proxyClient2.Disconnect()
+		}, "5s", "100ms").Should(Succeed())
 	})
 })

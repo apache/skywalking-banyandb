@@ -27,6 +27,7 @@ import (
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	agentcluster "github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	agentlifecycle "github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	agentmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -174,16 +175,18 @@ func NewProxyClientWithCollector(
 		reconnectInterval,
 		frTyped,
 		collector,
+		nil,
 		logger,
 	)
 }
 
 // ProxyClientWrapper wraps ProxyClient methods for testing.
 type ProxyClientWrapper struct {
-	client        *proxy.Client
-	collector     *agentcluster.Collector
-	ctx           context.Context
-	connMgrActive bool
+	client             *proxy.Client
+	collector          *agentcluster.Collector
+	lifecycleCollector *agentlifecycle.Collector
+	ctx                context.Context
+	connMgrActive      bool
 }
 
 // StartConnManager starts the connection manager.
@@ -241,6 +244,11 @@ func (w *ProxyClientWrapper) SetClusterTopology(nodes []*databasev1.Node, calls 
 	return nil
 }
 
+// StartLifecycleStream establishes bi-directional lifecycle stream with Proxy.
+func (w *ProxyClientWrapper) StartLifecycleStream(ctx context.Context) error {
+	return w.client.StartLifecycleStream(ctx)
+}
+
 // NewProxyClientWrapper creates a wrapped ProxyClient for testing.
 func NewProxyClientWrapper(
 	proxyAddr string,
@@ -253,8 +261,13 @@ func NewProxyClientWrapper(
 	flightRecorder interface{},
 	logger *logger.Logger,
 ) *ProxyClientWrapper {
-	collector := &agentcluster.Collector{}
-	client := NewProxyClientWithCollector(
+	frTyped, ok := flightRecorder.(*flightrecorder.FlightRecorder)
+	if !ok {
+		return nil
+	}
+	clusterCollector := &agentcluster.Collector{}
+	lifecycleCollector := agentlifecycle.NewCollector(nil, "", "", 0)
+	client := proxy.NewClient(
 		proxyAddr,
 		nodeRole,
 		podName,
@@ -262,12 +275,14 @@ func NewProxyClientWrapper(
 		labels,
 		heartbeatInterval,
 		reconnectInterval,
-		flightRecorder,
-		collector,
+		frTyped,
+		clusterCollector,
+		lifecycleCollector,
 		logger,
 	)
-	if client == nil {
-		return nil
+	return &ProxyClientWrapper{
+		client:             client,
+		collector:          clusterCollector,
+		lifecycleCollector: lifecycleCollector,
 	}
-	return &ProxyClientWrapper{client: client, collector: collector}
 }
