@@ -509,7 +509,7 @@ func TestTagFamilyFilterUnmarshalMinMaxCorruption(t *testing.T) {
 		&mockReader{data: []byte{}},
 	)
 
-	tagFilter, _ := (*tff)["numeric-tag"]
+	tagFilter := (*tff)["numeric-tag"]
 
 	assert.Equal(t, minValue, convert.BytesToInt64(tagFilter.min), "min value should not be corrupted by bb.Buf reuse")
 	assert.Equal(t, maxValue, convert.BytesToInt64(tagFilter.max), "max value should not be corrupted by bb.Buf reuse")
