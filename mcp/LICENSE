@@ -55,7 +55,7 @@ MIT licenses
 ========================================================================
 
     @hono/node-server 1.19.11 MIT
-    @modelcontextprotocol/sdk 1.27.1 MIT
+    @modelcontextprotocol/sdk 1.28.0 MIT
     accepts 2.0.0 MIT
     ajv 8.18.0 MIT
     ajv-formats 3.0.1 MIT
@@ -93,7 +93,7 @@ MIT licenses
     gopd 1.2.0 MIT
     has-symbols 1.1.0 MIT
     hasown 2.0.2 MIT
-    hono 4.12.8 MIT
+    hono 4.12.9 MIT
     http-errors 2.0.1 MIT
     iconv-lite 0.7.2 MIT
     ip-address 10.1.0 MIT
