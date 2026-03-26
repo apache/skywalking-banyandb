@@ -509,10 +509,11 @@ func TestTagFamilyFilterUnmarshalMinMaxCorruption(t *testing.T) {
 		&mockReader{data: []byte{}},
 	)
 
-	tagFilter := (*tff)["numeric-tag"]
-
-	assert.Equal(t, minValue, convert.BytesToInt64(tagFilter.min), "min value should not be corrupted by bb.Buf reuse")
-	assert.Equal(t, maxValue, convert.BytesToInt64(tagFilter.max), "max value should not be corrupted by bb.Buf reuse")
+	tagFilter, ok := (*tff)["numeric-tag"]
+	if assert.True(t, ok, "tag filter for numeric-tag should exist") && assert.NotNil(t, tagFilter, "tag filter for numeric-tag should not be nil") {
+		assert.Equal(t, minValue, convert.BytesToInt64(tagFilter.min), "min value should not be corrupted by bb.Buf reuse")
+		assert.Equal(t, maxValue, convert.BytesToInt64(tagFilter.max), "max value should not be corrupted by bb.Buf reuse")
+	}
 }
 
 func generateMetaAndFilterWithScenarios(scenarios []struct {
