@@ -121,6 +121,7 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 			1*time.Second,
 			flightRecorder1,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient1).NotTo(BeNil())
 
@@ -134,6 +135,7 @@ var _ = Describe("Test Case 2: Metrics Time Window", func() {
 			1*time.Second,
 			flightRecorder2,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 

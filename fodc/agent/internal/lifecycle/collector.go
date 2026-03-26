@@ -39,8 +39,9 @@ import (
 
 const (
 	// DefaultReportDir is the default directory for lifecycle report files.
-	DefaultReportDir = "/tmp/lifecycle-reports"
-	maxReportFiles   = 5
+	DefaultReportDir  = "/tmp/lifecycle-reports"
+	maxReportFiles    = 5
+	maxReportFileSize = 5 * 1024 * 1024 // 5MB
 )
 
 const grpcTimeout = 10 * time.Second
@@ -155,6 +156,20 @@ func (c *Collector) readReportFiles() []*fodcv1.LifecycleReport {
 
 	reports := make([]*fodcv1.LifecycleReport, 0, len(jsonFiles))
 	for _, entry := range jsonFiles {
+		info, statErr := entry.Info()
+		if statErr != nil {
+			if c.log != nil {
+				c.log.Warn().Err(statErr).Str("file", entry.Name()).Msg("Error getting report file info")
+			}
+			continue
+		}
+		if info.Size() > maxReportFileSize {
+			if c.log != nil {
+				c.log.Warn().Str("file", entry.Name()).Int64("size", info.Size()).Int64("max", maxReportFileSize).
+					Msg("Report file exceeds max size, skipping")
+			}
+			continue
+		}
 		filePath := filepath.Join(c.reportDir, entry.Name())
 		data, readErr := os.ReadFile(filePath)
 		if readErr != nil {

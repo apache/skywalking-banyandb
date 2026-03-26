@@ -103,6 +103,7 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 			1*time.Second,
 			flightRecorder,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient).NotTo(BeNil())
 
@@ -251,6 +252,7 @@ var _ = Describe("Test Case 3: Agent Reconnection", func() {
 			1*time.Second,
 			flightRecorder,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient).NotTo(BeNil())
 

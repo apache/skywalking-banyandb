@@ -40,8 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-const lifecycleReportDir = "/tmp/lifecycle-reports"
-
 var _ = Describe("Lifecycle Integration", func() {
 	var (
 		proxyGRPCAddr     string
@@ -62,14 +60,13 @@ var _ = Describe("Lifecycle Integration", func() {
 		agentCancel2      context.CancelFunc
 		httpClient        *http.Client
 		testLogger        *logger.Logger
+		reportDir         string
 	)
 
 	BeforeEach(func() {
 		testLogger = logger.GetLogger("test", "lifecycle-integration")
 		httpClient = &http.Client{Timeout: 2 * time.Second}
-
-		Expect(os.RemoveAll(lifecycleReportDir)).To(Succeed())
-		Expect(os.MkdirAll(lifecycleReportDir, 0o755)).To(Succeed())
+		reportDir = GinkgoT().TempDir()
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
@@ -152,6 +149,7 @@ var _ = Describe("Lifecycle Integration", func() {
 			reconnectInterval,
 			flightRecorder1,
 			testLogger,
+			reportDir,
 		)
 		Expect(proxyClient1).NotTo(BeNil())
 		proxyClient2 = testhelper.NewProxyClientWrapper(
@@ -164,6 +162,7 @@ var _ = Describe("Lifecycle Integration", func() {
 			reconnectInterval,
 			flightRecorder2,
 			testLogger,
+			reportDir,
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 
@@ -200,7 +199,7 @@ var _ = Describe("Lifecycle Integration", func() {
 	}
 
 	writeReport := func(name, content string) {
-		Expect(os.WriteFile(filepath.Join(lifecycleReportDir, name), []byte(content), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(reportDir, name), []byte(content), 0o600)).To(Succeed())
 	}
 
 	It("should return empty lifecycle data when no report files exist", func() {

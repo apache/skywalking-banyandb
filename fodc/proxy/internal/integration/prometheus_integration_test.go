@@ -130,6 +130,7 @@ var _ = Describe("Prometheus Integration", func() {
 			1*time.Second,
 			fr,
 			fixture.testLogger,
+			"",
 		)
 		Expect(agent).NotTo(BeNil())
 		agent.StartConnManager(ctx)

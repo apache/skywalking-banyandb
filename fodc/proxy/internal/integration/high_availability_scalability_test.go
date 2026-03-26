@@ -125,6 +125,7 @@ var _ = Describe("High Availability and Scalability", func() {
 				1*time.Second,
 				fr,
 				logger.GetLogger("test", "agent"),
+				"",
 			)
 
 			Expect(client).NotTo(BeNil())
@@ -277,6 +278,7 @@ var _ = Describe("High Availability and Scalability", func() {
 				1*time.Second,
 				agent.flightRecorder,
 				logger.GetLogger("test", "agent"),
+				"",
 			)
 			Expect(newClient).NotTo(BeNil())
 

@@ -110,6 +110,7 @@ var _ = Describe("Test Case 1: Agent Registration and Metrics Flow", func() {
 			1*time.Second,
 			flightRecorder,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient).NotTo(BeNil())
 

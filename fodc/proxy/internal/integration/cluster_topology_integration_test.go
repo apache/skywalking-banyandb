@@ -153,6 +153,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 			reconnectInterval,
 			flightRecorder1,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient1).NotTo(BeNil())
 		proxyClient2 = testhelper.NewProxyClientWrapper(
@@ -165,6 +166,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 			reconnectInterval,
 			flightRecorder2,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 

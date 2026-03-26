@@ -1110,15 +1110,15 @@ func (m *mockStreamLifecycleServer) Send(resp *fodcv1.StreamLifecycleResponse) e
 func (m *mockStreamLifecycleServer) Recv() (*fodcv1.StreamLifecycleRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.recvRequests) > 0 {
+		req := m.recvRequests[0]
+		m.recvRequests = m.recvRequests[1:]
+		return req, nil
+	}
 	if m.recvErr != nil {
 		return nil, m.recvErr
 	}
-	if len(m.recvRequests) == 0 {
-		return nil, io.EOF
-	}
-	req := m.recvRequests[0]
-	m.recvRequests = m.recvRequests[1:]
-	return req, nil
+	return nil, io.EOF
 }
 
 func (m *mockStreamLifecycleServer) SetRecvError(err error) {

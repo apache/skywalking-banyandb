@@ -260,13 +260,14 @@ func NewProxyClientWrapper(
 	reconnectInterval time.Duration,
 	flightRecorder interface{},
 	logger *logger.Logger,
+	reportDir string,
 ) *ProxyClientWrapper {
 	frTyped, ok := flightRecorder.(*flightrecorder.FlightRecorder)
 	if !ok {
 		return nil
 	}
 	clusterCollector := &agentcluster.Collector{}
-	lifecycleCollector := agentlifecycle.NewCollector(nil, "", "", 0)
+	lifecycleCollector := agentlifecycle.NewCollector(nil, "", reportDir, 0)
 	client := proxy.NewClient(
 		proxyAddr,
 		nodeRole,

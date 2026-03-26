@@ -156,6 +156,58 @@ The proxy triggers a topology collection across all registered agents and merges
 	- `status` / `last_heartbeat`: online status from the agent registry.
 - `calls` entries describe the node-to-node call graph reported by agents.
 
+### GET /cluster/lifecycle
+
+Requests lifecycle data from all connected agents and returns aggregated lifecycle reports and group information as JSON.
+The proxy triggers lifecycle data collection from all agents that support the lifecycle stream.
+
+**Response**
+
+- Content-Type: `application/json`
+- Body shape:
+
+```json
+{
+	"groups": [
+		{
+			"name": "sw_metric",
+			"catalog": "CATALOG_MEASURE",
+			"resource_opts": {
+				"shard_num": 2,
+				"segment_interval": {"unit": "UNIT_DAY", "num": 1},
+				"ttl": {"unit": "UNIT_DAY", "num": 7}
+			},
+			"data_info": []
+		}
+	],
+	"lifecycle_statuses": [
+		{
+			"pod_name": "banyandb-data-0",
+			"reports": [
+				{
+					"filename": "2026-03-26.json",
+					"report_json": "{\"status\":\"ok\"}"
+				}
+			]
+		}
+	]
+}
+```
+
+**Field notes**
+
+- `groups`: Group lifecycle information collected from the first agent that provides it (typically the liaison node).
+  Each entry contains the group name, catalog type, resource options, and data info.
+- `lifecycle_statuses`: Per-pod lifecycle reports. Each entry contains the pod name and an array of report files
+  (JSON files read from the agent's lifecycle report directory).
+- Agents that do not support the lifecycle stream are silently skipped.
+
+**Example**
+
+```text
+GET http://localhost:17913/cluster/lifecycle
+```
+
 ## FODC Agent CLI Flags
 
 The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
@@ -173,6 +225,9 @@ The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
 | `--reconnect-interval` | `5s` | Backoff between reconnection attempts to the proxy. |
 | `--cluster-state-ports` | _empty_ | gRPC ports for BanyanDB cluster state polling; enables topology collection. |
 | `--cluster-state-poll-interval` | `30s` | Interval for polling cluster state from BanyanDB nodes. |
+| `--lifecycle-port` | `17912` | gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection. |
+| `--lifecycle-report-dir` | `/tmp/lifecycle-reports` | Directory where lifecycle sidecar writes report files. |
+| `--lifecycle-cache-ttl` | `10m` | TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache. |
 
 **Behavior notes**
 

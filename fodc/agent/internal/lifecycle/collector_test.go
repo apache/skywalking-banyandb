@@ -44,13 +44,11 @@ func TestNewCollector(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, collector.cacheTTL)
 }
 
-func TestCollector_ReadReportFiles_NoDir(t *testing.T) {
+func TestCollector_ReadReportFiles_EmptyDir(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 0)
+	collector := NewCollector(log, "", t.TempDir(), 0)
 	reports := collector.readReportFiles()
-	for _, report := range reports {
-		assert.NotEmpty(t, report.Filename)
-	}
+	assert.Empty(t, reports)
 }
 
 func TestCollector_Collect(t *testing.T) {
@@ -147,6 +145,20 @@ func TestCollector_ReadReportFiles_SkipsNonJSON(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-03-26.json"), []byte(`{}`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("text"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "data.csv"), []byte("a,b"), 0o600))
+
+	reports := collector.readReportFiles()
+	require.Equal(t, 1, len(reports))
+	assert.Equal(t, "2026-03-26.json", reports[0].Filename)
+}
+
+func TestCollector_ReadReportFiles_OversizedFile(t *testing.T) {
+	log := initTestLogger(t)
+	dir := t.TempDir()
+	collector := NewCollector(log, "", dir, 0)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-03-26.json"), []byte(`{"ok":true}`), 0o600))
+	oversized := make([]byte, maxReportFileSize+1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-03-25.json"), oversized, 0o600))
 
 	reports := collector.readReportFiles()
 	require.Equal(t, 1, len(reports))

@@ -38,8 +38,15 @@ type PodLifecycleStatus struct {
 
 // InspectionResult is the aggregated result from agents and liaison.
 type InspectionResult struct {
-	Groups            []*fodcv1.GroupLifecycleInfo `json:"groups,omitempty"`
-	LifecycleStatuses []*PodLifecycleStatus        `json:"lifecycle_statuses,omitempty"`
+	Groups            []*fodcv1.GroupLifecycleInfo `json:"groups"`
+	LifecycleStatuses []*PodLifecycleStatus        `json:"lifecycle_statuses"`
+}
+
+func emptyResult() *InspectionResult {
+	return &InspectionResult{
+		Groups:            make([]*fodcv1.GroupLifecycleInfo, 0),
+		LifecycleStatuses: make([]*PodLifecycleStatus, 0),
+	}
 }
 
 // agentLifecycleData carries pod_name alongside the lifecycle data through the channel.
@@ -83,14 +90,14 @@ func (m *Manager) SetGRPCService(grpcService RequestSender) {
 
 // UpdateLifecycle updates lifecycle data for a specific agent.
 func (m *Manager) UpdateLifecycle(agentID, podName string, data *fodcv1.LifecycleData) {
-	m.collectingMu.RLock()
-	collectCh, exists := m.collecting[agentID]
-	m.collectingMu.RUnlock()
-	if !exists {
-		return
-	}
 	if data == nil {
 		data = &fodcv1.LifecycleData{}
+	}
+	m.collectingMu.RLock()
+	defer m.collectingMu.RUnlock()
+	collectCh, exists := m.collecting[agentID]
+	if !exists {
+		return
 	}
 	select {
 	case collectCh <- &agentLifecycleData{PodName: podName, Data: data}:
@@ -106,13 +113,13 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 
 	if m.registry == nil {
 		m.log.Info().Msg("CollectLifecycle: registry is nil, returning empty")
-		return &InspectionResult{}
+		return emptyResult()
 	}
 
 	agents := m.registry.ListAgents()
 	if len(agents) == 0 {
 		m.log.Info().Msg("CollectLifecycle: no agents registered, returning empty")
-		return &InspectionResult{}
+		return emptyResult()
 	}
 
 	m.log.Info().Int("agent_count", len(agents)).Msg("CollectLifecycle: starting collection")
@@ -133,7 +140,7 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 		select {
 		case <-ctx.Done():
 			m.log.Info().Msg("CollectLifecycle: context canceled during request phase")
-			return &InspectionResult{}
+			return emptyResult()
 		default:
 		}
 		if m.grpcService == nil {
@@ -197,6 +204,7 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 
 func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *InspectionResult {
 	result := &InspectionResult{
+		Groups:            make([]*fodcv1.GroupLifecycleInfo, 0),
 		LifecycleStatuses: m.aggregateLifecycle(allData),
 	}
 	for _, ad := range allData {
@@ -210,7 +218,7 @@ func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *Inspecti
 
 // aggregateLifecycle aggregates lifecycle statuses from multiple agents.
 func (m *Manager) aggregateLifecycle(allData []*agentLifecycleData) []*PodLifecycleStatus {
-	var allStatuses []*PodLifecycleStatus
+	allStatuses := make([]*PodLifecycleStatus, 0)
 	for _, ad := range allData {
 		if ad == nil || ad.Data == nil {
 			continue

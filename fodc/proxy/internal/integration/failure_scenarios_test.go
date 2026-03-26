@@ -140,6 +140,7 @@ func startAgentForFixture(f *failureFixture, podName string, role string) *agent
 		1*time.Second,
 		fr,
 		logger.GetLogger("test", fmt.Sprintf("agent-%s", podName)),
+		"",
 	)
 
 	Expect(client).NotTo(BeNil())
