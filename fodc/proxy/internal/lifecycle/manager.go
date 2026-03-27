@@ -203,17 +203,27 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 }
 
 func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *InspectionResult {
-	result := &InspectionResult{
-		Groups:            make([]*fodcv1.GroupLifecycleInfo, 0),
+	return &InspectionResult{
+		Groups:            m.mergeGroups(allData),
 		LifecycleStatuses: m.aggregateLifecycle(allData),
 	}
+}
+
+func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLifecycleInfo {
+	groupMap := make(map[string]*fodcv1.GroupLifecycleInfo)
 	for _, ad := range allData {
-		if ad != nil && ad.Data != nil && len(ad.Data.Groups) > 0 {
-			result.Groups = ad.Data.Groups
-			break
+		if ad == nil || ad.Data == nil {
+			continue
+		}
+		for _, g := range ad.Data.Groups {
+			groupMap[g.Name] = g
 		}
 	}
-	return result
+	groups := make([]*fodcv1.GroupLifecycleInfo, 0, len(groupMap))
+	for _, g := range groupMap {
+		groups = append(groups, g)
+	}
+	return groups
 }
 
 // aggregateLifecycle aggregates lifecycle statuses from multiple agents.
