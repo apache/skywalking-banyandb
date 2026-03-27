@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -79,9 +80,16 @@ func (tm *tagMetadata) unmarshal(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal tagMetadata.min: %w", err)
 	}
+	tm.min = bytes.Clone(tm.min)
+	if len(tm.min) > 0 {
+		tm.min = bytes.Clone(tm.min)
+	}
 	src, tm.max, err = encoding.DecodeBytes(src)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal tagMetadata.max: %w", err)
+	}
+	if len(tm.max) > 0 {
+		tm.max = bytes.Clone(tm.max)
 	}
 	src = tm.filterBlock.unmarshal(src)
 	return src, nil
