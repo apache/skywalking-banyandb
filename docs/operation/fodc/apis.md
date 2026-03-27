@@ -225,7 +225,7 @@ The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
 | `--reconnect-interval` | `5s` | Backoff between reconnection attempts to the proxy. |
 | `--cluster-state-ports` | _empty_ | gRPC ports for BanyanDB cluster state polling; enables topology collection. |
 | `--cluster-state-poll-interval` | `30s` | Interval for polling cluster state from BanyanDB nodes. |
-| `--lifecycle-port` | `17912` | gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection. |
+| `--lifecycle-port` | `18912` | gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection. |
 | `--lifecycle-report-dir` | `/tmp/lifecycle-reports` | Directory where lifecycle sidecar writes report files. |
 | `--lifecycle-cache-ttl` | `10m` | TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache. |
 

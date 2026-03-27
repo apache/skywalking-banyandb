@@ -115,7 +115,7 @@ func init() {
 		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
 		"Interval at which to poll cluster state from the BanyanDB nodes")
-	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 17912,
+	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 18912,
 		"gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection")
 	rootCmd.Flags().StringVar(&lifecycleReportDir, "lifecycle-report-dir", lifecycle.DefaultReportDir,
 		"Directory where lifecycle sidecar writes report files")
