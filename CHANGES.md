@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.11.0
+
+### Features
+
+- Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
+
 ## 0.10.0
 
 ### Features
