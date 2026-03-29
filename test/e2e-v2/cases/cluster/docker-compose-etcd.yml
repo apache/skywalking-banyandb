@@ -35,7 +35,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --etcd-endpoints=http://etcd:2379 --schema-registry-mode=etcd --node-discovery-mode=etcd --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: liaison --etcd-endpoints=http://etcd:2379 --schema-registry-mode=etcd --node-discovery-mode=etcd
     networks:
       - e2e
 

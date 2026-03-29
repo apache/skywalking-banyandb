@@ -36,10 +36,6 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - standalone
-            - --enable-ingestion-access-log
-            - --enable-query-access-log
-            - --access-log-root-path
-            - /tmp
           ports:
             - name: grpc
               containerPort: 17912

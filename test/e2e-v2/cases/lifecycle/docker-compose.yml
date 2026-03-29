@@ -56,7 +56,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:

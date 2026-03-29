@@ -82,7 +82,6 @@ cleanup:
           - /tmp/measure/
           - /tmp/property/
           - /tmp/schema-property/
-          - /tmp/accesslog/
       - service: data-warm1
         paths:
           - /tmp/trace/
@@ -90,7 +89,6 @@ cleanup:
           - /tmp/measure/
           - /tmp/property/
           - /tmp/schema-property/
-          - /tmp/accesslog/
       - service: data-cold1
         paths:
           - /tmp/trace/
@@ -98,4 +96,3 @@ cleanup:
           - /tmp/measure/
           - /tmp/property/
           - /tmp/schema-property/
-          - /tmp/accesslog/
