@@ -52,6 +52,14 @@ setup:
     - name: Wait for BanyanDB
       command: kubectl rollout status deployment/banyandb -n istio-system --timeout=120s
     - name: Install SkyWalking
+      # To enable BanyanDB access logs for debugging, add the following --set flags to the helm install command:
+      #   --set "banyandb.standalone.env[0].name=BYDB_ENABLE_INGESTION_ACCESS_LOG"
+      #   --set "banyandb.standalone.env[0].value=\"true\""
+      #   --set "banyandb.standalone.env[1].name=BYDB_ENABLE_QUERY_ACCESS_LOG"
+      #   --set "banyandb.standalone.env[1].value=\"true\""
+      #   --set "banyandb.standalone.env[2].name=BYDB_ACCESS_LOG_ROOT_PATH"
+      #   --set "banyandb.standalone.env[2].value=/tmp"
+      # Note: access logs use Go channels with internal mutex locks, which adds contention to the request path.
       command: |
         rm -rf skywalking-helm
         helm pull oci://ghcr.io/apache/skywalking-helm/skywalking-helm \
