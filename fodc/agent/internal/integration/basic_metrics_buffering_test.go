@@ -273,9 +273,6 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 		}
 
 		// Verify metrics were updated across multiple cycles.
-		// Metrics that already existed in the initial poll should have one value per timestamp,
-		// while metrics introduced later may legitimately have fewer samples than the datasource's
-		// total timestamp count.
 		metricsMap := ds.GetMetrics()
 		var processCPUMetricKey string
 		for metricKey, metricBuffer := range metricsMap {
