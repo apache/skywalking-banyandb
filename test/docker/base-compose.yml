@@ -48,7 +48,7 @@ services:
       - 2121
       - 6060
       - 17932
-    command: data --etcd-endpoints=http://etcd:2379 --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: data --etcd-endpoints=http://etcd:2379
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://127.0.0.1:17913"]
       interval: 5s

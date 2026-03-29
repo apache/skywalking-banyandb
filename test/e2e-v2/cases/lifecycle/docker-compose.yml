@@ -26,7 +26,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd
     volumes:
       - ./data-generator/tmp/metadata:/tmp/measure/data/metadata
     networks:
@@ -37,11 +37,11 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot2
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd
     volumes:
-      - ./data-generator/tmp/measure:/tmp/measure
-      - ./data-generator/tmp/stream:/tmp/stream
-      - ./data-generator/tmp/property:/tmp/property
+      - ./data-generator/tmp/measure-data/measure:/tmp/measure
+      - ./data-generator/tmp/stream-data/stream:/tmp/stream
+      - ./data-generator/tmp/property/data:/tmp/property
     networks:
       - e2e
 
@@ -50,7 +50,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-cold1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=cold --schema-registry-mode=etcd --node-discovery-mode=etcd --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
+    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=cold --schema-registry-mode=etcd --node-discovery-mode=etcd
     volumes:
       - /tmp/measure/data-cold1:/tmp/measure
       - /tmp/stream/data-cold1:/tmp/stream
