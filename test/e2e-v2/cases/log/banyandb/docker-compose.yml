@@ -13,26 +13,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-debuggingtrace: null
-type: TIME_SERIES_VALUES
-results:
-  {{- contains .results }}
-  - metric:
-      labels:
-        {{- contains .metric.labels }}
-        - key: p
-          value: {{ notEmpty .value }}
-        {{- end}}
-    values:
-      {{- contains .values }}
-      - id: {{ notEmpty .id }}
-        value: {{ notEmpty .value }}
-        owner: null
-        traceid: null
-      - id: {{ notEmpty .id }}
-        value: null
-        owner: null
-        traceid: null
-      {{- end}}
-  {{- end}}
-error: null
+version: '2.1'
+
+services:
+  banyandb:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: banyandb
+    networks:
+      - e2e
+
+  oap:
+    extends:
+      file: ../log-base-compose.yml
+      service: oap
+    environment:
+      SW_STORAGE: banyandb
+    ports:
+      - 12800
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    networks:
+      - e2e
+
+  provider:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: provider
+    ports:
+      - 9090
+    depends_on:
+      oap:
+        condition: service_healthy
+    networks:
+      - e2e
+
+networks:
+  e2e:
