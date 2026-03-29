@@ -20,7 +20,7 @@ services:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
       service: banyandb
-    command: standalone
+    command: standalone --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
     networks:
       - e2e
 

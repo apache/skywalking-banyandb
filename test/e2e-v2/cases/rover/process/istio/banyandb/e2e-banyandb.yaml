@@ -101,3 +101,19 @@ verify:
           swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql instance list --service-name=productpage.default | yq e '.[0].name' - \
         )
       expected: expected/process.yml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - namespace: istio-system
+        label-selector: app=banyandb
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+          - /tmp/accesslog/

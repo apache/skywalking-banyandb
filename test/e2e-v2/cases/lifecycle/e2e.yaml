@@ -60,3 +60,37 @@ verify:
       expected: ./expected/topN-OP-service.yml
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(endpoint_resp_time,3,des)" --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ./expected/topN-OP-endpoint.yml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - service: data-hot1
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+          - /tmp/accesslog/
+      - service: data-hot2
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+          - /tmp/accesslog/
+      - service: data-cold1
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+          - /tmp/accesslog/
+      - service: liaison
+        paths:
+          - /tmp/accesslog/

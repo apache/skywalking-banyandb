@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
+- Collect BanyanDB data and access logs on e2e test failure for all Docker Compose and Kind tests.
 
 ## 0.10.0
 

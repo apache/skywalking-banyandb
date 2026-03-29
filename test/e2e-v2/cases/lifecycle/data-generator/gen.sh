@@ -32,12 +32,12 @@ CONTAINER_ID=$(docker compose -f "$COMPOSE_FILE" ps -q banyandb)
 echo "⌛ monitoring segment files..."
 found=false
 for i in {1..60}; do
-  if docker exec "$CONTAINER_ID" sh -c '[ -n "$(ls /tmp/measure-data/measure/data/metricsDay/seg* 2>/dev/null)" ]'; then
+  if docker exec "$CONTAINER_ID" sh -c '[ -n "$(ls /tmp/measure/data/metricsDay/seg* 2>/dev/null)" ]'; then
     echo "✅ found segment files"
     sleep 180
     # copy out data
     docker cp "$CONTAINER_ID":/tmp "$DIR/tmp"
-    docker cp "$CONTAINER_ID":/tmp/measure-data/measure/data/metadata "$DIR/tmp"
+    docker cp "$CONTAINER_ID":/tmp/measure/data/metadata "$DIR/tmp"
     found=true
     break
   else

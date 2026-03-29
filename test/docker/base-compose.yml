@@ -19,7 +19,7 @@ services:
       - 17912
       - 2121
       - 6060
-    command: standalone
+    command: standalone --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://banyandb:17913"]
       interval: 5s
@@ -34,7 +34,7 @@ services:
       - 17912
       - 2121
       - 6060
-    command: liaison --etcd-endpoints=http://etcd:2379
+    command: liaison --etcd-endpoints=http://etcd:2379 --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://liaison:17913"]
       interval: 5s
@@ -48,7 +48,7 @@ services:
       - 2121
       - 6060
       - 17932
-    command: data --etcd-endpoints=http://etcd:2379
+    command: data --etcd-endpoints=http://etcd:2379 --enable-ingestion-access-log --enable-query-access-log --access-log-root-path /tmp
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--addr=http://127.0.0.1:17913"]
       interval: 5s
