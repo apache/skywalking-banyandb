@@ -1,0 +1,58 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+traces:
+  - spans:
+    - span: trace_001_span_1
+      spanId: span_001_1
+    - span: trace_001_span_2
+      spanId: span_001_2
+    - span: trace_001_span_3
+      spanId: span_001_3
+    - span: trace_001_span_4
+      spanId: span_001_4
+    - span: trace_001_span_5
+      spanId: span_001_5
+    traceId: trace_001
+  - spans:
+    - span: trace_002_span_1
+      spanId: span_002_1
+    - span: trace_002_span_2
+      spanId: span_002_2
+    - span: trace_002_span_3
+      spanId: span_002_3
+    - span: trace_002_span_4
+      spanId: span_002_4
+    traceId: trace_002
+  - spans:
+    - span: trace_003_span_1
+      spanId: span_003_1
+    - span: trace_003_span_2
+      spanId: span_003_2
+    - span: trace_003_span_3
+      spanId: span_003_3
+    traceId: trace_003
+  - spans:
+    - span: trace_005_span_1
+      spanId: span_005_1
+    - span: trace_005_span_2
+      spanId: span_005_2
+    - span: trace_005_span_3
+      spanId: span_005_3
+    - span: trace_005_span_4
+      spanId: span_005_4
+    traceId: trace_005

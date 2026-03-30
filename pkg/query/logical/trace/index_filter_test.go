@@ -283,6 +283,73 @@ func TestTraceHavingFilterIntegration(t *testing.T) {
 	assert.False(t, shouldSkip, "should not skip when services are found")
 }
 
+// TestBuildFilterEntityTagNotInCollectedTagNames verifies that entity tags (e.g. serviceInstanceId)
+// are NOT included in collectedTagNames. Entity tags are handled by series routing and are not
+// stored as tag data in SIDX blocks. Including them shifts TagIdx values in conditionSchema,
+// causing wrong tag values to be looked up when filtering non-entity tags like traceState.
+func TestBuildFilterEntityTagNotInCollectedTagNames(t *testing.T) {
+	trace := &databasev1.Trace{
+		Metadata: &commonv1.Metadata{Name: "test", Group: "default"},
+		Tags: []*databasev1.TraceTagSpec{
+			{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "timestamp", Type: databasev1.TagType_TAG_TYPE_TIMESTAMP},
+			{Name: "service_instance_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "state", Type: databasev1.TagType_TAG_TYPE_INT},
+		},
+		TraceIdTagName:   "trace_id",
+		SpanIdTagName:    "span_id",
+		TimestampTagName: "timestamp",
+	}
+	traceSchema, schemaErr := BuildSchema(trace, nil)
+	assert.NoError(t, schemaErr)
+
+	// service_instance_id is an entity tag
+	entityDict := map[string]int{
+		"service_id":          0,
+		"service_instance_id": 1,
+	}
+	entity := []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}},
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}},
+	}
+
+	// Condition: service_instance_id = "X" AND state = 0
+	// service_instance_id is an entity tag: must NOT appear in collectedTagNames.
+	// state is a regular tag: must appear in collectedTagNames.
+	criteria := &modelv1.Criteria{
+		Exp: &modelv1.Criteria_Le{
+			Le: &modelv1.LogicalExpression{
+				Op: modelv1.LogicalExpression_LOGICAL_OP_AND,
+				Left: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "service_instance_id",
+							Op:    modelv1.Condition_BINARY_OP_EQ,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "instance-1"}}},
+						},
+					},
+				},
+				Right: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "state",
+							Op:    modelv1.Condition_BINARY_OP_EQ,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 0}}},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _, collectedTagNames, _, _, _, buildErr := buildTraceFilter( //nolint:dogsled
+		criteria, traceSchema, entityDict, entity, "trace_id", "span_id", "")
+	assert.NoError(t, buildErr)
+	assert.Equal(t, []string{"state"}, collectedTagNames,
+		"entity tag service_instance_id must not be in collectedTagNames; only non-entity tag state should appear")
+}
+
 // TestBuildFilterDeduplicatesCollectedTagNames verifies that buildFilter deduplicates tag names
 // when criteria has multiple conditions on the same tag (e.g. duration > 100 AND duration < 200).
 func TestBuildFilterDeduplicatesCollectedTagNames(t *testing.T) {
