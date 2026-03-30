@@ -13,26 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-debuggingtrace: null
-type: TIME_SERIES_VALUES
-results:
-  {{- contains .results }}
-  - metric:
-      labels:
-        {{- contains .metric.labels }}
-        - key: p
-          value: {{ notEmpty .value }}
-        {{- end}}
-    values:
-      {{- contains .values }}
-      - id: {{ notEmpty .id }}
-        value: {{ notEmpty .value }}
-        owner: null
-        traceid: null
-      - id: {{ notEmpty .id }}
-        value: null
-        owner: null
-        traceid: null
-      {{- end}}
-  {{- end}}
-error: null
+nodes:
+  - name: data-hot1
+    grpc_address: data-hot1:17912
+  - name: data-warm1
+    grpc_address: data-warm1:17912
+  - name: data-cold1
+    grpc_address: data-cold1:17912
+  - name: liaison
+    grpc_address: liaison:17912

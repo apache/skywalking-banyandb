@@ -13,26 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-debuggingtrace: null
-type: TIME_SERIES_VALUES
-results:
-  {{- contains .results }}
-  - metric:
-      labels:
-        {{- contains .metric.labels }}
-        - key: p
-          value: {{ notEmpty .value }}
-        {{- end}}
-    values:
-      {{- contains .values }}
-      - id: {{ notEmpty .id }}
-        value: {{ notEmpty .value }}
-        owner: null
-        traceid: null
-      - id: {{ notEmpty .id }}
-        value: null
-        owner: null
-        traceid: null
-      {{- end}}
-  {{- end}}
-error: null
+{{- contains . }}
+- id: {{ b64enc "e2e-service-provider" }}.1
+  name: e2e-service-provider
+  group: ""
+  shortname: e2e-service-provider
+  normal: true
+  layers:
+    - GENERAL
+{{- end }}
