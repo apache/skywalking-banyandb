@@ -14,6 +14,7 @@ Release Notes.
 ### Bug Fixes
 
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
+- Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
 
 ## 0.10.0
 
