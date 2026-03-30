@@ -56,25 +56,25 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: BanyanDB Etcd
+          - name: Storage (etcd)
             config: test/e2e-v2/cases/storage/banyandb/e2e-etcd.yaml
-          - name: BanyanDB Property
+          - name: Storage (native-property/dns)
             config: test/e2e-v2/cases/storage/banyandb/e2e-property.yaml
-          - name: Trace Profiling BanyanDB Etcd
+          - name: Trace Profiling (etcd)
             config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-etcd.yaml
-          - name: Trace Profiling BanyanDB Property
+          - name: Trace Profiling (native-property/dns)
             config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-property.yaml
-          - name: Event BanyanDB Etcd
+          - name: Event (etcd)
             config: test/e2e-v2/cases/event/banyandb/e2e-etcd.yaml
-          - name: Event BanyanDB Property
+          - name: Event (native-property/dns)
             config: test/e2e-v2/cases/event/banyandb/e2e-property.yaml
-          - name: Log BanyanDB
+          - name: Log
             config: test/e2e-v2/cases/log/banyandb/e2e.yaml
-          - name: BanyanDB Cluster Mode Etcd
+          - name: Cluster (etcd)
             config: test/e2e-v2/cases/cluster/e2e-etcd.yaml
-          - name: BanyanDB Cluster Mode Property
+          - name: Cluster (native-property/dns)
             config: test/e2e-v2/cases/cluster/e2e-property.yaml
-          - name: Rover Istio BanyanDB
+          - name: Rover Istio
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             env: |
               ISTIO_VERSION=1.28.0
