@@ -26,6 +26,8 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -35,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pkgquery "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 )
 
 const defaultTopNQueryTimeout = 10 * time.Second
@@ -44,6 +47,31 @@ type topNQueryProcessor struct {
 	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener
+}
+
+func (t *topNQueryProcessor) getTopNFieldType(ctx context.Context, group, topNName string) databasev1.FieldType {
+	topNAgg, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, &commonv1.Metadata{
+		Group: group,
+		Name:  topNName,
+	})
+	if err != nil {
+		t.log.Warn().Err(err).Str("group", group).Str("topN", topNName).Msg("failed to get topN aggregation")
+		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+	}
+	sourceMeasure := topNAgg.GetSourceMeasure()
+	measureSchema, err := t.metaService.MeasureRegistry().GetMeasure(ctx, sourceMeasure)
+	if err != nil {
+		t.log.Warn().Err(err).Str("measure", sourceMeasure.GetName()).Msg("failed to get source measure")
+		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+	}
+	fieldName := topNAgg.GetFieldName()
+	for _, field := range measureSchema.GetFields() {
+		if field.GetName() == fieldName {
+			return field.GetFieldType()
+		}
+	}
+	t.log.Warn().Str("field", fieldName).Str("measure", sourceMeasure.GetName()).Msg("field not found in measure")
+	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
 }
 
 func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -103,6 +131,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
+	originalTopN := request.GetTopN()
+	// Set topN to 0 to disable truncation on data nodes for all aggregation functions.
+	// This ensures coordinator-side aggregation can see all relevant candidates.
+	request.TopN = 0
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
@@ -111,51 +143,24 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	var allErr error
-	aggregator := measure.CreateTopNPostProcessor(request.GetTopN(),
-		agg, request.GetFieldValueSort())
-	var tags []string
-	var responseCount int
-	for _, f := range ff {
-		if m, getErr := f.Get(); getErr != nil {
-			allErr = multierr.Append(allErr, getErr)
-		} else {
-			d := m.Data()
-			if d == nil {
-				continue
-			}
-			responseCount++
-			topNResp := d.(*measurev1.TopNResponse)
-			for _, l := range topNResp.Lists {
-				for _, tn := range l.Items {
-					if tags == nil {
-						tags = make([]string, 0, len(tn.Entity))
-						for _, e := range tn.Entity {
-							tags = append(tags, e.Key)
-						}
-					}
-					entityValues := make(pbv1.EntityValues, 0, len(tn.Entity))
-					for _, e := range tn.Entity {
-						entityValues = append(entityValues, e.Value)
-					}
-					aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
-				}
-			}
-		}
+	fieldType := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
+	var lists []*measurev1.TopNList
+	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+		lists, allErr = processTopNResponse(ff, originalTopN, agg, request.GetFieldValueSort(),
+			measure.CreateTopNPostProcessorFloat, measure.FieldValueToFloat)
+	} else {
+		lists, allErr = processTopNResponse(ff, originalTopN, agg, request.GetFieldValueSort(),
+			measure.CreateTopNPostProcessorInt, measure.FieldValueToInt)
 	}
 	if span != nil {
-		span.Tagf("response_count", "%d", responseCount)
+		span.Tagf("response_count", "%d", len(ff))
 	}
 	if allErr != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
 		return
 	}
-	if tags == nil {
+	if len(lists) == 0 {
 		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
-		return
-	}
-	lists, err := aggregator.Val(tags)
-	if err != nil {
-		resp = bus.NewMessage(now, common.NewError("failed to post-aggregate %s: %v", request.GetName(), err))
 		return
 	}
 
@@ -181,6 +186,9 @@ type comparableTopNItem struct {
 }
 
 func (c *comparableTopNItem) SortedField() []byte {
+	if c.Value.GetFloat() != nil {
+		return convert.Float64ToOrderedBytes(c.Value.GetFloat().GetValue())
+	}
 	return convert.Int64ToBytes(c.Value.GetInt().Value)
 }
 
@@ -205,6 +213,53 @@ func (s *sortedTopNList) Next() bool {
 
 func (s *sortedTopNList) Val() *comparableTopNItem {
 	return &comparableTopNItem{s.Items[s.index-1]}
+}
+
+func processTopNResponse[N aggregation.Number](
+	ff []bus.Future,
+	topN int32,
+	agg modelv1.AggregationFunction,
+	sort modelv1.Sort,
+	createAggregator func(int32, modelv1.AggregationFunction, modelv1.Sort) measure.PostProcessor[N],
+	convertValue func(*modelv1.FieldValue) N,
+) ([]*measurev1.TopNList, error) {
+	aggregator := createAggregator(topN, agg, sort)
+	var tags []string
+	var allErr error
+	for _, f := range ff {
+		if m, getErr := f.Get(); getErr != nil {
+			allErr = multierr.Append(allErr, getErr)
+		} else {
+			d := m.Data()
+			if d == nil {
+				continue
+			}
+			topNResp := d.(*measurev1.TopNResponse)
+			for _, l := range topNResp.Lists {
+				for _, tn := range l.Items {
+					if tags == nil {
+						tags = make([]string, 0, len(tn.Entity))
+						for _, e := range tn.Entity {
+							tags = append(tags, e.Key)
+						}
+					}
+					entityValues := make(pbv1.EntityValues, 0, len(tn.Entity))
+					for _, e := range tn.Entity {
+						entityValues = append(entityValues, e.Value)
+					}
+					aggregator.Put(entityValues, convertValue(tn.Value), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
+				}
+			}
+		}
+	}
+	if tags == nil {
+		return nil, allErr
+	}
+	lists, err := aggregator.Val(tags)
+	if err != nil {
+		return nil, multierr.Append(allErr, err)
+	}
+	return lists, allErr
 }
 
 func (t *topNQueryProcessor) validateRequest(request *measurev1.TopNRequest) error {

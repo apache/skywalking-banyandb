@@ -55,7 +55,7 @@ func TestFlow_TopN_Aggregator(t *testing.T) {
 					keyExtractor: func(record flow.StreamRecord) uint64 {
 						return uint64(record.Data().(flow.Data)[0].(int))
 					},
-					sortKeyExtractor: func(record flow.StreamRecord) int64 {
+					sortKeyExtractor: func(record flow.StreamRecord) interface{} {
 						return int64(record.Data().(flow.Data)[2].(int))
 					},
 					groupKeyExtractor: func(record flow.StreamRecord) string {

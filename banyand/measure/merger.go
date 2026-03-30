@@ -391,8 +391,9 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		left, right = right, left
 	}
 
-	var topNProcessor PostProcessor
 	var isTopN bool
+	var topNLimit int32
+	var topNSort modelv1.Sort
 
 	if isTopNBlock(left) {
 		sort, limit, err := parseTopNMeta(left)
@@ -401,7 +402,8 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 			isTopN = false
 		} else {
 			isTopN = true
-			topNProcessor = CreateTopNPostProcessor(limit, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+			topNLimit = limit
+			topNSort = sort
 		}
 	}
 
@@ -414,7 +416,7 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		if i > left.idx && left.timestamps[i-1] == ts2 {
 			if isTopN {
 				target.append(left, i-1)
-				target.mergeAndAppendTopN(left, i-1, right, right.idx, topNProcessor)
+				target.mergeAndAppendTopN(left, i-1, right, right.idx, topNLimit, topNSort)
 			} else {
 				if left.versions[i-1] >= right.versions[right.idx] {
 					target.append(left, i)

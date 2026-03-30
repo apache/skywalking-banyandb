@@ -26,6 +26,7 @@ import (
 	"github.com/emirpasic/gods/utils"
 	"github.com/pkg/errors"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -61,12 +62,10 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 		if topNAggrFunc.sortKeyExtractor == nil {
 			s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
 		}
-		if topNAggrFunc.sort == ASC {
-			topNAggrFunc.comparator = utils.Int64Comparator
-		} else { // DESC
-			topNAggrFunc.comparator = func(a, b interface{}) int {
-				return utils.Int64Comparator(b, a)
-			}
+		if topNAggrFunc.fieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
+			s.f.drainErr(errors.New("fieldType must be specified"))
+		} else {
+			topNAggrFunc.setComparatorFromFieldType()
 		}
 		topNAggrFunc.aggregatorGroup = make(map[string]*topNAggregator)
 		return topNAggrFunc
@@ -77,18 +76,19 @@ func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
 type topNAggregatorGroup struct {
 	aggregatorGroup   map[string]*topNAggregator
 	keyExtractor      func(flow.StreamRecord) uint64
-	sortKeyExtractor  func(flow.StreamRecord) int64
+	sortKeyExtractor  func(flow.StreamRecord) interface{}
 	groupKeyExtractor func(flow.StreamRecord) string
 	comparator        utils.Comparator
 	l                 *logger.Logger
 	cacheSize         int
 	sort              TopNSort
+	fieldType         databasev1.FieldType
 }
 
 type topNAggregator struct {
 	*topNAggregatorGroup
 	treeMap *treemap.Map
-	dict    map[uint64]int64
+	dict    map[uint64]interface{}
 	dirty   bool
 }
 
@@ -96,7 +96,7 @@ type topNAggregator struct {
 type TopNOption func(aggregator *topNAggregatorGroup)
 
 // WithSortKeyExtractor sets a closure to extract the sorting key.
-func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
+func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) interface{}) TopNOption {
 	return func(aggregator *topNAggregatorGroup) {
 		aggregator.sortKeyExtractor = sortKeyExtractor
 	}
@@ -120,6 +120,13 @@ func WithGroupKeyExtractor(groupKeyExtractor func(flow.StreamRecord) string) Top
 func OrderBy(sort TopNSort) TopNOption {
 	return func(aggregator *topNAggregatorGroup) {
 		aggregator.sort = sort
+	}
+}
+
+// WithFieldType sets the field type for sorting.
+func WithFieldType(fieldType databasev1.FieldType) TopNOption {
+	return func(aggregator *topNAggregatorGroup) {
+		aggregator.fieldType = fieldType
 	}
 }
 
@@ -194,9 +201,37 @@ func (t *topNAggregatorGroup) getOrCreateGroup(group string) *topNAggregator {
 	t.aggregatorGroup[group] = &topNAggregator{
 		topNAggregatorGroup: t,
 		treeMap:             treemap.NewWith(t.comparator),
-		dict:                make(map[uint64]int64),
+		dict:                make(map[uint64]interface{}),
 	}
 	return t.aggregatorGroup[group]
+}
+
+func (t *topNAggregatorGroup) setComparatorFromFieldType() {
+	var baseComparator utils.Comparator
+	switch t.fieldType {
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		baseComparator = utils.Int64Comparator
+	case databasev1.FieldType_FIELD_TYPE_FLOAT:
+		baseComparator = utils.Float64Comparator
+	default:
+		// Unsupported field type: log and fall back to a no-op comparator instead of panicking.
+		if t.l != nil {
+			t.l.Error().
+				Interface("fieldType", t.fieldType).
+				Msg("unsupported field type for TopN; defaulting to no-op comparator")
+		}
+		// Treat all values as equal to avoid type assumptions and panics.
+		baseComparator = func(_, _ interface{}) int {
+			return 0
+		}
+	}
+	if t.sort == ASC {
+		t.comparator = baseComparator
+	} else {
+		t.comparator = func(a, b interface{}) int {
+			return baseComparator(b, a)
+		}
+	}
 }
 
 func (t *topNAggregator) doCleanUp() {
@@ -214,7 +249,7 @@ func (t *topNAggregator) doCleanUp() {
 	}
 }
 
-func (t *topNAggregator) put(key uint64, sortKey int64, data flow.StreamRecord) {
+func (t *topNAggregator) put(key uint64, sortKey interface{}, data flow.StreamRecord) {
 	t.dirty = true
 	if existingList, ok := t.treeMap.Get(sortKey); ok {
 		existingList = append(existingList.([]interface{}), data)
@@ -225,7 +260,7 @@ func (t *topNAggregator) put(key uint64, sortKey int64, data flow.StreamRecord) 
 	t.dict[key] = sortKey
 }
 
-func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
+func (t *topNAggregator) checkSortKeyInBufferRange(sortKey interface{}) bool {
 	// get the "maximum" item
 	// - if ASC, the maximum item
 	// - else DESC, the minimum item
@@ -234,7 +269,7 @@ func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
 		// return true if the buffer is empty.
 		return true
 	}
-	if t.comparator(sortKey, worstKey.(int64)) < 0 {
+	if t.comparator(sortKey, worstKey) < 0 {
 		return true
 	}
 	return t.size() < t.cacheSize
