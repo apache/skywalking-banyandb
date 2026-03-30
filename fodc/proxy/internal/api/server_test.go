@@ -34,6 +34,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -88,7 +89,7 @@ func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *mockCluster
 	mockRequester := &mockClusterDataRequester{}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
 	mockRequester.clusterMgr = clusterMgr
-	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
 	return server, testRegistry, mockRequester
 }
 
@@ -164,7 +165,7 @@ func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)
@@ -179,7 +180,7 @@ func TestHandleClusterTopology_RequestClusterDataError(t *testing.T) {
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 	mockRequester := &mockClusterDataRequester{requestErr: assert.AnError}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
-	server := NewServer(aggregator, clusterMgr, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
 		PodName:        "test-pod",
@@ -201,7 +202,7 @@ func TestNewServer(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	server := NewServer(aggregator, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, aggregator, server.metricsAggregator)
@@ -675,6 +676,25 @@ func TestHandleMetricsWindows_WithFilters(t *testing.T) {
 	require.NoError(t, decodeErr)
 }
 
+// mockLifecycleDataRequester is a mock implementation of lifecycle.RequestSender for testing.
+type mockLifecycleDataRequester struct {
+	requestErr   error
+	lifecycleMgr *lifecycle.Manager
+	dataByAgent  map[string]*fodcv1.LifecycleData
+	podByAgent   map[string]string
+}
+
+func (m *mockLifecycleDataRequester) RequestLifecycleData(agentID string) error {
+	if m.requestErr != nil {
+		return m.requestErr
+	}
+	if data, exists := m.dataByAgent[agentID]; exists && m.lifecycleMgr != nil {
+		podName := m.podByAgent[agentID]
+		go m.lifecycleMgr.UpdateLifecycle(agentID, podName, data)
+	}
+	return nil
+}
+
 func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
 	server := newTestServerOnly(t)
 
@@ -692,4 +712,72 @@ func TestFormatPrometheusText_SortedMetrics(t *testing.T) {
 	zIndex := strings.Index(result, "z_metric")
 
 	assert.True(t, aIndex < mIndex && mIndex < zIndex, "Metrics should be sorted alphabetically")
+}
+
+func TestHandleClusterLifecycle_Success(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	ctx := context.Background()
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod-1",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(ctx, identity)
+	require.NoError(t, registerErr)
+
+	mockLifecycleRequester.dataByAgent[agentID] = &fodcv1.LifecycleData{
+		Reports: []*fodcv1.LifecycleReport{
+			{Filename: "2026-03-26.json", ReportJson: `{"status":"ok"}`},
+		},
+		Groups: []*fodcv1.GroupLifecycleInfo{
+			{Name: "group1", Catalog: "measure"},
+		},
+	}
+	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, "application/json", resp.Header().Get("Content-Type"))
+
+	var result lifecycle.InspectionResult
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	require.NoError(t, decodeErr)
+	assert.Equal(t, 1, len(result.Groups))
+	assert.Equal(t, "group1", result.Groups[0].Name)
+	assert.Equal(t, 1, len(result.LifecycleStatuses))
+	assert.Equal(t, "test-pod-1", result.LifecycleStatuses[0].PodName)
+	assert.Equal(t, 1, len(result.LifecycleStatuses[0].Reports))
+	assert.Equal(t, "2026-03-26.json", result.LifecycleStatuses[0].Reports[0].Filename)
+}
+
+func TestHandleClusterLifecycle_NoLifecycleManager(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
 }

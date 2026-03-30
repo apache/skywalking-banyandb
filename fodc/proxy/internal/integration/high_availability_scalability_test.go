@@ -75,7 +75,7 @@ var _ = Describe("High Availability and Scalability", func() {
 
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 1000)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 
 		grpcListener, listenErr := net.Listen("tcp", "localhost:0")
@@ -91,7 +91,7 @@ var _ = Describe("High Availability and Scalability", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, nil, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, nil, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 30*time.Second, 30*time.Second)).To(Succeed())
 
 		Eventually(func() error {
@@ -125,6 +125,7 @@ var _ = Describe("High Availability and Scalability", func() {
 				1*time.Second,
 				fr,
 				logger.GetLogger("test", "agent"),
+				"",
 			)
 
 			Expect(client).NotTo(BeNil())
@@ -277,6 +278,7 @@ var _ = Describe("High Availability and Scalability", func() {
 				1*time.Second,
 				agent.flightRecorder,
 				logger.GetLogger("test", "agent"),
+				"",
 			)
 			Expect(newClient).NotTo(BeNil())
 

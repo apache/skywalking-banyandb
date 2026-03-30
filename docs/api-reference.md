@@ -306,6 +306,11 @@
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
     - [Call](#banyandb-fodc-v1-Call)
+    - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
+    - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
+    - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
+    - [LifecycleData](#banyandb-fodc-v1-LifecycleData)
+    - [LifecycleReport](#banyandb-fodc-v1-LifecycleReport)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
@@ -313,11 +318,14 @@
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
     - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
     - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
+    - [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest)
+    - [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
   
     - [FODCService](#banyandb-fodc-v1-FODCService)
+    - [GroupLifecycleService](#banyandb-fodc-v1-GroupLifecycleService)
   
 - [banyandb/measure/v1/write.proto](#banyandb_measure_v1_write-proto)
     - [DataPointSpec](#banyandb-measure-v1-DataPointSpec)
@@ -4752,6 +4760,81 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-GroupLifecycleInfo"></a>
+
+### GroupLifecycleInfo
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| catalog | [string](#string) |  |  |
+| resource_opts | [banyandb.common.v1.ResourceOpts](#banyandb-common-v1-ResourceOpts) |  |  |
+| data_info | [banyandb.database.v1.DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-InspectAllRequest"></a>
+
+### InspectAllRequest
+
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-InspectAllResponse"></a>
+
+### InspectAllResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-LifecycleData"></a>
+
+### LifecycleData
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reports | [LifecycleReport](#banyandb-fodc-v1-LifecycleReport) | repeated |  |
+| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-LifecycleReport"></a>
+
+### LifecycleReport
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| filename | [string](#string) |  |  |
+| report_json | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -4870,6 +4953,38 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamLifecycleRequest"></a>
+
+### StreamLifecycleRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| pod_name | [string](#string) |  |  |
+| lifecycle_data | [LifecycleData](#banyandb-fodc-v1-LifecycleData) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamLifecycleResponse"></a>
+
+### StreamLifecycleResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_lifecycle | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamMetricsRequest"></a>
 
 ### StreamMetricsRequest
@@ -4934,6 +5049,18 @@ Phase represents the current phase of the deletion task.
 | RegisterAgent | [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest) stream | [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse) stream | Bi-directional stream for agent registration and heartbeat |
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
 | StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
+| StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
+
+
+<a name="banyandb-fodc-v1-GroupLifecycleService"></a>
+
+### GroupLifecycleService
+GroupLifecycleService provides group lifecycle information from liaison nodes.
+Registered on the internal gRPC server so FODC agent can access it.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| InspectAll | [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest) | [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse) | InspectAll lists all groups and returns their full lifecycle info in one call. |
 
  
 
