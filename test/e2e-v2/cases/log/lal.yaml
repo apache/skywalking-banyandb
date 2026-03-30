@@ -13,26 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-debuggingtrace: null
-type: TIME_SERIES_VALUES
-results:
-  {{- contains .results }}
-  - metric:
-      labels:
-        {{- contains .metric.labels }}
-        - key: p
-          value: {{ notEmpty .value }}
-        {{- end}}
-    values:
-      {{- contains .values }}
-      - id: {{ notEmpty .id }}
-        value: {{ notEmpty .value }}
-        owner: null
-        traceid: null
-      - id: {{ notEmpty .id }}
-        value: null
-        owner: null
-        traceid: null
-      {{- end}}
-  {{- end}}
-error: null
+rules:
+  - name: example
+    layer: GENERAL
+    dsl: |
+      filter {
+        text {
+          abortOnFailure false // for test purpose, we want to persist all logs
+          regexp $/(?s)(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}) \[TID:(?<tid>.+?)] \[(?<thread>.+?)] (?<level>\w{4,}) (?<logger>.{1,36}) (?<msg>.+)/$
+        }
+        extractor {
+          metrics {
+            timestamp log.timestamp as Long
+            labels level: parsed.level, service: log.service, instance: log.serviceInstance
+            name "log_count"
+            value 1
+          }
+        }
+        sink {
+        }
+      }
