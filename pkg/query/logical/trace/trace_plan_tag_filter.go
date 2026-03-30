@@ -96,6 +96,11 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 		}
 	}
 
+	// Add entity tags to projection for row-level filtering
+	// Entity tags are not in SIDX blocks (handled by series routing) but need to be
+	// projected so they can be validated at the row level during span filtering
+	ctx.projectionTags.Names = append(ctx.projectionTags.Names, entityList...)
+
 	// Add tag names from filter conditions to projection
 	var conditionSchema logical.Schema
 	if len(conditionTagNames) > 0 {
