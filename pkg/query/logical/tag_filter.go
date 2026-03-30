@@ -102,7 +102,9 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := entityDict[cond.Name]; ok && !hasGlobalIndex {
+		if _, ok := entityDict[cond.Name]; ok {
+			// Entity tags are handled at the series routing level and are not stored in tag data.
+			// They should not be included in row-level filters.
 			return DummyFilter, nil
 		}
 		for _, skippedTagName := range skippedTagNames {
