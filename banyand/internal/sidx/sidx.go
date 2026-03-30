@@ -409,8 +409,13 @@ func (b *blockCursorBuilder) collectTagsForFilter(
 	// because it uses schema tag refs to locate tag values by index (TagFamily.Tags[idx]).
 	// Iterating a Go map is randomized, which makes results flaky.
 	if len(projections) > 0 {
+		seenTagNames := make(map[string]struct{}, len(b.block.tags))
 		for _, proj := range projections {
 			for _, tagName := range proj.Names {
+				if _, exists := seenTagNames[tagName]; exists {
+					continue
+				}
+
 				tagData, ok := b.block.tags[tagName]
 				if !ok || index >= len(tagData.values) {
 					continue
@@ -425,6 +430,7 @@ func (b *blockCursorBuilder) collectTagsForFilter(
 					Key:   tagName,
 					Value: tagValue,
 				})
+				seenTagNames[tagName] = struct{}{}
 			}
 		}
 		return buf

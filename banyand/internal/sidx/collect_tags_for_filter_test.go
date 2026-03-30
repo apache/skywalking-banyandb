@@ -29,7 +29,7 @@ import (
 )
 
 // testStrDecoder decodes stored string bytes into model TagValue (same shape as query path).
-func testStrDecoder(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
+func testStrDecoder(valueType pbv1.ValueType, value []byte, _ [][]byte) *modelv1.TagValue {
 	if valueType != pbv1.ValueTypeStr {
 		return nil
 	}
@@ -92,6 +92,27 @@ func TestCollectTagsForFilter_DeterministicOrder(t *testing.T) {
 		b := &blockCursorBuilder{block: blk}
 		projections := []model.TagProjection{
 			{Family: "span", Names: []string{"zebra", "alpha", "middle"}},
+		}
+		var buf []*modelv1.Tag
+		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, projections)
+		require.Len(t, buf, 3)
+		assert.Equal(t, []string{"zebra", "alpha", "middle"}, tagKeysFromSlice(buf))
+	})
+
+	t.Run("duplicate tag names across projection families are deduplicated", func(t *testing.T) {
+		blk := &block{
+			userKeys: []int64{1},
+			data:     [][]byte{{}},
+			tags:     make(map[string]*tagData),
+		}
+		blk.tags["zebra"] = newStrTagData("z")
+		blk.tags["middle"] = newStrTagData("m")
+		blk.tags["alpha"] = newStrTagData("a")
+
+		b := &blockCursorBuilder{block: blk}
+		projections := []model.TagProjection{
+			{Family: "span", Names: []string{"zebra", "alpha"}},
+			{Family: "service", Names: []string{"alpha", "middle", "zebra"}},
 		}
 		var buf []*modelv1.Tag
 		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, projections)
