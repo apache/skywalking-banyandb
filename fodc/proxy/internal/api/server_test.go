@@ -690,7 +690,7 @@ func (m *mockLifecycleDataRequester) RequestLifecycleData(agentID string) error 
 	}
 	if data, exists := m.dataByAgent[agentID]; exists && m.lifecycleMgr != nil {
 		podName := m.podByAgent[agentID]
-		go m.lifecycleMgr.UpdateLifecycle(agentID, podName, data)
+		m.lifecycleMgr.UpdateLifecycle(agentID, podName, data)
 	}
 	return nil
 }
