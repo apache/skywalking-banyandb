@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 const (
@@ -366,7 +368,7 @@ func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Log
 			continue
 		}
 
-		tags = b.collectTagsForFilter(tags, decoder, i)
+		tags = b.collectTagsForFilter(tags, decoder, i, req.TagProjection)
 
 		matched, err := req.TagFilter.Match(tags)
 		if err != nil {
@@ -395,22 +397,60 @@ func (b *blockCursorBuilder) processWithoutFilter() {
 	}
 }
 
-func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue, index int) []*modelv1.Tag {
+func (b *blockCursorBuilder) collectTagsForFilter(
+	buf []*modelv1.Tag,
+	decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue,
+	index int,
+	projections []model.TagProjection,
+) []*modelv1.Tag {
 	buf = buf[:0]
 
-	for tagName, tagData := range b.block.tags {
+	// IMPORTANT: The logical tag filter matcher relies on stable tag ordering,
+	// because it uses schema tag refs to locate tag values by index (TagFamily.Tags[idx]).
+	// Iterating a Go map is randomized, which makes results flaky.
+	if len(projections) > 0 {
+		for _, proj := range projections {
+			for _, tagName := range proj.Names {
+				tagData, ok := b.block.tags[tagName]
+				if !ok || index >= len(tagData.values) {
+					continue
+				}
+
+				row := &tagData.values[index]
+				tagValue := decoder(tagData.valueType, row.value, row.valueArr)
+				if tagValue == nil {
+					continue
+				}
+				buf = append(buf, &modelv1.Tag{
+					Key:   tagName,
+					Value: tagValue,
+				})
+			}
+		}
+		return buf
+	}
+
+	// Fallback: stable order via sorting keys.
+	tagNames := make([]string, 0, len(b.block.tags))
+	for tagName := range b.block.tags {
+		tagNames = append(tagNames, tagName)
+	}
+	sort.Strings(tagNames)
+	for _, tagName := range tagNames {
+		tagData := b.block.tags[tagName]
 		if index >= len(tagData.values) {
 			continue
 		}
 
 		row := &tagData.values[index]
 		tagValue := decoder(tagData.valueType, row.value, row.valueArr)
-		if tagValue != nil {
-			buf = append(buf, &modelv1.Tag{
-				Key:   tagName,
-				Value: tagValue,
-			})
+		if tagValue == nil {
+			continue
 		}
+		buf = append(buf, &modelv1.Tag{
+			Key:   tagName,
+			Value: tagValue,
+		})
 	}
 	return buf
 }
