@@ -21,6 +21,7 @@ package grpc
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -52,6 +54,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
+	fslib "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
@@ -228,6 +231,9 @@ func (s *server) PreRun(ctx context.Context) error {
 		if s.accessLogRootPath, err = banyandbpath.Get(s.accessLogRootPath); err != nil {
 			return err
 		}
+		s.accessLogRootPath = filepath.Join(s.accessLogRootPath, "accesslog")
+		lfs := fslib.NewLocalFileSystemWithLogger(s.log.Named("accesslog"))
+		lfs.MkdirIfNotExist(s.accessLogRootPath, fslib.Mode(storage.DirPerm))
 	}
 	if s.certFile != "" {
 		if s.certFile, err = banyandbpath.Get(s.certFile); err != nil {
