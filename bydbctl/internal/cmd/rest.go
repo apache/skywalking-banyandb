@@ -117,7 +117,13 @@ func parseFromYAML(tryParseGroup bool, reader io.Reader) (requests []reqBody, er
 		} else if name, ok = data["name"].(string); ok {
 			groups, ok := data["groups"].([]any)
 			if ok {
-				group = groups[0].(string)
+				if len(groups) == 0 {
+					return nil, errors.New("please specify a non-empty groups list in input json")
+				}
+				group, ok = groups[0].(string)
+				if !ok {
+					return nil, errors.New("the first element of groups must be a string")
+				}
 			}
 			if !ok && tryParseGroup {
 				group = viper.GetString("group")
@@ -276,6 +282,9 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 		id, ok = data["id"].(string)
 		if !ok {
 			return nil, errors.WithMessage(errMalformedInput, "absent node: id")
+		}
+		if id == "" {
+			return nil, errors.New("please provide a non-empty id in input json")
 		}
 		j, err = json.Marshal(data)
 		if err != nil {
