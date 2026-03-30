@@ -19,7 +19,9 @@ syntax = "proto3";
 
 package banyandb.fodc.v1;
 
+import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/database.proto";
+import "banyandb/database/v1/rpc.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1";
@@ -34,6 +36,9 @@ service FODCService {
 
   // Bi-directional stream for cluster topology
   rpc StreamClusterTopology(stream StreamClusterTopologyRequest) returns (stream StreamClusterTopologyResponse);
+
+  // Bi-directional stream for lifecycle data
+  rpc StreamLifecycle(stream StreamLifecycleRequest) returns (stream StreamLifecycleResponse);
 }
 
 message RegisterAgentRequest {
@@ -87,4 +92,44 @@ message StreamClusterTopologyRequest {
 message StreamClusterTopologyResponse {
   // Request topology from agent
   bool request_topology = 1;
+}
+
+message StreamLifecycleRequest {
+  google.protobuf.Timestamp timestamp = 1;
+  string pod_name = 2;
+  LifecycleData lifecycle_data = 3;
+}
+
+message StreamLifecycleResponse {
+  bool request_lifecycle = 1;
+}
+
+message LifecycleData {
+  repeated LifecycleReport reports = 1;
+  repeated GroupLifecycleInfo groups = 2;
+}
+
+message GroupLifecycleInfo {
+  string name = 1;
+  string catalog = 2;
+  banyandb.common.v1.ResourceOpts resource_opts = 3;
+  repeated banyandb.database.v1.DataInfo data_info = 4;
+}
+
+message LifecycleReport {
+  string filename = 1;
+  string report_json = 2;
+}
+
+// GroupLifecycleService provides group lifecycle information from liaison nodes.
+// Registered on the internal gRPC server so FODC agent can access it.
+service GroupLifecycleService {
+  // InspectAll lists all groups and returns their full lifecycle info in one call.
+  rpc InspectAll(InspectAllRequest) returns (InspectAllResponse);
+}
+
+message InspectAllRequest {}
+
+message InspectAllResponse {
+  repeated GroupLifecycleInfo groups = 1;
 }

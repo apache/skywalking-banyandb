@@ -36,6 +36,7 @@ import (
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -53,12 +54,14 @@ type Client struct {
 	flightRecorder     *flightrecorder.FlightRecorder
 	connManager        *connManager
 	clusterCollector   *cluster.Collector
+	lifecycleCollector *lifecycle.Collector
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
 	metricsStream      fodcv1.FODCService_StreamMetricsClient
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
+	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
@@ -85,23 +88,25 @@ func NewClient(
 	reconnectInterval time.Duration,
 	flightRecorder *flightrecorder.FlightRecorder,
 	clusterCollector *cluster.Collector,
+	lifecycleCollector *lifecycle.Collector,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
 	client := &Client{
-		connManager:       connMgr,
-		proxyAddr:         proxyAddr,
-		nodeRole:          nodeRole,
-		podName:           podName,
-		containerNames:    containerNames,
-		labels:            labels,
-		heartbeatInterval: heartbeatInterval,
-		reconnectInterval: reconnectInterval,
-		flightRecorder:    flightRecorder,
-		clusterCollector:  clusterCollector,
-		logger:            logger,
-		stopCh:            make(chan struct{}),
-		reconnectCh:       make(chan struct{}, 1),
+		connManager:        connMgr,
+		proxyAddr:          proxyAddr,
+		nodeRole:           nodeRole,
+		podName:            podName,
+		containerNames:     containerNames,
+		labels:             labels,
+		heartbeatInterval:  heartbeatInterval,
+		reconnectInterval:  reconnectInterval,
+		flightRecorder:     flightRecorder,
+		clusterCollector:   clusterCollector,
+		lifecycleCollector: lifecycleCollector,
+		logger:             logger,
+		stopCh:             make(chan struct{}),
+		reconnectCh:        make(chan struct{}, 1),
 	}
 	connMgr.setHeartbeatChecker(client.SendHeartbeat)
 	return client
@@ -317,6 +322,125 @@ func (c *Client) sendClusterTopology() error {
 		Int("calls_count", len(topology.Calls)).
 		Msg("Successfully sent cluster topology to proxy")
 	return nil
+}
+
+// StartLifecycleStream establishes bi-directional lifecycle stream with Proxy.
+func (c *Client) StartLifecycleStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamLifecycle(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create lifecycle stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.lifecycleStream = stream
+	c.streamsMu.Unlock()
+
+	go c.handleLifecycleStream(ctx, stream)
+
+	c.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Lifecycle stream established with Proxy")
+
+	return nil
+}
+
+// sendLifecycleData sends lifecycle data to Proxy.
+func (c *Client) sendLifecycleData(ctx context.Context) error {
+	c.streamsMu.RLock()
+	if c.disconnected || c.lifecycleStream == nil {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("lifecycle stream not established")
+	}
+	lifecycleStream := c.lifecycleStream
+	collector := c.lifecycleCollector
+	c.streamsMu.RUnlock()
+	if collector == nil {
+		c.logger.Warn().Msg("Lifecycle collector is nil, skipping send")
+		return nil
+	}
+	data, collectErr := collector.Collect(ctx)
+	if collectErr != nil {
+		return fmt.Errorf("failed to collect lifecycle data: %w", collectErr)
+	}
+	if len(data.Reports) == 0 && len(data.Groups) == 0 {
+		c.logger.Debug().Msg("No lifecycle data available to send")
+	}
+	req := &fodcv1.StreamLifecycleRequest{
+		Timestamp:     timestamppb.Now(),
+		PodName:       c.podName,
+		LifecycleData: data,
+	}
+	c.streamsMu.Lock()
+	if c.lifecycleStream != lifecycleStream {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("lifecycle stream changed during send")
+	}
+	sendErr := lifecycleStream.Send(req)
+	c.streamsMu.Unlock()
+	if sendErr != nil {
+		return fmt.Errorf("failed to send lifecycle data: %w", sendErr)
+	}
+	c.logger.Info().
+		Int("reports_count", len(data.Reports)).
+		Int("groups_count", len(data.Groups)).
+		Msg("Successfully sent lifecycle data to proxy")
+	return nil
+}
+
+// handleLifecycleStream handles the lifecycle stream.
+func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCService_StreamLifecycleClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Lifecycle stream closed by Proxy, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Lifecycle stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from lifecycle stream, reconnecting...")
+			go c.reconnect(ctx)
+			return
+		}
+		if resp != nil && resp.RequestLifecycle {
+			c.logger.Debug().Msg("Received lifecycle data request from proxy")
+			if sendErr := c.sendLifecycleData(ctx); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send lifecycle data to proxy")
+			}
+		}
+	}
 }
 
 // handleClusterStateStream handles the cluster state stream.
@@ -645,6 +769,13 @@ func (c *Client) cleanupStreams() {
 		}
 		c.clusterStateStream = nil
 	}
+
+	if c.lifecycleStream != nil {
+		if closeErr := c.lifecycleStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing lifecycle stream")
+		}
+		c.lifecycleStream = nil
+	}
 	c.client = nil
 	c.streamsMu.Unlock()
 }
@@ -690,6 +821,13 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing cluster state stream")
 		}
 		c.clusterStateStream = nil
+	}
+
+	if c.lifecycleStream != nil {
+		if closeErr := c.lifecycleStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing lifecycle stream")
+		}
+		c.lifecycleStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -746,6 +884,15 @@ func (c *Client) Start(ctx context.Context) error {
 			c.cleanupStreams()
 			time.Sleep(c.reconnectInterval)
 			continue
+		}
+
+		if c.lifecycleCollector != nil {
+			if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
+				c.logger.Error().Err(lifecycleErr).Msg("Failed to start lifecycle stream, reconnecting...")
+				c.cleanupStreams()
+				time.Sleep(c.reconnectInterval)
+				continue
+			}
 		}
 
 		c.logger.Info().Msg("Proxy client started successfully")
@@ -891,6 +1038,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.clusterStateStream.CloseSend()
 		c.clusterStateStream = nil
 	}
+	if c.lifecycleStream != nil {
+		_ = c.lifecycleStream.CloseSend()
+		c.lifecycleStream = nil
+	}
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
@@ -929,6 +1080,13 @@ func (c *Client) reconnect(ctx context.Context) {
 	if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
 		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream")
 		return
+	}
+
+	if c.lifecycleCollector != nil {
+		if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
+			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream")
+			return
+		}
 	}
 
 	c.logger.Info().Msg("Successfully reconnected to Proxy")

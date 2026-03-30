@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -63,6 +64,7 @@ type Server interface {
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
 	SetRouteProviders(providers map[string]route.TableProvider)
+	SetMetadataRepo(repo metadata.Repo)
 }
 
 // BatchPublisher is the interface for publishing data in batch.

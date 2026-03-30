@@ -34,6 +34,7 @@ import (
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -43,6 +44,7 @@ import (
 type agentConnection struct {
 	metricsStream      fodcv1.FODCService_StreamMetricsServer
 	clusterStateStream fodcv1.FODCService_StreamClusterTopologyServer
+	lifecycleStream    fodcv1.FODCService_StreamLifecycleServer
 	lastActivity       time.Time
 	agentID            string
 	mu                 sync.RWMutex
@@ -112,12 +114,43 @@ func (ac *agentConnection) sendClusterDataRequest() error {
 	return nil
 }
 
+// setLifecycleStream sets the lifecycle stream.
+func (ac *agentConnection) setLifecycleStream(stream fodcv1.FODCService_StreamLifecycleServer) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.lifecycleStream = stream
+}
+
+// hasLifecycleStream reports whether the lifecycle stream is established.
+func (ac *agentConnection) hasLifecycleStream() bool {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	return ac.lifecycleStream != nil
+}
+
+// sendLifecycleDataRequest sends a lifecycle data request to the agent via the lifecycle stream.
+func (ac *agentConnection) sendLifecycleDataRequest() error {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if ac.lifecycleStream == nil {
+		return fmt.Errorf("lifecycle stream not established for agent ID: %s", ac.agentID)
+	}
+	resp := &fodcv1.StreamLifecycleResponse{
+		RequestLifecycle: true,
+	}
+	if err := ac.lifecycleStream.Send(resp); err != nil {
+		return fmt.Errorf("failed to send lifecycle data request: %w", err)
+	}
+	return nil
+}
+
 // FODCService implements the FODC gRPC service.
 type FODCService struct {
 	fodcv1.UnimplementedFODCServiceServer
 	registry            *registry.AgentRegistry
 	metricsAggregator   *metrics.Aggregator
 	clusterStateManager *cluster.Manager
+	lifecycleManager    *lifecycle.Manager
 	logger              *logger.Logger
 	connections         map[string]*agentConnection
 	connectionsMu       sync.RWMutex
@@ -129,6 +162,7 @@ func NewFODCService(
 	registry *registry.AgentRegistry,
 	metricsAggregator *metrics.Aggregator,
 	clusterStateManager *cluster.Manager,
+	lifecycleManager *lifecycle.Manager,
 	logger *logger.Logger,
 	heartbeatInterval time.Duration,
 ) *FODCService {
@@ -136,6 +170,7 @@ func NewFODCService(
 		registry:            registry,
 		metricsAggregator:   metricsAggregator,
 		clusterStateManager: clusterStateManager,
+		lifecycleManager:    lifecycleManager,
 		logger:              logger,
 		connections:         make(map[string]*agentConnection),
 		heartbeatInterval:   heartbeatInterval,
@@ -151,6 +186,17 @@ func (s *FODCService) HasClusterStateStream(agentID string) bool {
 		return false
 	}
 	return conn.hasClusterStateStream()
+}
+
+// HasLifecycleStream reports whether the given agent currently has a lifecycle stream.
+func (s *FODCService) HasLifecycleStream(agentID string) bool {
+	s.connectionsMu.RLock()
+	defer s.connectionsMu.RUnlock()
+	conn, exists := s.connections[agentID]
+	if !exists || conn == nil {
+		return false
+	}
+	return conn.hasLifecycleStream()
 }
 
 // RegisterAgent handles bi-directional agent registration stream.
@@ -480,4 +526,83 @@ func (s *FODCService) RequestClusterData(agentID string) error {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
 	}
 	return agentConn.sendClusterDataRequest()
+}
+
+// StreamLifecycle handles bi-directional lifecycle data streaming.
+func (s *FODCService) StreamLifecycle(stream fodcv1.FODCService_StreamLifecycleServer) error {
+	ctx := stream.Context()
+	agentID := s.getAgentIDFromContext(ctx)
+	if agentID == "" {
+		agentID = s.getAgentIDFromPeer(ctx)
+		if agentID != "" {
+			s.logger.Warn().
+				Str("agent_id", agentID).
+				Msg("Agent ID not found in metadata, using peer address fallback (this may be unreliable)")
+		}
+	}
+	if agentID == "" {
+		s.logger.Error().Msg("Agent ID not found in context metadata or peer address for lifecycle stream")
+		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
+	}
+
+	s.connectionsMu.Lock()
+	existingConn, exists := s.connections[agentID]
+	if exists {
+		existingConn.setLifecycleStream(stream)
+		existingConn.updateActivity()
+	} else {
+		agentConn := &agentConnection{
+			agentID:         agentID,
+			lifecycleStream: stream,
+			lastActivity:    time.Now(),
+		}
+		s.connections[agentID] = agentConn
+	}
+	s.connectionsMu.Unlock()
+
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			s.logger.Debug().Str("agent_id", agentID).Msg("Lifecycle stream closed by agent")
+			return nil
+		}
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				s.logger.Debug().Err(err).Str("agent_id", agentID).Msg("Lifecycle stream closed")
+			} else if st, ok := status.FromError(err); ok {
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
+					s.logger.Debug().Err(err).Str("agent_id", agentID).Msg("Lifecycle stream closed")
+				} else {
+					s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Error receiving lifecycle data")
+				}
+			} else {
+				s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Error receiving lifecycle data")
+			}
+			return err
+		}
+		if s.lifecycleManager != nil {
+			data := req.LifecycleData
+			if data == nil {
+				data = &fodcv1.LifecycleData{}
+			}
+			s.lifecycleManager.UpdateLifecycle(agentID, req.PodName, data)
+			s.logger.Debug().
+				Str("agent_id", agentID).
+				Str("pod_name", req.PodName).
+				Int("reports_count", len(data.Reports)).
+				Msg("Received lifecycle data from agent")
+		}
+	}
+}
+
+// RequestLifecycleData requests lifecycle data from an agent via the lifecycle stream.
+func (s *FODCService) RequestLifecycleData(agentID string) error {
+	s.connectionsMu.RLock()
+	agentConn, exists := s.connections[agentID]
+	s.connectionsMu.RUnlock()
+	if !exists {
+		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
+	}
+	return agentConn.sendLifecycleDataRequest()
 }
