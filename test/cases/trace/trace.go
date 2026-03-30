@@ -54,6 +54,8 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	g.Entry("filter by service id", helpers.Args{Input: "eq_service_order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("filter by service instance id", helpers.Args{Input: "eq_service_instance_order_time_asc", Duration: 1 * time.Hour}),
 	g.Entry("filter by service instance id and endpoint id", helpers.Args{Input: "eq_service_instance_and_endpoint_order_timestamp_asc", Duration: 1 * time.Hour}),
+	g.Entry("filter by state and duration range and ids order by timestamp desc",
+		helpers.Args{Input: "state_duration_range_and_ids_order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("filter by endpoint", helpers.Args{Input: "eq_endpoint_order_duration_asc", Duration: 1 * time.Hour}),
 	g.Entry("order by timestamp limit 2", helpers.Args{Input: "order_timestamp_desc_limit", Duration: 1 * time.Hour}),
 	g.Entry("filter by trace id and service unknown", helpers.Args{Input: "eq_trace_id_and_service_unknown", Duration: 1 * time.Hour, WantEmpty: true}),

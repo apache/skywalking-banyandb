@@ -11,6 +11,10 @@ Release Notes.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
 
+### Bug Fixes
+
+- Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
+
 ## 0.10.0
 
 ### Features
