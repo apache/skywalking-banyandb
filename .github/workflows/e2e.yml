@@ -48,7 +48,7 @@ jobs:
           tag: ${{ github.sha }}
 
   StoragePlugins:
-    name: Storage E2E
+    name: ${{ matrix.test.name }}
     runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 90
     needs: [DockerImage]
@@ -74,7 +74,7 @@ jobs:
             config: test/e2e-v2/cases/cluster/e2e-etcd.yaml
           - name: Cluster (native-property/dns)
             config: test/e2e-v2/cases/cluster/e2e-property.yaml
-          - name: Rover Istio
+          - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             env: |
               ISTIO_VERSION=1.28.0
