@@ -76,7 +76,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		clusterManager = cluster.NewManager(agentRegistry, nil, testLogger)
 
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, clusterManager, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, clusterManager, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 		clusterManager.SetGRPCService(grpcService)
 
@@ -93,7 +93,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, clusterManager, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, clusterManager, nil, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
@@ -153,6 +153,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 			reconnectInterval,
 			flightRecorder1,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient1).NotTo(BeNil())
 		proxyClient2 = testhelper.NewProxyClientWrapper(
@@ -165,6 +166,7 @@ var _ = Describe("Cluster Topology Integration", func() {
 			reconnectInterval,
 			flightRecorder2,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 

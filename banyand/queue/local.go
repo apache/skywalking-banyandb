@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -99,6 +100,9 @@ func (*local) GetPort() *uint32 {
 }
 
 func (*local) SetRouteProviders(_ map[string]route.TableProvider) {
+}
+
+func (*local) SetMetadataRepo(_ metadata.Repo) {
 }
 
 func (*local) Register(bus.Topic, schema.EventHandler) {

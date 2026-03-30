@@ -57,7 +57,7 @@ func newPromFixture() *promFixture {
 
 	reg := registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 	agg := metricsproxy.NewAggregator(reg, nil, testLogger)
-	svc := grpcproxy.NewFODCService(reg, agg, nil, testLogger, heartbeatInterval)
+	svc := grpcproxy.NewFODCService(reg, agg, nil, nil, testLogger, heartbeatInterval)
 	agg.SetGRPCService(svc)
 
 	grpcListener, err := net.Listen("tcp", "localhost:0")
@@ -71,7 +71,7 @@ func newPromFixture() *promFixture {
 	Expect(err).NotTo(HaveOccurred())
 	httpAddr := httpListener.Addr().String()
 	_ = httpListener.Close()
-	httpSrv := api.NewServer(agg, nil, reg, testLogger)
+	httpSrv := api.NewServer(agg, nil, nil, reg, testLogger)
 	Expect(httpSrv.Start(httpAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 	Eventually(func() error {
@@ -130,6 +130,7 @@ var _ = Describe("Prometheus Integration", func() {
 			1*time.Second,
 			fr,
 			fixture.testLogger,
+			"",
 		)
 		Expect(agent).NotTo(BeNil())
 		agent.StartConnManager(ctx)
