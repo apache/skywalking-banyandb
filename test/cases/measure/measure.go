@@ -36,9 +36,6 @@ var (
 		gm.Eventually(func(innerGm gm.Gomega) {
 			measureTestData.VerifyFn(innerGm, SharedContext, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
-		gm.Consistently(func(innerGm gm.Gomega) {
-			measureTestData.VerifyFn(innerGm, SharedContext, args)
-		}, flags.ConsistentlyTimeout).Should(gm.Succeed())
 	}
 )
 

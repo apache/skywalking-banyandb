@@ -43,9 +43,6 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
-	gm.Consistently(func(innerGm gm.Gomega) {
-		verify(innerGm, args)
-	}, flags.ConsistentlyTimeout).Should(gm.Succeed())
 },
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),

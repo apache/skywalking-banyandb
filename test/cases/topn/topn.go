@@ -38,7 +38,7 @@ var (
 		}, flags.EventuallyTimeout).WithTimeout(10 * time.Second).WithPolling(2 * time.Second).Should(gm.Succeed())
 		gm.Consistently(func(innerGm gm.Gomega) {
 			topNTestData.VerifyFn(innerGm, SharedContext, args)
-		}, flags.ConsistentlyTimeout).WithPolling(2 * time.Second).Should(gm.Succeed())
+		}, flags.ConsistentlyTimeout).Should(gm.Succeed())
 	}
 )
 

@@ -74,7 +74,7 @@ func TestCollectTagsForFilter_DeterministicOrder(t *testing.T) {
 
 		b := &blockCursorBuilder{block: blk}
 		var buf []*modelv1.Tag
-		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, nil)
+		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, b.orderedTagNamesForFilter(nil))
 		require.Len(t, buf, 3)
 		assert.Equal(t, []string{"alpha", "middle", "zebra"}, tagKeysFromSlice(buf))
 	})
@@ -94,7 +94,7 @@ func TestCollectTagsForFilter_DeterministicOrder(t *testing.T) {
 			{Family: "span", Names: []string{"zebra", "alpha", "middle"}},
 		}
 		var buf []*modelv1.Tag
-		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, projections)
+		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, b.orderedTagNamesForFilter(projections))
 		require.Len(t, buf, 3)
 		assert.Equal(t, []string{"zebra", "alpha", "middle"}, tagKeysFromSlice(buf))
 	})
@@ -115,7 +115,7 @@ func TestCollectTagsForFilter_DeterministicOrder(t *testing.T) {
 			{Family: "service", Names: []string{"alpha", "middle", "zebra"}},
 		}
 		var buf []*modelv1.Tag
-		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, projections)
+		buf = b.collectTagsForFilter(buf, testStrDecoder, 0, b.orderedTagNamesForFilter(projections))
 		require.Len(t, buf, 3)
 		assert.Equal(t, []string{"zebra", "alpha", "middle"}, tagKeysFromSlice(buf))
 	})

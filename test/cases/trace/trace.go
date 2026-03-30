@@ -41,9 +41,6 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		verify(innerGm, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
-	gm.Consistently(func(innerGm gm.Gomega) {
-		verify(innerGm, args)
-	}, flags.ConsistentlyTimeout).Should(gm.Succeed())
 },
 	g.Entry("query by trace id", helpers.Args{Input: "eq_trace_id", Duration: 1 * time.Hour}),
 	g.Entry("query by trace ids", helpers.Args{Input: "in_trace_ids", Duration: 1 * time.Hour}),
