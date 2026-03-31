@@ -10,12 +10,14 @@ Release Notes.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
+- Add periodic health check for property schema connection.
 
 ### Bug Fixes
 
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
 - Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
 - MCP: Add validation for properties and harden the mcp server.
+- Fix property schema client connection not stable after data node restarted.
 
 ## 0.10.0
 
