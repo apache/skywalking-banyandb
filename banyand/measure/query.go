@@ -501,14 +501,10 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		Order:       mqo.Order,
 		PreloadSize: preloadSize,
 		Projection:  indexProjection,
+		TimeRange:   mqo.TimeRange,
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
-		if mqo.TimeRange.Include(segments[i].GetTimeRange()) {
-			opts.TimeRange = nil
-		} else {
-			opts.TimeRange = mqo.TimeRange
-		}
 		sr := &segResult{}
 		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, opts)
 		if err != nil {

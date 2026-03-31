@@ -2,6 +2,26 @@
 
 Release Notes.
 
+## 0.11.0
+
+### Features
+
+- Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
+- Collect BanyanDB data on e2e test failure for CI debugging.
+- Add log query e2e test.
+- Sync lifecycle e2e test from SkyWalking stages test.
+
+### Bug Fixes
+
+- Fix the reuse of byte arrays in the underlying min/max implementation.
+- Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
+- Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
+- Fix bydbctl validation for malformed YAML input.
+- Fix entity tag handling in trace filter to prevent TagIdx index mismatch.
+- Make FODC agent test more stable.
+- Fix tag filter matching order in sidx.
+- MCP: Add validation for properties and harden the mcp server.
+- Fix property schema client connection not stable after data node restarted.
 ## 0.10.0
 
 ### Features
