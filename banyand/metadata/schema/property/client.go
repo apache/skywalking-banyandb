@@ -209,20 +209,20 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		}
 	}
 
-	// Wait for at least one schema server to become active.
-	// OnAddOrUpdate health-checks synchronously; if it fails, a background
-	// retry goroutine retries backoff. Poll until active or timeout.
-	if connMgr.ActiveCount() == 0 {
-		waitDeadline := time.Now().Add(initWaitTime)
-		for connMgr.ActiveCount() == 0 && time.Now().Before(waitDeadline) {
-			time.Sleep(500 * time.Millisecond)
-		}
+	// Wait for at least one schema server to become active and able to serve schema queries.
+	waitDeadline := time.Now().Add(initWaitTime)
+	for time.Now().Before(waitDeadline) {
 		if connMgr.ActiveCount() == 0 {
-			_ = reg.Close()
-			return nil, fmt.Errorf("no schema servers reachable after %s", initWaitTime)
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
+		if _, probeErr := reg.ListGroup(context.Background()); probeErr == nil {
+			return reg, nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	return reg, nil
+	_ = reg.Close()
+	return nil, fmt.Errorf("no schema servers ready to serve after %s", initWaitTime)
 }
 
 // OnAddOrUpdate handles node add/update events for dynamic node discovery.
