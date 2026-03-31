@@ -34,10 +34,15 @@ export function truncateText(text: string, maxLength: number): string {
 }
 
 const generateBydbQLPromptSchema = {
-  description: z.string().describe(
-    "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans order by time')",
-  ),
-  resource_type: z.enum(['stream', 'measure', 'trace', 'property']).optional().describe('Optional resource type hint: stream, measure, trace, or property'),
+  description: z
+    .string()
+    .describe(
+      "Natural language description of the query (e.g., 'list the last 30 minutes service_cpm_minute', 'show the last 30 zipkin spans order by time')",
+    ),
+  resource_type: z
+    .enum(['stream', 'measure', 'trace', 'property'])
+    .optional()
+    .describe('Optional resource type hint: stream, measure, trace, or property'),
   resource_name: z.string().optional().describe('Optional resource name hint (stream/measure/trace/property name)'),
   group: z.string().optional().describe('Optional group hint, for example the properties group'),
 } as const;
@@ -132,7 +137,9 @@ async function handleListGroupsSchemas(banyandbClient: BanyanDBClient, args: unk
 
   if (resourceType === 'groups') {
     const groups = await banyandbClient.listGroups();
-    const groupNames = groups.map((groupResource) => groupResource.metadata?.name || '').filter((groupName) => groupName !== '');
+    const groupNames = groups
+      .map((groupResource) => groupResource.metadata?.name || '')
+      .filter((groupName) => groupName !== '');
     result = `Available Groups (${groupNames.length}):\n${groupNames.join('\n')}`;
     if (groupNames.length === 0) {
       result += '\n\nNo groups found. BanyanDB may be empty or not configured.';
@@ -151,11 +158,15 @@ async function handleListGroupsSchemas(banyandbClient: BanyanDBClient, args: unk
 
     const fetcher = resourceFetchers[resourceType];
     if (!fetcher) {
-      throw new Error(`Invalid resource_type "${resourceType}". Must be one of: groups, streams, measures, traces, properties`);
+      throw new Error(
+        `Invalid resource_type "${resourceType}". Must be one of: groups, streams, measures, traces, properties`,
+      );
     }
 
     const resources = await fetcher();
-    const resourceNames = resources.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== '');
+    const resourceNames = resources
+      .map((resource) => resource.metadata?.name || '')
+      .filter((resourceName) => resourceName !== '');
     const resourceLabel = resourceType.charAt(0).toUpperCase() + resourceType.slice(1);
 
     result = `Available ${resourceLabel} in group "${group}" (${resourceNames.length}):\n${resourceNames.join('\n')}`;
@@ -182,7 +193,10 @@ async function handleListResourcesBydbql(banyandbClient: BanyanDBClient, args: u
     if (queryHints.group) debugParts.push(`Group: ${queryHints.group}`);
 
     const debugInfo = debugParts.length > 0 ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}` : '';
-    const text = truncateText(`=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${queryHints.BydbQL}${debugInfo}`, MAX_TOOL_RESPONSE_LENGTH);
+    const text = truncateText(
+      `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${queryHints.BydbQL}${debugInfo}`,
+      MAX_TOOL_RESPONSE_LENGTH,
+    );
 
     return { content: [{ type: 'text', text }] };
   } catch (error) {
@@ -206,7 +220,11 @@ async function handleListResourcesBydbql(banyandbClient: BanyanDBClient, args: u
           ],
         };
       }
-      if (error.message.includes('not found') || error.message.includes('does not exist') || error.message.includes('Empty response')) {
+      if (
+        error.message.includes('not found') ||
+        error.message.includes('does not exist') ||
+        error.message.includes('Empty response')
+      ) {
         return {
           content: [
             {

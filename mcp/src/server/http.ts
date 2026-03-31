@@ -177,7 +177,11 @@ export function startHttpServer(banyandbClient: BanyanDBClient): void {
       } catch (error) {
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: truncateText(error instanceof Error ? error.message : String(error), MAX_ERROR_MESSAGE_LENGTH) }));
+          res.end(
+            JSON.stringify({
+              error: truncateText(error instanceof Error ? error.message : String(error), MAX_ERROR_MESSAGE_LENGTH),
+            }),
+          );
         }
       }
     });

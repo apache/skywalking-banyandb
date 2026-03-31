@@ -19,13 +19,20 @@ import { BanyanDBClient } from '../client/index.js';
 import { ResourcesByGroup } from './types.js';
 import { log } from '../utils/logger.js';
 
-export async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<{ groups: string[]; resourcesByGroup: ResourcesByGroup }> {
+export async function loadQueryContext(
+  banyandbClient: BanyanDBClient,
+): Promise<{ groups: string[]; resourcesByGroup: ResourcesByGroup }> {
   let groups: string[] = [];
   try {
     const groupsList = await banyandbClient.listGroups();
-    groups = groupsList.map((groupResource) => groupResource.metadata?.name || '').filter((groupName) => groupName !== '');
+    groups = groupsList
+      .map((groupResource) => groupResource.metadata?.name || '')
+      .filter((groupName) => groupName !== '');
   } catch (error) {
-    log.warn('Failed to fetch groups, continuing without group information:', error instanceof Error ? error.message : String(error));
+    log.warn(
+      'Failed to fetch groups, continuing without group information:',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   const resourcesByGroup: ResourcesByGroup = {};
@@ -42,14 +49,25 @@ export async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<
 
       resourcesByGroup[group] = {
         streams: streams.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
-        measures: measures.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
+        measures: measures
+          .map((resource) => resource.metadata?.name || '')
+          .filter((resourceName) => resourceName !== ''),
         traces: traces.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
-        properties: properties.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
-        topNItems: topNItems.map((resource) => resource.metadata?.name || '').filter((resourceName) => resourceName !== ''),
-        indexRule: indexRule.filter((resource) => !resource.noSort && resource.metadata?.name).map((resource) => resource.metadata?.name || ''),
+        properties: properties
+          .map((resource) => resource.metadata?.name || '')
+          .filter((resourceName) => resourceName !== ''),
+        topNItems: topNItems
+          .map((resource) => resource.metadata?.name || '')
+          .filter((resourceName) => resourceName !== ''),
+        indexRule: indexRule
+          .filter((resource) => !resource.noSort && resource.metadata?.name)
+          .map((resource) => resource.metadata?.name || ''),
       };
     } catch (error) {
-      log.warn(`Failed to fetch resources for group "${group}", continuing:`, error instanceof Error ? error.message : String(error));
+      log.warn(
+        `Failed to fetch resources for group "${group}", continuing:`,
+        error instanceof Error ? error.message : String(error),
+      );
       resourcesByGroup[group] = { streams: [], measures: [], traces: [], properties: [], topNItems: [], indexRule: [] };
     }
   }
