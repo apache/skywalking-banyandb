@@ -507,6 +507,9 @@ func standaloneServerWithAuth(config *ClusterConfig, path string, ports []int, s
 		if isPropertyMode {
 			preloadStandaloneSchemaViaProperty(config, schemaLoaders)
 			waitForSchemaSync(addr)
+			if config.NodeDiscovery.Mode == ModeFile {
+				waitForNodeDiscovery(addr)
+			}
 		} else {
 			endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
 			preloadStandaloneSchemaViaEtcd(endpoint, schemaLoaders)
@@ -855,6 +858,40 @@ func waitForSchemaSync(grpcAddr string) {
 		g.Expect(listErr).NotTo(gomega.HaveOccurred())
 		g.Expect(resp.GetGroup()).NotTo(gomega.BeEmpty(),
 			"no groups found in standalone schema registry")
+	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+}
+
+func waitForNodeDiscovery(grpcAddr string) {
+	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
+		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+	defer func() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}()
+	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
+	gomega.Eventually(func(g gomega.Gomega) {
+		listResp, listErr := groupClient.List(
+			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+		g.Expect(listErr).NotTo(gomega.HaveOccurred())
+		groups := listResp.GetGroup()
+		g.Expect(groups).NotTo(gomega.BeEmpty())
+		var groupName string
+		for _, group := range groups {
+			catalog := group.GetCatalog()
+			if catalog == commonv1.Catalog_CATALOG_MEASURE ||
+				catalog == commonv1.Catalog_CATALOG_STREAM ||
+				catalog == commonv1.Catalog_CATALOG_TRACE {
+				groupName = group.GetMetadata().GetName()
+				break
+			}
+		}
+		g.Expect(groupName).NotTo(gomega.BeEmpty(), "no data group found for node discovery check")
+		_, inspectErr := groupClient.Inspect(
+			context.Background(), &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+		g.Expect(inspectErr).NotTo(gomega.HaveOccurred(),
+			"node discovery not ready: inspect failed for group %s", groupName)
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 }
 

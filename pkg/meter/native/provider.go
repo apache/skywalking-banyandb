@@ -126,6 +126,9 @@ func (p *provider) Histogram(name string, _ meter.Buckets, labelNames ...string)
 	}
 }
 
+// Close is a no-op for the native provider.
+func (p *provider) Close() {}
+
 func (p *provider) registerOrDefer(name string, labels []string) {
 	if p.initialized.Load() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
