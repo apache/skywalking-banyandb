@@ -174,11 +174,11 @@ export class BanyanDBClient {
     const propertyResult = response.propertyResult || response.result?.propertyResult;
     const topnResult = response.topnResult || response.result?.topnResult;
 
-      if (streamResult) {
-        // Check if it's an empty result set
-        if (streamResult.elements && Array.isArray(streamResult.elements) && streamResult.elements.length === 0) {
-          return 'Stream Query Result: No data found (empty result set)';
-        }
+    if (streamResult) {
+      // Check if it's an empty result set
+      if (streamResult.elements && Array.isArray(streamResult.elements) && streamResult.elements.length === 0) {
+        return 'Stream Query Result: No data found (empty result set)';
+      }
       return truncateText(`Stream Query Result:\n${JSON.stringify(streamResult, null, 2)}`, maxToolResultLength);
     }
 
