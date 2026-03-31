@@ -60,27 +60,29 @@ type ConnectionHandler[C Client] interface {
 
 // ConnManagerConfig holds configuration for ConnManager.
 type ConnManagerConfig[C Client] struct {
-	Handler            ConnectionHandler[C]
-	Logger             *logger.Logger
-	RetryPolicy        string
-	ExtraDialOpts      []grpc.DialOption
-	MaxRecvMsgSize     int
-	HealthCheckTimeout time.Duration
+	Handler             ConnectionHandler[C]
+	Logger              *logger.Logger
+	RetryPolicy         string
+	ExtraDialOpts       []grpc.DialOption
+	HealthCheckTimeout  time.Duration
+	HealthCheckInterval time.Duration
+	MaxRecvMsgSize      int
 }
 
 // ConnManager manages gRPC connections with health checking, circuit breaking, and eviction.
 type ConnManager[C Client] struct {
-	handler            ConnectionHandler[C]
-	log                *logger.Logger
-	registered         map[string]*databasev1.Node
-	active             map[string]*managedNode[C]
-	evictable          map[string]evictNode
-	cbStates           map[string]*circuitState
-	closer             *run.Closer
-	dialOpts           []grpc.DialOption
-	healthCheckTimeout time.Duration
-	mu                 sync.RWMutex
-	cbMu               sync.RWMutex
+	handler             ConnectionHandler[C]
+	log                 *logger.Logger
+	registered          map[string]*databasev1.Node
+	active              map[string]*managedNode[C]
+	evictable           map[string]evictNode
+	cbStates            map[string]*circuitState
+	closer              *run.Closer
+	dialOpts            []grpc.DialOption
+	healthCheckTimeout  time.Duration
+	healthCheckInterval time.Duration
+	mu                  sync.RWMutex
+	cbMu                sync.RWMutex
 }
 
 type managedNode[C Client] struct {
@@ -109,15 +111,19 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		healthCheckTimeout = 2 * time.Second
 	}
 	m := &ConnManager[C]{
-		handler:            cfg.Handler,
-		log:                cfg.Logger,
-		registered:         make(map[string]*databasev1.Node),
-		active:             make(map[string]*managedNode[C]),
-		evictable:          make(map[string]evictNode),
-		cbStates:           make(map[string]*circuitState),
-		closer:             run.NewCloser(1),
-		dialOpts:           dialOpts,
-		healthCheckTimeout: healthCheckTimeout,
+		handler:             cfg.Handler,
+		log:                 cfg.Logger,
+		registered:          make(map[string]*databasev1.Node),
+		active:              make(map[string]*managedNode[C]),
+		evictable:           make(map[string]evictNode),
+		cbStates:            make(map[string]*circuitState),
+		closer:              run.NewCloser(1),
+		dialOpts:            dialOpts,
+		healthCheckTimeout:  healthCheckTimeout,
+		healthCheckInterval: cfg.HealthCheckInterval,
+	}
+	if m.healthCheckInterval > 0 && m.closer.AddRunning() {
+		go m.periodicHealthCheck()
 	}
 	return m
 }
@@ -497,6 +503,22 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 		}
 	}(name, m.evictable[name])
 	return false
+}
+
+func (m *ConnManager[C]) periodicHealthCheck() {
+	defer m.closer.Done()
+	ticker := time.NewTicker(m.healthCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			for _, name := range m.ActiveNames() {
+				m.FailoverNode(name)
+			}
+		case <-m.closer.CloseNotify():
+			return
+		}
+	}
 }
 
 func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
