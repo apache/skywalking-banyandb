@@ -63,6 +63,15 @@ if (!Number.isFinite(mcpRateLimitMaxRequestsRaw) || mcpRateLimitMaxRequestsRaw <
   throw new Error(`Invalid MCP_RATE_LIMIT_MAX_REQUESTS value "${process.env.MCP_RATE_LIMIT_MAX_REQUESTS}": must be a positive integer.`);
 }
 const MCP_RATE_LIMIT_MAX_REQUESTS = mcpRateLimitMaxRequestsRaw;
+const maxDescriptionLength = 2048;
+const maxIdentifierLength = 256;
+const maxBydbQLLength = 4096;
+const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const allowedResourceTypes = ['groups', 'streams', 'measures', 'traces', 'properties'] as const;
+const allowedQueryHintResourceTypes = ['stream', 'measure', 'trace', 'property'] as const;
+const disallowedQueryTokenPatterns = [/[;]/, /--/, /\/\*/, /\*\//];
+const controlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const allowedQueryPrefixPatterns = [/^\s*SELECT\b/i, /^\s*SHOW\s+TOP\b/i];
 
 // Prompt schema for generate_BydbQL — used with registerPrompt which requires a type cast
 // due to MCP SDK 1.x Zod v3/v4 compatibility layer causing TS2589 deep type instantiation.
@@ -151,6 +160,111 @@ function normalizeQueryHints(args: unknown): QueryHints {
   };
 }
 
+function validateTextInput(fieldName: string, rawValue: string, maxLength: number): string {
+  const value = rawValue.trim();
+  if (!value) {
+    throw new Error(`${fieldName} cannot be empty`);
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${fieldName} exceeds the maximum length of ${maxLength} characters`);
+  }
+  if (controlCharacterPattern.test(value)) {
+    throw new Error(`${fieldName} contains unsupported control characters`);
+  }
+
+  return value;
+}
+
+function validateIdentifier(fieldName: string, rawValue: string): string {
+  const value = validateTextInput(fieldName, rawValue, maxIdentifierLength);
+  if (!identifierPattern.test(value)) {
+    throw new Error(`${fieldName} contains unsupported characters`);
+  }
+
+  return value;
+}
+
+function validateResourceType(rawValue: string): (typeof allowedResourceTypes)[number] {
+  const value = validateTextInput('resource_type', rawValue, 32).toLowerCase();
+  if (!allowedResourceTypes.includes(value as (typeof allowedResourceTypes)[number])) {
+    throw new Error('resource_type must be one of: groups, streams, measures, traces, properties');
+  }
+
+  return value as (typeof allowedResourceTypes)[number];
+}
+
+function validateQueryHintResourceType(rawValue: string): (typeof allowedQueryHintResourceTypes)[number] {
+  const value = validateTextInput('resource_type', rawValue, 32).toLowerCase();
+  if (!allowedQueryHintResourceTypes.includes(value as (typeof allowedQueryHintResourceTypes)[number])) {
+    throw new Error('resource_type must be one of: stream, measure, trace, property');
+  }
+
+  return value as (typeof allowedQueryHintResourceTypes)[number];
+}
+
+function validateBydbQL(rawValue: string): string {
+  const value = validateTextInput('BydbQL', rawValue, maxBydbQLLength);
+  if (!allowedQueryPrefixPatterns.some((pattern) => pattern.test(value))) {
+    throw new Error('BydbQL must be a read-only SELECT or SHOW TOP query');
+  }
+  for (const disallowedPattern of disallowedQueryTokenPatterns) {
+    if (disallowedPattern.test(value)) {
+      throw new Error('BydbQL contains unsupported multi-statement or comment syntax');
+    }
+  }
+
+  return value;
+}
+
+function validateListGroupsArgs(args: unknown): { resourceType: (typeof allowedResourceTypes)[number]; group?: string } {
+  if (!args || typeof args !== 'object') {
+    throw new Error('tool arguments must be an object');
+  }
+
+  const rawArgs = args as Record<string, unknown>;
+  const rawResourceType = rawArgs.resource_type;
+  if (typeof rawResourceType !== 'string') {
+    throw new Error('resource_type is required and must be one of: groups, streams, measures, traces, properties');
+  }
+
+  const resourceType = validateResourceType(rawResourceType);
+  if (resourceType === 'groups') {
+    return { resourceType };
+  }
+
+  const rawGroup = rawArgs.group;
+  if (typeof rawGroup !== 'string') {
+    throw new Error(`group is required for listing ${resourceType}`);
+  }
+
+  return {
+    resourceType,
+    group: validateIdentifier('group', rawGroup),
+  };
+}
+
+function validateQueryHints(queryHints: QueryHints): QueryHints {
+  const validatedHints: QueryHints = {};
+
+  if (queryHints.description) {
+    validatedHints.description = validateTextInput('description', queryHints.description, maxDescriptionLength);
+  }
+  if (queryHints.BydbQL) {
+    validatedHints.BydbQL = validateBydbQL(queryHints.BydbQL);
+  }
+  if (queryHints.resource_type) {
+    validatedHints.resource_type = validateQueryHintResourceType(queryHints.resource_type);
+  }
+  if (queryHints.resource_name) {
+    validatedHints.resource_name = validateIdentifier('resource_name', queryHints.resource_name);
+  }
+  if (queryHints.group) {
+    validatedHints.group = validateIdentifier('group', queryHints.group);
+  }
+
+  return validatedHints;
+}
+
 async function loadQueryContext(banyandbClient: BanyanDBClient): Promise<{ groups: string[]; resourcesByGroup: ResourcesByGroup }> {
   let groups: string[] = [];
   try {
@@ -227,13 +341,19 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
       argsSchema: generateBydbQLPromptSchema,
     },
     async (args) => {
-      const description = args.description.trim();
+      const validatedHints = validateQueryHints({
+        description: args.description,
+        resource_type: args.resource_type,
+        resource_name: args.resource_name,
+        group: args.group,
+      });
+      const description = validatedHints.description;
       if (!description) {
         throw new Error('description is required');
       }
 
       const { groups, resourcesByGroup } = await loadQueryContext(banyandbClient);
-      const prompt = generateBydbQL(description, args, groups, resourcesByGroup);
+      const prompt = generateBydbQL(description, validatedHints, groups, resourcesByGroup);
 
       return {
         messages: [
@@ -338,10 +458,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     const { name, arguments: args } = request.params;
 
     if (name === 'list_groups_schemas') {
-      const resourceType = (args as Record<string, unknown>)?.resource_type as string | undefined;
-      if (!resourceType) {
-        throw new Error('resource_type is required and must be one of: groups, streams, measures, traces, properties');
-      }
+      const { resourceType, group } = validateListGroupsArgs(args);
 
       let result: string;
 
@@ -353,7 +470,6 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
           result += '\n\nNo groups found. BanyanDB may be empty or not configured.';
         }
       } else {
-        const group = (args as Record<string, unknown>)?.group as string | undefined;
         if (!group) {
           throw new Error(`group is required for listing ${resourceType}`);
         }
@@ -384,7 +500,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     }
 
     if (name === 'list_resources_bydbql') {
-      const queryHints = normalizeQueryHints(args);
+      const queryHints = validateQueryHints(normalizeQueryHints(args));
       if (!queryHints.BydbQL) {
         throw new Error('BydbQL is required');
       }
@@ -444,7 +560,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     }
 
     if (name === 'get_generate_bydbql_prompt') {
-      const queryHints = normalizeQueryHints(args);
+      const queryHints = validateQueryHints(normalizeQueryHints(args));
       if (!queryHints.description) {
         throw new Error('description is required');
       }
