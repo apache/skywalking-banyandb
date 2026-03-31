@@ -13,16 +13,22 @@ This guide is for developers who want to build the MCP server from source and cr
 ```
 mcp/
 ├── src/
-│   ├── index.ts              # MCP server implementation
+│   ├── index.ts              # MCP bootstrap entrypoint
+│   ├── config.ts             # Environment parsing and runtime limits
 │   ├── client/
-│   │   ├── index.ts            # BanyanDB HTTP client
-│   │   └── types.ts            # Client type definitions
+│   │   ├── index.ts          # BanyanDB HTTP client
+│   │   └── types.ts          # Client type definitions
 │   ├── query/
-│   │   ├── llm-prompt.ts       # BydbQL prompt generation
-│   │   └── types.ts            # Query type definitions
+│   │   ├── context.ts        # Schema/resource discovery helpers
+│   │   ├── llm-prompt.ts     # BydbQL prompt generation
+│   │   ├── types.ts          # Query type definitions
+│   │   └── validation.ts     # Query and hint validation
+│   ├── server/
+│   │   ├── http.ts           # HTTP transport, auth, and rate limiting
+│   │   └── mcp.ts            # MCP prompt/tool registration and handlers
 │   └── utils/
-│       ├── http.ts             # HTTP utilities
-│       └── logger.ts           # Logging utilities
+│       ├── http.ts           # HTTP utilities
+│       └── logger.ts         # Logging utilities
 ├── tools/
 │   └── checkversion.js        # Version checking utility
 ├── dist/                     # Compiled JavaScript (generated)
@@ -56,6 +62,13 @@ npm run build
 
 This compiles TypeScript to JavaScript in the `dist/` directory.
 
+The runtime is organized into small modules:
+
+- `src/index.ts` wires together configuration, transport selection, and startup.
+- `src/server/mcp.ts` owns MCP prompt/tool registration and handlers.
+- `src/server/http.ts` owns HTTP transport, request limits, auth, and rate limiting.
+- `src/query/validation.ts` centralizes validation for BydbQL and entity hints.
+
 ### 3. Verify Build
 
 ```bash
@@ -82,7 +95,12 @@ This runs `src/index.ts` directly using `tsx`, which is faster for iterative dev
 
 ### 1. Make Changes
 
-Edit files in the `src/` directory.
+Edit the relevant files in `src/`:
+
+- transport/bootstrap changes: `src/index.ts`, `src/server/http.ts`
+- tool behavior and prompt wiring: `src/server/mcp.ts`
+- query validation: `src/query/validation.ts`
+- BanyanDB API access: `src/client/index.ts`
 
 ### 2. Format and Lint
 

@@ -33,6 +33,7 @@ Set the following environment variables:
 - `MCP_MAX_BODY_BYTES`: Maximum HTTP request body size. Default is `1048576` (1 MiB).
 - `MCP_RATE_LIMIT_WINDOW_MS`: Per-client HTTP rate limit window in milliseconds. Default is `60000`.
 - `MCP_RATE_LIMIT_MAX_REQUESTS`: Maximum HTTP requests allowed per client in each rate-limit window. Default is `60`.
+- `MCP_RATE_LIMIT_MAX_CLIENTS`: Maximum number of client IDs tracked by the in-memory HTTP rate limiter. Default is `10000`.
 
 **Address formats:**
 - `localhost:17900` - Local BanyanDB
@@ -125,6 +126,7 @@ services:
 | `MCP_MAX_BODY_BYTES` | No | `1048576` | Maximum HTTP request body size in bytes. |
 | `MCP_RATE_LIMIT_WINDOW_MS` | No | `60000` | Per-client HTTP rate-limit window in milliseconds. |
 | `MCP_RATE_LIMIT_MAX_REQUESTS` | No | `60` | Maximum HTTP requests allowed per client during each rate-limit window. |
+| `MCP_RATE_LIMIT_MAX_CLIENTS` | No | `10000` | Maximum number of client IDs retained by the in-memory HTTP rate limiter before oldest entries are evicted. |
 
 ### Verifying BanyanDB Connection
 
@@ -175,7 +177,7 @@ If `MCP_AUTH_TOKEN` is configured, clients must send:
 Authorization: Bearer <token>
 ```
 
-HTTP mode also enforces request-size and per-client rate limits using `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, and `MCP_RATE_LIMIT_MAX_REQUESTS`.
+HTTP mode also enforces request-size and per-client rate limits using `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS`.
 
 ### Configure an MCP Client for HTTP
 
@@ -261,7 +263,7 @@ services:
 
 **HTTP mode exits at startup:**
 - If `MCP_HOST` is not `127.0.0.1`, `localhost`, or `::1`, set `MCP_AUTH_TOKEN`
-- Verify `MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, and `MCP_RATE_LIMIT_MAX_REQUESTS` are positive integers
+- Verify `MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS` are positive integers
 
 **MCP server not appearing in client:**
 - Verify JSON config is valid
