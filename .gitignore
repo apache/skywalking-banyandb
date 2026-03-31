@@ -74,8 +74,10 @@ gomock_reflect*
 .cursorrules
 .cursor/
 
-# Claude Local setup.
-.claude/settings.local.json
+# Claude
+Claude.md
+.claude/
+CLAUDE.md
 
 # eBPF generated files and binaries
 fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
