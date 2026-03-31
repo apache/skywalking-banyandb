@@ -183,7 +183,7 @@ func TestPeriodicHealthCheck(t *testing.T) {
 		// Register the node — health check passes, node becomes active.
 		mgr.OnAddOrUpdate(buildNode("hc-node", addr))
 		require.Equal(t, 1, mgr.ActiveCount())
-		require.NotNil(t, handler.activeNodes["hc-node"])
+		require.True(t, handler.isActive("hc-node"))
 
 		// Stop the server to make the node unhealthy.
 		stopServer()
@@ -195,7 +195,7 @@ func TestPeriodicHealthCheck(t *testing.T) {
 			"node should be moved from active to evictable after health check failure")
 
 		// Verify OnInactive was called.
-		assert.NotNil(t, handler.inactiveNodes["hc-node"])
+		assert.True(t, handler.isInactive("hc-node"))
 		assert.Equal(t, 1, mgr.EvictableCount())
 	})
 
@@ -216,7 +216,7 @@ func TestPeriodicHealthCheck(t *testing.T) {
 		// Node should still be active.
 		assert.Equal(t, 1, mgr.ActiveCount())
 		assert.Equal(t, 0, mgr.EvictableCount())
-		assert.NotNil(t, handler.activeNodes["hc-stable"])
+		assert.True(t, handler.isActive("hc-stable"))
 	})
 
 	t.Run("node_recovers_after_server_restart", func(t *testing.T) {
@@ -235,7 +235,7 @@ func TestPeriodicHealthCheck(t *testing.T) {
 			return mgr.ActiveCount() == 0
 		}, testflags.EventuallyTimeout, 100*time.Millisecond,
 			"node should become evictable after server stop")
-		assert.NotNil(t, handler.inactiveNodes["hc-restart"])
+		assert.True(t, handler.isInactive("hc-restart"))
 
 		// Restart server on the same address.
 		_, stopRestarted := startHealthServerOnAddr(t, addr)
@@ -246,7 +246,7 @@ func TestPeriodicHealthCheck(t *testing.T) {
 			return mgr.ActiveCount() == 1
 		}, testflags.EventuallyTimeout, 100*time.Millisecond,
 			"node should recover to active after server restart")
-		assert.NotNil(t, handler.activeNodes["hc-restart"])
+		assert.True(t, handler.isActive("hc-restart"))
 	})
 
 	t.Run("disabled_when_interval_is_zero", func(t *testing.T) {
@@ -307,7 +307,7 @@ func TestPeriodicHealthCheck_ConnectsViaGRPC(t *testing.T) {
 	// Register the node via ConnManager — should establish a real gRPC connection.
 	mgr.OnAddOrUpdate(buildNode("grpc-node", addr))
 	require.Equal(t, 1, mgr.ActiveCount())
-	require.NotNil(t, handler.activeNodes["grpc-node"])
+	require.True(t, handler.isActive("grpc-node"))
 
 	// Wait for several health check cycles — node should stay active.
 	time.Sleep(1 * time.Second)
@@ -319,5 +319,5 @@ func TestPeriodicHealthCheck_ConnectsViaGRPC(t *testing.T) {
 		return mgr.ActiveCount() == 0
 	}, testflags.EventuallyTimeout, 100*time.Millisecond,
 		"node should be evicted after server stops")
-	assert.NotNil(t, handler.inactiveNodes["grpc-node"])
+	assert.True(t, handler.isInactive("grpc-node"))
 }

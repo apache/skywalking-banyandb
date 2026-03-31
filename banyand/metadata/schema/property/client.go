@@ -1286,32 +1286,24 @@ func (r *SchemaRegistry) sendSyncRequest(ctx context.Context,
 			r.l.Warn().Str("node", name).Msg("sendSyncRequest: channel full, skipping session")
 		}
 	}
-	if skipped > 0 {
-		r.l.Warn().Int("skipped", skipped).Int("totalSessions", len(sessions)).
-			Msg("sendSyncRequest: some sessions skipped, returning early")
-		return nil, fmt.Errorf("sync partially failed: %d skipped out of %d sessions", skipped, len(sessions))
-	}
 	var timedOut int
 	allDigests := make(map[string][]*digestEntry, len(sentChs))
 	for name, ch := range sentChs {
-		timer := time.NewTimer(r.syncTimeout)
 		select {
 		case digests := <-ch:
-			timer.Stop()
 			allDigests[name] = digests
 			r.l.Debug().Str("node", name).Int("digestCount", len(digests)).Msg("sendSyncRequest: received digests")
-		case <-timer.C:
+		case <-time.After(r.syncTimeout):
 			timedOut++
 			r.l.Warn().Str("node", name).Msg("sync timeout")
 		case <-ctx.Done():
-			timer.Stop()
 			return nil, ctx.Err()
 		}
 	}
 	r.l.Debug().Int("totalSessions", len(sessions)).Int("sent", len(sentChs)).Int("responded", len(allDigests)).Msg("sendSyncRequest: completed")
-	if timedOut > 0 {
-		return allDigests, fmt.Errorf("sync partially failed: %d timed out out of %d sessions",
-			timedOut, len(sessions))
+	if skipped > 0 || timedOut > 0 {
+		return allDigests, fmt.Errorf("sync partially failed: %d skipped, %d timed out out of %d sessions",
+			skipped, timedOut, len(sessions))
 	}
 	return allDigests, nil
 }
