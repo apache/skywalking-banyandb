@@ -98,44 +98,45 @@ func NewClient(toRegisterNode, forceRegisterNode bool) (Service, error) {
 }
 
 type clientService struct {
-	schemaRegistry             schema.Registry
-	nodeDiscoveryRegistry      schema.NodeDiscovery
-	omr                        observability.MetricsRegistry
-	dataBroadcaster            bus.Broadcaster
-	liaisonBroadcaster         bus.Broadcaster
-	infoCollectorRegistry      *schema.InfoCollectorRegistry
-	closer                     *run.Closer
-	nodeInfo                   *databasev1.Node
-	etcdTLSCertFile            string
-	etcdPassword               string
-	etcdTLSCAFile              string
-	etcdUsername               string
-	etcdTLSKeyFile             string
-	namespace                  string
-	nodeDiscoveryMode          string
-	schemaRegistryMode         string
-	filePath                   string
-	propertySchemaClientCACert string
-	dnsCACertPaths             []string
-	dnsSRVAddresses            []string
-	endpoints                  []string
-	registryTimeout            time.Duration
-	dnsFetchInitInterval       time.Duration
-	dnsFetchInitDuration       time.Duration
-	dnsFetchInterval           time.Duration
-	grpcTimeout                time.Duration
-	etcdFullSyncInterval       time.Duration
-	propertySchemaSyncInterval time.Duration
-	fileFetchInterval          time.Duration
-	fileRetryInitialInterval   time.Duration
-	fileRetryMaxInterval       time.Duration
-	propertySchemaMaxRecvSize  run.Bytes
-	fileRetryMultiplier        float64
-	nodeInfoMux                sync.Mutex
-	forceRegisterNode          bool
-	toRegisterNode             bool
-	dnsTLSEnabled              bool
-	propertySchemaClientTLS    bool
+	schemaRegistry                    schema.Registry
+	nodeDiscoveryRegistry             schema.NodeDiscovery
+	omr                               observability.MetricsRegistry
+	dataBroadcaster                   bus.Broadcaster
+	liaisonBroadcaster                bus.Broadcaster
+	infoCollectorRegistry             *schema.InfoCollectorRegistry
+	closer                            *run.Closer
+	nodeInfo                          *databasev1.Node
+	etcdTLSCertFile                   string
+	etcdPassword                      string
+	etcdTLSCAFile                     string
+	etcdUsername                      string
+	etcdTLSKeyFile                    string
+	namespace                         string
+	nodeDiscoveryMode                 string
+	schemaRegistryMode                string
+	filePath                          string
+	propertySchemaClientCACert        string
+	dnsCACertPaths                    []string
+	dnsSRVAddresses                   []string
+	endpoints                         []string
+	registryTimeout                   time.Duration
+	dnsFetchInitInterval              time.Duration
+	dnsFetchInitDuration              time.Duration
+	dnsFetchInterval                  time.Duration
+	grpcTimeout                       time.Duration
+	etcdFullSyncInterval              time.Duration
+	propertySchemaSyncInterval        time.Duration
+	propertySchemaHealthCheckInterval time.Duration
+	fileFetchInterval                 time.Duration
+	fileRetryInitialInterval          time.Duration
+	fileRetryMaxInterval              time.Duration
+	propertySchemaMaxRecvSize         run.Bytes
+	fileRetryMultiplier               float64
+	nodeInfoMux                       sync.Mutex
+	forceRegisterNode                 bool
+	toRegisterNode                    bool
+	dnsTLSEnabled                     bool
+	propertySchemaClientTLS           bool
 }
 
 func (s *clientService) SchemaRegistry() schema.Registry {
@@ -159,6 +160,8 @@ func (s *clientService) FlagSet() *run.FlagSet {
 		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
 	fs.DurationVar(&s.propertySchemaSyncInterval, "schema-property-client-sync-interval", property.DefaultSyncInterval,
 		"Polling interval for property-based schema sync")
+	fs.DurationVar(&s.propertySchemaHealthCheckInterval, "schema-property-client-health-check-interval", property.DefaultHealthCheckInterval,
+		"Interval for periodic connection health checks to schema servers. 0 uses default, negative disables")
 	s.propertySchemaMaxRecvSize = defaultRecvSize
 	fs.VarP(&s.propertySchemaMaxRecvSize, "schema-property-client-max-recv-msg-size", "",
 		"Max gRPC receive message size for property schema client")
@@ -426,14 +429,15 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		}
 	}
 	cfg := &property.ClientConfig{
-		GRPCTimeout:    s.grpcTimeout,
-		SyncInterval:   s.propertySchemaSyncInterval,
-		OMR:            s.omr,
-		CurNode:        currentNode,
-		NodeRegistry:   s.NodeRegistry(),
-		MaxRecvMsgSize: int(s.propertySchemaMaxRecvSize),
-		TLSEnabled:     s.propertySchemaClientTLS,
-		CACertPath:     s.propertySchemaClientCACert,
+		GRPCTimeout:         s.grpcTimeout,
+		SyncInterval:        s.propertySchemaSyncInterval,
+		HealthCheckInterval: s.propertySchemaHealthCheckInterval,
+		OMR:                 s.omr,
+		CurNode:             currentNode,
+		NodeRegistry:        s.NodeRegistry(),
+		MaxRecvMsgSize:      int(s.propertySchemaMaxRecvSize),
+		TLSEnabled:          s.propertySchemaClientTLS,
+		CACertPath:          s.propertySchemaClientCACert,
 	}
 	for attempt := 1; attempt <= propertyRegistryInitRetryCount; attempt++ {
 		registry, createErr := property.NewSchemaRegistryClient(cfg) //nolint:contextcheck // healthCheck uses its own 2s timeout via context.Background()

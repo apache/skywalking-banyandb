@@ -54,6 +54,10 @@ const (
 	DefaultSyncInterval = 30 * time.Second
 	// DefaultInitWaitTime is the default maximum time to wait for at least one schema server to become active during initialization.
 	DefaultInitWaitTime = time.Minute
+	// DefaultHealthCheckInterval is the default interval for periodic connection health checks.
+	DefaultHealthCheckInterval = 10 * time.Second
+	// defaultSyncTimeout is the default timeout for waiting for a sync response from a single node.
+	defaultSyncTimeout = 30 * time.Second
 )
 
 var _ schema.Registry = (*SchemaRegistry)(nil)
@@ -62,16 +66,19 @@ var errNoActiveServers = fmt.Errorf("no active schema servers available")
 
 // ClientConfig holds configuration for the property-based schema registry client.
 type ClientConfig struct {
-	OMR                observability.MetricsRegistry
-	NodeRegistry       schema.Node
-	CurNode            *databasev1.Node
-	CACertPath         string
-	GRPCTimeout        time.Duration
-	SyncInterval       time.Duration
-	InitWaitTime       time.Duration
-	FullReconcileEvery uint64
-	MaxRecvMsgSize     int
-	TLSEnabled         bool
+	OMR                 observability.MetricsRegistry
+	NodeRegistry        schema.Node
+	CurNode             *databasev1.Node
+	CACertPath          string
+	GRPCTimeout         time.Duration
+	SyncInterval        time.Duration
+	SyncTimeout         time.Duration
+	WatchMaxBackoff     time.Duration
+	InitWaitTime        time.Duration
+	HealthCheckInterval time.Duration
+	FullReconcileEvery  uint64
+	MaxRecvMsgSize      int
+	TLSEnabled          bool
 }
 
 type syncRequest struct {
@@ -79,10 +86,14 @@ type syncRequest struct {
 	tagProjection []string
 }
 
+type syncMessage struct {
+	responseCh chan []*digestEntry
+	syncRequest
+}
+
 type watchSession struct {
 	cancelFn  context.CancelFunc
-	syncReqCh chan *syncRequest
-	syncResCh chan []*digestEntry
+	syncReqCh chan *syncMessage
 }
 
 type digestEntry struct {
@@ -107,6 +118,8 @@ type SchemaRegistry struct {
 	handlers           map[schema.Kind][]schema.EventHandler
 	watchSessions      map[string]*watchSession
 	syncInterval       time.Duration
+	syncTimeout        time.Duration
+	watchMaxBackoff    time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
 	mux                sync.RWMutex
@@ -129,10 +142,17 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		caCertReloader: caCertReloader,
 		tlsEnabled:     cfg.TLSEnabled,
 	}
+	healthCheckInterval := cfg.HealthCheckInterval
+	if healthCheckInterval == 0 {
+		healthCheckInterval = DefaultHealthCheckInterval
+	} else if healthCheckInterval < 0 {
+		healthCheckInterval = 0 // negative means disabled
+	}
 	connMgr := grpchelper.NewConnManager[*schemaClient](grpchelper.ConnManagerConfig[*schemaClient]{
-		Handler:        handler,
-		Logger:         l,
-		MaxRecvMsgSize: cfg.MaxRecvMsgSize,
+		Handler:             handler,
+		Logger:              l,
+		MaxRecvMsgSize:      cfg.MaxRecvMsgSize,
+		HealthCheckInterval: healthCheckInterval,
 	})
 	syncInterval := cfg.SyncInterval
 	if syncInterval == 0 {
@@ -146,6 +166,14 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 	if fullReconcileEvery <= 0 {
 		fullReconcileEvery = DefaultFullReconcileEvery
 	}
+	syncTimeout := cfg.SyncTimeout
+	if syncTimeout == 0 {
+		syncTimeout = defaultSyncTimeout
+	}
+	watchMaxBackoff := cfg.WatchMaxBackoff
+	if watchMaxBackoff == 0 {
+		watchMaxBackoff = defaultWatchMaxBackoff
+	}
 	reg := &SchemaRegistry{
 		connMgr:            connMgr,
 		closer:             run.NewCloser(1),
@@ -155,6 +183,8 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
 		watchSessions:      make(map[string]*watchSession),
 		syncInterval:       syncInterval,
+		syncTimeout:        syncTimeout,
+		watchMaxBackoff:    watchMaxBackoff,
 		fullReconcileEvery: fullReconcileEvery,
 	}
 	handler.registry = reg
@@ -1017,8 +1047,7 @@ func (r *SchemaRegistry) launchWatch(nodeName string, client *schemaClient) {
 	ctx, cancel := context.WithCancel(r.closer.Ctx())
 	session := &watchSession{
 		cancelFn:  cancel,
-		syncReqCh: make(chan *syncRequest, 1),
-		syncResCh: make(chan []*digestEntry, 1),
+		syncReqCh: make(chan *syncMessage, 1),
 	}
 	r.watchSessions[nodeName] = session
 	r.l.Debug().Str("node", nodeName).Msg("launchWatch: starting new watch session")
@@ -1045,7 +1074,8 @@ func (r *SchemaRegistry) stopWatch(nodeName string) {
 
 const (
 	watchInitialBackoff = time.Second
-	watchMaxBackoff     = 30 * time.Second
+	// defaultWatchMaxBackoff is the default maximum backoff for watch stream reconnection.
+	defaultWatchMaxBackoff = 30 * time.Second
 )
 
 func (r *SchemaRegistry) watchLoop(ctx context.Context, nodeName string,
@@ -1073,8 +1103,8 @@ func (r *SchemaRegistry) watchLoop(ctx context.Context, nodeName string,
 		case <-time.After(backoff):
 		}
 		backoff *= 2
-		if backoff > watchMaxBackoff {
-			backoff = watchMaxBackoff
+		if backoff > r.watchMaxBackoff {
+			backoff = r.watchMaxBackoff
 		}
 	}
 }
@@ -1113,6 +1143,7 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 	var inSync bool
 	var metadataOnly bool
 	var digests []*digestEntry
+	var currentResponseCh chan []*digestEntry
 
 	for {
 		select {
@@ -1132,18 +1163,20 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 			inSync = true
 			metadataOnly = len(req.tagProjection) > 0
 			digests = nil
+			currentResponseCh = req.responseCh
 		case resp, ok := <-recvCh:
 			if !ok {
 				return <-recvErrCh
 			}
 			if resp.EventType == schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE {
 				r.l.Debug().Bool("inSync", inSync).Msg("processWatchSession: received REPLAY_DONE")
-				if inSync {
+				if inSync && currentResponseCh != nil {
 					r.l.Debug().Int("digestCount", len(digests)).Msg("processWatchSession: sync replay completed, sending digests")
-					session.syncResCh <- digests
+					currentResponseCh <- digests
 					digests = nil
 					inSync = false
 					metadataOnly = false
+					currentResponseCh = nil
 				}
 				continue
 			}
@@ -1219,7 +1252,9 @@ func (r *SchemaRegistry) performIncrementalSync(ctx context.Context) {
 		criteria: buildRevisionCriteria(maxRev),
 	}
 	r.l.Debug().Int64("maxRevision", maxRev).Msg("incremental sync: requesting changes")
-	r.sendSyncRequest(ctx, sessions, req)
+	if _, err := r.sendSyncRequest(ctx, sessions, req); err != nil {
+		r.l.Warn().Err(err).Msg("incremental sync: sync request partially failed")
+	}
 }
 
 func (r *SchemaRegistry) getActiveSessions() map[string]*watchSession {
@@ -1234,29 +1269,51 @@ func (r *SchemaRegistry) getActiveSessions() map[string]*watchSession {
 
 func (r *SchemaRegistry) sendSyncRequest(ctx context.Context,
 	sessions map[string]*watchSession, req *syncRequest,
-) map[string][]*digestEntry {
+) (map[string][]*digestEntry, error) {
 	r.l.Debug().Int("sessionCount", len(sessions)).Msg("sendSyncRequest: dispatching to watch sessions")
-	sent := make(map[string]*watchSession, len(sessions))
+	sentChs := make(map[string]chan []*digestEntry, len(sessions))
+	var skipped int
 	for name, s := range sessions {
+		msg := &syncMessage{
+			syncRequest: *req,
+			responseCh:  make(chan []*digestEntry, 1),
+		}
 		select {
-		case s.syncReqCh <- req:
-			sent[name] = s
+		case s.syncReqCh <- msg:
+			sentChs[name] = msg.responseCh
 		default:
+			skipped++
 			r.l.Warn().Str("node", name).Msg("sendSyncRequest: channel full, skipping session")
 		}
 	}
-	allDigests := make(map[string][]*digestEntry, len(sent))
-	for name, s := range sent {
+	if skipped > 0 {
+		r.l.Warn().Int("skipped", skipped).Int("totalSessions", len(sessions)).
+			Msg("sendSyncRequest: some sessions skipped, returning early")
+		return nil, fmt.Errorf("sync partially failed: %d skipped out of %d sessions", skipped, len(sessions))
+	}
+	var timedOut int
+	allDigests := make(map[string][]*digestEntry, len(sentChs))
+	for name, ch := range sentChs {
+		timer := time.NewTimer(r.syncTimeout)
 		select {
-		case digests := <-s.syncResCh:
+		case digests := <-ch:
+			timer.Stop()
 			allDigests[name] = digests
-		case <-time.After(30 * time.Second):
+			r.l.Debug().Str("node", name).Int("digestCount", len(digests)).Msg("sendSyncRequest: received digests")
+		case <-timer.C:
+			timedOut++
 			r.l.Warn().Str("node", name).Msg("sync timeout")
 		case <-ctx.Done():
-			return nil
+			timer.Stop()
+			return nil, ctx.Err()
 		}
 	}
-	return allDigests
+	r.l.Debug().Int("totalSessions", len(sessions)).Int("sent", len(sentChs)).Int("responded", len(allDigests)).Msg("sendSyncRequest: completed")
+	if timedOut > 0 {
+		return allDigests, fmt.Errorf("sync partially failed: %d timed out out of %d sessions",
+			timedOut, len(sessions))
+	}
+	return allDigests, nil
 }
 
 func (r *SchemaRegistry) performFullSync(ctx context.Context) {
@@ -1268,14 +1325,21 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 	req := &syncRequest{
 		tagProjection: basicTagKeys,
 	}
-	allDigests := r.sendSyncRequest(ctx, sessions, req)
+	allDigests, err := r.sendSyncRequest(ctx, sessions, req)
 	if allDigests == nil {
 		return
+	}
+	if err != nil {
+		// Partial failure: some sessions timed out or were skipped.
+		// Use whatever digests were received for the add/update path,
+		// but skip the deletion reconciliation to avoid removing entries
+		// that may exist on unreachable nodes.
+		r.l.Warn().Err(err).Msg("performFullSync: sync request partially failed, skipping deletion reconciliation")
 	}
 
 	merged := r.mergeDigests(allDigests)
 	cachedEntries := r.cache.GetAllEntries()
-	r.l.Debug().Int("mergedCount", len(merged)).Int("cachedCount", len(cachedEntries)).
+	r.l.Debug().Int("respondedNodes", len(allDigests)).Int("mergedCount", len(merged)).Int("cachedCount", len(cachedEntries)).
 		Msg("performFullSync: comparing server digests with local cache")
 
 	for propID, d := range merged {
@@ -1297,30 +1361,35 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 				r.l.Warn().Str("kind", d.kind).Msg("full sync: unknown kind")
 				continue
 			}
-			r.l.Debug().Str("propID", propID).Stringer("kind", kind).
-				Int64("serverRevision", d.revision).Msg("performFullSync: fetching updated schema from server")
-			prop, err := r.getSchema(ctx, kind, d.group, d.name)
-			if err != nil {
-				r.l.Warn().Err(err).Str("propID", propID).Msg("full sync: failed to get schema")
+			r.l.Info().Str("propID", propID).Stringer("kind", kind).
+				Int64("serverRevision", d.revision).
+				Bool("localMissing", localEntry == nil).
+				Msg("performFullSync: fetching updated schema from server")
+			prop, getErr := r.getSchema(ctx, kind, d.group, d.name)
+			if getErr != nil {
+				r.l.Warn().Err(getErr).Str("propID", propID).Msg("full sync: failed to get schema")
 				continue
 			}
 			if prop == nil {
 				continue
 			}
-			md, err := ToSchema(kind, prop)
-			if err != nil {
-				r.l.Warn().Err(err).Str("propID", propID).Msg("full sync: failed to convert property")
+			md, convertErr := ToSchema(kind, prop)
+			if convertErr != nil {
+				r.l.Warn().Err(convertErr).Str("propID", propID).Msg("full sync: failed to convert property")
 				continue
 			}
 			r.processInitialResourceFromProperty(kind, prop, md.Spec.(proto.Message))
 		}
 	}
 
-	for propID, entry := range cachedEntries {
-		if _, exists := merged[propID]; !exists {
-			r.l.Debug().Str("propID", propID).Stringer("kind", entry.kind).
-				Msg("performFullSync: cached entry not found on server, deleting")
-			r.handleDeletion(entry.kind, propID, entry, entry.latestUpdateAt)
+	if err == nil {
+		for propID, entry := range cachedEntries {
+			if _, exists := merged[propID]; !exists {
+				r.l.Warn().Str("propID", propID).Stringer("kind", entry.kind).
+					Str("group", entry.group).Str("name", entry.name).
+					Msg("performFullSync: cached entry not found on server, deleting")
+				r.handleDeletion(entry.kind, propID, entry, entry.latestUpdateAt)
+			}
 		}
 	}
 }
