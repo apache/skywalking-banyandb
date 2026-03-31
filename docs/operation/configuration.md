@@ -139,7 +139,7 @@ The following flags configure the property-based schema registry used for metada
 
 - `--schema-registry-mode string`: Schema registry mode: `etcd` for etcd-based storage, `property` for property-based storage (default: "property").
 - `--schema-property-client-sync-interval duration`: Polling interval for property-based schema sync (default: 30s).
-- `--schema-property-client-health-check-interval duration`: Interval for periodic connection health checks to schema servers. Set to a negative value to disable (default: 10s).
+- `--schema-property-client-health-check-interval duration`: Interval for periodic connection health checks to schema servers. Set to 0 to use the default interval (10s), or to a negative value to disable.
 - `--schema-property-client-max-recv-msg-size bytes`: Max gRPC receive message size for property schema client.
 - `--schema-property-client-tls`: Enable TLS for property schema client connections.
 - `--schema-property-client-ca-cert string`: CA certificate file to verify the property schema server.
