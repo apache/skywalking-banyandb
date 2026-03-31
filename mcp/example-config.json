@@ -4,7 +4,13 @@
       "command": "node",
       "args": ["/absolute/path/to/skywalking-banyandb/mcp/dist/index.js"],
       "env": {
-        "BANYANDB_ADDRESS": "localhost:17900"
+        "BANYANDB_ADDRESS": "localhost:17900",
+        "TRANSPORT": "stdio",
+        "MCP_HOST": "127.0.0.1",
+        "MCP_MAX_BODY_BYTES": "1048576",
+        "MCP_RATE_LIMIT_WINDOW_MS": "60000",
+        "MCP_RATE_LIMIT_MAX_REQUESTS": "60",
+        "MCP_RATE_LIMIT_MAX_CLIENTS": "10000"
       }
     }
   }
