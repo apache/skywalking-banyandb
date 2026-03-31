@@ -229,7 +229,7 @@ func createBenchmarkSIDX(b *testing.B) SIDX {
 func introduceBenchmarkMemPart(tb testing.TB, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
 	tb.Helper()
 
-	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID, nil, nil)
 	if err != nil {
 		tb.Fatalf("failed to convert requests to memPart: %v", err)
 	}

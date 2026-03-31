@@ -192,6 +192,7 @@ func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, is index
 }
 
 func (t *tsResult) Release() {
+	streamQueryResultTracker.Release(t)
 	if t.ts != nil {
 		t.ts.close()
 	}

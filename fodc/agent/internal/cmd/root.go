@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
@@ -70,6 +71,9 @@ var (
 	reconnectInterval            time.Duration
 	clusterStatePorts            []string
 	clusterStatePollInterval     time.Duration
+	lifecyclePort                int
+	lifecycleReportDir           string
+	lifecycleCacheTTL            time.Duration
 	rootCmd                      = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -111,6 +115,12 @@ func init() {
 		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
 		"Interval at which to poll cluster state from the BanyanDB nodes")
+	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 18912,
+		"gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection")
+	rootCmd.Flags().StringVar(&lifecycleReportDir, "lifecycle-report-dir", lifecycle.DefaultReportDir,
+		"Directory where lifecycle sidecar writes report files")
+	rootCmd.Flags().DurationVar(&lifecycleCacheTTL, "lifecycle-cache-ttl", 10*time.Minute,
+		"TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache")
 }
 
 func calculateCapacity(log *logger.Logger) int64 {
@@ -341,8 +351,14 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
 		return nil
 	}
+	var lifecycleCollector *lifecycle.Collector
+	if lifecyclePort > 0 {
+		grpcAddr := fmt.Sprintf("localhost:%d", lifecyclePort)
+		lifecycleCollector = lifecycle.NewCollector(log, grpcAddr, lifecycleReportDir, lifecycleCacheTTL)
+		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
+	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
-		heartbeatInterval, reconnectInterval, fr, collector, log)
+		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, log)
 	go func() {
 		if startErr := client.Start(ctx); startErr != nil {
 			log.Error().Err(startErr).Msg("Proxy client error")

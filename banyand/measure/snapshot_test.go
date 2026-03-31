@@ -18,8 +18,10 @@
 package measure
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -519,4 +522,293 @@ func TestSnapshotFunctionality(t *testing.T) {
 			t.Fatalf("expected hard linked files to share inode: %v", err)
 		}
 	}
+}
+
+func testSnapshotOption() option {
+	return option{
+		flushTimeout: 0,
+		mergePolicy:  newDefaultMergePolicyForTesting(),
+		protector:    protector.Nop{},
+	}
+}
+
+func TestMustWriteSnapshotUsesTempThenRename(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	const epoch = uint64(0x10)
+	partNames := []string{partName(0x1)}
+	tst.mustWriteSnapshot(epoch, partNames)
+	snpPath := filepath.Join(tabDir, snapshotName(epoch))
+	tmpPathFile := snpPath + ".tmp"
+	require.False(t, fileSystem.IsExist(tmpPathFile), "temp file must be removed after rename")
+	require.True(t, fileSystem.IsExist(snpPath), "final snapshot file must exist")
+	data, err := fileSystem.Read(snpPath)
+	require.NoError(t, err)
+	var decoded []string
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, partNames, decoded)
+}
+
+func TestMustWriteSnapshotWithMultipleParts(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	partNames := []string{partName(0x1), partName(0x2), partName(0xff)}
+	tst.mustWriteSnapshot(1, partNames)
+	parts, readErr := tst.readSnapshot(1)
+	require.NoError(t, readErr)
+	require.Equal(t, []uint64{0x1, 0x2, 0xff}, parts)
+}
+
+func TestMustWriteSnapshotEmptyPartList(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	tst.mustWriteSnapshot(1, []string{})
+	parts, readErr := tst.readSnapshot(1)
+	require.NoError(t, readErr)
+	require.Empty(t, parts)
+}
+
+func TestTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
+	require.NoError(t, err)
+	tst.mustAddDataPoints(dpsTS1)
+	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		dd := fileSystem.ReadDir(tabDir)
+		for _, d := range dd {
+			if d.IsDir() && d.Name() != storage.FailedPartsDirName {
+				return true
+			}
+		}
+		return false
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	tst.Close()
+	snapshots := make([]uint64, 0)
+	for _, e := range fileSystem.ReadDir(tabDir) {
+		if filepath.Ext(e.Name()) == snapshotSuffix {
+			parsed, parseErr := parseSnapshot(e.Name())
+			if parseErr == nil {
+				snapshots = append(snapshots, parsed)
+			}
+		}
+	}
+	require.GreaterOrEqual(t, len(snapshots), 1)
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i] > snapshots[j] })
+	validEpoch := snapshots[0]
+	corruptEpoch := validEpoch + 1
+	corruptPath := filepath.Join(tabDir, snapshotName(corruptEpoch))
+	_, writeErr := fileSystem.Write([]byte{}, corruptPath, 0o600)
+	require.NoError(t, writeErr)
+	tst2, epoch2 := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	require.NotNil(t, tst2)
+	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newest is corrupt")
+	require.NotNil(t, tst2.snapshot)
+	require.Equal(t, validEpoch, tst2.snapshot.epoch)
+	require.False(t, fileSystem.IsExist(corruptPath), "corrupt newer snapshot must be deleted after fallback")
+}
+
+func TestMeasureInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, testSnapshotOption(), nil)
+	require.NoError(t, err)
+	tst.mustAddDataPoints(dpsTS1)
+	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		dd := fileSystem.ReadDir(tabDir)
+		for _, d := range dd {
+			if d.IsDir() && d.Name() != storage.FailedPartsDirName {
+				return true
+			}
+		}
+		return false
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	tst.Close()
+	snapshots := make([]uint64, 0)
+	for _, e := range fileSystem.ReadDir(tabDir) {
+		if filepath.Ext(e.Name()) == snapshotSuffix {
+			parsed, parseErr := parseSnapshot(e.Name())
+			if parseErr == nil {
+				snapshots = append(snapshots, parsed)
+			}
+		}
+	}
+	require.GreaterOrEqual(t, len(snapshots), 1)
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i] > snapshots[j] })
+	validEpoch := snapshots[0]
+	// Create two corrupt newer snapshots
+	corruptEpoch1 := validEpoch + 1
+	corruptEpoch2 := validEpoch + 2
+	corruptPath1 := filepath.Join(tabDir, snapshotName(corruptEpoch1))
+	corruptPath2 := filepath.Join(tabDir, snapshotName(corruptEpoch2))
+	_, writeErr := fileSystem.Write([]byte{}, corruptPath1, 0o600)
+	require.NoError(t, writeErr)
+	_, writeErr = fileSystem.Write([]byte{}, corruptPath2, 0o600)
+	require.NoError(t, writeErr)
+	tst2, epoch2 := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	require.NotNil(t, tst2)
+	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newer ones are corrupt")
+	require.NotNil(t, tst2.snapshot)
+	require.Equal(t, validEpoch, tst2.snapshot.epoch)
+	require.False(t, fileSystem.IsExist(corruptPath1), "first corrupt snapshot must be deleted after fallback")
+	require.False(t, fileSystem.IsExist(corruptPath2), "second corrupt snapshot must be deleted after fallback")
+}
+
+func TestReadSnapshotReturnsErrorOnEmptyFile(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	snpPath := filepath.Join(tabDir, snapshotName(1))
+	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
+	require.NoError(t, writeErr)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	_, readErr := tst.readSnapshot(1)
+	require.Error(t, readErr)
+	require.Contains(t, readErr.Error(), "cannot parse")
+}
+
+func TestReadSnapshotReturnsErrorOnInvalidJSON(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	snpPath := filepath.Join(tabDir, snapshotName(1))
+	_, writeErr := fileSystem.Write([]byte("{invalid}"), snpPath, 0o600)
+	require.NoError(t, writeErr)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	_, readErr := tst.readSnapshot(1)
+	require.Error(t, readErr)
+	require.Contains(t, readErr.Error(), "cannot parse")
+}
+
+func TestReadSnapshotReturnsErrorOnInvalidPartName(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	partNamesData, marshalErr := json.Marshal([]string{"not-hex"})
+	require.NoError(t, marshalErr)
+	snpPath := filepath.Join(tabDir, snapshotName(1))
+	_, writeErr := fileSystem.Write(partNamesData, snpPath, 0o600)
+	require.NoError(t, writeErr)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	_, readErr := tst.readSnapshot(1)
+	require.Error(t, readErr)
+}
+
+func TestReadSnapshotSucceedsOnValidFile(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	tst.mustWriteSnapshot(1, []string{partName(0xa), partName(0xb)})
+	parts, readErr := tst.readSnapshot(1)
+	require.NoError(t, readErr)
+	require.Equal(t, []uint64{0xa, 0xb}, parts)
+}
+
+func TestMustReadSnapshotPanicsOnError(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	snpPath := filepath.Join(tabDir, snapshotName(1))
+	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
+	require.NoError(t, writeErr)
+	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
+	require.Panics(t, func() { _ = tst.mustReadSnapshot(1) })
+}
+
+func TestInitTSTableEmptyDirectory(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst, epoch := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	require.NotNil(t, tst)
+	require.Greater(t, epoch, uint64(0))
+	require.Nil(t, tst.snapshot)
+}
+
+func TestInitTSTableEmptyTableWhenAllSnapshotsCorrupt(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	snpPath := filepath.Join(tabDir, snapshotName(1))
+	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
+	require.NoError(t, writeErr)
+	tst, epoch := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	require.NotNil(t, tst)
+	require.Greater(t, epoch, uint64(0))
+	require.Nil(t, tst.snapshot)
+	require.False(t, fileSystem.IsExist(snpPath), "corrupt snapshot file must be deleted")
+}
+
+func TestInitTSTableLoadsNewestWhenMultipleValid(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, testSnapshotOption(), nil)
+	require.NoError(t, err)
+	tst.mustAddDataPoints(dpsTS1)
+	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		dd := fileSystem.ReadDir(tabDir)
+		for _, d := range dd {
+			if d.IsDir() && d.Name() != storage.FailedPartsDirName {
+				return true
+			}
+		}
+		return false
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	tst.Close()
+	snapshots := make([]uint64, 0)
+	for _, e := range fileSystem.ReadDir(tabDir) {
+		if filepath.Ext(e.Name()) == snapshotSuffix {
+			parsed, parseErr := parseSnapshot(e.Name())
+			if parseErr == nil {
+				snapshots = append(snapshots, parsed)
+			}
+		}
+	}
+	require.GreaterOrEqual(t, len(snapshots), 1)
+	tst2, epoch2 := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	require.NotNil(t, tst2)
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i] > snapshots[j] })
+	require.Equal(t, snapshots[0], epoch2, "must load newest valid snapshot")
 }

@@ -114,6 +114,8 @@ type FileSystem interface {
 	Read(name string) ([]byte, error)
 	// Delete the file.
 	DeleteFile(name string) error
+	// Rename renames oldPath to newPath atomically.
+	Rename(oldPath, newPath string) error
 	// Delete the directory.
 	MustRMAll(path string)
 	// SyncPath the directory of file.

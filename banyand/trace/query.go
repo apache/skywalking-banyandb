@@ -34,8 +34,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
+
+var traceQueryResultTracker = pool.RegisterTracker("trace.queryResult")
 
 const (
 	checkDoneEvery = 128
@@ -69,12 +72,22 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	segmentsNeedRelease := true
+	defer func() {
+		if !segmentsNeedRelease {
+			return
+		}
+		for i := range segments {
+			segments[i].DecRef()
+		}
+	}()
 
 	result := queryResult{
 		ctx:           ctx,
 		segments:      segments,
 		tagProjection: tqo.TagProjection,
 	}
+	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
 			result.Release()
@@ -105,6 +118,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(tqo, qo, tables)
 	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
+		result.Release()
 		return nilResult, nil
 	}
 
@@ -131,6 +145,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 
+	traceQueryResultTracker.Acquire(&result)
 	return &result, nil
 }
 
@@ -484,6 +499,7 @@ func (qr *queryResult) releaseCurrentBatch() {
 }
 
 func (qr *queryResult) Release() {
+	traceQueryResultTracker.Release(qr)
 	if qr.cancel != nil {
 		qr.cancel()
 	}
@@ -494,23 +510,25 @@ func (qr *queryResult) Release() {
 	}
 
 	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
-	for batch := range qr.cursorBatchCh {
-		if batch != nil {
-			if batch.cursorCh != nil {
-				// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
-				for result := range batch.cursorCh {
-					if result.cursor != nil {
-						releaseBlockCursor(result.cursor)
+	if qr.cursorBatchCh != nil {
+		for batch := range qr.cursorBatchCh {
+			if batch != nil {
+				if batch.cursorCh != nil {
+					// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
+					for result := range batch.cursorCh {
+						if result.cursor != nil {
+							releaseBlockCursor(result.cursor)
+						}
 					}
 				}
-			}
-			// Release snapshots from drained batches
-			for _, s := range batch.snapshots {
-				s.decRef()
+				// Release snapshots from drained batches
+				for _, s := range batch.snapshots {
+					s.decRef()
+				}
 			}
 		}
+		qr.cursorBatchCh = nil
 	}
-	qr.cursorBatchCh = nil
 
 	qr.releaseCurrentBatch()
 

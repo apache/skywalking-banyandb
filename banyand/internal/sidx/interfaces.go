@@ -62,7 +62,8 @@ type SIDX interface {
 	// IntroduceMerged introduces a merged map and a new part to the SIDX instance.
 	IntroduceMerged(nextIntroduction *MergerIntroduction) func()
 	// ConvertToMemPart converts a write request to a memPart.
-	ConvertToMemPart(reqs []WriteRequest, segmentID int64) (*MemPart, error)
+	// minTimestamp and maxTimestamp are optional; when provided they are stored in manifest.json for part selection.
+	ConvertToMemPart(reqs []WriteRequest, segmentID int64, minTimestamp, maxTimestamp *int64) (*MemPart, error)
 	// StreamingQuery executes the query and streams batched QueryResponse objects.
 	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
 	// unique Data elements (when positive). The error channel delivers any fatal execution error.
@@ -107,6 +108,8 @@ type QueryRequest struct {
 	Order         *index.OrderBy
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64
+	MaxTimestamp  *int64
 	SeriesIDs     []common.SeriesID
 	TagProjection []model.TagProjection
 	MaxBatchSize  int
@@ -126,6 +129,8 @@ type ScanQueryRequest struct {
 	OnProgress    ScanProgressFunc
 	MinKey        *int64
 	MaxKey        *int64
+	MinTimestamp  *int64
+	MaxTimestamp  *int64
 	TagProjection []model.TagProjection
 	MaxBatchSize  int
 }
@@ -351,6 +356,9 @@ func (qr QueryRequest) Validate() error {
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
+	if qr.MinTimestamp != nil && qr.MaxTimestamp != nil && *qr.MinTimestamp > *qr.MaxTimestamp {
+		return fmt.Errorf("MinTimestamp cannot be greater than MaxTimestamp")
+	}
 	return nil
 }
 
@@ -361,6 +369,9 @@ func (sqr ScanQueryRequest) Validate() error {
 	}
 	if sqr.MinKey != nil && sqr.MaxKey != nil && *sqr.MinKey > *sqr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
+	}
+	if sqr.MinTimestamp != nil && sqr.MaxTimestamp != nil && *sqr.MinTimestamp > *sqr.MaxTimestamp {
+		return fmt.Errorf("MinTimestamp cannot be greater than MaxTimestamp")
 	}
 	return nil
 }
@@ -374,6 +385,8 @@ func (qr *QueryRequest) Reset() {
 	qr.MaxBatchSize = 0
 	qr.MinKey = nil
 	qr.MaxKey = nil
+	qr.MinTimestamp = nil
+	qr.MaxTimestamp = nil
 }
 
 // CopyFrom copies the QueryRequest from other to qr.
@@ -412,6 +425,18 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.MaxKey = &maxKey
 	} else {
 		qr.MaxKey = nil
+	}
+	if other.MinTimestamp != nil {
+		minTS := *other.MinTimestamp
+		qr.MinTimestamp = &minTS
+	} else {
+		qr.MinTimestamp = nil
+	}
+	if other.MaxTimestamp != nil {
+		maxTS := *other.MaxTimestamp
+		qr.MaxTimestamp = &maxTS
+	} else {
+		qr.MaxTimestamp = nil
 	}
 }
 

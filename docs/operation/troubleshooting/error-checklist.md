@@ -42,3 +42,4 @@ Here's an expanded section on common issues for your BanyanDB troubleshooting do
 - [Troubleshooting No Data Issues](./no-data.md)
 - [Troubleshooting Query Issues](./query.md)
 - [Troubleshooting Installation Issues](./install.md)
+- [Common Issues](./common-issues.md)

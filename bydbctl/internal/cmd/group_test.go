@@ -105,6 +105,18 @@ resource_opts:
 		}).Should(Succeed())
 	})
 
+	It("delete group with dry-run flag", func() {
+		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1", "--dry-run"})
+		out := capturer.CaptureStdout(func() {
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Expect(out).To(ContainSubstring("group group1 dry-run deletion result:"))
+		resp := new(databasev1.GroupRegistryServiceDeleteResponse)
+		helpers.UnmarshalYAML([]byte(out[strings.Index(out, "\n")+1:]), resp)
+		Expect(resp).NotTo(BeNil())
+	})
+
 	It("list group", func() {
 		// create another group for list operation
 		rootCmd.SetArgs([]string{"group", "create", "-f", "-"})

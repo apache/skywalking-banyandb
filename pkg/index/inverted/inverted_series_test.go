@@ -943,6 +943,65 @@ func field(key index.FieldKey, value []byte, indexed bool) index.Field {
 	return f
 }
 
+// TestStore_BuildQueryTimeRangeWithoutSeriesMatchers verifies that BuildQuery applies the time range
+// filter even when no series matchers are provided, both with and without a secondary query.
+func TestStore_BuildQueryTimeRangeWithoutSeriesMatchers(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+
+	insertData(tester, s)
+
+	// series2 has Timestamp=101, series3 has Timestamp=1001, series4 has Timestamp=2001.
+	// A time range [100, 2000) should match series2 and series3 only.
+	tr := timestamp.NewTimeRange(time.Unix(0, 100), time.Unix(0, 2000), true, false)
+
+	t.Run("nil secondary query", func(t *testing.T) {
+		query, buildErr := s.BuildQuery(nil, nil, &tr)
+		require.NoError(t, buildErr)
+		require.NotNil(t, query)
+
+		got, searchErr := s.Search(context.Background(), nil, query, 0)
+		require.NoError(t, searchErr)
+
+		sort.Slice(got, func(i, j int) bool {
+			return string(got[i].Key.EntityValues) < string(got[j].Key.EntityValues)
+		})
+		want := []index.SeriesDocument{
+			{Key: index.Series{EntityValues: []byte("test2")}, Timestamp: int64(101)},
+			{Key: index.Series{EntityValues: []byte("test3")}, Timestamp: int64(1001)},
+		}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("with secondary query", func(t *testing.T) {
+		// Build a secondary query matching entity "test4" (timestamp=2001).
+		// The time range [100, 2000) excludes its timestamp, so nothing should match.
+		durQuery, buildErr := s.BuildQuery([]index.SeriesMatcher{{
+			Type:  index.SeriesMatcherTypeExact,
+			Match: []byte("test4"),
+		}}, nil, nil)
+		require.NoError(t, buildErr)
+
+		// Now query with no series matchers, that secondary query, and the narrow time range.
+		combined, buildErr := s.BuildQuery(nil, durQuery, &tr)
+		require.NoError(t, buildErr)
+		require.NotNil(t, combined)
+
+		got, searchErr := s.Search(context.Background(), nil, combined, 0)
+		require.NoError(t, searchErr)
+		assert.Empty(t, got, "time range [100,2000) must exclude test4 (timestamp=2001)")
+	})
+}
+
 func updateData(tester *require.Assertions, s index.SeriesStore) {
 	b1, b2 := generateDocs()
 	tester.NoError(s.UpdateSeriesBatch(b1))

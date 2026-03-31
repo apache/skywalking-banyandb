@@ -197,6 +197,9 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 func (s *segment[T, O]) collectMetrics() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.index == nil {
+		return
+	}
 	s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
 }
 

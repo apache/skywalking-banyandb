@@ -4,7 +4,7 @@ This guide explains how to set up and use the BanyanDB MCP server from pre-built
 
 ## Prerequisites
 
-- **Node.js 20+** installed (for binary usage)
+- **Node.js 24.6.0+** installed (for binary usage)
 - **BanyanDB** running and accessible
 - **MCP client** (e.g., Claude Desktop, MCP Inspector, or other MCP-compatible clients)
 
@@ -16,16 +16,24 @@ The MCP server binary is included in the BanyanDB release package. After extract
 
 ```bash
 cd mcp
-node dist/index.js --help
+node dist/index.js
 ```
+
+The server starts in stdio mode by default and waits for MCP client connections. Verify BanyanDB is accessible before starting (see [Verifying BanyanDB Connection](#verifying-banyandb-connection)).
 
 ### 2. Configure Environment Variables
 
 Set the following environment variables:
 
 - `BANYANDB_ADDRESS`: BanyanDB server address (default: `localhost:17900`). The server auto-converts gRPC port (17900) to HTTP port (17913).
-- `LLM_API_KEY`: (Optional) API key for LLM-powered query generation. Falls back to pattern-based if not set.
-- `LLM_BASE_URL`: (Optional) Base URL for the LLM API (default: `https://api.openai.com/v1`). Only used when `LLM_API_KEY` is set.
+- `TRANSPORT`: Transport mode. Default is `stdio`. Set `http` only when you want to expose the MCP server over HTTP.
+- `MCP_HOST`: HTTP listen address. Default is `127.0.0.1`.
+- `MCP_PORT`: HTTP listen port. Default is `3000`.
+- `MCP_AUTH_TOKEN`: Optional bearer token for HTTP mode. Required when `MCP_HOST` is not a loopback address.
+- `MCP_MAX_BODY_BYTES`: Maximum HTTP request body size. Default is `1048576` (1 MiB).
+- `MCP_RATE_LIMIT_WINDOW_MS`: Per-client HTTP rate limit window in milliseconds. Default is `60000`.
+- `MCP_RATE_LIMIT_MAX_REQUESTS`: Maximum HTTP requests allowed per client in each rate-limit window. Default is `60`.
+- `MCP_RATE_LIMIT_MAX_CLIENTS`: Maximum number of client IDs tracked by the in-memory HTTP rate limiter. Default is `10000`.
 
 **Address formats:**
 - `localhost:17900` - Local BanyanDB
@@ -40,8 +48,10 @@ Create a configuration file for your MCP client. For example, for MCP Inspector,
 
 The MCP server is available as a Docker image for easy deployment.
 
+### 1. Pull Docker Image
+
 ```bash
-docker pull apache/skywalking-banyandb-mcp:{COMMIT_ID}
+docker pull ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
 
 ### 2. Run the Container
@@ -50,8 +60,6 @@ docker pull apache/skywalking-banyandb-mcp:{COMMIT_ID}
 docker run -d \
   --name banyandb-mcp \
   -e BANYANDB_ADDRESS=banyandb:17900 \
-  -e LLM_API_KEY=sk-your-key-here \
-  -e LLM_BASE_URL=your-llm-base-url \
   ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
 
@@ -69,8 +77,6 @@ When using Docker, configure your MCP client to connect to the container:
         "--rm",
         "-i",
         "-e", "BANYANDB_ADDRESS=banyandb:17900",
-        "-e", "LLM_API_KEY=sk-your-key-here",
-        "-e", "LLM_BASE_URL=your-llm-base-url",
         "--network", "host",
         "ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}"
       ]
@@ -100,8 +106,6 @@ services:
     container_name: banyandb-mcp
     environment:
       - BANYANDB_ADDRESS=banyandb:17900
-      - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
     depends_on:
       - banyandb
     networks:
@@ -115,8 +119,14 @@ services:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BANYANDB_ADDRESS` | No | `localhost:17900` | BanyanDB server address. Auto-converts gRPC port (17900) to HTTP port (17913). |
-| `LLM_API_KEY` | No | - | API key for LLM-powered query generation. Falls back to pattern-based if not set. |
-| `LLM_BASE_URL` | No | `https://api.openai.com/v1` | Base URL for the LLM API. Only used when `LLM_API_KEY` is set. |
+| `TRANSPORT` | No | `stdio` | Transport mode: `stdio` for standard I/O (default), `http` for Streamable HTTP. |
+| `MCP_HOST` | No | `127.0.0.1` | HTTP listen address. Only used when `TRANSPORT=http`. |
+| `MCP_PORT` | No | `3000` | HTTP port to listen on. Only used when `TRANSPORT=http`. |
+| `MCP_AUTH_TOKEN` | Conditionally | unset | Optional bearer token for HTTP mode. Required when `MCP_HOST` is not a loopback address. |
+| `MCP_MAX_BODY_BYTES` | No | `1048576` | Maximum HTTP request body size in bytes. |
+| `MCP_RATE_LIMIT_WINDOW_MS` | No | `60000` | Per-client HTTP rate-limit window in milliseconds. |
+| `MCP_RATE_LIMIT_MAX_REQUESTS` | No | `60` | Maximum HTTP requests allowed per client during each rate-limit window. |
+| `MCP_RATE_LIMIT_MAX_CLIENTS` | No | `10000` | Maximum number of client IDs retained by the in-memory HTTP rate limiter before oldest entries are evicted. |
 
 ### Verifying BanyanDB Connection
 
@@ -131,6 +141,114 @@ curl http://localhost:17913/api/healthz
 grpcurl -plaintext localhost:17912 list
 ```
 
+## HTTP Transport Mode
+
+By default the MCP server communicates over standard I/O (`TRANSPORT=stdio`), which is suitable for desktop clients such as Claude Desktop. Set `TRANSPORT=http` to expose the server as an HTTP endpoint instead. This mode uses the MCP [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) transport, which supports both streaming (SSE) and direct JSON responses.
+
+### Start in HTTP Mode
+
+```bash
+# Default loopback bind
+TRANSPORT=http BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+
+# Custom host and port
+TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=8080 BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+
+# Non-loopback host requires an auth token
+TRANSPORT=http \
+MCP_HOST=0.0.0.0 \
+MCP_PORT=3000 \
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+BANYANDB_ADDRESS=localhost:17900 \
+node dist/index.js
+```
+
+The server prints the listening address on startup:
+
+```
+BanyanDB MCP HTTP server listening on 127.0.0.1:3000/mcp
+```
+
+The single endpoint is `POST /mcp`. Other HTTP methods on `/mcp` return `405 Method Not Allowed`, and all other paths return `404`.
+
+If `MCP_AUTH_TOKEN` is configured, clients must send:
+
+```http
+Authorization: Bearer <token>
+```
+
+HTTP mode also enforces request-size and per-client rate limits using `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS`.
+
+### Configure an MCP Client for HTTP
+
+MCP clients that support the Streamable HTTP transport (e.g. MCP Inspector, custom integrations) connect via a URL:
+
+```json
+{
+  "mcpServers": {
+    "banyandb": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-your-token"
+      }
+    }
+  }
+}
+```
+
+If you keep the default loopback bind and do not set `MCP_AUTH_TOKEN`, the `headers` block is not required.
+
+### Docker with HTTP Mode
+
+When running in a container, expose the HTTP port and set the transport env var:
+
+```bash
+docker run -d \
+  --name banyandb-mcp \
+  -p 3000:3000 \
+  -e TRANSPORT=http \
+  -e MCP_HOST=0.0.0.0 \
+  -e MCP_PORT=3000 \
+  -e MCP_AUTH_TOKEN=replace-with-a-strong-random-token \
+  -e BANYANDB_ADDRESS=banyandb:17900 \
+  ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
+```
+
+Docker Compose example with HTTP mode:
+
+```yaml
+services:
+  banyandb:
+    image: ghcr.io/apache/skywalking-banyandb:{COMMIT_ID}
+    container_name: banyandb
+    command: standalone
+    ports:
+      - "17912:17912"
+      - "17913:17913"
+
+  mcp:
+    image: ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
+    container_name: banyandb-mcp
+    environment:
+      - TRANSPORT=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3000
+      - MCP_AUTH_TOKEN=replace-with-a-strong-random-token
+      - BANYANDB_ADDRESS=banyandb:17900
+    ports:
+      - "3000:3000"
+    depends_on:
+      - banyandb
+```
+
+### Choosing a Transport
+
+| | `stdio` (default) | `http` |
+|---|---|---|
+| **Best for** | Claude Desktop, local CLI clients | Web integrations, remote clients, custom apps |
+| **Connection** | Subprocess stdin/stdout | HTTP `POST /mcp` |
+| **Session state** | Persistent (single process) | Stateless (new context per request) |
+
 ## Troubleshooting
 
 **Connection refused:**
@@ -140,8 +258,12 @@ grpcurl -plaintext localhost:17912 list
 - For Docker, ensure containers are on the same network
 
 **"Command not found: node":**
-- Install Node.js 20+ from [nodejs.org](https://nodejs.org/)
+- Install Node.js 24.6.0+ from [nodejs.org](https://nodejs.org/)
 - Or use Docker image instead
+
+**HTTP mode exits at startup:**
+- If `MCP_HOST` is not `127.0.0.1`, `localhost`, or `::1`, set `MCP_AUTH_TOKEN`
+- Verify `MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS` are positive integers
 
 **MCP server not appearing in client:**
 - Verify JSON config is valid
@@ -153,4 +275,3 @@ grpcurl -plaintext localhost:17912 list
 
 - [Test via Inspector Guide](inspector.md) - Learn how to test the MCP server using MCP Inspector
 - [Build and Package](build.md) - For developers who want to build from source
-

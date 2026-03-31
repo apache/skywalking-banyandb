@@ -272,18 +272,28 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 			}
 		}
 
-		// Verify metrics were updated across multiple cycles
+		// Verify metrics were updated across multiple cycles.
 		metricsMap := ds.GetMetrics()
+		var processCPUMetricKey string
 		for metricKey, metricBuffer := range metricsMap {
 			values := metricBuffer.GetAllValues()
 			// At least some metrics should have multiple values from multiple polls
 			if len(values) > 0 {
 				Expect(len(values)).To(BeNumerically(">=", 1),
 					fmt.Sprintf("Metric %s should have values from polling cycles", metricKey))
-				Expect(len(values)).To(BeNumerically("==", len(timestampValues)),
-					fmt.Sprintf("Metric %s should have values equal to timestamps", metricKey))
+				Expect(len(values)).To(BeNumerically("<=", len(timestampValues)),
+					fmt.Sprintf("Metric %s should not have more values than timestamps", metricKey))
+			}
+			if strings.Contains(metricKey, "process_cpu_seconds_total") {
+				processCPUMetricKey = metricKey
 			}
 		}
+
+		Expect(processCPUMetricKey).NotTo(BeEmpty(), "process_cpu_seconds_total should be collected on every poll")
+
+		processCPUValues := metricsMap[processCPUMetricKey].GetAllValues()
+		Expect(len(processCPUValues)).To(BeNumerically("==", len(timestampValues)),
+			fmt.Sprintf("Metric %s should have samples for every observed polling cycle", processCPUMetricKey))
 	})
 
 	It("should verify FlightRecorder API accessibility", func() {

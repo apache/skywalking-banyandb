@@ -42,10 +42,12 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -77,31 +79,31 @@ type server struct {
 	databasev1.UnimplementedNodeQueryServiceServer
 	databasev1.UnimplementedClusterStateServiceServer
 	clusterv1.UnimplementedServiceServer
+	fodcv1.UnimplementedGroupLifecycleServiceServer
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
-	curNode               *databasev1.Node
-	metrics               *metrics
+	metadataRepo          metadata.Repo
+	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
 	topicMap              map[string]bus.Topic
 	chunkedSyncHandlers   map[bus.Topic]queue.ChunkedSyncHandler
-	activeSessions        map[string]*syncSession
 	log                   *logger.Logger
 	httpSrv               *http.Server
 	tlsReloader           *pkgtls.Reloader
-	clientCloser          context.CancelFunc
+	metrics               *metrics
 	routeTableProvider    map[string]route.TableProvider
+	curNode               *databasev1.Node
+	flagNamePrefix        string
 	certFile              string
 	addr                  string
-	keyFile               string
-	flagNamePrefix        string
 	httpAddr              string
 	host                  string
+	keyFile               string
 	chunkBufferTimeout    time.Duration
 	maxRecvMsgSize        run.Bytes
 	listenersLock         sync.RWMutex
 	routeTableProviderMu  sync.RWMutex
-	activeSessionsMu      sync.Mutex
 	port                  uint32
 	httpPort              uint32
 	maxChunkBufferSize    uint32
@@ -121,7 +123,6 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		listeners:           make(map[bus.Topic][]bus.MessageListener),
 		topicMap:            make(map[string]bus.Topic),
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
-		activeSessions:      make(map[string]*syncSession),
 		omr:                 omr,
 		maxRecvMsgSize:      defaultRecvSize,
 		flagNamePrefix:      flagNamePrefix,
@@ -288,6 +289,9 @@ func (s *server) Serve() run.StopNotify {
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
+	if s.metadataRepo != nil {
+		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+	}
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())
@@ -381,39 +385,6 @@ func (s *server) GracefulStop() {
 		t.Stop()
 		s.log.Info().Msg("stopped gracefully")
 	}
-
-	s.closeAllSessions()
-}
-
-// registerSession adds a session to the active sessions map.
-func (s *server) registerSession(id string, session *syncSession) {
-	s.activeSessionsMu.Lock()
-	s.activeSessions[id] = session
-	s.activeSessionsMu.Unlock()
-}
-
-// unregisterSession removes a session from the active sessions map.
-func (s *server) unregisterSession(id string) {
-	s.activeSessionsMu.Lock()
-	delete(s.activeSessions, id)
-	s.activeSessionsMu.Unlock()
-}
-
-// closeAllSessions closes the partCtx of every remaining active session.
-// It is called after the gRPC server has fully stopped as a safety net.
-func (s *server) closeAllSessions() {
-	s.activeSessionsMu.Lock()
-	sessions := s.activeSessions
-	s.activeSessions = make(map[string]*syncSession)
-	s.activeSessionsMu.Unlock()
-
-	for id, session := range sessions {
-		if session.partCtx != nil {
-			if closeErr := session.partCtx.Close(); closeErr != nil {
-				s.log.Error().Err(closeErr).Str("session_id", id).Msg("failed to close session partCtx during shutdown")
-			}
-		}
-	}
 }
 
 // RegisterChunkedSyncHandler implements queue.Server.
@@ -425,6 +396,11 @@ func (s *server) SetRouteProviders(providers map[string]route.TableProvider) {
 	s.routeTableProviderMu.Lock()
 	s.routeTableProvider = providers
 	s.routeTableProviderMu.Unlock()
+}
+
+// SetMetadataRepo sets the metadata repository for the internal gRPC server.
+func (s *server) SetMetadataRepo(repo metadata.Repo) {
+	s.metadataRepo = repo
 }
 
 type metrics struct {
@@ -444,6 +420,7 @@ type metrics struct {
 	bufferTimeouts           meter.Counter
 	largeGapsRejected        meter.Counter
 	bufferCapacityExceeded   meter.Counter
+	finishSyncErr            meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -463,11 +440,12 @@ func newMetrics(factory observability.Factory) *metrics {
 		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "session_id"),
 		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "session_id"),
 		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "session_id"),
+		finishSyncErr:            factory.NewCounter("finish_sync_err", "session_id"),
 	}
 }
 
 // updateChunkOrderMetrics updates chunk ordering metrics.
-func (s *server) updateChunkOrderMetrics(event string, sessionID string) {
+func (s *server) updateChunkOrderMetrics(event, sessionID string) {
 	if s.metrics == nil {
 		return // Skip metrics if not initialized (e.g., during tests)
 	}
@@ -482,5 +460,7 @@ func (s *server) updateChunkOrderMetrics(event string, sessionID string) {
 		s.metrics.largeGapsRejected.Inc(1, sessionID)
 	case "buffer_full":
 		s.metrics.bufferCapacityExceeded.Inc(1, sessionID)
+	case "finish_sync_err":
+		s.metrics.finishSyncErr.Inc(1, sessionID)
 	}
 }

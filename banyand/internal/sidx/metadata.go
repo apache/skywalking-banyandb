@@ -36,19 +36,16 @@ import (
 
 // partMetadata contains metadata for an entire part (replaces timestamp-specific metadata from stream module).
 type partMetadata struct {
-	// Size information
+	MinTimestamp          *int64 `json:"minTimestamp,omitempty"`
+	MaxTimestamp          *int64 `json:"maxTimestamp,omitempty"`
 	CompressedSizeBytes   uint64 `json:"compressedSizeBytes"`
 	UncompressedSizeBytes uint64 `json:"uncompressedSizeBytes"`
 	TotalCount            uint64 `json:"totalCount"`
 	BlocksCount           uint64 `json:"blocksCount"`
-
-	// Key range
-	MinKey int64 `json:"minKey"` // Minimum user key in part
-	MaxKey int64 `json:"maxKey"` // Maximum user key in part
-
-	// Identity
-	ID        uint64 `json:"id"`        // Unique part identifier
-	SegmentID int64  `json:"segmentID"` // Segment identifier
+	MinKey                int64  `json:"minKey"`
+	MaxKey                int64  `json:"maxKey"`
+	ID                    uint64 `json:"id"`
+	SegmentID             int64  `json:"segmentID"`
 }
 
 func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
@@ -140,6 +137,8 @@ func (pm *partMetadata) reset() {
 	pm.BlocksCount = 0
 	pm.MinKey = 0
 	pm.MaxKey = 0
+	pm.MinTimestamp = nil
+	pm.MaxTimestamp = nil
 	pm.ID = 0
 }
 
@@ -191,6 +190,10 @@ func (bm *blockMetadata) copyFrom(other *blockMetadata) {
 func (pm *partMetadata) validate() error {
 	if pm.MinKey > pm.MaxKey {
 		return fmt.Errorf("invalid key range: MinKey (%d) > MaxKey (%d)", pm.MinKey, pm.MaxKey)
+	}
+	if pm.MinTimestamp != nil && pm.MaxTimestamp != nil && *pm.MinTimestamp > *pm.MaxTimestamp {
+		return fmt.Errorf("invalid timestamp range: minTimestamp (%d) > maxTimestamp (%d)",
+			*pm.MinTimestamp, *pm.MaxTimestamp)
 	}
 	if pm.CompressedSizeBytes > pm.UncompressedSizeBytes {
 		return fmt.Errorf("invalid size: compressed (%d) > uncompressed (%d)",

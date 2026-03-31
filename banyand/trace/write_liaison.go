@@ -222,8 +222,10 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
 						continue
 					}
+					minTS := es.timeRange.Start.UnixNano()
+					maxTS := es.timeRange.End.UnixNano()
 					var siMemPart *sidx.MemPart
-					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano()); err != nil {
+					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano(), &minTS, &maxTS); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
 						continue
 					}

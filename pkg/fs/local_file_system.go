@@ -256,6 +256,29 @@ func (fs *localFileSystem) Read(name string) ([]byte, error) {
 	}
 }
 
+// Rename renames oldPath to newPath atomically.
+func (fs *localFileSystem) Rename(oldPath, newPath string) error {
+	if err := os.Rename(oldPath, newPath); err != nil {
+		if os.IsNotExist(err) {
+			return &FileSystemError{
+				Code:    IsNotExistError,
+				Message: fmt.Sprintf("Rename failed, file does not exist, old: %s, new: %s, error: %s", oldPath, newPath, err),
+			}
+		}
+		if os.IsPermission(err) {
+			return &FileSystemError{
+				Code:    permissionError,
+				Message: fmt.Sprintf("Rename failed, permission denied, old: %s, new: %s, error: %s", oldPath, newPath, err),
+			}
+		}
+		return &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Rename failed, old: %s, new: %s, error: %s", oldPath, newPath, err),
+		}
+	}
+	return nil
+}
+
 // DeleteFile is used to delete the file.
 func (fs *localFileSystem) DeleteFile(name string) error {
 	err := os.Remove(name)

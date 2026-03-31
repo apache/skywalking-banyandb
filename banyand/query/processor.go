@@ -33,6 +33,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -223,17 +224,6 @@ func executeMeasurePlan(
 	return mIterator, plan, nil
 }
 
-// extractTagValuesFromInternalDataPoints extracts tag values from InternalDataPoints for RewriteAggTopNResult.
-func extractTagValuesFromInternalDataPoints(dataPoints []*measurev1.InternalDataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
-	tagValueMap := make(map[string][]*modelv1.TagValue)
-	for _, idp := range dataPoints {
-		if idp.DataPoint != nil {
-			extractTagValuesFromDataPoint(idp.DataPoint, groupByTags, tagValueMap)
-		}
-	}
-	return tagValueMap
-}
-
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
 func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.InternalDataPoint {
 	result := make([]*measurev1.InternalDataPoint, 0)
@@ -246,50 +236,6 @@ func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.Intern
 	return result
 }
 
-// extractTagValuesFromDataPoints extracts tag values from DataPoints for RewriteAggTopNResult.
-func extractTagValuesFromDataPoints(dataPoints []*measurev1.DataPoint, groupByTags []string) map[string][]*modelv1.TagValue {
-	tagValueMap := make(map[string][]*modelv1.TagValue)
-	for _, dp := range dataPoints {
-		extractTagValuesFromDataPoint(dp, groupByTags, tagValueMap)
-	}
-	return tagValueMap
-}
-
-// extractTagValuesFromDataPoint extracts tag values from a single DataPoint and appends to tagValueMap.
-func extractTagValuesFromDataPoint(dp *measurev1.DataPoint, groupByTags []string, tagValueMap map[string][]*modelv1.TagValue) {
-	for _, tagFamily := range dp.GetTagFamilies() {
-		for _, tag := range tagFamily.GetTags() {
-			tagName := tag.GetKey()
-			if len(groupByTags) == 0 || slices.Contains(groupByTags, tagName) {
-				tagValueMap[tagName] = append(tagValueMap[tagName], tag.GetValue())
-			}
-		}
-	}
-}
-
-// getGroupByTags extracts group by tag names from query criteria.
-func getGroupByTags(queryCriteria *measurev1.QueryRequest) []string {
-	groupByTags := make([]string, 0)
-	if queryCriteria.GetGroupBy() != nil {
-		for _, tagFamily := range queryCriteria.GetGroupBy().GetTagProjection().GetTagFamilies() {
-			groupByTags = append(groupByTags, tagFamily.GetTags()...)
-		}
-	}
-	return groupByTags
-}
-
-// buildRewriteQueryCriteria builds the rewrite query criteria for RewriteAggTopNResult.
-func buildRewriteQueryCriteria(queryCriteria *measurev1.QueryRequest, rewrittenCriteria *modelv1.Criteria) *measurev1.QueryRequest {
-	return &measurev1.QueryRequest{
-		Groups:          queryCriteria.Groups,
-		Name:            queryCriteria.Name,
-		TimeRange:       queryCriteria.TimeRange,
-		Criteria:        rewrittenCriteria,
-		TagProjection:   queryCriteria.TagProjection,
-		FieldProjection: queryCriteria.FieldProjection,
-	}
-}
-
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
@@ -298,34 +244,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
-	if queryCriteria.RewriteAggTopNResult {
-		queryCriteria.Top.Number *= 2
-	}
 	resp = p.executeQuery(ctx, queryCriteria)
-
-	if queryCriteria.RewriteAggTopNResult {
-		result, handleErr := handleResponse(resp)
-		if handleErr != nil {
-			return
-		}
-		if len(result) == 0 {
-			return
-		}
-		groupByTags := getGroupByTags(queryCriteria)
-		tagValueMap := extractTagValuesFromDataPoints(result, groupByTags)
-		rewrittenCriteria, rewriteErr := rewriteCriteria(tagValueMap)
-		if rewriteErr != nil {
-			p.log.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
-			return
-		}
-		rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
-		resp = p.executeQuery(ctx, rewriteQueryCriteria)
-		dataPoints, handleErr := handleResponse(resp)
-		if handleErr != nil {
-			return
-		}
-		resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{DataPoints: dataPoints})
-	}
 	return
 }
 
@@ -416,22 +335,11 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 	return
 }
 
-func handleResponse(resp bus.Message) ([]*measurev1.DataPoint, *common.Error) {
-	data := resp.Data()
-	switch d := data.(type) {
-	case *common.Error:
-		return nil, d
-	case *measurev1.QueryResponse:
-		return d.DataPoints, nil
-	default:
-		return nil, common.NewError("unexpected response data type: %T", d)
-	}
-}
-
 type measureInternalQueryProcessor struct {
 	measureService measure.Service
 	*queryService
 	*bus.UnImplementedHealthyListener
+	metricSvc observability.MetricsRegistry
 }
 
 func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -446,10 +354,6 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	if queryCriteria == nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query request is nil"))
 		return
-	}
-	// Handle RewriteAggTopNResult: double the top number for initial query
-	if queryCriteria.RewriteAggTopNResult {
-		queryCriteria.Top.Number *= 2
 	}
 	defer func() {
 		if recoverErr := recover(); recoverErr != nil {
@@ -482,7 +386,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+		span, _ = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
 		span.Tag("plan", plan.String())
 		defer func() {
 			respData := resp.Data()
@@ -503,29 +407,6 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 
 	result := collectInternalDataPoints(mIterator)
 
-	// Handle RewriteAggTopNResult: rewrite query to get original data with Timestamp
-	if queryCriteria.RewriteAggTopNResult && len(result) > 0 {
-		groupByTags := getGroupByTags(queryCriteria)
-		tagValueMap := extractTagValuesFromInternalDataPoints(result, groupByTags)
-		rewrittenCriteria, rewriteErr := rewriteCriteria(tagValueMap)
-		if rewriteErr != nil {
-			mctx.ml.Error().Err(rewriteErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to rewrite the query criteria")
-		} else {
-			rewriteQueryCriteria := buildRewriteQueryCriteria(queryCriteria, rewrittenCriteria)
-			rewriteIterator, _, rewriteExecErr := executeMeasurePlan(ctx, rewriteQueryCriteria, mctx, false)
-			if rewriteExecErr != nil {
-				mctx.ml.Error().Err(rewriteExecErr).RawJSON("req", logger.Proto(rewriteQueryCriteria)).Msg("fail to execute the rewrite query plan")
-			} else {
-				defer func() {
-					if closeErr := rewriteIterator.Close(); closeErr != nil {
-						mctx.ml.Error().Err(closeErr).Msg("fail to close the rewrite query plan")
-					}
-				}()
-				result = collectInternalDataPoints(rewriteIterator)
-			}
-		}
-	}
-
 	qr := &measurev1.InternalQueryResponse{DataPoints: result}
 	if e := mctx.ml.Debug(); e.Enabled() {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got an internal measure response")
@@ -538,85 +419,6 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		}
 	}
 	return
-}
-
-func rewriteCriteria(tagValueMap map[string][]*modelv1.TagValue) (*modelv1.Criteria, error) {
-	var tagConditions []*modelv1.Condition
-	for tagName, tagValues := range tagValueMap {
-		if len(tagValues) == 0 {
-			continue
-		}
-		switch tagValues[0].GetValue().(type) {
-		case *modelv1.TagValue_Str:
-			valueSet := make(map[string]bool)
-			for _, value := range tagValues {
-				if strVal, ok := value.GetValue().(*modelv1.TagValue_Str); ok {
-					valueSet[strVal.Str.GetValue()] = true
-				}
-			}
-			values := make([]string, 0, len(valueSet))
-			for value := range valueSet {
-				values = append(values, value)
-			}
-			condition := &modelv1.Condition{
-				Name: tagName,
-				Op:   modelv1.Condition_BINARY_OP_IN,
-				Value: &modelv1.TagValue{
-					Value: &modelv1.TagValue_StrArray{
-						StrArray: &modelv1.StrArray{
-							Value: values,
-						},
-					},
-				},
-			}
-			tagConditions = append(tagConditions, condition)
-		case *modelv1.TagValue_Int:
-			valueSet := make(map[int64]bool)
-			for _, value := range tagValues {
-				if intVal, ok := value.GetValue().(*modelv1.TagValue_Int); ok {
-					valueSet[intVal.Int.GetValue()] = true
-				}
-			}
-			values := make([]int64, 0, len(valueSet))
-			for value := range valueSet {
-				values = append(values, value)
-			}
-			condition := &modelv1.Condition{
-				Name: tagName,
-				Op:   modelv1.Condition_BINARY_OP_IN,
-				Value: &modelv1.TagValue{
-					Value: &modelv1.TagValue_IntArray{
-						IntArray: &modelv1.IntArray{
-							Value: values,
-						},
-					},
-				},
-			}
-			tagConditions = append(tagConditions, condition)
-		default:
-			return nil, fmt.Errorf("unsupported tag value type: %T", tagValues[0].GetValue())
-		}
-	}
-	return buildCriteriaTree(tagConditions), nil
-}
-
-func buildCriteriaTree(conditions []*modelv1.Condition) *modelv1.Criteria {
-	if len(conditions) == 0 {
-		return nil
-	}
-	return &modelv1.Criteria{
-		Exp: &modelv1.Criteria_Le{
-			Le: &modelv1.LogicalExpression{
-				Op: modelv1.LogicalExpression_LOGICAL_OP_AND,
-				Left: &modelv1.Criteria{
-					Exp: &modelv1.Criteria_Condition{
-						Condition: conditions[0],
-					},
-				},
-				Right: buildCriteriaTree(conditions[1:]),
-			},
-		},
-	}
 }
 
 type traceQueryProcessor struct {

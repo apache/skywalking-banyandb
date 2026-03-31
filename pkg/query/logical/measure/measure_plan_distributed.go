@@ -154,13 +154,6 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		temp.GroupBy = ud.originalQuery.GroupBy
 		temp.Agg = ud.originalQuery.Agg
 	}
-	// push down groupBy, agg and top to data node and rewrite agg result to raw data
-	if ud.originalQuery.Agg != nil && ud.originalQuery.Top != nil {
-		temp.RewriteAggTopNResult = true
-		temp.Agg = ud.originalQuery.Agg
-		temp.Top = ud.originalQuery.Top
-		temp.GroupBy = ud.originalQuery.GroupBy
-	}
 	// Prepare groupBy tags refs if needed for deduplication
 	var groupByTagsRefs [][]*logical.TagRef
 	if ud.pushDownAgg && ud.originalQuery.GetGroupBy() != nil {
@@ -429,6 +422,7 @@ type sortedMIterator struct {
 	uniqueData  map[uint64]*measurev1.InternalDataPoint
 	cur         *measurev1.InternalDataPoint
 	initialized bool
+	exhausted   bool
 	closed      bool
 }
 
@@ -438,7 +432,7 @@ func (s *sortedMIterator) init() {
 	}
 	s.initialized = true
 	if !s.Iterator.Next() {
-		s.closed = true
+		s.exhausted = true
 		return
 	}
 	s.data = list.New()
@@ -463,7 +457,7 @@ func (s *sortedMIterator) Next() bool {
 }
 
 func (s *sortedMIterator) loadDps() {
-	if s.closed {
+	if s.exhausted {
 		return
 	}
 	for k := range s.uniqueData {
@@ -473,7 +467,7 @@ func (s *sortedMIterator) loadDps() {
 	s.uniqueData[hashDataPoint(first.GetDataPoint())] = first.InternalDataPoint
 	for {
 		if !s.Iterator.Next() {
-			s.closed = true
+			s.exhausted = true
 			break
 		}
 		v := s.Iterator.Val()
@@ -500,7 +494,18 @@ func (s *sortedMIterator) Current() []*measurev1.InternalDataPoint {
 }
 
 func (s *sortedMIterator) Close() error {
-	return nil
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	s.exhausted = true
+	s.data = nil
+	s.uniqueData = nil
+	s.cur = nil
+	if s.Iterator == nil {
+		return nil
+	}
+	return s.Iterator.Close()
 }
 
 const (

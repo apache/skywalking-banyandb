@@ -26,9 +26,11 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -74,16 +76,17 @@ func (i *indexSchema) parse(schema *databasev1.Measure) {
 }
 
 type measure struct {
-	indexSchema atomic.Value
-	tsdb        atomic.Value
-	c           storage.Cache
-	pm          protector.Memory
-	l           *logger.Logger
-	schema      *databasev1.Measure
-	schemaRepo  *schemaRepo
-	name        string
-	group       string
-	interval    time.Duration
+	indexSchema  atomic.Value
+	tsdb         atomic.Value
+	c            storage.Cache
+	pm           protector.Memory
+	l            *logger.Logger
+	schema       *databasev1.Measure
+	schemaRepo   *schemaRepo
+	queryMetrics *queryMetrics
+	name         string
+	group        string
+	interval     time.Duration
 }
 
 func (m *measure) GetSchema() *databasev1.Measure {
@@ -120,15 +123,37 @@ type measureSpec struct {
 	schema *databasev1.Measure
 }
 
+type queryMetrics struct {
+	queryLatency             meter.Histogram
+	queryErrors              meter.Counter
+	resultPoints             meter.Histogram
+	totalQueryResultStarted  meter.Counter
+	totalQueryResultFinished meter.Counter
+}
+
+func newQueryMetrics(factory observability.Factory) *queryMetrics {
+	if factory == nil {
+		return nil
+	}
+	return &queryMetrics{
+		queryLatency:             factory.NewHistogram("query_latency", meter.DefBuckets),
+		queryErrors:              factory.NewCounter("total_query_errors"),
+		resultPoints:             factory.NewHistogram("result_points", meter.DefBuckets),
+		totalQueryResultStarted:  factory.NewCounter("total_query_result_started"),
+		totalQueryResultFinished: factory.NewCounter("total_query_result_finished"),
+	}
+}
+
 func openMeasure(spec measureSpec,
-	l *logger.Logger, c storage.Cache, pm protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, c storage.Cache, pm protector.Memory, schemaRepo *schemaRepo, qm *queryMetrics,
 ) (*measure, error) {
 	m := &measure{
-		schema:     spec.schema,
-		l:          l,
-		c:          c,
-		pm:         pm,
-		schemaRepo: schemaRepo,
+		schema:       spec.schema,
+		l:            l,
+		c:            c,
+		pm:           pm,
+		schemaRepo:   schemaRepo,
+		queryMetrics: qm,
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err

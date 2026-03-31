@@ -68,7 +68,7 @@ jobs:
           make -C mcp docker || make -C mcp docker 
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@v1.10.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         if: github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.HUB }}

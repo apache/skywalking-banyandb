@@ -163,7 +163,7 @@ func createTestSIDXWithOptions(t *testing.T, tweak func(*Options)) SIDX {
 
 func writeTestData(t *testing.T, sidx SIDX, reqs []WriteRequest, segmentID int64, partID uint64) {
 	// Convert write requests to MemPart
-	memPart, err := sidx.ConvertToMemPart(reqs, segmentID)
+	memPart, err := sidx.ConvertToMemPart(reqs, segmentID, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, memPart)
 
@@ -315,7 +315,7 @@ func TestSIDX_Write_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := sidx.ConvertToMemPart([]WriteRequest{tt.req}, 12) // Test with segmentID=12
+			_, err := sidx.ConvertToMemPart([]WriteRequest{tt.req}, 12, nil, nil) // Test with segmentID=12
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -588,7 +588,7 @@ func TestSIDX_ConcurrentWrites(t *testing.T) {
 			}
 
 			// Convert to MemPart and introduce
-			memPart, err := sidx.ConvertToMemPart(reqs, int64(goroutineID+12)) // Test with varied segmentID
+			memPart, err := sidx.ConvertToMemPart(reqs, int64(goroutineID+12), nil, nil) // Test with varied segmentID
 			if err != nil {
 				errors <- err
 				return
@@ -670,7 +670,7 @@ func TestSIDX_ConcurrentReadsWrites(t *testing.T) {
 					fmt.Sprintf("writer-%d-data-%d", writerID, writeCount),
 				)
 				// Convert to MemPart and introduce (ignore errors during concurrent stress)
-				if memPart, err := sidx.ConvertToMemPart([]WriteRequest{req}, int64(writerID+13)); err == nil { // Test with varied segmentID
+				if memPart, err := sidx.ConvertToMemPart([]WriteRequest{req}, int64(writerID+13), nil, nil); err == nil { // Test with varied segmentID
 					sidx.IntroduceMemPart(uint64(writerID+13), memPart) // Test with varied partID
 				}
 				writeCount++
