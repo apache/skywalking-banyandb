@@ -709,7 +709,7 @@ MIT licenses
     on-finished 2.4.1 MIT
     parseurl 1.3.3 MIT
     path-key 3.1.1 MIT
-    path-to-regexp 8.3.0 MIT
+    path-to-regexp 8.4.1 MIT
     pkce-challenge 5.0.1 MIT
     proxy-addr 2.0.7 MIT
     range-parser 1.2.1 MIT
