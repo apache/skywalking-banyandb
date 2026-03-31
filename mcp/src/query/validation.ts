@@ -22,7 +22,6 @@ const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const allowedResourceTypes = ['groups', 'streams', 'measures', 'traces', 'properties'] as const;
 const allowedQueryHintResourceTypes = ['stream', 'measure', 'trace', 'property'] as const;
 const disallowedQueryTokenPatterns = [/[;]/, /--/, /\/\*/, /\*\//];
-const controlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const allowedQueryPrefixPatterns = [/^\s*SELECT\b/i, /^\s*SHOW\s+TOP\b/i];
 
 export type QueryHints = {
@@ -38,6 +37,23 @@ export type ListGroupsArgs = {
   group?: string;
 };
 
+function containsControlCharacters(value: string): boolean {
+  for (const char of value) {
+    const charCode = char.charCodeAt(0);
+    if (
+      (charCode >= 0x00 && charCode <= 0x08) ||
+      charCode === 0x0b ||
+      charCode === 0x0c ||
+      (charCode >= 0x0e && charCode <= 0x1f) ||
+      charCode === 0x7f
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function validateTextInput(fieldName: string, rawValue: string, maxLength: number): string {
   const value = rawValue.trim();
   if (!value) {
@@ -46,7 +62,7 @@ function validateTextInput(fieldName: string, rawValue: string, maxLength: numbe
   if (value.length > maxLength) {
     throw new Error(`${fieldName} exceeds the maximum length of ${maxLength} characters`);
   }
-  if (controlCharacterPattern.test(value)) {
+  if (containsControlCharacters(value)) {
     throw new Error(`${fieldName} contains unsupported control characters`);
   }
 
