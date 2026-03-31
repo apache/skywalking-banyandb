@@ -14,6 +14,7 @@ Release Notes.
 ### Bug Fixes
 
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
+- MCP: Add validation for properties and harden the mcp server.
 
 ## 0.10.0
 
