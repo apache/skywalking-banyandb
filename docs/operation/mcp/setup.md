@@ -4,7 +4,7 @@ This guide explains how to set up and use the BanyanDB MCP server from pre-built
 
 ## Prerequisites
 
-- **Node.js 20+** installed (for binary usage)
+- **Node.js 24.6.0+** installed (for binary usage)
 - **BanyanDB** running and accessible
 - **MCP client** (e.g., Claude Desktop, MCP Inspector, or other MCP-compatible clients)
 
@@ -26,6 +26,14 @@ The server starts in stdio mode by default and waits for MCP client connections.
 Set the following environment variables:
 
 - `BANYANDB_ADDRESS`: BanyanDB server address (default: `localhost:17900`). The server auto-converts gRPC port (17900) to HTTP port (17913).
+- `TRANSPORT`: Transport mode. Default is `stdio`. Set `http` only when you want to expose the MCP server over HTTP.
+- `MCP_HOST`: HTTP listen address. Default is `127.0.0.1`.
+- `MCP_PORT`: HTTP listen port. Default is `3000`.
+- `MCP_AUTH_TOKEN`: Optional bearer token for HTTP mode. Required when `MCP_HOST` is not a loopback address.
+- `MCP_MAX_BODY_BYTES`: Maximum HTTP request body size. Default is `1048576` (1 MiB).
+- `MCP_RATE_LIMIT_WINDOW_MS`: Per-client HTTP rate limit window in milliseconds. Default is `60000`.
+- `MCP_RATE_LIMIT_MAX_REQUESTS`: Maximum HTTP requests allowed per client in each rate-limit window. Default is `60`.
+- `MCP_RATE_LIMIT_MAX_CLIENTS`: Maximum number of client IDs tracked by the in-memory HTTP rate limiter. Default is `10000`.
 
 **Address formats:**
 - `localhost:17900` - Local BanyanDB
@@ -112,7 +120,13 @@ services:
 |----------|----------|---------|-------------|
 | `BANYANDB_ADDRESS` | No | `localhost:17900` | BanyanDB server address. Auto-converts gRPC port (17900) to HTTP port (17913). |
 | `TRANSPORT` | No | `stdio` | Transport mode: `stdio` for standard I/O (default), `http` for Streamable HTTP. |
+| `MCP_HOST` | No | `127.0.0.1` | HTTP listen address. Only used when `TRANSPORT=http`. |
 | `MCP_PORT` | No | `3000` | HTTP port to listen on. Only used when `TRANSPORT=http`. |
+| `MCP_AUTH_TOKEN` | Conditionally | unset | Optional bearer token for HTTP mode. Required when `MCP_HOST` is not a loopback address. |
+| `MCP_MAX_BODY_BYTES` | No | `1048576` | Maximum HTTP request body size in bytes. |
+| `MCP_RATE_LIMIT_WINDOW_MS` | No | `60000` | Per-client HTTP rate-limit window in milliseconds. |
+| `MCP_RATE_LIMIT_MAX_REQUESTS` | No | `60` | Maximum HTTP requests allowed per client during each rate-limit window. |
+| `MCP_RATE_LIMIT_MAX_CLIENTS` | No | `10000` | Maximum number of client IDs retained by the in-memory HTTP rate limiter before oldest entries are evicted. |
 
 ### Verifying BanyanDB Connection
 
@@ -134,20 +148,36 @@ By default the MCP server communicates over standard I/O (`TRANSPORT=stdio`), wh
 ### Start in HTTP Mode
 
 ```bash
-# Default port 3000
+# Default loopback bind
 TRANSPORT=http BANYANDB_ADDRESS=localhost:17900 node dist/index.js
 
-# Custom port
-TRANSPORT=http MCP_PORT=8080 BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+# Custom host and port
+TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=8080 BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+
+# Non-loopback host requires an auth token
+TRANSPORT=http \
+MCP_HOST=0.0.0.0 \
+MCP_PORT=3000 \
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+BANYANDB_ADDRESS=localhost:17900 \
+node dist/index.js
 ```
 
 The server prints the listening address on startup:
 
 ```
-BanyanDB MCP HTTP server listening on :3000/mcp
+BanyanDB MCP HTTP server listening on 127.0.0.1:3000/mcp
 ```
 
 The single endpoint is `POST /mcp`. Other HTTP methods on `/mcp` return `405 Method Not Allowed`, and all other paths return `404`.
+
+If `MCP_AUTH_TOKEN` is configured, clients must send:
+
+```http
+Authorization: Bearer <token>
+```
+
+HTTP mode also enforces request-size and per-client rate limits using `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS`.
 
 ### Configure an MCP Client for HTTP
 
@@ -157,11 +187,16 @@ MCP clients that support the Streamable HTTP transport (e.g. MCP Inspector, cust
 {
   "mcpServers": {
     "banyandb": {
-      "url": "http://localhost:3000/mcp"
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-your-token"
+      }
     }
   }
 }
 ```
+
+If you keep the default loopback bind and do not set `MCP_AUTH_TOKEN`, the `headers` block is not required.
 
 ### Docker with HTTP Mode
 
@@ -172,7 +207,9 @@ docker run -d \
   --name banyandb-mcp \
   -p 3000:3000 \
   -e TRANSPORT=http \
+  -e MCP_HOST=0.0.0.0 \
   -e MCP_PORT=3000 \
+  -e MCP_AUTH_TOKEN=replace-with-a-strong-random-token \
   -e BANYANDB_ADDRESS=banyandb:17900 \
   ghcr.io/apache/skywalking-banyandb-mcp:{COMMIT_ID}
 ```
@@ -194,7 +231,9 @@ services:
     container_name: banyandb-mcp
     environment:
       - TRANSPORT=http
+      - MCP_HOST=0.0.0.0
       - MCP_PORT=3000
+      - MCP_AUTH_TOKEN=replace-with-a-strong-random-token
       - BANYANDB_ADDRESS=banyandb:17900
     ports:
       - "3000:3000"
@@ -219,8 +258,12 @@ services:
 - For Docker, ensure containers are on the same network
 
 **"Command not found: node":**
-- Install Node.js 20+ from [nodejs.org](https://nodejs.org/)
+- Install Node.js 24.6.0+ from [nodejs.org](https://nodejs.org/)
 - Or use Docker image instead
+
+**HTTP mode exits at startup:**
+- If `MCP_HOST` is not `127.0.0.1`, `localhost`, or `::1`, set `MCP_AUTH_TOKEN`
+- Verify `MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_WINDOW_MS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, and `MCP_RATE_LIMIT_MAX_CLIENTS` are positive integers
 
 **MCP server not appearing in client:**
 - Verify JSON config is valid

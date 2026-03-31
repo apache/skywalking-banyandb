@@ -139,66 +139,68 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 
 // BuildQuery implements index.SeriesStore.
 func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query, timeRange *timestamp.TimeRange) (index.Query, error) {
-	if len(seriesMatchers) == 0 {
+	if len(seriesMatchers) == 0 && timeRange == nil {
 		return secondaryQuery, nil
 	}
 
-	qs := make([]bluge.Query, len(seriesMatchers))
-	nodes := make([]node, len(seriesMatchers))
-	for i := range seriesMatchers {
-		switch seriesMatchers[i].Type {
-		case index.SeriesMatcherTypeExact:
-			match := convert.BytesToString(seriesMatchers[i].Match)
-			q := bluge.NewTermQuery(match)
-			q.SetField(docIDField)
-			qs[i] = q
-			nodes = append(nodes, newTermNode(match, nil))
-		case index.SeriesMatcherTypePrefix:
-			match := convert.BytesToString(seriesMatchers[i].Match)
-			q := bluge.NewPrefixQuery(match)
-			q.SetField(docIDField)
-			qs[i] = q
-			nodes = append(nodes, newPrefixNode(match))
-		case index.SeriesMatcherTypeWildcard:
-			match := convert.BytesToString(seriesMatchers[i].Match)
-			q := bluge.NewWildcardQuery(match)
-			q.SetField(docIDField)
-			qs[i] = q
-			nodes = append(nodes, newWildcardNode(match))
-		default:
-			return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
+	query := bluge.NewBooleanQuery()
+	rootNode := newMustNode()
+	if len(seriesMatchers) > 0 {
+		qs := make([]bluge.Query, len(seriesMatchers))
+		matcherNodes := make([]node, len(seriesMatchers))
+		for i := range seriesMatchers {
+			switch seriesMatchers[i].Type {
+			case index.SeriesMatcherTypeExact:
+				match := convert.BytesToString(seriesMatchers[i].Match)
+				q := bluge.NewTermQuery(match)
+				q.SetField(docIDField)
+				qs[i] = q
+				matcherNodes = append(matcherNodes, newTermNode(match, nil))
+			case index.SeriesMatcherTypePrefix:
+				match := convert.BytesToString(seriesMatchers[i].Match)
+				q := bluge.NewPrefixQuery(match)
+				q.SetField(docIDField)
+				qs[i] = q
+				matcherNodes = append(matcherNodes, newPrefixNode(match))
+			case index.SeriesMatcherTypeWildcard:
+				match := convert.BytesToString(seriesMatchers[i].Match)
+				q := bluge.NewWildcardQuery(match)
+				q.SetField(docIDField)
+				qs[i] = q
+				matcherNodes = append(matcherNodes, newWildcardNode(match))
+			default:
+				return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
+			}
 		}
-	}
-	var primaryQuery bluge.Query
-	var n node
-	if len(qs) > 1 {
-		bq := bluge.NewBooleanQuery()
-		bq.AddShould(qs...)
-		bq.SetMinShould(1)
-		primaryQuery = bq
-		n = newShouldNode()
-		for i := range nodes {
-			n.(*shouldNode).Append(nodes[i])
+		var primaryQuery bluge.Query
+		var primaryNode node
+		if len(qs) > 1 {
+			bq := bluge.NewBooleanQuery()
+			bq.AddShould(qs...)
+			bq.SetMinShould(1)
+			primaryQuery = bq
+			primaryNode = newShouldNode()
+			for i := range matcherNodes {
+				primaryNode.(*shouldNode).Append(matcherNodes[i])
+			}
+		} else {
+			primaryQuery = qs[0]
+			primaryNode = matcherNodes[0]
 		}
-	} else {
-		primaryQuery = qs[0]
-		n = nodes[0]
+		query.AddMust(primaryQuery)
+		rootNode.Append(primaryNode)
 	}
-
-	query := bluge.NewBooleanQuery().AddMust(primaryQuery)
-	node := newMustNode()
-	node.Append(n)
 	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
 		query.AddMust(secondaryQuery.(*queryNode).query)
-		node.Append(secondaryQuery.(*queryNode).node)
+		rootNode.Append(secondaryQuery.(*queryNode).node)
 	}
 	if timeRange != nil {
 		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
 		q.SetField(timestampField)
 		query.AddMust(q)
-		node.Append(newTimeRangeNode(timeRange))
+		rootNode.Append(newTimeRangeNode(timeRange))
 	}
-	return &queryNode{query, node}, nil
+	return &queryNode{query, rootNode}, nil
 }
 
 // Search implements index.SeriesStore.

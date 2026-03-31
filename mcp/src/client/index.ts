@@ -20,6 +20,17 @@
 import type { QueryRequest, QueryResponse, Group, ResourceMetadata } from './types.js';
 import { httpFetch } from '../utils/http.js';
 
+const maxErrorBodyLength = 2048;
+const maxToolResultLength = 32 * 1024;
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n... [truncated ${text.length - maxLength} characters]`;
+}
+
 /**
  * BanyanDBClient wraps the BanyanDB HTTP client for executing queries.
  * Uses the HTTP API (grpc-gateway) instead of gRPC to avoid proto dependency issues.
@@ -79,7 +90,7 @@ export class BanyanDBClient {
         const errorResponse = (data as { errors: Response }).errors;
         const errorText = await errorResponse.text().catch(() => errorResponse.statusText);
         throw new Error(
-          `Query execution failed: ${errorResponse.status} ${errorResponse.statusText}\n\n${queryDebugInfo}\n\nResponse: ${errorText}`,
+          `Query execution failed: ${errorResponse.status} ${errorResponse.statusText}\n\n${queryDebugInfo}\n\nResponse: ${truncateText(errorText, maxErrorBodyLength)}`,
         );
       }
 
@@ -168,7 +179,7 @@ export class BanyanDBClient {
       if (streamResult.elements && Array.isArray(streamResult.elements) && streamResult.elements.length === 0) {
         return 'Stream Query Result: No data found (empty result set)';
       }
-      return `Stream Query Result:\n${JSON.stringify(streamResult, null, 2)}`;
+      return truncateText(`Stream Query Result:\n${JSON.stringify(streamResult, null, 2)}`, maxToolResultLength);
     }
 
     if (measureResult) {
@@ -188,7 +199,7 @@ export class BanyanDBClient {
           '3. Verify data was written to BanyanDB for this measure'
         );
       }
-      return `Measure Query Result:\n${JSON.stringify(dataPoints, null, 2)}`;
+      return truncateText(`Measure Query Result:\n${JSON.stringify(dataPoints, null, 2)}`, maxToolResultLength);
     }
 
     if (traceResult) {
@@ -196,7 +207,7 @@ export class BanyanDBClient {
       if (traceResult.elements && Array.isArray(traceResult.elements) && traceResult.elements.length === 0) {
         return 'Trace Query Result: No data found (empty result set)';
       }
-      return `Trace Query Result:\n${JSON.stringify(traceResult, null, 2)}`;
+      return truncateText(`Trace Query Result:\n${JSON.stringify(traceResult, null, 2)}`, maxToolResultLength);
     }
 
     if (propertyResult) {
@@ -204,7 +215,7 @@ export class BanyanDBClient {
       if (propertyResult.items && Array.isArray(propertyResult.items) && propertyResult.items.length === 0) {
         return 'Property Query Result: No data found (empty result set)';
       }
-      return `Property Query Result:\n${JSON.stringify(propertyResult, null, 2)}`;
+      return truncateText(`Property Query Result:\n${JSON.stringify(propertyResult, null, 2)}`, maxToolResultLength);
     }
 
     if (topnResult) {
@@ -212,7 +223,7 @@ export class BanyanDBClient {
       if (topnResult.lists && Array.isArray(topnResult.lists) && topnResult.lists.length === 0) {
         return 'TopN Query Result: No data found (empty result set)';
       }
-      return `TopN Query Result:\n${JSON.stringify(topnResult, null, 2)}`;
+      return truncateText(`TopN Query Result:\n${JSON.stringify(topnResult, null, 2)}`, maxToolResultLength);
     }
 
     return 'Unknown result type';
