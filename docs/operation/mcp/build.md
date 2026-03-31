@@ -4,7 +4,7 @@ This guide is for developers who want to build the MCP server from source and cr
 
 ## Prerequisites
 
-- **Node.js 20+** installed
+- **Node.js 24.6.0+** installed
 - **npm** or **yarn** package manager
 - **TypeScript** knowledge (for development)
 
@@ -13,16 +13,22 @@ This guide is for developers who want to build the MCP server from source and cr
 ```
 mcp/
 ├── src/
-│   ├── index.ts              # MCP server implementation
+│   ├── index.ts              # MCP bootstrap entrypoint
+│   ├── config.ts             # Environment parsing and runtime limits
 │   ├── client/
-│   │   ├── index.ts            # BanyanDB HTTP client
-│   │   └── types.ts            # Client type definitions
+│   │   ├── index.ts          # BanyanDB HTTP client
+│   │   └── types.ts          # Client type definitions
 │   ├── query/
-│   │   ├── llm-prompt.ts       # BydbQL prompt generation
-│   │   └── types.ts            # Query type definitions
+│   │   ├── context.ts        # Schema/resource discovery helpers
+│   │   ├── llm-prompt.ts     # BydbQL prompt generation
+│   │   ├── types.ts          # Query type definitions
+│   │   └── validation.ts     # Query and hint validation
+│   ├── server/
+│   │   ├── http.ts           # HTTP transport, auth, and rate limiting
+│   │   └── mcp.ts            # MCP prompt/tool registration and handlers
 │   └── utils/
-│       ├── http.ts             # HTTP utilities
-│       └── logger.ts           # Logging utilities
+│       ├── http.ts           # HTTP utilities
+│       └── logger.ts         # Logging utilities
 ├── tools/
 │   └── checkversion.js        # Version checking utility
 ├── dist/                     # Compiled JavaScript (generated)
@@ -34,11 +40,9 @@ mcp/
 ├── package.json              # Node.js dependencies and scripts
 ├── package-lock.json         # Dependency lock file
 ├── example-config.json       # Example MCP configuration
-├── inspector-config.json     # MCP Inspector configuration
 ├── LICENSE                   # License file
 ├── LICENSE.tpl               # License template
 ├── Makefile                  # Build automation
-└── README.md                 # Project documentation
 ```
 
 ## Building from Source
@@ -58,10 +62,23 @@ npm run build
 
 This compiles TypeScript to JavaScript in the `dist/` directory.
 
+The runtime is organized into small modules:
+
+- `src/index.ts` wires together configuration, transport selection, and startup.
+- `src/server/mcp.ts` owns MCP prompt/tool registration and handlers.
+- `src/server/http.ts` owns HTTP transport, request limits, auth, and rate limiting.
+- `src/query/validation.ts` centralizes validation for BydbQL and entity hints.
+
 ### 3. Verify Build
 
 ```bash
-node dist/index.js --help
+BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+```
+
+The server starts in `stdio` mode by default. Use `TRANSPORT=http` if you want to verify the HTTP transport:
+
+```bash
+TRANSPORT=http BANYANDB_ADDRESS=localhost:17900 node dist/index.js
 ```
 
 ## Development Mode
@@ -78,7 +95,12 @@ This runs `src/index.ts` directly using `tsx`, which is faster for iterative dev
 
 ### 1. Make Changes
 
-Edit files in the `src/` directory.
+Edit the relevant files in `src/`:
+
+- transport/bootstrap changes: `src/index.ts`, `src/server/http.ts`
+- tool behavior and prompt wiring: `src/server/mcp.ts`
+- query validation: `src/query/validation.ts`
+- BanyanDB API access: `src/client/index.ts`
 
 ### 2. Format and Lint
 
@@ -109,11 +131,12 @@ node dist/index.js
 Use MCP Inspector to test your changes:
 
 ```bash
-# Build first
+# Terminal 1: start the MCP server
 npm run build
+BANYANDB_ADDRESS=localhost:17900 node dist/index.js
 
-# Run Inspector
-npx @modelcontextprotocol/inspector --config inspector-config.json
+# Terminal 2: run Inspector and point it at the local server command or HTTP URL
+npx @modelcontextprotocol/inspector
 ```
 
 ## Debugging
@@ -133,8 +156,7 @@ Create `.vscode/launch.json` in the `mcp` directory:
       "runtimeExecutable": "npx",
       "runtimeArgs": [
         "@modelcontextprotocol/inspector",
-        "--config",
-        "${workspaceFolder}/inspector-config.json"
+        "--cli"
       ],
       "env": {
         "BANYANDB_ADDRESS": "localhost:17900"
@@ -203,7 +225,7 @@ The Dockerfile includes:
 - **Multi-stage build**: Separate build and production stages for smaller final image
 - **Security**: Runs as non-root user (`appuser`) for better security
 - **Optimization**: Only production dependencies in final image
-- **Alpine-based**: Uses `node:20-alpine` for minimal image size
+- **Runtime validation**: Supports HTTP safety controls such as `MCP_HOST`, `MCP_AUTH_TOKEN`, request size limits, and rate limiting
 
 #### Build Arguments
 
@@ -223,6 +245,18 @@ After building, test the image:
 # Run the container
 docker run --rm \
   -e BANYANDB_ADDRESS=localhost:17900 \
+  apache/skywalking-banyandb-mcp:latest
+```
+
+To test HTTP mode in Docker:
+
+```bash
+docker run --rm \
+  -p 3000:3000 \
+  -e TRANSPORT=http \
+  -e MCP_HOST=0.0.0.0 \
+  -e MCP_AUTH_TOKEN=replace-with-a-strong-random-token \
+  -e BANYANDB_ADDRESS=host.docker.internal:17900 \
   apache/skywalking-banyandb-mcp:latest
 ```
 
@@ -293,7 +327,13 @@ Test with real BanyanDB instance:
 2. Run MCP Inspector:
    ```bash
    npm run build
-   npx @modelcontextprotocol/inspector --config inspector-config.json
+   BANYANDB_ADDRESS=localhost:17900 node dist/index.js
+   ```
+
+   In another terminal:
+
+   ```bash
+   npx @modelcontextprotocol/inspector
    ```
 
 3. Test various queries through the Inspector UI
@@ -358,4 +398,3 @@ Both linting and formatting are integrated into the build process via the Makefi
 - [TypeScript Documentation](https://www.typescriptlang.org/docs/)
 - [MCP SDK Documentation](https://github.com/modelcontextprotocol/typescript-sdk)
 - [Node.js Documentation](https://nodejs.org/docs/)
-
