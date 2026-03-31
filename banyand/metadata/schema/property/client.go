@@ -209,20 +209,18 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		}
 	}
 
-	// Wait for at least one schema server to become active and able to serve schema queries.
-	waitDeadline := time.Now().Add(initWaitTime)
-	for time.Now().Before(waitDeadline) {
-		if connMgr.ActiveCount() == 0 {
+	// Wait for at least one schema server to become active.
+	if connMgr.ActiveCount() == 0 {
+		waitDeadline := time.Now().Add(initWaitTime)
+		for connMgr.ActiveCount() == 0 && time.Now().Before(waitDeadline) {
 			time.Sleep(500 * time.Millisecond)
-			continue
 		}
-		if _, probeErr := reg.ListGroup(context.Background()); probeErr == nil {
-			return reg, nil
+		if connMgr.ActiveCount() == 0 {
+			_ = reg.Close()
+			return nil, fmt.Errorf("no schema servers reachable after %s", initWaitTime)
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
-	_ = reg.Close()
-	return nil, fmt.Errorf("no schema servers ready to serve after %s", initWaitTime)
+	return reg, nil
 }
 
 // OnAddOrUpdate handles node add/update events for dynamic node discovery.
@@ -969,12 +967,40 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 		}
 	}
 	r.l.Info().Str("name", name).Interface("kinds", kinds).Msg("registering property schema handler")
-	handler.OnInit(kinds)
+	r.initHandlerWithRetry(name, handler, kinds)
 	r.mux.Lock()
 	defer r.mux.Unlock()
 	for _, ki := range kinds {
 		r.handlers[ki] = append(r.handlers[ki], handler)
 	}
+}
+
+func (r *SchemaRegistry) initHandlerWithRetry(name string, handler schema.EventHandler, kinds []schema.Kind) {
+	deadline := time.Now().Add(time.Minute)
+	var lastErr interface{}
+	for {
+		if tryCallOnInit(handler, kinds, &lastErr) {
+			return
+		}
+		if time.Now().After(deadline) {
+			r.l.Panic().Str("name", name).Interface("error", lastErr).
+				Msg("handler OnInit failed after 1m, giving up")
+		}
+		r.l.Warn().Str("name", name).Interface("error", lastErr).
+			Msg("handler OnInit panicked due to transient error, retrying in 1s")
+		time.Sleep(time.Second)
+	}
+}
+
+func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *interface{}) (ok bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			*lastErr = rec
+			ok = false
+		}
+	}()
+	handler.OnInit(kinds)
+	return true
 }
 
 // Start starts a single goroutine that periodically syncs schemas.
