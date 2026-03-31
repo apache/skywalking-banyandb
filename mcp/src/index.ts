@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { createServer } from 'node:http';
+import { createServer, IncomingMessage } from 'node:http';
 
 import dotenv from 'dotenv';
 import { z } from 'zod';
@@ -39,11 +39,30 @@ setupGlobalErrorHandlers();
 
 const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
 const TRANSPORT = process.env.TRANSPORT || 'stdio';
+const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
+const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN?.trim() || '';
 const mcpPortRaw = parseInt(process.env.MCP_PORT || '3000', 10);
 if (!Number.isFinite(mcpPortRaw) || mcpPortRaw <= 0 || mcpPortRaw > 65535) {
   throw new Error(`Invalid MCP_PORT value "${process.env.MCP_PORT}": must be an integer between 1 and 65535.`);
 }
 const MCP_PORT = mcpPortRaw;
+const mcpMaxBodyBytesRaw = parseInt(process.env.MCP_MAX_BODY_BYTES || `${1024 * 1024}`, 10);
+if (!Number.isFinite(mcpMaxBodyBytesRaw) || mcpMaxBodyBytesRaw <= 0) {
+  throw new Error(`Invalid MCP_MAX_BODY_BYTES value "${process.env.MCP_MAX_BODY_BYTES}": must be a positive integer.`);
+}
+const MCP_MAX_BODY_BYTES = mcpMaxBodyBytesRaw;
+const maxErrorMessageLength = 1024;
+const maxToolResponseLength = 64 * 1024;
+const mcpRateLimitWindowMsRaw = parseInt(process.env.MCP_RATE_LIMIT_WINDOW_MS || '60000', 10);
+if (!Number.isFinite(mcpRateLimitWindowMsRaw) || mcpRateLimitWindowMsRaw <= 0) {
+  throw new Error(`Invalid MCP_RATE_LIMIT_WINDOW_MS value "${process.env.MCP_RATE_LIMIT_WINDOW_MS}": must be a positive integer.`);
+}
+const MCP_RATE_LIMIT_WINDOW_MS = mcpRateLimitWindowMsRaw;
+const mcpRateLimitMaxRequestsRaw = parseInt(process.env.MCP_RATE_LIMIT_MAX_REQUESTS || '60', 10);
+if (!Number.isFinite(mcpRateLimitMaxRequestsRaw) || mcpRateLimitMaxRequestsRaw <= 0) {
+  throw new Error(`Invalid MCP_RATE_LIMIT_MAX_REQUESTS value "${process.env.MCP_RATE_LIMIT_MAX_REQUESTS}": must be a positive integer.`);
+}
+const MCP_RATE_LIMIT_MAX_REQUESTS = mcpRateLimitMaxRequestsRaw;
 
 // Prompt schema for generate_BydbQL — used with registerPrompt which requires a type cast
 // due to MCP SDK 1.x Zod v3/v4 compatibility layer causing TS2589 deep type instantiation.
@@ -63,6 +82,59 @@ type QueryHints = {
   resource_name?: string;
   group?: string;
 };
+
+type RateLimitEntry = {
+  count: number;
+  windowStart: number;
+};
+
+const rateLimitByClient = new Map<string, RateLimitEntry>();
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n... [truncated ${text.length - maxLength} characters]`;
+}
+
+function getAuthorizationToken(req: IncomingMessage): string {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return '';
+  }
+
+  const bearerPrefix = 'Bearer ';
+  return authHeader.startsWith(bearerPrefix) ? authHeader.slice(bearerPrefix.length).trim() : '';
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+function getClientIdentifier(req: IncomingMessage): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+    return forwardedFor.split(',')[0].trim();
+  }
+
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function isRateLimited(clientId: string, now: number): boolean {
+  const currentEntry = rateLimitByClient.get(clientId);
+  if (!currentEntry || now - currentEntry.windowStart >= MCP_RATE_LIMIT_WINDOW_MS) {
+    rateLimitByClient.set(clientId, { count: 1, windowStart: now });
+    return false;
+  }
+
+  if (currentEntry.count >= MCP_RATE_LIMIT_MAX_REQUESTS) {
+    return true;
+  }
+
+  currentEntry.count += 1;
+  return false;
+}
 
 function normalizeQueryHints(args: unknown): QueryHints {
   if (!args || typeof args !== 'object') {
@@ -326,7 +398,7 @@ function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
         if (queryHints.group) debugParts.push(`Group: ${queryHints.group}`);
 
         const debugInfo = debugParts.length > 0 ? `\n\n=== Debug Information ===\n${debugParts.join('\n')}` : '';
-        const text = `=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${queryHints.BydbQL}${debugInfo}`;
+        const text = truncateText(`=== Query Result ===\n\n${result}\n\n=== BydbQL Query ===\n${queryHints.BydbQL}${debugInfo}`, maxToolResponseLength);
 
         return { content: [{ type: 'text', text }] };
       } catch (error) {
@@ -395,6 +467,10 @@ async function main() {
   log.info('Using built-in BydbQL prompt generation with natural language support and BanyanDB schema hints. Use the list_groups_schemas tool to discover available resources and guide your queries.');
 
   if (TRANSPORT === 'http') {
+    if (!isLoopbackHost(MCP_HOST) && !MCP_AUTH_TOKEN) {
+      throw new Error('MCP_AUTH_TOKEN is required when MCP_HOST is not a loopback address.');
+    }
+
     const httpServer = createServer((req, res) => {
       const { pathname } = new URL(req.url ?? '', 'http://localhost');
       if (pathname !== '/mcp') {
@@ -412,9 +488,41 @@ async function main() {
         return;
       }
 
+      if (MCP_AUTH_TOKEN && getAuthorizationToken(req) !== MCP_AUTH_TOKEN) {
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer',
+        });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+
+      const clientId = getClientIdentifier(req);
+      if (isRateLimited(clientId, Date.now())) {
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': `${Math.ceil(MCP_RATE_LIMIT_WINDOW_MS / 1000)}`,
+        });
+        res.end(JSON.stringify({ error: 'Too many requests' }));
+        return;
+      }
+
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      let requestTooLarge = false;
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+        if (body.length > MCP_MAX_BODY_BYTES) {
+          requestTooLarge = true;
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Request body too large. Limit is ${MCP_MAX_BODY_BYTES} bytes.` }));
+          req.destroy();
+        }
+      });
       req.on('end', async () => {
+        if (requestTooLarge) {
+          return;
+        }
+
         let parsedBody: unknown;
         if (body) {
           try {
@@ -433,15 +541,17 @@ async function main() {
         } catch (error) {
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+            res.end(JSON.stringify({ error: truncateText(error instanceof Error ? error.message : String(error), maxErrorMessageLength) }));
           }
         }
       });
     });
 
-    httpServer.listen(MCP_PORT, () => {
-      log.info(`BanyanDB MCP HTTP server listening on :${MCP_PORT}/mcp`);
+    httpServer.listen(MCP_PORT, MCP_HOST, () => {
+      log.info(`BanyanDB MCP HTTP server listening on ${MCP_HOST}:${MCP_PORT}/mcp`);
       log.info(`Connecting to BanyanDB at ${BANYANDB_ADDRESS}`);
+      log.info(`HTTP auth ${MCP_AUTH_TOKEN ? 'enabled' : 'disabled'}`);
+      log.info(`HTTP rate limit ${MCP_RATE_LIMIT_MAX_REQUESTS} requests per ${MCP_RATE_LIMIT_WINDOW_MS}ms`);
     });
   } else {
     const mcpServer = createMcpServer(banyandbClient);
