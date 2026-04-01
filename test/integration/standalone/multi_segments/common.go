@@ -93,7 +93,7 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 	if round2Conn != nil {
-		round2Conn.Close()
+		gomega.Expect(round2Conn.Close()).To(gomega.Succeed())
 	}
 }, func() {})
 
