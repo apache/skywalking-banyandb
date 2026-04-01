@@ -35,14 +35,12 @@ import (
 	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
 )
 
-var _ = ginkgo.Describe("on-disk data", ginkgo.Serial, ginkgo.Ordered, func() {
-	var newStopFunc func()
-	var round2Conn *grpc.ClientConn
+var round2Conn *grpc.ClientConn
 
+var _ = ginkgo.Describe("on-disk data", ginkgo.Ordered, func() {
 	ginkgo.BeforeAll(func() {
 		gomega.Expect(result.Restart).NotTo(gomega.BeNil())
-		newAddr, stopFn := result.Restart()
-		newStopFunc = stopFn
+		newAddr, _ := result.Restart()
 		var connErr error
 		round2Conn, connErr = grpchelper.Conn(newAddr, 10*time.Second,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -56,15 +54,6 @@ var _ = ginkgo.Describe("on-disk data", ginkgo.Serial, ginkgo.Ordered, func() {
 		casestopn.SharedContext = sharedCtx
 		casestrace.SharedContext = sharedCtx
 		casesproperty.SharedContext = sharedCtx
-	})
-
-	ginkgo.AfterAll(func() {
-		if round2Conn != nil {
-			round2Conn.Close()
-		}
-		if newStopFunc != nil {
-			newStopFunc()
-		}
 	})
 
 	casesstream.RegisterTable("Scanning Streams")

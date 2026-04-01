@@ -97,6 +97,9 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
 		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
+	if round2Conn != nil {
+		round2Conn.Close()
+	}
 }, func() {})
 
 var _ = ginkgo.ReportAfterSuite("Integration Query Suite", func(report ginkgo.Report) {
