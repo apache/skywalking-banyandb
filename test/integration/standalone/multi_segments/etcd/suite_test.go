@@ -44,7 +44,7 @@ func init() {
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		baseTime := time.Date(now.Year(), now.Month(), now.Day(), 0o0, 0o2, 0, 0, now.Location())
 		test_cases.Initialize(addr, baseTime)
-		var prevClose, currClose func() = closeFunc, func() {}
+		prevClose, currClose := closeFunc, func() {}
 		return multisegments.SetupResult{
 			Addr:     addr,
 			Now:      now,

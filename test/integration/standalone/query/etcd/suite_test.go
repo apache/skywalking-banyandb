@@ -43,7 +43,7 @@ func init() {
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		test_cases.Initialize(addr, now)
-		var prevClose, currClose func() = closeFunc, func() {}
+		prevClose, currClose := closeFunc, func() {}
 		return query.SetupResult{
 			Addr: addr,
 			Now:  now,
