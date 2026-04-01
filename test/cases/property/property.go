@@ -37,7 +37,7 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("Scanning Properties", verify,
+var propertyEntries = []any{
 	g.Entry("all", helpers.Args{Input: "all"}),
 	g.Entry("limit", helpers.Args{Input: "limit"}),
 	g.Entry("query by criteria", helpers.Args{Input: "query_by_criteria"}),
@@ -47,4 +47,11 @@ var _ = g.DescribeTable("Scanning Properties", verify,
 	g.Entry("order by with limit", helpers.Args{Input: "order_by_with_limit"}),
 	g.Entry("order without projection", helpers.Args{Input: "order_without_projection"}),
 	g.Entry("query with order", helpers.Args{Input: "query_with_order"}),
-)
+}
+
+// RegisterTable registers the property test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{verify}, propertyEntries...)...)
+}
+
+var _ = RegisterTable("Scanning Properties")
