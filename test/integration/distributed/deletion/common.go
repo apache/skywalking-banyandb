@@ -202,7 +202,7 @@ var _ = ginkgo.Describe("GroupDeletion", func() {
 		dn1MeasureDir := filepath.Join(dataNode1Path, "measure", "data", groupName)
 		liaisonMeasureDir := filepath.Join(liaisonNodePath, "measure", "data", groupName)
 
-		ginkgo.By("Creating a group with measuree schema and data")
+		ginkgo.By("Creating a group with measure schema and data")
 		_, err := groupClient.Create(context.TODO(), &databasev1.GroupRegistryServiceCreateRequest{
 			Group: &commonv1.Group{
 				Metadata: &commonv1.Metadata{Name: groupName},
