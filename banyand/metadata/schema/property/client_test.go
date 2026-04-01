@@ -1337,11 +1337,7 @@ func (s *recordingSchemaServer) DeleteSchema(_ context.Context, req *schemav1.De
 	return &schemav1.DeleteSchemaResponse{Found: false}, nil
 }
 
-func startRecordingServer(t *testing.T) (*recordingSchemaServer, string) {
-	t.Helper()
-	mock := newRecordingSchemaServer()
-	lis, lisErr := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, lisErr)
+func serveRecordingServer(mock *recordingSchemaServer, lis net.Listener) *grpc.Server {
 	srv := grpc.NewServer()
 	schemav1.RegisterSchemaManagementServiceServer(srv, mock)
 	schemav1.RegisterSchemaUpdateServiceServer(srv, mock)
@@ -1349,6 +1345,15 @@ func startRecordingServer(t *testing.T) (*recordingSchemaServer, string) {
 	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 	grpc_health_v1.RegisterHealthServer(srv, healthSrv)
 	go func() { _ = srv.Serve(lis) }()
+	return srv
+}
+
+func startRecordingServer(t *testing.T) (*recordingSchemaServer, string) {
+	t.Helper()
+	mock := newRecordingSchemaServer()
+	lis, lisErr := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, lisErr)
+	srv := serveRecordingServer(mock, lis)
 	t.Cleanup(func() { srv.GracefulStop() })
 	return mock, lis.Addr().String()
 }
@@ -1565,6 +1570,109 @@ func deleteSchemaProperty(t *testing.T, mgmt schemav1.SchemaManagementServiceCli
 		UpdateAt: timestamppb.Now(),
 	})
 	require.NoError(t, err)
+}
+
+func TestFullSyncServerDown(t *testing.T) {
+	t.Run("groups_preserved_when_server_stops", func(t *testing.T) {
+		// Verifies that when the schema server stops (simulating hot node restart),
+		// performFullSync does NOT delete locally cached groups because
+		// sendSyncRequest returns an error on timeout.
+		_, addr, stopFn := startTestSchemaServerFull(t)
+		mgmt := rawMgmtClient(t, addr)
+
+		insertSchemaProperty(t, mgmt, buildMockGroupProperty(t))
+		insertSchemaProperty(t, mgmt, buildMockStreamProperty(t, "sv-stream", time.Now()))
+
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       200 * time.Millisecond,
+			SyncTimeout:        2 * time.Second,
+			FullReconcileEvery: 1,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("test-handler", schema.KindGroup|schema.KindStream, handler)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+
+		waitForAddOrUpdateEvent(t, handler, schema.KindGroup, "test-group")
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, "sv-stream")
+		initialDeleteCount := len(handler.getDeleteEvents())
+
+		// Stop the server. The watch session stays "active" but broken.
+		stopFn()
+
+		// Wait for the sync timeout (2s) to fire plus some buffer.
+		time.Sleep(5 * time.Second)
+
+		// Verify NO group delete events were fired.
+		deleteEvents := handler.getDeleteEvents()
+		groupDeleteCount := 0
+		for _, evt := range deleteEvents[initialDeleteCount:] {
+			if evt.Kind == schema.KindGroup && evt.Name == "test-group" {
+				groupDeleteCount++
+			}
+		}
+		assert.Equal(t, 0, groupDeleteCount, "Groups should NOT be deleted when server is unreachable")
+	})
+
+	t.Run("groups_recovered_after_server_restart", func(t *testing.T) {
+		// Verifies that after server stops and restarts on the same address,
+		// the watch session reconnects and groups remain consistent.
+		lis, lisErr := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, lisErr)
+		addr := lis.Addr().String()
+
+		mock := newRecordingSchemaServer()
+		mock.addSchema(buildMockGroupProperty(t))
+		mock.addSchema(buildMockStreamProperty(t, "sv-stream", time.Now()))
+		srv := serveRecordingServer(mock, lis)
+
+		reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+			SyncInterval:       200 * time.Millisecond,
+			SyncTimeout:        2 * time.Second,
+			WatchMaxBackoff:    2 * time.Second,
+			FullReconcileEvery: 1,
+		}, addr)
+		handler := &testEventHandler{}
+		reg.RegisterHandler("test-handler", schema.KindGroup|schema.KindStream, handler)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, reg.Start(ctx))
+
+		waitForAddOrUpdateEvent(t, handler, schema.KindGroup, "test-group")
+		waitForAddOrUpdateEvent(t, handler, schema.KindStream, "sv-stream")
+		initialDeleteCount := len(handler.getDeleteEvents())
+
+		// Stop the server (hard stop to avoid blocking on bidi streams).
+		srv.Stop()
+
+		// Wait for sync timeout (2s) to fire. Groups should NOT be deleted.
+		time.Sleep(5 * time.Second)
+		for _, evt := range handler.getDeleteEvents()[initialDeleteCount:] {
+			require.NotEqual(t, schema.KindGroup, evt.Kind,
+				"Group should not be deleted during server outage")
+		}
+
+		// Restart server on same address with same data.
+		lis2, lisErr2 := net.Listen("tcp", addr)
+		require.NoError(t, lisErr2)
+		mock2 := newRecordingSchemaServer()
+		mock2.addSchema(buildMockGroupProperty(t))
+		mock2.addSchema(buildMockStreamProperty(t, "sv-stream", time.Now()))
+		srv2 := serveRecordingServer(mock2, lis2)
+		t.Cleanup(func() { srv2.Stop() })
+
+		// Wait for watch reconnection (backoff up to 2s) and a successful full sync.
+		time.Sleep(5 * time.Second)
+
+		// Verify no group was deleted during the entire process.
+		for _, evt := range handler.getDeleteEvents()[initialDeleteCount:] {
+			assert.NotEqual(t, schema.KindGroup, evt.Kind,
+				"Group should not be deleted after server restart")
+		}
+	})
 }
 
 func TestWatchPush(t *testing.T) {

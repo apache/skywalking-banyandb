@@ -101,6 +101,7 @@ func (gc *GroupConfig) Close() {
 	}
 }
 
+//nolint:contextcheck // health check goroutine uses context.Background()
 func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
@@ -148,7 +149,7 @@ func parseGroup(
 	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
 		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
-	client := pub.NewWithoutMetadata()
+	client := pub.NewWithoutMetadata() //nolint:contextcheck // health check goroutine uses context.Background()
 	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)
 	} else {

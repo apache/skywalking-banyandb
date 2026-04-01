@@ -16,6 +16,27 @@ The skill is auto-triggered when you use the relevant phrases. No manual invocat
 
 ## Available Skills
 
+### compiling
+
+Compile and build the SkyWalking BanyanDB project.
+
+**Triggers:** "compile", "build", "generate code"
+
+**What it does:**
+1. Runs `make generate` to regenerate protobuf and mock code
+2. Runs `make build` to compile all binaries
+
+### gh-pull-request
+
+Create a GitHub pull request following project conventions.
+
+**Triggers:** "create a PR", "submit changes", "open a pull request"
+
+**What it does:**
+1. Guides through pre-PR checks (generate, build, lint, check, license, tests)
+2. Creates branch and pushes to remote
+3. Opens PR with proper format
+
 ### vendor-update
 
 Upgrades Go/Node.js vendor dependencies and syncs tool versions.
@@ -27,14 +48,3 @@ Upgrades Go/Node.js vendor dependencies and syncs tool versions.
 2. Checks `scripts/build/version.mk` against upgraded `go.mod` to detect tool version drift
 3. Updates `version.mk` if a library bump warrants a tool version bump
 4. Removes stale binaries from `bin/` when versions change
-
-**Usage:**
-```
-$ claude
-<user> upgrade dependencies
-```
-
-Or trigger explicitly:
-```
-<user> run vendor-update
-```
