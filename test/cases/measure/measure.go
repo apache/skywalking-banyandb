@@ -39,7 +39,7 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("Scanning Measures", verify,
+var measureEntries = []any{
 	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("index mode filter hidden tag projection", helpers.Args{Input: "index_mode_filter_hidden_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("all", helpers.Args{Input: "all", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
@@ -93,4 +93,11 @@ var _ = g.DescribeTable("Scanning Measures", verify,
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 15 * time.Minute, Offset: 25 * time.Minute, DisOrder: true}),
-)
+}
+
+// RegisterTable registers the measure test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{verify}, measureEntries...)...)
+}
+
+var _ = RegisterTable("Scanning Measures")

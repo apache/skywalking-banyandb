@@ -41,6 +41,7 @@ import (
 
 // SetupResult contains all info returned by SetupFunc.
 type SetupResult struct {
+	Restart  func() (string, func())
 	Now      time.Time
 	BaseTime time.Time
 	StopFunc func()

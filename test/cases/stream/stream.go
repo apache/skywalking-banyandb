@@ -39,11 +39,7 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
-	gm.Eventually(func(innerGm gm.Gomega) {
-		verify(innerGm, args)
-	}, flags.EventuallyTimeout).Should(gm.Succeed())
-},
+var streamEntries = []any{
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
 	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
@@ -99,4 +95,15 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 1 * time.Hour, IgnoreElementID: true}),
-)
+}
+
+// RegisterTable registers the stream test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{func(args helpers.Args) {
+		gm.Eventually(func(innerGm gm.Gomega) {
+			verify(innerGm, args)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+	}}, streamEntries...)...)
+}
+
+var _ = RegisterTable("Scanning Streams")
