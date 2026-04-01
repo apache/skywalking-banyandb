@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
@@ -33,16 +34,35 @@ import (
 
 func init() {
 	multisegments.SetupFunc = func() multisegments.SetupResult {
-		addr, _, cleanup := setup.Standalone(nil)
+		path, diskCleanupFn, pathErr := test.NewSpace()
+		Expect(pathErr).NotTo(HaveOccurred())
+		var ports []int
+		ports, portsErr := test.AllocateFreePorts(4)
+		Expect(portsErr).NotTo(HaveOccurred())
+		addr, _, closeFunc := setup.ClosableStandalone(nil, path, ports)
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		baseTime := time.Date(now.Year(), now.Month(), now.Day(), 0o0, 0o2, 0, 0, now.Location())
 		test_cases.Initialize(addr, baseTime)
+		prevClose, currClose := closeFunc, func() {}
 		return multisegments.SetupResult{
 			Addr:     addr,
 			Now:      now,
 			BaseTime: baseTime,
-			StopFunc: cleanup,
+			Restart: func() (string, func()) {
+				time.Sleep(5 * time.Second)
+				prevClose()
+				time.Sleep(3 * time.Second)
+				currClose()
+				addr, _, closeFunc := setup.EmptyClosableStandalone(nil, path, ports)
+				prevClose, currClose = currClose, closeFunc
+				return addr, closeFunc
+			},
+			StopFunc: func() {
+				currClose()
+				prevClose()
+				diskCleanupFn()
+			},
 		}
 	}
 }

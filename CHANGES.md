@@ -18,6 +18,7 @@ Release Notes.
 - Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
 - MCP: Add validation for properties and harden the mcp server.
 - Fix property schema client connection not stable after data node restarted.
+- Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
 
 ## 0.10.0
 

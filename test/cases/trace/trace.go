@@ -37,11 +37,7 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
-	gm.Eventually(func(innerGm gm.Gomega) {
-		verify(innerGm, args)
-	}, flags.EventuallyTimeout).Should(gm.Succeed())
-},
+var traceEntries = []any{
 	g.Entry("query by trace id", helpers.Args{Input: "eq_trace_id", Duration: 1 * time.Hour}),
 	g.Entry("query by trace ids", helpers.Args{Input: "in_trace_ids", Duration: 1 * time.Hour}),
 	g.Entry("query by empty span ids", helpers.Args{Input: "in_empty_span_ids", Duration: 1 * time.Hour, WantEmpty: true}),
@@ -69,4 +65,15 @@ var _ = g.DescribeTable("Scanning Traces", func(args helpers.Args) {
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 1 * time.Hour, DisOrder: true}),
-)
+}
+
+// RegisterTable registers the trace test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{func(args helpers.Args) {
+		gm.Eventually(func(innerGm gm.Gomega) {
+			verify(innerGm, args)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
+	}}, traceEntries...)...)
+}
+
+var _ = RegisterTable("Scanning Traces")

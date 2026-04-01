@@ -42,7 +42,7 @@ var (
 	}
 )
 
-var _ = g.DescribeTable("TopN Tests", verify,
+var topnEntries = []any{
 	g.Entry("max top3 order by desc", helpers.Args{Input: "aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 with condition order by desc", helpers.Args{Input: "condition_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 for null group order by desc", helpers.Args{Input: "null_group", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
@@ -52,4 +52,11 @@ var _ = g.DescribeTable("TopN Tests", verify,
 	g.Entry("using in operation in aggregation", helpers.Args{Input: "in", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("using not-in operation in aggregation", helpers.Args{Input: "not_in", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 with version merged order by desc", helpers.Args{Input: "aggr_version_merged", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
-)
+}
+
+// RegisterTable registers the topn test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{verify}, topnEntries...)...)
+}
+
+var _ = RegisterTable("TopN Tests")
