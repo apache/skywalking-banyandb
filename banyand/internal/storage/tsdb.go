@@ -176,6 +176,7 @@ func (d *database[T, O]) Close() error {
 	if d.metricsFactory != nil {
 		d.metricsFactory.Close()
 	}
+	obsservice.MetricsCollector.Unregister(d.location)
 	return nil
 }
 

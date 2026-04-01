@@ -616,16 +616,17 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata     metadata.Repo
-	omr          observability.MetricsRegistry
-	c            storage.Cache
-	pm           protector.Memory
-	l            *logger.Logger
-	schemaRepo   *schemaRepo
-	nodeLabels   map[string]string
-	queryMetrics atomic.Pointer[queryMetrics]
-	path         string
-	option       option
+	metadata            metadata.Repo
+	omr                 observability.MetricsRegistry
+	c                   storage.Cache
+	pm                  protector.Memory
+	l                   *logger.Logger
+	schemaRepo          *schemaRepo
+	nodeLabels          map[string]string
+	queryMetrics        atomic.Pointer[queryMetrics]
+	queryMetricsFactory atomic.Value
+	path                string
+	option              option
 }
 
 func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
@@ -787,13 +788,15 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	}
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
+	metrics, metricsFactory := s.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(s.path, group),
 		Option:          s.option,
-		Metrics:         s.newMetrics(p),
+		Metrics:         metrics,
+		MetricsFactory:  metricsFactory,
 		SubQueueCreator: newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
@@ -821,7 +824,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	)
 }
 
-func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
@@ -863,7 +866,7 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
-	}
+	}, factory
 }
 
 // GetTopNSchema returns the schema of the topN result measure.
